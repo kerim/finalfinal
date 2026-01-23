@@ -1,0 +1,31 @@
+# Xcode
+*.xcodeproj/project.xcworkspace/
+*.xcodeproj/xcuserdata/
+DerivedData/
+*.xcuserstate
+*.xcscmblueprint
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Node
+node_modules/
+web/node_modules/
+web/milkdown/node_modules/
+web/codemirror/node_modules/
+web/milkdown/dist/
+web/codemirror/dist/
+
+# Build outputs
+final\ final/Resources/editor/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Claude
+.claude/

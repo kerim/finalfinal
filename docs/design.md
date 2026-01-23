@@ -1,0 +1,379 @@
+# final final — Design Document
+
+## Overview
+
+A macOS-native markdown editor for long-form academic writing. SQLite-first architecture with header-based outlining.
+
+**Core principles:**
+- Database is the single source of truth (no file system sync)
+- Headers (`#`, `##`, `###`, etc.) define document structure
+- Clean, Bear/Ulysses-style interface
+- Focus on writing experience, defer complexity
+
+---
+
+## Architecture
+
+### Technology Stack
+
+| Component | Technology | Rationale |
+|-----------|------------|-----------|
+| Platform | macOS (SwiftUI), iOS later | Native performance, shared codebase |
+| Database | SQLite via GRDB | Performance, sync flexibility, reactive queries |
+| WYSIWYG Editor | Milkdown (WKWebView) | ProseMirror-based, plugin support, proven |
+| Source Editor | CodeMirror 6 (WKWebView) | Best markdown editing, mobile support |
+| Web integration | WKWebView + JS bridge | Same pattern as Academic Writer, simplified by SQLite |
+
+### Key Difference from Academic Writer
+
+**Academic Writer**: Files in Finder → Manifest → Complex sync
+**final final**: SQLite DB → Export when needed → No sync complexity
+
+The database stores all content. No file watching, no manifest reconciliation, no undo coordination across files.
+
+---
+
+## Project Model
+
+### Package Structure
+
+Each project is a macOS package (folder appearing as file):
+
+```
+MyBook.ff/
+├── content.sqlite        # SQLite database (GRDB)
+└── references/           # Reference files (Phase 2+)
+    └── (user-organized folders)
+```
+
+**Benefits:**
+- Portable: backup/share as single "file"
+- Sync-friendly: package or just SQLite
+- Finder shows as file, "Show Package Contents" reveals internals
+- Standard macOS pattern (like Scrivener, Final Draft)
+
+---
+
+## Data Model (GRDB)
+
+### Core Tables
+
+```sql
+-- Project metadata
+CREATE TABLE project (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+-- Main content (one row per project)
+CREATE TABLE content (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES project(id),
+    markdown TEXT NOT NULL,  -- Full markdown content
+    updated_at TEXT NOT NULL
+);
+
+-- Outline cache (derived from headers, rebuilt on content change)
+CREATE TABLE outline_nodes (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES project(id),
+    header_level INTEGER NOT NULL,  -- 1-6
+    title TEXT NOT NULL,
+    start_offset INTEGER NOT NULL,  -- Character position in content
+    end_offset INTEGER NOT NULL,
+    parent_id TEXT REFERENCES outline_nodes(id),
+    sort_order INTEGER NOT NULL,
+    is_pseudo_section BOOLEAN DEFAULT FALSE  -- For "## Title-part 1" style
+);
+
+-- User preferences per project
+CREATE TABLE settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
+-- Future tables (Phase 2+)
+-- reference_folders, reference_files, annotations, citations
+```
+
+### Content Model
+
+One project = one markdown string. Headers within that string define the outline structure.
+
+```markdown
+# Book Title
+
+## Chapter 1
+
+### Section 1.1
+
+Content here...
+
+### Section 1.2
+
+More content...
+
+## Chapter 2
+
+...
+```
+
+The `outline_nodes` table is a cache rebuilt whenever content changes. It enables fast sidebar rendering without parsing markdown on every frame.
+
+---
+
+## UI Layout
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Toolbar: [Toggle Editor Mode] [Zoom Out] [Settings]        │
+├──────────────┬──────────────────────────────────────────────┤
+│              │                                              │
+│   Outline    │                                              │
+│   Sidebar    │              Editor                          │
+│              │              (Milkdown or CodeMirror 6)      │
+│   - H1 Card  │                                              │
+│     - H2     │                                              │
+│       - H3   │                                              │
+│     - H2     │                                              │
+│   - H1 Card  │                                              │
+│              │                                              │
+├──────────────┴──────────────────────────────────────────────┤
+│  Status: Word count | Section name | Editor mode            │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Sidebar Behavior
+
+- **Cards**: Each header (H1-H6) becomes a card, nested by level
+- **Single click**: Scroll editor to that section
+- **Double click**: Zoom into section (show only that section + children)
+- **Option-click header in editor**: Also zooms
+
+### Editor Modes
+
+- **WYSIWYG (Milkdown)**: Default, hides markdown syntax
+- **Source (CodeMirror 6)**: Shows raw markdown with syntax highlighting
+- **Toggle**: Preserve cursor position when switching
+
+---
+
+## Phase 1: MVP (Editor + Outline)
+
+### Goals
+- Working editor with both modes (Milkdown WYSIWYG + CodeMirror 6 source)
+- Header-based outline sidebar with preview text and word counts
+- Focus mode (paragraph dimming)
+- Color scheme theming
+- SQLite persistence
+- Basic document management
+
+### Feature Details
+
+**Editors:**
+- Milkdown for WYSIWYG mode
+- CodeMirror 6 for source mode
+- Cmd+/ toggles between modes (cursor position preserved)
+- Cmd+B/I/K formatting shortcuts (insert markdown syntax in source mode)
+- Both editors use same `editor://` URL scheme pattern from Academic Writer
+
+**Outline Sidebar (Bear/Ulysses style):**
+- Flat card list with banners for top-level headers
+- Each card shows: header title, preview text (1-4 lines), word count
+- Single click = scroll to section
+- Double click = zoom into section (sidebar shows only subtree)
+- Option-click header in editor = zoom
+- Pseudo-sections (`## Title-part 1`) show with special marker
+- NO drag-and-drop add bar in MVP (design TBD for later)
+
+**Focus Mode:**
+- Paragraph dimming (dims non-current paragraph)
+- Use ProseMirror Decoration system (not DOM manipulation)
+- Works in WYSIWYG mode only
+
+**Theming:**
+- Multiple color schemes (light/dark variants)
+- Sidebar colors from theme system
+- Editor colors from theme system
+
+### Implementation Steps
+
+#### 1.1 Project Setup
+- Create Xcode project (SwiftUI, macOS 13+)
+- Add GRDB via SPM
+- Set up basic app structure
+- Configure `editor://` URL scheme
+
+#### 1.2 Database Layer
+- Define GRDB models (Document, OutlineNode)
+- Implement document CRUD operations
+- Implement outline parsing (markdown → nodes)
+
+#### 1.3 Theme System
+- Define color scheme structure
+- Implement theme switching
+- CSS variables for web editors
+
+#### 1.4 Editor Integration (Milkdown)
+- Set up WKWebView wrapper
+- Bundle Milkdown with vite build
+- Implement Swift ↔ JS bridge:
+  - `setContent(markdown)`
+  - `getContent() → markdown`
+  - `onContentChange` callback
+  - `setFocusMode(enabled)`
+- Focus mode plugin with Decoration system
+- Connect to database
+
+#### 1.5 Editor Integration (CodeMirror 6)
+- Bundle CodeMirror 6 with markdown support
+- Same bridge pattern as Milkdown
+- Mode toggle (Cmd+/) with cursor preservation
+- Formatting shortcuts (Cmd+B/I/K)
+
+#### 1.6 Outline Sidebar
+- `FlatListBuilder` to flatten header hierarchy
+- `SectionBannerView` for top-level headers
+- `SidebarCardView` with preview text, word count
+- Click/double-click handlers
+- Zoom state management
+- Scroll sync (editor position ↔ sidebar highlight)
+
+#### 1.7 Project Management
+- New project (creates .ff package)
+- Open project (file picker for .ff packages)
+- Recent projects list
+- Save (automatic, debounced 500ms)
+- Import markdown file (creates new project from .md)
+- Export to markdown file
+
+### Files to Create
+
+```
+final final/
+├── final final.xcodeproj
+├── final final/
+│   ├── App/
+│   │   ├── FinalFinalApp.swift
+│   │   └── AppDelegate.swift      # Static shared reference pattern
+│   ├── Models/
+│   │   ├── Document.swift         # GRDB model
+│   │   ├── OutlineNode.swift      # GRDB model
+│   │   └── Database.swift         # GRDB setup, migrations
+│   ├── ViewState/
+│   │   └── EditorViewState.swift  # Published state (zoom, mode, focus)
+│   ├── Views/
+│   │   ├── ContentView.swift      # Main layout
+│   │   ├── StatusBar.swift        # Bottom status
+│   │   └── Sidebar/
+│   │       ├── OutlineSidebar.swift
+│   │       ├── SectionBannerView.swift
+│   │       ├── SidebarCardView.swift
+│   │       └── FlatListBuilder.swift
+│   ├── Editors/
+│   │   ├── MilkdownEditor.swift   # WKWebView wrapper
+│   │   ├── CodeMirrorEditor.swift # WKWebView wrapper
+│   │   ├── EditorBridge.swift     # Shared JS bridge protocol
+│   │   └── EditorSchemeHandler.swift  # Custom editor:// URL scheme
+│   ├── Theme/
+│   │   ├── ColorScheme.swift      # Theme definitions
+│   │   └── ThemeManager.swift     # Theme switching, persistence
+│   ├── Services/
+│   │   ├── OutlineParser.swift    # Markdown → outline nodes
+│   │   └── DocumentManager.swift  # Document lifecycle
+│   ├── Commands/
+│   │   └── ViewCommands.swift     # Menu items, keyboard shortcuts
+│   └── Resources/
+│       └── editor/                # Bundled web editors (build output)
+├── web/
+│   ├── milkdown/                  # Milkdown source + plugins
+│   │   ├── src/
+│   │   │   ├── main.ts
+│   │   │   ├── focus-mode-plugin.ts
+│   │   │   └── styles.css
+│   │   ├── package.json
+│   │   └── vite.config.ts
+│   └── codemirror/                # CodeMirror 6 source
+│       ├── src/
+│       │   ├── main.ts
+│       │   └── styles.css
+│       ├── package.json
+│       └── vite.config.ts
+└── docs/
+    └── plans/
+```
+
+### Verification (Phase 1)
+
+**Editor basics:**
+- [ ] Can create new document
+- [ ] Can type in WYSIWYG mode (Milkdown)
+- [ ] Can toggle to source mode (CodeMirror 6) with Cmd+/
+- [ ] Cursor position approximately preserved on toggle
+- [ ] Cmd+B/I/K insert markdown syntax in source mode
+- [ ] Content persists after app restart
+
+**Outline sidebar:**
+- [ ] Headers appear as cards with preview text
+- [ ] Word counts display on cards/banners
+- [ ] Single click scrolls to section
+- [ ] Double click zooms into section
+- [ ] Zoomed view shows only subtree in sidebar
+- [ ] Option-click header in editor zooms
+- [ ] Pseudo-sections show with special marker
+
+**Focus mode:**
+- [ ] Cmd+Shift+F toggles focus mode
+- [ ] Non-current paragraphs dimmed in WYSIWYG mode
+- [ ] Focus mode hidden when in source mode
+
+**Theming:**
+- [ ] Can switch between color schemes
+- [ ] Sidebar and editor respect theme
+- [ ] Theme persists after restart
+
+**Status bar:**
+- [ ] Word count updates in both modes
+- [ ] Current section name displayed
+- [ ] Editor mode indicator shown
+
+---
+
+## Future Phases (Reference)
+
+| Phase | Features |
+|-------|----------|
+| 2 | Reference pane (Finder-style folders for PDFs, images, docs) |
+| 3 | Annotations (Task, Rewrite, Link, Comment with inline/sidebar modes) |
+| 4 | Zotero integration (citations, bibliography) |
+| 5 | Version control (Git-based, auto-commits, named versions) |
+| 6 | Export (Pandoc, templates) |
+| 7 | Sync (Cloudflare DO or CloudKit) |
+
+---
+
+## Lessons from Academic Writer
+
+**Apply:**
+- ProseMirror Decoration system for focus mode (not DOM manipulation)
+- Custom URL scheme (`editor://`) for loading bundled assets
+- 500ms polling for content changes (simple, works)
+- Web Inspector debugging (`isInspectable = true`)
+
+**Avoid:**
+- File system sync complexity (eliminated by SQLite)
+- Section/text node distinction (use headers instead)
+- Numeric file prefixes (not needed)
+- ID-based manifest ordering (outline derived from content)
+
+---
+
+## Design Decisions (Resolved)
+
+1. **Pseudo-sections**: `## Chapter 1-part 1` style breaks show with a special marker in the sidebar (indicating they're continuations, not full sections)
+
+2. **Zoom state**: When zoomed into a section, sidebar shows only that subtree (parent and children), not the full document outline
+
+3. **Large documents**: Defer until we hit performance issues. GRDB handles data efficiently; CodeMirror 6 has viewport-based rendering built in

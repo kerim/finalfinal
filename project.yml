@@ -1,0 +1,53 @@
+name: final final
+options:
+  bundleIdPrefix: com.kerim
+  deploymentTarget:
+    macOS: "14.0"
+  xcodeVersion: "15.0"
+  generateEmptyDirectories: true
+
+packages:
+  GRDB:
+    url: https://github.com/groue/GRDB.swift
+    majorVersion: 7.0.0
+
+targets:
+  final final:
+    type: application
+    platform: macOS
+    sources:
+      - path: final final
+        excludes:
+          - "**/.DS_Store"
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.kerim.final-final
+        PRODUCT_NAME: final final
+        MARKETING_VERSION: "1"
+        CURRENT_PROJECT_VERSION: "0.1.1"
+        INFOPLIST_GENERATION_MODE: GeneratedFile
+        GENERATE_INFOPLIST_FILE: YES
+        SWIFT_VERSION: "5.9"
+        MACOSX_DEPLOYMENT_TARGET: "14.0"
+    dependencies:
+      - package: GRDB
+    info:
+      path: final final/Info.plist
+      properties:
+        CFBundleDisplayName: final final
+        CFBundleName: final final
+        LSMinimumSystemVersion: "14.0"
+        NSPrincipalClass: NSApplication
+        NSHighResolutionCapable: true
+
+  final finalTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: final finalTests
+    dependencies:
+      - target: final final
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.kerim.final-final-tests
+        SWIFT_VERSION: "5.9"

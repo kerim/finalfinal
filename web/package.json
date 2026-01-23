@@ -1,0 +1,12 @@
+{
+  "name": "final-final-web",
+  "version": "0.1.1",
+  "private": true,
+  "scripts": {
+    "build": "pnpm -r build",
+    "dev": "pnpm -r dev"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.0"
+  }
+}
