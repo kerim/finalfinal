@@ -16,6 +16,7 @@ struct FinalFinalApp: App {
         }
         .commands {
             ThemeCommands()
+            EditorCommands()
         }
     }
 }

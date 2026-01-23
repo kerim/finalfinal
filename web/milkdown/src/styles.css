@@ -1,0 +1,48 @@
+/* Editor styles with CSS variable support for theming */
+:root {
+  --editor-bg: #ffffff;
+  --editor-text: #000000;
+  --editor-selection: rgba(0, 122, 255, 0.3);
+  --accent-color: #007aff;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: var(--editor-bg);
+  color: var(--editor-text);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+}
+
+#editor {
+  padding: 24px 48px;
+  min-height: 100%;
+  outline: none;
+}
+
+.milkdown { background: var(--editor-bg); color: var(--editor-text); }
+.milkdown .editor { outline: none; }
+.ProseMirror { outline: none; }
+.ProseMirror ::selection { background: var(--editor-selection); }
+
+/* Focus mode dimming */
+.ff-dimmed { opacity: 0.3; transition: opacity 0.2s ease; }
+
+/* Typography */
+.milkdown h1, .milkdown h2, .milkdown h3 { color: var(--editor-text); margin-top: 1.5em; margin-bottom: 0.5em; }
+.milkdown h1 { font-size: 2em; }
+.milkdown h2 { font-size: 1.5em; }
+.milkdown h3 { font-size: 1.25em; }
+.milkdown p { margin: 0.75em 0; line-height: 1.6; }
+
+/* Code */
+.milkdown code { background: rgba(128, 128, 128, 0.1); padding: 0.2em 0.4em; border-radius: 3px; font-family: 'SF Mono', Menlo, Monaco, monospace; }
+.milkdown pre { background: rgba(128, 128, 128, 0.1); padding: 1em; border-radius: 6px; overflow-x: auto; }
+
+/* Links and lists */
+.milkdown a { color: var(--accent-color); text-decoration: none; }
+.milkdown a:hover { text-decoration: underline; }
+.milkdown ul, .milkdown ol { padding-left: 1.5em; }
+.milkdown li { margin: 0.25em 0; }
+.milkdown blockquote { border-left: 4px solid var(--accent-color); margin: 1em 0; padding-left: 1em; opacity: 0.9; }
