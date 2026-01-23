@@ -75,6 +75,7 @@ struct MilkdownEditor: NSViewRepresentable {
         var lastFocusModeState: Bool = false
         var lastThemeCss: String = ""
         private var isEditorReady = false
+        private var isCleanedUp = false
 
         init(content: Binding<String>, onContentChange: @escaping (String) -> Void, onStatsChange: @escaping (Int, Int) -> Void) {
             self.contentBinding = content
@@ -86,6 +87,7 @@ struct MilkdownEditor: NSViewRepresentable {
         deinit { pollingTimer?.invalidate() }
 
         func cleanup() {
+            isCleanedUp = true
             pollingTimer?.invalidate()
             pollingTimer = nil
             webView = nil
@@ -130,17 +132,18 @@ struct MilkdownEditor: NSViewRepresentable {
         private func startPolling() {
             pollingTimer?.invalidate()
             pollingTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
-                MainActor.assumeIsolated {
+                Task { @MainActor in
                     self?.pollContent()
                 }
             }
         }
 
         private func pollContent() {
-            guard isEditorReady, let webView else { return }
+            guard !isCleanedUp, isEditorReady, let webView else { return }
 
             webView.evaluateJavaScript("window.FinalFinal.getContent()") { [weak self] result, _ in
-                guard let self, let content = result as? String, content != self.lastPushedContent else { return }
+                guard let self, !self.isCleanedUp,
+                      let content = result as? String, content != self.lastPushedContent else { return }
                 self.lastReceivedFromEditor = Date()
                 self.lastPushedContent = content
                 self.contentBinding.wrappedValue = content
@@ -148,7 +151,8 @@ struct MilkdownEditor: NSViewRepresentable {
             }
 
             webView.evaluateJavaScript("window.FinalFinal.getStats()") { [weak self] result, _ in
-                guard let self, let dict = result as? [String: Any],
+                guard let self, !self.isCleanedUp,
+                      let dict = result as? [String: Any],
                       let words = dict["words"] as? Int, let chars = dict["characters"] as? Int else { return }
                 self.onStatsChange(words, chars)
             }

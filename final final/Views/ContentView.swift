@@ -43,10 +43,10 @@ Try the following:
         .task {
             loadDemoContent()
         }
-        .onReceive(NotificationCenter.default.publisher(for: .toggleFocusMode)) { _ in
+        .onReceive(NotificationCenter.default.publisher(for: .toggleFocusMode).receive(on: DispatchQueue.main)) { _ in
             editorState.toggleFocusMode()
         }
-        .onReceive(NotificationCenter.default.publisher(for: .toggleEditorMode)) { _ in
+        .onReceive(NotificationCenter.default.publisher(for: .toggleEditorMode).receive(on: DispatchQueue.main)) { _ in
             editorState.toggleEditorMode()
         }
     }
