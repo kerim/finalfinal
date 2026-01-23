@@ -10,6 +10,7 @@ declare global {
       setFocusMode: (enabled: boolean) => void;
       getStats: () => { words: number; characters: number };
       scrollToOffset: (offset: number) => void;
+      setTheme: (cssVariables: string) => void;
     };
   }
 }
@@ -33,6 +34,17 @@ window.FinalFinal = {
   },
   scrollToOffset(offset: number) {
     console.log('[Milkdown] scrollToOffset:', offset);
+  },
+  setTheme(cssVariables: string) {
+    const root = document.documentElement;
+    const pairs = cssVariables.split(';').filter(s => s.trim());
+    pairs.forEach(pair => {
+      const [key, value] = pair.split(':').map(s => s.trim());
+      if (key && value) {
+        root.style.setProperty(key, value);
+      }
+    });
+    console.log('[Milkdown] Theme applied with', pairs.length, 'variables');
   }
 };
 

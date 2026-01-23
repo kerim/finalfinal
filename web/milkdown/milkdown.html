@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Milkdown Editor</title>
+  <style>
+    :root {
+      --editor-bg: #ffffff;
+      --editor-text: #000000;
+      --editor-selection: rgba(0, 122, 255, 0.3);
+      --accent-color: #007aff;
+    }
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      background: var(--editor-bg);
+      color: var(--editor-text);
+      font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+    }
+    #editor {
+      padding: 20px;
+      min-height: 100%;
+      outline: none;
+    }
+  </style>
+</head>
+<body>
+  <div id="editor"></div>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>

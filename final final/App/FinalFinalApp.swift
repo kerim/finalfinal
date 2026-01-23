@@ -12,6 +12,10 @@ struct FinalFinalApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
+                .environment(ThemeManager.shared)
+        }
+        .commands {
+            ThemeCommands()
         }
     }
 }

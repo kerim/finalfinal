@@ -113,3 +113,31 @@ extension AppDatabase {
         }
     }
 }
+
+// MARK: - AppDatabase Settings
+
+extension AppDatabase {
+    func getSetting(key: String) throws -> String? {
+        try read { db in
+            try String.fetchOne(db, sql: "SELECT value FROM settings WHERE key = ?", arguments: [key])
+        }
+    }
+
+    func setSetting(key: String, value: String) throws {
+        try write { db in
+            try db.execute(
+                sql: """
+                    INSERT INTO settings (key, value) VALUES (?, ?)
+                    ON CONFLICT(key) DO UPDATE SET value = excluded.value
+                    """,
+                arguments: [key, value]
+            )
+        }
+    }
+
+    func deleteSetting(key: String) throws {
+        try write { db in
+            try db.execute(sql: "DELETE FROM settings WHERE key = ?", arguments: [key])
+        }
+    }
+}

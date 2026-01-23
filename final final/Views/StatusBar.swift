@@ -6,30 +6,31 @@
 import SwiftUI
 
 struct StatusBar: View {
+    @Environment(ThemeManager.self) private var themeManager
+
     var body: some View {
         HStack {
             Text("0 words")
                 .font(.caption)
-                .foregroundColor(.secondary)
             Spacer()
             Text("No section")
                 .font(.caption)
-                .foregroundColor(.secondary)
             Spacer()
             Text("WYSIWYG")
                 .font(.caption)
-                .foregroundColor(.secondary)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 2)
-                .background(Color.secondary.opacity(0.2))
+                .background(themeManager.currentTheme.accentColor.opacity(0.2))
                 .cornerRadius(4)
         }
+        .foregroundColor(themeManager.currentTheme.sidebarText.opacity(0.7))
         .padding(.horizontal)
         .padding(.vertical, 4)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(themeManager.currentTheme.sidebarBackground)
     }
 }
 
 #Preview {
     StatusBar()
+        .environment(ThemeManager.shared)
 }
