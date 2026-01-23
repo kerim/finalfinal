@@ -114,30 +114,34 @@ extension AppDatabase {
     }
 }
 
+// MARK: - Setting Record
+
+struct Setting: Codable, FetchableRecord, PersistableRecord, Sendable {
+    static let databaseTableName = "settings"
+
+    var key: String
+    var value: String
+}
+
 // MARK: - AppDatabase Settings
 
 extension AppDatabase {
     func getSetting(key: String) throws -> String? {
         try read { db in
-            try String.fetchOne(db, sql: "SELECT value FROM settings WHERE key = ?", arguments: [key])
+            try Setting.filter(Column("key") == key).fetchOne(db)?.value
         }
     }
 
     func setSetting(key: String, value: String) throws {
         try write { db in
-            try db.execute(
-                sql: """
-                    INSERT INTO settings (key, value) VALUES (?, ?)
-                    ON CONFLICT(key) DO UPDATE SET value = excluded.value
-                    """,
-                arguments: [key, value]
-            )
+            var setting = Setting(key: key, value: value)
+            try setting.save(db, onConflict: .replace)
         }
     }
 
     func deleteSetting(key: String) throws {
         try write { db in
-            try db.execute(sql: "DELETE FROM settings WHERE key = ?", arguments: [key])
+            try Setting.filter(Column("key") == key).deleteAll(db)
         }
     }
 }

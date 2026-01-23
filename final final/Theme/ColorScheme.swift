@@ -17,6 +17,9 @@ struct AppColorScheme: Identifiable, Equatable, Sendable {
     let accentColor: Color
     let dividerColor: Color
 
+    /// Keyboard shortcut key for this theme (used with Cmd+Opt)
+    let shortcutKey: Character?
+
     /// Generates CSS custom properties string for web editor injection
     var cssVariables: String {
         """
@@ -29,15 +32,22 @@ struct AppColorScheme: Identifiable, Equatable, Sendable {
         --divider-color: \(dividerColor.cssHex);
         """
     }
+
+    /// Returns the keyboard shortcut for this theme, if defined
+    var keyboardShortcut: KeyboardShortcut? {
+        guard let key = shortcutKey else { return nil }
+        return KeyboardShortcut(KeyEquivalent(key), modifiers: [.command, .option])
+    }
 }
 
 // MARK: - Color CSS Hex Extension
 
 extension Color {
     /// Converts Color to CSS hex string (e.g., "#FF5500")
+    /// Uses sRGB color space for consistent cross-platform color representation
     var cssHex: String {
         let nsColor = NSColor(self)
-        guard let rgb = nsColor.usingColorSpace(.deviceRGB) else {
+        guard let rgb = nsColor.usingColorSpace(.sRGB) else {
             return "#000000"
         }
         return String(format: "#%02X%02X%02X",
@@ -48,9 +58,10 @@ extension Color {
     }
 
     /// Converts Color to CSS rgba string for colors with alpha
+    /// Uses sRGB color space for consistent cross-platform color representation
     var cssHexWithAlpha: String {
         let nsColor = NSColor(self)
-        guard let rgb = nsColor.usingColorSpace(.deviceRGB) else {
+        guard let rgb = nsColor.usingColorSpace(.sRGB) else {
             return "rgba(0,0,0,0.3)"
         }
         let alpha = rgb.alphaComponent
@@ -79,7 +90,8 @@ extension AppColorScheme {
         editorText: Color.black,
         editorSelection: Color.accentColor.opacity(0.3),
         accentColor: Color.accentColor,
-        dividerColor: Color(nsColor: .separatorColor)
+        dividerColor: Color(nsColor: .separatorColor),
+        shortcutKey: "1"
     )
 
     static let dark = AppColorScheme(
@@ -92,7 +104,8 @@ extension AppColorScheme {
         editorText: Color.white,
         editorSelection: Color.accentColor.opacity(0.4),
         accentColor: Color.accentColor,
-        dividerColor: Color(nsColor: .separatorColor)
+        dividerColor: Color(nsColor: .separatorColor),
+        shortcutKey: "2"
     )
 
     static let sepia = AppColorScheme(
@@ -105,7 +118,8 @@ extension AppColorScheme {
         editorText: Color(red: 0.35, green: 0.30, blue: 0.25),
         editorSelection: Color(red: 0.85, green: 0.80, blue: 0.70).opacity(0.5),
         accentColor: Color(red: 0.65, green: 0.45, blue: 0.20),
-        dividerColor: Color(red: 0.80, green: 0.75, blue: 0.65)
+        dividerColor: Color(red: 0.80, green: 0.75, blue: 0.65),
+        shortcutKey: "3"
     )
 
     static let solarizedLight = AppColorScheme(
@@ -118,7 +132,8 @@ extension AppColorScheme {
         editorText: Color(red: 0.40, green: 0.48, blue: 0.51),
         editorSelection: Color(red: 0.93, green: 0.91, blue: 0.84),
         accentColor: Color(red: 0.15, green: 0.55, blue: 0.82),        // blue
-        dividerColor: Color(red: 0.93, green: 0.91, blue: 0.84)
+        dividerColor: Color(red: 0.93, green: 0.91, blue: 0.84),
+        shortcutKey: "4"
     )
 
     static let solarizedDark = AppColorScheme(
@@ -131,7 +146,8 @@ extension AppColorScheme {
         editorText: Color(red: 0.51, green: 0.58, blue: 0.59),
         editorSelection: Color(red: 0.03, green: 0.21, blue: 0.26),
         accentColor: Color(red: 0.15, green: 0.55, blue: 0.82),
-        dividerColor: Color(red: 0.03, green: 0.21, blue: 0.26)
+        dividerColor: Color(red: 0.03, green: 0.21, blue: 0.26),
+        shortcutKey: "5"
     )
 
     static let all: [AppColorScheme] = [.light, .dark, .sepia, .solarizedLight, .solarizedDark]

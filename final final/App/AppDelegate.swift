@@ -20,14 +20,23 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         do {
             database = try AppDatabase.makeDefault()
+            #if DEBUG
             print("[AppDelegate] Database initialized successfully")
+            #endif
+
+            // Load theme now that database is ready
+            ThemeManager.shared.loadThemeIfNeeded()
         } catch {
+            #if DEBUG
             print("[AppDelegate] Failed to initialize database: \(error)")
+            #endif
         }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        #if DEBUG
         print("[AppDelegate] Application terminating")
+        #endif
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
