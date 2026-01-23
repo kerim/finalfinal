@@ -6,7 +6,7 @@
 import Foundation
 import GRDB
 
-struct OutlineNode: Codable, Identifiable, FetchableRecord, MutablePersistableRecord {
+struct OutlineNode: Codable, Identifiable, Equatable, Sendable, FetchableRecord, MutablePersistableRecord {
     var id: String
     var projectId: String
     var headerLevel: Int

@@ -6,14 +6,19 @@
 # Build web editors (required before Xcode build)
 cd web && pnpm install && pnpm build
 
+# Regenerate Xcode project (after moving/adding Swift files)
+xcodegen generate
+
 # Build macOS app
 xcodebuild -scheme "final final" -destination 'platform=macOS' build
 
 # Full rebuild
-cd web && pnpm build && cd .. && xcodebuild -scheme "final final" -destination 'platform=macOS' build
+cd web && pnpm build && cd .. && xcodegen generate && xcodebuild -scheme "final final" -destination 'platform=macOS' build
 ```
 
 Web output goes to `final final/Resources/editor/` which Xcode bundles.
+
+**Note:** This project uses `xcodegen` to generate the Xcode project from `project.yml`. Always run `xcodegen generate` after moving or adding Swift files.
 
 ## Architecture
 
@@ -36,17 +41,19 @@ Custom `editor://` URL scheme + 500ms polling:
 
 | File | Purpose |
 |------|---------|
-| `Models/Database.swift` | GRDB setup, migrations |
-| `Models/Document.swift` | GRDB document model |
-| `Models/OutlineNode.swift` | GRDB outline cache model |
-| `Editors/EditorSchemeHandler.swift` | Custom URL scheme handler |
-| `Editors/MilkdownEditor.swift` | WYSIWYG WKWebView wrapper |
-| `Editors/CodeMirrorEditor.swift` | Source mode WKWebView wrapper |
-| `Services/OutlineParser.swift` | Markdown headers → outline nodes |
-| `web/milkdown/src/main.ts` | WYSIWYG editor + focus mode plugin |
-| `web/codemirror/src/main.ts` | Source editor |
 | `App/AppDelegate.swift` | App lifecycle + database init |
 | `App/FinalFinalApp.swift` | SwiftUI app entry point |
+| `Models/Database.swift` | GRDB setup, migrations, persistent storage |
+| `Models/Document.swift` | Project + Content GRDB models |
+| `Models/OutlineNode.swift` | Outline cache GRDB model |
+| `ViewState/EditorViewState.swift` | Editor state (@Observable, @MainActor) |
+| `Editors/EditorSchemeHandler.swift` | Custom URL scheme handler |
+| `Services/OutlineParser.swift` | Markdown headers → outline nodes |
+| `Theme/ColorScheme.swift` | App color scheme definitions |
+| `web/milkdown/src/main.ts` | WYSIWYG editor + focus mode plugin |
+| `web/codemirror/src/main.ts` | Source editor |
+
+*Planned (Phase 1.4-1.5):* `Editors/MilkdownEditor.swift`, `Editors/CodeMirrorEditor.swift`
 
 ### window.FinalFinal API
 
@@ -96,6 +103,42 @@ Plan files in `docs/plans/` are **immutable** once created. A hook blocks overwr
 - `feature-name-v03.md` (second revision)
 
 Never edit existing plan files. Always create a new versioned file.
+
+## Swift Engineering Plugin
+
+Use the `swift-engineering` plugin for code review and Swift best practices.
+
+### Invocation Patterns
+
+| Type | Location | How to Invoke | Example |
+|------|----------|---------------|---------|
+| **Commands** | `commands/` | `/swift-engineering:name` | `/swift-engineering:reflect` |
+| **Skills** | `skills/` | `Skill("swift-engineering:grdb")` | Load GRDB reference |
+| **Agents** | `agents/` | `Task(subagent_type="swift-engineering:swift-code-reviewer")` | Spawn reviewer |
+
+### Available Skills
+
+- `grdb` - GRDB patterns, migrations, ValueObservation
+- `swift-style` - Swift code style conventions
+- `swiftui-patterns` - SwiftUI best practices
+- `composable-architecture` - TCA patterns
+- `modern-swift` - async/await, Sendable, actors
+
+### Code Review
+
+After completing implementation work, run code review:
+```
+Task(subagent_type="swift-engineering:swift-code-reviewer", prompt="Review the Swift code...")
+```
+
+Or use the reflect command for instruction improvements:
+```
+/swift-engineering:reflect
+```
+
+## Completed Phases
+
+- [x] **Phase 1.1** - Project setup, GRDB, editor:// scheme (2026-01-23)
 
 ## Phase 1 Verification
 

@@ -6,10 +6,26 @@
 import Foundation
 import GRDB
 
-struct AppDatabase {
-    let dbWriter: any DatabaseWriter
+struct AppDatabase: Sendable {
+    let dbWriter: any DatabaseWriter & Sendable
 
+    /// Creates a persistent database in Application Support directory
     static func makeDefault() throws -> AppDatabase {
+        let fileManager = FileManager.default
+        let supportURL = try fileManager.url(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask,
+            appropriateFor: nil,
+            create: true
+        )
+        let appSupportURL = supportURL.appendingPathComponent("com.kerim.final-final", isDirectory: true)
+        try fileManager.createDirectory(at: appSupportURL, withIntermediateDirectories: true)
+        let dbPath = appSupportURL.appendingPathComponent("database.sqlite").path
+        return try make(at: dbPath)
+    }
+
+    /// Creates an in-memory database (for testing)
+    static func makeInMemory() throws -> AppDatabase {
         let dbQueue = try DatabaseQueue()
         let database = AppDatabase(dbWriter: dbQueue)
         try database.migrate()

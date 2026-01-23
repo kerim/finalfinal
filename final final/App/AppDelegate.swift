@@ -6,6 +6,7 @@
 import AppKit
 import GRDB
 
+@MainActor
 class AppDelegate: NSObject, NSApplicationDelegate {
     /// Static shared reference - required because NSApp.delegate casting
     /// doesn't work with @NSApplicationDelegateAdaptor

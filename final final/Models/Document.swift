@@ -6,7 +6,7 @@
 import Foundation
 import GRDB
 
-struct Project: Codable, Identifiable, FetchableRecord, MutablePersistableRecord {
+struct Project: Codable, Identifiable, Equatable, Sendable, FetchableRecord, MutablePersistableRecord {
     var id: String
     var title: String
     var createdAt: Date
@@ -20,7 +20,7 @@ struct Project: Codable, Identifiable, FetchableRecord, MutablePersistableRecord
     }
 }
 
-struct Content: Codable, Identifiable, FetchableRecord, MutablePersistableRecord {
+struct Content: Codable, Identifiable, Equatable, Sendable, FetchableRecord, MutablePersistableRecord {
     var id: String
     var projectId: String
     var markdown: String

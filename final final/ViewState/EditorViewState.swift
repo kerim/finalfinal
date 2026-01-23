@@ -10,6 +10,7 @@ enum EditorMode: String, CaseIterable {
     case source = "Source"
 }
 
+@MainActor
 @Observable
 class EditorViewState {
     var editorMode: EditorMode = .wysiwyg
