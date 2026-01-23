@@ -88,16 +88,20 @@ final class ProjectStore {
     // MARK: - Content Operations
 
     /// Updates the markdown content (triggers outline rebuild)
-    func updateContent(_ markdown: String) throws {
+    func updateContent(_ markdown: String) async throws {
         guard let projectId = project?.id else {
             throw ProjectStoreError.noProjectOpen
         }
 
-        try database?.saveContent(markdown: markdown, for: projectId)
-
-        // Update local state immediately
+        // Update local state immediately for responsive UI
         content?.markdown = markdown
         content?.updatedAt = Date()
+
+        // Perform database write off main thread
+        let db = database
+        try await Task.detached {
+            try db?.saveContent(markdown: markdown, for: projectId)
+        }.value
     }
 
     // MARK: - Observation
@@ -117,15 +121,11 @@ final class ProjectStore {
             do {
                 for try await nodes in observation.values(in: db.dbWriter) {
                     guard let self, !Task.isCancelled else { return }
-                    await MainActor.run {
-                        self.outlineNodes = nodes
-                    }
+                    self.outlineNodes = nodes
                 }
             } catch {
                 guard let self, !Task.isCancelled else { return }
-                await MainActor.run {
-                    self.error = error
-                }
+                self.error = error
             }
         }
     }

@@ -46,45 +46,9 @@ struct AppDatabase: Sendable {
         migrator.eraseDatabaseOnSchemaChange = true
         #endif
 
-        migrator.registerMigration("v1_initial") { db in
-            try db.create(table: "project") { t in
-                t.primaryKey("id", .text)
-                t.column("title", .text).notNull()
-                t.column("createdAt", .datetime).notNull()
-                t.column("updatedAt", .datetime).notNull()
-            }
-
-            try db.create(table: "content") { t in
-                t.primaryKey("id", .text)
-                t.column("projectId", .text).notNull()
-                    .references("project", onDelete: .cascade)
-                t.column("markdown", .text).notNull()
-                t.column("updatedAt", .datetime).notNull()
-            }
-
-            try db.create(table: "outlineNode") { t in
-                t.primaryKey("id", .text)
-                t.column("projectId", .text).notNull()
-                    .references("project", onDelete: .cascade)
-                t.column("headerLevel", .integer).notNull()
-                t.column("title", .text).notNull()
-                t.column("startOffset", .integer).notNull()
-                t.column("endOffset", .integer).notNull()
-                t.column("parentId", .text)
-                    .references("outlineNode", onDelete: .cascade)
-                t.column("sortOrder", .integer).notNull()
-                t.column("isPseudoSection", .boolean).notNull().defaults(to: false)
-            }
-
-            try db.create(index: "outlineNode_projectId", on: "outlineNode", columns: ["projectId"])
-
-            try db.create(table: "settings") { t in
-                t.primaryKey("key", .text)
-                t.column("value", .text).notNull()
-            }
-        }
-
-        migrator.registerMigration("v2_recent_projects") { db in
+        // AppDatabase stores app-level state only (recent projects, global settings)
+        // Project data (content, outline) is stored in per-project ProjectDatabase
+        migrator.registerMigration("v1_app_database") { db in
             try db.create(table: "recentProject") { t in
                 t.primaryKey("id", .text)
                 t.column("path", .text).notNull().unique()
@@ -92,6 +56,11 @@ struct AppDatabase: Sendable {
                 t.column("lastOpenedAt", .datetime).notNull()
             }
             try db.create(index: "recentProject_lastOpened", on: "recentProject", columns: ["lastOpenedAt"])
+
+            try db.create(table: "settings") { t in
+                t.primaryKey("key", .text)
+                t.column("value", .text).notNull()
+            }
         }
 
         try migrator.migrate(dbWriter)

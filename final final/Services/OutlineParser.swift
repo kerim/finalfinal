@@ -121,8 +121,8 @@ struct OutlineParser {
                 headers.append(header)
             }
 
-            // Advance offset (+1 for newline, use utf8 for accurate byte counting)
-            currentOffset += lineStr.utf8.count + 1
+            // Advance offset (+1 for newline, use character count for String indexing compatibility)
+            currentOffset += lineStr.count + 1
         }
 
         return headers

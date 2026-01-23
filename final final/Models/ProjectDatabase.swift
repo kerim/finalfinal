@@ -52,6 +52,8 @@ final class ProjectDatabase: Sendable {
                 t.column("updatedAt", .datetime).notNull()
             }
 
+            try db.create(index: "content_projectId", on: "content", columns: ["projectId"])
+
             try db.create(table: "outlineNode") { t in
                 t.primaryKey("id", .text)
                 t.column("projectId", .text).notNull()
