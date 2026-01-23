@@ -84,6 +84,16 @@ struct AppDatabase: Sendable {
             }
         }
 
+        migrator.registerMigration("v2_recent_projects") { db in
+            try db.create(table: "recentProject") { t in
+                t.primaryKey("id", .text)
+                t.column("path", .text).notNull().unique()
+                t.column("title", .text).notNull()
+                t.column("lastOpenedAt", .datetime).notNull()
+            }
+            try db.create(index: "recentProject_lastOpened", on: "recentProject", columns: ["lastOpenedAt"])
+        }
+
         try migrator.migrate(dbWriter)
     }
 
@@ -93,5 +103,44 @@ struct AppDatabase: Sendable {
 
     func write<T>(_ block: (Database) throws -> T) throws -> T {
         try dbWriter.write(block)
+    }
+}
+
+// MARK: - AppDatabase Recent Projects
+
+extension AppDatabase {
+    func fetchRecentProjects(limit: Int = 10) throws -> [RecentProject] {
+        try read { db in
+            try RecentProject
+                .order(Column("lastOpenedAt").desc)
+                .limit(limit)
+                .fetchAll(db)
+        }
+    }
+
+    func addRecentProject(path: String, title: String) throws {
+        try write { db in
+            // Check if already exists
+            if var existing = try RecentProject.filter(Column("path") == path).fetchOne(db) {
+                existing.title = title
+                existing.lastOpenedAt = Date()
+                try existing.update(db)
+            } else {
+                var recent = RecentProject(path: path, title: title)
+                try recent.insert(db)
+            }
+        }
+    }
+
+    func removeRecentProject(at path: String) throws {
+        try write { db in
+            try RecentProject.filter(Column("path") == path).deleteAll(db)
+        }
+    }
+
+    func clearRecentProjects() throws {
+        try write { db in
+            try RecentProject.deleteAll(db)
+        }
     }
 }

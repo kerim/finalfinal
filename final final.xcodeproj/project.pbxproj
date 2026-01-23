@@ -15,11 +15,17 @@
 		49989C588EFAF924B6BF9400 /* Document.swift in Sources */ = {isa = PBXBuildFile; fileRef = 54B0DE603A99327D920573B6 /* Document.swift */; };
 		5428AB4DBE5F4E61BBD3DFAC /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = 980503AFBDB8FC8CEF6F8BFE /* GRDB */; };
 		5DC993888BDFB3602E1FA2AA /* EditorSchemeHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE6D9836DD14A789629A10CB /* EditorSchemeHandler.swift */; };
+		63072A9E8DE3BC6324759AE9 /* ProjectDatabase.swift in Sources */ = {isa = PBXBuildFile; fileRef = DFB3FE823FEA8DAD86CD01A9 /* ProjectDatabase.swift */; };
+		6906417635740343EE8F362A /* OutlineParserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FDA7C9F1CFBE9EDB2C4D818C /* OutlineParserTests.swift */; };
 		6D12AEF734B0A4D7D05F681F /* FinalFinalApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE24C13995368C23BC470A26 /* FinalFinalApp.swift */; };
 		790667B521454C125B0FE74B /* ColorScheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2AAD6FB6258FBF011A89ECFC /* ColorScheme.swift */; };
 		7ACE3361E6A474E6D99062E1 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02E925EEE027AE829C229AAA /* ContentView.swift */; };
 		A7F047CACD5338BFF13C8336 /* OutlineNode.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF113F2ADAA8371F7C810BF0 /* OutlineNode.swift */; };
+		ACAF912B9BF42D9FD97B82C2 /* Database+CRUD.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13133CB5518EA086A3120EDE /* Database+CRUD.swift */; };
 		AD8451C7428BC1E2016746D1 /* StatusBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF41CB39EB2C5BD4E30A2CDA /* StatusBar.swift */; };
+		D1576467EE827142AA4F49BE /* ProjectStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = D567C1445BFF0160D8410001 /* ProjectStore.swift */; };
+		D6A0D3C2D59070E808EFA6C9 /* ProjectPackage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 734874328EB5518EAC0C2517 /* ProjectPackage.swift */; };
+		E028FEF9DCA9E380AE542AF2 /* RecentProject.swift in Sources */ = {isa = PBXBuildFile; fileRef = 87363EA3909D1FDA8BFDB5F1 /* RecentProject.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -36,17 +42,23 @@
 		02E925EEE027AE829C229AAA /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		0E843650744C2F13D1618667 /* FinalFinalTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FinalFinalTests.swift; sourceTree = "<group>"; };
 		109DDCE3DD312B1666618AD5 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		13133CB5518EA086A3120EDE /* Database+CRUD.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Database+CRUD.swift"; sourceTree = "<group>"; };
 		2AAD6FB6258FBF011A89ECFC /* ColorScheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ColorScheme.swift; sourceTree = "<group>"; };
 		31C89F3A4269349290CD8F03 /* EditorViewState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorViewState.swift; sourceTree = "<group>"; };
 		54B0DE603A99327D920573B6 /* Document.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Document.swift; sourceTree = "<group>"; };
 		5741EAE0DDD338AB4D025101 /* final final.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "final final.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		5A1E8A83A78A7909AA1289DB /* OutlineParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutlineParser.swift; sourceTree = "<group>"; };
 		6AD4BB30F275702838E8D3F8 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+		734874328EB5518EAC0C2517 /* ProjectPackage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectPackage.swift; sourceTree = "<group>"; };
 		788D4C2FB2475A38D3477A97 /* final finalTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "final finalTests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
+		87363EA3909D1FDA8BFDB5F1 /* RecentProject.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecentProject.swift; sourceTree = "<group>"; };
 		BF41CB39EB2C5BD4E30A2CDA /* StatusBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusBar.swift; sourceTree = "<group>"; };
 		CE6D9836DD14A789629A10CB /* EditorSchemeHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorSchemeHandler.swift; sourceTree = "<group>"; };
 		CF113F2ADAA8371F7C810BF0 /* OutlineNode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutlineNode.swift; sourceTree = "<group>"; };
+		D567C1445BFF0160D8410001 /* ProjectStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectStore.swift; sourceTree = "<group>"; };
+		DFB3FE823FEA8DAD86CD01A9 /* ProjectDatabase.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectDatabase.swift; sourceTree = "<group>"; };
 		E9A8D79672E775EA73854D93 /* Database.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Database.swift; sourceTree = "<group>"; };
+		FDA7C9F1CFBE9EDB2C4D818C /* OutlineParserTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutlineParserTests.swift; sourceTree = "<group>"; };
 		FE24C13995368C23BC470A26 /* FinalFinalApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FinalFinalApp.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -116,8 +128,12 @@
 			isa = PBXGroup;
 			children = (
 				E9A8D79672E775EA73854D93 /* Database.swift */,
+				13133CB5518EA086A3120EDE /* Database+CRUD.swift */,
 				54B0DE603A99327D920573B6 /* Document.swift */,
 				CF113F2ADAA8371F7C810BF0 /* OutlineNode.swift */,
+				DFB3FE823FEA8DAD86CD01A9 /* ProjectDatabase.swift */,
+				734874328EB5518EAC0C2517 /* ProjectPackage.swift */,
+				87363EA3909D1FDA8BFDB5F1 /* RecentProject.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -150,6 +166,7 @@
 			isa = PBXGroup;
 			children = (
 				5A1E8A83A78A7909AA1289DB /* OutlineParser.swift */,
+				D567C1445BFF0160D8410001 /* ProjectStore.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -167,6 +184,7 @@
 			isa = PBXGroup;
 			children = (
 				0E843650744C2F13D1618667 /* FinalFinalTests.swift */,
+				FDA7C9F1CFBE9EDB2C4D818C /* OutlineParserTests.swift */,
 			);
 			path = "final finalTests";
 			sourceTree = "<group>";
@@ -273,6 +291,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				20AFD8B3E9B9181745AD26B8 /* FinalFinalTests.swift in Sources */,
+				6906417635740343EE8F362A /* OutlineParserTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -283,6 +302,7 @@
 				2A5EB4F121ED5781FDD710A7 /* AppDelegate.swift in Sources */,
 				790667B521454C125B0FE74B /* ColorScheme.swift in Sources */,
 				7ACE3361E6A474E6D99062E1 /* ContentView.swift in Sources */,
+				ACAF912B9BF42D9FD97B82C2 /* Database+CRUD.swift in Sources */,
 				45869BA1A8791DA0E428B1BD /* Database.swift in Sources */,
 				49989C588EFAF924B6BF9400 /* Document.swift in Sources */,
 				5DC993888BDFB3602E1FA2AA /* EditorSchemeHandler.swift in Sources */,
@@ -290,6 +310,10 @@
 				6D12AEF734B0A4D7D05F681F /* FinalFinalApp.swift in Sources */,
 				A7F047CACD5338BFF13C8336 /* OutlineNode.swift in Sources */,
 				47DBF3857C5C06C046A299AD /* OutlineParser.swift in Sources */,
+				63072A9E8DE3BC6324759AE9 /* ProjectDatabase.swift in Sources */,
+				D6A0D3C2D59070E808EFA6C9 /* ProjectPackage.swift in Sources */,
+				D1576467EE827142AA4F49BE /* ProjectStore.swift in Sources */,
+				E028FEF9DCA9E380AE542AF2 /* RecentProject.swift in Sources */,
 				AD8451C7428BC1E2016746D1 /* StatusBar.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -366,6 +390,7 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -490,6 +515,7 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",

@@ -39,6 +39,21 @@ targets:
         LSMinimumSystemVersion: "14.0"
         NSPrincipalClass: NSApplication
         NSHighResolutionCapable: true
+        CFBundleDocumentTypes:
+          - CFBundleTypeName: final final Document
+            CFBundleTypeRole: Editor
+            LSHandlerRank: Owner
+            LSItemContentTypes:
+              - com.kerim.final-final.document
+        UTExportedTypeDeclarations:
+          - UTTypeIdentifier: com.kerim.final-final.document
+            UTTypeDescription: final final Document
+            UTTypeConformsTo:
+              - com.apple.package
+              - public.composite-content
+            UTTypeTagSpecification:
+              public.filename-extension:
+                - ff
 
   final finalTests:
     type: bundle.unit-test
@@ -51,3 +66,4 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.kerim.final-final-tests
         SWIFT_VERSION: "5.9"
+        GENERATE_INFOPLIST_FILE: YES
