@@ -52,13 +52,24 @@ final class EditorSchemeHandler: NSObject, WKURLSchemeHandler {
         let pathComponents = url.pathComponents.filter { $0 != "/" }
         guard !pathComponents.isEmpty else { return nil }
 
-        let relativePath = pathComponents.joined(separator: "/")
+        // URL format: editor://milkdown/milkdown.html
+        // First component is the editor type (milkdown, codemirror)
+        // Last component is the filename
+        let filename = pathComponents.last!
+        let name = (filename as NSString).deletingPathExtension
+        let ext = (filename as NSString).pathExtension
 
-        return Bundle.main.url(
-            forResource: relativePath,
+        // Try with subdirectory first (for folder references)
+        if let url = Bundle.main.url(
+            forResource: pathComponents.joined(separator: "/"),
             withExtension: nil,
             subdirectory: resourceSubdirectory
-        )
+        ) {
+            return url
+        }
+
+        // Fall back to flat resources (Xcode default behavior)
+        return Bundle.main.url(forResource: name, withExtension: ext)
     }
 
     private func mimeType(for url: URL) -> String {
