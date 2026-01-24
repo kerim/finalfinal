@@ -5,9 +5,20 @@
 
 import SwiftUI
 
+/// Line-based cursor position for cross-editor coordination.
+/// Uses line/column instead of raw offsets because ProseMirror (tree-based)
+/// and markdown (flat text) positions don't map 1:1.
+struct CursorPosition: Equatable {
+    let line: Int
+    let column: Int
+
+    static let start = CursorPosition(line: 1, column: 0)
+}
+
 struct ContentView: View {
     @Environment(ThemeManager.self) private var themeManager
     @State private var editorState = EditorViewState()
+    @State private var cursorPositionToRestore: CursorPosition? = nil
 
     private let demoContent = """
 # Welcome to final final
@@ -97,25 +108,31 @@ Try the following:
             MilkdownEditor(
                 content: $editorState.content,
                 focusModeEnabled: $editorState.focusModeEnabled,
+                cursorPositionToRestore: $cursorPositionToRestore,
                 onContentChange: { _ in
                     // Content change handling - could trigger outline parsing here
                 },
                 onStatsChange: { words, characters in
                     editorState.updateStats(words: words, characters: characters)
+                },
+                onCursorPositionSaved: { position in
+                    cursorPositionToRestore = position
                 }
             )
         case .source:
-            // Placeholder for CodeMirror (Phase 1.5)
-            VStack {
-                Spacer()
-                Text("Source Mode")
-                    .font(.largeTitle)
-                    .foregroundColor(themeManager.currentTheme.editorText.opacity(0.5))
-                Text("Phase 1.5 will add CodeMirror editor")
-                    .font(.body)
-                    .foregroundColor(themeManager.currentTheme.editorText.opacity(0.5))
-                Spacer()
-            }
+            CodeMirrorEditor(
+                content: $editorState.content,
+                cursorPositionToRestore: $cursorPositionToRestore,
+                onContentChange: { _ in
+                    // Content change handling - could trigger outline parsing here
+                },
+                onStatsChange: { words, characters in
+                    editorState.updateStats(words: words, characters: characters)
+                },
+                onCursorPositionSaved: { position in
+                    cursorPositionToRestore = position
+                }
+            )
         }
     }
 

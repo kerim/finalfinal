@@ -1,17 +1,16 @@
 //
-//  MilkdownEditor.swift
+//  CodeMirrorEditor.swift
 //  final final
 //
-//  WKWebView wrapper for Milkdown WYSIWYG editor.
+//  WKWebView wrapper for CodeMirror 6 source editor.
 //  Uses 500ms polling pattern for content synchronization.
 //
 
 import SwiftUI
 import WebKit
 
-struct MilkdownEditor: NSViewRepresentable {
+struct CodeMirrorEditor: NSViewRepresentable {
     @Binding var content: String
-    @Binding var focusModeEnabled: Bool
     @Binding var cursorPositionToRestore: CursorPosition?
 
     let onContentChange: (String) -> Void
@@ -22,7 +21,7 @@ struct MilkdownEditor: NSViewRepresentable {
         let configuration = WKWebViewConfiguration()
         configuration.setURLSchemeHandler(EditorSchemeHandler(), forURLScheme: "editor")
 
-        // === PHASE 4: Add error handler script to capture JS errors ===
+        // === Error handler script to capture JS errors ===
         let errorScript = WKUserScript(
             source: """
                 window.onerror = function(msg, url, line, col, error) {
@@ -61,7 +60,7 @@ struct MilkdownEditor: NSViewRepresentable {
         webView.isInspectable = true
         #endif
 
-        if let url = URL(string: "editor://milkdown/milkdown.html") {
+        if let url = URL(string: "editor://codemirror/codemirror.html") {
             webView.load(URLRequest(url: url))
         }
 
@@ -70,11 +69,6 @@ struct MilkdownEditor: NSViewRepresentable {
     }
 
     func updateNSView(_ webView: WKWebView, context: Context) {
-        if context.coordinator.lastFocusModeState != focusModeEnabled {
-            context.coordinator.lastFocusModeState = focusModeEnabled
-            context.coordinator.setFocusMode(focusModeEnabled)
-        }
-
         if context.coordinator.shouldPushContent(content) {
             context.coordinator.setContent(content)
         }
@@ -115,7 +109,6 @@ struct MilkdownEditor: NSViewRepresentable {
         private var lastReceivedFromEditor: Date = .distantPast
         private var lastPushedContent: String = ""
 
-        var lastFocusModeState: Bool = false
         var lastThemeCss: String = ""
         private var isEditorReady = false
         private var isCleanedUp = false
@@ -157,36 +150,14 @@ struct MilkdownEditor: NSViewRepresentable {
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             #if DEBUG
-            print("[MilkdownEditor] WebView finished loading")
+            print("[CodeMirrorEditor] WebView finished loading")
 
-            // === PHASE 2: Verify JavaScript execution from Swift side ===
-            webView.evaluateJavaScript("typeof window.__MILKDOWN_SCRIPT_STARTED__") { result, error in
-                if let error = error {
-                    print("[MilkdownEditor] JS script check error: \(error)")
-                } else {
-                    print("[MilkdownEditor] JS script execution check: \(result ?? "nil") (should be 'number')")
-                }
+            webView.evaluateJavaScript("typeof window.__CODEMIRROR_SCRIPT_STARTED__") { result, error in
+                print("[CodeMirrorEditor] JS script check: \(result ?? "nil")")
             }
 
             webView.evaluateJavaScript("typeof window.FinalFinal") { result, error in
-                if let error = error {
-                    print("[MilkdownEditor] FinalFinal check error: \(error)")
-                } else {
-                    print("[MilkdownEditor] window.FinalFinal type: \(result ?? "nil") (should be 'object')")
-                }
-            }
-
-            webView.evaluateJavaScript("document.querySelector('#editor') !== null") { result, error in
-                print("[MilkdownEditor] #editor element exists: \(result ?? "unknown")")
-            }
-
-            // === PHASE 6: Query debug state ===
-            webView.evaluateJavaScript("window.__MILKDOWN_DEBUG__ ? JSON.stringify(window.__MILKDOWN_DEBUG__) : 'not defined'") { result, error in
-                if let error = error {
-                    print("[MilkdownEditor] Debug state error: \(error)")
-                } else {
-                    print("[MilkdownEditor] Debug state: \(result ?? "nil")")
-                }
+                print("[CodeMirrorEditor] window.FinalFinal type: \(result ?? "nil")")
             }
             #endif
 
@@ -206,29 +177,23 @@ struct MilkdownEditor: NSViewRepresentable {
             }
         }
 
-        // === PHASE 4: Handle JS error messages from WKScriptMessageHandler ===
+        // === WKScriptMessageHandler - handle JS error messages ===
         nonisolated func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
             if message.name == "errorHandler", let body = message.body as? [String: Any] {
                 let msgType = body["type"] as? String ?? "unknown"
                 let errorMsg = body["message"] as? String ?? "unknown"
-                let url = body["url"] as? String ?? ""
-                let line = body["line"] ?? ""
-                let col = body["column"] ?? ""
-                let error = body["error"] as? String ?? ""
-
-                print("[MilkdownEditor] JS \(msgType.uppercased()): \(errorMsg)")
-                if !url.isEmpty { print("  URL: \(url)") }
-                print("  Line: \(line), Col: \(col)")
-                if !error.isEmpty { print("  Error: \(error)") }
+                print("[CodeMirrorEditor] JS \(msgType.uppercased()): \(errorMsg)")
             }
         }
 
+        // === Content push guard - prevent feedback loops ===
         func shouldPushContent(_ newContent: String) -> Bool {
             let timeSinceLastReceive = Date().timeIntervalSince(lastReceivedFromEditor)
             if timeSinceLastReceive < 0.6 && newContent == lastPushedContent { return false }
             return newContent != lastPushedContent
         }
 
+        // === JavaScript API calls ===
         func setContent(_ markdown: String) {
             guard isEditorReady, let webView else { return }
             lastPushedContent = markdown
@@ -236,13 +201,8 @@ struct MilkdownEditor: NSViewRepresentable {
                 .replacingOccurrences(of: "`", with: "\\`")
                 .replacingOccurrences(of: "$", with: "\\$")
             webView.evaluateJavaScript("window.FinalFinal.setContent(`\(escaped)`)") { _, error in
-                if let error { print("[MilkdownEditor] setContent error: \(error)") }
+                if let error { print("[CodeMirrorEditor] setContent error: \(error)") }
             }
-        }
-
-        func setFocusMode(_ enabled: Bool) {
-            guard isEditorReady, let webView else { return }
-            webView.evaluateJavaScript("window.FinalFinal.setFocusMode(\(enabled))") { _, _ in }
         }
 
         func setTheme(_ cssVariables: String) {
@@ -253,13 +213,13 @@ struct MilkdownEditor: NSViewRepresentable {
 
         func getCursorPosition(completion: @escaping (CursorPosition) -> Void) {
             guard isEditorReady, let webView else {
-                print("[MilkdownEditor] getCursorPosition: editor not ready, returning line 1 col 0")
+                print("[CodeMirrorEditor] getCursorPosition: editor not ready, returning line 1 col 0")
                 completion(.start)
                 return
             }
             webView.evaluateJavaScript("JSON.stringify(window.FinalFinal.getCursorPosition())") { result, error in
                 if let error = error {
-                    print("[MilkdownEditor] getCursorPosition error: \(error)")
+                    print("[CodeMirrorEditor] getCursorPosition error: \(error)")
                     completion(.start)
                     return
                 }
@@ -267,31 +227,32 @@ struct MilkdownEditor: NSViewRepresentable {
                       let data = json.data(using: .utf8),
                       let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Int],
                       let line = dict["line"], let column = dict["column"] else {
-                    print("[MilkdownEditor] getCursorPosition: failed to parse JSON")
+                    print("[CodeMirrorEditor] getCursorPosition: failed to parse JSON")
                     completion(.start)
                     return
                 }
                 let pos = CursorPosition(line: line, column: column)
-                print("[MilkdownEditor] getCursorPosition returned: line \(pos.line) col \(pos.column)")
+                print("[CodeMirrorEditor] getCursorPosition returned: line \(pos.line) col \(pos.column)")
                 completion(pos)
             }
         }
 
         func setCursorPosition(_ position: CursorPosition) {
-            print("[MilkdownEditor] setCursorPosition called with: line \(position.line) col \(position.column)")
+            print("[CodeMirrorEditor] setCursorPosition called with: line \(position.line) col \(position.column)")
             guard isEditorReady, let webView else {
-                print("[MilkdownEditor] setCursorPosition: editor not ready")
+                print("[CodeMirrorEditor] setCursorPosition: editor not ready")
                 return
             }
             webView.evaluateJavaScript(
                 "window.FinalFinal.setCursorPosition({line: \(position.line), column: \(position.column)})"
             ) { _, error in
                 if let error = error {
-                    print("[MilkdownEditor] setCursorPosition error: \(error)")
+                    print("[CodeMirrorEditor] setCursorPosition error: \(error)")
                 }
             }
         }
 
+        // === 500ms content polling ===
         private func startPolling() {
             pollingTimer?.invalidate()
             pollingTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
