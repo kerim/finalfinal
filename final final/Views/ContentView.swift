@@ -58,6 +58,14 @@ Try the following:
             editorState.toggleFocusMode()
         }
         .onReceive(NotificationCenter.default.publisher(for: .toggleEditorMode).receive(on: DispatchQueue.main)) { _ in
+            // Two-phase toggle: request cursor save first, then toggle after callback
+            editorState.requestEditorModeToggle()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .didSaveCursorPosition).receive(on: DispatchQueue.main)) { notification in
+            // Cursor saved - now complete the toggle
+            if let position = notification.userInfo?["position"] as? CursorPosition {
+                cursorPositionToRestore = position
+            }
             editorState.toggleEditorMode()
         }
     }

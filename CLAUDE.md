@@ -93,6 +93,17 @@ Set `webView.isInspectable = true` in development. Safari → Develop → [app n
 2. **Persistent debug state:** Use `window.__MILKDOWN_DEBUG__` or similar to store values, then query via `getDebugState()` before the switch
 3. **Xcode console:** All Swift `print()` output appears in Xcode's debug console and persists across editor switches
 
+## Git Commits
+
+When asked to commit changes:
+
+1. **Always run `git status` first** to see ALL modified files, not just the ones you recently edited
+2. **Review the full list** of staged and unstaged changes before committing
+3. **Ask the user** if any modified files should be excluded from the commit
+4. **Include all related work** from the session, not just the last task
+
+Never commit only the files you remember working on - always check for other modifications that may have been made earlier in the session.
+
 ## Documentation
 
 - `docs/plans/` - Feature plans (protected from overwrites)

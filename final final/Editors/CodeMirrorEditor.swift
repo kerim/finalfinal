@@ -112,6 +112,7 @@ struct CodeMirrorEditor: NSViewRepresentable {
         var lastThemeCss: String = ""
         private var isEditorReady = false
         private var isCleanedUp = false
+        private var toggleObserver: NSObjectProtocol?
 
         init(
             content: Binding<String>,
@@ -126,14 +127,32 @@ struct CodeMirrorEditor: NSViewRepresentable {
             self.onStatsChange = onStatsChange
             self.onCursorPositionSaved = onCursorPositionSaved
             super.init()
+
+            // Subscribe to toggle notification - save cursor before editor switches
+            toggleObserver = NotificationCenter.default.addObserver(
+                forName: .willToggleEditorMode,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                self?.saveAndNotify()
+            }
         }
 
-        deinit { pollingTimer?.invalidate() }
+        deinit {
+            pollingTimer?.invalidate()
+            if let observer = toggleObserver {
+                NotificationCenter.default.removeObserver(observer)
+            }
+        }
 
         func cleanup() {
             isCleanedUp = true
             pollingTimer?.invalidate()
             pollingTimer = nil
+            if let observer = toggleObserver {
+                NotificationCenter.default.removeObserver(observer)
+                toggleObserver = nil
+            }
             webView = nil
         }
 
@@ -142,9 +161,42 @@ struct CodeMirrorEditor: NSViewRepresentable {
             webView.evaluateJavaScript("JSON.stringify(window.FinalFinal.getCursorPosition())") { [weak self] result, _ in
                 guard let json = result as? String,
                       let data = json.data(using: .utf8),
-                      let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Int],
-                      let line = dict["line"], let column = dict["column"] else { return }
+                      let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let line = dict["line"] as? Int,
+                      let column = dict["column"] as? Int else { return }
                 self?.onCursorPositionSaved(CursorPosition(line: line, column: column))
+            }
+        }
+
+        /// Save cursor and post notification for two-phase toggle
+        private func saveAndNotify() {
+            guard isEditorReady, let webView, !isCleanedUp else {
+                // Editor not ready - post notification with start position
+                print("[CodeMirrorEditor] saveAndNotify: editor not ready, returning start position")
+                NotificationCenter.default.post(
+                    name: .didSaveCursorPosition,
+                    object: nil,
+                    userInfo: ["position": CursorPosition.start]
+                )
+                return
+            }
+
+            webView.evaluateJavaScript("JSON.stringify(window.FinalFinal.getCursorPosition())") { result, _ in
+                var position = CursorPosition.start
+                if let json = result as? String,
+                   let data = json.data(using: .utf8),
+                   let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                   let line = dict["line"] as? Int,
+                   let column = dict["column"] as? Int {
+                    position = CursorPosition(line: line, column: column)
+                }
+
+                print("[CodeMirrorEditor] saveAndNotify: posting didSaveCursorPosition with line \(position.line) col \(position.column)")
+                NotificationCenter.default.post(
+                    name: .didSaveCursorPosition,
+                    object: nil,
+                    userInfo: ["position": position]
+                )
             }
         }
 
@@ -169,9 +221,15 @@ struct CodeMirrorEditor: NSViewRepresentable {
         }
 
         private func restoreCursorPositionIfNeeded() {
-            guard let position = cursorPositionToRestoreBinding.wrappedValue else { return }
+            print("[CodeMirrorEditor] restoreCursorPositionIfNeeded: cursorPositionToRestore=\(String(describing: cursorPositionToRestoreBinding.wrappedValue))")
+            guard let position = cursorPositionToRestoreBinding.wrappedValue else {
+                print("[CodeMirrorEditor] restoreCursorPositionIfNeeded: no position to restore, returning")
+                return
+            }
+            print("[CodeMirrorEditor] restoreCursorPositionIfNeeded: will restore position line=\(position.line) col=\(position.column) after 0.1s delay")
             // Small delay to ensure content is fully loaded
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+                print("[CodeMirrorEditor] restoreCursorPositionIfNeeded: delay elapsed, setting cursor position")
                 self?.setCursorPosition(position)
                 self?.cursorPositionToRestoreBinding.wrappedValue = nil
             }
@@ -225,8 +283,9 @@ struct CodeMirrorEditor: NSViewRepresentable {
                 }
                 guard let json = result as? String,
                       let data = json.data(using: .utf8),
-                      let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Int],
-                      let line = dict["line"], let column = dict["column"] else {
+                      let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let line = dict["line"] as? Int,
+                      let column = dict["column"] as? Int else {
                     print("[CodeMirrorEditor] getCursorPosition: failed to parse JSON")
                     completion(.start)
                     return

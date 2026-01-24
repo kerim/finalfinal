@@ -119,6 +119,7 @@ struct MilkdownEditor: NSViewRepresentable {
         var lastThemeCss: String = ""
         private var isEditorReady = false
         private var isCleanedUp = false
+        private var toggleObserver: NSObjectProtocol?
 
         init(
             content: Binding<String>,
@@ -133,14 +134,32 @@ struct MilkdownEditor: NSViewRepresentable {
             self.onStatsChange = onStatsChange
             self.onCursorPositionSaved = onCursorPositionSaved
             super.init()
+
+            // Subscribe to toggle notification - save cursor before editor switches
+            toggleObserver = NotificationCenter.default.addObserver(
+                forName: .willToggleEditorMode,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                self?.saveAndNotify()
+            }
         }
 
-        deinit { pollingTimer?.invalidate() }
+        deinit {
+            pollingTimer?.invalidate()
+            if let observer = toggleObserver {
+                NotificationCenter.default.removeObserver(observer)
+            }
+        }
 
         func cleanup() {
             isCleanedUp = true
             pollingTimer?.invalidate()
             pollingTimer = nil
+            if let observer = toggleObserver {
+                NotificationCenter.default.removeObserver(observer)
+                toggleObserver = nil
+            }
             webView = nil
         }
 
@@ -149,9 +168,52 @@ struct MilkdownEditor: NSViewRepresentable {
             webView.evaluateJavaScript("JSON.stringify(window.FinalFinal.getCursorPosition())") { [weak self] result, _ in
                 guard let json = result as? String,
                       let data = json.data(using: .utf8),
-                      let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Int],
-                      let line = dict["line"], let column = dict["column"] else { return }
+                      let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let line = dict["line"] as? Int,
+                      let column = dict["column"] as? Int else { return }
                 self?.onCursorPositionSaved(CursorPosition(line: line, column: column))
+            }
+        }
+
+        /// Save cursor and post notification for two-phase toggle
+        private func saveAndNotify() {
+            guard isEditorReady, let webView, !isCleanedUp else {
+                // Editor not ready - post notification with start position
+                print("[MilkdownEditor] saveAndNotify: editor not ready, returning start position")
+                NotificationCenter.default.post(
+                    name: .didSaveCursorPosition,
+                    object: nil,
+                    userInfo: ["position": CursorPosition.start]
+                )
+                return
+            }
+
+            webView.evaluateJavaScript("JSON.stringify(window.FinalFinal.getCursorPosition())") { [weak self] result, _ in
+                var position = CursorPosition.start
+                if let json = result as? String,
+                   let data = json.data(using: .utf8),
+                   let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                   let line = dict["line"] as? Int,
+                   let column = dict["column"] as? Int {
+                    position = CursorPosition(line: line, column: column)
+                }
+
+                print("[MilkdownEditor] saveAndNotify: posting didSaveCursorPosition with line \(position.line) col \(position.column)")
+
+                // Query cursor diagnostics for debugging (persists in debugState before WebView unloads)
+                self?.webView?.evaluateJavaScript(
+                    "JSON.stringify(window.__MILKDOWN_DEBUG__.cursorDiagnostics)"
+                ) { diagResult, _ in
+                    if let diagJson = diagResult as? String, diagJson != "null" {
+                        print("[MilkdownEditor] CURSOR DIAGNOSTICS: \(diagJson)")
+                    }
+                }
+
+                NotificationCenter.default.post(
+                    name: .didSaveCursorPosition,
+                    object: nil,
+                    userInfo: ["position": position]
+                )
             }
         }
 
@@ -265,8 +327,9 @@ struct MilkdownEditor: NSViewRepresentable {
                 }
                 guard let json = result as? String,
                       let data = json.data(using: .utf8),
-                      let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Int],
-                      let line = dict["line"], let column = dict["column"] else {
+                      let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let line = dict["line"] as? Int,
+                      let column = dict["column"] as? Int else {
                     print("[MilkdownEditor] getCursorPosition: failed to parse JSON")
                     completion(.start)
                     return
@@ -285,9 +348,19 @@ struct MilkdownEditor: NSViewRepresentable {
             }
             webView.evaluateJavaScript(
                 "window.FinalFinal.setCursorPosition({line: \(position.line), column: \(position.column)})"
-            ) { _, error in
+            ) { [weak self] _, error in
                 if let error = error {
                     print("[MilkdownEditor] setCursorPosition error: \(error)")
+                }
+                // Query setCursorDiagnostics after the call completes
+                self?.webView?.evaluateJavaScript(
+                    "JSON.stringify(window.__MILKDOWN_DEBUG__.setCursorDiagnostics)"
+                ) { diagResult, _ in
+                    if let diagJson = diagResult as? String, diagJson != "null" {
+                        print("[MilkdownEditor] SET_CURSOR DIAGNOSTICS: \(diagJson)")
+                    } else {
+                        print("[MilkdownEditor] SET_CURSOR DIAGNOSTICS: null (no diagnostics stored)")
+                    }
                 }
             }
         }

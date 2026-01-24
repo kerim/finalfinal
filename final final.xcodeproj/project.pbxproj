@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		0127F846C37CAFAFA0455C60 /* CodeMirrorEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 73EA833CAD13B84DA71C0544 /* CodeMirrorEditor.swift */; };
+		034B4612DBA7801971F8D0A7 /* codemirror.css in Resources */ = {isa = PBXBuildFile; fileRef = 96F9CD7F12EED09B5367DA7C /* codemirror.css */; };
 		1B0AC8AA42A1078AD13881CD /* milkdown.html in Resources */ = {isa = PBXBuildFile; fileRef = FB81B292D5A8DE802F0AFB6F /* milkdown.html */; };
 		20AFD8B3E9B9181745AD26B8 /* FinalFinalTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E843650744C2F13D1618667 /* FinalFinalTests.swift */; };
 		20C24A349BE36122136559B4 /* codemirror.html in Resources */ = {isa = PBXBuildFile; fileRef = 92D034519ECAC7C488B3DDB2 /* codemirror.html */; };
@@ -63,11 +65,13 @@
 		66C895E42D3FA5D90DC0B575 /* milkdown.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = milkdown.js; sourceTree = "<group>"; };
 		6AD4BB30F275702838E8D3F8 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		734874328EB5518EAC0C2517 /* ProjectPackage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectPackage.swift; sourceTree = "<group>"; };
+		73EA833CAD13B84DA71C0544 /* CodeMirrorEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodeMirrorEditor.swift; sourceTree = "<group>"; };
 		788D4C2FB2475A38D3477A97 /* final finalTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "final finalTests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 		7E3150F9999744FC44CB14B4 /* codemirror.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = codemirror.js; sourceTree = "<group>"; };
 		7EEDC491836013F46E97FAE8 /* MilkdownEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MilkdownEditor.swift; sourceTree = "<group>"; };
 		87363EA3909D1FDA8BFDB5F1 /* RecentProject.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecentProject.swift; sourceTree = "<group>"; };
 		92D034519ECAC7C488B3DDB2 /* codemirror.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; path = codemirror.html; sourceTree = "<group>"; };
+		96F9CD7F12EED09B5367DA7C /* codemirror.css */ = {isa = PBXFileReference; lastKnownFileType = text.css; path = codemirror.css; sourceTree = "<group>"; };
 		BF41CB39EB2C5BD4E30A2CDA /* StatusBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusBar.swift; sourceTree = "<group>"; };
 		C4E5542284D791AA71E83BE0 /* milkdown.css */ = {isa = PBXFileReference; lastKnownFileType = text.css; path = milkdown.css; sourceTree = "<group>"; };
 		CE6D9836DD14A789629A10CB /* EditorSchemeHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorSchemeHandler.swift; sourceTree = "<group>"; };
@@ -114,6 +118,7 @@
 		1A41C166B938E47086169E96 /* Editors */ = {
 			isa = PBXGroup;
 			children = (
+				73EA833CAD13B84DA71C0544 /* CodeMirrorEditor.swift */,
 				CE6D9836DD14A789629A10CB /* EditorSchemeHandler.swift */,
 				7EEDC491836013F46E97FAE8 /* MilkdownEditor.swift */,
 			);
@@ -137,17 +142,10 @@
 			path = ViewState;
 			sourceTree = "<group>";
 		};
-		51E8E652F09A5F0A2BCD5074 /* docs */ = {
-			isa = PBXGroup;
-			children = (
-				DE6AEFF9EB54FF1C5CBDCFFF /* plans */,
-			);
-			path = docs;
-			sourceTree = "<group>";
-		};
 		525D19478C4862DEDABDB099 /* codemirror */ = {
 			isa = PBXGroup;
 			children = (
+				96F9CD7F12EED09B5367DA7C /* codemirror.css */,
 				92D034519ECAC7C488B3DDB2 /* codemirror.html */,
 				7E3150F9999744FC44CB14B4 /* codemirror.js */,
 			);
@@ -192,7 +190,6 @@
 				109DDCE3DD312B1666618AD5 /* Info.plist */,
 				EA04EC30CD2DDAE4DA3776FB /* App */,
 				169B52CD3D09C7F3C852D46F /* Commands */,
-				51E8E652F09A5F0A2BCD5074 /* docs */,
 				1A41C166B938E47086169E96 /* Editors */,
 				863FDB9EBD7F0987C81E6ECA /* Models */,
 				A0A538514A7F8AF439E6E08D /* Resources */,
@@ -246,13 +243,6 @@
 				897DF43C87D41FD1A0CCF1C9 /* editor */,
 			);
 			path = Resources;
-			sourceTree = "<group>";
-		};
-		DE6AEFF9EB54FF1C5CBDCFFF /* plans */ = {
-			isa = PBXGroup;
-			children = (
-			);
-			path = plans;
 			sourceTree = "<group>";
 		};
 		EA04EC30CD2DDAE4DA3776FB /* App */ = {
@@ -342,6 +332,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				034B4612DBA7801971F8D0A7 /* codemirror.css in Resources */,
 				20C24A349BE36122136559B4 /* codemirror.html in Resources */,
 				91E3EB11EC2C1CFFF280BBB2 /* codemirror.js in Resources */,
 				A46237665E070F9A59CF8B87 /* milkdown.css in Resources */,
@@ -367,6 +358,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				2A5EB4F121ED5781FDD710A7 /* AppDelegate.swift in Sources */,
+				0127F846C37CAFAFA0455C60 /* CodeMirrorEditor.swift in Sources */,
 				790667B521454C125B0FE74B /* ColorScheme.swift in Sources */,
 				7ACE3361E6A474E6D99062E1 /* ContentView.swift in Sources */,
 				ACAF912B9BF42D9FD97B82C2 /* Database+CRUD.swift in Sources */,
@@ -479,7 +471,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 0.1.6;
+				CURRENT_PROJECT_VERSION = 0.1.23;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "final final/Info.plist";
 				INFOPLIST_GENERATION_MODE = GeneratedFile;
@@ -501,7 +493,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 0.1.6;
+				CURRENT_PROJECT_VERSION = 0.1.23;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "final final/Info.plist";
 				INFOPLIST_GENERATION_MODE = GeneratedFile;

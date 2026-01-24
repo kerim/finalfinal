@@ -5,6 +5,14 @@
 
 import SwiftUI
 
+// MARK: - Editor Toggle Notifications
+extension Notification.Name {
+    /// Posted when editor mode toggle is requested - current editor should save cursor
+    static let willToggleEditorMode = Notification.Name("willToggleEditorMode")
+    /// Posted after cursor position is saved - toggle can proceed
+    static let didSaveCursorPosition = Notification.Name("didSaveCursorPosition")
+}
+
 enum EditorMode: String, CaseIterable {
     case wysiwyg = "WYSIWYG"
     case source = "Source"
@@ -42,6 +50,11 @@ class EditorViewState {
 
     func toggleEditorMode() {
         editorMode = editorMode == .wysiwyg ? .source : .wysiwyg
+    }
+
+    /// Request editor mode toggle - posts notification for current editor to save cursor first
+    func requestEditorModeToggle() {
+        NotificationCenter.default.post(name: .willToggleEditorMode, object: nil)
     }
 
     func toggleFocusMode() {
