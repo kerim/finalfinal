@@ -206,37 +206,122 @@ window.FinalFinal = {
     return JSON.stringify((window as any).__MILKDOWN_DEBUG__, null, 2);
   },
 
-  getCursorPosition(): { line: number; column: number } {
+  getCursorPosition(): { line: number; column: number; debug?: object } {
     if (!editorInstance) {
-      console.log('[Milkdown] getCursorPosition: editor not ready, returning line 1 col 0');
-      return { line: 1, column: 0 };
+      return { line: 1, column: 0, debug: { error: 'editor not ready' } };
     }
+
     try {
       const view = editorInstance.ctx.get(editorViewCtx);
       const { head } = view.state.selection;
+      const markdown = editorInstance.action(getMarkdown());
+      const mdLines = markdown.split('\n');
 
-      // Walk through document to find line number and column
+      // Resolve cursor position in document tree
+      const $head = view.state.doc.resolve(head);
+
+      // Collect debug info
+      const debug: Record<string, unknown> = {
+        pmHead: head,
+        docSize: view.state.doc.content.size,
+        mdLineCount: mdLines.length,
+        cursorDepth: $head.depth,
+      };
+
+      // Get the immediate parent node (paragraph, heading, etc.)
+      // This is the actual text-containing node, NOT a container like bullet_list
+      const parentNode = $head.parent;
+      const parentText = parentNode.textContent;
+      const parentType = parentNode.type.name;
+
+      debug.parentType = parentType;
+      debug.parentText = parentText.slice(0, 50);
+
+      // Build ancestry path for debugging
+      const ancestry: string[] = [];
+      for (let d = $head.depth; d >= 0; d--) {
+        ancestry.push($head.node(d).type.name);
+      }
+      debug.ancestry = ancestry;
+
+      // Find which markdown line contains this paragraph's text
       let line = 1;
-      let lineStart = 0;
+      let matchType = 'none';
 
-      view.state.doc.nodesBetween(0, head, (node, pos) => {
-        if (node.isBlock && pos < head) {
-          // Each block node after the first increments line count
-          if (pos > 0) {
-            line++;
-            lineStart = pos + 1; // +1 to skip the node boundary
-          }
+      for (let i = 0; i < mdLines.length; i++) {
+        const rawLine = mdLines[i];
+
+        // Strip markdown syntax for comparison
+        const stripped = rawLine
+          .replace(/^#+\s*/, '')           // headings
+          .replace(/^\s*[-*+]\s*/, '')     // unordered list items
+          .replace(/^\s*\d+\.\s*/, '')     // ordered list items
+          .replace(/^\s*>\s*/, '')         // blockquotes
+          .replace(/\*\*([^*]+)\*\*/g, '$1')  // bold
+          .replace(/__([^_]+)__/g, '$1')      // bold alt
+          .replace(/\*([^*]+)\*/g, '$1')      // italic
+          .replace(/_([^_]+)_/g, '$1')        // italic alt
+          .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1') // links
+          .replace(/`([^`]+)`/g, '$1')        // inline code
+          .trim();
+
+        // Try exact match first
+        if (stripped === parentText) {
+          line = i + 1;
+          matchType = 'exact';
+          debug.matchedLine = i + 1;
+          debug.matchedLineText = rawLine.slice(0, 40);
+          debug.strippedLine = stripped.slice(0, 40);
+          break;
         }
-        return true;
-      });
 
-      // Column is the offset within the current line
-      const column = head - lineStart;
-      console.log('[Milkdown] getCursorPosition: line', line, 'col', column, 'head', head);
-      return { line, column };
+        // Then try prefix match (for long lines or partial matches)
+        if (stripped && parentText.startsWith(stripped) && stripped.length >= 10) {
+          line = i + 1;
+          matchType = 'prefix';
+          debug.matchedLine = i + 1;
+          debug.matchedLineText = rawLine.slice(0, 40);
+          debug.strippedLine = stripped.slice(0, 40);
+          break;
+        }
+
+        // Also check if stripped starts with parentText (for short paragraphs)
+        if (parentText && stripped.startsWith(parentText.slice(0, 15)) && parentText.length >= 5) {
+          line = i + 1;
+          matchType = 'reverse-prefix';
+          debug.matchedLine = i + 1;
+          debug.matchedLineText = rawLine.slice(0, 40);
+          debug.strippedLine = stripped.slice(0, 40);
+          break;
+        }
+      }
+
+      debug.matchType = matchType;
+
+      // Calculate column offset within the paragraph
+      const blockStart = $head.start($head.depth);
+      const offsetInBlock = head - blockStart;
+
+      // Get the markdown line
+      const lineContent = mdLines[line - 1] || '';
+
+      // Account for line-start syntax (list markers, heading #, etc.)
+      const syntaxMatch = lineContent.match(/^(#+\s*|\s*[-*+]\s*|\s*\d+\.\s*|\s*>\s*)/);
+      const syntaxLength = syntaxMatch ? syntaxMatch[0].length : 0;
+
+      // Column = syntax prefix + offset in text
+      // Note: This simple approach works for lists, paragraphs, headings.
+      // Inline markdown like **bold** may have cursor off by 2-4 chars (acceptable tradeoff).
+      const column = syntaxLength + Math.min(offsetInBlock, lineContent.length - syntaxLength);
+
+      debug.offsetInBlock = offsetInBlock;
+      debug.syntaxLength = syntaxLength;
+      debug.calculatedLine = line;
+      debug.calculatedColumn = column;
+
+      return { line, column, debug };
     } catch (e) {
-      console.error('[Milkdown] getCursorPosition error:', e);
-      return { line: 1, column: 0 };
+      return { line: 1, column: 0, debug: { error: String(e) } };
     }
   },
 
@@ -245,31 +330,34 @@ window.FinalFinal = {
       console.warn('[Milkdown] setCursorPosition: editor not ready');
       return;
     }
+
     try {
       const view = editorInstance.ctx.get(editorViewCtx);
       const { line, column } = lineCol;
 
-      // Find the position of the target line
-      let currentLine = 1;
-      let targetPos = 1; // Start after doc boundary
+      // Get serialized markdown
+      const markdown = editorInstance.action(getMarkdown());
+      const lines = markdown.split('\n');
 
-      view.state.doc.nodesBetween(0, view.state.doc.content.size, (node, pos) => {
-        if (node.isBlock) {
-          if (currentLine === line) {
-            // Found target line - position is: node start + 1 (enter block) + column
-            const maxCol = Math.max(0, node.content.size);
-            targetPos = pos + 1 + Math.min(column, maxCol);
-            return false; // Stop iteration
-          }
-          if (pos > 0) currentLine++;
-        }
-        return true;
-      });
+      // Calculate markdown offset from line:column
+      let mdOffset = 0;
+      for (let i = 0; i < line - 1 && i < lines.length; i++) {
+        mdOffset += lines[i].length + 1; // +1 for newline
+      }
+      const lineContent = lines[line - 1] || '';
+      mdOffset += Math.min(column, lineContent.length);
 
-      console.log('[Milkdown] setCursorPosition: line', line, 'col', column, '-> pos', targetPos);
+      // Map markdown offset back to PM position
+      const docSize = view.state.doc.content.size;
+      const mdLength = markdown.length;
 
-      const safePos = Math.min(Math.max(1, targetPos), view.state.doc.content.size);
-      const selection = Selection.near(view.state.doc.resolve(safePos));
+      let pmPos = Math.round((mdOffset / Math.max(mdLength, 1)) * docSize);
+      pmPos = Math.max(1, Math.min(pmPos, docSize));
+
+      console.log('[Milkdown] setCursorPosition: line', line, 'col', column,
+                  '-> mdOffset', mdOffset, '-> pmPos', pmPos);
+
+      const selection = Selection.near(view.state.doc.resolve(pmPos));
       view.dispatch(view.state.tr.setSelection(selection).scrollIntoView());
       view.focus();
     } catch (e) {
