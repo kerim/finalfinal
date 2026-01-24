@@ -87,9 +87,16 @@ After 2 failed fix attempts, STOP. Add diagnostic logging before trying again.
 
 Set `webView.isInspectable = true` in development. Safari → Develop → [app name].
 
+**Limitation:** Web Inspector context is erased when switching between Milkdown and CodeMirror (WebView reloads). For debugging editor switches, use:
+
+1. **Swift-side logging:** Add `print()` statements in `MilkdownEditor.swift` / `CodeMirrorEditor.swift` to log values returned from `evaluateJavaScript`
+2. **Persistent debug state:** Use `window.__MILKDOWN_DEBUG__` or similar to store values, then query via `getDebugState()` before the switch
+3. **Xcode console:** All Swift `print()` output appears in Xcode's debug console and persists across editor switches
+
 ## Documentation
 
 - `docs/plans/` - Feature plans (protected from overwrites)
+- `docs/deferred/` - Abandoned approaches that might be revisited later
 - `docs/LESSONS-LEARNED.md` - Technical patterns discovered
 - `docs/design.md` - Master design document
 

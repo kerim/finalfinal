@@ -1,22 +1,6 @@
 // Milkdown WYSIWYG Editor for final final
 // Uses window.FinalFinal API for Swift ↔ JS communication
 
-// Debug state for Swift-side querying
-const debugState = {
-  editorReady: false,
-  errors: [] as string[],
-  // Cursor diagnostics - persists for Swift-side querying before editor switch
-  cursorDiagnostics: null as null | {
-    head: number;
-    parentTextPreview: string;
-    matched: boolean;
-    matchedLine: number | null;
-    fallback: null | { blockCount: number; resultLine: number };
-    finalResult: { line: number; column: number };
-  },
-};
-(window as any).__MILKDOWN_DEBUG__ = debugState;
-
 import { Editor, defaultValueCtx, editorViewCtx, parserCtx } from '@milkdown/kit/core';
 import { commonmark } from '@milkdown/kit/preset/commonmark';
 import { gfm } from '@milkdown/kit/preset/gfm';
@@ -35,6 +19,8 @@ import './styles.css';
  */
 function stripMarkdownSyntax(line: string): string {
   return line
+    .replace(/^\||\|$/g, '')            // leading/trailing pipes (table)
+    .replace(/\|/g, ' ')                // internal pipes (table cells)
     .replace(/^#+\s*/, '')              // headings
     .replace(/^\s*[-*+]\s*/, '')        // unordered list items
     .replace(/^\s*\d+\.\s*/, '')        // ordered list items
@@ -47,7 +33,39 @@ function stripMarkdownSyntax(line: string): string {
     .replace(/`([^`]+)`/g, '$1')        // inline code
     .replace(/!\[([^\]]*)\]\([^)]+\)/g, '$1') // images
     .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')  // links
-    .trim();
+    .trim()
+    .replace(/\s+/g, ' ');              // normalize whitespace
+}
+
+/**
+ * Check if a markdown line is a table row (starts/ends with |)
+ */
+function isTableLine(line: string): boolean {
+  const trimmed = line.trim();
+  // Ensure at least |x| structure (3 chars minimum)
+  return trimmed.length >= 3 && trimmed.startsWith('|') && trimmed.endsWith('|');
+}
+
+/**
+ * Check if a markdown line is a table separator (| --- | --- |)
+ */
+function isTableSeparator(line: string): boolean {
+  const trimmed = line.trim();
+  return /^\|[\s:-]+\|$/.test(trimmed) || /^\|(\s*:?-+:?\s*\|)+$/.test(trimmed);
+}
+
+/**
+ * Find the table structure in markdown: returns startLine for the table containing the given line
+ */
+function findTableStartLine(lines: string[], targetLine: number): number | null {
+  if (!isTableLine(lines[targetLine - 1])) return null;
+
+  // Find table start (scan backwards)
+  let startLine = targetLine;
+  while (startLine > 1 && isTableLine(lines[startLine - 2])) {
+    startLine--;
+  }
+  return startLine;
 }
 
 
@@ -60,7 +78,6 @@ declare global {
       getStats: () => { words: number; characters: number };
       scrollToOffset: (offset: number) => void;
       setTheme: (cssVariables: string) => void;
-      getDebugState: () => string;
       getCursorPosition: () => { line: number; column: number };
       setCursorPosition: (pos: { line: number; column: number }) => void;
     };
@@ -75,7 +92,6 @@ async function initEditor() {
   const root = document.getElementById('editor');
   if (!root) {
     console.error('[Milkdown] Editor root element not found');
-    debugState.errors.push('Editor root element not found');
     return;
   }
 
@@ -92,9 +108,7 @@ async function initEditor() {
 
     root.appendChild(editorInstance.ctx.get(editorViewCtx).dom);
   } catch (e) {
-    const errorMsg = e instanceof Error ? e.message : String(e);
     console.error('[Milkdown] Init failed:', e);
-    debugState.errors.push(`Init failed: ${errorMsg}`);
     throw e;
   }
 
@@ -108,7 +122,6 @@ async function initEditor() {
     }
   };
 
-  debugState.editorReady = true;
   console.log('[Milkdown] Editor initialized');
 }
 
@@ -184,13 +197,8 @@ window.FinalFinal = {
     });
   },
 
-  getDebugState() {
-    return JSON.stringify((window as any).__MILKDOWN_DEBUG__, null, 2);
-  },
-
   getCursorPosition(): { line: number; column: number } {
     if (!editorInstance) {
-      console.log('[Milkdown] getCursorPosition: editor not ready');
       return { line: 1, column: 0 };
     }
 
@@ -205,57 +213,82 @@ window.FinalFinal = {
       const parentNode = $head.parent;
       const parentText = parentNode.textContent;
 
-      // Initialize diagnostics for Swift-side querying
-      const diag: typeof debugState.cursorDiagnostics = {
-        head: head,
-        parentTextPreview: parentText.substring(0, 80),
-        matched: false,
-        matchedLine: null,
-        fallback: null,
-        finalResult: { line: 1, column: 0 },
-      };
-
-      // Find which markdown line contains this paragraph's text
       let line = 1;
       let matched = false;
 
-      for (let i = 0; i < mdLines.length; i++) {
+      // Check if cursor is in a table by looking at ancestor nodes
+      let inTable = false;
+      for (let d = $head.depth; d > 0; d--) {
+        if ($head.node(d).type.name === 'table') {
+          inTable = true;
+          break;
+        }
+      }
+
+      // SIMPLE TABLE HANDLING: When cursor is in a table, return the table's START line
+      if (inTable) {
+        let pmTableOrdinal = 0;
+        let foundTablePos = false;
+        view.state.doc.descendants((node, pos) => {
+          if (foundTablePos) return false;
+          if (node.type.name === 'table') {
+            pmTableOrdinal++;
+            if (head > pos && head < pos + node.nodeSize) {
+              foundTablePos = true;
+              return false;
+            }
+          }
+          return true;
+        });
+
+        // Find the pmTableOrdinal-th table in markdown
+        if (pmTableOrdinal > 0) {
+          let mdTableCount = 0;
+          for (let i = 0; i < mdLines.length; i++) {
+            if (isTableLine(mdLines[i]) && !isTableSeparator(mdLines[i])) {
+              if (i === 0 || !isTableLine(mdLines[i - 1])) {
+                mdTableCount++;
+                if (mdTableCount === pmTableOrdinal) {
+                  line = i + 1;
+                  matched = true;
+                  break;
+                }
+              }
+            }
+          }
+        }
+      }
+
+      // Standard text matching (skip if already matched via table)
+      for (let i = 0; i < mdLines.length && !matched; i++) {
         const stripped = stripMarkdownSyntax(mdLines[i]);
 
-        // Exact match
         if (stripped === parentText) {
           line = i + 1;
           matched = true;
-          diag.matched = true;
-          diag.matchedLine = line;
           break;
         }
 
-        // Partial match (for long lines that may get truncated)
+        // Partial match (for long lines)
         if (stripped && parentText &&
             parentText.startsWith(stripped) &&
             stripped.length >= 10) {
           line = i + 1;
           matched = true;
-          diag.matched = true;
-          diag.matchedLine = line;
           break;
         }
 
-        // Reverse partial match (stripped is longer than parentText)
+        // Reverse partial match
         if (stripped && parentText &&
             stripped.startsWith(parentText) &&
             parentText.length >= 10) {
           line = i + 1;
           matched = true;
-          diag.matched = true;
-          diag.matchedLine = line;
           break;
         }
       }
 
-      // Fallback: count blocks from document start to find line
-      // Empty markdown lines don't create ProseMirror blocks, so we map block index to content line
+      // Fallback: count blocks from document start
       if (!matched) {
         let blockCount = 0;
         view.state.doc.descendants((node, pos) => {
@@ -266,7 +299,6 @@ window.FinalFinal = {
           return true;
         });
 
-        // Map PM block count back to MD line by finding the (blockCount)-th non-empty line
         let contentLinesSeen = 0;
         for (let i = 0; i < mdLines.length; i++) {
           if (mdLines[i].trim() !== '') {
@@ -277,15 +309,9 @@ window.FinalFinal = {
             }
           }
         }
-        // If we couldn't find enough content lines, use last valid line
         if (contentLinesSeen < blockCount) {
           line = mdLines.length;
         }
-        diag.fallback = {
-          blockCount: blockCount,
-          resultLine: line,
-        };
-        console.log('[Milkdown] getCursorPosition: fallback mapped blockCount', blockCount, 'to line', line);
       }
 
       // Calculate column with inline markdown offset mapping
@@ -293,19 +319,11 @@ window.FinalFinal = {
       const offsetInBlock = head - blockStart;
       const lineContent = mdLines[line - 1] || '';
 
-      // Account for line-start syntax
       const syntaxMatch = lineContent.match(/^(#+\s*|\s*[-*+]\s*|\s*\d+\.\s*|\s*>\s*)/);
       const syntaxLength = syntaxMatch ? syntaxMatch[0].length : 0;
       const afterSyntax = lineContent.slice(syntaxLength);
-
-      // Use mapping function for accurate column
       const column = syntaxLength + textToMdOffset(afterSyntax, offsetInBlock);
 
-      // Store final result and save diagnostics for Swift-side querying
-      diag.finalResult = { line, column };
-      debugState.cursorDiagnostics = diag;
-
-      console.log('[Milkdown] getCursorPosition: line', line, 'col', column, matched ? '' : '(fallback)');
       return { line, column };
     } catch (e) {
       console.error('[Milkdown] getCursorPosition error:', e);
@@ -315,53 +333,108 @@ window.FinalFinal = {
 
   setCursorPosition(lineCol: { line: number; column: number; scrollFraction?: number }) {
     if (!editorInstance) {
-      console.warn('[Milkdown] setCursorPosition: editor not ready');
       return;
     }
 
     try {
       const view = editorInstance.ctx.get(editorViewCtx);
-      const { line, column } = lineCol;
+      let { line, column } = lineCol;
       const markdown = editorInstance.action(getMarkdown());
       const lines = markdown.split('\n');
 
-      // Get target line and calculate text offset
-      const targetLine = lines[line - 1] || '';
+      // Handle separator rows - redirect to first data row
+      let targetLine = lines[line - 1] || '';
+
+      if (isTableLine(targetLine) && isTableSeparator(targetLine)) {
+        const tableStart = findTableStartLine(lines, line);
+        if (tableStart) {
+          let dataRowLine = line + 1;
+          while (dataRowLine <= lines.length && isTableSeparator(lines[dataRowLine - 1])) {
+            dataRowLine++;
+          }
+          if (dataRowLine <= lines.length && isTableLine(lines[dataRowLine - 1])) {
+            line = dataRowLine;
+            column = 1;
+            targetLine = lines[line - 1];
+          }
+        }
+      }
+
+      // Calculate text offset for column positioning
       const syntaxMatch = targetLine.match(/^(#+\s*|\s*[-*+]\s*|\s*\d+\.\s*|\s*>\s*)/);
       const syntaxLength = syntaxMatch ? syntaxMatch[0].length : 0;
       const afterSyntax = targetLine.slice(syntaxLength);
       const mdColumnInContent = Math.max(0, column - syntaxLength);
       const textOffset = mdToTextOffset(afterSyntax, mdColumnInContent);
 
-      // Strip syntax from target line for matching
       const targetText = stripMarkdownSyntax(targetLine);
 
-      // Find matching node in document by text content
       let pmPos = 1;
       let found = false;
-      view.state.doc.descendants((node, pos) => {
-        if (found) return false;
 
-        if (node.isBlock && node.textContent.trim() === targetText) {
-          pmPos = pos + 1 + Math.min(textOffset, node.content.size);
-          found = true;
-          return false;
-        }
-        return true;
-      });
-
-      // Fallback: map markdown line to PM block via content line index
-      // Empty markdown lines don't create ProseMirror blocks, so we count non-empty lines
-      if (!found) {
-        // Count non-empty lines up to target line to get content index
-        let contentLineIndex = 0;
-        for (let i = 0; i < line; i++) {
-          if (lines[i].trim() !== '') {
-            contentLineIndex++;
+      // SIMPLE TABLE HANDLING: Place cursor at the START of the table
+      if (isTableLine(targetLine) && !isTableSeparator(targetLine)) {
+        // Find which table this is in markdown (ordinal counting)
+        // Count tables up to and including the target line
+        let tableOrdinal = 0;
+        for (let i = 0; i <= line - 1; i++) {
+          if (isTableLine(lines[i]) && !isTableSeparator(lines[i])) {
+            if (i === 0 || !isTableLine(lines[i - 1])) {
+              tableOrdinal++;
+            }
           }
         }
 
-        // Find the contentLineIndex-th block in PM
+        // Find the tableOrdinal-th table in ProseMirror and place cursor at its start
+        let currentTableOrdinal = 0;
+        view.state.doc.descendants((node, pos) => {
+          if (found) return false;
+          if (node.type.name === 'table') {
+            currentTableOrdinal++;
+            if (currentTableOrdinal === tableOrdinal) {
+              // Place cursor at start of table (position just inside first cell)
+              pmPos = pos + 3;
+              found = true;
+              return false;
+            }
+          }
+          return true;
+        });
+      }
+
+      // Standard text matching
+      if (!found) {
+        view.state.doc.descendants((node, pos) => {
+          if (found) return false;
+
+          if (node.isBlock && node.textContent.trim() === targetText) {
+            pmPos = pos + 1 + Math.min(textOffset, node.content.size);
+            found = true;
+            return false;
+          }
+          return true;
+        });
+      }
+
+      // Fallback: map markdown line to PM block via content line index
+      if (!found) {
+        let contentLineIndex = 0;
+        let inTableBlock = false;
+        for (let i = 0; i < line; i++) {
+          const currentLine = lines[i];
+          if (isTableLine(currentLine)) {
+            if (!inTableBlock) {
+              contentLineIndex++;
+              inTableBlock = true;
+            }
+          } else {
+            inTableBlock = false;
+            if (currentLine.trim() !== '') {
+              contentLineIndex++;
+            }
+          }
+        }
+
         let blockCount = 0;
         view.state.doc.descendants((node, pos) => {
           if (found) return false;
@@ -372,10 +445,12 @@ window.FinalFinal = {
               found = true;
               return false;
             }
+            if (node.type.name === 'table') {
+              return false;
+            }
           }
           return true;
         });
-        console.log('[Milkdown] setCursorPosition: fallback used contentLineIndex', contentLineIndex, 'for line', line);
       }
 
       const selection = Selection.near(view.state.doc.resolve(pmPos));
@@ -399,8 +474,6 @@ window.FinalFinal = {
           }
         });
       }
-
-      console.log('[Milkdown] setCursorPosition: line', line, 'col', column, '-> pmPos', pmPos);
     } catch (e) {
       console.warn('[Milkdown] setCursorPosition failed:', e);
     }
@@ -409,7 +482,5 @@ window.FinalFinal = {
 
 // Initialize editor
 initEditor().catch((e) => {
-  const errorMsg = e instanceof Error ? e.message : String(e);
   console.error('[Milkdown] Init failed:', e);
-  debugState.errors.push(`initEditor failed: ${errorMsg}`);
 });
