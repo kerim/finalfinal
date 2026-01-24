@@ -1,20 +1,19 @@
 // Milkdown WYSIWYG Editor for final final
 // Uses window.FinalFinal API for Swift ↔ JS communication
 
-// === PHASE 1: Verify script execution at the very top ===
-(window as any).__MILKDOWN_SCRIPT_STARTED__ = Date.now();
-console.log('[Milkdown] SCRIPT TAG EXECUTED - timestamp:', Date.now());
-
-// === PHASE 6: Debug state object for Swift-side querying ===
+// Debug state for Swift-side querying
 const debugState = {
-  scriptLoaded: true,
-  importsComplete: false,
-  apiRegistered: false,
-  initStarted: false,
-  initSteps: [] as string[],
+  editorReady: false,
   errors: [] as string[],
-  editorCreated: false,
-  domReady: false,
+  // Cursor diagnostics - persists for Swift-side querying before editor switch
+  cursorDiagnostics: null as null | {
+    head: number;
+    parentTextPreview: string;
+    matched: boolean;
+    matchedLine: number | null;
+    fallback: null | { blockCount: number; resultLine: number };
+    finalResult: { line: number; column: number };
+  },
 };
 (window as any).__MILKDOWN_DEBUG__ = debugState;
 
@@ -30,10 +29,27 @@ import { focusModePlugin, setFocusModeEnabled } from './focus-mode-plugin';
 import { textToMdOffset, mdToTextOffset } from './cursor-mapping';
 import './styles.css';
 
-// === PHASE 1: Verify imports completed ===
-console.log('[Milkdown] IMPORTS COMPLETED');
-debugState.importsComplete = true;
-debugState.initSteps.push('Imports completed');
+/**
+ * Strip markdown syntax from a line to get plain text content
+ * Used for matching ProseMirror nodes to markdown lines
+ */
+function stripMarkdownSyntax(line: string): string {
+  return line
+    .replace(/^#+\s*/, '')              // headings
+    .replace(/^\s*[-*+]\s*/, '')        // unordered list items
+    .replace(/^\s*\d+\.\s*/, '')        // ordered list items
+    .replace(/^\s*>\s*/, '')            // blockquotes
+    .replace(/~~(.+?)~~/g, '$1')        // strikethrough
+    .replace(/\*\*(.+?)\*\*/g, '$1')    // bold
+    .replace(/__(.+?)__/g, '$1')        // bold alt
+    .replace(/\*(.+?)\*/g, '$1')        // italic
+    .replace(/_([^_]+)_/g, '$1')        // italic alt
+    .replace(/`([^`]+)`/g, '$1')        // inline code
+    .replace(/!\[([^\]]*)\]\([^)]+\)/g, '$1') // images
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')  // links
+    .trim();
+}
+
 
 declare global {
   interface Window {
@@ -56,29 +72,16 @@ let currentContent = '';
 let isSettingContent = false;
 
 async function initEditor() {
-  // === PHASE 5: Numbered logging throughout initialization ===
-  console.log('[Milkdown] INIT STEP 1: Function entered');
-  debugState.initStarted = true;
-  debugState.initSteps.push('Step 1: initEditor() entered');
-
   const root = document.getElementById('editor');
-  console.log('[Milkdown] INIT STEP 2: querySelector result:', root);
-  debugState.initSteps.push(`Step 2: #editor element = ${root ? 'found' : 'NOT FOUND'}`);
-
   if (!root) {
-    console.error('[Milkdown] INIT STEP 2 FAILED: Editor root element not found');
+    console.error('[Milkdown] Editor root element not found');
     debugState.errors.push('Editor root element not found');
     return;
   }
 
-  console.log('[Milkdown] INIT STEP 3: Starting Editor.make()');
-  debugState.initSteps.push('Step 3: Starting Editor.make()');
-
   try {
     editorInstance = await Editor.make()
       .config((ctx) => {
-        console.log('[Milkdown] INIT STEP 4: Inside config callback');
-        debugState.initSteps.push('Step 4: Inside config callback');
         ctx.set(defaultValueCtx, '');
       })
       .use(commonmark)
@@ -87,35 +90,15 @@ async function initEditor() {
       .use(focusModePlugin)
       .create();
 
-    console.log('[Milkdown] INIT STEP 5: Editor.make().create() completed');
-    debugState.initSteps.push('Step 5: Editor created');
-    debugState.editorCreated = true;
-    console.log('[Milkdown] INIT STEP 6: Editor instance:', editorInstance);
-  } catch (e) {
-    const errorMsg = e instanceof Error ? e.message : String(e);
-    console.error('[Milkdown] INIT STEP FAILED at create:', e);
-    debugState.errors.push(`Editor.make().create() failed: ${errorMsg}`);
-    throw e;
-  }
-
-  console.log('[Milkdown] INIT STEP 7: Appending editor DOM to root');
-  debugState.initSteps.push('Step 7: Appending DOM');
-
-  try {
     root.appendChild(editorInstance.ctx.get(editorViewCtx).dom);
-    console.log('[Milkdown] INIT STEP 8: DOM appended successfully');
-    debugState.initSteps.push('Step 8: DOM appended');
   } catch (e) {
     const errorMsg = e instanceof Error ? e.message : String(e);
-    console.error('[Milkdown] INIT STEP 7-8 FAILED:', e);
-    debugState.errors.push(`DOM append failed: ${errorMsg}`);
+    console.error('[Milkdown] Init failed:', e);
+    debugState.errors.push(`Init failed: ${errorMsg}`);
     throw e;
   }
 
   // Track content changes
-  console.log('[Milkdown] INIT STEP 9: Setting up dispatch wrapper');
-  debugState.initSteps.push('Step 9: Setting up dispatch');
-
   const view = editorInstance.ctx.get(editorViewCtx);
   const originalDispatch = view.dispatch.bind(view);
   view.dispatch = (tr) => {
@@ -125,8 +108,8 @@ async function initEditor() {
     }
   };
 
-  console.log('[Milkdown] INIT STEP 10: Editor fully initialized');
-  debugState.initSteps.push('Step 10: Initialization complete');
+  debugState.editorReady = true;
+  console.log('[Milkdown] Editor initialized');
 }
 
 window.FinalFinal = {
@@ -172,7 +155,6 @@ window.FinalFinal = {
       const view = editorInstance.ctx.get(editorViewCtx);
       view.dispatch(view.state.tr);
     }
-    console.log('[Milkdown] Focus mode:', enabled);
   },
 
   getStats() {
@@ -202,7 +184,6 @@ window.FinalFinal = {
     });
   },
 
-  // === PHASE 6: Debug state getter for Swift-side querying ===
   getDebugState() {
     return JSON.stringify((window as any).__MILKDOWN_DEBUG__, null, 2);
   },
@@ -224,26 +205,87 @@ window.FinalFinal = {
       const parentNode = $head.parent;
       const parentText = parentNode.textContent;
 
+      // Initialize diagnostics for Swift-side querying
+      const diag: typeof debugState.cursorDiagnostics = {
+        head: head,
+        parentTextPreview: parentText.substring(0, 80),
+        matched: false,
+        matchedLine: null,
+        fallback: null,
+        finalResult: { line: 1, column: 0 },
+      };
+
       // Find which markdown line contains this paragraph's text
       let line = 1;
-      for (let i = 0; i < mdLines.length; i++) {
-        const rawLine = mdLines[i];
-        const stripped = rawLine
-          .replace(/^#+\s*/, '')           // headings
-          .replace(/^\s*[-*+]\s*/, '')     // unordered list items
-          .replace(/^\s*\d+\.\s*/, '')     // ordered list items
-          .replace(/^\s*>\s*/, '')         // blockquotes
-          .replace(/\*\*([^*]+)\*\*/g, '$1')  // bold
-          .replace(/\*([^*]+)\*/g, '$1')      // italic
-          .replace(/`([^`]+)`/g, '$1')        // inline code
-          .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1') // links
-          .trim();
+      let matched = false;
 
-        if (stripped === parentText ||
-            (stripped && parentText.startsWith(stripped) && stripped.length >= 10)) {
+      for (let i = 0; i < mdLines.length; i++) {
+        const stripped = stripMarkdownSyntax(mdLines[i]);
+
+        // Exact match
+        if (stripped === parentText) {
           line = i + 1;
+          matched = true;
+          diag.matched = true;
+          diag.matchedLine = line;
           break;
         }
+
+        // Partial match (for long lines that may get truncated)
+        if (stripped && parentText &&
+            parentText.startsWith(stripped) &&
+            stripped.length >= 10) {
+          line = i + 1;
+          matched = true;
+          diag.matched = true;
+          diag.matchedLine = line;
+          break;
+        }
+
+        // Reverse partial match (stripped is longer than parentText)
+        if (stripped && parentText &&
+            stripped.startsWith(parentText) &&
+            parentText.length >= 10) {
+          line = i + 1;
+          matched = true;
+          diag.matched = true;
+          diag.matchedLine = line;
+          break;
+        }
+      }
+
+      // Fallback: count blocks from document start to find line
+      // Empty markdown lines don't create ProseMirror blocks, so we map block index to content line
+      if (!matched) {
+        let blockCount = 0;
+        view.state.doc.descendants((node, pos) => {
+          if (pos >= head) return false;
+          if (node.isBlock && node.type.name !== 'doc') {
+            blockCount++;
+          }
+          return true;
+        });
+
+        // Map PM block count back to MD line by finding the (blockCount)-th non-empty line
+        let contentLinesSeen = 0;
+        for (let i = 0; i < mdLines.length; i++) {
+          if (mdLines[i].trim() !== '') {
+            contentLinesSeen++;
+            if (contentLinesSeen === blockCount) {
+              line = i + 1;
+              break;
+            }
+          }
+        }
+        // If we couldn't find enough content lines, use last valid line
+        if (contentLinesSeen < blockCount) {
+          line = mdLines.length;
+        }
+        diag.fallback = {
+          blockCount: blockCount,
+          resultLine: line,
+        };
+        console.log('[Milkdown] getCursorPosition: fallback mapped blockCount', blockCount, 'to line', line);
       }
 
       // Calculate column with inline markdown offset mapping
@@ -259,7 +301,11 @@ window.FinalFinal = {
       // Use mapping function for accurate column
       const column = syntaxLength + textToMdOffset(afterSyntax, offsetInBlock);
 
-      console.log('[Milkdown] getCursorPosition: line', line, 'col', column);
+      // Store final result and save diagnostics for Swift-side querying
+      diag.finalResult = { line, column };
+      debugState.cursorDiagnostics = diag;
+
+      console.log('[Milkdown] getCursorPosition: line', line, 'col', column, matched ? '' : '(fallback)');
       return { line, column };
     } catch (e) {
       console.error('[Milkdown] getCursorPosition error:', e);
@@ -288,22 +334,14 @@ window.FinalFinal = {
       const textOffset = mdToTextOffset(afterSyntax, mdColumnInContent);
 
       // Strip syntax from target line for matching
-      const targetText = targetLine
-        .replace(/^#+\s*/, '')
-        .replace(/^\s*[-*+]\s*/, '')
-        .replace(/^\s*\d+\.\s*/, '')
-        .replace(/^\s*>\s*/, '')
-        .replace(/\*\*([^*]+)\*\*/g, '$1')
-        .replace(/\*([^*]+)\*/g, '$1')
-        .replace(/`([^`]+)`/g, '$1')
-        .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
-        .trim();
+      const targetText = stripMarkdownSyntax(targetLine);
 
-      // Find matching node in document
+      // Find matching node in document by text content
       let pmPos = 1;
       let found = false;
       view.state.doc.descendants((node, pos) => {
         if (found) return false;
+
         if (node.isBlock && node.textContent.trim() === targetText) {
           pmPos = pos + 1 + Math.min(textOffset, node.content.size);
           found = true;
@@ -311,6 +349,34 @@ window.FinalFinal = {
         }
         return true;
       });
+
+      // Fallback: map markdown line to PM block via content line index
+      // Empty markdown lines don't create ProseMirror blocks, so we count non-empty lines
+      if (!found) {
+        // Count non-empty lines up to target line to get content index
+        let contentLineIndex = 0;
+        for (let i = 0; i < line; i++) {
+          if (lines[i].trim() !== '') {
+            contentLineIndex++;
+          }
+        }
+
+        // Find the contentLineIndex-th block in PM
+        let blockCount = 0;
+        view.state.doc.descendants((node, pos) => {
+          if (found) return false;
+          if (node.isBlock && node.type.name !== 'doc') {
+            blockCount++;
+            if (blockCount === contentLineIndex) {
+              pmPos = pos + 1 + Math.min(textOffset, node.content.size);
+              found = true;
+              return false;
+            }
+          }
+          return true;
+        });
+        console.log('[Milkdown] setCursorPosition: fallback used contentLineIndex', contentLineIndex, 'for line', line);
+      }
 
       const selection = Selection.near(view.state.doc.resolve(pmPos));
       view.dispatch(view.state.tr.setSelection(selection).scrollIntoView());
@@ -341,25 +407,9 @@ window.FinalFinal = {
   },
 };
 
-// Register API before calling initEditor
-console.log('[Milkdown] window.FinalFinal API registering...');
-debugState.apiRegistered = true;
-debugState.initSteps.push('API registered');
-
-// Check DOM ready state
-console.log('[Milkdown] Document readyState:', document.readyState);
-debugState.domReady = document.readyState === 'complete' || document.readyState === 'interactive';
-debugState.initSteps.push(`DOM readyState: ${document.readyState}`);
-
-initEditor()
-  .then(() => {
-    console.log('[Milkdown] initEditor() promise resolved');
-    debugState.initSteps.push('initEditor promise resolved');
-  })
-  .catch((e) => {
-    const errorMsg = e instanceof Error ? e.message : String(e);
-    console.error('[Milkdown] Init failed:', e);
-    debugState.errors.push(`initEditor failed: ${errorMsg}`);
-  });
-
-console.log('[Milkdown] window.FinalFinal API registered');
+// Initialize editor
+initEditor().catch((e) => {
+  const errorMsg = e instanceof Error ? e.message : String(e);
+  console.error('[Milkdown] Init failed:', e);
+  debugState.errors.push(`initEditor failed: ${errorMsg}`);
+});
