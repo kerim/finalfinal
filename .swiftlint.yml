@@ -1,0 +1,20 @@
+# SwiftLint Configuration for "final final"
+
+# Allow idiomatic short variable names
+identifier_name:
+  excluded:
+    - db  # GRDB database connection
+    - t   # GRDB table builder
+    - i   # Loop index
+    - fm  # FileManager
+    - id  # Identifiable protocol conformance
+
+# Increase line length limit - inline JS strings are more readable on single lines
+line_length:
+  warning: 150
+  error: 200
+
+# Allow larger coordinator classes - WKWebView delegates naturally grow
+type_body_length:
+  warning: 300
+  error: 400

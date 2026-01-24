@@ -238,7 +238,7 @@ struct MilkdownEditor: NSViewRepresentable {
                 }
             }
 
-            webView.evaluateJavaScript("document.querySelector('#editor') !== null") { result, error in
+            webView.evaluateJavaScript("document.querySelector('#editor') !== null") { result, _ in
                 print("[MilkdownEditor] #editor element exists: \(result ?? "unknown")")
             }
 

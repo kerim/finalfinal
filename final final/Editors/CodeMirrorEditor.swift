@@ -204,11 +204,11 @@ struct CodeMirrorEditor: NSViewRepresentable {
             #if DEBUG
             print("[CodeMirrorEditor] WebView finished loading")
 
-            webView.evaluateJavaScript("typeof window.__CODEMIRROR_SCRIPT_STARTED__") { result, error in
+            webView.evaluateJavaScript("typeof window.__CODEMIRROR_SCRIPT_STARTED__") { result, _ in
                 print("[CodeMirrorEditor] JS script check: \(result ?? "nil")")
             }
 
-            webView.evaluateJavaScript("typeof window.FinalFinal") { result, error in
+            webView.evaluateJavaScript("typeof window.FinalFinal") { result, _ in
                 print("[CodeMirrorEditor] window.FinalFinal type: \(result ?? "nil")")
             }
             #endif

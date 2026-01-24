@@ -18,7 +18,7 @@ struct CursorPosition: Equatable {
 struct ContentView: View {
     @Environment(ThemeManager.self) private var themeManager
     @State private var editorState = EditorViewState()
-    @State private var cursorPositionToRestore: CursorPosition? = nil
+    @State private var cursorPositionToRestore: CursorPosition?
 
     private let demoContent = """
 # Welcome to final final

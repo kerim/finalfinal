@@ -23,7 +23,7 @@ enum EditorMode: String, CaseIterable {
 class EditorViewState {
     var editorMode: EditorMode = .wysiwyg
     var focusModeEnabled: Bool = false
-    var zoomedSectionId: String? = nil
+    var zoomedSectionId: String?
     var wordCount: Int = 0
     var characterCount: Int = 0
     var currentSectionName: String = ""
@@ -32,7 +32,7 @@ class EditorViewState {
     var content: String = ""
 
     // MARK: - Scroll Request
-    var scrollToOffset: Int? = nil
+    var scrollToOffset: Int?
 
     // MARK: - Stats Update
     func updateStats(words: Int, characters: Int) {
