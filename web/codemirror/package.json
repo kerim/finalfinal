@@ -1,6 +1,6 @@
 {
   "name": "@final-final/codemirror-editor",
-  "version": "0.1.7",
+  "version": "0.1.9",
   "private": true,
   "type": "module",
   "scripts": {
