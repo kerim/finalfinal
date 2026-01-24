@@ -17,6 +17,7 @@ declare global {
       setTheme: (cssVariables: string) => void;
       getCursorPosition: () => { line: number; column: number };
       setCursorPosition: (pos: { line: number; column: number }) => void;
+      scrollCursorToCenter: () => void;
     };
     __CODEMIRROR_DEBUG__?: {
       editorReady: boolean;
@@ -38,6 +39,22 @@ window.__CODEMIRROR_DEBUG__ = {
   lastContentLength: 0,
   lastStatsUpdate: ''
 };
+
+// === Diagnostic logging for cursor position debugging ===
+let _debugSeq = 0;
+const _debugLog: Array<{ seq: number; ts: string; msg: string }> = [];
+
+function debugLog(msg: string) {
+  const seq = ++_debugSeq;
+  const ts = performance.now().toFixed(2);
+  console.log(`[CM DEBUG ${seq}] T=${ts}ms: ${msg}`);
+  _debugLog.push({ seq, ts, msg });
+  // Keep only last 50 entries
+  if (_debugLog.length > 50) _debugLog.shift();
+}
+
+// Expose debug log for Swift to query
+(window as any).__CM_DEBUG_LOG__ = _debugLog;
 
 function initEditor() {
   const container = document.getElementById('editor');
@@ -113,12 +130,20 @@ function countWords(text: string): number {
 // Register window.FinalFinal API
 window.FinalFinal = {
   setContent(markdown: string) {
-    if (!editorView) return;
+    debugLog(`setContent START, ${markdown.length} chars`);
+    if (!editorView) {
+      debugLog('setContent: no editorView');
+      return;
+    }
+    const prevLen = editorView.state.doc.length;
+    const prevCursor = editorView.state.selection.main.head;
     editorView.dispatch({
-      changes: { from: 0, to: editorView.state.doc.length, insert: markdown }
+      changes: { from: 0, to: prevLen, insert: markdown }
     });
+    const newLen = editorView.state.doc.length;
+    const newCursor = editorView.state.selection.main.head;
     window.__CODEMIRROR_DEBUG__!.lastContentLength = markdown.length;
-    console.log('[CodeMirror] setContent:', markdown.length, 'chars');
+    debugLog(`setContent DONE, prevLen=${prevLen}, newLen=${newLen}, prevCursor=${prevCursor}, newCursor=${newCursor}`);
   },
 
   getContent(): string {
@@ -161,28 +186,31 @@ window.FinalFinal = {
   },
 
   getCursorPosition(): { line: number; column: number } {
+    debugLog('getCursorPosition START');
     if (!editorView) {
-      console.log('[CodeMirror] getCursorPosition: editor not ready, returning line 1 col 0');
+      debugLog('getCursorPosition: editor not ready, returning line 1 col 0');
       return { line: 1, column: 0 };
     }
     try {
       const pos = editorView.state.selection.main.head;
+      const docLen = editorView.state.doc.length;
       const line = editorView.state.doc.lineAt(pos);
       const result = {
         line: line.number,  // CodeMirror lines are 1-indexed
         column: pos - line.from
       };
-      console.log('[CodeMirror] getCursorPosition: line', result.line, 'col', result.column);
+      debugLog(`getCursorPosition DONE: pos=${pos}, docLen=${docLen}, line=${result.line}, col=${result.column}`);
       return result;
     } catch (e) {
-      console.error('[CodeMirror] getCursorPosition error:', e);
+      debugLog(`getCursorPosition error: ${e}`);
       return { line: 1, column: 0 };
     }
   },
 
   setCursorPosition(lineCol: { line: number; column: number }) {
+    debugLog(`setCursorPosition START: line=${lineCol.line}, col=${lineCol.column}`);
     if (!editorView) {
-      console.warn('[CodeMirror] setCursorPosition: editor not ready');
+      debugLog('setCursorPosition: editor not ready');
       return;
     }
     try {
@@ -198,15 +226,34 @@ window.FinalFinal = {
 
       const pos = lineInfo.from + safeCol;
 
-      console.log('[CodeMirror] setCursorPosition: line', safeLine, 'col', safeCol, '-> pos', pos);
+      debugLog(`setCursorPosition: lineCount=${lineCount}, safeLine=${safeLine}, safeCol=${safeCol}, pos=${pos}`);
 
+      const cursorBefore = editorView.state.selection.main.head;
       editorView.dispatch({
         selection: { anchor: pos },
         effects: EditorView.scrollIntoView(pos, { y: 'center' })
       });
+      const cursorAfter = editorView.state.selection.main.head;
+      debugLog(`setCursorPosition DONE: cursorBefore=${cursorBefore}, cursorAfter=${cursorAfter}`);
       editorView.focus();
     } catch (e) {
-      console.warn('[CodeMirror] setCursorPosition failed:', e);
+      debugLog(`setCursorPosition failed: ${e}`);
+    }
+  },
+
+  scrollCursorToCenter() {
+    if (!editorView) return;
+    try {
+      const pos = editorView.state.selection.main.head;
+      const coords = editorView.coordsAtPos(pos);
+      if (coords) {
+        const viewportHeight = window.innerHeight;
+        const targetScrollY = coords.top + window.scrollY - (viewportHeight / 2);
+        window.scrollTo({ top: Math.max(0, targetScrollY), behavior: 'instant' });
+        console.log('[CodeMirror] scrollCursorToCenter: scrolled to', targetScrollY);
+      }
+    } catch (e) {
+      console.warn('[CodeMirror] scrollCursorToCenter failed:', e);
     }
   }
 };

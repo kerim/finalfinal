@@ -114,6 +114,9 @@ struct CodeMirrorEditor: NSViewRepresentable {
         private var isCleanedUp = false
         private var toggleObserver: NSObjectProtocol?
 
+        /// Pending cursor position that is being restored (set before JS call, cleared after)
+        private var pendingCursorRestore: CursorPosition?
+
         init(
             content: Binding<String>,
             cursorPositionToRestore: Binding<CursorPosition?>,
@@ -181,7 +184,22 @@ struct CodeMirrorEditor: NSViewRepresentable {
                 return
             }
 
-            webView.evaluateJavaScript("JSON.stringify(window.FinalFinal.getCursorPosition())") { result, _ in
+            // RACE CONDITION FIX: If we have a pending cursor restore that hasn't completed,
+            // use that position instead of reading from the editor (which would return wrong value)
+            if let pending = pendingCursorRestore {
+                print("[CodeMirrorEditor] saveAndNotify: using pending cursor restore position line \(pending.line) col \(pending.column)")
+                NotificationCenter.default.post(
+                    name: .didSaveCursorPosition,
+                    object: nil,
+                    userInfo: ["position": pending]
+                )
+                return
+            }
+
+            webView.evaluateJavaScript("JSON.stringify(window.FinalFinal.getCursorPosition())") { [weak self] result, _ in
+                // Query debug log first
+                self?.queryDebugLog()
+
                 var position = CursorPosition.start
                 if let json = result as? String,
                    let data = json.data(using: .utf8),
@@ -230,8 +248,39 @@ struct CodeMirrorEditor: NSViewRepresentable {
             // Small delay to ensure content is fully loaded
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
                 print("[CodeMirrorEditor] restoreCursorPositionIfNeeded: delay elapsed, setting cursor position")
-                self?.setCursorPosition(position)
+                self?.setCursorPosition(position) {
+                    // Scroll cursor to center after cursor is set
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+                        self?.scrollCursorToCenter()
+                    }
+                }
                 self?.cursorPositionToRestoreBinding.wrappedValue = nil
+            }
+        }
+
+        func scrollCursorToCenter() {
+            guard isEditorReady, let webView else { return }
+            webView.evaluateJavaScript("window.FinalFinal.scrollCursorToCenter()") { _, error in
+                if let error = error {
+                    print("[CodeMirrorEditor] scrollCursorToCenter error: \(error)")
+                }
+            }
+        }
+
+        /// Query the JavaScript debug log for cursor position debugging
+        func queryDebugLog() {
+            guard isEditorReady, let webView else {
+                print("[CodeMirrorEditor] queryDebugLog: editor not ready")
+                return
+            }
+            webView.evaluateJavaScript("JSON.stringify(window.__CM_DEBUG_LOG__ || [])") { result, error in
+                if let error = error {
+                    print("[CodeMirrorEditor] queryDebugLog error: \(error)")
+                    return
+                }
+                if let json = result as? String {
+                    print("[CodeMirrorEditor] JS DEBUG LOG: \(json)")
+                }
             }
         }
 
@@ -296,18 +345,28 @@ struct CodeMirrorEditor: NSViewRepresentable {
             }
         }
 
-        func setCursorPosition(_ position: CursorPosition) {
+        func setCursorPosition(_ position: CursorPosition, completion: (() -> Void)? = nil) {
             print("[CodeMirrorEditor] setCursorPosition called with: line \(position.line) col \(position.column)")
             guard isEditorReady, let webView else {
                 print("[CodeMirrorEditor] setCursorPosition: editor not ready")
+                completion?()
                 return
             }
+
+            // Track pending cursor restore to handle race conditions with toggle
+            pendingCursorRestore = position
+
             webView.evaluateJavaScript(
                 "window.FinalFinal.setCursorPosition({line: \(position.line), column: \(position.column)})"
-            ) { _, error in
+            ) { [weak self] _, error in
                 if let error = error {
                     print("[CodeMirrorEditor] setCursorPosition error: \(error)")
                 }
+                // Clear pending restore now that JS has executed
+                self?.pendingCursorRestore = nil
+                // Query debug log to see what happened
+                self?.queryDebugLog()
+                completion?()
             }
         }
 

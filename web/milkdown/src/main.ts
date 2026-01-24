@@ -80,6 +80,7 @@ declare global {
       setTheme: (cssVariables: string) => void;
       getCursorPosition: () => { line: number; column: number };
       setCursorPosition: (pos: { line: number; column: number }) => void;
+      scrollCursorToCenter: () => void;
     };
   }
 }
@@ -87,6 +88,22 @@ declare global {
 let editorInstance: Editor | null = null;
 let currentContent = '';
 let isSettingContent = false;
+
+// === Diagnostic logging for cursor position debugging ===
+let _debugSeq = 0;
+const _debugLog: Array<{ seq: number; ts: string; msg: string }> = [];
+
+function debugLog(msg: string) {
+  const seq = ++_debugSeq;
+  const ts = performance.now().toFixed(2);
+  console.log(`[MD DEBUG ${seq}] T=${ts}ms: ${msg}`);
+  _debugLog.push({ seq, ts, msg });
+  // Keep only last 50 entries
+  if (_debugLog.length > 50) _debugLog.shift();
+}
+
+// Expose debug log for Swift to query
+(window as any).__MD_DEBUG_LOG__ = _debugLog;
 
 async function initEditor() {
   const root = document.getElementById('editor');
@@ -127,11 +144,16 @@ async function initEditor() {
 
 window.FinalFinal = {
   setContent(markdown: string) {
+    debugLog(`setContent START, ${markdown.length} chars`);
     if (!editorInstance) {
+      debugLog('setContent: no editorInstance, caching content');
       currentContent = markdown;
       return;
     }
-    if (currentContent === markdown) return;
+    if (currentContent === markdown) {
+      debugLog('setContent: content unchanged, skipping');
+      return;
+    }
 
     isSettingContent = true;
     try {
@@ -139,10 +161,15 @@ window.FinalFinal = {
         const view = ctx.get(editorViewCtx);
         const parser = ctx.get(parserCtx);
         const doc = parser(markdown);
-        if (!doc) return;
+        if (!doc) {
+          debugLog('setContent: parser returned null');
+          return;
+        }
 
+        const prevSize = view.state.doc.content.size;
+        const prevCursor = view.state.selection.anchor;
         const { from } = view.state.selection;
-        let tr = view.state.tr.replace(0, view.state.doc.content.size, new Slice(doc.content, 0, 0));
+        let tr = view.state.tr.replace(0, prevSize, new Slice(doc.content, 0, 0));
 
         const safeFrom = Math.min(from, Math.max(0, doc.content.size - 1));
         try {
@@ -151,6 +178,10 @@ window.FinalFinal = {
           tr = tr.setSelection(Selection.atStart(tr.doc));
         }
         view.dispatch(tr);
+
+        const newSize = view.state.doc.content.size;
+        const newCursor = view.state.selection.anchor;
+        debugLog(`setContent DONE: prevSize=${prevSize}, newSize=${newSize}, prevCursor=${prevCursor}, newCursor=${newCursor}`);
       });
       currentContent = markdown;
     } finally {
@@ -198,13 +229,17 @@ window.FinalFinal = {
   },
 
   getCursorPosition(): { line: number; column: number } {
+    debugLog('getCursorPosition START');
     if (!editorInstance) {
+      debugLog('getCursorPosition: no editorInstance, returning line 1 col 0');
       return { line: 1, column: 0 };
     }
 
     try {
       const view = editorInstance.ctx.get(editorViewCtx);
       const { head } = view.state.selection;
+      const docSize = view.state.doc.content.size;
+      debugLog(`getCursorPosition: head=${head}, docSize=${docSize}`);
       const markdown = editorInstance.action(getMarkdown());
       const mdLines = markdown.split('\n');
       const $head = view.state.doc.resolve(head);
@@ -324,23 +359,28 @@ window.FinalFinal = {
       const afterSyntax = lineContent.slice(syntaxLength);
       const column = syntaxLength + textToMdOffset(afterSyntax, offsetInBlock);
 
+      debugLog(`getCursorPosition DONE: line=${line}, column=${column}, matched=${matched}, inTable=${inTable}`);
       return { line, column };
     } catch (e) {
-      console.error('[Milkdown] getCursorPosition error:', e);
+      debugLog(`getCursorPosition error: ${e}`);
       return { line: 1, column: 0 };
     }
   },
 
   setCursorPosition(lineCol: { line: number; column: number; scrollFraction?: number }) {
+    debugLog(`setCursorPosition START: line=${lineCol.line}, col=${lineCol.column}`);
     if (!editorInstance) {
+      debugLog('setCursorPosition: no editorInstance');
       return;
     }
 
     try {
       const view = editorInstance.ctx.get(editorViewCtx);
+      const cursorBefore = view.state.selection.anchor;
       let { line, column } = lineCol;
       const markdown = editorInstance.action(getMarkdown());
       const lines = markdown.split('\n');
+      debugLog(`setCursorPosition: cursorBefore=${cursorBefore}, mdLines=${lines.length}`);
 
       // Handle separator rows - redirect to first data row
       let targetLine = lines[line - 1] || '';
@@ -455,6 +495,8 @@ window.FinalFinal = {
 
       const selection = Selection.near(view.state.doc.resolve(pmPos));
       view.dispatch(view.state.tr.setSelection(selection).scrollIntoView());
+      const cursorAfter = view.state.selection.anchor;
+      debugLog(`setCursorPosition: pmPos=${pmPos}, found=${found}, cursorAfter=${cursorAfter}`);
       view.focus();
 
       // Restore scroll position if provided
@@ -474,8 +516,26 @@ window.FinalFinal = {
           }
         });
       }
+      debugLog('setCursorPosition DONE');
     } catch (e) {
-      console.warn('[Milkdown] setCursorPosition failed:', e);
+      debugLog(`setCursorPosition failed: ${e}`);
+    }
+  },
+
+  scrollCursorToCenter() {
+    if (!editorInstance) return;
+    try {
+      const view = editorInstance.ctx.get(editorViewCtx);
+      const { head } = view.state.selection;
+      const coords = view.coordsAtPos(head);
+      if (coords) {
+        const viewportHeight = window.innerHeight;
+        const targetScrollY = coords.top + window.scrollY - (viewportHeight / 2);
+        window.scrollTo({ top: Math.max(0, targetScrollY), behavior: 'instant' });
+        console.log('[Milkdown] scrollCursorToCenter: scrolled to', targetScrollY);
+      }
+    } catch (e) {
+      console.warn('[Milkdown] scrollCursorToCenter failed:', e);
     }
   },
 };

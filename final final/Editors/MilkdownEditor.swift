@@ -121,6 +121,9 @@ struct MilkdownEditor: NSViewRepresentable {
         private var isCleanedUp = false
         private var toggleObserver: NSObjectProtocol?
 
+        /// Pending cursor position that is being restored (set before JS call, cleared after)
+        private var pendingCursorRestore: CursorPosition?
+
         init(
             content: Binding<String>,
             cursorPositionToRestore: Binding<CursorPosition?>,
@@ -188,7 +191,22 @@ struct MilkdownEditor: NSViewRepresentable {
                 return
             }
 
+            // RACE CONDITION FIX: If we have a pending cursor restore that hasn't completed,
+            // use that position instead of reading from the editor (which would return wrong value)
+            if let pending = pendingCursorRestore {
+                print("[MilkdownEditor] saveAndNotify: using pending cursor restore position line \(pending.line) col \(pending.column)")
+                NotificationCenter.default.post(
+                    name: .didSaveCursorPosition,
+                    object: nil,
+                    userInfo: ["position": pending]
+                )
+                return
+            }
+
             webView.evaluateJavaScript("JSON.stringify(window.FinalFinal.getCursorPosition())") { [weak self] result, _ in
+                // Query debug log first
+                self?.queryDebugLog()
+
                 var position = CursorPosition.start
                 if let json = result as? String,
                    let data = json.data(using: .utf8),
@@ -199,15 +217,6 @@ struct MilkdownEditor: NSViewRepresentable {
                 }
 
                 print("[MilkdownEditor] saveAndNotify: posting didSaveCursorPosition with line \(position.line) col \(position.column)")
-
-                // Query cursor diagnostics for debugging (persists in debugState before WebView unloads)
-                self?.webView?.evaluateJavaScript(
-                    "JSON.stringify(window.__MILKDOWN_DEBUG__.cursorDiagnostics)"
-                ) { diagResult, _ in
-                    if let diagJson = diagResult as? String, diagJson != "null" {
-                        print("[MilkdownEditor] CURSOR DIAGNOSTICS: \(diagJson)")
-                    }
-                }
 
                 NotificationCenter.default.post(
                     name: .didSaveCursorPosition,
@@ -263,8 +272,39 @@ struct MilkdownEditor: NSViewRepresentable {
             guard let position = cursorPositionToRestoreBinding.wrappedValue else { return }
             // Small delay to ensure content is fully loaded
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
-                self?.setCursorPosition(position)
+                self?.setCursorPosition(position) {
+                    // Scroll cursor to center after cursor is set
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+                        self?.scrollCursorToCenter()
+                    }
+                }
                 self?.cursorPositionToRestoreBinding.wrappedValue = nil
+            }
+        }
+
+        func scrollCursorToCenter() {
+            guard isEditorReady, let webView else { return }
+            webView.evaluateJavaScript("window.FinalFinal.scrollCursorToCenter()") { _, error in
+                if let error = error {
+                    print("[MilkdownEditor] scrollCursorToCenter error: \(error)")
+                }
+            }
+        }
+
+        /// Query the JavaScript debug log for cursor position debugging
+        func queryDebugLog() {
+            guard isEditorReady, let webView else {
+                print("[MilkdownEditor] queryDebugLog: editor not ready")
+                return
+            }
+            webView.evaluateJavaScript("JSON.stringify(window.__MD_DEBUG_LOG__ || [])") { result, error in
+                if let error = error {
+                    print("[MilkdownEditor] queryDebugLog error: \(error)")
+                    return
+                }
+                if let json = result as? String {
+                    print("[MilkdownEditor] JS DEBUG LOG: \(json)")
+                }
             }
         }
 
@@ -340,28 +380,28 @@ struct MilkdownEditor: NSViewRepresentable {
             }
         }
 
-        func setCursorPosition(_ position: CursorPosition) {
+        func setCursorPosition(_ position: CursorPosition, completion: (() -> Void)? = nil) {
             print("[MilkdownEditor] setCursorPosition called with: line \(position.line) col \(position.column)")
             guard isEditorReady, let webView else {
                 print("[MilkdownEditor] setCursorPosition: editor not ready")
+                completion?()
                 return
             }
+
+            // Track pending cursor restore to handle race conditions with toggle
+            pendingCursorRestore = position
+
             webView.evaluateJavaScript(
                 "window.FinalFinal.setCursorPosition({line: \(position.line), column: \(position.column)})"
             ) { [weak self] _, error in
                 if let error = error {
                     print("[MilkdownEditor] setCursorPosition error: \(error)")
                 }
-                // Query setCursorDiagnostics after the call completes
-                self?.webView?.evaluateJavaScript(
-                    "JSON.stringify(window.__MILKDOWN_DEBUG__.setCursorDiagnostics)"
-                ) { diagResult, _ in
-                    if let diagJson = diagResult as? String, diagJson != "null" {
-                        print("[MilkdownEditor] SET_CURSOR DIAGNOSTICS: \(diagJson)")
-                    } else {
-                        print("[MilkdownEditor] SET_CURSOR DIAGNOSTICS: null (no diagnostics stored)")
-                    }
-                }
+                // Clear pending restore now that JS has executed
+                self?.pendingCursorRestore = nil
+                // Query debug log to see what happened
+                self?.queryDebugLog()
+                completion?()
             }
         }
 
