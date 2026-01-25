@@ -61,6 +61,23 @@
 				</array>
 			</dict>
 		</dict>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>Section Transfer</string>
+			<key>UTTypeIdentifier</key>
+			<string>com.kerim.final-final.section</string>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.mime-type</key>
+				<array>
+					<string>application/x-final-final-section</string>
+				</array>
+			</dict>
+		</dict>
 	</array>
 </dict>
 </plist>

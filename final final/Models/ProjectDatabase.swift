@@ -76,6 +76,31 @@ final class ProjectDatabase: Sendable {
             }
         }
 
+        // Phase 1.6: Sections as blocks (replacing outline_nodes cache)
+        migrator.registerMigration("v2_sections") { db in
+            try db.create(table: "section") { t in
+                t.primaryKey("id", .text)
+                t.column("projectId", .text).notNull()
+                    .references("project", onDelete: .cascade)
+                t.column("parentId", .text)
+                    .references("section", onDelete: .cascade)
+                t.column("sortOrder", .integer).notNull()
+                t.column("headerLevel", .integer).notNull()
+                t.column("title", .text).notNull()
+                t.column("markdownContent", .text).notNull()
+                t.column("status", .text).notNull().defaults(to: "writing")
+                t.column("tags", .text).notNull().defaults(to: "[]")
+                t.column("wordGoal", .integer)
+                t.column("wordCount", .integer).notNull().defaults(to: 0)
+                t.column("createdAt", .datetime).notNull()
+                t.column("updatedAt", .datetime).notNull()
+            }
+
+            try db.create(index: "section_projectId", on: "section", columns: ["projectId"])
+            try db.create(index: "section_parentId", on: "section", columns: ["parentId"])
+            try db.create(index: "section_sortOrder", on: "section", columns: ["projectId", "sortOrder"])
+        }
+
         try migrator.migrate(dbWriter)
     }
 

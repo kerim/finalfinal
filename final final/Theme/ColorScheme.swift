@@ -5,6 +5,34 @@
 
 import SwiftUI
 
+/// Colors for section status indicators
+struct StatusColors: Equatable, Sendable {
+    let writing: Color
+    let next: Color
+    let waiting: Color
+    let review: Color
+    let final_: Color
+
+    func color(for status: SectionStatus) -> Color {
+        switch status {
+        case .writing: return writing
+        case .next: return next
+        case .waiting: return waiting
+        case .review: return review
+        case .final_: return final_
+        }
+    }
+
+    /// Default status colors (suitable for both light and dark modes)
+    static let `default` = StatusColors(
+        writing: Color.blue,
+        next: Color.orange,
+        waiting: Color.yellow,
+        review: Color.purple,
+        final_: Color.green
+    )
+}
+
 struct AppColorScheme: Identifiable, Equatable, Sendable {
     let id: String
     let name: String
@@ -16,6 +44,9 @@ struct AppColorScheme: Identifiable, Equatable, Sendable {
     let editorSelection: Color
     let accentColor: Color
     let dividerColor: Color
+
+    /// Section status colors
+    let statusColors: StatusColors
 
     /// Keyboard shortcut key for this theme (used with Cmd+Opt)
     let shortcutKey: Character?
@@ -91,6 +122,7 @@ extension AppColorScheme {
         editorSelection: Color.accentColor.opacity(0.3),
         accentColor: Color.accentColor,
         dividerColor: Color(nsColor: .separatorColor),
+        statusColors: .default,
         shortcutKey: "1"
     )
 
@@ -105,6 +137,7 @@ extension AppColorScheme {
         editorSelection: Color.accentColor.opacity(0.4),
         accentColor: Color.accentColor,
         dividerColor: Color(nsColor: .separatorColor),
+        statusColors: .default,
         shortcutKey: "2"
     )
 
@@ -119,6 +152,7 @@ extension AppColorScheme {
         editorSelection: Color(red: 0.85, green: 0.80, blue: 0.70).opacity(0.5),
         accentColor: Color(red: 0.65, green: 0.45, blue: 0.20),
         dividerColor: Color(red: 0.80, green: 0.75, blue: 0.65),
+        statusColors: .default,
         shortcutKey: "3"
     )
 
@@ -133,6 +167,7 @@ extension AppColorScheme {
         editorSelection: Color(red: 0.93, green: 0.91, blue: 0.84),
         accentColor: Color(red: 0.15, green: 0.55, blue: 0.82),        // blue
         dividerColor: Color(red: 0.93, green: 0.91, blue: 0.84),
+        statusColors: .default,
         shortcutKey: "4"
     )
 
@@ -147,6 +182,7 @@ extension AppColorScheme {
         editorSelection: Color(red: 0.03, green: 0.21, blue: 0.26),
         accentColor: Color(red: 0.15, green: 0.55, blue: 0.82),
         dividerColor: Color(red: 0.03, green: 0.21, blue: 0.26),
+        statusColors: .default,
         shortcutKey: "5"
     )
 

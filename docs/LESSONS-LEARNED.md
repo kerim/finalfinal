@@ -101,6 +101,34 @@ Apply offset mapping only to content after syntax, then add syntax length back.
 
 ---
 
+## macOS Event Handling
+
+### Ctrl-Click vs Right-Click Are Different Events
+
+On macOS, ctrl+left-click and physical right-click generate **different event types**:
+
+- **Physical right-click** (two-finger tap, right mouse button) → `.rightMouseDown` event
+- **Ctrl+left-click** → `.leftMouseDown` event with `event.modifierFlags.contains(.control) == true`
+
+To handle both as "secondary click", monitor both event types:
+
+```swift
+eventMonitor = NSEvent.addLocalMonitorForEvents(
+    matching: [.rightMouseDown, .leftMouseDown]
+) { event in
+    let isRightClick = event.type == .rightMouseDown
+    let isCtrlClick = event.type == .leftMouseDown && event.modifierFlags.contains(.control)
+
+    guard isRightClick || isCtrlClick else { return event }
+    // Handle secondary click...
+    return nil  // Consume event
+}
+```
+
+SwiftUI's `.onTapGesture` consumes ctrl+click before custom handlers can intercept it, so use `NSEvent.addLocalMonitorForEvents` with event consumption (`return nil`) to prevent click-through.
+
+---
+
 ## Build
 
 ### Vite emptyOutDir: false
