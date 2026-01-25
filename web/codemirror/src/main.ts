@@ -4,6 +4,7 @@ import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { languages } from '@codemirror/language-data';
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
 import { syntaxHighlighting, defaultHighlightStyle } from '@codemirror/language';
+import { autocompletion, CompletionContext, CompletionResult } from '@codemirror/autocomplete';
 import './styles.css';
 
 declare global {
@@ -18,6 +19,8 @@ declare global {
       getCursorPosition: () => { line: number; column: number };
       setCursorPosition: (pos: { line: number; column: number }) => void;
       scrollCursorToCenter: () => void;
+      insertAtCursor: (text: string) => void;
+      insertBreak: () => void;
     };
     __CODEMIRROR_DEBUG__?: {
       editorReady: boolean;
@@ -26,6 +29,39 @@ declare global {
     };
     __CODEMIRROR_SCRIPT_STARTED__?: number;
   }
+}
+
+// Slash command completions for section breaks and other commands
+function slashCompletions(context: CompletionContext): CompletionResult | null {
+  const word = context.matchBefore(/\/\w*/);
+  if (!word) return null;
+  if (word.from === word.to && !context.explicit) return null;
+
+  return {
+    from: word.from,
+    options: [
+      {
+        label: '/break',
+        detail: 'Insert section break',
+        apply: '<!-- ::break:: -->\n\n'
+      },
+      {
+        label: '/h1',
+        detail: 'Heading 1',
+        apply: '# '
+      },
+      {
+        label: '/h2',
+        detail: 'Heading 2',
+        apply: '## '
+      },
+      {
+        label: '/h3',
+        detail: 'Heading 3',
+        apply: '### '
+      }
+    ]
+  };
 }
 
 // Mark script start time for debugging
@@ -72,6 +108,7 @@ function initEditor() {
       history(),
       markdown({ base: markdownLanguage, codeLanguages: languages }),
       syntaxHighlighting(defaultHighlightStyle),
+      autocompletion({ override: [slashCompletions] }),
       keymap.of([
         // Filter out Mod-/ (toggle comment) from default keymap to allow Swift to handle mode toggle
         ...defaultKeymap.filter(k => k.key !== 'Mod-/'),
@@ -255,6 +292,22 @@ window.FinalFinal = {
     } catch (e) {
       console.warn('[CodeMirror] scrollCursorToCenter failed:', e);
     }
+  },
+
+  insertAtCursor(text: string) {
+    if (!editorView) return;
+    const { from, to } = editorView.state.selection.main;
+    editorView.dispatch({
+      changes: { from, to, insert: text },
+      selection: { anchor: from + text.length }
+    });
+    editorView.focus();
+    console.log('[CodeMirror] insertAtCursor: inserted', text.length, 'chars');
+  },
+
+  insertBreak() {
+    // Insert a pseudo-section break marker
+    this.insertAtCursor('\n\n<!-- ::break:: -->\n\n');
   }
 };
 

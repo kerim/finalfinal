@@ -18,6 +18,13 @@ struct EditorCommands: Commands {
                 NotificationCenter.default.post(name: .toggleEditorMode, object: nil)
             }
             .keyboardShortcut("/", modifiers: .command)
+
+            Divider()
+
+            Button("Insert Section Break") {
+                NotificationCenter.default.post(name: .insertSectionBreak, object: nil)
+            }
+            .keyboardShortcut(.return, modifiers: [.command, .shift])
         }
     }
 }
@@ -25,4 +32,5 @@ struct EditorCommands: Commands {
 extension Notification.Name {
     static let toggleFocusMode = Notification.Name("toggleFocusMode")
     static let toggleEditorMode = Notification.Name("toggleEditorMode")
+    static let insertSectionBreak = Notification.Name("insertSectionBreak")
 }

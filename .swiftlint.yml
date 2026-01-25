@@ -3,11 +3,13 @@
 # Allow idiomatic short variable names
 identifier_name:
   excluded:
-    - db  # GRDB database connection
-    - t   # GRDB table builder
-    - i   # Loop index
-    - fm  # FileManager
-    - id  # Identifiable protocol conformance
+    - db      # GRDB database connection
+    - t       # GRDB table builder
+    - i       # Loop index
+    - fm      # FileManager
+    - id      # Identifiable protocol conformance
+    - x       # X coordinate in geometry calculations
+    - final_  # Swift convention for reserved keyword "final"
 
 # Increase line length limit - inline JS strings are more readable on single lines
 line_length:

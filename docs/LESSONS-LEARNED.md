@@ -129,6 +129,53 @@ SwiftUI's `.onTapGesture` consumes ctrl+click before custom handlers can interce
 
 ---
 
+## Performance
+
+### Console Print Statements Cause UI Freezes
+
+**Problem:** During drag-drop reordering, the UI would freeze/stutter noticeably.
+
+**Root Cause:** Print statements scattered throughout the code path were causing synchronous console I/O. Even "small" prints in frequently-called functions compound:
+
+- SectionSyncService printing "[SectionSyncService] Not configured" 11 times per drop
+- SectionCardView printing status/level changes on every render
+- Editor coordinators printing cursor position debug info during content changes
+
+**Why it matters:**
+- `print()` is synchronous - blocks the main thread
+- Drag-drop triggers many rapid state updates
+- Each update cascades through multiple components with prints
+- Console I/O latency (especially with Xcode attached) compounds
+
+**Solution:**
+1. Remove all debug prints from hot code paths
+2. Wrap essential debug logging in `#if DEBUG` guards
+3. For expected conditions (like "not configured" in demo mode), fail silently
+
+**Pattern to avoid:**
+```swift
+// Bad - prints on every content change
+func contentChanged(_ markdown: String) {
+    print("[Service] Content changed: \(markdown.prefix(50))...")
+    // process...
+}
+```
+
+**Pattern to use:**
+```swift
+// Good - only print actual errors in debug builds
+func contentChanged(_ markdown: String) {
+    #if DEBUG
+    if unexpectedCondition {
+        print("[Service] Warning: \(reason)")
+    }
+    #endif
+    // process...
+}
+```
+
+---
+
 ## Build
 
 ### Vite emptyOutDir: false

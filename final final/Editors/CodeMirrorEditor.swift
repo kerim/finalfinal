@@ -12,6 +12,7 @@ import WebKit
 struct CodeMirrorEditor: NSViewRepresentable {
     @Binding var content: String
     @Binding var cursorPositionToRestore: CursorPosition?
+    @Binding var scrollToOffset: Int?
 
     let onContentChange: (String) -> Void
     let onStatsChange: (Int, Int) -> Void
@@ -78,12 +79,21 @@ struct CodeMirrorEditor: NSViewRepresentable {
             context.coordinator.lastThemeCss = cssVars
             context.coordinator.setTheme(cssVars)
         }
+
+        // Handle scroll-to-offset requests from sidebar
+        if let offset = scrollToOffset {
+            context.coordinator.scrollToOffset(offset)
+            DispatchQueue.main.async {
+                self.scrollToOffset = nil
+            }
+        }
     }
 
     func makeCoordinator() -> Coordinator {
         Coordinator(
             content: $content,
             cursorPositionToRestore: $cursorPositionToRestore,
+            scrollToOffset: $scrollToOffset,
             onContentChange: onContentChange,
             onStatsChange: onStatsChange,
             onCursorPositionSaved: onCursorPositionSaved
@@ -101,6 +111,7 @@ struct CodeMirrorEditor: NSViewRepresentable {
 
         private var contentBinding: Binding<String>
         private var cursorPositionToRestoreBinding: Binding<CursorPosition?>
+        private var scrollToOffsetBinding: Binding<Int?>
         private let onContentChange: (String) -> Void
         private let onStatsChange: (Int, Int) -> Void
         private let onCursorPositionSaved: (CursorPosition) -> Void
@@ -108,11 +119,13 @@ struct CodeMirrorEditor: NSViewRepresentable {
         private var pollingTimer: Timer?
         private var lastReceivedFromEditor: Date = .distantPast
         private var lastPushedContent: String = ""
+        private var lastPushTime: Date = .distantPast
 
         var lastThemeCss: String = ""
         private var isEditorReady = false
         private var isCleanedUp = false
         private var toggleObserver: NSObjectProtocol?
+        private var insertBreakObserver: NSObjectProtocol?
 
         /// Pending cursor position that is being restored (set before JS call, cleared after)
         private var pendingCursorRestore: CursorPosition?
@@ -120,12 +133,14 @@ struct CodeMirrorEditor: NSViewRepresentable {
         init(
             content: Binding<String>,
             cursorPositionToRestore: Binding<CursorPosition?>,
+            scrollToOffset: Binding<Int?>,
             onContentChange: @escaping (String) -> Void,
             onStatsChange: @escaping (Int, Int) -> Void,
             onCursorPositionSaved: @escaping (CursorPosition) -> Void
         ) {
             self.contentBinding = content
             self.cursorPositionToRestoreBinding = cursorPositionToRestore
+            self.scrollToOffsetBinding = scrollToOffset
             self.onContentChange = onContentChange
             self.onStatsChange = onStatsChange
             self.onCursorPositionSaved = onCursorPositionSaved
@@ -139,11 +154,23 @@ struct CodeMirrorEditor: NSViewRepresentable {
             ) { [weak self] _ in
                 self?.saveAndNotify()
             }
+
+            // Subscribe to insert section break notification
+            insertBreakObserver = NotificationCenter.default.addObserver(
+                forName: .insertSectionBreak,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                self?.insertSectionBreak()
+            }
         }
 
         deinit {
             pollingTimer?.invalidate()
             if let observer = toggleObserver {
+                NotificationCenter.default.removeObserver(observer)
+            }
+            if let observer = insertBreakObserver {
                 NotificationCenter.default.removeObserver(observer)
             }
         }
@@ -156,7 +183,16 @@ struct CodeMirrorEditor: NSViewRepresentable {
                 NotificationCenter.default.removeObserver(observer)
                 toggleObserver = nil
             }
+            if let observer = insertBreakObserver {
+                NotificationCenter.default.removeObserver(observer)
+                insertBreakObserver = nil
+            }
             webView = nil
+        }
+
+        func insertSectionBreak() {
+            guard isEditorReady, let webView else { return }
+            webView.evaluateJavaScript("window.FinalFinal.insertBreak()") { _, _ in }
         }
 
         func saveCursorPositionBeforeCleanup() {
@@ -175,7 +211,6 @@ struct CodeMirrorEditor: NSViewRepresentable {
         private func saveAndNotify() {
             guard isEditorReady, let webView, !isCleanedUp else {
                 // Editor not ready - post notification with start position
-                print("[CodeMirrorEditor] saveAndNotify: editor not ready, returning start position")
                 NotificationCenter.default.post(
                     name: .didSaveCursorPosition,
                     object: nil,
@@ -187,7 +222,6 @@ struct CodeMirrorEditor: NSViewRepresentable {
             // RACE CONDITION FIX: If we have a pending cursor restore that hasn't completed,
             // use that position instead of reading from the editor (which would return wrong value)
             if let pending = pendingCursorRestore {
-                print("[CodeMirrorEditor] saveAndNotify: using pending cursor restore position line \(pending.line) col \(pending.column)")
                 NotificationCenter.default.post(
                     name: .didSaveCursorPosition,
                     object: nil,
@@ -196,10 +230,7 @@ struct CodeMirrorEditor: NSViewRepresentable {
                 return
             }
 
-            webView.evaluateJavaScript("JSON.stringify(window.FinalFinal.getCursorPosition())") { [weak self] result, _ in
-                // Query debug log first
-                self?.queryDebugLog()
-
+            webView.evaluateJavaScript("JSON.stringify(window.FinalFinal.getCursorPosition())") { result, _ in
                 var position = CursorPosition.start
                 if let json = result as? String,
                    let data = json.data(using: .utf8),
@@ -209,7 +240,6 @@ struct CodeMirrorEditor: NSViewRepresentable {
                     position = CursorPosition(line: line, column: column)
                 }
 
-                print("[CodeMirrorEditor] saveAndNotify: posting didSaveCursorPosition with line \(position.line) col \(position.column)")
                 NotificationCenter.default.post(
                     name: .didSaveCursorPosition,
                     object: nil,
@@ -239,15 +269,9 @@ struct CodeMirrorEditor: NSViewRepresentable {
         }
 
         private func restoreCursorPositionIfNeeded() {
-            print("[CodeMirrorEditor] restoreCursorPositionIfNeeded: cursorPositionToRestore=\(String(describing: cursorPositionToRestoreBinding.wrappedValue))")
-            guard let position = cursorPositionToRestoreBinding.wrappedValue else {
-                print("[CodeMirrorEditor] restoreCursorPositionIfNeeded: no position to restore, returning")
-                return
-            }
-            print("[CodeMirrorEditor] restoreCursorPositionIfNeeded: will restore position line=\(position.line) col=\(position.column) after 0.1s delay")
+            guard let position = cursorPositionToRestoreBinding.wrappedValue else { return }
             // Small delay to ensure content is fully loaded
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
-                print("[CodeMirrorEditor] restoreCursorPositionIfNeeded: delay elapsed, setting cursor position")
                 self?.setCursorPosition(position) {
                     // Scroll cursor to center after cursor is set
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
@@ -260,37 +284,18 @@ struct CodeMirrorEditor: NSViewRepresentable {
 
         func scrollCursorToCenter() {
             guard isEditorReady, let webView else { return }
-            webView.evaluateJavaScript("window.FinalFinal.scrollCursorToCenter()") { _, error in
-                if let error = error {
-                    print("[CodeMirrorEditor] scrollCursorToCenter error: \(error)")
-                }
-            }
+            webView.evaluateJavaScript("window.FinalFinal.scrollCursorToCenter()") { _, _ in }
         }
 
-        /// Query the JavaScript debug log for cursor position debugging
-        func queryDebugLog() {
-            guard isEditorReady, let webView else {
-                print("[CodeMirrorEditor] queryDebugLog: editor not ready")
-                return
-            }
-            webView.evaluateJavaScript("JSON.stringify(window.__CM_DEBUG_LOG__ || [])") { result, error in
-                if let error = error {
-                    print("[CodeMirrorEditor] queryDebugLog error: \(error)")
-                    return
-                }
-                if let json = result as? String {
-                    print("[CodeMirrorEditor] JS DEBUG LOG: \(json)")
-                }
-            }
-        }
-
-        // === WKScriptMessageHandler - handle JS error messages ===
+        // Handle JS error messages
         nonisolated func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+            #if DEBUG
             if message.name == "errorHandler", let body = message.body as? [String: Any] {
                 let msgType = body["type"] as? String ?? "unknown"
                 let errorMsg = body["message"] as? String ?? "unknown"
                 print("[CodeMirrorEditor] JS \(msgType.uppercased()): \(errorMsg)")
             }
+            #endif
         }
 
         // === Content push guard - prevent feedback loops ===
@@ -304,12 +309,11 @@ struct CodeMirrorEditor: NSViewRepresentable {
         func setContent(_ markdown: String) {
             guard isEditorReady, let webView else { return }
             lastPushedContent = markdown
+            lastPushTime = Date()  // Record push time to prevent poll feedback
             let escaped = markdown.replacingOccurrences(of: "\\", with: "\\\\")
                 .replacingOccurrences(of: "`", with: "\\`")
                 .replacingOccurrences(of: "$", with: "\\$")
-            webView.evaluateJavaScript("window.FinalFinal.setContent(`\(escaped)`)") { _, error in
-                if let error { print("[CodeMirrorEditor] setContent error: \(error)") }
-            }
+            webView.evaluateJavaScript("window.FinalFinal.setContent(`\(escaped)`)") { _, _ in }
         }
 
         func setTheme(_ cssVariables: String) {
@@ -318,37 +322,31 @@ struct CodeMirrorEditor: NSViewRepresentable {
             webView.evaluateJavaScript("window.FinalFinal.setTheme(`\(escaped)`)") { _, _ in }
         }
 
+        func scrollToOffset(_ offset: Int) {
+            guard isEditorReady, let webView else { return }
+            webView.evaluateJavaScript("window.FinalFinal.scrollToOffset(\(offset))") { _, _ in }
+        }
+
         func getCursorPosition(completion: @escaping (CursorPosition) -> Void) {
             guard isEditorReady, let webView else {
-                print("[CodeMirrorEditor] getCursorPosition: editor not ready, returning line 1 col 0")
                 completion(.start)
                 return
             }
-            webView.evaluateJavaScript("JSON.stringify(window.FinalFinal.getCursorPosition())") { result, error in
-                if let error = error {
-                    print("[CodeMirrorEditor] getCursorPosition error: \(error)")
-                    completion(.start)
-                    return
-                }
+            webView.evaluateJavaScript("JSON.stringify(window.FinalFinal.getCursorPosition())") { result, _ in
                 guard let json = result as? String,
                       let data = json.data(using: .utf8),
                       let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                       let line = dict["line"] as? Int,
                       let column = dict["column"] as? Int else {
-                    print("[CodeMirrorEditor] getCursorPosition: failed to parse JSON")
                     completion(.start)
                     return
                 }
-                let pos = CursorPosition(line: line, column: column)
-                print("[CodeMirrorEditor] getCursorPosition returned: line \(pos.line) col \(pos.column)")
-                completion(pos)
+                completion(CursorPosition(line: line, column: column))
             }
         }
 
         func setCursorPosition(_ position: CursorPosition, completion: (() -> Void)? = nil) {
-            print("[CodeMirrorEditor] setCursorPosition called with: line \(position.line) col \(position.column)")
             guard isEditorReady, let webView else {
-                print("[CodeMirrorEditor] setCursorPosition: editor not ready")
                 completion?()
                 return
             }
@@ -358,14 +356,9 @@ struct CodeMirrorEditor: NSViewRepresentable {
 
             webView.evaluateJavaScript(
                 "window.FinalFinal.setCursorPosition({line: \(position.line), column: \(position.column)})"
-            ) { [weak self] _, error in
-                if let error = error {
-                    print("[CodeMirrorEditor] setCursorPosition error: \(error)")
-                }
+            ) { [weak self] _, _ in
                 // Clear pending restore now that JS has executed
                 self?.pendingCursorRestore = nil
-                // Query debug log to see what happened
-                self?.queryDebugLog()
                 completion?()
             }
         }
@@ -385,7 +378,16 @@ struct CodeMirrorEditor: NSViewRepresentable {
 
             webView.evaluateJavaScript("window.FinalFinal.getContent()") { [weak self] result, _ in
                 guard let self, !self.isCleanedUp,
-                      let content = result as? String, content != self.lastPushedContent else { return }
+                      let content = result as? String else { return }
+
+                // Grace period guard: don't overwrite recent pushes (race condition fix)
+                let timeSincePush = Date().timeIntervalSince(self.lastPushTime)
+                if timeSincePush < 0.3 && content != self.lastPushedContent {
+                    return  // JS hasn't processed our push yet
+                }
+
+                guard content != self.lastPushedContent else { return }
+
                 self.lastReceivedFromEditor = Date()
                 self.lastPushedContent = content
                 self.contentBinding.wrappedValue = content

@@ -81,6 +81,8 @@ declare global {
       getCursorPosition: () => { line: number; column: number };
       setCursorPosition: (pos: { line: number; column: number }) => void;
       scrollCursorToCenter: () => void;
+      insertAtCursor: (text: string) => void;
+      insertBreak: () => void;
     };
   }
 }
@@ -537,6 +539,25 @@ window.FinalFinal = {
     } catch (e) {
       console.warn('[Milkdown] scrollCursorToCenter failed:', e);
     }
+  },
+
+  insertAtCursor(text: string) {
+    if (!editorInstance) return;
+    try {
+      const view = editorInstance.ctx.get(editorViewCtx);
+      const { from, to } = view.state.selection;
+      const tr = view.state.tr.replaceWith(from, to, view.state.schema.text(text));
+      view.dispatch(tr);
+      view.focus();
+      console.log('[Milkdown] insertAtCursor: inserted', text.length, 'chars');
+    } catch (e) {
+      console.warn('[Milkdown] insertAtCursor failed:', e);
+    }
+  },
+
+  insertBreak() {
+    // Insert a pseudo-section break marker
+    this.insertAtCursor('\n\n<!-- ::break:: -->\n\n');
   },
 };
 

@@ -68,6 +68,7 @@ struct Section: Codable, Identifiable, Equatable, Sendable, FetchableRecord, Mut
     var tags: [String]
     var wordGoal: Int?
     var wordCount: Int
+    var startOffset: Int  // Character offset where section begins in document
     var createdAt: Date
     var updatedAt: Date
 
@@ -85,6 +86,7 @@ struct Section: Codable, Identifiable, Equatable, Sendable, FetchableRecord, Mut
         tags: [String] = [],
         wordGoal: Int? = nil,
         wordCount: Int = 0,
+        startOffset: Int = 0,
         createdAt: Date = Date(),
         updatedAt: Date = Date()
     ) {
@@ -99,6 +101,7 @@ struct Section: Codable, Identifiable, Equatable, Sendable, FetchableRecord, Mut
         self.tags = tags
         self.wordGoal = wordGoal
         self.wordCount = wordCount
+        self.startOffset = startOffset
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }
@@ -117,6 +120,7 @@ struct Section: Codable, Identifiable, Equatable, Sendable, FetchableRecord, Mut
         case tags
         case wordGoal
         case wordCount
+        case startOffset
         case createdAt
         case updatedAt
     }
@@ -135,6 +139,7 @@ struct Section: Codable, Identifiable, Equatable, Sendable, FetchableRecord, Mut
         case tags
         case wordGoal
         case wordCount
+        case startOffset
         case createdAt
         case updatedAt
     }
@@ -151,6 +156,7 @@ struct Section: Codable, Identifiable, Equatable, Sendable, FetchableRecord, Mut
         status = try container.decode(SectionStatus.self, forKey: .status)
         wordGoal = try container.decodeIfPresent(Int.self, forKey: .wordGoal)
         wordCount = try container.decode(Int.self, forKey: .wordCount)
+        startOffset = try container.decode(Int.self, forKey: .startOffset)
         createdAt = try container.decode(Date.self, forKey: .createdAt)
         updatedAt = try container.decode(Date.self, forKey: .updatedAt)
 
@@ -176,6 +182,7 @@ struct Section: Codable, Identifiable, Equatable, Sendable, FetchableRecord, Mut
         try container.encode(status, forKey: .status)
         try container.encodeIfPresent(wordGoal, forKey: .wordGoal)
         try container.encode(wordCount, forKey: .wordCount)
+        try container.encode(startOffset, forKey: .startOffset)
         try container.encode(createdAt, forKey: .createdAt)
         try container.encode(updatedAt, forKey: .updatedAt)
 

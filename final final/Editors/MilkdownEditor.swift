@@ -13,6 +13,7 @@ struct MilkdownEditor: NSViewRepresentable {
     @Binding var content: String
     @Binding var focusModeEnabled: Bool
     @Binding var cursorPositionToRestore: CursorPosition?
+    @Binding var scrollToOffset: Int?
 
     let onContentChange: (String) -> Void
     let onStatsChange: (Int, Int) -> Void
@@ -84,12 +85,21 @@ struct MilkdownEditor: NSViewRepresentable {
             context.coordinator.lastThemeCss = cssVars
             context.coordinator.setTheme(cssVars)
         }
+
+        // Handle scroll-to-offset requests from sidebar
+        if let offset = scrollToOffset {
+            context.coordinator.scrollToOffset(offset)
+            DispatchQueue.main.async {
+                self.scrollToOffset = nil
+            }
+        }
     }
 
     func makeCoordinator() -> Coordinator {
         Coordinator(
             content: $content,
             cursorPositionToRestore: $cursorPositionToRestore,
+            scrollToOffset: $scrollToOffset,
             onContentChange: onContentChange,
             onStatsChange: onStatsChange,
             onCursorPositionSaved: onCursorPositionSaved
@@ -107,6 +117,7 @@ struct MilkdownEditor: NSViewRepresentable {
 
         private var contentBinding: Binding<String>
         private var cursorPositionToRestoreBinding: Binding<CursorPosition?>
+        private var scrollToOffsetBinding: Binding<Int?>
         private let onContentChange: (String) -> Void
         private let onStatsChange: (Int, Int) -> Void
         private let onCursorPositionSaved: (CursorPosition) -> Void
@@ -114,12 +125,14 @@ struct MilkdownEditor: NSViewRepresentable {
         private var pollingTimer: Timer?
         private var lastReceivedFromEditor: Date = .distantPast
         private var lastPushedContent: String = ""
+        private var lastPushTime: Date = .distantPast
 
         var lastFocusModeState: Bool = false
         var lastThemeCss: String = ""
         private var isEditorReady = false
         private var isCleanedUp = false
         private var toggleObserver: NSObjectProtocol?
+        private var insertBreakObserver: NSObjectProtocol?
 
         /// Pending cursor position that is being restored (set before JS call, cleared after)
         private var pendingCursorRestore: CursorPosition?
@@ -127,12 +140,14 @@ struct MilkdownEditor: NSViewRepresentable {
         init(
             content: Binding<String>,
             cursorPositionToRestore: Binding<CursorPosition?>,
+            scrollToOffset: Binding<Int?>,
             onContentChange: @escaping (String) -> Void,
             onStatsChange: @escaping (Int, Int) -> Void,
             onCursorPositionSaved: @escaping (CursorPosition) -> Void
         ) {
             self.contentBinding = content
             self.cursorPositionToRestoreBinding = cursorPositionToRestore
+            self.scrollToOffsetBinding = scrollToOffset
             self.onContentChange = onContentChange
             self.onStatsChange = onStatsChange
             self.onCursorPositionSaved = onCursorPositionSaved
@@ -146,11 +161,23 @@ struct MilkdownEditor: NSViewRepresentable {
             ) { [weak self] _ in
                 self?.saveAndNotify()
             }
+
+            // Subscribe to insert section break notification
+            insertBreakObserver = NotificationCenter.default.addObserver(
+                forName: .insertSectionBreak,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                self?.insertSectionBreak()
+            }
         }
 
         deinit {
             pollingTimer?.invalidate()
             if let observer = toggleObserver {
+                NotificationCenter.default.removeObserver(observer)
+            }
+            if let observer = insertBreakObserver {
                 NotificationCenter.default.removeObserver(observer)
             }
         }
@@ -163,7 +190,16 @@ struct MilkdownEditor: NSViewRepresentable {
                 NotificationCenter.default.removeObserver(observer)
                 toggleObserver = nil
             }
+            if let observer = insertBreakObserver {
+                NotificationCenter.default.removeObserver(observer)
+                insertBreakObserver = nil
+            }
             webView = nil
+        }
+
+        func insertSectionBreak() {
+            guard isEditorReady, let webView else { return }
+            webView.evaluateJavaScript("window.FinalFinal.insertBreak()") { _, _ in }
         }
 
         func saveCursorPositionBeforeCleanup() {
@@ -182,7 +218,6 @@ struct MilkdownEditor: NSViewRepresentable {
         private func saveAndNotify() {
             guard isEditorReady, let webView, !isCleanedUp else {
                 // Editor not ready - post notification with start position
-                print("[MilkdownEditor] saveAndNotify: editor not ready, returning start position")
                 NotificationCenter.default.post(
                     name: .didSaveCursorPosition,
                     object: nil,
@@ -194,7 +229,6 @@ struct MilkdownEditor: NSViewRepresentable {
             // RACE CONDITION FIX: If we have a pending cursor restore that hasn't completed,
             // use that position instead of reading from the editor (which would return wrong value)
             if let pending = pendingCursorRestore {
-                print("[MilkdownEditor] saveAndNotify: using pending cursor restore position line \(pending.line) col \(pending.column)")
                 NotificationCenter.default.post(
                     name: .didSaveCursorPosition,
                     object: nil,
@@ -203,10 +237,7 @@ struct MilkdownEditor: NSViewRepresentable {
                 return
             }
 
-            webView.evaluateJavaScript("JSON.stringify(window.FinalFinal.getCursorPosition())") { [weak self] result, _ in
-                // Query debug log first
-                self?.queryDebugLog()
-
+            webView.evaluateJavaScript("JSON.stringify(window.FinalFinal.getCursorPosition())") { result, _ in
                 var position = CursorPosition.start
                 if let json = result as? String,
                    let data = json.data(using: .utf8),
@@ -215,8 +246,6 @@ struct MilkdownEditor: NSViewRepresentable {
                    let column = dict["column"] as? Int {
                     position = CursorPosition(line: line, column: column)
                 }
-
-                print("[MilkdownEditor] saveAndNotify: posting didSaveCursorPosition with line \(position.line) col \(position.column)")
 
                 NotificationCenter.default.post(
                     name: .didSaveCursorPosition,
@@ -284,45 +313,18 @@ struct MilkdownEditor: NSViewRepresentable {
 
         func scrollCursorToCenter() {
             guard isEditorReady, let webView else { return }
-            webView.evaluateJavaScript("window.FinalFinal.scrollCursorToCenter()") { _, error in
-                if let error = error {
-                    print("[MilkdownEditor] scrollCursorToCenter error: \(error)")
-                }
-            }
+            webView.evaluateJavaScript("window.FinalFinal.scrollCursorToCenter()") { _, _ in }
         }
 
-        /// Query the JavaScript debug log for cursor position debugging
-        func queryDebugLog() {
-            guard isEditorReady, let webView else {
-                print("[MilkdownEditor] queryDebugLog: editor not ready")
-                return
-            }
-            webView.evaluateJavaScript("JSON.stringify(window.__MD_DEBUG_LOG__ || [])") { result, error in
-                if let error = error {
-                    print("[MilkdownEditor] queryDebugLog error: \(error)")
-                    return
-                }
-                if let json = result as? String {
-                    print("[MilkdownEditor] JS DEBUG LOG: \(json)")
-                }
-            }
-        }
-
-        // === PHASE 4: Handle JS error messages from WKScriptMessageHandler ===
+        // Handle JS error messages from WKScriptMessageHandler
         nonisolated func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+            #if DEBUG
             if message.name == "errorHandler", let body = message.body as? [String: Any] {
                 let msgType = body["type"] as? String ?? "unknown"
                 let errorMsg = body["message"] as? String ?? "unknown"
-                let url = body["url"] as? String ?? ""
-                let line = body["line"] ?? ""
-                let col = body["column"] ?? ""
-                let error = body["error"] as? String ?? ""
-
                 print("[MilkdownEditor] JS \(msgType.uppercased()): \(errorMsg)")
-                if !url.isEmpty { print("  URL: \(url)") }
-                print("  Line: \(line), Col: \(col)")
-                if !error.isEmpty { print("  Error: \(error)") }
             }
+            #endif
         }
 
         func shouldPushContent(_ newContent: String) -> Bool {
@@ -334,12 +336,11 @@ struct MilkdownEditor: NSViewRepresentable {
         func setContent(_ markdown: String) {
             guard isEditorReady, let webView else { return }
             lastPushedContent = markdown
+            lastPushTime = Date()  // Record push time to prevent poll feedback
             let escaped = markdown.replacingOccurrences(of: "\\", with: "\\\\")
                 .replacingOccurrences(of: "`", with: "\\`")
                 .replacingOccurrences(of: "$", with: "\\$")
-            webView.evaluateJavaScript("window.FinalFinal.setContent(`\(escaped)`)") { _, error in
-                if let error { print("[MilkdownEditor] setContent error: \(error)") }
-            }
+            webView.evaluateJavaScript("window.FinalFinal.setContent(`\(escaped)`)") { _, _ in }
         }
 
         func setFocusMode(_ enabled: Bool) {
@@ -353,37 +354,31 @@ struct MilkdownEditor: NSViewRepresentable {
             webView.evaluateJavaScript("window.FinalFinal.setTheme(`\(escaped)`)") { _, _ in }
         }
 
+        func scrollToOffset(_ offset: Int) {
+            guard isEditorReady, let webView else { return }
+            webView.evaluateJavaScript("window.FinalFinal.scrollToOffset(\(offset))") { _, _ in }
+        }
+
         func getCursorPosition(completion: @escaping (CursorPosition) -> Void) {
             guard isEditorReady, let webView else {
-                print("[MilkdownEditor] getCursorPosition: editor not ready, returning line 1 col 0")
                 completion(.start)
                 return
             }
-            webView.evaluateJavaScript("JSON.stringify(window.FinalFinal.getCursorPosition())") { result, error in
-                if let error = error {
-                    print("[MilkdownEditor] getCursorPosition error: \(error)")
-                    completion(.start)
-                    return
-                }
+            webView.evaluateJavaScript("JSON.stringify(window.FinalFinal.getCursorPosition())") { result, _ in
                 guard let json = result as? String,
                       let data = json.data(using: .utf8),
                       let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                       let line = dict["line"] as? Int,
                       let column = dict["column"] as? Int else {
-                    print("[MilkdownEditor] getCursorPosition: failed to parse JSON")
                     completion(.start)
                     return
                 }
-                let pos = CursorPosition(line: line, column: column)
-                print("[MilkdownEditor] getCursorPosition returned: line \(pos.line) col \(pos.column)")
-                completion(pos)
+                completion(CursorPosition(line: line, column: column))
             }
         }
 
         func setCursorPosition(_ position: CursorPosition, completion: (() -> Void)? = nil) {
-            print("[MilkdownEditor] setCursorPosition called with: line \(position.line) col \(position.column)")
             guard isEditorReady, let webView else {
-                print("[MilkdownEditor] setCursorPosition: editor not ready")
                 completion?()
                 return
             }
@@ -393,14 +388,9 @@ struct MilkdownEditor: NSViewRepresentable {
 
             webView.evaluateJavaScript(
                 "window.FinalFinal.setCursorPosition({line: \(position.line), column: \(position.column)})"
-            ) { [weak self] _, error in
-                if let error = error {
-                    print("[MilkdownEditor] setCursorPosition error: \(error)")
-                }
+            ) { [weak self] _, _ in
                 // Clear pending restore now that JS has executed
                 self?.pendingCursorRestore = nil
-                // Query debug log to see what happened
-                self?.queryDebugLog()
                 completion?()
             }
         }
@@ -419,7 +409,16 @@ struct MilkdownEditor: NSViewRepresentable {
 
             webView.evaluateJavaScript("window.FinalFinal.getContent()") { [weak self] result, _ in
                 guard let self, !self.isCleanedUp,
-                      let content = result as? String, content != self.lastPushedContent else { return }
+                      let content = result as? String else { return }
+
+                // Grace period guard: don't overwrite recent pushes (race condition fix)
+                let timeSincePush = Date().timeIntervalSince(self.lastPushTime)
+                if timeSincePush < 0.3 && content != self.lastPushedContent {
+                    return  // JS hasn't processed our push yet
+                }
+
+                guard content != self.lastPushedContent else { return }
+
                 self.lastReceivedFromEditor = Date()
                 self.lastPushedContent = content
                 self.contentBinding.wrappedValue = content

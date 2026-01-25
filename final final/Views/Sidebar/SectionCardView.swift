@@ -9,14 +9,16 @@ import SwiftUI
 /// Layout: HashBar → Title → Metadata row
 struct SectionCardView: View {
     @Bindable var section: SectionViewModel
-    var isDropTarget: Bool = false
     let onSingleClick: () -> Void
     let onDoubleClick: () -> Void
 
     @Environment(ThemeManager.self) private var themeManager
     @State private var isHovering = false
+    @State private var showAggregateWordCount = false
+    @State private var showGoalPopover = false
 
     var body: some View {
+
         VStack(alignment: .leading, spacing: 4) {
             // Header row: HashBar on left, StatusDot on right
             HStack {
@@ -49,9 +51,6 @@ struct SectionCardView: View {
     }
 
     private var backgroundColor: Color {
-        if isDropTarget {
-            return themeManager.currentTheme.accentColor.opacity(0.3)
-        }
         if isHovering {
             return themeManager.currentTheme.sidebarSelectedBackground.opacity(0.5)
         }
@@ -73,9 +72,38 @@ struct SectionCardView: View {
     }
 
     private var wordCountView: some View {
-        Text(section.wordCountDisplay)
+        Text(wordCountDisplayText)
             .font(.system(size: 11, weight: .medium, design: .monospaced))
             .foregroundColor(wordCountColor)
+            .contentShape(Rectangle())
+            .onTapGesture(count: 2) {
+                showGoalPopover = true
+            }
+            .onTapGesture(count: 1) {
+                showAggregateWordCount.toggle()
+            }
+            .popover(isPresented: $showGoalPopover) {
+                GoalEditorPopover(
+                    wordCount: section.wordCount,
+                    goal: Binding(
+                        get: { section.wordGoal },
+                        set: { section.wordGoal = $0 }
+                    )
+                )
+            }
+    }
+
+    private var wordCountDisplayText: String {
+        if showAggregateWordCount {
+            // Aggregate display: Σ + aggregate count
+            if let goal = section.wordGoal {
+                return "Σ \(section.aggregateWordCount)/\(goal)"
+            }
+            return "Σ \(section.aggregateWordCount)"
+        } else {
+            // Individual display
+            return section.wordCountDisplay
+        }
     }
 
     private var wordCountColor: Color {
@@ -106,6 +134,9 @@ class SectionViewModel: Identifiable {
     var tags: [String]
     var wordGoal: Int?
     var wordCount: Int
+    var startOffset: Int
+    /// Aggregate word count (this section + all descendants). Set by OutlineSidebar.
+    var aggregateWordCount: Int = 0
 
     init(from section: Section) {
         self.id = section.id
@@ -119,6 +150,8 @@ class SectionViewModel: Identifiable {
         self.tags = section.tags
         self.wordGoal = section.wordGoal
         self.wordCount = section.wordCount
+        self.startOffset = section.startOffset
+        self.aggregateWordCount = section.wordCount  // Default to own count
     }
 
     var isPseudoSection: Bool {
@@ -150,9 +183,103 @@ class SectionViewModel: Identifiable {
             tags: tags,
             wordGoal: wordGoal,
             wordCount: wordCount,
+            startOffset: startOffset,
             createdAt: createdAt,
             updatedAt: updatedAt
         )
+    }
+
+    /// Create a modified copy for reorder operations.
+    /// Returns a NEW object instance to trigger SwiftUI re-render.
+    /// Uses double-optional for parentId to distinguish "set to nil" from "don't change".
+    func withUpdates(
+        parentId: String?? = nil,
+        sortOrder: Int? = nil,
+        headerLevel: Int? = nil,
+        markdownContent: String? = nil,
+        startOffset: Int? = nil
+    ) -> SectionViewModel {
+        let section = Section(
+            id: self.id,
+            projectId: self.projectId,
+            parentId: parentId ?? self.parentId,
+            sortOrder: sortOrder ?? self.sortOrder,
+            headerLevel: headerLevel ?? self.headerLevel,
+            title: self.title,
+            markdownContent: markdownContent ?? self.markdownContent,
+            status: self.status,
+            tags: self.tags,
+            wordGoal: self.wordGoal,
+            wordCount: self.wordCount,
+            startOffset: startOffset ?? self.startOffset
+        )
+        let copy = SectionViewModel(from: section)
+        copy.aggregateWordCount = self.aggregateWordCount
+        return copy
+    }
+}
+
+/// Popover for editing word count goal
+struct GoalEditorPopover: View {
+    let wordCount: Int
+    @Binding var goal: Int?
+
+    @Environment(\.dismiss) private var dismiss
+    @Environment(ThemeManager.self) private var themeManager
+    @State private var goalText: String = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Word Count Goal")
+                .font(.headline)
+                .foregroundColor(themeManager.currentTheme.sidebarText)
+
+            HStack {
+                Text("Current:")
+                    .foregroundColor(themeManager.currentTheme.sidebarText.opacity(0.7))
+                Text("\(wordCount)")
+                    .fontWeight(.medium)
+                    .foregroundColor(themeManager.currentTheme.sidebarText)
+            }
+            .font(.system(size: 12))
+
+            TextField("Goal (e.g., 500)", text: $goalText)
+                .textFieldStyle(.roundedBorder)
+                .frame(width: 120)
+                .onSubmit {
+                    saveGoal()
+                }
+
+            HStack(spacing: 8) {
+                Button("Clear") {
+                    goal = nil
+                    dismiss()
+                }
+                .buttonStyle(.borderless)
+                .foregroundColor(.secondary)
+
+                Spacer()
+
+                Button("Save") {
+                    saveGoal()
+                }
+                .buttonStyle(.borderedProminent)
+            }
+        }
+        .padding()
+        .frame(width: 200)
+        .onAppear {
+            if let existingGoal = goal {
+                goalText = "\(existingGoal)"
+            }
+        }
+    }
+
+    private func saveGoal() {
+        if let value = Int(goalText), value > 0 {
+            goal = value
+        }
+        dismiss()
     }
 }
 

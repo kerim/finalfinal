@@ -101,6 +101,13 @@ final class ProjectDatabase: Sendable {
             try db.create(index: "section_sortOrder", on: "section", columns: ["projectId", "sortOrder"])
         }
 
+        // Phase 1.6: Add startOffset to sections for scroll-to-section
+        migrator.registerMigration("v3_section_offset") { db in
+            try db.alter(table: "section") { t in
+                t.add(column: "startOffset", .integer).notNull().defaults(to: 0)
+            }
+        }
+
         try migrator.migrate(dbWriter)
     }
 

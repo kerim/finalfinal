@@ -26,6 +26,53 @@ class SectionSyncService {
         self.projectId = projectId
     }
 
+    /// Rebuild document markdown from sections in their current order
+    /// Used after drag-drop reordering to sync sections back to document
+    /// NOTE: Caller must pass sections in correct order - no sorting is performed
+    func rebuildDocument(from sections: [Section]) -> String {
+        // Don't sort - caller passes sections in correct array order
+        // Sorting was causing issues when sortOrder values were stale
+        sections
+            .map { $0.markdownContent }
+            .joined()  // Content already includes trailing newlines
+    }
+
+    /// Update header level in markdown content
+    /// Used when section level changes during drag-drop
+    func updateHeaderLevel(in markdown: String, to newLevel: Int) -> String {
+        guard newLevel > 0 else { return markdown }  // Pseudo-sections don't have headers
+
+        let lines = markdown.split(separator: "\n", omittingEmptySubsequences: false)
+        guard let firstLine = lines.first else { return markdown }
+
+        let lineStr = String(firstLine)
+        // Check if first line is a header
+        guard lineStr.trimmingCharacters(in: .whitespaces).hasPrefix("#") else {
+            // Insert a header if this section doesn't have one
+            return markdown
+        }
+
+        // Replace the header prefix
+        let newPrefix = String(repeating: "#", count: newLevel)
+        var idx = lineStr.startIndex
+        while idx < lineStr.endIndex && lineStr[idx] == "#" {
+            idx = lineStr.index(after: idx)
+        }
+        // Skip space after #
+        if idx < lineStr.endIndex && lineStr[idx] == " " {
+            idx = lineStr.index(after: idx)
+        }
+
+        let title = String(lineStr[idx...])
+        let newFirstLine = "\(newPrefix) \(title)"
+
+        var result = [newFirstLine]
+        if lines.count > 1 {
+            result.append(contentsOf: lines.dropFirst().map { String($0) })
+        }
+        return result.joined(separator: "\n")
+    }
+
     /// Called when editor content changes
     /// Debounces and triggers sync after delay
     func contentChanged(_ markdown: String) {
@@ -50,7 +97,6 @@ class SectionSyncService {
         do {
             return try db.fetchSections(projectId: pid)
         } catch {
-            print("[SectionSyncService] Failed to load sections: \(error)")
             return []
         }
     }
@@ -58,10 +104,7 @@ class SectionSyncService {
     // MARK: - Private Methods
 
     private func syncSections(from markdown: String) async {
-        guard let db = projectDatabase, let pid = projectId else {
-            print("[SectionSyncService] Not configured")
-            return
-        }
+        guard let db = projectDatabase, let pid = projectId else { return }
 
         // Parse markdown into section structure
         let parsedSections = parseMarkdownToSections(markdown, projectId: pid)
@@ -71,7 +114,6 @@ class SectionSyncService {
         do {
             existingSections = try db.fetchSections(projectId: pid)
         } catch {
-            print("[SectionSyncService] Failed to fetch existing sections: \(error)")
             return
         }
 
@@ -81,9 +123,8 @@ class SectionSyncService {
         // Save to database
         do {
             try db.replaceSections(mergedSections, for: pid)
-            print("[SectionSyncService] Synced \(mergedSections.count) sections")
         } catch {
-            print("[SectionSyncService] Failed to save sections: \(error)")
+            // Silently fail - sections will sync on next content change
         }
     }
 
@@ -166,7 +207,8 @@ class SectionSyncService {
                 headerLevel: boundary.level,
                 title: boundary.title,
                 markdownContent: sectionMarkdown,
-                wordCount: wordCount
+                wordCount: wordCount,
+                startOffset: boundary.startOffset
             ))
         }
 
