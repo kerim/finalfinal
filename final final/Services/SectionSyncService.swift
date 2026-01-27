@@ -4,29 +4,28 @@
 //
 
 import Foundation
-import Combine
 
 /// Service to sync editor content with sections database
-/// Uses Option B: Re-parse on save with debouncing
+/// Uses position-based reconciliation with surgical database updates
 @MainActor
 @Observable
 class SectionSyncService {
-    private var cancellables = Set<AnyCancellable>()
     private var debounceTask: Task<Void, Never>?
     private let debounceInterval: Duration = .milliseconds(500)
+    private let reconciler = SectionReconciler()
 
     private var projectDatabase: ProjectDatabase?
     private var projectId: String?
 
-    // MARK: - Callback and Suppression
-
-    /// Called when sections are updated after sync completes
-    /// Provides the merged sections array for UI update
-    var onSectionsUpdated: (([SectionViewModel]) -> Void)?
-
-    /// When true, suppresses the onSectionsUpdated callback
-    /// Set during drag operations to prevent UI disruption
+    /// When true, suppresses sync operations
+    /// Set during drag operations to prevent race conditions
     var isSyncSuppressed: Bool = false
+
+    /// When true, content is a zoomed subset - skip full document save to database
+    var isContentZoomed: Bool = false
+
+    /// Content we last synced - prevents feedback loop from ValueObservation
+    private var lastSyncedContent: String = ""
 
     // MARK: - Public API
 
@@ -47,8 +46,6 @@ class SectionSyncService {
     /// Used after drag-drop reordering to sync sections back to document
     /// NOTE: Caller must pass sections in correct order - no sorting is performed
     func rebuildDocument(from sections: [Section]) -> String {
-        // Don't sort - caller passes sections in correct array order
-        // Sorting was causing issues when sortOrder values were stale
         sections
             .map { $0.markdownContent }
             .joined()  // Content already includes trailing newlines
@@ -65,7 +62,6 @@ class SectionSyncService {
         let lineStr = String(firstLine)
         // Check if first line is a header
         guard lineStr.trimmingCharacters(in: .whitespaces).hasPrefix("#") else {
-            // Insert a header if this section doesn't have one
             return markdown
         }
 
@@ -92,19 +88,33 @@ class SectionSyncService {
 
     /// Called when editor content changes
     /// Debounces and triggers sync after delay
-    func contentChanged(_ markdown: String) {
+    /// - Parameters:
+    ///   - markdown: The markdown content to sync
+    ///   - zoomedIds: Optional set of zoomed section IDs (pass when zoomed to avoid replacing full array)
+    func contentChanged(_ markdown: String, zoomedIds: Set<String>? = nil) {
+        // Skip if suppressed (during drag operations)
+        guard !isSyncSuppressed else { return }
+
+        // Idempotent check: skip if this is content we just synced
+        guard markdown != lastSyncedContent else { return }
+
         debounceTask?.cancel()
         debounceTask = Task {
             try? await Task.sleep(for: debounceInterval)
             guard !Task.isCancelled else { return }
-            await syncSections(from: markdown)
+            await syncContent(markdown, zoomedIds: zoomedIds)
         }
+    }
+
+    /// Reset sync tracking (call when manually setting content)
+    func resetSyncTracking() {
+        lastSyncedContent = ""
     }
 
     /// Force immediate sync (e.g., before app quit)
     func syncNow(_ markdown: String) async {
         debounceTask?.cancel()
-        await syncSections(from: markdown)
+        await syncContent(markdown)
     }
 
     /// Load sections from database as view models
@@ -124,62 +134,134 @@ class SectionSyncService {
     /// Used for initial sync when database has no sections yet
     func parseAndGetSections(from markdown: String) -> [SectionViewModel] {
         guard let pid = projectId else { return [] }
-        let sections = parseMarkdownToSections(markdown, projectId: pid)
+        let headers = parseHeaders(from: markdown)
+        let sections = headers.map { header in
+            Section(
+                projectId: pid,
+                sortOrder: header.position,
+                headerLevel: header.level,
+                title: header.title,
+                markdownContent: header.markdownContent,
+                wordCount: header.wordCount,
+                startOffset: header.startOffset
+            )
+        }
         return sections.map { SectionViewModel(from: $0) }
     }
 
     // MARK: - Private Methods
 
-    private func syncSections(from markdown: String) async {
+    /// Core sync method using position-based reconciliation
+    private func syncContent(_ markdown: String, zoomedIds: Set<String>? = nil) async {
         guard let db = projectDatabase, let pid = projectId else {
-            print("[SectionSyncService] syncSections skipped - database not configured")
+            print("[SectionSyncService] syncContent skipped - database not configured")
             return
         }
 
-        // Parse markdown into section structure (on main thread - parsing is fast)
-        let parsedSections = parseMarkdownToSections(markdown, projectId: pid)
+        // When zoomed, update zoomed sections in-place
+        if let zoomedIds = zoomedIds, isContentZoomed {
+            await syncZoomedSections(from: markdown, zoomedIds: zoomedIds)
+            return
+        }
 
-        // Move database operations to background thread
-        let existingSections: [Section] = await Task.detached { [db, pid] in
+        // 1. Parse headers from markdown
+        let headers = parseHeaders(from: markdown)
+        guard !headers.isEmpty else { return }
+
+        // 2. Get current DB sections
+        let dbSections: [Section]
+        do {
+            dbSections = try db.fetchSections(projectId: pid)
+        } catch {
+            print("[SectionSyncService] Error fetching sections: \(error.localizedDescription)")
+            return
+        }
+
+        // 3. Reconcile to find minimal changes
+        let changes = reconciler.reconcile(headers: headers, dbSections: dbSections, projectId: pid)
+
+        // 4. Apply changes to database (if any)
+        if !changes.isEmpty {
             do {
-                return try db.fetchSections(projectId: pid)
+                try db.applySectionChanges(changes, for: pid)
             } catch {
-                print("[SectionSyncService] Error fetching sections: \(error.localizedDescription)")
-                return []
+                print("[SectionSyncService] Error applying changes: \(error.localizedDescription)")
             }
-        }.value
+        }
 
-        // Match and merge sections (on main thread)
-        let mergedSections = mergeSections(parsed: parsedSections, existing: existingSections)
-
-        // Save to database (background)
-        await Task.detached { [db, pid] in
-            do {
-                try db.replaceSections(mergedSections, for: pid)
-            } catch {
-                print("[SectionSyncService] Error saving sections: \(error.localizedDescription)")
-            }
-        }.value
-
-        // Also save the content to database (background)
-        await Task.detached { [db, pid] in
+        // 5. Save full content to database ONLY when not zoomed
+        if !isContentZoomed {
             do {
                 try db.saveContent(markdown: markdown, for: pid)
             } catch {
                 print("[SectionSyncService] Error saving content: \(error.localizedDescription)")
             }
-        }.value
+        }
 
-        // Notify callback (on main thread, if not suppressed)
-        if !isSyncSuppressed {
-            let viewModels = mergedSections.map { SectionViewModel(from: $0) }
-            onSectionsUpdated?(viewModels)
+        // Track synced content to prevent feedback loops
+        lastSyncedContent = markdown
+
+        // Note: UI updates happen automatically via ValueObservation in EditorViewState
+    }
+
+    /// Sync zoomed content without replacing the full sections array
+    /// Updates zoomed sections in-place and saves only those to database
+    private func syncZoomedSections(from markdown: String, zoomedIds: Set<String>) async {
+        guard let db = projectDatabase, let pid = projectId else { return }
+
+        // Parse zoomed markdown to extract section content
+        let headers = parseHeaders(from: markdown)
+
+        // Fetch existing sections from database
+        let existingSections: [Section]
+        do {
+            existingSections = try db.fetchSections(projectId: pid)
+        } catch {
+            print("[SectionSyncService] Error fetching sections: \(error)")
+            return
+        }
+
+        // Build lookup of zoomed sections by sortOrder within zoomed subset
+        let zoomedExisting = existingSections
+            .filter { zoomedIds.contains($0.id) }
+            .sorted { $0.sortOrder < $1.sortOrder }
+
+        // Match parsed headers to existing zoomed sections by position and update
+        var changes: [SectionChange] = []
+        for (index, header) in headers.enumerated() {
+            guard index < zoomedExisting.count else { break }
+
+            let existing = zoomedExisting[index]
+            var updates = SectionUpdates()
+            var hasChanges = false
+
+            if header.markdownContent != existing.markdownContent {
+                updates.markdownContent = header.markdownContent
+                updates.wordCount = header.wordCount
+                hasChanges = true
+            }
+            if header.startOffset != existing.startOffset {
+                updates.startOffset = header.startOffset
+                hasChanges = true
+            }
+
+            if hasChanges {
+                changes.append(.update(id: existing.id, updates: updates))
+            }
+        }
+
+        if !changes.isEmpty {
+            do {
+                try db.applySectionChanges(changes, for: pid)
+            } catch {
+                print("[SectionSyncService] Error updating zoomed sections: \(error)")
+            }
         }
     }
 
-    /// Parse markdown content into sections
-    private func parseMarkdownToSections(_ markdown: String, projectId: String) -> [Section] {
-        var sections: [Section] = []
+    /// Parse markdown content into ParsedHeader structs for reconciliation
+    private func parseHeaders(from markdown: String) -> [ParsedHeader] {
+        var headers: [ParsedHeader] = []
         var currentOffset = 0
         var inCodeBlock = false
 
@@ -188,7 +270,6 @@ class SectionSyncService {
             let startOffset: Int
             let level: Int
             let title: String
-            let isPseudo: Bool
         }
 
         var boundaries: [SectionBoundary] = []
@@ -207,21 +288,18 @@ class SectionSyncService {
             if !inCodeBlock {
                 // Check for pseudo-section marker
                 if trimmed == "<!-- ::break:: -->" {
-                    // Next non-empty line is the pseudo-section title
                     boundaries.append(SectionBoundary(
                         startOffset: currentOffset,
                         level: 0,
-                        title: "§ Section Break",
-                        isPseudo: true
+                        title: "§ Section Break"
                     ))
                 }
                 // Check for header
-                else if let header = parseHeader(trimmed) {
+                else if let header = parseHeaderLine(trimmed) {
                     boundaries.append(SectionBoundary(
                         startOffset: currentOffset,
                         level: header.level,
-                        title: header.title,
-                        isPseudo: false
+                        title: header.title
                     ))
                 }
             }
@@ -247,32 +325,35 @@ class SectionSyncService {
             let endIdx = markdown.index(markdown.startIndex, offsetBy: min(endOffset, markdown.count))
             let sectionMarkdown = String(markdown[startIdx..<endIdx])
 
-            let wordCount = countWords(in: sectionMarkdown)
+            let wordCount = MarkdownUtils.wordCount(for: sectionMarkdown)
 
-            sections.append(Section(
-                projectId: projectId,
-                parentId: nil, // Will be assigned below
-                sortOrder: index,
-                headerLevel: boundary.level,
-                title: boundary.title,
+            // For pseudo-sections (level 0), extract title from first paragraph after break
+            let finalTitle: String
+            if boundary.level == 0 {
+                finalTitle = extractPseudoSectionTitle(from: sectionMarkdown)
+            } else {
+                finalTitle = boundary.title
+            }
+
+            headers.append(ParsedHeader(
+                position: index,
+                title: finalTitle,
+                level: boundary.level,
+                startOffset: boundary.startOffset,
                 markdownContent: sectionMarkdown,
-                wordCount: wordCount,
-                startOffset: boundary.startOffset
+                wordCount: wordCount
             ))
         }
 
-        // Assign parent IDs based on header levels
-        assignParents(&sections)
-
-        return sections
+        return headers
     }
 
-    private struct ParsedHeader {
+    private struct LocalParsedHeader {
         let level: Int
         let title: String
     }
 
-    private func parseHeader(_ line: String) -> ParsedHeader? {
+    private func parseHeaderLine(_ line: String) -> LocalParsedHeader? {
         guard line.hasPrefix("#") else { return nil }
 
         var level = 0
@@ -290,53 +371,70 @@ class SectionSyncService {
 
         guard !title.isEmpty else { return nil }
 
-        return ParsedHeader(level: level, title: title)
+        return LocalParsedHeader(level: level, title: title)
     }
 
-    private func countWords(in text: String) -> Int {
-        MarkdownUtils.wordCount(for: text)
-    }
+    /// Extract a title for pseudo-sections from the first paragraph after the break marker
+    /// Returns "§ " followed by the first few words (up to ~30 chars), or "§ Section Break" if no content
+    private func extractPseudoSectionTitle(from markdown: String) -> String {
+        let lines = markdown.split(separator: "\n", omittingEmptySubsequences: false)
 
-    private func assignParents(_ sections: inout [Section]) {
-        var parentStack: [(level: Int, id: String?)] = [(0, nil)]
+        // Skip the break marker line and any empty lines to find the first paragraph
+        for line in lines {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
 
-        for i in sections.indices {
-            let currentLevel = sections[i].headerLevel == 0 ? 1 : sections[i].headerLevel
-
-            // Pop until we find a parent with lower level
-            while parentStack.count > 1 && parentStack.last!.level >= currentLevel {
-                parentStack.removeLast()
+            // Skip the break marker itself
+            if trimmed == "<!-- ::break:: -->" {
+                continue
             }
 
-            sections[i].parentId = parentStack.last?.id
-            parentStack.append((currentLevel, sections[i].id))
-        }
-    }
-
-    /// Merge parsed sections with existing sections to preserve metadata
-    private func mergeSections(parsed: [Section], existing: [Section]) -> [Section] {
-        // Create lookup by title+level for matching
-        var existingLookup: [String: Section] = [:]
-        for section in existing {
-            let key = "\(section.headerLevel):\(section.title)"
-            existingLookup[key] = section
-        }
-
-        return parsed.map { parsedSection in
-            let key = "\(parsedSection.headerLevel):\(parsedSection.title)"
-
-            if let existingSection = existingLookup[key] {
-                // Preserve metadata from existing section
-                var merged = parsedSection
-                merged.id = existingSection.id
-                merged.status = existingSection.status
-                merged.tags = existingSection.tags
-                merged.wordGoal = existingSection.wordGoal
-                merged.createdAt = existingSection.createdAt
-                return merged
+            // Skip empty lines
+            if trimmed.isEmpty {
+                continue
             }
 
-            return parsedSection
+            // Skip other markdown constructs that shouldn't be titles
+            if trimmed.hasPrefix("#") ||      // Headers
+               trimmed.hasPrefix("```") ||    // Code blocks
+               trimmed.hasPrefix(">") ||      // Block quotes
+               trimmed.hasPrefix("-") ||      // Lists
+               trimmed.hasPrefix("*") ||      // Lists
+               trimmed.hasPrefix("1.") ||     // Numbered lists
+               trimmed.hasPrefix("|") {       // Tables
+                continue
+            }
+
+            // Found paragraph text - extract first ~30 characters at word boundary
+            let excerpt = extractExcerpt(from: trimmed, maxLength: 30)
+            if !excerpt.isEmpty {
+                return "§ \(excerpt)"
+            }
         }
+
+        // Fallback if no paragraph content found
+        return "§ Section Break"
+    }
+
+    /// Extract an excerpt from text, truncating at word boundary with ellipsis
+    private func extractExcerpt(from text: String, maxLength: Int) -> String {
+        // Strip any markdown formatting (bold, italic, links)
+        let plainText = text
+            .replacingOccurrences(of: "\\*\\*([^*]+)\\*\\*", with: "$1", options: .regularExpression)
+            .replacingOccurrences(of: "\\*([^*]+)\\*", with: "$1", options: .regularExpression)
+            .replacingOccurrences(of: "_([^_]+)_", with: "$1", options: .regularExpression)
+            .replacingOccurrences(of: "\\[([^\\]]+)\\]\\([^)]+\\)", with: "$1", options: .regularExpression)
+
+        if plainText.count <= maxLength {
+            return plainText
+        }
+
+        // Find a word boundary near maxLength
+        let prefix = String(plainText.prefix(maxLength))
+        if let lastSpace = prefix.lastIndex(of: " ") {
+            return String(prefix[..<lastSpace]) + "…"
+        }
+
+        // No space found - just truncate
+        return prefix + "…"
     }
 }

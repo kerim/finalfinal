@@ -42,6 +42,7 @@
 		91E3EB11EC2C1CFFF280BBB2 /* codemirror.js in Resources */ = {isa = PBXBuildFile; fileRef = 7E3150F9999744FC44CB14B4 /* codemirror.js */; };
 		A46237665E070F9A59CF8B87 /* milkdown.css in Resources */ = {isa = PBXBuildFile; fileRef = C4E5542284D791AA71E83BE0 /* milkdown.css */; };
 		A7F047CACD5338BFF13C8336 /* OutlineNode.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF113F2ADAA8371F7C810BF0 /* OutlineNode.swift */; };
+		AC1816323A52499CA6DCFD2A /* SectionReconciler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61DE6BB00F5D1EF8A75439EB /* SectionReconciler.swift */; };
 		ACAF912B9BF42D9FD97B82C2 /* Database+CRUD.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13133CB5518EA086A3120EDE /* Database+CRUD.swift */; };
 		AD8451C7428BC1E2016746D1 /* StatusBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF41CB39EB2C5BD4E30A2CDA /* StatusBar.swift */; };
 		D0208FE27BA4FBD4AADFD905 /* SectionCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 92AF8BACE222B0C414BF2E8C /* SectionCardView.swift */; };
@@ -79,6 +80,7 @@
 		5741EAE0DDD338AB4D025101 /* final final.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "final final.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		5A1E8A83A78A7909AA1289DB /* OutlineParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutlineParser.swift; sourceTree = "<group>"; };
 		5FD87E27CB1257814D589880 /* Database+Sections.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Database+Sections.swift"; sourceTree = "<group>"; };
+		61DE6BB00F5D1EF8A75439EB /* SectionReconciler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SectionReconciler.swift; sourceTree = "<group>"; };
 		65E7386521E240F08687F38B /* TagPillView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TagPillView.swift; sourceTree = "<group>"; };
 		66C895E42D3FA5D90DC0B575 /* milkdown.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = milkdown.js; sourceTree = "<group>"; };
 		6AD4BB30F275702838E8D3F8 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
@@ -253,6 +255,7 @@
 				BBC3D73969C6FC77A4A46FEC /* DemoProjectManager.swift */,
 				5A1E8A83A78A7909AA1289DB /* OutlineParser.swift */,
 				D567C1445BFF0160D8410001 /* ProjectStore.swift */,
+				61DE6BB00F5D1EF8A75439EB /* SectionReconciler.swift */,
 				EA5B65E36E0BB3661A7CE09A /* SectionSyncService.swift */,
 			);
 			path = Services;
@@ -439,6 +442,7 @@
 				E028FEF9DCA9E380AE542AF2 /* RecentProject.swift in Sources */,
 				0ED46619B703DCB8610330F3 /* Section.swift in Sources */,
 				D0208FE27BA4FBD4AADFD905 /* SectionCardView.swift in Sources */,
+				AC1816323A52499CA6DCFD2A /* SectionReconciler.swift in Sources */,
 				04195D3F2962ED2D9A21C2F5 /* SectionSyncService.swift in Sources */,
 				0482D5E5C956125D76159EA2 /* SectionTypography.swift in Sources */,
 				AD8451C7428BC1E2016746D1 /* StatusBar.swift in Sources */,
@@ -539,7 +543,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 0.1.58;
+				CURRENT_PROJECT_VERSION = 0.1.67;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "final final/Info.plist";
 				INFOPLIST_GENERATION_MODE = GeneratedFile;
@@ -561,7 +565,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 0.1.58;
+				CURRENT_PROJECT_VERSION = 0.1.67;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "final final/Info.plist";
 				INFOPLIST_GENERATION_MODE = GeneratedFile;

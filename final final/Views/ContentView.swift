@@ -165,10 +165,19 @@ Use this content to verify that:
             detailView
         }
         .task {
+            // Register editor state with AppDelegate for cleanup on quit
+            AppDelegate.shared?.editorState = editorState
             await initializeProject()
         }
         .onChange(of: editorState.content) { _, newValue in
-            sectionSyncService.contentChanged(newValue)
+            // Skip sync during zoom transitions to prevent race conditions
+            guard editorState.contentState == .idle else { return }
+            // Pass zoomedIds when zoomed to enable in-place updates instead of replacing full array
+            sectionSyncService.contentChanged(newValue, zoomedIds: editorState.zoomedSectionIds)
+        }
+        .onChange(of: editorState.zoomedSectionId) { _, newValue in
+            // Track zoom state in sync service to prevent overwriting full document
+            sectionSyncService.isContentZoomed = (newValue != nil)
         }
         .onReceive(NotificationCenter.default.publisher(for: .toggleFocusMode).receive(on: DispatchQueue.main)) { _ in
             editorState.toggleFocusMode()
@@ -194,7 +203,7 @@ Use this content to verify that:
                 ZoomBreadcrumb(
                     zoomedSection: zoomedSection,
                     onZoomOut: {
-                        editorState.zoomOut()
+                        editorState.zoomOutSync()
                     }
                 )
                 Divider()
@@ -213,11 +222,21 @@ Use this content to verify that:
                 onSectionReorder: { request in
                     reorderSection(request)
                 },
+                onZoomToSection: { sectionId in
+                    Task {
+                        await editorState.zoomToSection(sectionId)
+                    }
+                },
+                onZoomOut: {
+                    editorState.zoomOutSync()
+                },
                 onDragStarted: {
+                    editorState.isObservationSuppressed = true
                     sectionSyncService.isSyncSuppressed = true
                     sectionSyncService.cancelPendingSync()
                 },
                 onDragEnded: {
+                    editorState.isObservationSuppressed = false
                     sectionSyncService.isSyncSuppressed = false
                 }
             )
@@ -252,127 +271,250 @@ Use this content to verify that:
     }
 
     private func reorderSection(_ request: SectionReorderRequest) {
-        // Cancel any pending sync to prevent race conditions
+        print("[REORDER] === START ===")
+        print("[REORDER] Request: sectionId=\(request.sectionId), targetSectionId=\(request.targetSectionId ?? "nil"), newLevel=\(request.newLevel), newParentId=\(request.newParentId ?? "nil")")
+        print("[REORDER] Current sections count: \(editorState.sections.count)")
+        print("[REORDER] Section titles in order: \(editorState.sections.map { "\($0.title)[H\($0.headerLevel)]" })")
+
         sectionSyncService.cancelPendingSync()
 
-        // Validate: section cannot be its own parent (circular reference)
-        if request.newParentId == request.sectionId { return }
+        // Validate
+        if request.newParentId == request.sectionId {
+            print("[REORDER] ERROR: newParentId equals sectionId - circular reference prevented")
+            return
+        }
+        guard let fromIndex = editorState.sections.firstIndex(where: { $0.id == request.sectionId }) else {
+            print("[REORDER] ERROR: Section \(request.sectionId) not found in editorState.sections!")
+            return
+        }
+        print("[REORDER] fromIndex=\(fromIndex)")
 
-        // Find the section to move
-        guard let fromIndex = editorState.sections.firstIndex(where: { $0.id == request.sectionId }) else { return }
+        // Use the target section ID passed from OutlineSidebar (stable across zoom/filtering)
+        let targetSectionId = request.targetSectionId
 
-        let oldSection = editorState.sections[fromIndex]
-        let oldLevel = oldSection.headerLevel
+        // Early return for self-drop at same position (no-op)
+        if targetSectionId == request.sectionId {
+            print("[REORDER] SKIP: Self-drop at same position")
+            return
+        }
 
-        // Calculate adjusted insertion index (account for removal shifting indices)
-        let adjustedIndex = fromIndex < request.insertionIndex ? request.insertionIndex - 1 : request.insertionIndex
-        let safeIndex = min(max(0, adjustedIndex), editorState.sections.count - 1)
+        let sectionToMove = editorState.sections[fromIndex]
+        let oldLevel = sectionToMove.headerLevel
+        print("[REORDER] Moving section: '\(sectionToMove.title)' from index \(fromIndex), oldLevel=\(oldLevel)")
 
-        // BEFORE removing: promote any children that will become orphaned
-        promoteOrphanedChildren(
+        if let targetId = targetSectionId,
+           let targetSection = editorState.sections.first(where: { $0.id == targetId }) {
+            print("[REORDER] Target section: '\(targetSection.title)' (insert AFTER this)")
+        } else {
+            print("[REORDER] Target section: nil (insert at beginning)")
+        }
+
+        // Work with a local copy to batch all SwiftUI updates
+        var sections = editorState.sections
+        print("[REORDER] Working with local copy of \(sections.count) sections")
+
+        // 1. Promote orphaned children (on local copy)
+        // Pass targetSectionId instead of index - IDs are stable across modifications
+        print("[REORDER] Step 1: Promoting orphaned children...")
+        promoteOrphanedChildrenInPlace(
+            sections: &sections,
             movedSectionId: request.sectionId,
-            movedFromIndex: fromIndex,
-            movingToIndex: safeIndex,
+            targetSectionId: targetSectionId,
             oldLevel: oldLevel
         )
 
-        // Re-find the section index (it may have shifted after promotions)
-        guard let currentFromIndex = editorState.sections.firstIndex(where: { $0.id == request.sectionId }) else { return }
+        // 2. Re-find section after promotions
+        guard let currentFromIndex = sections.firstIndex(where: { $0.id == request.sectionId }) else {
+            print("[REORDER] ERROR: Section disappeared after promotions!")
+            return
+        }
+        print("[REORDER] Step 2: currentFromIndex after promotions = \(currentFromIndex)")
 
-        // Remove from old position
-        let sectionToMove = editorState.sections.remove(at: currentFromIndex)
+        // 3. Remove the section
+        var removed = sections.remove(at: currentFromIndex)
+        print("[REORDER] Step 3: Removed section '\(removed.title)' from index \(currentFromIndex)")
+        print("[REORDER] Sections after removal: \(sections.map { "\($0.title)[H\($0.headerLevel)]" })")
 
-        // Recalculate safe index after removal
-        let finalIndex = min(max(0, currentFromIndex < safeIndex ? safeIndex : safeIndex), editorState.sections.count)
-
-        // Update markdown content if level changed
-        var newMarkdown = sectionToMove.markdownContent
-        if sectionToMove.headerLevel != request.newLevel && request.newLevel > 0 {
-            newMarkdown = sectionSyncService.updateHeaderLevel(
-                in: sectionToMove.markdownContent,
-                to: request.newLevel
-            )
+        // 4. Find insertion point using the target section ID (stable across modifications)
+        var finalIndex: Int
+        if let targetId = targetSectionId,
+           let targetIdx = sections.firstIndex(where: { $0.id == targetId }) {
+            // Insert AFTER the target section
+            finalIndex = targetIdx + 1
+            print("[REORDER] Step 4: Found target '\(sections[targetIdx].title)' at idx \(targetIdx), finalIndex = \(finalIndex)")
+        } else {
+            // No target means insert at beginning
+            finalIndex = 0
+            print("[REORDER] Step 4: No target found, finalIndex = 0 (INSERT AT TOP)")
         }
 
-        // CREATE NEW OBJECT - critical for SwiftUI to detect change!
-        let newSection = sectionToMove.withUpdates(
-            parentId: request.newParentId,
-            sortOrder: finalIndex,
-            headerLevel: request.newLevel,
-            markdownContent: newMarkdown,
-            startOffset: 0  // Will be recalculated below
-        )
+        // Clamp to valid range
+        let beforeClamp = finalIndex
+        finalIndex = min(max(0, finalIndex), sections.count)
+        if beforeClamp != finalIndex {
+            print("[REORDER] Step 4b: Clamped finalIndex from \(beforeClamp) to \(finalIndex)")
+        }
 
-        // Insert at new position
-        editorState.sections.insert(newSection, at: finalIndex)
+        // 5. Update section properties
+        if removed.headerLevel != request.newLevel && request.newLevel > 0 {
+            let newMarkdown = sectionSyncService.updateHeaderLevel(
+                in: removed.markdownContent,
+                to: request.newLevel
+            )
+            removed = removed.withUpdates(
+                parentId: request.newParentId,
+                headerLevel: request.newLevel,
+                markdownContent: newMarkdown
+            )
+            print("[REORDER] Step 5: Updated level from \(oldLevel) to \(request.newLevel)")
+        } else {
+            removed = removed.withUpdates(parentId: request.newParentId)
+            print("[REORDER] Step 5: Level unchanged at \(removed.headerLevel)")
+        }
 
-        // Recalculate parent relationships for ALL sections based on final positions
-        recalculateParentRelationships()
+        // 6. Insert at calculated position
+        sections.insert(removed, at: finalIndex)
+        print("[REORDER] Step 6: Inserted '\(removed.title)' at finalIndex \(finalIndex)")
+        print("[REORDER] Sections after insert: \(sections.map { "\($0.title)[H\($0.headerLevel)]" })")
 
-        // Recalculate sort orders and start offsets for ALL sections
+        // 7. Recalculate sort orders and offsets
         var currentOffset = 0
-        for index in editorState.sections.indices {
-            let section = editorState.sections[index]
-            editorState.sections[index] = section.withUpdates(
+        for index in sections.indices {
+            sections[index] = sections[index].withUpdates(
                 sortOrder: index,
                 startOffset: currentOffset
             )
-            currentOffset += editorState.sections[index].markdownContent.count
+            currentOffset += sections[index].markdownContent.count
         }
+        print("[REORDER] Step 7: Recalculated sortOrders and offsets")
 
-        // Enforce hierarchy constraints - no section can be more than 1 level deeper than predecessor
+        // 8. Single atomic update to trigger SwiftUI
+        editorState.sections = sections
+        print("[REORDER] Step 8: Updated editorState.sections")
+        print("[REORDER] Final order: \(editorState.sections.map { "\($0.sortOrder):\($0.title)[H\($0.headerLevel)]" })")
+
+        // 9. Recalculate parent relationships and enforce hierarchy
+        recalculateParentRelationships()
         enforceHierarchyConstraints()
+        print("[REORDER] Step 9: Recalculated parent relationships and enforced hierarchy")
 
-        // Rebuild document - ensure every section ends with newline for proper markdown separation
-        let newContent = editorState.sections
-            .map { section in
-                var content = section.markdownContent
-                // Ensure every section ends with newline for proper markdown separation
-                if !content.hasSuffix("\n") {
-                    content += "\n"
-                }
-                return content
-            }
-            .joined()
+        // 10. Rebuild document content (zoom-aware)
+        rebuildDocumentContent()
+        print("[REORDER] Step 10: Rebuilt document content")
 
-        editorState.content = newContent
+        // 11. Persist reordered sections to database
+        // This makes the reorder permanent and triggers ValueObservation
+        print("[REORDER] Step 11: Dispatching persistReorderedSections()...")
+        Task {
+            await persistReorderedSections()
+        }
+        print("[REORDER] === END ===")
     }
 
-    /// Promote children that will become orphaned when their parent moves below them
-    private func promoteOrphanedChildren(
+    /// Persist current sections to database after reorder
+    private func persistReorderedSections() async {
+        print("[PERSIST] === START ===")
+        print("[PERSIST] isObservationSuppressed: \(editorState.isObservationSuppressed)")
+
+        guard let db = demoProjectManager.projectDatabase,
+              let pid = demoProjectManager.projectId else {
+            print("[PERSIST] ERROR: Database or projectId is nil!")
+            return
+        }
+
+        print("[PERSIST] Building changes for \(editorState.sections.count) sections")
+
+        // Build change set for all sections with updated sortOrder and potentially new levels
+        var changes: [SectionChange] = []
+
+        for (index, viewModel) in editorState.sections.enumerated() {
+            let updates = SectionUpdates(
+                title: viewModel.title,
+                headerLevel: viewModel.headerLevel,
+                sortOrder: index,
+                markdownContent: viewModel.markdownContent,
+                startOffset: viewModel.startOffset,
+                parentId: .some(viewModel.parentId)  // Use .some to explicitly set (even if nil)
+            )
+            changes.append(.update(id: viewModel.id, updates: updates))
+            print("[PERSIST] Change \(index): '\(viewModel.title)' sortOrder=\(index), level=\(viewModel.headerLevel)")
+        }
+
+        do {
+            try db.applySectionChanges(changes, for: pid)
+            print("[PERSIST] SUCCESS: \(changes.count) changes applied to database")
+            // ValueObservation will automatically update the sidebar
+        } catch {
+            print("[PERSIST] ERROR: \(error)")
+        }
+        print("[PERSIST] === END ===")
+    }
+
+    /// Promote orphaned children in-place on a local array (avoids multiple SwiftUI updates)
+    /// Uses target section ID for stable position comparison
+    private func promoteOrphanedChildrenInPlace(
+        sections: inout [SectionViewModel],
         movedSectionId: String,
-        movedFromIndex: Int,
-        movingToIndex: Int,
+        targetSectionId: String?,  // ID of section that will be BEFORE the moved section
         oldLevel: Int
     ) {
+        guard let movedFromIndex = sections.firstIndex(where: { $0.id == movedSectionId }) else { return }
+
         // Find direct children of the section being moved
-        let childIndices = editorState.sections.enumerated()
+        let childIndices = sections.enumerated()
             .filter { $0.element.parentId == movedSectionId }
             .map { $0.offset }
 
         for childIndex in childIndices {
-            let child = editorState.sections[childIndex]
+            let child = sections[childIndex]
 
-            // After the parent is removed, child stays at childIndex (if after parent) or shifts
+            // After parent removal, where will the child be?
             let childFinalIndex = childIndex > movedFromIndex ? childIndex - 1 : childIndex
-            // Parent will be at movingToIndex after insertion
-            let parentFinalIndex = movingToIndex
 
-            // Child is orphaned if it ends up BEFORE the parent
+            // After parent removal, where will the target be? Parent inserts AFTER target.
+            let parentFinalIndex: Int
+            if let targetId = targetSectionId,
+               let targetIdx = sections.firstIndex(where: { $0.id == targetId }) {
+                // Target shifts down if it was after the removed section
+                let targetFinalIndex = targetIdx > movedFromIndex ? targetIdx - 1 : targetIdx
+                parentFinalIndex = targetFinalIndex + 1  // Parent goes AFTER target
+            } else {
+                parentFinalIndex = 0  // No target = insert at beginning
+            }
+
+            // Child is orphaned if it ends up BEFORE the parent in document order
             if childFinalIndex < parentFinalIndex {
-                // Promote to the parent's old level
                 let newLevel = oldLevel
                 let newMarkdown = sectionSyncService.updateHeaderLevel(
                     in: child.markdownContent,
                     to: newLevel
                 )
-
-                editorState.sections[childIndex] = child.withUpdates(
+                sections[childIndex] = child.withUpdates(
                     headerLevel: newLevel,
                     markdownContent: newMarkdown
                 )
             }
         }
+    }
+
+    /// Rebuild document content based on zoom state (extracted for reuse)
+    private func rebuildDocumentContent() {
+        let sectionsToRebuild: [SectionViewModel]
+        if let zoomedIds = editorState.zoomedSectionIds {
+            sectionsToRebuild = editorState.sections
+                .filter { zoomedIds.contains($0.id) }
+                .sorted { $0.sortOrder < $1.sortOrder }
+        } else {
+            sectionsToRebuild = editorState.sections
+        }
+
+        editorState.content = sectionsToRebuild
+            .map { section in
+                var content = section.markdownContent
+                if !content.hasSuffix("\n") { content += "\n" }
+                return content
+            }
+            .joined()
     }
 
     /// Recalculate parentId for all sections based on document order and header levels
@@ -504,20 +646,17 @@ Use this content to verify that:
 
     /// Initialize the project - load from database or create with demo content
     private func initializeProject() async {
-        // Set up the callback for section updates BEFORE initializing
-        sectionSyncService.onSectionsUpdated = { [self] sections in
-            editorState.sections = sections
-            recalculateParentRelationships()
-        }
-
         do {
             // Initialize demo project (creates if needed)
             try await demoProjectManager.ensureDemoProjectExists(demoContent: demoContent)
 
-            // Configure sync service with database
+            // Configure sync service with database and start observation
             if let db = demoProjectManager.projectDatabase,
                let pid = demoProjectManager.projectId {
                 sectionSyncService.configure(database: db, projectId: pid)
+
+                // Start reactive observation (replaces callback-based updates)
+                editorState.startObserving(database: db, projectId: pid)
             }
 
             // Try to load saved content from database
@@ -528,19 +667,14 @@ Use this content to verify that:
                 editorState.content = demoContent
             }
 
-            // Load sections from database or parse from content
-            let sections = await sectionSyncService.loadSections()
-            if sections.isEmpty {
-                // No sections in database - parse from content
-                editorState.sections = sectionSyncService.parseAndGetSections(from: editorState.content)
-                // Trigger an immediate sync to save parsed sections
+            // Check if sections exist in database
+            let existingSections = await sectionSyncService.loadSections()
+            if existingSections.isEmpty {
+                // No sections in database - trigger immediate sync to create them
+                // ValueObservation will automatically update editorState.sections
                 await sectionSyncService.syncNow(editorState.content)
-            } else {
-                editorState.sections = sections
             }
-
-            // Initialize parent relationships
-            recalculateParentRelationships()
+            // Note: editorState.sections is populated via ValueObservation in startObserving()
 
         } catch {
             print("[ContentView] Failed to initialize project: \(error.localizedDescription)")

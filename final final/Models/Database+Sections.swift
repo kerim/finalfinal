@@ -6,6 +6,44 @@
 import Foundation
 import GRDB
 
+// MARK: - Section Change Types
+
+/// Represents a surgical change to apply to the sections table
+enum SectionChange {
+    case insert(Section)
+    case update(id: String, updates: SectionUpdates)
+    case delete(id: String)
+}
+
+/// Updates to apply to an existing section (all fields optional)
+struct SectionUpdates {
+    var title: String?
+    var headerLevel: Int?
+    var sortOrder: Int?
+    var markdownContent: String?
+    var wordCount: Int?
+    var startOffset: Int?
+    var parentId: String??  // Double-optional: nil = don't change, .some(nil) = set to nil
+
+    init(
+        title: String? = nil,
+        headerLevel: Int? = nil,
+        sortOrder: Int? = nil,
+        markdownContent: String? = nil,
+        wordCount: Int? = nil,
+        startOffset: Int? = nil,
+        parentId: String?? = nil
+    ) {
+        self.title = title
+        self.headerLevel = headerLevel
+        self.sortOrder = sortOrder
+        self.markdownContent = markdownContent
+        self.wordCount = wordCount
+        self.startOffset = startOffset
+        self.parentId = parentId
+    }
+}
+
 // MARK: - ProjectDatabase Section CRUD
 
 extension ProjectDatabase {
@@ -245,7 +283,57 @@ extension ProjectDatabase {
 
     // MARK: - Bulk Operations
 
+    /// Apply surgical section changes (insert/update/delete) within a single transaction
+    /// This replaces the previous DELETE ALL + INSERT ALL pattern to prevent race conditions
+    func applySectionChanges(_ changes: [SectionChange], for projectId: String) throws {
+        try write { db in
+            for change in changes {
+                switch change {
+                case .insert(var section):
+                    try section.insert(db)
+
+                case .update(let id, let updates):
+                    guard var section = try Section.fetchOne(db, key: id) else { continue }
+
+                    // Apply only the fields that are set
+                    if let title = updates.title {
+                        section.title = title
+                    }
+                    if let headerLevel = updates.headerLevel {
+                        section.headerLevel = headerLevel
+                    }
+                    if let sortOrder = updates.sortOrder {
+                        section.sortOrder = sortOrder
+                    }
+                    if let markdownContent = updates.markdownContent {
+                        section.markdownContent = markdownContent
+                    }
+                    if let wordCount = updates.wordCount {
+                        section.wordCount = wordCount
+                    }
+                    if let startOffset = updates.startOffset {
+                        section.startOffset = startOffset
+                    }
+                    // Double-optional handling for parentId
+                    if let parentIdUpdate = updates.parentId {
+                        section.parentId = parentIdUpdate  // Can be nil or a value
+                    }
+
+                    section.updatedAt = Date()
+                    try section.update(db)
+
+                case .delete(let id):
+                    try Section
+                        .filter(Section.Columns.id == id)
+                        .deleteAll(db)
+                }
+            }
+        }
+    }
+
     /// Replace all sections for a project (used by sync service)
+    /// Sections are sorted topologically (parents before children) to satisfy foreign key constraints
+    /// @deprecated Use applySectionChanges() for surgical updates instead
     func replaceSections(_ sections: [Section], for projectId: String) throws {
         try write { db in
             // Delete existing sections
@@ -253,11 +341,49 @@ extension ProjectDatabase {
                 .filter(Section.Columns.projectId == projectId)
                 .deleteAll(db)
 
-            // Insert new sections
-            for var section in sections {
+            // Sort sections: parents before children (topological sort)
+            let sorted = topologicalSortSections(sections)
+
+            // Insert in order
+            for var section in sorted {
                 try section.insert(db)
             }
         }
+    }
+
+    /// Sort sections so parents are inserted before children
+    /// This prevents FOREIGN KEY constraint failures when sections reference parent IDs
+    private func topologicalSortSections(_ sections: [Section]) -> [Section] {
+        var result: [Section] = []
+        var remaining = sections
+        var insertedIds = Set<String>()
+
+        // First pass: insert all root sections (no parent)
+        let roots = remaining.filter { $0.parentId == nil }
+        result.append(contentsOf: roots)
+        insertedIds.formUnion(roots.map(\.id))
+        remaining.removeAll { $0.parentId == nil }
+
+        // Iteratively insert sections whose parents are already inserted
+        while !remaining.isEmpty {
+            let canInsert = remaining.filter { section in
+                guard let parentId = section.parentId else { return true }
+                return insertedIds.contains(parentId)
+            }
+
+            if canInsert.isEmpty {
+                // Circular reference or orphaned sections - insert remaining anyway
+                // This prevents infinite loops if data is corrupted
+                result.append(contentsOf: remaining)
+                break
+            }
+
+            result.append(contentsOf: canInsert)
+            insertedIds.formUnion(canInsert.map(\.id))
+            remaining.removeAll { canInsert.contains($0) }
+        }
+
+        return result
     }
 
     /// Recalculate word counts for all sections in a project

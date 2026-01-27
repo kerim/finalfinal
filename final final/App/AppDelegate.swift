@@ -15,6 +15,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// The application's database connection
     var database: AppDatabase?
 
+    /// Reference to editor state for cleanup on quit
+    weak var editorState: EditorViewState?
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppDelegate.shared = self
 
@@ -37,6 +40,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         #if DEBUG
         print("[AppDelegate] Application terminating")
         #endif
+
+        // If zoomed, merge content back before quitting
+        // This is fire-and-forget since we're terminating anyway
+        if let state = editorState, state.zoomedSectionId != nil {
+            Task { @MainActor in
+                await state.zoomOut()
+            }
+        }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {

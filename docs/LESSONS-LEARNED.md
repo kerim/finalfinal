@@ -269,3 +269,42 @@ Add CSS to enforce the attribute-based visibility:
 ```
 
 **General principle:** When integrating with library-managed UI components, use the library's visibility API exclusively. Mixing direct DOM manipulation with library state causes desync.
+
+---
+
+## SwiftUI Data Flow
+
+### Use IDs Not Indices When Communicating Between Filtered and Full Arrays
+
+**Problem:** Drag-drop reordering worked correctly when viewing all sections, but moved sections to wrong positions when the sidebar was zoomed/filtered to show only a subset.
+
+**Root Cause:** The drop handler calculated an `insertionIndex` based on the **filtered** array (`filteredSections` with 5 items), but the reorder function interpreted that index against the **full** array (`sections` with 17 items).
+
+```swift
+// In OutlineSidebar (filtered view):
+let insertionIndex = 4  // Position in filteredSections
+
+// In ContentView (full array):
+let targetIdx = insertionIndex - 1  // = 3
+let target = sections[targetIdx]    // WRONG! Index 3 in full array != index 3 in filtered array
+```
+
+**Solution:** Pass the **target section ID** instead of an index. IDs are stable across both arrays:
+
+```swift
+// Before (ambiguous)
+struct SectionReorderRequest {
+    let sectionId: String
+    let insertionIndex: Int  // Filtered or full array? Unclear!
+}
+
+// After (unambiguous)
+struct SectionReorderRequest {
+    let sectionId: String
+    let targetSectionId: String?  // Insert AFTER this section (nil = beginning)
+}
+```
+
+The receiver uses `sections.firstIndex(where: { $0.id == targetId })` to find the correct position in its own array.
+
+**General principle:** When passing position information between components that may have different views of the same data (filtered, sorted, paginated), use stable identifiers rather than indices.
