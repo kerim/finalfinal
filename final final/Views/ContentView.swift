@@ -21,8 +21,9 @@ struct ContentView: View {
     @State private var editorState = EditorViewState()
     @State private var cursorPositionToRestore: CursorPosition?
     @State private var sectionSyncService = SectionSyncService()
+    @State private var demoProjectManager = DemoProjectManager()
 
-    // swiftlint:disable:next line_length
+    // swiftlint:disable line_length
     private let demoContent = """
 # Welcome to final final
 
@@ -153,6 +154,7 @@ Use this content to verify that:
 3. Section hierarchy is properly detected
 4. Drag-drop reordering maintains document integrity
 """
+// swiftlint:enable line_length
 // Note: Demo content ends WITH content (no trailing newline)
 // to test that reorderSection() properly normalizes section endings
 
@@ -163,8 +165,7 @@ Use this content to verify that:
             detailView
         }
         .task {
-            loadDemoContent()
-            syncSections()
+            await initializeProject()
         }
         .onChange(of: editorState.content) { _, newValue in
             sectionSyncService.contentChanged(newValue)
@@ -211,6 +212,13 @@ Use this content to verify that:
                 },
                 onSectionReorder: { request in
                     reorderSection(request)
+                },
+                onDragStarted: {
+                    sectionSyncService.isSyncSuppressed = true
+                    sectionSyncService.cancelPendingSync()
+                },
+                onDragEnded: {
+                    sectionSyncService.isSyncSuppressed = false
                 }
             )
         }
@@ -227,10 +235,26 @@ Use this content to verify that:
     }
 
     private func updateSection(_ section: SectionViewModel) {
-        // TODO: Save section changes to database
+        // Save section metadata changes to database
+        Task {
+            do {
+                try demoProjectManager.saveSectionStatus(id: section.id, status: section.status)
+                if let goal = section.wordGoal {
+                    try demoProjectManager.saveSectionWordGoal(id: section.id, goal: goal)
+                }
+                if !section.tags.isEmpty {
+                    try demoProjectManager.saveSectionTags(id: section.id, tags: section.tags)
+                }
+            } catch {
+                print("[ContentView] Error saving section: \(error.localizedDescription)")
+            }
+        }
     }
 
     private func reorderSection(_ request: SectionReorderRequest) {
+        // Cancel any pending sync to prevent race conditions
+        sectionSyncService.cancelPendingSync()
+
         // Validate: section cannot be its own parent (circular reference)
         if request.newParentId == request.sectionId { return }
 
@@ -478,18 +502,51 @@ Use this content to verify that:
         }
     }
 
-    private func loadDemoContent() {
-        if editorState.content.isEmpty {
-            editorState.content = demoContent
+    /// Initialize the project - load from database or create with demo content
+    private func initializeProject() async {
+        // Set up the callback for section updates BEFORE initializing
+        sectionSyncService.onSectionsUpdated = { [self] sections in
+            editorState.sections = sections
+            recalculateParentRelationships()
         }
-    }
 
-    private func syncSections() {
-        Task { @MainActor in
-            // For now, parse demo content into sections
-            // In full implementation, this would load from ProjectDatabase
+        do {
+            // Initialize demo project (creates if needed)
+            try await demoProjectManager.ensureDemoProjectExists(demoContent: demoContent)
+
+            // Configure sync service with database
+            if let db = demoProjectManager.projectDatabase,
+               let pid = demoProjectManager.projectId {
+                sectionSyncService.configure(database: db, projectId: pid)
+            }
+
+            // Try to load saved content from database
+            if let savedContent = try demoProjectManager.loadContent(), !savedContent.isEmpty {
+                editorState.content = savedContent
+            } else {
+                // Fall back to demo content for new projects
+                editorState.content = demoContent
+            }
+
+            // Load sections from database or parse from content
+            let sections = await sectionSyncService.loadSections()
+            if sections.isEmpty {
+                // No sections in database - parse from content
+                editorState.sections = sectionSyncService.parseAndGetSections(from: editorState.content)
+                // Trigger an immediate sync to save parsed sections
+                await sectionSyncService.syncNow(editorState.content)
+            } else {
+                editorState.sections = sections
+            }
+
+            // Initialize parent relationships
+            recalculateParentRelationships()
+
+        } catch {
+            print("[ContentView] Failed to initialize project: \(error.localizedDescription)")
+            // Fall back to in-memory mode with demo content
+            editorState.content = demoContent
             editorState.sections = parseDemoSections()
-            // Initialize parent relationships based on header levels
             recalculateParentRelationships()
         }
     }

@@ -163,3 +163,4 @@ Save section metadata (goals, status, tags) to database when changed.
 | Package | Version | Purpose |
 |---------|---------|---------|
 | `unist-util-visit` | ^5.0.0 | Tree traversal for remark plugins |
+|  |  |  |

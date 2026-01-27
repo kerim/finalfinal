@@ -69,7 +69,7 @@ struct OutlineFilterBar: View {
 }
 
 #Preview {
-    @Previewable @State var filter: SectionStatus? = nil
+    @Previewable @State var filter: SectionStatus?
 
     VStack {
         OutlineFilterBar(selectedFilter: $filter)

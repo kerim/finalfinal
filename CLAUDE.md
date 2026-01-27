@@ -44,16 +44,21 @@ Custom `editor://` URL scheme + 500ms polling:
 | `App/AppDelegate.swift` | App lifecycle + database init |
 | `App/FinalFinalApp.swift` | SwiftUI app entry point |
 | `Models/Database.swift` | GRDB setup, migrations, persistent storage |
+| `Models/ProjectDatabase.swift` | Project-specific database with CRUD operations |
 | `Models/Document.swift` | Project + Content GRDB models |
-| `Models/OutlineNode.swift` | Outline cache GRDB model |
+| `Models/Section.swift` | Section model with metadata (status, tags, goals) |
 | `ViewState/EditorViewState.swift` | Editor state (@Observable, @MainActor) |
 | `Editors/EditorSchemeHandler.swift` | Custom URL scheme handler |
+| `Editors/MilkdownEditor.swift` | WYSIWYG editor WKWebView wrapper |
+| `Editors/CodeMirrorEditor.swift` | Source editor WKWebView wrapper |
+| `Services/DemoProjectManager.swift` | Demo project lifecycle + database access |
+| `Services/SectionSyncService.swift` | Editor ↔ section sync with debouncing |
 | `Services/OutlineParser.swift` | Markdown headers → outline nodes |
+| `Views/Sidebar/OutlineSidebar.swift` | Section cards with drag-drop reordering |
+| `Views/Sidebar/SectionCardView.swift` | Individual section card + SectionViewModel |
 | `Theme/ColorScheme.swift` | App color scheme definitions |
 | `web/milkdown/src/main.ts` | WYSIWYG editor + focus mode plugin |
 | `web/codemirror/src/main.ts` | Source editor |
-
-*Planned (Phase 1.4-1.5):* `Editors/MilkdownEditor.swift`, `Editors/CodeMirrorEditor.swift`
 
 ### window.FinalFinal API
 
@@ -157,15 +162,19 @@ Or use the reflect command for instruction improvements:
 ## Completed Phases
 
 - [x] **Phase 1.1** - Project setup, GRDB, editor:// scheme (2026-01-23)
+- [x] **Phase 1.6** - Outline sidebar with section management (2026-01-26)
+- [x] **Phase 1.6b** - Editor ↔ sidebar sync with database wiring (2026-01-27)
 
 ## Phase 1 Verification
 
-- [ ] WYSIWYG editing works (Milkdown)
-- [ ] Source editing works (CodeMirror)
-- [ ] Cmd+/ toggles modes, cursor preserved
-- [ ] Outline sidebar shows headers with preview text
-- [ ] Single click → scroll to section
-- [ ] Double click → zoom into section
-- [ ] Focus mode dims non-current paragraphs
-- [ ] Content persists after restart
-- [ ] Themes switch correctly
+- [x] WYSIWYG editing works (Milkdown)
+- [x] Source editing works (CodeMirror)
+- [x] Cmd+/ toggles modes, cursor preserved
+- [x] Outline sidebar shows headers with preview text
+- [x] Single click → scroll to section
+- [x] Double click → zoom into section
+- [x] Focus mode dims non-current paragraphs
+- [x] Content persists after restart
+- [x] Themes switch correctly
+- [x] Drag-drop reordering with hierarchy constraints
+- [x] Section metadata (status, tags, word goals) persists
