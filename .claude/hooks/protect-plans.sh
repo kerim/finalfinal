@@ -34,8 +34,14 @@ case "$file_path" in
 
         # If file exists, create backup before allowing edit
         if [ -f "$full_path" ]; then
-            backup_dir="$CLAUDE_PROJECT_DIR/docs/plans/.backups"
+            # Get current git branch (sanitize for filesystem)
+            branch=$(git -C "$CLAUDE_PROJECT_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
+            branch_safe=$(echo "$branch" | tr '/' '-')
+
+            # External backup location organized by branch
+            backup_dir="/Users/niyaro/Documents/Code/Claude Code Plans Backups/$branch_safe"
             mkdir -p "$backup_dir"
+
             filename=$(basename "$full_path")
             timestamp=$(date +%Y%m%d-%H%M%S)
             cp "$full_path" "$backup_dir/${filename%.md}-${timestamp}.md"

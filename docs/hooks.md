@@ -69,10 +69,17 @@ Claude Code hooks run before or after Claude Code tool executions within a Claud
 
 **What it does:**
 - Detects if the target file is in `docs/plans/`
-- If the file exists, creates a timestamped backup in `docs/plans/.backups/`
+- If the file exists, creates a timestamped backup in the external backup location
 - Allows the edit to proceed after backup
 
-**Example:** Editing `docs/plans/feature.md` creates `docs/plans/.backups/feature-20260124-153022.md`
+**Backup Location:** `/Users/niyaro/Documents/Code/Claude Code Plans Backups/<branch>/`
+
+Backups are organized by git branch to keep them separate across different workstreams. The branch name is sanitized (e.g., `feature/foo` becomes `feature-foo`).
+
+**Example:** On branch `main`, editing `docs/plans/feature.md` creates:
+`/Users/niyaro/Documents/Code/Claude Code Plans Backups/main/feature-20260124-153022.md`
+
+**Why external location:** The previous location (`docs/plans/.backups/`) was inside the git repository and would get cleared during git merge operations. The external location preserves backups regardless of git operations.
 
 ### protect-backups.sh
 
@@ -83,7 +90,8 @@ Claude Code hooks run before or after Claude Code tool executions within a Claud
 **Purpose:** Prevents Claude Code from modifying backup files.
 
 **What it does:**
-- Blocks any write/edit operation targeting files in `.backups/` directories
+- Blocks any write/edit operation targeting files in `.backups/` directories (backwards compatibility)
+- Blocks any write/edit operation targeting files in `/Users/niyaro/Documents/Code/Claude Code Plans Backups/`
 - Returns exit code 2 to stop the operation
 
 ### protect-backups-git.sh
@@ -92,10 +100,11 @@ Claude Code hooks run before or after Claude Code tool executions within a Claud
 
 **Triggers:** Before any `Bash` tool execution
 
-**Purpose:** Prevents Claude Code from running `git rm` on backup files.
+**Purpose:** Prevents Claude Code from running destructive git commands on backup files.
 
 **What it does:**
-- Detects `git rm` commands targeting `.backups/` directories
+- Detects `git rm` commands targeting `.backups/` directories (backwards compatibility)
+- Detects `git rm`, `git add`, or `git mv` commands targeting the external backup location
 - Blocks such commands with exit code 2
 
 ---
@@ -116,7 +125,7 @@ After cloning the repository, run:
 cat > .git/hooks/post-merge << 'EOF'
 #!/bin/bash
 echo "Post-merge: Rebuilding web editors..."
-cd "$GIT_DIR/../web" || exit 0
+cd "$(git rev-parse --show-toplevel)/web" || exit 0
 if command -v pnpm &> /dev/null; then
     pnpm build
     echo "Post-merge: Web editors rebuilt successfully"

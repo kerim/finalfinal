@@ -21,5 +21,11 @@ if echo "$command" | grep -qE "git\s+rm.*\.backups"; then
     exit 2
 fi
 
+# Check if it's a git operation targeting the external backup location
+if echo "$command" | grep -qE "git\s+(rm|add|mv).*Claude Code Plans Backups"; then
+    echo "BLOCKED: Cannot run git operations on Claude Code Plans Backups folder" >&2
+    exit 2
+fi
+
 # Allow the operation
 exit 0

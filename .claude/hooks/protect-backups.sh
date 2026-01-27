@@ -18,10 +18,17 @@ file_path=$(echo "$input" | grep -o '"file_path"[[:space:]]*:[[:space:]]*"[^"]*"
 # If no file path found, allow
 [ -z "$file_path" ] && exit 0
 
-# Block if path is in .backups
+# External backup location
+backup_base="/Users/niyaro/Documents/Code/Claude Code Plans Backups"
+
+# Block if path is in .backups or external backup location
 case "$file_path" in
     */.backups/* | */.backups)
         echo "BLOCKED: Cannot modify files in .backups/ folder" >&2
+        exit 2
+        ;;
+    "$backup_base"/* | "$backup_base")
+        echo "BLOCKED: Cannot modify files in Claude Code Plans Backups folder" >&2
         exit 2
         ;;
 esac
