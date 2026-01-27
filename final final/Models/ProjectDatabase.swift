@@ -118,4 +118,34 @@ final class ProjectDatabase: Sendable {
     func write<T>(_ block: (Database) throws -> T) throws -> T {
         try dbWriter.write(block)
     }
+
+    // MARK: - Reactive Observation
+
+    /// Returns an async sequence of section updates for reactive UI
+    /// Uses ValueObservation to automatically push updates when the database changes
+    func observeSections(for projectId: String) -> AsyncThrowingStream<[Section], Error> {
+        let observation = ValueObservation
+            .tracking { db in
+                try Section
+                    .filter(Section.Columns.projectId == projectId)
+                    .order(Section.Columns.sortOrder)
+                    .fetchAll(db)
+            }
+            .removeDuplicates()  // Prevent unnecessary re-renders
+
+        return AsyncThrowingStream { continuation in
+            let cancellable = observation.start(
+                in: dbWriter,
+                scheduling: .async(onQueue: .main)
+            ) { error in
+                continuation.finish(throwing: error)
+            } onChange: { sections in
+                continuation.yield(sections)
+            }
+
+            continuation.onTermination = { _ in
+                cancellable.cancel()
+            }
+        }
+    }
 }

@@ -87,7 +87,7 @@ func calculateZoneLevel(x: CGFloat, sidebarWidth: CGFloat, predecessorLevel: Int
 /// Structured request for section reordering with full context
 struct SectionReorderRequest {
     let sectionId: String
-    let insertionIndex: Int
+    let targetSectionId: String?  // Insert AFTER this section (nil = insert at beginning)
     let newLevel: Int
     let newParentId: String?
 }
@@ -109,6 +109,10 @@ struct OutlineSidebar: View {
     let onScrollToSection: (String) -> Void
     let onSectionUpdated: (SectionViewModel) -> Void
     let onSectionReorder: ((SectionReorderRequest) -> Void)?
+    /// Called when user requests zoom into a section (double-click)
+    var onZoomToSection: ((String) -> Void)?
+    /// Called when user requests zoom out (double-click on already zoomed section)
+    var onZoomOut: (() -> Void)?
     /// Called when drag operation starts - use to suppress sync
     var onDragStarted: (() -> Void)?
     /// Called when drag operation ends - use to resume sync
@@ -224,9 +228,11 @@ struct OutlineSidebar: View {
                             },
                             onDoubleClick: {
                                 if zoomedSectionId == section.id {
-                                    zoomedSectionId = nil
+                                    // Zoom out if already zoomed to this section
+                                    onZoomOut?()
                                 } else {
-                                    zoomedSectionId = section.id
+                                    // Zoom into this section
+                                    onZoomToSection?(section.id)
                                 }
                             }
                         )
@@ -368,53 +374,83 @@ struct OutlineSidebar: View {
     /// Handle drop onto a section card with position awareness
     /// Uses the constrained level from drop position (determined by horizontal position)
     private func handleDrop(dropped: SectionTransfer, position: DropPosition, targetSection: SectionViewModel) {
-        let insertionIndex: Int
+        print("[DROP] === handleDrop START ===")
+        print("[DROP] dropped.id=\(dropped.id), dropped.sortOrder=\(dropped.sortOrder), dropped.headerLevel=\(dropped.headerLevel)")
+        print("[DROP] position=\(position)")
+        print("[DROP] targetSection='\(targetSection.title)' id=\(targetSection.id)")
+        print("[DROP] filteredSections count: \(filteredSections.count)")
+        print("[DROP] sections binding count: \(sections.count)")
+        print("[DROP] filteredSections: \(filteredSections.map { "\($0.sortOrder):\($0.title)[H\($0.headerLevel)]" })")
+
         let newLevel = position.level
 
+        // Self-drop: only proceed if level is changing
         if dropped.id == targetSection.id {
-            // Self-drop: only proceed if level is changing
-            guard dropped.headerLevel != newLevel else { return }
-            // Use guard let to safely unwrap (not ?? 0 which could corrupt data)
-            guard let currentIndex = filteredSections.firstIndex(where: { $0.id == dropped.id }) else { return }
-            insertionIndex = currentIndex
-        } else {
-            // Cross-section drop
-            switch position {
-            case .insertBefore(let idx, _):
-                insertionIndex = idx
-            case .insertAfter(let idx, _):
-                insertionIndex = idx + 1
+            print("[DROP] Self-drop detected (same section)")
+            guard dropped.headerLevel != newLevel else {
+                print("[DROP] SKIP: Self-drop with no level change")
+                return
             }
         }
 
-        // Common path for both self-drop and cross-section drop
+        // Calculate target section ID (the section we insert AFTER)
+        // This ID is stable across zoom/filter states, unlike index-based positioning
+        let targetSectionId: String?
+        let insertionIndexForParent: Int  // Only used for parent calculation within filteredSections
+
+        switch position {
+        case .insertBefore(let idx, _):
+            // Insert BEFORE section at idx means insert AFTER section at idx-1
+            targetSectionId = idx > 0 ? filteredSections[idx - 1].id : nil
+            insertionIndexForParent = idx
+            print("[DROP] insertBefore idx=\(idx), targetSectionId=\(targetSectionId ?? "nil (insert at beginning)")")
+        case .insertAfter(let idx, _):
+            targetSectionId = filteredSections[idx].id
+            insertionIndexForParent = idx + 1
+            print("[DROP] insertAfter idx=\(idx), targetSectionId=\(targetSectionId ?? "nil") '\(filteredSections[idx].title)'")
+        }
+
         // Find parent based on level - look backwards for a section with level < newLevel
         // Exclude the dragged section to prevent circular parent references
-        let newParentId = findParentId(forLevel: newLevel, insertionIndex: insertionIndex, excludingId: dropped.id)
+        let newParentId = findParentId(forLevel: newLevel, insertionIndex: insertionIndexForParent, excludingId: dropped.id)
+        print("[DROP] Calculated newParentId=\(newParentId ?? "nil")")
 
-        // Notify parent with structured request
+        // Notify parent with structured request using stable section ID
         let request = SectionReorderRequest(
             sectionId: dropped.id,
-            insertionIndex: insertionIndex,
+            targetSectionId: targetSectionId,
             newLevel: newLevel,
             newParentId: newParentId
         )
+        print("[DROP] Calling onSectionReorder with: sectionId=\(request.sectionId), targetSectionId=\(request.targetSectionId ?? "nil"), newLevel=\(request.newLevel), newParentId=\(request.newParentId ?? "nil")")
         onSectionReorder?(request)
+        print("[DROP] === handleDrop END ===")
     }
 
     /// Handle drop at end of list
     private func handleDropAtEnd(dropped: SectionTransfer, position: DropPosition) {
+        print("[DROP-END] === handleDropAtEnd START ===")
+        print("[DROP-END] dropped.id=\(dropped.id), position=\(position)")
+        print("[DROP-END] filteredSections count: \(filteredSections.count)")
+
         // Use level from drop position (constrained by predecessor)
         let newLevel = position.level
         let newParentId = findParentId(forLevel: newLevel, insertionIndex: filteredSections.count, excludingId: dropped.id)
+        print("[DROP-END] newLevel=\(newLevel), newParentId=\(newParentId ?? "nil")")
+
+        // Target is the last visible section (insert after it)
+        let targetSectionId = filteredSections.last?.id
+        print("[DROP-END] targetSectionId=\(targetSectionId ?? "nil") '\(filteredSections.last?.title ?? "")'")
 
         let request = SectionReorderRequest(
             sectionId: dropped.id,
-            insertionIndex: filteredSections.count,
+            targetSectionId: targetSectionId,
             newLevel: newLevel,
             newParentId: newParentId
         )
+        print("[DROP-END] Calling onSectionReorder with targetSectionId=\(request.targetSectionId ?? "nil")")
         onSectionReorder?(request)
+        print("[DROP-END] === handleDropAtEnd END ===")
     }
 
     /// Find the appropriate parent ID for a section at the given level and insertion point
@@ -828,7 +864,15 @@ struct ZoomBreadcrumb: View {
         onSectionUpdated: { section in print("Updated: \(section.title)") },
         onSectionReorder: { request in
             // swiftlint:disable:next line_length
-            print("Reorder: \(request.sectionId) to index \(request.insertionIndex), level \(request.newLevel), parent: \(request.newParentId ?? "nil")")
+            print("Reorder: \(request.sectionId) after \(request.targetSectionId ?? "nil"), level \(request.newLevel), parent: \(request.newParentId ?? "nil")")
+        },
+        onZoomToSection: { id in
+            zoom = id
+            print("Zoom to: \(id)")
+        },
+        onZoomOut: {
+            zoom = nil
+            print("Zoom out")
         },
         onDragStarted: { print("Drag started") },
         onDragEnded: { print("Drag ended") }

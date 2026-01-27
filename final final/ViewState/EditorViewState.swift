@@ -20,6 +20,13 @@ enum EditorMode: String, CaseIterable {
     case source = "Source"
 }
 
+/// Content state machine - replaces multiple boolean flags for zoom/enforcement transitions
+enum EditorContentState {
+    case idle
+    case zoomTransition
+    case hierarchyEnforcement
+}
+
 @MainActor
 @Observable
 class EditorViewState {
@@ -30,6 +37,16 @@ class EditorViewState {
     var characterCount: Int = 0
     var currentSectionName: String = ""
 
+    // MARK: - Content State Machine
+    /// Tracks content transitions to prevent race conditions
+    var contentState: EditorContentState = .idle
+
+    /// Full document stored when zoomed (section-level backup)
+    var fullDocumentBeforeZoom: String?
+
+    /// IDs of sections included in the zoom (root + descendants)
+    var zoomedSectionIds: Set<String>?
+
     // MARK: - Content
     var content: String = ""
 
@@ -39,6 +56,85 @@ class EditorViewState {
     // MARK: - Sidebar State (Phase 1.6)
     var sections: [SectionViewModel] = []
     var statusFilter: SectionStatus?
+
+    // MARK: - Database Observation
+    private var observationTask: Task<Void, Never>?
+
+    /// When true, ValueObservation updates are ignored (used during drag-drop reorder)
+    var isObservationSuppressed = false
+
+    /// Start observing sections from database for reactive UI updates
+    /// Call this once during initialization after database is ready
+    func startObserving(database: ProjectDatabase, projectId: String) {
+        stopObserving()  // Cancel any existing observation
+
+        observationTask = Task {
+            do {
+                for try await dbSections in database.observeSections(for: projectId) {
+                    guard !Task.isCancelled else { break }
+
+                    print("[OBSERVE] Received \(dbSections.count) sections from database")
+                    print("[OBSERVE] isObservationSuppressed: \(isObservationSuppressed)")
+                    print("[OBSERVE] DB section order: \(dbSections.map { "\($0.sortOrder):\($0.title)[H\($0.headerLevel)]" })")
+
+                    // Skip updates when observation is suppressed (during drag-drop reorder)
+                    guard !isObservationSuppressed else {
+                        print("[OBSERVE] SKIPPED due to suppression flag")
+                        continue
+                    }
+
+                    // Convert to view models
+                    let viewModels = dbSections.map { SectionViewModel(from: $0) }
+
+                    print("[OBSERVE] Updating sections array with \(viewModels.count) view models")
+                    // Update sections and recalculate parent relationships
+                    self.sections = viewModels
+                    self.recalculateParentRelationships()
+                    print("[OBSERVE] Updated. Current order: \(self.sections.map { "\($0.sortOrder):\($0.title)[H\($0.headerLevel)]" })")
+                }
+            } catch {
+                print("[OBSERVE] ERROR: \(error)")
+            }
+        }
+    }
+
+    /// Stop observing sections from database
+    func stopObserving() {
+        observationTask?.cancel()
+        observationTask = nil
+    }
+
+    /// Recalculate parentId for all sections based on document order and header levels
+    /// A section's parent is the nearest preceding section with a lower header level
+    private func recalculateParentRelationships() {
+        for index in sections.indices {
+            let section = sections[index]
+            let newParentId = findParentByLevel(at: index)
+
+            if section.parentId != newParentId {
+                sections[index] = section.withUpdates(parentId: newParentId)
+            }
+        }
+    }
+
+    /// Find the appropriate parent for a section at the given index
+    /// Parent = nearest preceding section with a LOWER header level
+    private func findParentByLevel(at index: Int) -> String? {
+        let section = sections[index]
+
+        // H1 sections have no parent
+        guard section.headerLevel > 1 else { return nil }
+
+        // Look backwards for a section with lower level
+        for i in stride(from: index - 1, through: 0, by: -1) {
+            let candidate = sections[i]
+            if candidate.headerLevel < section.headerLevel {
+                return candidate.id
+            }
+        }
+
+        return nil
+    }
 
     /// Sections to display (filtered by status and zoom)
     var displaySections: [SectionViewModel] {
@@ -108,11 +204,230 @@ class EditorViewState {
         focusModeEnabled.toggle()
     }
 
-    func zoomToSection(_ sectionId: String) {
+    /// Zoom into a section, filtering the editor to show only that section and its descendants
+    /// This is async because it needs to coordinate content transitions safely
+    func zoomToSection(_ sectionId: String) async {
+        // Guard against re-entry during transitions
+        guard contentState == .idle else { return }
+
+        // If already zoomed to a different section, unzoom first
+        if zoomedSectionId != nil && zoomedSectionId != sectionId {
+            await zoomOut()
+        }
+
+        guard sections.first(where: { $0.id == sectionId }) != nil else { return }
+
+        contentState = .zoomTransition
+        // NOTE: Do NOT use defer { contentState = .idle } here!
+        // defer executes BEFORE SwiftUI's onChange fires, causing race conditions
+
+        // Calculate zoomed section IDs (section + all descendants)
+        let descendantIds = getDescendantIds(of: sectionId)
+        zoomedSectionIds = descendantIds
+
+        // Store full document BEFORE modifying content
+        fullDocumentBeforeZoom = content
+
+        // Extract zoomed content by joining zoomed sections
+        let zoomedSections = sections.filter { descendantIds.contains($0.id) }
+        let zoomedContent = zoomedSections
+            .sorted { $0.sortOrder < $1.sortOrder }
+            .map { section in
+                var md = section.markdownContent
+                // Ensure proper markdown separation
+                if !md.hasSuffix("\n") { md += "\n" }
+                return md
+            }
+            .joined()
+
+        // Set zoomed state
         zoomedSectionId = sectionId
+        content = zoomedContent
+
+        // Use MainActor.run to ensure state is set AFTER SwiftUI processes the content change
+        // This runs in the next runloop iteration after content assignment
+        await MainActor.run {
+            contentState = .idle
+        }
     }
 
-    func zoomOut() {
+    /// Zoom out from current section, merging any edits back into the full document
+    func zoomOut() async {
+        guard let fullDoc = fullDocumentBeforeZoom,
+              let zoomedIds = zoomedSectionIds else {
+            // Simple zoom out if no content backup (shouldn't happen, but safe fallback)
+            zoomedSectionId = nil
+            return
+        }
+
+        contentState = .zoomTransition
+        // NOTE: Do NOT use defer { contentState = .idle } here!
+        // defer executes BEFORE SwiftUI's onChange fires, causing race conditions
+
+        // Rebuild document: use current sections array which has been synced with edits
+        // Non-zoomed sections retain their original content from the backup
+        // Zoomed sections have their current edited content
+
+        // Parse the full backup to get original non-zoomed section content
+        let originalSections = parseMarkdownToSectionOffsets(fullDoc)
+
+        // Build merged content: for zoomed sections use current content, for others use original
+        var mergedContent = ""
+        var currentIdx = 0
+
+        for original in originalSections {
+            if zoomedIds.contains(original.id) {
+                // Find the current edited version of this section
+                if let editedSection = sections.first(where: { $0.id == original.id }) {
+                    var md = editedSection.markdownContent
+                    if !md.hasSuffix("\n") { md += "\n" }
+                    mergedContent += md
+                } else {
+                    // Section was deleted while zoomed - skip it
+                }
+            } else {
+                // Use original content for non-zoomed sections
+                mergedContent += original.content
+            }
+            currentIdx += 1
+        }
+
+        // Handle any new sections created while zoomed (not in original)
+        for section in sections where !originalSections.contains(where: { $0.id == section.id }) {
+            if zoomedIds.contains(section.id) {
+                var md = section.markdownContent
+                if !md.hasSuffix("\n") { md += "\n" }
+                mergedContent += md
+            }
+        }
+
+        // Restore full document
+        content = mergedContent
+        fullDocumentBeforeZoom = nil
+        zoomedSectionIds = nil
         zoomedSectionId = nil
+
+        // Use MainActor.run to ensure state is set AFTER SwiftUI processes the content change
+        await MainActor.run {
+            contentState = .idle
+        }
+    }
+
+    /// Simple zoom out without async - for use in synchronous contexts like breadcrumb click
+    func zoomOutSync() {
+        Task {
+            await zoomOut()
+        }
+    }
+
+    // MARK: - Private Helpers
+
+    /// Get all descendant section IDs for a given section
+    private func getDescendantIds(of sectionId: String) -> Set<String> {
+        var ids = Set<String>([sectionId])
+        var changed = true
+        while changed {
+            changed = false
+            for section in sections where section.parentId != nil && ids.contains(section.parentId!) {
+                if !ids.contains(section.id) {
+                    ids.insert(section.id)
+                    changed = true
+                }
+            }
+        }
+        return ids
+    }
+
+    /// Simple struct to hold parsed section info for merge operations
+    private struct ParsedSectionInfo {
+        let id: String
+        let content: String
+    }
+
+    /// Parse markdown to extract section boundaries for merge operations
+    /// This is a simplified version that matches sections by title/level to their IDs
+    private func parseMarkdownToSectionOffsets(_ markdown: String) -> [ParsedSectionInfo] {
+        var results: [ParsedSectionInfo] = []
+        var currentOffset = 0
+        var inCodeBlock = false
+
+        struct HeaderInfo {
+            let offset: Int
+            let level: Int
+            let title: String
+        }
+
+        var headers: [HeaderInfo] = []
+
+        // First pass: find all headers
+        let lines = markdown.split(separator: "\n", omittingEmptySubsequences: false)
+        for line in lines {
+            let lineStr = String(line)
+            let trimmed = lineStr.trimmingCharacters(in: .whitespaces)
+
+            if trimmed.hasPrefix("```") {
+                inCodeBlock = !inCodeBlock
+            }
+
+            if !inCodeBlock {
+                if trimmed.hasPrefix("#") {
+                    if let header = parseHeader(trimmed) {
+                        headers.append(HeaderInfo(offset: currentOffset, level: header.level, title: header.title))
+                    }
+                }
+            }
+
+            currentOffset += lineStr.count + 1
+        }
+
+        // Second pass: extract content and match to section IDs
+        let contentLength = markdown.count
+        for (index, header) in headers.enumerated() {
+            let endOffset = index < headers.count - 1 ? headers[index + 1].offset : contentLength
+
+            let startIdx = markdown.index(markdown.startIndex, offsetBy: min(header.offset, markdown.count))
+            let endIdx = markdown.index(markdown.startIndex, offsetBy: min(endOffset, markdown.count))
+            let sectionContent = String(markdown[startIdx..<endIdx])
+
+            // Find matching section by title and level
+            let matchingSection = sections.first { section in
+                section.headerLevel == header.level && section.title == header.title
+            }
+
+            if let section = matchingSection {
+                results.append(ParsedSectionInfo(id: section.id, content: sectionContent))
+            } else {
+                // No match found - use a placeholder ID
+                results.append(ParsedSectionInfo(id: "unknown-\(index)", content: sectionContent))
+            }
+        }
+
+        return results
+    }
+
+    private struct ParsedHeader {
+        let level: Int
+        let title: String
+    }
+
+    private func parseHeader(_ line: String) -> ParsedHeader? {
+        guard line.hasPrefix("#") else { return nil }
+
+        var level = 0
+        var idx = line.startIndex
+
+        while idx < line.endIndex && line[idx] == "#" && level < 6 {
+            level += 1
+            idx = line.index(after: idx)
+        }
+
+        guard level > 0, idx < line.endIndex, line[idx] == " " else { return nil }
+
+        let titleStart = line.index(after: idx)
+        let title = String(line[titleStart...]).trimmingCharacters(in: .whitespaces)
+
+        guard !title.isEmpty else { return nil }
+
+        return ParsedHeader(level: level, title: title)
     }
 }
