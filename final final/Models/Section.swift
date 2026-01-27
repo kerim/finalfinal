@@ -61,7 +61,8 @@ struct Section: Codable, Identifiable, Equatable, Sendable, FetchableRecord, Mut
     var projectId: String
     var parentId: String?
     var sortOrder: Int
-    var headerLevel: Int  // 1-6 for headers, 0 for pseudo-sections
+    var headerLevel: Int  // 1-6 for headers (pseudo-sections inherit level from preceding section)
+    var isPseudoSection: Bool  // True for break markers (<!-- ::break:: -->)
     var title: String
     var markdownContent: String
     var status: SectionStatus
@@ -80,6 +81,7 @@ struct Section: Codable, Identifiable, Equatable, Sendable, FetchableRecord, Mut
         parentId: String? = nil,
         sortOrder: Int,
         headerLevel: Int,
+        isPseudoSection: Bool = false,
         title: String,
         markdownContent: String = "",
         status: SectionStatus = .next,
@@ -95,6 +97,7 @@ struct Section: Codable, Identifiable, Equatable, Sendable, FetchableRecord, Mut
         self.parentId = parentId
         self.sortOrder = sortOrder
         self.headerLevel = headerLevel
+        self.isPseudoSection = isPseudoSection
         self.title = title
         self.markdownContent = markdownContent
         self.status = status
@@ -114,6 +117,7 @@ struct Section: Codable, Identifiable, Equatable, Sendable, FetchableRecord, Mut
         case parentId
         case sortOrder
         case headerLevel
+        case isPseudoSection
         case title
         case markdownContent
         case status
@@ -133,6 +137,7 @@ struct Section: Codable, Identifiable, Equatable, Sendable, FetchableRecord, Mut
         case parentId
         case sortOrder
         case headerLevel
+        case isPseudoSection
         case title
         case markdownContent
         case status
@@ -151,6 +156,7 @@ struct Section: Codable, Identifiable, Equatable, Sendable, FetchableRecord, Mut
         parentId = try container.decodeIfPresent(String.self, forKey: .parentId)
         sortOrder = try container.decode(Int.self, forKey: .sortOrder)
         headerLevel = try container.decode(Int.self, forKey: .headerLevel)
+        isPseudoSection = try container.decode(Bool.self, forKey: .isPseudoSection)
         title = try container.decode(String.self, forKey: .title)
         markdownContent = try container.decode(String.self, forKey: .markdownContent)
         status = try container.decode(SectionStatus.self, forKey: .status)
@@ -177,6 +183,7 @@ struct Section: Codable, Identifiable, Equatable, Sendable, FetchableRecord, Mut
         try container.encodeIfPresent(parentId, forKey: .parentId)
         try container.encode(sortOrder, forKey: .sortOrder)
         try container.encode(headerLevel, forKey: .headerLevel)
+        try container.encode(isPseudoSection, forKey: .isPseudoSection)
         try container.encode(title, forKey: .title)
         try container.encode(markdownContent, forKey: .markdownContent)
         try container.encode(status, forKey: .status)
@@ -193,11 +200,6 @@ struct Section: Codable, Identifiable, Equatable, Sendable, FetchableRecord, Mut
     }
 
     // MARK: - Computed Properties
-
-    /// Whether this is a pseudo-section (break marker without header)
-    var isPseudoSection: Bool {
-        headerLevel == 0
-    }
 
     /// Calculate word count from markdown content (excludes markdown syntax)
     mutating func recalculateWordCount() {

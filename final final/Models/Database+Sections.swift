@@ -19,6 +19,7 @@ enum SectionChange {
 struct SectionUpdates {
     var title: String?
     var headerLevel: Int?
+    var isPseudoSection: Bool?
     var sortOrder: Int?
     var markdownContent: String?
     var wordCount: Int?
@@ -28,6 +29,7 @@ struct SectionUpdates {
     init(
         title: String? = nil,
         headerLevel: Int? = nil,
+        isPseudoSection: Bool? = nil,
         sortOrder: Int? = nil,
         markdownContent: String? = nil,
         wordCount: Int? = nil,
@@ -36,6 +38,7 @@ struct SectionUpdates {
     ) {
         self.title = title
         self.headerLevel = headerLevel
+        self.isPseudoSection = isPseudoSection
         self.sortOrder = sortOrder
         self.markdownContent = markdownContent
         self.wordCount = wordCount
@@ -301,6 +304,9 @@ extension ProjectDatabase {
                     }
                     if let headerLevel = updates.headerLevel {
                         section.headerLevel = headerLevel
+                    }
+                    if let isPseudoSection = updates.isPseudoSection {
+                        section.isPseudoSection = isPseudoSection
                     }
                     if let sortOrder = updates.sortOrder {
                         section.sortOrder = sortOrder

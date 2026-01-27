@@ -270,9 +270,11 @@ class SectionSyncService {
             let startOffset: Int
             let level: Int
             let title: String
+            let isPseudoSection: Bool
         }
 
         var boundaries: [SectionBoundary] = []
+        var lastActualHeaderLevel: Int = 1  // Default to H1 for pseudo-sections at document start
 
         // First pass: find all headers and pseudo-sections
         let lines = markdown.split(separator: "\n", omittingEmptySubsequences: false)
@@ -288,18 +290,23 @@ class SectionSyncService {
             if !inCodeBlock {
                 // Check for pseudo-section marker
                 if trimmed == "<!-- ::break:: -->" {
+                    // Pseudo-sections inherit level from preceding header (not 0!)
                     boundaries.append(SectionBoundary(
                         startOffset: currentOffset,
-                        level: 0,
-                        title: "§ Section Break"
+                        level: lastActualHeaderLevel,
+                        title: "§ Section Break",
+                        isPseudoSection: true
                     ))
+                    // Do NOT update lastActualHeaderLevel - pseudo-sections don't affect it
                 }
                 // Check for header
                 else if let header = parseHeaderLine(trimmed) {
+                    lastActualHeaderLevel = header.level  // Track for subsequent pseudo-sections
                     boundaries.append(SectionBoundary(
                         startOffset: currentOffset,
                         level: header.level,
-                        title: header.title
+                        title: header.title,
+                        isPseudoSection: false
                     ))
                 }
             }
@@ -327,9 +334,9 @@ class SectionSyncService {
 
             let wordCount = MarkdownUtils.wordCount(for: sectionMarkdown)
 
-            // For pseudo-sections (level 0), extract title from first paragraph after break
+            // For pseudo-sections, extract title from first paragraph after break
             let finalTitle: String
-            if boundary.level == 0 {
+            if boundary.isPseudoSection {
                 finalTitle = extractPseudoSectionTitle(from: sectionMarkdown)
             } else {
                 finalTitle = boundary.title
@@ -339,6 +346,7 @@ class SectionSyncService {
                 position: index,
                 title: finalTitle,
                 level: boundary.level,
+                isPseudoSection: boundary.isPseudoSection,
                 startOffset: boundary.startOffset,
                 markdownContent: sectionMarkdown,
                 wordCount: wordCount
