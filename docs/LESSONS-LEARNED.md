@@ -229,3 +229,43 @@ const remarkPlugin = $remark('section-break', () => () => (tree) => {
 ### Vite emptyOutDir: false
 
 Changes to source `index.html` won't sync to output. Either manually sync or set `emptyOutDir: true`.
+
+---
+
+## Milkdown SlashProvider
+
+### Dual Visibility Control Causes Menu to Not Reappear
+
+**Problem:** Slash menu shows on first `/` keystroke, command executes, but subsequent `/` keystrokes don't show the menu.
+
+**Root Cause:** Two independent visibility controls fighting each other:
+
+1. **SlashProvider** controls visibility via `data-show` attribute
+2. **Custom code** sets `style.display = 'none'` directly
+
+When hiding after command execution:
+```typescript
+// Problem: sets inline CSS that SlashProvider doesn't clear
+slashMenuElement.style.display = 'none';
+```
+
+When SlashProvider shows the menu again, it only sets `data-show="true"` — it does NOT clear the inline `style.display`. CSS specificity means `style.display: none` wins.
+
+**Solution:** Use a single visibility mechanism. Rely solely on SlashProvider's `data-show` attribute:
+
+```typescript
+// Hide menu - let SlashProvider handle it
+if (slashProviderInstance) {
+  slashProviderInstance.hide();  // Sets data-show="false"
+}
+// DON'T set style.display = 'none'
+```
+
+Add CSS to enforce the attribute-based visibility:
+```css
+.slash-menu[data-show="false"] {
+  display: none !important;
+}
+```
+
+**General principle:** When integrating with library-managed UI components, use the library's visibility API exclusively. Mixing direct DOM manipulation with library state causes desync.

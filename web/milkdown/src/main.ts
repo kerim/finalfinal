@@ -115,10 +115,12 @@ let filteredCommands: SlashCommand[] = [];
 let slashProviderInstance: SlashProvider | null = null;
 let currentFilter = '';
 let suppressSlashMenu = false; // Prevents re-showing menu during command execution
+let lastSlashShowTime = 0; // Debounce: prevents immediate hide after show
 
 function createSlashMenu(): HTMLElement {
   const menu = document.createElement('div');
   menu.className = 'slash-menu';
+  menu.setAttribute('data-show', 'false');  // Prevent flash on load
   menu.style.cssText = `
     position: absolute;
     padding: 4px 0;
@@ -158,7 +160,9 @@ function createMenuItem(cmd: SlashCommand, index: number, isSelected: boolean): 
   item.appendChild(labelSpan);
   item.appendChild(descSpan);
 
-  item.addEventListener('click', () => executeSlashCommand(index));
+  item.addEventListener('click', () => {
+    executeSlashCommand(index);
+  });
   item.addEventListener('mouseenter', () => {
     selectedIndex = index;
     updateSlashMenu(currentFilter);
@@ -199,7 +203,8 @@ function updateSlashMenu(filter: string) {
 }
 
 function executeSlashCommand(index: number) {
-  if (!editorInstance || index >= filteredCommands.length) return;
+  if (!editorInstance) return;
+  if (index >= filteredCommands.length) return;
 
   suppressSlashMenu = true; // Prevent SlashProvider from re-showing during transaction
 
@@ -232,28 +237,23 @@ function executeSlashCommand(index: number) {
         // Paragraph only contains the slash command - replace the whole paragraph
         tr = tr.replaceWith(parentStart, parentEnd, node);
       } else {
-        // Paragraph has other content - just delete slash and insert node after
-        tr = tr.delete(cmdStart, from);
-        tr = tr.insert(cmdStart, node);
+        // Paragraph has other content - insert break BEFORE paragraph, delete only /break text
+        tr = tr.delete(cmdStart, from);           // Delete the "/break" text
+        tr = tr.insert(parentStart, node);        // Insert section_break BEFORE the paragraph
       }
       view.dispatch(tr);
-      console.log('[Milkdown slash] Inserted section_break node');
     } else {
       // Standard text replacement
       const tr = view.state.tr
         .delete(cmdStart, from)
         .insertText(cmd.replacement, cmdStart);
       view.dispatch(tr);
-      console.log('[Milkdown slash] Executed:', cmd.label);
     }
   }
 
-  // Hide menu
+  // Hide menu - rely solely on SlashProvider's data-show attribute
   if (slashProviderInstance) {
     slashProviderInstance.hide();
-  }
-  if (slashMenuElement) {
-    slashMenuElement.style.display = 'none';
   }
   filteredCommands = [];
 
@@ -267,8 +267,8 @@ function executeSlashCommand(index: number) {
 function handleSlashKeydown(e: KeyboardEvent): boolean {
   if (!slashMenuElement || !slashProviderInstance) return false;
 
-  // Check if menu is visible
-  if (slashMenuElement.style.display === 'none') return false;
+  // Check if menu is visible via SlashProvider's data-show attribute
+  if (slashMenuElement.getAttribute('data-show') === 'false') return false;
 
   // Check if menu has items
   if (filteredCommands.length === 0) return false;
@@ -312,15 +312,22 @@ function configureSlash(ctx: Ctx) {
   slashProviderInstance = new SlashProvider({
     content: slashMenuElement,
     shouldShow(view) {
+      const content = this.getContent(view);
+      const now = Date.now();
+
       // Suppress re-showing during command execution
       if (suppressSlashMenu) return false;
 
-      const content = this.getContent(view);
-      if (!content) return false;
+      if (!content) {
+        // Debounce: if we just showed the menu, don't hide immediately
+        if (now - lastSlashShowTime < 100) return true;
+        return false;
+      }
 
       // Show menu when text ends with / or /followed-by-letters
       const match = content.match(/\/\w*$/);
       if (match) {
+        lastSlashShowTime = now;
         selectedIndex = 0;
         updateSlashMenu(match[0]);
         return filteredCommands.length > 0;
@@ -387,7 +394,6 @@ async function initEditor() {
     }
   };
 
-  console.log('[Milkdown] Editor initialized');
 }
 
 window.FinalFinal = {
@@ -447,42 +453,25 @@ window.FinalFinal = {
   },
 
   scrollToOffset(offset: number) {
-    console.log('[Milkdown scroll] === START ===');
-    console.log('[Milkdown scroll] Input offset:', offset);
-
-    if (!editorInstance) {
-      console.log('[Milkdown scroll] No editor instance');
-      return;
-    }
+    if (!editorInstance) return;
 
     const view = editorInstance.ctx.get(editorViewCtx);
     const docSize = view.state.doc.content.size;
     const pos = Math.min(offset, Math.max(0, docSize - 1));
-    console.log('[Milkdown scroll] Doc size:', docSize, 'Clamped pos:', pos);
 
     try {
       const selection = Selection.near(view.state.doc.resolve(pos));
       view.dispatch(view.state.tr.setSelection(selection));
 
       const coords = view.coordsAtPos(pos);
-      console.log('[Milkdown scroll] coordsAtPos result:', coords);
-
       if (coords) {
-        // Scroll the window to put the target 100px from the top
         const targetScrollY = coords.top + window.scrollY - 100;
-        console.log('[Milkdown scroll] Window scroll:', {
-          coordsTop: coords.top,
-          windowScrollY: window.scrollY,
-          targetScrollY: targetScrollY,
-        });
         window.scrollTo({ top: Math.max(0, targetScrollY), behavior: 'smooth' });
-        console.log('[Milkdown scroll] window.scrollTo called with:', Math.max(0, targetScrollY));
       }
 
       view.focus();
-      console.log('[Milkdown scroll] === END ===');
-    } catch (e) {
-      console.warn('[Milkdown scroll] Failed:', e);
+    } catch {
+      // Scroll failed, ignore
     }
   },
 
@@ -765,8 +754,8 @@ window.FinalFinal = {
               const scrollAdjust = cursorInView - targetTop;
               view.dom.scrollTop += scrollAdjust;
             }
-          } catch (scrollErr) {
-            console.warn('[Milkdown] scroll adjustment failed:', scrollErr);
+          } catch {
+            // Scroll adjustment failed, ignore
           }
         });
       }
@@ -785,10 +774,9 @@ window.FinalFinal = {
         const viewportHeight = window.innerHeight;
         const targetScrollY = coords.top + window.scrollY - (viewportHeight / 2);
         window.scrollTo({ top: Math.max(0, targetScrollY), behavior: 'instant' });
-        console.log('[Milkdown] scrollCursorToCenter: scrolled to', targetScrollY);
       }
-    } catch (e) {
-      console.warn('[Milkdown] scrollCursorToCenter failed:', e);
+    } catch {
+      // Scroll failed, ignore
     }
   },
 
@@ -800,9 +788,8 @@ window.FinalFinal = {
       const tr = view.state.tr.replaceWith(from, to, view.state.schema.text(text));
       view.dispatch(tr);
       view.focus();
-      console.log('[Milkdown] insertAtCursor: inserted', text.length, 'chars');
-    } catch (e) {
-      console.warn('[Milkdown] insertAtCursor failed:', e);
+    } catch {
+      // Insert failed, ignore
     }
   },
 
@@ -817,9 +804,8 @@ window.FinalFinal = {
       const tr = view.state.tr.insert(from, node);
       view.dispatch(tr);
       view.focus();
-      console.log('[Milkdown] insertBreak: inserted section break node');
-    } catch (e) {
-      console.warn('[Milkdown] insertBreak failed:', e);
+    } catch {
+      // Insert failed, ignore
     }
   },
 };

@@ -47,14 +47,19 @@ html, body {
 .milkdown li { margin: 0.25em 0; }
 .milkdown blockquote { border-left: 4px solid var(--accent-color); margin: 1em 0; padding-left: 1em; opacity: 0.9; }
 
-/* Section break - matches paragraph styling */
+/* Section break - compact visual separator */
 .section-break {
   display: block;
   color: var(--editor-muted, #999);
   font-size: 1.5em;
-  line-height: 1.6;
+  line-height: 1;  /* Keep symbol compact - no extra vertical space */
   text-align: left;
   user-select: all;
   cursor: default;
-  margin: 0.75em 0;
+  margin: 8px 0;  /* Fixed small margin for minimal visual footprint */
+}
+
+/* Hide slash menu when SlashProvider sets data-show="false" */
+.slash-menu[data-show="false"] {
+  display: none !important;
 }
