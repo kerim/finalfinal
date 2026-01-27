@@ -245,7 +245,7 @@ class SectionSyncService {
     }
 
     private func countWords(in text: String) -> Int {
-        text.split { $0.isWhitespace || $0.isNewline }.count
+        MarkdownUtils.wordCount(for: text)
     }
 
     private func assignParents(_ sections: inout [Section]) {

@@ -15,37 +15,145 @@ struct CursorPosition: Equatable {
     static let start = CursorPosition(line: 1, column: 0)
 }
 
+// swiftlint:disable:next type_body_length
 struct ContentView: View {
     @Environment(ThemeManager.self) private var themeManager
     @State private var editorState = EditorViewState()
     @State private var cursorPositionToRestore: CursorPosition?
     @State private var sectionSyncService = SectionSyncService()
 
+    // swiftlint:disable:next line_length
     private let demoContent = """
 # Welcome to final final
 
-This is a **WYSIWYG** editor powered by [Milkdown](https://milkdown.dev).
+This is a **WYSIWYG** editor powered by [Milkdown](https://milkdown.dev). \
+The editor supports rich text editing with full markdown compatibility.
 
-## Features
+You can write prose naturally and see it formatted in real-time. \
+This paragraph demonstrates that the outline sidebar correctly calculates word counts \
+even with *italic* and **bold** formatting mixed throughout the text.
 
-- Rich text editing
-- Markdown support
-- Focus mode (Cmd+Shift+F)
-- Multiple themes
+## Getting Started
 
-### Getting Started
+Start typing to edit this document. Your changes are automatically saved to the project database, so you never have to worry about losing your work.
 
-Start typing to edit this document. Your changes are automatically saved.
+The sidebar on the left shows an outline of your document structure. You can:
+
+- Click a section to scroll to it
+- Double-click to zoom into that section
+- Drag sections to reorder them
+- Set word goals and track progress
+
+### Quick Tips
+
+Here are some keyboard shortcuts to help you get started:
+
+1. Toggle focus mode with **Cmd+Shift+F** to dim surrounding paragraphs
+2. Switch themes with **Cmd+Opt+1** through **Cmd+Opt+5**
+3. Toggle source view with **Cmd+/** to see raw markdown
 
 > "The first draft is just you telling yourself the story." — Terry Pratchett
 
-Try the following:
+### Using Slash Commands
 
-1. Toggle focus mode with **Cmd+Shift+F**
-2. Switch themes with **Cmd+Opt+1** through **Cmd+Opt+5**
-3. Toggle source view with **Cmd+/**
+Type `/` followed by a command name to quickly insert content:
+
+- `/break` - Insert a section break marker
+- `/h1` through `/h6` - Insert heading markers
+- Press space after the command to activate it
+
+## Writing Features
+
+The editor includes several features designed for long-form writing projects like novels, academic papers, and documentation.
+
+### Focus Mode
+
+Focus mode dims paragraphs you're not currently editing, helping you concentrate on the text at hand. This is especially useful when working on longer sections where distractions can break your flow.
+
+Enable focus mode with **Cmd+Shift+F** or from the View menu.
+
+### Section Management
+
+Each heading in your document becomes a section in the outline sidebar. Sections can have:
+
+- **Status**: Track progress (Next, Writing, Waiting, Review, Final)
+- **Word Goals**: Set targets and see progress bars
+- **Tags**: Organize with custom labels
+
+### Drag and Drop
+
+Reorganize your document by dragging sections in the sidebar. The editor automatically:
+
+1. Updates heading levels to maintain hierarchy
+2. Preserves section metadata like status and goals
+3. Syncs changes back to the editor immediately
+
+## Advanced Topics
+
+This section covers more advanced features for power users.
+
+### Code Blocks
+
+The editor supports fenced code blocks with syntax highlighting:
+
+```swift
+struct ContentView: View {
+    @State private var content = ""
+
+    var body: some View {
+        Text("Hello, World!")
+    }
+}
+```
+
+### Tables
+
+You can create tables using markdown syntax:
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| WYSIWYG | Done | Milkdown editor |
+| Source | Done | CodeMirror editor |
+| Outline | Done | Section sidebar |
+| Focus | Done | Paragraph dimming |
+
+### Links and References
+
+The editor supports [inline links](https://example.com) as well as reference-style links for cleaner prose in source mode.
+
+## Project Organization
+
+final final uses a package format (`.ff` files) to store your projects. Each package contains:
+
+- A SQLite database for content and metadata
+- Section information with hierarchy
+- Project settings and preferences
+
+### Multiple Documents
+
+While this demo shows a single document, the full application will support projects with multiple documents organized in a binder-style interface.
+
+### Export Options
+
+When your project is complete, you'll be able to export to various formats including:
+
+- Markdown (`.md`)
+- HTML
+- PDF (via system print)
+- Word documents (`.docx`)
+
+## Conclusion
+
+This demo content provides a comprehensive test of the outline sidebar functionality. It includes multiple heading levels (H1, H2, H3), various markdown formatting, lists, code blocks, and tables.
+
+Use this content to verify that:
+
+1. Scroll-to-section works correctly
+2. Word counts exclude markdown syntax
+3. Section hierarchy is properly detected
+4. Drag-drop reordering maintains document integrity
 """
-// Note: Demo content intentionally ends WITH content (no trailing newline)
+// Note: Demo content ends WITH content (no trailing newline)
 // to test that reorderSection() properly normalizes section endings
 
     var body: some View {
@@ -436,7 +544,7 @@ Try the following:
     }
 
     private func countWords(in text: String) -> Int {
-        text.split { $0.isWhitespace || $0.isNewline }.count
+        MarkdownUtils.wordCount(for: text)
     }
 
     private func parseHeader(_ line: String) -> (Int, String)? {

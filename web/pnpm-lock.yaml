@@ -54,6 +54,12 @@ importers:
       '@milkdown/kit':
         specifier: ^7.8.0
         version: 7.18.0(@codemirror/language@6.12.1)(@codemirror/state@6.5.4)(@codemirror/view@6.39.11)(typescript@5.9.3)
+      '@milkdown/plugin-slash':
+        specifier: ^7.8.0
+        version: 7.18.0
+      unist-util-visit:
+        specifier: ^5.0.0
+        version: 5.1.0
     devDependencies:
       typescript:
         specifier: ^5.3.0
