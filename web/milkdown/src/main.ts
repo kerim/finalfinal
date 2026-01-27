@@ -165,7 +165,7 @@ function createMenuItem(cmd: SlashCommand, index: number, isSelected: boolean): 
   });
   item.addEventListener('mouseenter', () => {
     selectedIndex = index;
-    updateSlashMenu(currentFilter);
+    updateMenuSelection();  // Only update styles, don't recreate DOM
   });
 
   return item;
@@ -199,6 +199,22 @@ function updateSlashMenu(filter: string) {
 
   filteredCommands.forEach((cmd, i) => {
     slashMenuElement!.appendChild(createMenuItem(cmd, i, i === selectedIndex));
+  });
+}
+
+/**
+ * Update menu selection state without recreating DOM nodes.
+ * This prevents the race condition where mouseenter destroys the click target.
+ */
+function updateMenuSelection() {
+  if (!slashMenuElement) return;
+  const items = slashMenuElement.querySelectorAll('.slash-menu-item');
+  items.forEach((item, i) => {
+    const isSelected = i === selectedIndex;
+    item.classList.toggle('selected', isSelected);
+    (item as HTMLElement).style.background = isSelected
+      ? 'var(--editor-selection, #e8f0fe)'
+      : '';
   });
 }
 
@@ -277,14 +293,14 @@ function handleSlashKeydown(e: KeyboardEvent): boolean {
     e.preventDefault();
     e.stopPropagation();
     selectedIndex = (selectedIndex + 1) % filteredCommands.length;
-    updateSlashMenu(currentFilter);
+    updateMenuSelection();  // Only update styles, don't recreate DOM
     return true;
   }
   if (e.key === 'ArrowUp') {
     e.preventDefault();
     e.stopPropagation();
     selectedIndex = (selectedIndex - 1 + filteredCommands.length) % filteredCommands.length;
-    updateSlashMenu(currentFilter);
+    updateMenuSelection();  // Only update styles, don't recreate DOM
     return true;
   }
   if (e.key === 'Enter' || e.key === 'Tab') {

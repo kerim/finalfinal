@@ -108,6 +108,43 @@ final class ProjectDatabase: Sendable {
             }
         }
 
+        // Fix pseudo-section level inheritance: add isPseudoSection flag, fix headerLevel values
+        migrator.registerMigration("v4_section_isPseudoSection") { db in
+            try db.alter(table: "section") { t in
+                t.add(column: "isPseudoSection", .boolean).notNull().defaults(to: false)
+            }
+
+            // Mark existing level-0 sections as pseudo-sections
+            try db.execute(sql: "UPDATE section SET isPseudoSection = 1 WHERE headerLevel = 0")
+
+            // Fix levels per-project, respecting document order
+            // Pseudo-sections should inherit the level from the preceding real header
+            let projectIds = try String.fetchAll(db, sql: "SELECT DISTINCT projectId FROM section")
+            for projectId in projectIds {
+                let sections = try Row.fetchAll(db, sql: """
+                    SELECT id, headerLevel FROM section
+                    WHERE projectId = ? ORDER BY sortOrder
+                    """, arguments: [projectId])
+
+                var lastActualLevel = 1  // Default to H1 if first section is pseudo
+                for row in sections {
+                    let id: String = row["id"]
+                    let level: Int = row["headerLevel"]
+
+                    if level == 0 {
+                        // Pseudo-section: inherit level from last real header
+                        try db.execute(
+                            sql: "UPDATE section SET headerLevel = ? WHERE id = ?",
+                            arguments: [lastActualLevel, id]
+                        )
+                    } else {
+                        // Real header: track its level for subsequent pseudo-sections
+                        lastActualLevel = level
+                    }
+                }
+            }
+        }
+
         try migrator.migrate(dbWriter)
     }
 

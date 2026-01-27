@@ -22,7 +22,7 @@ struct SectionCardView: View {
         VStack(alignment: .leading, spacing: 4) {
             // Header row: HashBar on left, StatusDot on right
             HStack {
-                HashBar(level: section.headerLevel)
+                HashBar(level: section.headerLevel, isPseudoSection: section.isPseudoSection)
                 Spacer()
                 StatusDot(status: $section.status)
             }
@@ -128,6 +128,7 @@ class SectionViewModel: Identifiable {
     var parentId: String?
     var sortOrder: Int
     var headerLevel: Int
+    var isPseudoSection: Bool  // Stored, not computed
     var title: String
     var markdownContent: String
     var status: SectionStatus
@@ -144,6 +145,7 @@ class SectionViewModel: Identifiable {
         self.parentId = section.parentId
         self.sortOrder = section.sortOrder
         self.headerLevel = section.headerLevel
+        self.isPseudoSection = section.isPseudoSection
         self.title = section.title
         self.markdownContent = section.markdownContent
         self.status = section.status
@@ -152,10 +154,6 @@ class SectionViewModel: Identifiable {
         self.wordCount = section.wordCount
         self.startOffset = section.startOffset
         self.aggregateWordCount = section.wordCount  // Default to own count
-    }
-
-    var isPseudoSection: Bool {
-        headerLevel == 0
     }
 
     var goalProgress: Double? {
@@ -177,6 +175,7 @@ class SectionViewModel: Identifiable {
             parentId: parentId,
             sortOrder: sortOrder,
             headerLevel: headerLevel,
+            isPseudoSection: isPseudoSection,
             title: title,
             markdownContent: markdownContent,
             status: status,
@@ -196,6 +195,7 @@ class SectionViewModel: Identifiable {
         parentId: String?? = nil,
         sortOrder: Int? = nil,
         headerLevel: Int? = nil,
+        isPseudoSection: Bool? = nil,
         markdownContent: String? = nil,
         startOffset: Int? = nil
     ) -> SectionViewModel {
@@ -205,6 +205,7 @@ class SectionViewModel: Identifiable {
             parentId: parentId ?? self.parentId,
             sortOrder: sortOrder ?? self.sortOrder,
             headerLevel: headerLevel ?? self.headerLevel,
+            isPseudoSection: isPseudoSection ?? self.isPseudoSection,
             title: self.title,
             markdownContent: markdownContent ?? self.markdownContent,
             status: self.status,

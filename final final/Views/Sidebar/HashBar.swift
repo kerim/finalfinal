@@ -8,14 +8,10 @@ import SwiftUI
 /// Displays hierarchy indicator as ###□□□ pattern
 /// - Filled # marks for header level
 /// - Empty □ marks for remaining slots
-/// - § prefix for pseudo-sections (level 0)
 struct HashBar: View {
-    let level: Int  // 1-6 for headers, 0 for pseudo-sections
+    let level: Int  // 1-6 for headers (pseudo-sections inherit level from preceding)
+    let isPseudoSection: Bool  // True for break markers
     @Environment(ThemeManager.self) private var themeManager
-
-    private var effectiveLevel: Int {
-        level == 0 ? 1 : level
-    }
 
     var body: some View {
         HStack(spacing: 2) {
@@ -29,14 +25,11 @@ struct HashBar: View {
     }
 
     private func symbolFor(position: Int) -> String {
-        if position == 1 && level == 0 {
-            return "§"
-        }
         return "#"
     }
 
     private func colorFor(position: Int) -> Color {
-        if position <= effectiveLevel {
+        if position <= level {
             return themeManager.currentTheme.accentColor
         }
         return themeManager.currentTheme.sidebarText.opacity(0.3)
@@ -45,13 +38,13 @@ struct HashBar: View {
 
 #Preview {
     VStack(alignment: .leading, spacing: 8) {
-        HashBar(level: 1)
-        HashBar(level: 2)
-        HashBar(level: 3)
-        HashBar(level: 4)
-        HashBar(level: 5)
-        HashBar(level: 6)
-        HashBar(level: 0)  // Pseudo-section
+        HashBar(level: 1, isPseudoSection: false)
+        HashBar(level: 2, isPseudoSection: false)
+        HashBar(level: 3, isPseudoSection: false)
+        HashBar(level: 4, isPseudoSection: false)
+        HashBar(level: 5, isPseudoSection: false)
+        HashBar(level: 6, isPseudoSection: false)
+        HashBar(level: 2, isPseudoSection: true)  // Pseudo-section at H2 level
     }
     .padding()
     .environment(ThemeManager.shared)

@@ -15,7 +15,8 @@ import Foundation
 struct ParsedHeader {
     let position: Int           // 0-indexed position among headers
     let title: String
-    let level: Int              // Header level (1-6, or 0 for pseudo-sections)
+    let level: Int              // Header level (1-6, pseudo-sections inherit from preceding)
+    let isPseudoSection: Bool   // True for break markers (<!-- ::break:: -->)
     let startOffset: Int        // Character offset where section starts
     let markdownContent: String // Full markdown content of this section
     let wordCount: Int
@@ -59,6 +60,7 @@ class SectionReconciler {
                     projectId: projectId,
                     sortOrder: index,
                     headerLevel: header.level,
+                    isPseudoSection: header.isPseudoSection,
                     title: header.title,
                     markdownContent: header.markdownContent,
                     wordCount: header.wordCount,
@@ -97,8 +99,8 @@ class SectionReconciler {
         }
 
         // Tier 2: Same title anywhere (handles drag-drop reordering)
-        // Skip for pseudo-sections (headerLevel == 0) which all have the same title
-        if header.level > 0,
+        // Skip for pseudo-sections which all have similar generated titles
+        if !header.isPseudoSection,
            let match = available.first(where: { $0.title == header.title && $0.headerLevel == header.level }) {
             return match
         }
@@ -128,6 +130,12 @@ class SectionReconciler {
         // Level changed
         if header.level != existing.headerLevel {
             updates.headerLevel = header.level
+            hasChanges = true
+        }
+
+        // isPseudoSection changed
+        if header.isPseudoSection != existing.isPseudoSection {
+            updates.isPseudoSection = header.isPseudoSection
             hasChanges = true
         }
 

@@ -58,7 +58,7 @@ class DemoProjectManager {
 
             if fm.fileExists(atPath: Self.demoPath.path) {
                 // Open existing project
-                try openExistingProject()
+                try openExistingProject(demoContent: demoContent)
             } else {
                 // Create new project
                 try createNewProject(with: demoContent)
@@ -72,18 +72,23 @@ class DemoProjectManager {
 
     // MARK: - Private Methods
 
-    private func openExistingProject() throws {
+    private func openExistingProject(demoContent: String) throws {
         print("[DemoProjectManager] Opening existing project at: \(Self.demoPath.path)")
 
         let package = try ProjectPackage.open(at: Self.demoPath)
         projectDatabase = try ProjectDatabase(package: package)
-        projectId = try projectDatabase?.fetchProject()?.id
 
-        if projectId == nil {
-            throw DemoProjectError.noProjectFound
+        // Check if project exists (database may have been erased on schema change)
+        if let existingId = try projectDatabase?.fetchProject()?.id {
+            projectId = existingId
+            print("[DemoProjectManager] Opened project with ID: \(projectId ?? "nil")")
+        } else {
+            // Database was erased - delete folder and recreate fresh
+            print("[DemoProjectManager] Database was erased, recreating from scratch")
+            projectDatabase = nil
+            try FileManager.default.removeItem(at: Self.demoPath)
+            try createNewProject(with: demoContent)
         }
-
-        print("[DemoProjectManager] Opened project with ID: \(projectId ?? "nil")")
     }
 
     private func createNewProject(with demoContent: String) throws {
