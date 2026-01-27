@@ -109,12 +109,17 @@ struct OutlineSidebar: View {
     let onScrollToSection: (String) -> Void
     let onSectionUpdated: (SectionViewModel) -> Void
     let onSectionReorder: ((SectionReorderRequest) -> Void)?
+    /// Called when drag operation starts - use to suppress sync
+    var onDragStarted: (() -> Void)?
+    /// Called when drag operation ends - use to resume sync
+    var onDragEnded: (() -> Void)?
 
     @Environment(ThemeManager.self) private var themeManager
     @State private var dropPosition: DropPosition?
     @State private var pendingDropId: UUID?  // Guards against race conditions in async drop handling
     @State private var lastDropLocation: CGPoint?  // Deduplicates simultaneous delegate fires
     @State private var sidebarWidth: CGFloat = 300  // Track actual width for zone calculations
+    @State private var isDragging: Bool = false  // Track drag state for suppression
 
     var body: some View {
         VStack(spacing: 0) {
@@ -256,9 +261,12 @@ struct OutlineSidebar: View {
                             dropPosition: $dropPosition,
                             pendingDropId: $pendingDropId,
                             lastDropLocation: $lastDropLocation,
+                            isDragging: $isDragging,
                             onDrop: { transfer, position in
                                 handleDrop(dropped: transfer, position: position, targetSection: section)
-                            }
+                            },
+                            onDragStarted: onDragStarted,
+                            onDragEnded: onDragEnded
                         ))
                         .draggable(SectionTransfer(
                             id: section.id,
@@ -298,9 +306,12 @@ struct OutlineSidebar: View {
                             dropPosition: $dropPosition,
                             pendingDropId: $pendingDropId,
                             lastDropLocation: $lastDropLocation,
+                            isDragging: $isDragging,
                             onDrop: { transfer, position in
                                 handleDropAtEnd(dropped: transfer, position: position)
-                            }
+                            },
+                            onDragStarted: onDragStarted,
+                            onDragEnded: onDragEnded
                         ))
                 }
             }
@@ -521,7 +532,10 @@ struct SectionDropDelegate: DropDelegate {
     @Binding var dropPosition: DropPosition?
     @Binding var pendingDropId: UUID?  // Guards against race conditions in async drop handling
     @Binding var lastDropLocation: CGPoint?  // Deduplicates simultaneous delegate fires
+    @Binding var isDragging: Bool  // Track drag state for sync suppression
     let onDrop: (SectionTransfer, DropPosition) -> Void
+    var onDragStarted: (() -> Void)?
+    var onDragEnded: (() -> Void)?
 
     func dropUpdated(info: DropInfo) -> DropProposal? {
         // Skip updates if a drop is pending (prevents race condition)
@@ -603,6 +617,10 @@ struct SectionDropDelegate: DropDelegate {
                     self.onDrop(transfer, capturedPosition)
                 }
                 self.pendingDropId = nil
+
+                // Signal drag ended
+                self.isDragging = false
+                self.onDragEnded?()
             }
         }
 
@@ -617,6 +635,11 @@ struct SectionDropDelegate: DropDelegate {
     }
 
     func dropEntered(info: DropInfo) {
+        // Signal drag started (only once per drag session)
+        if !isDragging {
+            isDragging = true
+            onDragStarted?()
+        }
         _ = dropUpdated(info: info)
     }
 }
@@ -629,7 +652,10 @@ struct EndDropDelegate: DropDelegate {
     @Binding var dropPosition: DropPosition?
     @Binding var pendingDropId: UUID?  // Guards against race conditions in async drop handling
     @Binding var lastDropLocation: CGPoint?  // Deduplicates simultaneous delegate fires
+    @Binding var isDragging: Bool  // Track drag state for sync suppression
     let onDrop: (SectionTransfer, DropPosition) -> Void
+    var onDragStarted: (() -> Void)?
+    var onDragEnded: (() -> Void)?
 
     func dropUpdated(info: DropInfo) -> DropProposal? {
         // Skip updates if a drop is pending (prevents race condition)
@@ -696,6 +722,10 @@ struct EndDropDelegate: DropDelegate {
                     self.onDrop(transfer, capturedPosition)
                 }
                 self.pendingDropId = nil
+
+                // Signal drag ended
+                self.isDragging = false
+                self.onDragEnded?()
             }
         }
 
@@ -707,6 +737,15 @@ struct EndDropDelegate: DropDelegate {
         if pendingDropId == nil {
             dropPosition = nil
         }
+    }
+
+    func dropEntered(info: DropInfo) {
+        // Signal drag started (only once per drag session)
+        if !isDragging {
+            isDragging = true
+            onDragStarted?()
+        }
+        _ = dropUpdated(info: info)
     }
 }
 
@@ -778,8 +817,8 @@ struct ZoomBreadcrumb: View {
             wordCount: 180
         ))
     ]
-    @Previewable @State var filter: SectionStatus? = nil
-    @Previewable @State var zoom: String? = nil
+    @Previewable @State var filter: SectionStatus?
+    @Previewable @State var zoom: String?
 
     OutlineSidebar(
         sections: $sections,
@@ -788,8 +827,11 @@ struct ZoomBreadcrumb: View {
         onScrollToSection: { id in print("Scroll to: \(id)") },
         onSectionUpdated: { section in print("Updated: \(section.title)") },
         onSectionReorder: { request in
+            // swiftlint:disable:next line_length
             print("Reorder: \(request.sectionId) to index \(request.insertionIndex), level \(request.newLevel), parent: \(request.newParentId ?? "nil")")
-        }
+        },
+        onDragStarted: { print("Drag started") },
+        onDragEnded: { print("Drag ended") }
     )
     .frame(width: 300, height: 500)
     .environment(ThemeManager.shared)

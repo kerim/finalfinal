@@ -18,12 +18,29 @@ class SectionSyncService {
     private var projectDatabase: ProjectDatabase?
     private var projectId: String?
 
+    // MARK: - Callback and Suppression
+
+    /// Called when sections are updated after sync completes
+    /// Provides the merged sections array for UI update
+    var onSectionsUpdated: (([SectionViewModel]) -> Void)?
+
+    /// When true, suppresses the onSectionsUpdated callback
+    /// Set during drag operations to prevent UI disruption
+    var isSyncSuppressed: Bool = false
+
     // MARK: - Public API
 
     /// Configure the service for a specific project
     func configure(database: ProjectDatabase, projectId: String) {
         self.projectDatabase = database
         self.projectId = projectId
+    }
+
+    /// Cancel any pending debounced sync operation
+    /// Call this before starting drag operations to prevent race conditions
+    func cancelPendingSync() {
+        debounceTask?.cancel()
+        debounceTask = nil
     }
 
     /// Rebuild document markdown from sections in their current order
@@ -90,41 +107,73 @@ class SectionSyncService {
         await syncSections(from: markdown)
     }
 
-    /// Load sections from database
-    func loadSections() async -> [Section] {
+    /// Load sections from database as view models
+    func loadSections() async -> [SectionViewModel] {
         guard let db = projectDatabase, let pid = projectId else { return [] }
 
         do {
-            return try db.fetchSections(projectId: pid)
+            let sections = try db.fetchSections(projectId: pid)
+            return sections.map { SectionViewModel(from: $0) }
         } catch {
+            print("[SectionSyncService] Error loading sections: \(error.localizedDescription)")
             return []
         }
+    }
+
+    /// Parse markdown and return sections without saving to database
+    /// Used for initial sync when database has no sections yet
+    func parseAndGetSections(from markdown: String) -> [SectionViewModel] {
+        guard let pid = projectId else { return [] }
+        let sections = parseMarkdownToSections(markdown, projectId: pid)
+        return sections.map { SectionViewModel(from: $0) }
     }
 
     // MARK: - Private Methods
 
     private func syncSections(from markdown: String) async {
-        guard let db = projectDatabase, let pid = projectId else { return }
-
-        // Parse markdown into section structure
-        let parsedSections = parseMarkdownToSections(markdown, projectId: pid)
-
-        // Load existing sections for matching
-        let existingSections: [Section]
-        do {
-            existingSections = try db.fetchSections(projectId: pid)
-        } catch {
+        guard let db = projectDatabase, let pid = projectId else {
+            print("[SectionSyncService] syncSections skipped - database not configured")
             return
         }
 
-        // Match and merge sections
+        // Parse markdown into section structure (on main thread - parsing is fast)
+        let parsedSections = parseMarkdownToSections(markdown, projectId: pid)
+
+        // Move database operations to background thread
+        let existingSections: [Section] = await Task.detached { [db, pid] in
+            do {
+                return try db.fetchSections(projectId: pid)
+            } catch {
+                print("[SectionSyncService] Error fetching sections: \(error.localizedDescription)")
+                return []
+            }
+        }.value
+
+        // Match and merge sections (on main thread)
         let mergedSections = mergeSections(parsed: parsedSections, existing: existingSections)
 
-        // Save to database
-        do {
-            try db.replaceSections(mergedSections, for: pid)
-        } catch {
-            // Silently fail - sections will sync on next content change
+        // Save to database (background)
+        await Task.detached { [db, pid] in
+            do {
+                try db.replaceSections(mergedSections, for: pid)
+            } catch {
+                print("[SectionSyncService] Error saving sections: \(error.localizedDescription)")
+            }
+        }.value
+
+        // Also save the content to database (background)
+        await Task.detached { [db, pid] in
+            do {
+                try db.saveContent(markdown: markdown, for: pid)
+            } catch {
+                print("[SectionSyncService] Error saving content: \(error.localizedDescription)")
+            }
+        }.value
+
+        // Notify callback (on main thread, if not suppressed)
+        if !isSyncSuppressed {
+            let viewModels = mergedSections.map { SectionViewModel(from: $0) }
+            onSectionsUpdated?(viewModels)
         }
     }
 
