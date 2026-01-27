@@ -199,11 +199,9 @@ struct Section: Codable, Identifiable, Equatable, Sendable, FetchableRecord, Mut
         headerLevel == 0
     }
 
-    /// Calculate word count from markdown content
+    /// Calculate word count from markdown content (excludes markdown syntax)
     mutating func recalculateWordCount() {
-        wordCount = markdownContent
-            .split { $0.isWhitespace || $0.isNewline }
-            .count
+        wordCount = MarkdownUtils.wordCount(for: markdownContent)
     }
 
     /// Progress toward word goal (0.0 to 1.0+)

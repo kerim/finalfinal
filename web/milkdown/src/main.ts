@@ -1,15 +1,17 @@
 // Milkdown WYSIWYG Editor for final final
 // Uses window.FinalFinal API for Swift ↔ JS communication
 
-import { Editor, defaultValueCtx, editorViewCtx, parserCtx } from '@milkdown/kit/core';
+import { Editor, defaultValueCtx, editorViewCtx, parserCtx, Ctx } from '@milkdown/kit/core';
 import { commonmark } from '@milkdown/kit/preset/commonmark';
 import { gfm } from '@milkdown/kit/preset/gfm';
 import { history } from '@milkdown/kit/plugin/history';
 import { getMarkdown } from '@milkdown/kit/utils';
 import { Slice } from '@milkdown/kit/prose/model';
 import { Selection } from '@milkdown/kit/prose/state';
+import { slashFactory, SlashProvider } from '@milkdown/plugin-slash';
 
 import { focusModePlugin, setFocusModeEnabled } from './focus-mode-plugin';
+import { sectionBreakPlugin, sectionBreakNode } from './section-break-plugin';
 import { textToMdOffset, mdToTextOffset } from './cursor-mapping';
 import './styles.css';
 
@@ -91,21 +93,262 @@ let editorInstance: Editor | null = null;
 let currentContent = '';
 let isSettingContent = false;
 
-// === Diagnostic logging for cursor position debugging ===
-let _debugSeq = 0;
-const _debugLog: Array<{ seq: number; ts: string; msg: string }> = [];
-
-function debugLog(msg: string) {
-  const seq = ++_debugSeq;
-  const ts = performance.now().toFixed(2);
-  console.log(`[MD DEBUG ${seq}] T=${ts}ms: ${msg}`);
-  _debugLog.push({ seq, ts, msg });
-  // Keep only last 50 entries
-  if (_debugLog.length > 50) _debugLog.shift();
+// === Slash command definitions ===
+interface SlashCommand {
+  label: string;
+  replacement: string;
+  description: string;
+  isNodeInsertion?: boolean; // If true, uses custom node insertion instead of text
 }
 
-// Expose debug log for Swift to query
-(window as any).__MD_DEBUG_LOG__ = _debugLog;
+const slashCommands: SlashCommand[] = [
+  { label: '/break', replacement: '', description: 'Insert section break', isNodeInsertion: true },
+  { label: '/h1', replacement: '# ', description: 'Heading 1' },
+  { label: '/h2', replacement: '## ', description: 'Heading 2' },
+  { label: '/h3', replacement: '### ', description: 'Heading 3' },
+];
+
+// === Slash menu UI state ===
+let slashMenuElement: HTMLElement | null = null;
+let selectedIndex = 0;
+let filteredCommands: SlashCommand[] = [];
+let slashProviderInstance: SlashProvider | null = null;
+let currentFilter = '';
+let suppressSlashMenu = false; // Prevents re-showing menu during command execution
+
+function createSlashMenu(): HTMLElement {
+  const menu = document.createElement('div');
+  menu.className = 'slash-menu';
+  menu.style.cssText = `
+    position: absolute;
+    padding: 4px 0;
+    background: var(--editor-bg, white);
+    border: 1px solid var(--editor-border, #e0e0e0);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+    border-radius: 6px;
+    font-size: 14px;
+    min-width: 220px;
+    z-index: 1000;
+    color: var(--editor-text, #333);
+  `;
+  return menu;
+}
+
+function createMenuItem(cmd: SlashCommand, index: number, isSelected: boolean): HTMLElement {
+  const item = document.createElement('div');
+  item.className = 'slash-menu-item' + (isSelected ? ' selected' : '');
+  item.dataset.index = String(index);
+  item.style.cssText = `
+    padding: 6px 12px;
+    cursor: pointer;
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    ${isSelected ? 'background: var(--editor-selection, #e8f0fe);' : ''}
+  `;
+
+  const labelSpan = document.createElement('span');
+  labelSpan.style.cssText = 'font-weight: 500; min-width: 60px;';
+  labelSpan.textContent = cmd.label;
+
+  const descSpan = document.createElement('span');
+  descSpan.style.cssText = 'color: var(--editor-muted, #666);';
+  descSpan.textContent = cmd.description;
+
+  item.appendChild(labelSpan);
+  item.appendChild(descSpan);
+
+  item.addEventListener('click', () => executeSlashCommand(index));
+  item.addEventListener('mouseenter', () => {
+    selectedIndex = index;
+    updateSlashMenu(currentFilter);
+  });
+
+  return item;
+}
+
+function updateSlashMenu(filter: string) {
+  if (!slashMenuElement) return;
+  currentFilter = filter;
+
+  // Clear existing content
+  while (slashMenuElement.firstChild) {
+    slashMenuElement.removeChild(slashMenuElement.firstChild);
+  }
+
+  // Filter commands based on what user typed after /
+  const query = filter.slice(1).toLowerCase(); // Remove leading /
+  filteredCommands = slashCommands.filter(cmd =>
+    cmd.label.toLowerCase().includes(query) ||
+    cmd.description.toLowerCase().includes(query)
+  );
+
+  if (filteredCommands.length === 0) {
+    const noResults = document.createElement('div');
+    noResults.style.cssText = 'padding: 8px 12px; color: #999;';
+    noResults.textContent = 'No commands found';
+    slashMenuElement.appendChild(noResults);
+    return;
+  }
+
+  selectedIndex = Math.min(selectedIndex, filteredCommands.length - 1);
+
+  filteredCommands.forEach((cmd, i) => {
+    slashMenuElement!.appendChild(createMenuItem(cmd, i, i === selectedIndex));
+  });
+}
+
+function executeSlashCommand(index: number) {
+  if (!editorInstance || index >= filteredCommands.length) return;
+
+  suppressSlashMenu = true; // Prevent SlashProvider from re-showing during transaction
+
+  const cmd = filteredCommands[index];
+  const view = editorInstance.ctx.get(editorViewCtx);
+  const { from } = view.state.selection;
+  const $from = view.state.doc.resolve(from);
+
+  // Find the start of the slash command
+  const lineStart = $from.start($from.depth);
+  const textBefore = view.state.doc.textBetween(lineStart, from, '\n');
+  const slashIndex = textBefore.lastIndexOf('/');
+
+  if (slashIndex >= 0) {
+    const cmdStart = lineStart + slashIndex;
+
+    if (cmd.isNodeInsertion && cmd.label === '/break') {
+      // Insert section_break node
+      const nodeType = sectionBreakNode.type(editorInstance.ctx);
+      const node = nodeType.create();
+
+      // Delete the slash command text, then replace the parent paragraph with the break node
+      // We need to replace the entire paragraph if it only contains the slash
+      const parentStart = $from.before($from.depth);
+      const parentEnd = $from.after($from.depth);
+      const parentContent = view.state.doc.textBetween(parentStart + 1, parentEnd - 1, '\n').trim();
+
+      let tr = view.state.tr;
+      if (parentContent === textBefore.trim()) {
+        // Paragraph only contains the slash command - replace the whole paragraph
+        tr = tr.replaceWith(parentStart, parentEnd, node);
+      } else {
+        // Paragraph has other content - just delete slash and insert node after
+        tr = tr.delete(cmdStart, from);
+        tr = tr.insert(cmdStart, node);
+      }
+      view.dispatch(tr);
+      console.log('[Milkdown slash] Inserted section_break node');
+    } else {
+      // Standard text replacement
+      const tr = view.state.tr
+        .delete(cmdStart, from)
+        .insertText(cmd.replacement, cmdStart);
+      view.dispatch(tr);
+      console.log('[Milkdown slash] Executed:', cmd.label);
+    }
+  }
+
+  // Hide menu
+  if (slashProviderInstance) {
+    slashProviderInstance.hide();
+  }
+  if (slashMenuElement) {
+    slashMenuElement.style.display = 'none';
+  }
+  filteredCommands = [];
+
+  // Re-enable slash menu after transaction settles
+  requestAnimationFrame(() => {
+    suppressSlashMenu = false;
+  });
+}
+
+// Keyboard navigation for slash menu
+function handleSlashKeydown(e: KeyboardEvent): boolean {
+  if (!slashMenuElement || !slashProviderInstance) return false;
+
+  // Check if menu is visible
+  if (slashMenuElement.style.display === 'none') return false;
+
+  // Check if menu has items
+  if (filteredCommands.length === 0) return false;
+
+  if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    e.stopPropagation();
+    selectedIndex = (selectedIndex + 1) % filteredCommands.length;
+    updateSlashMenu(currentFilter);
+    return true;
+  }
+  if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    e.stopPropagation();
+    selectedIndex = (selectedIndex - 1 + filteredCommands.length) % filteredCommands.length;
+    updateSlashMenu(currentFilter);
+    return true;
+  }
+  if (e.key === 'Enter' || e.key === 'Tab') {
+    e.preventDefault();
+    e.stopPropagation();
+    executeSlashCommand(selectedIndex);
+    return true;
+  }
+  if (e.key === 'Escape') {
+    e.preventDefault();
+    e.stopPropagation();
+    slashProviderInstance.hide();
+    return true;
+  }
+  return false;
+}
+
+// === Slash plugin setup ===
+const slash = slashFactory('main');
+
+function configureSlash(ctx: Ctx) {
+  slashMenuElement = createSlashMenu();
+  document.body.appendChild(slashMenuElement);
+
+  slashProviderInstance = new SlashProvider({
+    content: slashMenuElement,
+    shouldShow(view) {
+      // Suppress re-showing during command execution
+      if (suppressSlashMenu) return false;
+
+      const content = this.getContent(view);
+      if (!content) return false;
+
+      // Show menu when text ends with / or /followed-by-letters
+      const match = content.match(/\/\w*$/);
+      if (match) {
+        selectedIndex = 0;
+        updateSlashMenu(match[0]);
+        return filteredCommands.length > 0;
+      }
+      return false;
+    },
+    offset: 8,
+  });
+
+  ctx.set(slash.key, {
+    view: () => ({
+      update: (view: any, prevState: any) => {
+        slashProviderInstance!.update(view, prevState);
+      },
+      destroy: () => {
+        slashProviderInstance!.destroy();
+        if (slashMenuElement) {
+          slashMenuElement.remove();
+          slashMenuElement = null;
+        }
+        document.removeEventListener('keydown', handleSlashKeydown, true);
+      },
+    }),
+  });
+
+  // Add keyboard listener for menu navigation
+  document.addEventListener('keydown', handleSlashKeydown, true);
+}
 
 async function initEditor() {
   const root = document.getElementById('editor');
@@ -119,10 +362,13 @@ async function initEditor() {
       .config((ctx) => {
         ctx.set(defaultValueCtx, '');
       })
+      .config(configureSlash)
+      .use(sectionBreakPlugin)  // BEFORE commonmark to intercept HTML before filtering
       .use(commonmark)
       .use(gfm)
       .use(history)
       .use(focusModePlugin)
+      .use(slash)
       .create();
 
     root.appendChild(editorInstance.ctx.get(editorViewCtx).dom);
@@ -146,14 +392,11 @@ async function initEditor() {
 
 window.FinalFinal = {
   setContent(markdown: string) {
-    debugLog(`setContent START, ${markdown.length} chars`);
     if (!editorInstance) {
-      debugLog('setContent: no editorInstance, caching content');
       currentContent = markdown;
       return;
     }
     if (currentContent === markdown) {
-      debugLog('setContent: content unchanged, skipping');
       return;
     }
 
@@ -164,14 +407,12 @@ window.FinalFinal = {
         const parser = ctx.get(parserCtx);
         const doc = parser(markdown);
         if (!doc) {
-          debugLog('setContent: parser returned null');
           return;
         }
 
-        const prevSize = view.state.doc.content.size;
-        const prevCursor = view.state.selection.anchor;
         const { from } = view.state.selection;
-        let tr = view.state.tr.replace(0, prevSize, new Slice(doc.content, 0, 0));
+        const docSize = view.state.doc.content.size;
+        let tr = view.state.tr.replace(0, docSize, new Slice(doc.content, 0, 0));
 
         const safeFrom = Math.min(from, Math.max(0, doc.content.size - 1));
         try {
@@ -180,10 +421,6 @@ window.FinalFinal = {
           tr = tr.setSelection(Selection.atStart(tr.doc));
         }
         view.dispatch(tr);
-
-        const newSize = view.state.doc.content.size;
-        const newCursor = view.state.selection.anchor;
-        debugLog(`setContent DONE: prevSize=${prevSize}, newSize=${newSize}, prevCursor=${prevCursor}, newCursor=${newCursor}`);
       });
       currentContent = markdown;
     } finally {
@@ -210,15 +447,42 @@ window.FinalFinal = {
   },
 
   scrollToOffset(offset: number) {
-    if (!editorInstance) return;
+    console.log('[Milkdown scroll] === START ===');
+    console.log('[Milkdown scroll] Input offset:', offset);
+
+    if (!editorInstance) {
+      console.log('[Milkdown scroll] No editor instance');
+      return;
+    }
+
     const view = editorInstance.ctx.get(editorViewCtx);
-    const pos = Math.min(offset, view.state.doc.content.size - 1);
+    const docSize = view.state.doc.content.size;
+    const pos = Math.min(offset, Math.max(0, docSize - 1));
+    console.log('[Milkdown scroll] Doc size:', docSize, 'Clamped pos:', pos);
+
     try {
       const selection = Selection.near(view.state.doc.resolve(pos));
-      view.dispatch(view.state.tr.setSelection(selection).scrollIntoView());
+      view.dispatch(view.state.tr.setSelection(selection));
+
+      const coords = view.coordsAtPos(pos);
+      console.log('[Milkdown scroll] coordsAtPos result:', coords);
+
+      if (coords) {
+        // Scroll the window to put the target 100px from the top
+        const targetScrollY = coords.top + window.scrollY - 100;
+        console.log('[Milkdown scroll] Window scroll:', {
+          coordsTop: coords.top,
+          windowScrollY: window.scrollY,
+          targetScrollY: targetScrollY,
+        });
+        window.scrollTo({ top: Math.max(0, targetScrollY), behavior: 'smooth' });
+        console.log('[Milkdown scroll] window.scrollTo called with:', Math.max(0, targetScrollY));
+      }
+
       view.focus();
+      console.log('[Milkdown scroll] === END ===');
     } catch (e) {
-      console.warn('[Milkdown] scrollToOffset failed:', e);
+      console.warn('[Milkdown scroll] Failed:', e);
     }
   },
 
@@ -231,17 +495,13 @@ window.FinalFinal = {
   },
 
   getCursorPosition(): { line: number; column: number } {
-    debugLog('getCursorPosition START');
     if (!editorInstance) {
-      debugLog('getCursorPosition: no editorInstance, returning line 1 col 0');
       return { line: 1, column: 0 };
     }
 
     try {
       const view = editorInstance.ctx.get(editorViewCtx);
       const { head } = view.state.selection;
-      const docSize = view.state.doc.content.size;
-      debugLog(`getCursorPosition: head=${head}, docSize=${docSize}`);
       const markdown = editorInstance.action(getMarkdown());
       const mdLines = markdown.split('\n');
       const $head = view.state.doc.resolve(head);
@@ -361,28 +621,22 @@ window.FinalFinal = {
       const afterSyntax = lineContent.slice(syntaxLength);
       const column = syntaxLength + textToMdOffset(afterSyntax, offsetInBlock);
 
-      debugLog(`getCursorPosition DONE: line=${line}, column=${column}, matched=${matched}, inTable=${inTable}`);
       return { line, column };
-    } catch (e) {
-      debugLog(`getCursorPosition error: ${e}`);
+    } catch {
       return { line: 1, column: 0 };
     }
   },
 
   setCursorPosition(lineCol: { line: number; column: number; scrollFraction?: number }) {
-    debugLog(`setCursorPosition START: line=${lineCol.line}, col=${lineCol.column}`);
     if (!editorInstance) {
-      debugLog('setCursorPosition: no editorInstance');
       return;
     }
 
     try {
       const view = editorInstance.ctx.get(editorViewCtx);
-      const cursorBefore = view.state.selection.anchor;
       let { line, column } = lineCol;
       const markdown = editorInstance.action(getMarkdown());
       const lines = markdown.split('\n');
-      debugLog(`setCursorPosition: cursorBefore=${cursorBefore}, mdLines=${lines.length}`);
 
       // Handle separator rows - redirect to first data row
       let targetLine = lines[line - 1] || '';
@@ -497,8 +751,6 @@ window.FinalFinal = {
 
       const selection = Selection.near(view.state.doc.resolve(pmPos));
       view.dispatch(view.state.tr.setSelection(selection).scrollIntoView());
-      const cursorAfter = view.state.selection.anchor;
-      debugLog(`setCursorPosition: pmPos=${pmPos}, found=${found}, cursorAfter=${cursorAfter}`);
       view.focus();
 
       // Restore scroll position if provided
@@ -518,9 +770,8 @@ window.FinalFinal = {
           }
         });
       }
-      debugLog('setCursorPosition DONE');
-    } catch (e) {
-      debugLog(`setCursorPosition failed: ${e}`);
+    } catch {
+      // Cursor positioning failed, ignore
     }
   },
 
@@ -556,8 +807,20 @@ window.FinalFinal = {
   },
 
   insertBreak() {
-    // Insert a pseudo-section break marker
-    this.insertAtCursor('\n\n<!-- ::break:: -->\n\n');
+    // Insert a section break node
+    if (!editorInstance) return;
+    try {
+      const view = editorInstance.ctx.get(editorViewCtx);
+      const { from } = view.state.selection;
+      const nodeType = sectionBreakNode.type(editorInstance.ctx);
+      const node = nodeType.create();
+      const tr = view.state.tr.insert(from, node);
+      view.dispatch(tr);
+      view.focus();
+      console.log('[Milkdown] insertBreak: inserted section break node');
+    } catch (e) {
+      console.warn('[Milkdown] insertBreak failed:', e);
+    }
   },
 };
 

@@ -176,6 +176,54 @@ func contentChanged(_ markdown: String) {
 
 ---
 
+## Milkdown Remark Plugins
+
+### HTML Nodes Are Filtered Before Custom Plugins Run
+
+**Problem:** Custom HTML comments like `<!-- ::break:: -->` aren't parsed when loaded via `setContent()`, but work fine when inserted via slash command.
+
+**Root Cause:** Milkdown's commonmark preset includes `filterHTMLPlugin` that removes HTML nodes (including comments) **before** custom remark plugins can transform them.
+
+**Pipeline order:**
+```
+Markdown → remark-parse → [filterHTMLPlugin removes HTML] → [Your remark plugin] → ProseMirror
+```
+
+**Why slash command works:** It creates the ProseMirror node directly, bypassing the parsing pipeline.
+
+**Solution:** Register your remark plugin BEFORE the commonmark preset:
+
+```typescript
+// Wrong - plugin runs after HTML is filtered out
+Editor.make()
+  .use(commonmark)
+  .use(sectionBreakPlugin)  // Too late!
+
+// Right - plugin runs before filtering
+Editor.make()
+  .use(sectionBreakPlugin)  // Intercepts HTML first
+  .use(commonmark)
+```
+
+Use `unist-util-visit` for proper tree traversal:
+
+```typescript
+import { visit } from 'unist-util-visit';
+
+const remarkPlugin = $remark('section-break', () => () => (tree) => {
+  visit(tree, 'html', (node: any) => {
+    if (node.value?.trim() === '<!-- ::break:: -->') {
+      node.type = 'sectionBreak';  // Transform before filtering
+      delete node.value;
+    }
+  });
+});
+```
+
+**Dependency:** Add `unist-util-visit` to package.json.
+
+---
+
 ## Build
 
 ### Vite emptyOutDir: false

@@ -1,6 +1,6 @@
 {
   "name": "@final-final/milkdown-editor",
-  "version": "0.1.10",
+  "version": "0.1.53",
   "private": true,
   "type": "module",
   "scripts": {
@@ -9,7 +9,9 @@
   },
   "dependencies": {
     "@milkdown/kit": "^7.8.0",
-    "@milkdown/components": "^7.8.0"
+    "@milkdown/components": "^7.8.0",
+    "@milkdown/plugin-slash": "^7.8.0",
+    "unist-util-visit": "^5.0.0"
   },
   "devDependencies": {
     "typescript": "^5.3.0",
