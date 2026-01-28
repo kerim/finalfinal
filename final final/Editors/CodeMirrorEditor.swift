@@ -13,6 +13,7 @@ struct CodeMirrorEditor: NSViewRepresentable {
     @Binding var content: String
     @Binding var cursorPositionToRestore: CursorPosition?
     @Binding var scrollToOffset: Int?
+    @Binding var isResettingContent: Bool
 
     let onContentChange: (String) -> Void
     let onStatsChange: (Int, Int) -> Void
@@ -94,6 +95,7 @@ struct CodeMirrorEditor: NSViewRepresentable {
             content: $content,
             cursorPositionToRestore: $cursorPositionToRestore,
             scrollToOffset: $scrollToOffset,
+            isResettingContent: $isResettingContent,
             onContentChange: onContentChange,
             onStatsChange: onStatsChange,
             onCursorPositionSaved: onCursorPositionSaved
@@ -112,6 +114,7 @@ struct CodeMirrorEditor: NSViewRepresentable {
         private var contentBinding: Binding<String>
         private var cursorPositionToRestoreBinding: Binding<CursorPosition?>
         private var scrollToOffsetBinding: Binding<Int?>
+        private var isResettingContentBinding: Binding<Bool>
         private let onContentChange: (String) -> Void
         private let onStatsChange: (Int, Int) -> Void
         private let onCursorPositionSaved: (CursorPosition) -> Void
@@ -134,6 +137,7 @@ struct CodeMirrorEditor: NSViewRepresentable {
             content: Binding<String>,
             cursorPositionToRestore: Binding<CursorPosition?>,
             scrollToOffset: Binding<Int?>,
+            isResettingContent: Binding<Bool>,
             onContentChange: @escaping (String) -> Void,
             onStatsChange: @escaping (Int, Int) -> Void,
             onCursorPositionSaved: @escaping (CursorPosition) -> Void
@@ -141,6 +145,7 @@ struct CodeMirrorEditor: NSViewRepresentable {
             self.contentBinding = content
             self.cursorPositionToRestoreBinding = cursorPositionToRestore
             self.scrollToOffsetBinding = scrollToOffset
+            self.isResettingContentBinding = isResettingContent
             self.onContentChange = onContentChange
             self.onStatsChange = onStatsChange
             self.onCursorPositionSaved = onCursorPositionSaved
@@ -265,7 +270,14 @@ struct CodeMirrorEditor: NSViewRepresentable {
             setContent(contentBinding.wrappedValue)
             setTheme(ThemeManager.shared.cssVariables)
             restoreCursorPositionIfNeeded()
+            focusEditor()
             startPolling()
+        }
+
+        /// Focus the editor so user can start typing immediately
+        private func focusEditor() {
+            guard isEditorReady, let webView else { return }
+            webView.evaluateJavaScript("window.FinalFinal.focus()") { _, _ in }
         }
 
         private func restoreCursorPositionIfNeeded() {
@@ -376,9 +388,15 @@ struct CodeMirrorEditor: NSViewRepresentable {
         private func pollContent() {
             guard !isCleanedUp, isEditorReady, let webView else { return }
 
+            // Skip polling during content reset (project switch)
+            guard !isResettingContentBinding.wrappedValue else { return }
+
             webView.evaluateJavaScript("window.FinalFinal.getContent()") { [weak self] result, _ in
                 guard let self, !self.isCleanedUp,
                       let content = result as? String else { return }
+
+                // Double-check reset flag in callback (may have changed)
+                guard !self.isResettingContentBinding.wrappedValue else { return }
 
                 // Grace period guard: don't overwrite recent pushes (race condition fix)
                 let timeSincePush = Date().timeIntervalSince(self.lastPushTime)

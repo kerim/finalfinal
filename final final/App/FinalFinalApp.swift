@@ -15,8 +15,10 @@ struct FinalFinalApp: App {
                 .environment(ThemeManager.shared)
         }
         .commands {
+            FileCommands()
             ThemeCommands()
             EditorCommands()
         }
+        .handlesExternalEvents(matching: ["open"])
     }
 }

@@ -41,6 +41,10 @@ class EditorViewState {
     /// Tracks content transitions to prevent race conditions
     var contentState: EditorContentState = .idle
 
+    /// When true, editor polling should skip updating the content binding.
+    /// Used during project switch to prevent old editor content from bleeding into new projects.
+    var isResettingContent = false
+
     /// Full document stored when zoomed (section-level backup)
     var fullDocumentBeforeZoom: String?
 

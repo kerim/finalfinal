@@ -21,6 +21,7 @@ declare global {
       scrollCursorToCenter: () => void;
       insertAtCursor: (text: string) => void;
       insertBreak: () => void;
+      focus: () => void;
     };
     __CODEMIRROR_DEBUG__?: {
       editorReady: boolean;
@@ -308,6 +309,11 @@ window.FinalFinal = {
   insertBreak() {
     // Insert a pseudo-section break marker
     this.insertAtCursor('\n\n<!-- ::break:: -->\n\n');
+  },
+
+  focus() {
+    if (!editorView) return;
+    editorView.focus();
   }
 };
 

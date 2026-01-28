@@ -17,13 +17,17 @@ final class ProjectDatabase: Sendable {
     }
 
     /// Creates a new project database with initial project and content
-    static func create(package: ProjectPackage, title: String) throws -> ProjectDatabase {
+    /// - Parameters:
+    ///   - package: The project package
+    ///   - title: Project title
+    ///   - initialContent: Initial markdown content (defaults to empty string)
+    static func create(package: ProjectPackage, title: String, initialContent: String = "") throws -> ProjectDatabase {
         let db = try ProjectDatabase(package: package)
         try db.dbWriter.write { database in
             var project = Project(title: title)
             try project.insert(database)
 
-            var content = Content(projectId: project.id)
+            var content = Content(projectId: project.id, markdown: initialContent)
             try content.insert(database)
         }
         return db

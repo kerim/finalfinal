@@ -427,7 +427,8 @@ struct OutlineSidebar: View {
             newLevel: newLevel,
             newParentId: newParentId
         )
-        print("[DROP] Calling onSectionReorder with: sectionId=\(request.sectionId), targetSectionId=\(request.targetSectionId ?? "nil"), newLevel=\(request.newLevel), newParentId=\(request.newParentId ?? "nil")")
+        print("[DROP] Calling onSectionReorder: section=\(request.sectionId), " +
+              "target=\(request.targetSectionId ?? "nil"), level=\(request.newLevel)")
         onSectionReorder?(request)
         print("[DROP] === handleDrop END ===")
     }
