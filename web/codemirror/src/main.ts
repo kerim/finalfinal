@@ -2,7 +2,7 @@ import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLi
 import { EditorState } from '@codemirror/state';
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { languages } from '@codemirror/language-data';
-import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
+import { defaultKeymap, history, undo, redo } from '@codemirror/commands';
 import { syntaxHighlighting, defaultHighlightStyle } from '@codemirror/language';
 import { autocompletion, CompletionContext, CompletionResult } from '@codemirror/autocomplete';
 import './styles.css';
@@ -31,6 +31,9 @@ declare global {
   }
 }
 
+// Track slash command execution for smart undo
+let pendingSlashUndo = false;
+
 // Slash command completions for section breaks and other commands
 function slashCompletions(context: CompletionContext): CompletionResult | null {
   const word = context.matchBefore(/\/\w*/);
@@ -43,22 +46,52 @@ function slashCompletions(context: CompletionContext): CompletionResult | null {
       {
         label: '/break',
         detail: 'Insert section break',
-        apply: '<!-- ::break:: -->\n\n'
+        apply: (view: EditorView, _completion: any, from: number, to: number) => {
+          console.log(`[SLASH DEBUG] apply: from=${from}, to=${to}, text="${view.state.sliceDoc(from, to)}"`);
+          console.log(`[SLASH DEBUG] doc BEFORE dispatch (around from): "${view.state.sliceDoc(Math.max(0,from-5), from)}|${view.state.sliceDoc(from, to)}|${view.state.sliceDoc(to, to+20)}"`);
+          view.dispatch({
+            changes: { from, to, insert: '<!-- ::break:: -->\n\n' }
+          });
+          console.log(`[SLASH DEBUG] doc AFTER dispatch (around from): "${view.state.sliceDoc(Math.max(0,from-5), from+30)}"`);
+          pendingSlashUndo = true;
+          console.log('[SLASH DEBUG] pendingSlashUndo set to true');
+        }
       },
       {
         label: '/h1',
         detail: 'Heading 1',
-        apply: '# '
+        apply: (view: EditorView, _completion: any, from: number, to: number) => {
+          console.log(`[SLASH DEBUG] apply /h1: from=${from}, to=${to}, text="${view.state.sliceDoc(from, to)}"`);
+          view.dispatch({
+            changes: { from, to, insert: '# ' }
+          });
+          pendingSlashUndo = true;
+          console.log('[SLASH DEBUG] pendingSlashUndo set to true');
+        }
       },
       {
         label: '/h2',
         detail: 'Heading 2',
-        apply: '## '
+        apply: (view: EditorView, _completion: any, from: number, to: number) => {
+          console.log(`[SLASH DEBUG] apply /h2: from=${from}, to=${to}, text="${view.state.sliceDoc(from, to)}"`);
+          view.dispatch({
+            changes: { from, to, insert: '## ' }
+          });
+          pendingSlashUndo = true;
+          console.log('[SLASH DEBUG] pendingSlashUndo set to true');
+        }
       },
       {
         label: '/h3',
         detail: 'Heading 3',
-        apply: '### '
+        apply: (view: EditorView, _completion: any, from: number, to: number) => {
+          console.log(`[SLASH DEBUG] apply /h3: from=${from}, to=${to}, text="${view.state.sliceDoc(from, to)}"`);
+          view.dispatch({
+            changes: { from, to, insert: '### ' }
+          });
+          pendingSlashUndo = true;
+          console.log('[SLASH DEBUG] pendingSlashUndo set to true');
+        }
       }
     ]
   };
@@ -112,7 +145,36 @@ function initEditor() {
       keymap.of([
         // Filter out Mod-/ (toggle comment) from default keymap to allow Swift to handle mode toggle
         ...defaultKeymap.filter(k => k.key !== 'Mod-/'),
-        ...historyKeymap,
+        // Custom undo: after slash command, also removes the "/" trigger
+        {
+          key: 'Mod-z',
+          run: (view) => {
+            console.log(`[SLASH DEBUG] Mod-z keymap, pendingSlashUndo=${pendingSlashUndo}`);
+            if (pendingSlashUndo) {
+              // Undo the slash command insertion
+              undo(view);
+
+              // Delete the "/" that was restored
+              const pos = view.state.selection.main.head;
+              if (pos > 0) {
+                const charBefore = view.state.sliceDoc(pos - 1, pos);
+                console.log(`[SLASH DEBUG] charBefore="${charBefore}"`);
+                if (charBefore === '/') {
+                  view.dispatch({
+                    changes: { from: pos - 1, to: pos, insert: '' }
+                  });
+                }
+              }
+              pendingSlashUndo = false;
+              return true;
+            }
+            // Normal undo
+            return undo(view);
+          }
+        },
+        // Redo bindings (Mac and Windows)
+        { key: 'Mod-Shift-z', run: (view) => redo(view) },
+        { key: 'Mod-y', run: (view) => redo(view) },
         // Cmd+B: Bold
         { key: 'Mod-b', run: () => { wrapSelection('**'); return true; } },
         // Cmd+I: Italic
@@ -124,6 +186,16 @@ function initEditor() {
       EditorView.theme({
         '&': { height: '100%' },
         '.cm-scroller': { overflow: 'auto' }
+      }),
+      // Reset pendingSlashUndo on any editing key
+      EditorView.domEventHandlers({
+        keydown(event, _view) {
+          // Reset flag on any editing key (typing, backspace, delete)
+          if (event.key.length === 1 || event.key === 'Backspace' || event.key === 'Delete') {
+            pendingSlashUndo = false;
+          }
+          return false;
+        }
       })
     ]
   });

@@ -308,3 +308,56 @@ struct SectionReorderRequest {
 The receiver uses `sections.firstIndex(where: { $0.id == targetId })` to find the correct position in its own array.
 
 **General principle:** When passing position information between components that may have different views of the same data (filtered, sorted, paginated), use stable identifiers rather than indices.
+
+---
+
+## CodeMirror
+
+### Keymap Intercepts Events Before DOM Handlers
+
+**Problem:** Custom undo behavior in `EditorView.domEventHandlers({ keydown })` never executed because the handler never fired.
+
+**Root Cause:** CodeMirror's `historyKeymap` binds `Mod-z` and intercepts the event before DOM handlers run:
+
+1. User presses Cmd+Z
+2. `historyKeymap` matches `Mod-z` → calls built-in `undo()` → returns `true` (handled)
+3. Event is consumed; `domEventHandlers.keydown` **never fires**
+
+**Wrong approach (DOM handler):**
+```typescript
+EditorView.domEventHandlers({
+  keydown(event, view) {
+    if (event.key === 'z' && event.metaKey) {
+      // This never runs! historyKeymap already handled the event
+      customUndo(view);
+      return true;
+    }
+    return false;
+  }
+})
+```
+
+**Right approach (custom keymap):**
+```typescript
+keymap.of([
+  ...defaultKeymap.filter(k => k.key !== 'Mod-/'),
+  // Custom undo replaces historyKeymap's Mod-z binding
+  {
+    key: 'Mod-z',
+    run: (view) => {
+      if (needsCustomBehavior) {
+        customUndo(view);
+        return true;
+      }
+      return undo(view);  // Fallback to normal undo
+    }
+  },
+  { key: 'Mod-Shift-z', run: (view) => redo(view) },
+  { key: 'Mod-y', run: (view) => redo(view) },
+  // ... other bindings
+])
+```
+
+**Key insight:** Don't include `...historyKeymap` when you need to override undo/redo behavior. Define your own `Mod-z`, `Mod-Shift-z`, and `Mod-y` bindings explicitly.
+
+**General principle:** To intercept keyboard shortcuts in CodeMirror, replace the keymap binding, not the DOM handler. Keymap handlers run first.

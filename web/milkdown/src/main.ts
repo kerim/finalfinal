@@ -5,6 +5,7 @@ import { Editor, defaultValueCtx, editorViewCtx, parserCtx, Ctx } from '@milkdow
 import { commonmark } from '@milkdown/kit/preset/commonmark';
 import { gfm } from '@milkdown/kit/preset/gfm';
 import { history } from '@milkdown/kit/plugin/history';
+import { undo, redo } from '@milkdown/kit/prose/history';
 import { getMarkdown } from '@milkdown/kit/utils';
 import { Slice } from '@milkdown/kit/prose/model';
 import { Selection } from '@milkdown/kit/prose/state';
@@ -92,6 +93,10 @@ declare global {
 let editorInstance: Editor | null = null;
 let currentContent = '';
 let isSettingContent = false;
+
+// Track slash command execution for smart undo/redo
+let pendingSlashUndo = false;
+let pendingSlashRedo = false;
 
 // === Slash command definitions ===
 interface SlashCommand {
@@ -265,6 +270,9 @@ function executeSlashCommand(index: number) {
         .insertText(cmd.replacement, cmdStart);
       view.dispatch(tr);
     }
+
+    // Mark for smart undo
+    pendingSlashUndo = true;
   }
 
   // Hide menu - rely solely on SlashProvider's data-show attribute
@@ -279,8 +287,78 @@ function executeSlashCommand(index: number) {
   });
 }
 
-// Keyboard navigation for slash menu
+// Keyboard navigation for slash menu AND smart undo/redo handling
 function handleSlashKeydown(e: KeyboardEvent): boolean {
+  // Smart undo: after slash command, undo removes both the result AND the "/" trigger
+  if (e.key === 'z' && (e.metaKey || e.ctrlKey) && !e.shiftKey) {
+    if (pendingSlashUndo && editorInstance) {
+      e.preventDefault();
+      e.stopPropagation();
+
+      // Suppress menu during undo operations
+      suppressSlashMenu = true;
+
+      const view = editorInstance.ctx.get(editorViewCtx);
+
+      // Perform first undo (removes the slash command result)
+      undo(view.state, view.dispatch);
+
+      // Check if "/" pattern remains at cursor
+      const { from } = view.state.selection;
+      const $from = view.state.doc.resolve(from);
+      const lineStart = $from.start($from.depth);
+      const textBefore = view.state.doc.textBetween(lineStart, from, '\n');
+
+      if (/\/\w*$/.test(textBefore)) {
+        // Perform second undo (removes the "/" trigger)
+        undo(view.state, view.dispatch);
+        pendingSlashRedo = true;  // Enable smart redo
+      }
+
+      pendingSlashUndo = false;
+
+      // Re-enable menu after transaction settles
+      requestAnimationFrame(() => {
+        suppressSlashMenu = false;
+      });
+
+      return true;
+    }
+  }
+
+  // Smart redo: after smart undo, redo restores both steps
+  if (e.key === 'z' && (e.metaKey || e.ctrlKey) && e.shiftKey) {
+    if (pendingSlashRedo && editorInstance) {
+      e.preventDefault();
+      e.stopPropagation();
+
+      // Suppress menu during redo operations
+      suppressSlashMenu = true;
+
+      const view = editorInstance.ctx.get(editorViewCtx);
+
+      // Perform two redos to restore both "/" and the command result
+      redo(view.state, view.dispatch);
+      redo(view.state, view.dispatch);
+
+      pendingSlashRedo = false;
+      pendingSlashUndo = true;  // Allow smart undo again
+
+      // Re-enable menu after transaction settles
+      requestAnimationFrame(() => {
+        suppressSlashMenu = false;
+      });
+
+      return true;
+    }
+  }
+
+  // Reset flags on any editing key (typing, backspace, delete)
+  if (e.key.length === 1 || e.key === 'Backspace' || e.key === 'Delete') {
+    pendingSlashUndo = false;
+    pendingSlashRedo = false;
+  }
+
   if (!slashMenuElement || !slashProviderInstance) return false;
 
   // Check if menu is visible via SlashProvider's data-show attribute
