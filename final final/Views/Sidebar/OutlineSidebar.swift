@@ -1,3 +1,4 @@
+// swiftlint:disable file_length type_body_length
 //
 //  OutlineSidebar.swift
 //  final final
@@ -11,6 +12,16 @@ struct SectionTransfer: Codable, Transferable {
     let id: String
     let sortOrder: Int
     let headerLevel: Int
+    let isSubtreeDrag: Bool      // True when Option-drag includes descendants
+    let childIds: [String]       // Ordered descendant IDs for subtree drag
+
+    init(id: String, sortOrder: Int, headerLevel: Int, isSubtreeDrag: Bool = false, childIds: [String] = []) {
+        self.id = id
+        self.sortOrder = sortOrder
+        self.headerLevel = headerLevel
+        self.isSubtreeDrag = isSubtreeDrag
+        self.childIds = childIds
+    }
 
     static var transferRepresentation: some TransferRepresentation {
         CodableRepresentation(contentType: .sectionTransfer)
@@ -54,15 +65,16 @@ enum DropPosition: Equatable {
 ///   - x: Horizontal position of the drop
 ///   - sidebarWidth: Total width of the sidebar for zone calculation
 ///   - predecessorLevel: Header level of the section above the drop position (0 if dropping at top)
-/// - Returns: Target header level (1-6)
+/// - Returns: Target header level (1+, no upper limit for deep headers)
 func calculateZoneLevel(x: CGFloat, sidebarWidth: CGFloat, predecessorLevel: Int) -> Int {
     // Special case: first position (no predecessor) only allows level 1
     if predecessorLevel == 0 {
         return 1
     }
 
+    // Allow levels beyond H6 (deep headers from subtree drags)
     let minLevel = max(1, predecessorLevel - 1)
-    let maxLevel = min(6, predecessorLevel + 1)
+    let maxLevel = predecessorLevel + 1  // No cap - allow H7+
 
     // Determine how many unique levels are available
     let uniqueLevels = Set([minLevel, predecessorLevel, maxLevel]).sorted()
@@ -90,6 +102,24 @@ struct SectionReorderRequest {
     let targetSectionId: String?  // Insert AFTER this section (nil = insert at beginning)
     let newLevel: Int
     let newParentId: String?
+    let isSubtreeDrag: Bool       // True when Option-drag moves parent with children
+    let childIds: [String]        // Ordered descendant IDs for subtree drag
+
+    init(
+        sectionId: String,
+        targetSectionId: String?,
+        newLevel: Int,
+        newParentId: String?,
+        isSubtreeDrag: Bool = false,
+        childIds: [String] = []
+    ) {
+        self.sectionId = sectionId
+        self.targetSectionId = targetSectionId
+        self.newLevel = newLevel
+        self.newParentId = newParentId
+        self.isSubtreeDrag = isSubtreeDrag
+        self.childIds = childIds
+    }
 }
 
 /// Lightweight struct for level constraint calculation (thread-safe)
@@ -125,6 +155,12 @@ struct OutlineSidebar: View {
     @State private var sidebarWidth: CGFloat = 300  // Track actual width for zone calculations
     @State private var isDragging: Bool = false  // Track drag state for suppression
 
+    // Subtree drag state
+    @State private var draggingSubtreeIds: Set<String> = []  // IDs being dragged (parent + children)
+    @State private var showSubtreeDragHint: Bool = false
+    @State private var subtreeDragHintTask: Task<Void, Never>?  // Replaces Timer for proper lifecycle
+    private let hasSeenSubtreeDragHintKey = "hasSeenSubtreeDragHint"
+
     /// Total word count of currently visible sections
     private var filteredWordCount: Int {
         filteredSections.reduce(0) { $0 + $1.wordCount }
@@ -145,13 +181,22 @@ struct OutlineSidebar: View {
         }
         .frame(minWidth: 250, idealWidth: 300, maxWidth: 400)
         .background(themeManager.currentTheme.sidebarBackground)
+        .onChange(of: sections.count) { _, _ in
+            // Recalculate aggregate word counts when sections are added/removed
+            calculateAggregateWordCounts()
+        }
+        .onChange(of: sections.map { $0.wordCount }) { _, _ in
+            // Recalculate aggregate word counts when section word counts change
+            calculateAggregateWordCounts()
+        }
+        .onAppear {
+            // Calculate initial aggregate word counts
+            calculateAggregateWordCounts()
+        }
     }
 
     private var filteredSections: [SectionViewModel] {
         var result = sections
-
-        // Calculate aggregate word counts before filtering
-        calculateAggregateWordCounts()
 
         // Apply status filter
         if let filter = statusFilter {
@@ -221,13 +266,97 @@ struct OutlineSidebar: View {
         return result
     }
 
+    // MARK: - Subtree Drag Helpers
+
+    /// Collect IDs of all descendants for subtree drag (level-based, not parent-based)
+    /// Returns all sections after rootId until reaching one at same or shallower level
+    private func collectSubtreeIds(rootId: String) -> [String] {
+        guard let rootIndex = filteredSections.firstIndex(where: { $0.id == rootId }) else {
+            return []
+        }
+
+        let rootLevel = filteredSections[rootIndex].headerLevel
+        var childIds: [String] = []
+
+        // Iterate forward, collecting all sections deeper than root
+        for i in (rootIndex + 1)..<filteredSections.count {
+            let section = filteredSections[i]
+            if section.headerLevel <= rootLevel {
+                break  // Hit a section at same or shallower level
+            }
+            childIds.append(section.id)
+        }
+
+        return childIds
+    }
+
+    /// Check if section has children (for hint logic)
+    private func sectionHasChildren(_ sectionId: String) -> Bool {
+        return !collectSubtreeIds(rootId: sectionId).isEmpty
+    }
+
+    /// Show hint for subtree drag (first-time only)
+    /// Called when a single-card drag starts on a section with children
+    /// Uses Task.sleep for proper async lifecycle management
+    private func maybeShowSubtreeDragHint(for sectionId: String) {
+        // Only show if hasn't seen hint before
+        guard !UserDefaults.standard.bool(forKey: hasSeenSubtreeDragHintKey) else {
+            return
+        }
+
+        // Cancel any existing hint task
+        subtreeDragHintTask?.cancel()
+
+        // Show hint after 500ms delay using Task.sleep
+        subtreeDragHintTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(500))
+            guard !Task.isCancelled else { return }
+            showSubtreeDragHint = true
+
+            // Auto-dismiss after 3 seconds
+            try? await Task.sleep(for: .seconds(3))
+            guard !Task.isCancelled else { return }
+            showSubtreeDragHint = false
+            UserDefaults.standard.set(true, forKey: hasSeenSubtreeDragHintKey)
+        }
+    }
+
+    /// Cancel hint task when drag ends
+    private func cancelSubtreeDragHint() {
+        subtreeDragHintTask?.cancel()
+        subtreeDragHintTask = nil
+        showSubtreeDragHint = false
+    }
+
+    /// Clear drag state when drag ends
+    private func clearDragState() {
+        draggingSubtreeIds = []
+        cancelSubtreeDragHint()
+    }
+
     private var sectionsList: some View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: 0) {
                     ForEach(Array(filteredSections.enumerated()), id: \.element.id) { index, section in
-                        SectionCardView(
+                        // Use DraggableCardView for cursor offset control via AppKit
+                        DraggableCardView(
                             section: section,
+                            allSections: filteredSections,
+                            isGhost: draggingSubtreeIds.contains(section.id),
+                            onDragStarted: { draggedIds in
+                                // Track subtree IDs for ghost state
+                                draggingSubtreeIds = draggedIds
+                                // Show hint for single-card drags on sections with children
+                                if draggedIds.count == 1 && sectionHasChildren(section.id) {
+                                    maybeShowSubtreeDragHint(for: section.id)
+                                }
+                                onDragStarted?()
+                            },
+                            onDragEnded: {
+                                clearDragState()
+                                onDragEnded?()
+                            },
                             onSingleClick: {
                                 onScrollToSection(section.id)
                             },
@@ -276,29 +405,14 @@ struct OutlineSidebar: View {
                             onDrop: { transfer, position in
                                 handleDrop(dropped: transfer, position: position, targetSection: section)
                             },
-                            onDragStarted: onDragStarted,
-                            onDragEnded: onDragEnded
+                            onDragStarted: {
+                                // Ghost state already set by DraggableCardView.onDragStarted
+                                // This is called by drop delegate when drag enters a drop zone
+                            },
+                            onDragEnded: {
+                                // Drag ended callback already handled by DraggableCardView
+                            }
                         ))
-                        .draggable(SectionTransfer(
-                            id: section.id,
-                            sortOrder: section.sortOrder,
-                            headerLevel: section.headerLevel
-                        )) {
-                            // NO STATE MODIFICATION - just return the drag preview
-                            SectionCardView(
-                                section: section,
-                                onSingleClick: {},
-                                onDoubleClick: {}
-                            )
-                            .frame(width: 280)
-                            .background(themeManager.currentTheme.sidebarBackground)
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .stroke(themeManager.currentTheme.accentColor, lineWidth: 2)
-                            )
-                            .shadow(color: .black.opacity(0.3), radius: 8, x: 0, y: 4)
-                        }
 
                         Divider()
                             .foregroundColor(themeManager.currentTheme.dividerColor)
@@ -330,6 +444,15 @@ struct OutlineSidebar: View {
                 proxy.size.width
             } action: { newWidth in
                 sidebarWidth = newWidth
+            }
+            // Subtree drag hint overlay
+            .overlay(alignment: .bottom) {
+                if showSubtreeDragHint {
+                    SubtreeDragHint()
+                        .padding(.bottom, 16)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                        .animation(.easeInOut(duration: 0.3), value: showSubtreeDragHint)
+                }
             }
         }
     }
@@ -421,13 +544,17 @@ struct OutlineSidebar: View {
         print("[DROP] Calculated newParentId=\(newParentId ?? "nil")")
 
         // Notify parent with structured request using stable section ID
+        print("[DROP] isSubtreeDrag=\(dropped.isSubtreeDrag), childIds=\(dropped.childIds)")
         let request = SectionReorderRequest(
             sectionId: dropped.id,
             targetSectionId: targetSectionId,
             newLevel: newLevel,
-            newParentId: newParentId
+            newParentId: newParentId,
+            isSubtreeDrag: dropped.isSubtreeDrag,
+            childIds: dropped.childIds
         )
-        print("[DROP] Calling onSectionReorder with: sectionId=\(request.sectionId), targetSectionId=\(request.targetSectionId ?? "nil"), newLevel=\(request.newLevel), newParentId=\(request.newParentId ?? "nil")")
+        // swiftlint:disable:next line_length
+        print("[DROP] onSectionReorder: id=\(request.sectionId), target=\(request.targetSectionId ?? "nil"), level=\(request.newLevel), parent=\(request.newParentId ?? "nil"), subtree=\(request.isSubtreeDrag)")
         onSectionReorder?(request)
         print("[DROP] === handleDrop END ===")
     }
@@ -447,13 +574,16 @@ struct OutlineSidebar: View {
         let targetSectionId = filteredSections.last?.id
         print("[DROP-END] targetSectionId=\(targetSectionId ?? "nil") '\(filteredSections.last?.title ?? "")'")
 
+        print("[DROP-END] isSubtreeDrag=\(dropped.isSubtreeDrag), childIds=\(dropped.childIds)")
         let request = SectionReorderRequest(
             sectionId: dropped.id,
             targetSectionId: targetSectionId,
             newLevel: newLevel,
-            newParentId: newParentId
+            newParentId: newParentId,
+            isSubtreeDrag: dropped.isSubtreeDrag,
+            childIds: dropped.childIds
         )
-        print("[DROP-END] Calling onSectionReorder with targetSectionId=\(request.targetSectionId ?? "nil")")
+        print("[DROP-END] Calling onSectionReorder with targetSectionId=\(request.targetSectionId ?? "nil"), isSubtreeDrag=\(request.isSubtreeDrag)")
         onSectionReorder?(request)
         print("[DROP-END] === handleDropAtEnd END ===")
     }
@@ -516,14 +646,26 @@ struct OutlineSidebar: View {
         .frame(maxWidth: .infinity)
     }
 }
+// swiftlint:enable type_body_length
 
 /// Floating badge showing the target header level during drag
+/// Supports deep headers (H7+) with ######+N notation
 struct DragLevelBadge: View {
     let level: Int
     @Environment(ThemeManager.self) private var themeManager
 
+    /// Display text for the level badge
+    private var levelText: String {
+        if level <= 6 {
+            return String(repeating: "#", count: level)
+        } else {
+            // Deep header: ######+N
+            return String(repeating: "#", count: 6) + "+\(level - 6)"
+        }
+    }
+
     var body: some View {
-        Text(String(repeating: "#", count: level))
+        Text(levelText)
             .font(.system(size: 14, weight: .bold, design: .monospaced))
             .foregroundColor(.white)
             .padding(.horizontal, 8)
@@ -556,6 +698,82 @@ struct DropIndicatorLine: View {
         }
         .padding(.horizontal, 8)
         .frame(height: Self.height)
+    }
+}
+
+/// Drag preview for subtree drag operations
+/// Shows parent card with stacked shadow effect and "+N" badge
+struct SubtreeDragPreview: View {
+    let section: SectionViewModel
+    let childCount: Int
+
+    @Environment(ThemeManager.self) private var themeManager
+
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            // Stacked shadow effect - two layers behind
+            if childCount > 1 {
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(themeManager.currentTheme.sidebarBackground)
+                    .frame(width: 280)
+                    .offset(x: 6, y: 6)
+                    .shadow(color: .black.opacity(0.15), radius: 4, x: 0, y: 2)
+            }
+
+            if childCount > 0 {
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(themeManager.currentTheme.sidebarBackground)
+                    .frame(width: 280)
+                    .offset(x: 3, y: 3)
+                    .shadow(color: .black.opacity(0.2), radius: 4, x: 0, y: 2)
+            }
+
+            // Main card
+            SectionCardView(
+                section: section,
+                onSingleClick: {},
+                onDoubleClick: {}
+            )
+            .frame(width: 280)
+            .background(themeManager.currentTheme.sidebarBackground)
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(themeManager.currentTheme.accentColor, lineWidth: 2)
+            )
+            .shadow(color: .black.opacity(0.3), radius: 8, x: 0, y: 4)
+
+            // Badge showing "+N" children count
+            if childCount > 0 {
+                Text("+\(childCount)")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(themeManager.currentTheme.accentColor)
+                    .clipShape(Capsule())
+                    .offset(x: 8, y: -8)
+            }
+        }
+    }
+}
+
+/// Hint popup for first-time subtree drag discoverability
+struct SubtreeDragHint: View {
+    @Environment(ThemeManager.self) private var themeManager
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "option")
+                .font(.system(size: 14, weight: .medium))
+            Text("Hold ⌥ while dragging to include child sections")
+                .font(.system(size: 12))
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(themeManager.currentTheme.sidebarSelectedBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .shadow(color: .black.opacity(0.2), radius: 8, x: 0, y: 4)
     }
 }
 
@@ -612,6 +830,7 @@ struct SectionDropDelegate: DropDelegate {
         return sectionLevels[insertionIndex - 1].headerLevel
     }
 
+    // swiftlint:disable:next cyclomatic_complexity
     func performDrop(info: DropInfo) -> Bool {
         // Dedupe by exact location (same drop event has same location)
         if lastDropLocation == info.location { return false }

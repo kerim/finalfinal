@@ -8,15 +8,12 @@
 
 /* Begin PBXBuildFile section */
 		0127F846C37CAFAFA0455C60 /* CodeMirrorEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 73EA833CAD13B84DA71C0544 /* CodeMirrorEditor.swift */; };
-		034B4612DBA7801971F8D0A7 /* codemirror.css in Resources */ = {isa = PBXBuildFile; fileRef = 96F9CD7F12EED09B5367DA7C /* codemirror.css */; };
 		04195D3F2962ED2D9A21C2F5 /* SectionSyncService.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA5B65E36E0BB3661A7CE09A /* SectionSyncService.swift */; };
 		0482D5E5C956125D76159EA2 /* SectionTypography.swift in Sources */ = {isa = PBXBuildFile; fileRef = 049B00CFA6C19B14553937F3 /* SectionTypography.swift */; };
 		0ED46619B703DCB8610330F3 /* Section.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC27954DE76B2ADD62BBFF00 /* Section.swift */; };
 		0F5F1DF5B5C69DC5B51710E7 /* GoalPopover.swift in Sources */ = {isa = PBXBuildFile; fileRef = 748760007DC30115235FC8D6 /* GoalPopover.swift */; };
 		135D44FB4D2BB6A12ABB783F /* OutlineSidebar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75B3D65D281D81B769D7DF96 /* OutlineSidebar.swift */; };
-		1B0AC8AA42A1078AD13881CD /* milkdown.html in Resources */ = {isa = PBXBuildFile; fileRef = FB81B292D5A8DE802F0AFB6F /* milkdown.html */; };
 		20AFD8B3E9B9181745AD26B8 /* FinalFinalTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E843650744C2F13D1618667 /* FinalFinalTests.swift */; };
-		20C24A349BE36122136559B4 /* codemirror.html in Resources */ = {isa = PBXBuildFile; fileRef = 92D034519ECAC7C488B3DDB2 /* codemirror.html */; };
 		21F0559EDFDBA7FFB28AAD5D /* ThemeCommands.swift in Sources */ = {isa = PBXBuildFile; fileRef = 36487B030EB59318DB746D86 /* ThemeCommands.swift */; };
 		27788FB6CF7677E47103E1D6 /* EditorViewState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 31C89F3A4269349290CD8F03 /* EditorViewState.swift */; };
 		2A5EB4F121ED5781FDD710A7 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AD4BB30F275702838E8D3F8 /* AppDelegate.swift */; };
@@ -25,10 +22,10 @@
 		47DBF3857C5C06C046A299AD /* OutlineParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A1E8A83A78A7909AA1289DB /* OutlineParser.swift */; };
 		49989C588EFAF924B6BF9400 /* Document.swift in Sources */ = {isa = PBXBuildFile; fileRef = 54B0DE603A99327D920573B6 /* Document.swift */; };
 		5428AB4DBE5F4E61BBD3DFAC /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = 980503AFBDB8FC8CEF6F8BFE /* GRDB */; };
+		5AF10728B84222571BDBB8A1 /* DraggableCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B94BA0DFF06C7D3B1B7F38F5 /* DraggableCardView.swift */; };
 		5C07BE1D08BFF8C132BC10C7 /* StatusDot.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F774D004F48293691E2241C /* StatusDot.swift */; };
 		5DC993888BDFB3602E1FA2AA /* EditorSchemeHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE6D9836DD14A789629A10CB /* EditorSchemeHandler.swift */; };
 		63072A9E8DE3BC6324759AE9 /* ProjectDatabase.swift in Sources */ = {isa = PBXBuildFile; fileRef = DFB3FE823FEA8DAD86CD01A9 /* ProjectDatabase.swift */; };
-		662D9A2016188A5C55476E2E /* milkdown.js in Resources */ = {isa = PBXBuildFile; fileRef = 66C895E42D3FA5D90DC0B575 /* milkdown.js */; };
 		6906417635740343EE8F362A /* OutlineParserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FDA7C9F1CFBE9EDB2C4D818C /* OutlineParserTests.swift */; };
 		6D12AEF734B0A4D7D05F681F /* FinalFinalApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE24C13995368C23BC470A26 /* FinalFinalApp.swift */; };
 		75D604E7143573D4BFD533FD /* MilkdownEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7EEDC491836013F46E97FAE8 /* MilkdownEditor.swift */; };
@@ -39,8 +36,6 @@
 		8384B00E2738A39290BDCB1B /* ThemeManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27856E54C5B28F839E83F154 /* ThemeManager.swift */; };
 		83EF38E6AD012B11C741891D /* OutlineFilterBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABFC8351EA2CEE315AFD46C8 /* OutlineFilterBar.swift */; };
 		90566734810E75E47CEF710E /* MarkdownUtils.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C20C6E92294CD47FFE7539F /* MarkdownUtils.swift */; };
-		91E3EB11EC2C1CFFF280BBB2 /* codemirror.js in Resources */ = {isa = PBXBuildFile; fileRef = 7E3150F9999744FC44CB14B4 /* codemirror.js */; };
-		A46237665E070F9A59CF8B87 /* milkdown.css in Resources */ = {isa = PBXBuildFile; fileRef = C4E5542284D791AA71E83BE0 /* milkdown.css */; };
 		A7F047CACD5338BFF13C8336 /* OutlineNode.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF113F2ADAA8371F7C810BF0 /* OutlineNode.swift */; };
 		AC1816323A52499CA6DCFD2A /* SectionReconciler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61DE6BB00F5D1EF8A75439EB /* SectionReconciler.swift */; };
 		ACAF912B9BF42D9FD97B82C2 /* Database+CRUD.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13133CB5518EA086A3120EDE /* Database+CRUD.swift */; };
@@ -82,7 +77,6 @@
 		5FD87E27CB1257814D589880 /* Database+Sections.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Database+Sections.swift"; sourceTree = "<group>"; };
 		61DE6BB00F5D1EF8A75439EB /* SectionReconciler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SectionReconciler.swift; sourceTree = "<group>"; };
 		65E7386521E240F08687F38B /* TagPillView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TagPillView.swift; sourceTree = "<group>"; };
-		66C895E42D3FA5D90DC0B575 /* milkdown.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = milkdown.js; sourceTree = "<group>"; };
 		6AD4BB30F275702838E8D3F8 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		734874328EB5518EAC0C2517 /* ProjectPackage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectPackage.swift; sourceTree = "<group>"; };
 		73EA833CAD13B84DA71C0544 /* CodeMirrorEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodeMirrorEditor.swift; sourceTree = "<group>"; };
@@ -90,24 +84,20 @@
 		75B3D65D281D81B769D7DF96 /* OutlineSidebar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutlineSidebar.swift; sourceTree = "<group>"; };
 		788D4C2FB2475A38D3477A97 /* final finalTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "final finalTests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 		7C20C6E92294CD47FFE7539F /* MarkdownUtils.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownUtils.swift; sourceTree = "<group>"; };
-		7E3150F9999744FC44CB14B4 /* codemirror.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = codemirror.js; sourceTree = "<group>"; };
 		7EEDC491836013F46E97FAE8 /* MilkdownEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MilkdownEditor.swift; sourceTree = "<group>"; };
 		87363EA3909D1FDA8BFDB5F1 /* RecentProject.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecentProject.swift; sourceTree = "<group>"; };
 		92AF8BACE222B0C414BF2E8C /* SectionCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SectionCardView.swift; sourceTree = "<group>"; };
-		92D034519ECAC7C488B3DDB2 /* codemirror.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; path = codemirror.html; sourceTree = "<group>"; };
-		96F9CD7F12EED09B5367DA7C /* codemirror.css */ = {isa = PBXFileReference; lastKnownFileType = text.css; path = codemirror.css; sourceTree = "<group>"; };
 		ABFC8351EA2CEE315AFD46C8 /* OutlineFilterBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutlineFilterBar.swift; sourceTree = "<group>"; };
+		B94BA0DFF06C7D3B1B7F38F5 /* DraggableCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DraggableCardView.swift; sourceTree = "<group>"; };
 		BBC3D73969C6FC77A4A46FEC /* DemoProjectManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DemoProjectManager.swift; sourceTree = "<group>"; };
 		BC27954DE76B2ADD62BBFF00 /* Section.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Section.swift; sourceTree = "<group>"; };
 		BF41CB39EB2C5BD4E30A2CDA /* StatusBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusBar.swift; sourceTree = "<group>"; };
-		C4E5542284D791AA71E83BE0 /* milkdown.css */ = {isa = PBXFileReference; lastKnownFileType = text.css; path = milkdown.css; sourceTree = "<group>"; };
 		CE6D9836DD14A789629A10CB /* EditorSchemeHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorSchemeHandler.swift; sourceTree = "<group>"; };
 		CF113F2ADAA8371F7C810BF0 /* OutlineNode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutlineNode.swift; sourceTree = "<group>"; };
 		D567C1445BFF0160D8410001 /* ProjectStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectStore.swift; sourceTree = "<group>"; };
 		DFB3FE823FEA8DAD86CD01A9 /* ProjectDatabase.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectDatabase.swift; sourceTree = "<group>"; };
 		E9A8D79672E775EA73854D93 /* Database.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Database.swift; sourceTree = "<group>"; };
 		EA5B65E36E0BB3661A7CE09A /* SectionSyncService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SectionSyncService.swift; sourceTree = "<group>"; };
-		FB81B292D5A8DE802F0AFB6F /* milkdown.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; path = milkdown.html; sourceTree = "<group>"; };
 		FDA7C9F1CFBE9EDB2C4D818C /* OutlineParserTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutlineParserTests.swift; sourceTree = "<group>"; };
 		FE24C13995368C23BC470A26 /* FinalFinalApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FinalFinalApp.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -124,16 +114,6 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
-		1074FF40230B647F72F4CBBE /* milkdown */ = {
-			isa = PBXGroup;
-			children = (
-				C4E5542284D791AA71E83BE0 /* milkdown.css */,
-				FB81B292D5A8DE802F0AFB6F /* milkdown.html */,
-				66C895E42D3FA5D90DC0B575 /* milkdown.js */,
-			);
-			path = milkdown;
-			sourceTree = "<group>";
-		};
 		169B52CD3D09C7F3C852D46F /* Commands */ = {
 			isa = PBXGroup;
 			children = (
@@ -178,16 +158,6 @@
 			path = ViewState;
 			sourceTree = "<group>";
 		};
-		525D19478C4862DEDABDB099 /* codemirror */ = {
-			isa = PBXGroup;
-			children = (
-				96F9CD7F12EED09B5367DA7C /* codemirror.css */,
-				92D034519ECAC7C488B3DDB2 /* codemirror.html */,
-				7E3150F9999744FC44CB14B4 /* codemirror.js */,
-			);
-			path = codemirror;
-			sourceTree = "<group>";
-		};
 		5D30D849AC613F46C575C190 /* Products */ = {
 			isa = PBXGroup;
 			children = (
@@ -230,7 +200,6 @@
 				169B52CD3D09C7F3C852D46F /* Commands */,
 				1A41C166B938E47086169E96 /* Editors */,
 				863FDB9EBD7F0987C81E6ECA /* Models */,
-				A0A538514A7F8AF439E6E08D /* Resources */,
 				8CB164527A344E1D70DECB0B /* Services */,
 				32D736F5D00C9F506D5A9A60 /* Theme */,
 				286B8E2A62BC888E4FCC6A09 /* Utils */,
@@ -238,15 +207,6 @@
 				3F528C948E209CDF817C3EC8 /* ViewState */,
 			);
 			path = "final final";
-			sourceTree = "<group>";
-		};
-		897DF43C87D41FD1A0CCF1C9 /* editor */ = {
-			isa = PBXGroup;
-			children = (
-				525D19478C4862DEDABDB099 /* codemirror */,
-				1074FF40230B647F72F4CBBE /* milkdown */,
-			);
-			path = editor;
 			sourceTree = "<group>";
 		};
 		8CB164527A344E1D70DECB0B /* Services */ = {
@@ -280,17 +240,10 @@
 			path = "final finalTests";
 			sourceTree = "<group>";
 		};
-		A0A538514A7F8AF439E6E08D /* Resources */ = {
-			isa = PBXGroup;
-			children = (
-				897DF43C87D41FD1A0CCF1C9 /* editor */,
-			);
-			path = Resources;
-			sourceTree = "<group>";
-		};
 		B6F6A7853E44572DC6A576EF /* Sidebar */ = {
 			isa = PBXGroup;
 			children = (
+				B94BA0DFF06C7D3B1B7F38F5 /* DraggableCardView.swift */,
 				748760007DC30115235FC8D6 /* GoalPopover.swift */,
 				0CEC9B25AB24040A17CC1589 /* HashBar.swift */,
 				ABFC8351EA2CEE315AFD46C8 /* OutlineFilterBar.swift */,
@@ -338,7 +291,6 @@
 			buildConfigurationList = 2E161EC228B8AE3510464111 /* Build configuration list for PBXNativeTarget "final final" */;
 			buildPhases = (
 				AC02281FB7B2A5BB611B1A29 /* Sources */,
-				3BC3CAED088CEF7AE191FA7D /* Resources */,
 				E9038C5955C3D5D57EF730DB /* Frameworks */,
 			);
 			buildRules = (
@@ -385,22 +337,6 @@
 		};
 /* End PBXProject section */
 
-/* Begin PBXResourcesBuildPhase section */
-		3BC3CAED088CEF7AE191FA7D /* Resources */ = {
-			isa = PBXResourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-				034B4612DBA7801971F8D0A7 /* codemirror.css in Resources */,
-				20C24A349BE36122136559B4 /* codemirror.html in Resources */,
-				91E3EB11EC2C1CFFF280BBB2 /* codemirror.js in Resources */,
-				A46237665E070F9A59CF8B87 /* milkdown.css in Resources */,
-				1B0AC8AA42A1078AD13881CD /* milkdown.html in Resources */,
-				662D9A2016188A5C55476E2E /* milkdown.js in Resources */,
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-/* End PBXResourcesBuildPhase section */
-
 /* Begin PBXSourcesBuildPhase section */
 		2D0D2A66A7555B777B919AF8 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
@@ -424,6 +360,7 @@
 				45869BA1A8791DA0E428B1BD /* Database.swift in Sources */,
 				D6304F1494A8C62545B5D22B /* DemoProjectManager.swift in Sources */,
 				49989C588EFAF924B6BF9400 /* Document.swift in Sources */,
+				5AF10728B84222571BDBB8A1 /* DraggableCardView.swift in Sources */,
 				7ECDA8650F5A11B84724DF8F /* EditorCommands.swift in Sources */,
 				5DC993888BDFB3602E1FA2AA /* EditorSchemeHandler.swift in Sources */,
 				27788FB6CF7677E47103E1D6 /* EditorViewState.swift in Sources */,
@@ -543,7 +480,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 0.1.70;
+				CURRENT_PROJECT_VERSION = 0.1.75;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "final final/Info.plist";
 				INFOPLIST_GENERATION_MODE = GeneratedFile;
@@ -565,7 +502,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 0.1.70;
+				CURRENT_PROJECT_VERSION = 0.1.75;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "final final/Info.plist";
 				INFOPLIST_GENERATION_MODE = GeneratedFile;
