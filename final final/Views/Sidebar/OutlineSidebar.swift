@@ -725,7 +725,8 @@ struct SubtreeDragPreview: View {
                     .padding(.vertical, 4)
                     .background(themeManager.currentTheme.accentColor)
                     .clipShape(Capsule())
-                    .offset(x: 8, y: -8)
+                    .padding(.top, 8)
+                    .padding(.trailing, 8)
             }
         }
     }
