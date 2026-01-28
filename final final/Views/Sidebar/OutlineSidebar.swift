@@ -125,9 +125,14 @@ struct OutlineSidebar: View {
     @State private var sidebarWidth: CGFloat = 300  // Track actual width for zone calculations
     @State private var isDragging: Bool = false  // Track drag state for suppression
 
+    /// Total word count of currently visible sections
+    private var filteredWordCount: Int {
+        filteredSections.reduce(0) { $0 + $1.wordCount }
+    }
+
     var body: some View {
         VStack(spacing: 0) {
-            OutlineFilterBar(selectedFilter: $statusFilter)
+            OutlineFilterBar(selectedFilter: $statusFilter, filteredWordCount: filteredWordCount)
 
             Divider()
                 .foregroundColor(themeManager.currentTheme.dividerColor)

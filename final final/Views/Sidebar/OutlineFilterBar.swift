@@ -6,9 +6,10 @@
 import SwiftUI
 
 /// Filter bar for the outline sidebar
-/// Provides status filtering dropdown
+/// Provides status filtering dropdown and word count display
 struct OutlineFilterBar: View {
     @Binding var selectedFilter: SectionStatus?
+    let filteredWordCount: Int
     @Environment(ThemeManager.self) private var themeManager
 
     var body: some View {
@@ -49,12 +50,17 @@ struct OutlineFilterBar: View {
                         .lineLimit(1)
                 }
                 .font(.system(size: 12, weight: .medium))
-                .foregroundColor(themeManager.currentTheme.sidebarText.opacity(0.8))
             }
             .menuStyle(.borderlessButton)
+            .tint(themeManager.currentTheme.accentColor)
             .fixedSize()
 
             Spacer()
+
+            // Word count display (right-aligned)
+            Text("\(filteredWordCount) words")
+                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .foregroundColor(themeManager.currentTheme.sidebarText.opacity(0.6))
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
@@ -72,7 +78,7 @@ struct OutlineFilterBar: View {
     @Previewable @State var filter: SectionStatus?
 
     VStack {
-        OutlineFilterBar(selectedFilter: $filter)
+        OutlineFilterBar(selectedFilter: $filter, filteredWordCount: 1234)
         Divider()
         Text("Selected: \(filter?.displayName ?? "All")")
     }
