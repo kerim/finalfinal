@@ -21,7 +21,9 @@ struct ContentView: View {
     @State private var editorState = EditorViewState()
     @State private var cursorPositionToRestore: CursorPosition?
     @State private var sectionSyncService = SectionSyncService()
-    @State private var demoProjectManager = DemoProjectManager()
+
+    /// Use the shared DocumentManager for project lifecycle
+    private var documentManager: DocumentManager { DocumentManager.shared }
 
     // swiftlint:disable line_length
     private let demoContent = """
@@ -159,39 +161,33 @@ Use this content to verify that:
 // to test that reorderSection() properly normalizes section endings
 
     var body: some View {
+        mainContentView
+            .withEditorNotifications(editorState: editorState, cursorRestore: $cursorPositionToRestore)
+            .withFileNotifications(
+                editorState: editorState,
+                syncService: sectionSyncService,
+                onOpened: { await handleProjectOpened() },
+                onClosed: { handleProjectClosed() }
+            )
+    }
+
+    @ViewBuilder
+    private var mainContentView: some View {
         NavigationSplitView {
             sidebarView
         } detail: {
             detailView
         }
         .task {
-            // Register editor state with AppDelegate for cleanup on quit
             AppDelegate.shared?.editorState = editorState
             await initializeProject()
         }
         .onChange(of: editorState.content) { _, newValue in
-            // Skip sync during zoom transitions to prevent race conditions
             guard editorState.contentState == .idle else { return }
-            // Pass zoomedIds when zoomed to enable in-place updates instead of replacing full array
             sectionSyncService.contentChanged(newValue, zoomedIds: editorState.zoomedSectionIds)
         }
         .onChange(of: editorState.zoomedSectionId) { _, newValue in
-            // Track zoom state in sync service to prevent overwriting full document
             sectionSyncService.isContentZoomed = (newValue != nil)
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .toggleFocusMode).receive(on: DispatchQueue.main)) { _ in
-            editorState.toggleFocusMode()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .toggleEditorMode).receive(on: DispatchQueue.main)) { _ in
-            // Two-phase toggle: request cursor save first, then toggle after callback
-            editorState.requestEditorModeToggle()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .didSaveCursorPosition).receive(on: DispatchQueue.main)) { notification in
-            // Cursor saved - now complete the toggle
-            if let position = notification.userInfo?["position"] as? CursorPosition {
-                cursorPositionToRestore = position
-            }
-            editorState.toggleEditorMode()
         }
     }
 
@@ -257,12 +253,12 @@ Use this content to verify that:
         // Save section metadata changes to database
         Task {
             do {
-                try demoProjectManager.saveSectionStatus(id: section.id, status: section.status)
+                try documentManager.saveSectionStatus(id: section.id, status: section.status)
                 if let goal = section.wordGoal {
-                    try demoProjectManager.saveSectionWordGoal(id: section.id, goal: goal)
+                    try documentManager.saveSectionWordGoal(id: section.id, goal: goal)
                 }
                 if !section.tags.isEmpty {
-                    try demoProjectManager.saveSectionTags(id: section.id, tags: section.tags)
+                    try documentManager.saveSectionTags(id: section.id, tags: section.tags)
                 }
             } catch {
                 print("[ContentView] Error saving section: \(error.localizedDescription)")
@@ -512,8 +508,8 @@ Use this content to verify that:
         print("[PERSIST] === START ===")
         print("[PERSIST] isObservationSuppressed: \(editorState.isObservationSuppressed)")
 
-        guard let db = demoProjectManager.projectDatabase,
-              let pid = demoProjectManager.projectId else {
+        guard let db = documentManager.projectDatabase,
+              let pid = documentManager.projectId else {
             print("[PERSIST] ERROR: Database or projectId is nil!")
             return
         }
@@ -712,6 +708,7 @@ Use this content to verify that:
                 focusModeEnabled: $editorState.focusModeEnabled,
                 cursorPositionToRestore: $cursorPositionToRestore,
                 scrollToOffset: $editorState.scrollToOffset,
+                isResettingContent: $editorState.isResettingContent,
                 onContentChange: { _ in
                     // Content change handling - could trigger outline parsing here
                 },
@@ -727,6 +724,7 @@ Use this content to verify that:
                 content: $editorState.content,
                 cursorPositionToRestore: $cursorPositionToRestore,
                 scrollToOffset: $editorState.scrollToOffset,
+                isResettingContent: $editorState.isResettingContent,
                 onContentChange: { _ in
                     // Content change handling - could trigger outline parsing here
                 },
@@ -740,45 +738,144 @@ Use this content to verify that:
         }
     }
 
-    /// Initialize the project - load from database or create with demo content
+    /// Initialize the project - load from database or show welcome state
     private func initializeProject() async {
+        // Check if a project is already open (e.g., opened via recent projects or file association)
+        if documentManager.hasOpenProject {
+            await configureForCurrentProject()
+            return
+        }
+
+        // Try to restore last project
         do {
-            // Initialize demo project (creates if needed)
-            try await demoProjectManager.ensureDemoProjectExists(demoContent: demoContent)
-
-            // Configure sync service with database and start observation
-            if let db = demoProjectManager.projectDatabase,
-               let pid = demoProjectManager.projectId {
-                sectionSyncService.configure(database: db, projectId: pid)
-
-                // Start reactive observation (replaces callback-based updates)
-                editorState.startObserving(database: db, projectId: pid)
+            if try documentManager.restoreLastProject() {
+                await configureForCurrentProject()
+                return
             }
+        } catch {
+            print("[ContentView] Failed to restore last project: \(error)")
+        }
 
-            // Try to load saved content from database
-            if let savedContent = try demoProjectManager.loadContent(), !savedContent.isEmpty {
+        // Fall back to demo project
+        await openDemoProjectIfNeeded()
+    }
+
+    /// Configure UI for the currently open project
+    private func configureForCurrentProject() async {
+        guard let db = documentManager.projectDatabase,
+              let pid = documentManager.projectId else {
+            return
+        }
+
+        // Configure sync service with database
+        sectionSyncService.configure(database: db, projectId: pid)
+
+        // Start reactive observation
+        editorState.startObserving(database: db, projectId: pid)
+
+        // Load content
+        do {
+            let savedContent = try documentManager.loadContent()
+
+            if let savedContent = savedContent, !savedContent.isEmpty {
                 editorState.content = savedContent
             } else {
-                // Fall back to demo content for new projects
-                editorState.content = demoContent
+                // Empty project - set empty content
+                editorState.content = ""
             }
 
-            // Check if sections exist in database
+            // Check if sections exist
             let existingSections = await sectionSyncService.loadSections()
-            if existingSections.isEmpty {
-                // No sections in database - trigger immediate sync to create them
-                // ValueObservation will automatically update editorState.sections
+            if existingSections.isEmpty && !editorState.content.isEmpty {
                 await sectionSyncService.syncNow(editorState.content)
             }
-            // Note: editorState.sections is populated via ValueObservation in startObserving()
-
         } catch {
-            print("[ContentView] Failed to initialize project: \(error.localizedDescription)")
-            // Fall back to in-memory mode with demo content
+            print("[ContentView] Failed to load content: \(error.localizedDescription)")
+        }
+
+        // Safety net: ensure demo content is displayed even if DB load fails
+        // This handles edge cases where Content record exists but markdown is empty
+        if editorState.content.isEmpty && documentManager.projectTitle == "Demo" {
+            print("[ContentView] Safety net: Demo project has empty content, loading demo content")
+            editorState.content = demoContent
+            await sectionSyncService.syncNow(demoContent)
+        }
+    }
+
+    /// Open demo project for backwards compatibility during transition
+    private func openDemoProjectIfNeeded() async {
+        let fm = FileManager.default
+        let projectsFolder = fm.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("final final Projects")
+        let demoPath = projectsFolder.appendingPathComponent("demo.ff")
+
+        do {
+            // Create projects folder if needed
+            if !fm.fileExists(atPath: projectsFolder.path) {
+                try fm.createDirectory(at: projectsFolder, withIntermediateDirectories: true)
+            }
+
+            if fm.fileExists(atPath: demoPath.path) {
+                // Open existing demo project
+                try documentManager.openProject(at: demoPath)
+            } else {
+                // Create new demo project WITH content at creation time
+                try documentManager.newProject(at: demoPath, title: "Demo", initialContent: demoContent)
+            }
+
+            await configureForCurrentProject()
+
+            // Ensure sections exist for demo content
+            let existingSections = await sectionSyncService.loadSections()
+            if existingSections.isEmpty {
+                await sectionSyncService.syncNow(editorState.content)
+            }
+        } catch {
+            print("[ContentView] Failed to initialize demo project: \(error.localizedDescription)")
+            // Fall back to in-memory mode
             editorState.content = demoContent
             editorState.sections = parseDemoSections()
             recalculateParentRelationships()
         }
+    }
+
+    /// Handle project opened notification
+    private func handleProjectOpened() async {
+        // Stop existing observation
+        editorState.stopObserving()
+        sectionSyncService.cancelPendingSync()
+
+        // Set flag to prevent polling from overwriting empty content during reset
+        editorState.isResettingContent = true
+
+        // Reset state
+        editorState.content = ""
+        editorState.sections = []
+        editorState.zoomedSectionId = nil
+        editorState.fullDocumentBeforeZoom = nil
+        editorState.zoomedSectionIds = nil
+
+        // Configure for new project
+        await configureForCurrentProject()
+
+        // Clear the reset flag after project is configured
+        editorState.isResettingContent = false
+    }
+
+    /// Handle project closed notification
+    private func handleProjectClosed() {
+        // Stop observation FIRST to prevent any further syncs
+        editorState.stopObserving()
+        sectionSyncService.cancelPendingSync()
+
+        // Reset zoom state (these don't trigger database writes)
+        editorState.zoomedSectionId = nil
+        editorState.fullDocumentBeforeZoom = nil
+        editorState.zoomedSectionIds = nil
+
+        // Clear sections and content (UI state only, observation is already stopped)
+        editorState.sections = []
+        editorState.content = ""
     }
 
     /// Temporary: Parse demo content into sections for testing
@@ -853,6 +950,71 @@ Use this content to verify that:
         guard !title.isEmpty else { return nil }
 
         return (level, title)
+    }
+}
+
+// MARK: - Notification Extensions
+
+extension View {
+    /// Adds editor-related notification handlers
+    func withEditorNotifications(editorState: EditorViewState, cursorRestore: Binding<CursorPosition?>) -> some View {
+        self
+            .onReceive(NotificationCenter.default.publisher(for: .toggleFocusMode)) { _ in
+                editorState.toggleFocusMode()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .toggleEditorMode)) { _ in
+                editorState.requestEditorModeToggle()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .didSaveCursorPosition)) { notification in
+                if let position = notification.userInfo?["position"] as? CursorPosition {
+                    cursorRestore.wrappedValue = position
+                }
+                editorState.toggleEditorMode()
+            }
+    }
+
+    /// Adds file menu notification handlers
+    @MainActor
+    func withFileNotifications(
+        editorState: EditorViewState,
+        syncService: SectionSyncService,
+        onOpened: @escaping () async -> Void,
+        onClosed: @escaping () -> Void
+    ) -> some View {
+        self
+            .onReceive(NotificationCenter.default.publisher(for: .newProject)) { _ in
+                FileOperations.handleNewProject()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .openProject)) { _ in
+                FileOperations.handleOpenProject()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .closeProject)) { _ in
+                FileOperations.handleCloseProject()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .saveProject)) { _ in
+                FileOperations.handleSaveProject()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .importMarkdown)) { _ in
+                FileOperations.handleImportMarkdown()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .exportMarkdown)) { _ in
+                FileOperations.handleExportMarkdown(content: editorState.content)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .projectDidOpen)) { _ in
+                Task { await onOpened() }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .projectDidCreate)) { notification in
+                Task {
+                    await onOpened()
+                    if let content = notification.userInfo?["content"] as? String {
+                        editorState.content = content
+                        await syncService.syncNow(content)
+                    }
+                }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .projectDidClose)) { _ in
+                onClosed()
+            }
     }
 }
 

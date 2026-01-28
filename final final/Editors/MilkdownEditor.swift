@@ -14,6 +14,7 @@ struct MilkdownEditor: NSViewRepresentable {
     @Binding var focusModeEnabled: Bool
     @Binding var cursorPositionToRestore: CursorPosition?
     @Binding var scrollToOffset: Int?
+    @Binding var isResettingContent: Bool
 
     let onContentChange: (String) -> Void
     let onStatsChange: (Int, Int) -> Void
@@ -100,6 +101,7 @@ struct MilkdownEditor: NSViewRepresentable {
             content: $content,
             cursorPositionToRestore: $cursorPositionToRestore,
             scrollToOffset: $scrollToOffset,
+            isResettingContent: $isResettingContent,
             onContentChange: onContentChange,
             onStatsChange: onStatsChange,
             onCursorPositionSaved: onCursorPositionSaved
@@ -118,6 +120,7 @@ struct MilkdownEditor: NSViewRepresentable {
         private var contentBinding: Binding<String>
         private var cursorPositionToRestoreBinding: Binding<CursorPosition?>
         private var scrollToOffsetBinding: Binding<Int?>
+        private var isResettingContentBinding: Binding<Bool>
         private let onContentChange: (String) -> Void
         private let onStatsChange: (Int, Int) -> Void
         private let onCursorPositionSaved: (CursorPosition) -> Void
@@ -141,6 +144,7 @@ struct MilkdownEditor: NSViewRepresentable {
             content: Binding<String>,
             cursorPositionToRestore: Binding<CursorPosition?>,
             scrollToOffset: Binding<Int?>,
+            isResettingContent: Binding<Bool>,
             onContentChange: @escaping (String) -> Void,
             onStatsChange: @escaping (Int, Int) -> Void,
             onCursorPositionSaved: @escaping (CursorPosition) -> Void
@@ -148,6 +152,7 @@ struct MilkdownEditor: NSViewRepresentable {
             self.contentBinding = content
             self.cursorPositionToRestoreBinding = cursorPositionToRestore
             self.scrollToOffsetBinding = scrollToOffset
+            self.isResettingContentBinding = isResettingContent
             self.onContentChange = onContentChange
             self.onStatsChange = onStatsChange
             self.onCursorPositionSaved = onCursorPositionSaved
@@ -256,45 +261,18 @@ struct MilkdownEditor: NSViewRepresentable {
         }
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-            #if DEBUG
-            print("[MilkdownEditor] WebView finished loading")
-
-            // === PHASE 2: Verify JavaScript execution from Swift side ===
-            webView.evaluateJavaScript("typeof window.__MILKDOWN_SCRIPT_STARTED__") { result, error in
-                if let error = error {
-                    print("[MilkdownEditor] JS script check error: \(error)")
-                } else {
-                    print("[MilkdownEditor] JS script execution check: \(result ?? "nil") (should be 'number')")
-                }
-            }
-
-            webView.evaluateJavaScript("typeof window.FinalFinal") { result, error in
-                if let error = error {
-                    print("[MilkdownEditor] FinalFinal check error: \(error)")
-                } else {
-                    print("[MilkdownEditor] window.FinalFinal type: \(result ?? "nil") (should be 'object')")
-                }
-            }
-
-            webView.evaluateJavaScript("document.querySelector('#editor') !== null") { result, _ in
-                print("[MilkdownEditor] #editor element exists: \(result ?? "unknown")")
-            }
-
-            // === PHASE 6: Query debug state ===
-            webView.evaluateJavaScript("window.__MILKDOWN_DEBUG__ ? JSON.stringify(window.__MILKDOWN_DEBUG__) : 'not defined'") { result, error in
-                if let error = error {
-                    print("[MilkdownEditor] Debug state error: \(error)")
-                } else {
-                    print("[MilkdownEditor] Debug state: \(result ?? "nil")")
-                }
-            }
-            #endif
-
             isEditorReady = true
             setContent(contentBinding.wrappedValue)
             setTheme(ThemeManager.shared.cssVariables)
             restoreCursorPositionIfNeeded()
+            focusEditor()
             startPolling()
+        }
+
+        /// Focus the editor so user can start typing immediately
+        private func focusEditor() {
+            guard isEditorReady, let webView else { return }
+            webView.evaluateJavaScript("window.FinalFinal.focus()") { _, _ in }
         }
 
         private func restoreCursorPositionIfNeeded() {
@@ -407,9 +385,15 @@ struct MilkdownEditor: NSViewRepresentable {
         private func pollContent() {
             guard !isCleanedUp, isEditorReady, let webView else { return }
 
+            // Skip polling during content reset (project switch)
+            guard !isResettingContentBinding.wrappedValue else { return }
+
             webView.evaluateJavaScript("window.FinalFinal.getContent()") { [weak self] result, _ in
                 guard let self, !self.isCleanedUp,
                       let content = result as? String else { return }
+
+                // Double-check reset flag in callback (may have changed)
+                guard !self.isResettingContentBinding.wrappedValue else { return }
 
                 // Grace period guard: don't overwrite recent pushes (race condition fix)
                 let timeSincePush = Date().timeIntervalSince(self.lastPushTime)

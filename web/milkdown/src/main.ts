@@ -86,6 +86,7 @@ declare global {
       scrollCursorToCenter: () => void;
       insertAtCursor: (text: string) => void;
       insertBreak: () => void;
+      focus: () => void;
     };
   }
 }
@@ -496,6 +497,40 @@ window.FinalFinal = {
       currentContent = markdown;
       return;
     }
+
+    // Handle empty content FIRST - ensure doc has valid empty paragraph, not section_break
+    // This must run BEFORE the currentContent === markdown check because:
+    // - Editor may initialize with section_break due to schema default
+    // - currentContent starts as '' so the equality check would skip the fix
+    if (!markdown.trim()) {
+      editorInstance.action((ctx) => {
+        const view = ctx.get(editorViewCtx);
+        const doc = view.state.doc;
+
+        // Check if already a valid empty paragraph (optimization: skip if already correct)
+        if (doc.childCount === 1 &&
+            doc.firstChild?.type.name === 'paragraph' &&
+            doc.firstChild?.textContent === '') {
+          currentContent = markdown;
+          return;
+        }
+
+        // Replace with empty paragraph
+        isSettingContent = true;
+        try {
+          const emptyParagraph = view.state.schema.nodes.paragraph.create();
+          const emptyDoc = view.state.schema.nodes.doc.create(null, emptyParagraph);
+          const tr = view.state.tr.replaceWith(0, view.state.doc.content.size, emptyDoc.content);
+          view.dispatch(tr.setSelection(Selection.atStart(tr.doc)));
+          currentContent = markdown;
+        } finally {
+          isSettingContent = false;
+        }
+      });
+      return;
+    }
+
+    // For non-empty content, skip if unchanged
     if (currentContent === markdown) {
       return;
     }
@@ -504,6 +539,7 @@ window.FinalFinal = {
     try {
       editorInstance.action((ctx) => {
         const view = ctx.get(editorViewCtx);
+
         const parser = ctx.get(parserCtx);
         const doc = parser(markdown);
         if (!doc) {
@@ -529,7 +565,14 @@ window.FinalFinal = {
   },
 
   getContent() {
-    return editorInstance ? editorInstance.action(getMarkdown()) : currentContent;
+    const content = editorInstance ? editorInstance.action(getMarkdown()) : currentContent;
+    const trimmed = content.trim();
+
+    // Empty/minimal document may serialize to just a section break marker - treat as empty
+    if (trimmed === '' || trimmed === '<!-- ::break:: -->') {
+      return '';
+    }
+    return content;
   },
 
   setFocusMode(enabled: boolean) {
@@ -900,6 +943,16 @@ window.FinalFinal = {
       view.focus();
     } catch {
       // Insert failed, ignore
+    }
+  },
+
+  focus() {
+    if (!editorInstance) return;
+    try {
+      const view = editorInstance.ctx.get(editorViewCtx);
+      view.focus();
+    } catch {
+      // Focus failed, ignore
     }
   },
 };

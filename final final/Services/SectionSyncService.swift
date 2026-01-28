@@ -261,6 +261,7 @@ class SectionSyncService {
 
     /// Parse markdown content into ParsedHeader structs for reconciliation
     private func parseHeaders(from markdown: String) -> [ParsedHeader] {
+
         var headers: [ParsedHeader] = []
         var currentOffset = 0
         var inCodeBlock = false

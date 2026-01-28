@@ -24,11 +24,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.kerim.final-final
         PRODUCT_NAME: final final
         MARKETING_VERSION: "1"
-<<<<<<< HEAD
-        CURRENT_PROJECT_VERSION: "0.1.72"
-=======
-        CURRENT_PROJECT_VERSION: "0.1.77"
->>>>>>> outline-sidebar
+        CURRENT_PROJECT_VERSION: "0.1.78"
         INFOPLIST_GENERATION_MODE: GeneratedFile
         GENERATE_INFOPLIST_FILE: YES
         SWIFT_VERSION: "5.9"
@@ -43,6 +39,10 @@ targets:
         LSMinimumSystemVersion: "14.0"
         NSPrincipalClass: NSApplication
         NSHighResolutionCapable: true
+        CFBundleURLTypes:
+          - CFBundleURLName: com.kerim.final-final
+            CFBundleURLSchemes:
+              - finalfinal
         CFBundleDocumentTypes:
           - CFBundleTypeName: final final Document
             CFBundleTypeRole: Editor

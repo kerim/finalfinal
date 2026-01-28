@@ -361,3 +361,52 @@ keymap.of([
 **Key insight:** Don't include `...historyKeymap` when you need to override undo/redo behavior. Define your own `Mod-z`, `Mod-Shift-z`, and `Mod-y` bindings explicitly.
 
 **General principle:** To intercept keyboard shortcuts in CodeMirror, replace the keymap binding, not the DOM handler. Keymap handlers run first.
+
+---
+
+## Milkdown Empty Content Handling
+
+### Early Return Checks Can Bypass Essential Fixes
+
+**Problem:** Section break symbol (§) appeared when switching from CodeMirror to Milkdown on blank documents, even though empty content handling code existed.
+
+**Root Cause:** The `setContent()` function had this structure:
+
+```typescript
+let currentContent = '';  // Initial state
+
+setContent(markdown: string) {
+  if (currentContent === markdown) {
+    return;  // EARLY RETURN
+  }
+  // ... later in function ...
+  if (!markdown.trim()) {
+    // Empty content fix - never reached when both are ''
+  }
+}
+```
+
+When `currentContent = ''` and `setContent('')` is called:
+1. Check at line 1: `'' === ''` → **returns early**
+2. Empty content fix **never executes**
+3. Editor keeps its default state (section_break node from schema)
+
+**Solution:** Handle special cases BEFORE equality optimization checks:
+
+```typescript
+setContent(markdown: string) {
+  // Handle empty content FIRST
+  if (!markdown.trim()) {
+    // Fix empty document state
+    return;
+  }
+
+  // THEN check if content unchanged (for non-empty only)
+  if (currentContent === markdown) {
+    return;
+  }
+  // ... rest of parsing
+}
+```
+
+**General principle:** When a function has both an optimization (skip if unchanged) and a fix for edge cases, ensure the edge case handling runs before the optimization can bypass it.

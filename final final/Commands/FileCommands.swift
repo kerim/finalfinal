@@ -1,0 +1,303 @@
+//
+//  FileCommands.swift
+//  final final
+//
+//  File menu commands for project management.
+//
+
+import SwiftUI
+import AppKit
+
+struct FileCommands: Commands {
+    var body: some Commands {
+        // Replace the default New/Open/Save commands
+        CommandGroup(replacing: .newItem) {
+            Button("New Project...") {
+                NotificationCenter.default.post(name: .newProject, object: nil)
+            }
+            .keyboardShortcut("n", modifiers: .command)
+
+            Button("Open Project...") {
+                NotificationCenter.default.post(name: .openProject, object: nil)
+            }
+            .keyboardShortcut("o", modifiers: .command)
+
+            // Recent Projects submenu
+            Menu("Open Recent") {
+                RecentProjectsMenu()
+            }
+
+            Divider()
+
+            // Explicit Close Window to ensure Cmd-W works
+            Button("Close Window") {
+                NSApp.keyWindow?.close()
+            }
+            .keyboardShortcut("w", modifiers: .command)
+        }
+
+        CommandGroup(replacing: .saveItem) {
+            Button("Save") {
+                NotificationCenter.default.post(name: .saveProject, object: nil)
+            }
+            .keyboardShortcut("s", modifiers: .command)
+        }
+
+        CommandGroup(replacing: .importExport) {
+            Button("Import Markdown...") {
+                NotificationCenter.default.post(name: .importMarkdown, object: nil)
+            }
+            .keyboardShortcut("i", modifiers: [.command, .shift])
+
+            Button("Export Markdown...") {
+                NotificationCenter.default.post(name: .exportMarkdown, object: nil)
+            }
+            .keyboardShortcut("e", modifiers: [.command, .shift])
+        }
+    }
+}
+
+/// Submenu view for recent projects
+struct RecentProjectsMenu: View {
+    @State private var recentProjects: [DocumentManager.RecentProjectEntry] = []
+
+    var body: some View {
+        Group {
+            ForEach(recentProjects) { entry in
+                Button(entry.title) {
+                    openRecentProject(entry)
+                }
+            }
+
+            if !recentProjects.isEmpty {
+                Divider()
+                Button("Clear Recent Projects") {
+                    Task { @MainActor in
+                        DocumentManager.shared.clearRecentProjects()
+                        recentProjects = []
+                    }
+                }
+            }
+        }
+        .onAppear {
+            recentProjects = DocumentManager.shared.recentProjects
+        }
+    }
+
+    private func openRecentProject(_ entry: DocumentManager.RecentProjectEntry) {
+        Task { @MainActor in
+            do {
+                try DocumentManager.shared.openRecentProject(entry)
+                NotificationCenter.default.post(name: .projectDidOpen, object: nil)
+            } catch {
+                print("[FileCommands] Failed to open recent project: \(error)")
+                showErrorAlert(error)
+            }
+        }
+    }
+
+    private func showErrorAlert(_ error: Error) {
+        let alert = NSAlert()
+        alert.messageText = "Could Not Open Project"
+        alert.informativeText = error.localizedDescription
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
+    }
+}
+
+// MARK: - Notification Names for File Operations
+
+extension Notification.Name {
+    /// Posted after a project has been opened (for UI updates)
+    static let projectDidOpen = Notification.Name("projectDidOpen")
+    /// Posted after a project has been closed (for UI updates)
+    static let projectDidClose = Notification.Name("projectDidClose")
+    /// Posted after a new project has been created (for UI updates)
+    static let projectDidCreate = Notification.Name("projectDidCreate")
+}
+
+// MARK: - File Operation Handlers
+
+/// Handles file menu operations - called from ContentView
+@MainActor
+struct FileOperations {
+
+    static func handleNewProject() {
+        let savePanel = NSSavePanel()
+        savePanel.title = "Create New Project"
+        savePanel.nameFieldLabel = "Project Name:"
+        savePanel.nameFieldStringValue = "Untitled"
+        savePanel.allowedContentTypes = [.init(exportedAs: "com.kerim.final-final.document")]
+        savePanel.canCreateDirectories = true
+
+        savePanel.begin { response in
+            guard response == .OK, let url = savePanel.url else { return }
+
+            Task { @MainActor in
+                do {
+                    let title = url.deletingPathExtension().lastPathComponent
+                    try DocumentManager.shared.newProject(at: url, title: title)
+                    #if DEBUG
+                    print("[FileOperations] Project created, hasOpenProject: \(DocumentManager.shared.hasOpenProject)")
+                    #endif
+                    NotificationCenter.default.post(name: .projectDidCreate, object: nil)
+                } catch {
+                    print("[FileOperations] Failed to create project: \(error)")
+                    showErrorAlert("Could Not Create Project", error: error)
+                }
+            }
+        }
+    }
+
+    static func handleOpenProject() {
+        let openPanel = NSOpenPanel()
+        openPanel.title = "Open Project"
+        openPanel.allowedContentTypes = [.init(exportedAs: "com.kerim.final-final.document")]
+        openPanel.allowsMultipleSelection = false
+        openPanel.canChooseDirectories = false
+        openPanel.canChooseFiles = true
+
+        openPanel.begin { response in
+            guard response == .OK, let url = openPanel.url else { return }
+
+            Task { @MainActor in
+                do {
+                    try DocumentManager.shared.openProject(at: url)
+                    #if DEBUG
+                    print("[FileOperations] Project opened, hasOpenProject: \(DocumentManager.shared.hasOpenProject)")
+                    #endif
+                    NotificationCenter.default.post(name: .projectDidOpen, object: nil)
+                } catch {
+                    print("[FileOperations] Failed to open project: \(error)")
+                    showErrorAlert("Could Not Open Project", error: error)
+                }
+            }
+        }
+    }
+
+    static func handleCloseProject() {
+        // Check for unsaved changes
+        if DocumentManager.shared.hasUnsavedChanges {
+            let alert = NSAlert()
+            alert.messageText = "Do you want to save changes before closing?"
+            alert.informativeText = "Your changes will be lost if you don't save them."
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "Save")
+            alert.addButton(withTitle: "Don't Save")
+            alert.addButton(withTitle: "Cancel")
+
+            let response = alert.runModal()
+            switch response {
+            case .alertFirstButtonReturn:
+                // Save then close
+                handleSaveProject()
+                DocumentManager.shared.closeProject()
+                NotificationCenter.default.post(name: .projectDidClose, object: nil)
+            case .alertSecondButtonReturn:
+                // Close without saving
+                DocumentManager.shared.closeProject()
+                NotificationCenter.default.post(name: .projectDidClose, object: nil)
+            default:
+                // Cancel - do nothing
+                break
+            }
+        } else {
+            DocumentManager.shared.closeProject()
+            NotificationCenter.default.post(name: .projectDidClose, object: nil)
+        }
+    }
+
+    static func handleSaveProject() {
+        // Note: Content is auto-saved by SectionSyncService
+        // This explicit save is for any pending changes
+        DocumentManager.shared.markClean()
+        print("[FileOperations] Project saved")
+    }
+
+    static func handleImportMarkdown() {
+        let openPanel = NSOpenPanel()
+        openPanel.title = "Import Markdown"
+        openPanel.allowedContentTypes = [.plainText]
+        openPanel.allowsMultipleSelection = false
+        openPanel.canChooseDirectories = false
+        openPanel.canChooseFiles = true
+
+        openPanel.begin { response in
+            guard response == .OK, let url = openPanel.url else { return }
+
+            Task { @MainActor in
+                do {
+                    // Read the markdown content
+                    let content = try String(contentsOf: url, encoding: .utf8)
+
+                    // Create a new project with the imported content
+                    let savePanel = NSSavePanel()
+                    savePanel.title = "Save Imported Project"
+                    savePanel.nameFieldLabel = "Project Name:"
+                    savePanel.nameFieldStringValue = url.deletingPathExtension().lastPathComponent
+                    savePanel.allowedContentTypes = [.init(exportedAs: "com.kerim.final-final.document")]
+                    savePanel.canCreateDirectories = true
+
+                    savePanel.begin { saveResponse in
+                        guard saveResponse == .OK, let saveURL = savePanel.url else { return }
+
+                        Task { @MainActor in
+                            do {
+                                let title = saveURL.deletingPathExtension().lastPathComponent
+                                try DocumentManager.shared.newProject(at: saveURL, title: title)
+                                try DocumentManager.shared.saveContent(content)
+                                NotificationCenter.default.post(
+                                    name: .projectDidCreate,
+                                    object: nil,
+                                    userInfo: ["content": content]
+                                )
+                            } catch {
+                                print("[FileOperations] Failed to import: \(error)")
+                                showErrorAlert("Could Not Import File", error: error)
+                            }
+                        }
+                    }
+                } catch {
+                    print("[FileOperations] Failed to read file: \(error)")
+                    showErrorAlert("Could Not Read File", error: error)
+                }
+            }
+        }
+    }
+
+    static func handleExportMarkdown(content: String) {
+        let savePanel = NSSavePanel()
+        savePanel.title = "Export Markdown"
+        savePanel.nameFieldLabel = "File Name:"
+        savePanel.nameFieldStringValue = DocumentManager.shared.projectTitle ?? "Untitled"
+        savePanel.allowedContentTypes = [.plainText]
+        savePanel.canCreateDirectories = true
+
+        savePanel.begin { response in
+            guard response == .OK, var url = savePanel.url else { return }
+
+            // Ensure .md extension
+            if url.pathExtension != "md" {
+                url = url.appendingPathExtension("md")
+            }
+
+            do {
+                try content.write(to: url, atomically: true, encoding: .utf8)
+                print("[FileOperations] Exported to: \(url.path)")
+            } catch {
+                print("[FileOperations] Failed to export: \(error)")
+                showErrorAlert("Could Not Export File", error: error)
+            }
+        }
+    }
+
+    private static func showErrorAlert(_ title: String, error: Error) {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = error.localizedDescription
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
+    }
+}
