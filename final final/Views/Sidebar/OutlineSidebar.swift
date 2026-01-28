@@ -158,7 +158,7 @@ struct OutlineSidebar: View {
     // Subtree drag state
     @State private var draggingSubtreeIds: Set<String> = []  // IDs being dragged (parent + children)
     @State private var showSubtreeDragHint: Bool = false
-    @State private var subtreeDragHintTimer: Timer?
+    @State private var subtreeDragHintTask: Task<Void, Never>?  // Replaces Timer for proper lifecycle
     private let hasSeenSubtreeDragHintKey = "hasSeenSubtreeDragHint"
 
     /// Total word count of currently visible sections
@@ -181,13 +181,22 @@ struct OutlineSidebar: View {
         }
         .frame(minWidth: 250, idealWidth: 300, maxWidth: 400)
         .background(themeManager.currentTheme.sidebarBackground)
+        .onChange(of: sections.count) { _, _ in
+            // Recalculate aggregate word counts when sections are added/removed
+            calculateAggregateWordCounts()
+        }
+        .onChange(of: sections.map { $0.wordCount }) { _, _ in
+            // Recalculate aggregate word counts when section word counts change
+            calculateAggregateWordCounts()
+        }
+        .onAppear {
+            // Calculate initial aggregate word counts
+            calculateAggregateWordCounts()
+        }
     }
 
     private var filteredSections: [SectionViewModel] {
         var result = sections
-
-        // Calculate aggregate word counts before filtering
-        calculateAggregateWordCounts()
 
         // Apply status filter
         if let filter = statusFilter {
@@ -286,60 +295,36 @@ struct OutlineSidebar: View {
         return !collectSubtreeIds(rootId: sectionId).isEmpty
     }
 
-    /// Check if Option key is currently pressed
-    private func isOptionKeyPressed() -> Bool {
-        NSEvent.modifierFlags.contains(.option)
-    }
-
-    /// Create a SectionTransfer for dragging, with subtree info if Option is held
-    private func createDragTransfer(for section: SectionViewModel) -> SectionTransfer {
-        let isSubtree = isOptionKeyPressed()
-        let childIds = isSubtree ? collectSubtreeIds(rootId: section.id) : []
-
-        // Track which sections are being dragged for ghost state
-        if isSubtree && !childIds.isEmpty {
-            draggingSubtreeIds = Set([section.id] + childIds)
-        } else {
-            draggingSubtreeIds = Set([section.id])
-        }
-
-        return SectionTransfer(
-            id: section.id,
-            sortOrder: section.sortOrder,
-            headerLevel: section.headerLevel,
-            isSubtreeDrag: isSubtree && !childIds.isEmpty,
-            childIds: childIds
-        )
-    }
-
     /// Show hint for subtree drag (first-time only)
+    /// Called when a single-card drag starts on a section with children
+    /// Uses Task.sleep for proper async lifecycle management
     private func maybeShowSubtreeDragHint(for sectionId: String) {
-        // Only show if: has children, no Option key, hasn't seen hint before
-        guard sectionHasChildren(sectionId),
-              !isOptionKeyPressed(),
-              !UserDefaults.standard.bool(forKey: hasSeenSubtreeDragHintKey) else {
+        // Only show if hasn't seen hint before
+        guard !UserDefaults.standard.bool(forKey: hasSeenSubtreeDragHintKey) else {
             return
         }
 
-        // Show hint after 500ms delay
-        subtreeDragHintTimer?.invalidate()
-        subtreeDragHintTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: false) { [self] _ in
-            Task { @MainActor in
-                self.showSubtreeDragHint = true
+        // Cancel any existing hint task
+        subtreeDragHintTask?.cancel()
 
-                // Auto-dismiss after 3 seconds
-                DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
-                    self.showSubtreeDragHint = false
-                    UserDefaults.standard.set(true, forKey: self.hasSeenSubtreeDragHintKey)
-                }
-            }
+        // Show hint after 500ms delay using Task.sleep
+        subtreeDragHintTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(500))
+            guard !Task.isCancelled else { return }
+            showSubtreeDragHint = true
+
+            // Auto-dismiss after 3 seconds
+            try? await Task.sleep(for: .seconds(3))
+            guard !Task.isCancelled else { return }
+            showSubtreeDragHint = false
+            UserDefaults.standard.set(true, forKey: hasSeenSubtreeDragHintKey)
         }
     }
 
-    /// Cancel hint timer when drag ends
+    /// Cancel hint task when drag ends
     private func cancelSubtreeDragHint() {
-        subtreeDragHintTimer?.invalidate()
-        subtreeDragHintTimer = nil
+        subtreeDragHintTask?.cancel()
+        subtreeDragHintTask = nil
         showSubtreeDragHint = false
     }
 
@@ -347,45 +332,7 @@ struct OutlineSidebar: View {
     private func clearDragState() {
         draggingSubtreeIds = []
         cancelSubtreeDragHint()
-    }
-
-    /// Create SectionTransfer for dragging (checks Option key at drag start)
-    private func makeDragTransfer(for section: SectionViewModel) -> SectionTransfer {
-        let isSubtree = isOptionKeyPressed()
-        let childIds = isSubtree ? collectSubtreeIds(rootId: section.id) : []
-
-        return SectionTransfer(
-            id: section.id,
-            sortOrder: section.sortOrder,
-            headerLevel: section.headerLevel,
-            isSubtreeDrag: isSubtree && !childIds.isEmpty,
-            childIds: childIds
-        )
-    }
-
-    /// Create drag preview (subtree preview if Option held, normal otherwise)
-    @ViewBuilder
-    private func makeDragPreview(for section: SectionViewModel) -> some View {
-        let childIds = isOptionKeyPressed() ? collectSubtreeIds(rootId: section.id) : []
-
-        if !childIds.isEmpty {
-            SubtreeDragPreview(section: section, childCount: childIds.count)
-        } else {
-            // Normal single-card preview
-            SectionCardView(
-                section: section,
-                onSingleClick: {},
-                onDoubleClick: {}
-            )
-            .frame(width: 280)
-            .background(themeManager.currentTheme.sidebarBackground)
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-            .overlay(
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(themeManager.currentTheme.accentColor, lineWidth: 2)
-            )
-            .shadow(color: .black.opacity(0.3), radius: 8, x: 0, y: 4)
-        }
+        dropPosition = nil  // Clear drop indicator
     }
 
     private var sectionsList: some View {
@@ -393,8 +340,24 @@ struct OutlineSidebar: View {
             ScrollView {
                 LazyVStack(spacing: 0) {
                     ForEach(Array(filteredSections.enumerated()), id: \.element.id) { index, section in
-                        SectionCardView(
+                        // Use DraggableCardView for cursor offset control via AppKit
+                        DraggableCardView(
                             section: section,
+                            allSections: filteredSections,
+                            isGhost: draggingSubtreeIds.contains(section.id),
+                            onDragStarted: { draggedIds in
+                                // Track subtree IDs for ghost state
+                                draggingSubtreeIds = draggedIds
+                                // Show hint for single-card drags on sections with children
+                                if draggedIds.count == 1 && sectionHasChildren(section.id) {
+                                    maybeShowSubtreeDragHint(for: section.id)
+                                }
+                                onDragStarted?()
+                            },
+                            onDragEnded: {
+                                clearDragState()
+                                onDragEnded?()
+                            },
                             onSingleClick: {
                                 onScrollToSection(section.id)
                             },
@@ -406,8 +369,7 @@ struct OutlineSidebar: View {
                                     // Zoom into this section
                                     onZoomToSection?(section.id)
                                 }
-                            },
-                            isGhost: draggingSubtreeIds.contains(section.id)
+                            }
                         )
                         .id(section.id)
                         // Elevate z-index when showing indicator to prevent adjacent cards from rendering on top
@@ -445,25 +407,13 @@ struct OutlineSidebar: View {
                                 handleDrop(dropped: transfer, position: position, targetSection: section)
                             },
                             onDragStarted: {
-                                // Track subtree IDs for ghost state and start hint timer
-                                let childIds = collectSubtreeIds(rootId: section.id)
-                                if isOptionKeyPressed() && !childIds.isEmpty {
-                                    draggingSubtreeIds = Set([section.id] + childIds)
-                                } else {
-                                    draggingSubtreeIds = Set([section.id])
-                                    maybeShowSubtreeDragHint(for: section.id)
-                                }
-                                onDragStarted?()
+                                // Ghost state already set by DraggableCardView.onDragStarted
+                                // This is called by drop delegate when drag enters a drop zone
                             },
                             onDragEnded: {
-                                clearDragState()
-                                onDragEnded?()
+                                // Drag ended callback already handled by DraggableCardView
                             }
                         ))
-                        .draggable(makeDragTransfer(for: section)) {
-                            // Dynamic preview based on Option key state at drag start
-                            makeDragPreview(for: section)
-                        }
 
                         Divider()
                             .foregroundColor(themeManager.currentTheme.dividerColor)
@@ -553,23 +503,11 @@ struct OutlineSidebar: View {
     /// Handle drop onto a section card with position awareness
     /// Uses the constrained level from drop position (determined by horizontal position)
     private func handleDrop(dropped: SectionTransfer, position: DropPosition, targetSection: SectionViewModel) {
-        print("[DROP] === handleDrop START ===")
-        print("[DROP] dropped.id=\(dropped.id), dropped.sortOrder=\(dropped.sortOrder), dropped.headerLevel=\(dropped.headerLevel)")
-        print("[DROP] position=\(position)")
-        print("[DROP] targetSection='\(targetSection.title)' id=\(targetSection.id)")
-        print("[DROP] filteredSections count: \(filteredSections.count)")
-        print("[DROP] sections binding count: \(sections.count)")
-        print("[DROP] filteredSections: \(filteredSections.map { "\($0.sortOrder):\($0.title)[H\($0.headerLevel)]" })")
-
         let newLevel = position.level
 
         // Self-drop: only proceed if level is changing
         if dropped.id == targetSection.id {
-            print("[DROP] Self-drop detected (same section)")
-            guard dropped.headerLevel != newLevel else {
-                print("[DROP] SKIP: Self-drop with no level change")
-                return
-            }
+            guard dropped.headerLevel != newLevel else { return }
         }
 
         // Calculate target section ID (the section we insert AFTER)
@@ -582,20 +520,16 @@ struct OutlineSidebar: View {
             // Insert BEFORE section at idx means insert AFTER section at idx-1
             targetSectionId = idx > 0 ? filteredSections[idx - 1].id : nil
             insertionIndexForParent = idx
-            print("[DROP] insertBefore idx=\(idx), targetSectionId=\(targetSectionId ?? "nil (insert at beginning)")")
         case .insertAfter(let idx, _):
             targetSectionId = filteredSections[idx].id
             insertionIndexForParent = idx + 1
-            print("[DROP] insertAfter idx=\(idx), targetSectionId=\(targetSectionId ?? "nil") '\(filteredSections[idx].title)'")
         }
 
         // Find parent based on level - look backwards for a section with level < newLevel
         // Exclude the dragged section to prevent circular parent references
         let newParentId = findParentId(forLevel: newLevel, insertionIndex: insertionIndexForParent, excludingId: dropped.id)
-        print("[DROP] Calculated newParentId=\(newParentId ?? "nil")")
 
         // Notify parent with structured request using stable section ID
-        print("[DROP] isSubtreeDrag=\(dropped.isSubtreeDrag), childIds=\(dropped.childIds)")
         let request = SectionReorderRequest(
             sectionId: dropped.id,
             targetSectionId: targetSectionId,
@@ -604,28 +538,18 @@ struct OutlineSidebar: View {
             isSubtreeDrag: dropped.isSubtreeDrag,
             childIds: dropped.childIds
         )
-        // swiftlint:disable:next line_length
-        print("[DROP] onSectionReorder: id=\(request.sectionId), target=\(request.targetSectionId ?? "nil"), level=\(request.newLevel), parent=\(request.newParentId ?? "nil"), subtree=\(request.isSubtreeDrag)")
         onSectionReorder?(request)
-        print("[DROP] === handleDrop END ===")
     }
 
     /// Handle drop at end of list
     private func handleDropAtEnd(dropped: SectionTransfer, position: DropPosition) {
-        print("[DROP-END] === handleDropAtEnd START ===")
-        print("[DROP-END] dropped.id=\(dropped.id), position=\(position)")
-        print("[DROP-END] filteredSections count: \(filteredSections.count)")
-
         // Use level from drop position (constrained by predecessor)
         let newLevel = position.level
         let newParentId = findParentId(forLevel: newLevel, insertionIndex: filteredSections.count, excludingId: dropped.id)
-        print("[DROP-END] newLevel=\(newLevel), newParentId=\(newParentId ?? "nil")")
 
         // Target is the last visible section (insert after it)
         let targetSectionId = filteredSections.last?.id
-        print("[DROP-END] targetSectionId=\(targetSectionId ?? "nil") '\(filteredSections.last?.title ?? "")'")
 
-        print("[DROP-END] isSubtreeDrag=\(dropped.isSubtreeDrag), childIds=\(dropped.childIds)")
         let request = SectionReorderRequest(
             sectionId: dropped.id,
             targetSectionId: targetSectionId,
@@ -634,9 +558,7 @@ struct OutlineSidebar: View {
             isSubtreeDrag: dropped.isSubtreeDrag,
             childIds: dropped.childIds
         )
-        print("[DROP-END] Calling onSectionReorder with targetSectionId=\(request.targetSectionId ?? "nil"), isSubtreeDrag=\(request.isSubtreeDrag)")
         onSectionReorder?(request)
-        print("[DROP-END] === handleDropAtEnd END ===")
     }
 
     /// Find the appropriate parent ID for a section at the given level and insertion point
