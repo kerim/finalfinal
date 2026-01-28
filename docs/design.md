@@ -42,7 +42,7 @@ Each project is a macOS package (folder appearing as file):
 ```
 MyBook.ff/
 ├── content.sqlite        # SQLite database (GRDB)
-└── references/           # Reference files (Phase 2+)
+└── references/           # Reference files (Phase 6+)
     └── (user-organized folders)
 ```
 
@@ -94,8 +94,9 @@ CREATE TABLE settings (
     value TEXT NOT NULL
 );
 
--- Future tables (Phase 2+)
--- reference_folders, reference_files, annotations, citations
+-- Future tables
+-- annotations, citations (Phase 2-3)
+-- reference_folders, reference_files (Phase 6)
 ```
 
 ### Content Model
@@ -345,11 +346,11 @@ final final/
 
 | Phase | Features |
 |-------|----------|
-| 2 | Reference pane (Finder-style folders for PDFs, images, docs) |
-| 3 | Annotations (Task, Rewrite, Link, Comment with inline/sidebar modes) |
-| 4 | Zotero integration (citations, bibliography) |
-| 5 | Version control (Git-based, auto-commits, named versions) |
-| 6 | Export (Pandoc, templates) |
+| 2 | Annotations (Task, Rewrite, Link, Comment with inline/sidebar modes) |
+| 3 | Zotero integration (citations, bibliography) |
+| 4 | Version control (Git-based, auto-commits, named versions) |
+| 5 | Export (Pandoc, templates) |
+| 6 | Reference pane (Finder-style folders for PDFs, images, docs) |
 | 7 | Sync (Cloudflare DO or CloudKit) |
 
 ---

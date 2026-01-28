@@ -20,6 +20,8 @@ web/codemirror/dist/
 
 # Build outputs
 final\ final/Resources/editor/
+build/
+temp/
 
 # IDE
 .idea/
