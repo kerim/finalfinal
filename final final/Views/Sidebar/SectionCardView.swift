@@ -11,6 +11,7 @@ struct SectionCardView: View {
     @Bindable var section: SectionViewModel
     let onSingleClick: () -> Void
     let onDoubleClick: () -> Void
+    var isGhost: Bool = false  // When true, render at 30% opacity (drag source in subtree drag)
 
     @Environment(ThemeManager.self) private var themeManager
     @State private var isHovering = false
@@ -47,6 +48,19 @@ struct SectionCardView: View {
         }
         .onHover { hovering in
             isHovering = hovering
+        }
+        .opacity(isGhost ? 0.4 : 1.0)
+        .overlay {
+            if isGhost {
+                // Ghost indicator: dashed border to show this card is part of the drag
+                RoundedRectangle(cornerRadius: 6)
+                    .strokeBorder(
+                        themeManager.currentTheme.accentColor,
+                        style: StrokeStyle(lineWidth: 2, dash: [4, 4])
+                    )
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 2)
+            }
         }
     }
 
