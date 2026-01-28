@@ -272,7 +272,8 @@ Use this content to verify that:
 
     private func reorderSection(_ request: SectionReorderRequest) {
         print("[REORDER] === START ===")
-        print("[REORDER] Request: sectionId=\(request.sectionId), targetSectionId=\(request.targetSectionId ?? "nil"), newLevel=\(request.newLevel), newParentId=\(request.newParentId ?? "nil")")
+        // swiftlint:disable:next line_length
+        print("[REORDER] id=\(request.sectionId) target=\(request.targetSectionId ?? "nil") level=\(request.newLevel) parent=\(request.newParentId ?? "nil") subtree=\(request.isSubtreeDrag) children=\(request.childIds)")
         print("[REORDER] Current sections count: \(editorState.sections.count)")
         print("[REORDER] Section titles in order: \(editorState.sections.map { "\($0.title)[H\($0.headerLevel)]" })")
 
@@ -309,13 +310,24 @@ Use this content to verify that:
             print("[REORDER] Target section: nil (insert at beginning)")
         }
 
+        // Branch: Subtree drag vs single-card drag
+        if request.isSubtreeDrag && !request.childIds.isEmpty {
+            reorderSubtree(request: request, fromIndex: fromIndex, oldLevel: oldLevel)
+        } else {
+            reorderSingleSection(request: request, fromIndex: fromIndex, oldLevel: oldLevel)
+        }
+    }
+
+    /// Reorder a single section (original behavior, promotes orphaned children)
+    private func reorderSingleSection(request: SectionReorderRequest, fromIndex: Int, oldLevel: Int) {
+        let targetSectionId = request.targetSectionId
+
         // Work with a local copy to batch all SwiftUI updates
         var sections = editorState.sections
-        print("[REORDER] Working with local copy of \(sections.count) sections")
+        print("[REORDER-SINGLE] Working with local copy of \(sections.count) sections")
 
         // 1. Promote orphaned children (on local copy)
-        // Pass targetSectionId instead of index - IDs are stable across modifications
-        print("[REORDER] Step 1: Promoting orphaned children...")
+        print("[REORDER-SINGLE] Step 1: Promoting orphaned children...")
         promoteOrphanedChildrenInPlace(
             sections: &sections,
             movedSectionId: request.sectionId,
@@ -325,35 +337,26 @@ Use this content to verify that:
 
         // 2. Re-find section after promotions
         guard let currentFromIndex = sections.firstIndex(where: { $0.id == request.sectionId }) else {
-            print("[REORDER] ERROR: Section disappeared after promotions!")
+            print("[REORDER-SINGLE] ERROR: Section disappeared after promotions!")
             return
         }
-        print("[REORDER] Step 2: currentFromIndex after promotions = \(currentFromIndex)")
+        print("[REORDER-SINGLE] Step 2: currentFromIndex after promotions = \(currentFromIndex)")
 
         // 3. Remove the section
         var removed = sections.remove(at: currentFromIndex)
-        print("[REORDER] Step 3: Removed section '\(removed.title)' from index \(currentFromIndex)")
-        print("[REORDER] Sections after removal: \(sections.map { "\($0.title)[H\($0.headerLevel)]" })")
+        print("[REORDER-SINGLE] Step 3: Removed section '\(removed.title)' from index \(currentFromIndex)")
 
-        // 4. Find insertion point using the target section ID (stable across modifications)
+        // 4. Find insertion point
         var finalIndex: Int
         if let targetId = targetSectionId,
            let targetIdx = sections.firstIndex(where: { $0.id == targetId }) {
-            // Insert AFTER the target section
             finalIndex = targetIdx + 1
-            print("[REORDER] Step 4: Found target '\(sections[targetIdx].title)' at idx \(targetIdx), finalIndex = \(finalIndex)")
+            print("[REORDER-SINGLE] Step 4: Found target at idx \(targetIdx), finalIndex = \(finalIndex)")
         } else {
-            // No target means insert at beginning
             finalIndex = 0
-            print("[REORDER] Step 4: No target found, finalIndex = 0 (INSERT AT TOP)")
+            print("[REORDER-SINGLE] Step 4: No target, finalIndex = 0")
         }
-
-        // Clamp to valid range
-        let beforeClamp = finalIndex
         finalIndex = min(max(0, finalIndex), sections.count)
-        if beforeClamp != finalIndex {
-            print("[REORDER] Step 4b: Clamped finalIndex from \(beforeClamp) to \(finalIndex)")
-        }
 
         // 5. Update section properties
         if removed.headerLevel != request.newLevel && request.newLevel > 0 {
@@ -366,45 +369,138 @@ Use this content to verify that:
                 headerLevel: request.newLevel,
                 markdownContent: newMarkdown
             )
-            print("[REORDER] Step 5: Updated level from \(oldLevel) to \(request.newLevel)")
+            print("[REORDER-SINGLE] Step 5: Updated level from \(oldLevel) to \(request.newLevel)")
         } else {
             removed = removed.withUpdates(parentId: request.newParentId)
-            print("[REORDER] Step 5: Level unchanged at \(removed.headerLevel)")
         }
 
         // 6. Insert at calculated position
         sections.insert(removed, at: finalIndex)
-        print("[REORDER] Step 6: Inserted '\(removed.title)' at finalIndex \(finalIndex)")
-        print("[REORDER] Sections after insert: \(sections.map { "\($0.title)[H\($0.headerLevel)]" })")
+        print("[REORDER-SINGLE] Step 6: Inserted '\(removed.title)' at finalIndex \(finalIndex)")
 
-        // 7. Recalculate sort orders and offsets
+        // 7. Finalize (shared logic)
+        finalizeSectionReorder(sections: sections)
+    }
+
+    /// Reorder a subtree (parent + all children move together, levels adjusted relatively)
+    private func reorderSubtree(request: SectionReorderRequest, fromIndex: Int, oldLevel: Int) {
+        let targetSectionId = request.targetSectionId
+        let levelDelta = request.newLevel - oldLevel  // How much to shift all levels
+
+        print("[REORDER-SUBTREE] levelDelta=\(levelDelta) (newLevel=\(request.newLevel) - oldLevel=\(oldLevel))")
+        print("[REORDER-SUBTREE] Moving \(request.childIds.count + 1) sections together")
+
+        // Work with a local copy
+        var sections = editorState.sections
+
+        // 1. Collect all sections to move (parent + children) in order
+        let allIdsToMove = [request.sectionId] + request.childIds
+        var sectionsToMove: [SectionViewModel] = []
+
+        for id in allIdsToMove {
+            if let section = sections.first(where: { $0.id == id }) {
+                sectionsToMove.append(section)
+            }
+        }
+        print("[REORDER-SUBTREE] Step 1: Collected \(sectionsToMove.count) sections to move")
+
+        // 2. Remove all sections being moved (in reverse order to maintain indices)
+        let indicesToRemove = allIdsToMove.compactMap { id in
+            sections.firstIndex(where: { $0.id == id })
+        }.sorted().reversed()
+
+        for idx in indicesToRemove {
+            sections.remove(at: idx)
+        }
+        print("[REORDER-SUBTREE] Step 2: Removed \(allIdsToMove.count) sections from original positions")
+
+        // 3. Find insertion point
+        var insertionIndex: Int
+        if let targetId = targetSectionId,
+           let targetIdx = sections.firstIndex(where: { $0.id == targetId }) {
+            insertionIndex = targetIdx + 1
+            print("[REORDER-SUBTREE] Step 3: Found target at idx \(targetIdx), insertionIndex = \(insertionIndex)")
+        } else {
+            insertionIndex = 0
+            print("[REORDER-SUBTREE] Step 3: No target, insertionIndex = 0")
+        }
+        insertionIndex = min(max(0, insertionIndex), sections.count)
+
+        // 4. Apply level delta to all sections being moved
+        var adjustedSections: [SectionViewModel] = []
+        for (idx, section) in sectionsToMove.enumerated() {
+            let newSectionLevel = section.headerLevel + levelDelta
+            // Note: H7+ are allowed in data model (no clamping to 6)
+
+            if idx == 0 {
+                // Parent section - use the new parent from request
+                let newMarkdown = sectionSyncService.updateHeaderLevel(
+                    in: section.markdownContent,
+                    to: newSectionLevel
+                )
+                let adjusted = section.withUpdates(
+                    parentId: request.newParentId,
+                    headerLevel: newSectionLevel,
+                    markdownContent: newMarkdown
+                )
+                adjustedSections.append(adjusted)
+                print("[REORDER-SUBTREE] Step 4: Parent '\(section.title)' H\(section.headerLevel) -> H\(newSectionLevel)")
+            } else {
+                // Child section - apply delta but parent will be recalculated later
+                let newMarkdown = sectionSyncService.updateHeaderLevel(
+                    in: section.markdownContent,
+                    to: newSectionLevel
+                )
+                let adjusted = section.withUpdates(
+                    headerLevel: newSectionLevel,
+                    markdownContent: newMarkdown
+                )
+                adjustedSections.append(adjusted)
+                print("[REORDER-SUBTREE] Step 4: Child '\(section.title)' H\(section.headerLevel) -> H\(newSectionLevel)")
+            }
+        }
+
+        // 5. Insert all sections at the insertion point
+        for (offset, section) in adjustedSections.enumerated() {
+            sections.insert(section, at: insertionIndex + offset)
+        }
+        print("[REORDER-SUBTREE] Step 5: Inserted \(adjustedSections.count) sections at index \(insertionIndex)")
+
+        // 6. Finalize (shared logic)
+        finalizeSectionReorder(sections: sections)
+    }
+
+    /// Finalize section reorder - recalculate offsets, parent relationships, persist
+    private func finalizeSectionReorder(sections: [SectionViewModel]) {
+        var mutableSections = sections
+
+        // Recalculate sort orders and offsets
         var currentOffset = 0
-        for index in sections.indices {
-            sections[index] = sections[index].withUpdates(
+        for index in mutableSections.indices {
+            mutableSections[index] = mutableSections[index].withUpdates(
                 sortOrder: index,
                 startOffset: currentOffset
             )
-            currentOffset += sections[index].markdownContent.count
+            currentOffset += mutableSections[index].markdownContent.count
         }
-        print("[REORDER] Step 7: Recalculated sortOrders and offsets")
+        print("[REORDER-FINALIZE] Recalculated sortOrders and offsets")
 
-        // 8. Single atomic update to trigger SwiftUI
-        editorState.sections = sections
-        print("[REORDER] Step 8: Updated editorState.sections")
-        print("[REORDER] Final order: \(editorState.sections.map { "\($0.sortOrder):\($0.title)[H\($0.headerLevel)]" })")
+        // Single atomic update to trigger SwiftUI
+        editorState.sections = mutableSections
+        print("[REORDER-FINALIZE] Updated editorState.sections")
+        print("[REORDER-FINALIZE] Final order: \(editorState.sections.map { "\($0.sortOrder):\($0.title)[H\($0.headerLevel)]" })")
 
-        // 9. Recalculate parent relationships and enforce hierarchy
+        // Recalculate parent relationships and enforce hierarchy
         recalculateParentRelationships()
         enforceHierarchyConstraints()
-        print("[REORDER] Step 9: Recalculated parent relationships and enforced hierarchy")
+        print("[REORDER-FINALIZE] Recalculated parent relationships and enforced hierarchy")
 
-        // 10. Rebuild document content (zoom-aware)
+        // Rebuild document content (zoom-aware)
         rebuildDocumentContent()
-        print("[REORDER] Step 10: Rebuilt document content")
+        print("[REORDER-FINALIZE] Rebuilt document content")
 
-        // 11. Persist reordered sections to database
-        // This makes the reorder permanent and triggers ValueObservation
-        print("[REORDER] Step 11: Dispatching persistReorderedSections()...")
+        // Persist reordered sections to database
+        print("[REORDER-FINALIZE] Dispatching persistReorderedSections()...")
         Task {
             await persistReorderedSections()
         }

@@ -1,6 +1,10 @@
 {
   "name": "final-final-web",
+<<<<<<< HEAD
   "version": "0.1.73",
+=======
+  "version": "0.1.77",
+>>>>>>> outline-sidebar
   "private": true,
   "scripts": {
     "build": "pnpm -r build",
