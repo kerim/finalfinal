@@ -74,41 +74,69 @@ struct CSLDate: Sendable, Equatable {
         }
         return literal ?? raw ?? ""
     }
+
+    /// Extract [[Int]] from various formats (handles Int, String, Double)
+    /// BBT sends integers [[2015, 9, 15]], some versions send strings [["2015", "9", "15"]]
+    private static func extractDateParts(from value: Any) -> [[Int]]? {
+        // Handle [[Any]] - standard date-parts format
+        if let outerArray = value as? [[Any]] {
+            return outerArray.map { innerArray in
+                innerArray.compactMap { element -> Int? in
+                    if let intVal = element as? Int { return intVal }
+                    if let doubleVal = element as? Double { return Int(doubleVal) }
+                    if let strVal = element as? String { return Int(strVal) }
+                    return nil
+                }
+            }
+        }
+        // Handle [Any] - flat array format
+        if let flatArray = value as? [Any] {
+            let ints = flatArray.compactMap { element -> Int? in
+                if let intVal = element as? Int { return intVal }
+                if let doubleVal = element as? Double { return Int(doubleVal) }
+                if let strVal = element as? String { return Int(strVal) }
+                return nil
+            }
+            return ints.isEmpty ? nil : [ints]
+        }
+        return nil
+    }
 }
 
 extension CSLDate: Codable {
     init(from decoder: Decoder) throws {
         // Try decoding as a container first
         if let container = try? decoder.container(keyedBy: CodingKeys.self) {
-            // Try standard date-parts format: [[2019, 3, 15]]
-            if let parts = try? container.decodeIfPresent([[Int]].self, forKey: .dateParts) {
-                self.dateParts = parts
-            }
-            // Handle date-parts with string values: [["2019", "3", "15"]]
-            else if let stringParts = try? container.decodeIfPresent([[String]].self, forKey: .dateParts) {
-                self.dateParts = stringParts.map { $0.compactMap { Int($0) } }
-            }
-            // Handle single-level date-parts: [2019, 3, 15]
-            else if let flatParts = try? container.decodeIfPresent([Int].self, forKey: .dateParts) {
-                self.dateParts = [flatParts]
+            // Use AnyCodable to decode date-parts flexibly without corrupting decoder state
+            // This avoids the "key visited" problem where Swift's KeyedDecodingContainer
+            // considers a key consumed after the first decode attempt fails on type mismatch
+            if let anyValue = try? container.decodeIfPresent(AnyCodable.self, forKey: .dateParts) {
+                self.dateParts = Self.extractDateParts(from: anyValue.value)
+            } else {
+                self.dateParts = nil
             }
 
-            self.raw = try container.decodeIfPresent(String.self, forKey: .raw)
-            self.literal = try container.decodeIfPresent(String.self, forKey: .literal)
+            self.raw = try? container.decodeIfPresent(String.self, forKey: .raw)
+            self.literal = try? container.decodeIfPresent(String.self, forKey: .literal)
         }
         // Try decoding as a simple string (e.g., "2019-03-15" or "2019")
         else if let singleValue = try? decoder.singleValueContainer(),
                 let dateString = try? singleValue.decode(String.self) {
             self.raw = dateString
+            self.literal = nil
             // Try to extract year from ISO date or plain year
             if let year = Int(dateString.prefix(4)) {
                 self.dateParts = [[year]]
+            } else {
+                self.dateParts = nil
             }
         }
         // Try decoding as a simple number (year only)
         else if let singleValue = try? decoder.singleValueContainer(),
                 let year = try? singleValue.decode(Int.self) {
             self.dateParts = [[year]]
+            self.raw = nil
+            self.literal = nil
         }
         else {
             // Fallback: empty date
@@ -123,6 +151,35 @@ extension CSLDate: Codable {
         try container.encodeIfPresent(dateParts, forKey: .dateParts)
         try container.encodeIfPresent(raw, forKey: .raw)
         try container.encodeIfPresent(literal, forKey: .literal)
+    }
+}
+
+/// Helper type for decoding any JSON value without type constraints
+/// Used to decode date-parts which can be [[Int]], [[String]], [[Double]], etc.
+/// Uses singleValueContainer() to read values atomically, avoiding decoder state corruption.
+struct AnyCodable: Decodable, @unchecked Sendable {
+    let value: Any
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+
+        if container.decodeNil() {
+            self.value = NSNull()
+        } else if let bool = try? container.decode(Bool.self) {
+            self.value = bool
+        } else if let int = try? container.decode(Int.self) {
+            self.value = int
+        } else if let double = try? container.decode(Double.self) {
+            self.value = double
+        } else if let string = try? container.decode(String.self) {
+            self.value = string
+        } else if let array = try? container.decode([AnyCodable].self) {
+            self.value = array.map { $0.value }
+        } else if let dict = try? container.decode([String: AnyCodable].self) {
+            self.value = dict.mapValues { $0.value }
+        } else {
+            throw DecodingError.dataCorruptedError(in: container, debugDescription: "Cannot decode value")
+        }
     }
 }
 
@@ -225,7 +282,10 @@ struct CSLItem: Codable, Identifiable, Sendable, Equatable {
         title = try container.decodeIfPresent(String.self, forKey: .title)
         author = try? container.decodeIfPresent([CSLName].self, forKey: .author)
         editor = try? container.decodeIfPresent([CSLName].self, forKey: .editor)
+
+        // Decode issued date with lenient fallback
         issued = try? container.decodeIfPresent(CSLDate.self, forKey: .issued)
+
         accessed = try? container.decodeIfPresent(CSLDate.self, forKey: .accessed)
         containerTitle = try container.decodeIfPresent(String.self, forKey: .containerTitle)
         publisher = try container.decodeIfPresent(String.self, forKey: .publisher)

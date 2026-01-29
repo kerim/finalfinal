@@ -22,6 +22,7 @@ struct ContentView: View {
     @State private var cursorPositionToRestore: CursorPosition?
     @State private var sectionSyncService = SectionSyncService()
     @State private var annotationSyncService = AnnotationSyncService()
+    @State private var bibliographySyncService = BibliographySyncService()
 
     /// Use the shared DocumentManager for project lifecycle
     private var documentManager: DocumentManager { DocumentManager.shared }
@@ -188,6 +189,17 @@ Use this content to verify that:
             guard editorState.contentState == .idle else { return }
             sectionSyncService.contentChanged(newValue, zoomedIds: editorState.zoomedSectionIds)
             annotationSyncService.contentChanged(newValue)
+
+            // Check for citation changes and update bibliography if needed
+            if let projectId = documentManager.projectId {
+                let citekeys = BibliographySyncService.extractCitekeys(from: newValue)
+                if !citekeys.isEmpty {
+                    bibliographySyncService.checkAndUpdateBibliography(
+                        currentCitekeys: citekeys,
+                        projectId: projectId
+                    )
+                }
+            }
         }
         .onChange(of: editorState.zoomedSectionId) { _, newValue in
             sectionSyncService.isContentZoomed = (newValue != nil)
@@ -1044,6 +1056,7 @@ Use this content to verify that:
         // Configure sync services with database
         sectionSyncService.configure(database: db, projectId: pid)
         annotationSyncService.configure(database: db, contentId: cid)
+        bibliographySyncService.configure(database: db, projectId: pid)
 
         // Wire up hierarchy enforcement after sections are updated from database
         // This ensures slash commands that create new headings trigger rebalancing
@@ -1160,6 +1173,7 @@ Use this content to verify that:
         editorState.stopObserving()
         sectionSyncService.cancelPendingSync()
         annotationSyncService.cancelPendingSync()
+        bibliographySyncService.reset()
 
         // Set flag to prevent polling from overwriting empty content during reset
         editorState.isResettingContent = true
@@ -1186,6 +1200,7 @@ Use this content to verify that:
         editorState.stopObserving()
         sectionSyncService.cancelPendingSync()
         annotationSyncService.cancelPendingSync()
+        bibliographySyncService.reset()
 
         // Reset zoom state (these don't trigger database writes)
         editorState.zoomedSectionId = nil

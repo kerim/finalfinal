@@ -16,10 +16,13 @@ import { sectionBreakPlugin, sectionBreakNode } from './section-break-plugin';
 import { annotationPlugin, annotationNode, createAnnotationMarkdown, AnnotationType } from './annotation-plugin';
 import { annotationDisplayPlugin, setAnnotationDisplayModes as setDisplayModes, getAnnotationDisplayModes, setHideCompletedTasks } from './annotation-display-plugin';
 import { highlightPlugin, highlightMark } from './highlight-plugin';
-import { citationPlugin } from './citation-plugin';
-import { citationDisplayPlugin } from './citation-display';
+import { citationPlugin, CSLItem } from './citation-plugin';
+
+// Debug: Log plugin array contents at import time
+console.log('[Milkdown] citationPlugin imported, length:', citationPlugin.length);
+console.log('[Milkdown] citationPlugin contents:', citationPlugin.map(p => typeof p === 'function' ? p.name || 'anonymous' : p));
 import { setCitationLibrary, showCitationSearchPopup, hideSearchPopup, isSearchPopupVisible, getCitationLibrarySize, searchCitationsCallback } from './citation-search';
-import { getCiteprocEngine, CSLItem } from './citeproc-engine';
+import { getCiteprocEngine } from './citeproc-engine';
 import { textToMdOffset, mdToTextOffset } from './cursor-mapping';
 import './styles.css';
 
@@ -582,7 +585,7 @@ async function initEditor() {
       .use(history)
       .use(focusModePlugin)
       .use(annotationDisplayPlugin)  // Controls annotation visibility
-      .use(citationDisplayPlugin)    // Citation node view for formatted display
+      // citationNodeView is now included in citationPlugin (same file = correct atom identity)
       .use(slash)
       .create();
 

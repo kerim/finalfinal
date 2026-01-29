@@ -88,6 +88,7 @@ class CiteprocEngine {
 
   // Set the bibliography items
   setBibliography(items: CSLItem[]): void {
+    console.log('[CiteprocEngine] setBibliography called with', items.length, 'items');
     this.items.clear();
     items.forEach(item => {
       // Use citationKey if available, otherwise id
@@ -98,6 +99,7 @@ class CiteprocEngine {
 
     // Update engine with new item IDs
     const ids = Array.from(this.items.keys());
+    console.log('[CiteprocEngine] Keys after setBibliography:', ids);
     if (ids.length > 0) {
       try {
         this.engine.updateItems(ids);
@@ -109,7 +111,9 @@ class CiteprocEngine {
 
   // Check if an item exists in the bibliography
   hasItem(citekey: string): boolean {
-    return this.items.has(citekey);
+    const result = this.items.has(citekey);
+    console.log('[CiteprocEngine] hasItem("' + citekey + '") =', result, '| available keys:', Array.from(this.items.keys()));
+    return result;
   }
 
   // Get an item by citekey

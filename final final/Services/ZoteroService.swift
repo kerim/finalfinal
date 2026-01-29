@@ -213,6 +213,64 @@ final class ZoteroService {
         }
     }
 
+    /// Fetch items by citekey using BBT item.export
+    /// Unlike search(), this fetches specific citekeys from Zotero
+    func fetchItemsForCitekeys(_ citekeys: [String]) async throws -> [CSLItem] {
+        guard !citekeys.isEmpty else { return [] }
+        guard isConnected else { throw ZoteroError.notRunning }
+
+        guard let url = URL(string: "\(baseURL)/better-bibtex/json-rpc") else {
+            throw ZoteroError.invalidResponse("Invalid URL")
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        // item.export returns CSL-JSON for specified citekeys
+        let body: [String: Any] = [
+            "jsonrpc": "2.0",
+            "method": "item.export",
+            "params": [citekeys, "csljson"]
+        ]
+
+        do {
+            request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        } catch {
+            throw ZoteroError.invalidResponse("Failed to serialize request: \(error)")
+        }
+
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+
+            guard let httpResponse = response as? HTTPURLResponse,
+                  httpResponse.statusCode == 200 else {
+                throw ZoteroError.noResponse
+            }
+
+            // item.export returns a JSON-RPC wrapper with CSL-JSON string in result
+            guard let jsonObj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let resultString = jsonObj["result"] as? String,
+                  let resultData = resultString.data(using: .utf8) else {
+                throw ZoteroError.invalidResponse("Invalid item.export response")
+            }
+
+            // Decode CSL-JSON array
+            let items = try JSONDecoder().decode([CSLItem].self, from: resultData)
+
+            // Cache results
+            for item in items {
+                itemsByKey[item.citekey] = item
+            }
+
+            return items
+        } catch let error as ZoteroError {
+            throw error
+        } catch {
+            throw ZoteroError.networkError(error)
+        }
+    }
+
     /// Get a single item by citekey (from cache)
     func getItem(citekey: String) -> CSLItem? {
         itemsByKey[citekey]

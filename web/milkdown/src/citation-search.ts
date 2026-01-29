@@ -4,7 +4,7 @@
 
 import { EditorView } from '@milkdown/kit/prose/view';
 import { Selection } from '@milkdown/kit/prose/state';
-import { CSLItem } from './citeproc-engine';
+import { CSLItem, getCiteprocEngine } from './citeproc-engine';
 
 // Search popup state
 let searchPopup: HTMLElement | null = null;
@@ -60,6 +60,9 @@ export function searchCitationsCallback(items: CSLItem[]): void {
     }
     filteredResults = items;
     updateResultsDisplay(items);
+
+    // Update citeproc engine with all cached items so citations can render
+    getCiteprocEngine().setBibliography(cachedItems);
   } catch (error) {
     isSearching = false;
     console.error('[Citation Search] Callback error:', error);
@@ -270,19 +273,90 @@ function selectItem(index: number): void {
 
 // Insert citation at cursor
 function insertCitation(citekey: string): void {
-  if (!currentView) return;
+  if (!currentView) {
+    console.error('[Citation Search] No editor view');
+    hideSearchPopup();
+    return;
+  }
 
-  const citation = `[@${citekey}]`;
+  const engine = getCiteprocEngine();
+  console.log('[Citation Search] Inserting:', citekey, 'engine has?', engine.hasItem(citekey));
 
-  // Delete /cite command and insert citation
-  const tr = currentView.state.tr
-    .delete(currentCmdStart, currentView.state.selection.from)
-    .insertText(citation, currentCmdStart);
+  const { state, dispatch } = currentView;
+  const citationType = state.schema.nodes.citation;
 
-  currentView.dispatch(tr);
-  currentView.focus();
+  if (!citationType) {
+    console.error('[Citation Search] citation node type not found');
+    hideSearchPopup();
+    return;
+  }
 
-  // Close popup
+  const from = currentCmdStart;
+  const to = state.selection.from;
+
+  // Step 1: Validate positions using resolve() - catches out-of-range errors
+  let $from, $to;
+  try {
+    $from = state.doc.resolve(from);
+    $to = state.doc.resolve(to);
+  } catch (e) {
+    console.error('[Citation Search] Invalid positions:', { from, to, error: e });
+    hideSearchPopup();
+    return;
+  }
+
+  // Step 2: Verify parent accepts inline content
+  const parent = $from.parent;
+  if (!parent.inlineContent) {
+    console.error('[Citation Search] Parent node does not accept inline content:', parent.type.name);
+    hideSearchPopup();
+    return;
+  }
+
+  // Step 3: Create citation node
+  let citationNode;
+  try {
+    citationNode = citationType.create({
+      citekeys: citekey,
+      locators: '[]',
+      prefix: '',
+      suffix: '',
+      suppressAuthor: false,
+      rawSyntax: `[@${citekey}]`,
+    });
+  } catch (e) {
+    console.error('[Citation Search] Failed to create citation node:', e);
+    hideSearchPopup();
+    return;
+  }
+
+  // Step 4: Create and dispatch transaction using replaceRangeWith
+  // (handles position mapping internally, more reliable than delete + insert)
+  try {
+    let tr = state.tr.replaceRangeWith(from, to, citationNode);
+
+    // Set cursor after the inserted citation node
+    const insertPos = from + citationNode.nodeSize;
+    tr = tr.setSelection(Selection.near(tr.doc.resolve(insertPos)));
+
+    dispatch(tr);
+    currentView.focus();
+    console.log('[Citation Search] Inserted citation node:', citekey);
+  } catch (e) {
+    console.error('[Citation Search] Node insertion failed:', e);
+
+    // Fallback: insert as text (user will see raw markdown until reload)
+    try {
+      const textNode = state.schema.text(`[@${citekey}]`);
+      const tr = state.tr.replaceRangeWith(from, to, textNode);
+      dispatch(tr);
+      currentView.focus();
+      console.warn('[Citation Search] Inserted as text fallback:', citekey);
+    } catch (e2) {
+      console.error('[Citation Search] Text fallback also failed:', e2);
+    }
+  }
+
   hideSearchPopup();
 }
 

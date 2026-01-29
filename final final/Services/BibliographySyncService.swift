@@ -44,9 +44,31 @@ final class BibliographySyncService {
     // MARK: - Dependencies
 
     weak var database: ProjectDatabase?
-    weak var zoteroService: ZoteroService?
+
+    // MARK: - Static Helpers
+
+    /// Pre-compiled regex for citekey extraction
+    private static let citationPattern = try! NSRegularExpression(
+        pattern: #"\[@([^\];\s]+)"#,
+        options: []
+    )
+
+    /// Extract citekeys from markdown content
+    static func extractCitekeys(from markdown: String) -> [String] {
+        let range = NSRange(markdown.startIndex..., in: markdown)
+        let matches = citationPattern.matches(in: markdown, range: range)
+        return matches.compactMap { match in
+            guard let range = Range(match.range(at: 1), in: markdown) else { return nil }
+            return String(markdown[range])
+        }
+    }
 
     // MARK: - Public Methods
+
+    /// Configure the service with a database
+    func configure(database: ProjectDatabase, projectId: String) {
+        self.database = database
+    }
 
     /// Called after SectionSyncService completes a sync
     /// Checks if bibliography needs updating based on current document citekeys
@@ -101,7 +123,10 @@ final class BibliographySyncService {
     // MARK: - Private Methods
 
     private func performBibliographyUpdate(citekeys: [String], projectId: String) async {
-        guard let database, let zoteroService else { return }
+        guard let database else { return }
+
+        let zoteroService = ZoteroService.shared
+        guard zoteroService.isConnected else { return }
 
         state = .syncing
         defer { state = .idle }
@@ -115,7 +140,18 @@ final class BibliographySyncService {
             return
         }
 
-        // Generate bibliography markdown
+        // Check for missing items and fetch them from Zotero
+        let missingKeys = citekeys.filter { !zoteroService.hasItem(citekey: $0) }
+        if !missingKeys.isEmpty {
+            do {
+                print("[BibliographySyncService] Fetching \(missingKeys.count) missing items: \(missingKeys)")
+                _ = try await zoteroService.fetchItemsForCitekeys(missingKeys)
+            } catch {
+                print("[BibliographySyncService] Failed to fetch items: \(error)")
+            }
+        }
+
+        // Generate bibliography markdown (items now in cache)
         let bibliographyContent = generateBibliographyMarkdown(citekeys: citekeys)
 
         // Check if content actually changed
@@ -136,7 +172,7 @@ final class BibliographySyncService {
     }
 
     private func generateBibliographyMarkdown(citekeys: [String]) -> String {
-        guard let zoteroService else { return "" }
+        let zoteroService = ZoteroService.shared
 
         // Get items for citekeys
         let items = zoteroService.getItems(citekeys: citekeys)
