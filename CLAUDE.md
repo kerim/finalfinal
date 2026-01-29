@@ -115,6 +115,19 @@ Never commit only the files you remember working on - always check for other mod
 - `docs/deferred/` - Abandoned approaches that might be revisited later
 - `docs/LESSONS-LEARNED.md` - Technical patterns discovered
 - `docs/design.md` - Master design document
+- `KARMA.md` - Third-party code attribution and inspiration sources
+
+### Updating Documentation After Features
+
+When completing a feature phase, update these documents:
+
+1. **CLAUDE.md** - Add to "Completed Phases" list
+2. **README.md** - Move feature from "Planned" to "Implemented" table
+3. **docs/design.md** - Add phase section and update "Future Phases" table
+4. **KARMA.md** - If new dependencies were added:
+   - Add to appropriate "Bundled Dependencies" table
+   - Include package name, version, license, author, and URL
+   - Update the "Last updated" date and changelog
 
 ### Plan Files
 
@@ -164,6 +177,7 @@ Or use the reflect command for instruction improvements:
 - [x] **Phase 1.1** - Project setup, GRDB, editor:// scheme (2026-01-23)
 - [x] **Phase 1.6** - Outline sidebar with section management (2026-01-26)
 - [x] **Phase 1.6b** - Editor ↔ sidebar sync with database wiring (2026-01-27)
+- [x] **Phase 1.7** - Annotations (task, comment, reference) (2026-01-29)
 
 ## Phase 1 Verification
 

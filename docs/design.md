@@ -242,7 +242,16 @@ The `outline_nodes` table is a cache rebuilt whenever content changes. It enable
 - Zoom state management
 - Scroll sync (editor position ↔ sidebar highlight)
 
-#### 1.7 Project Management
+#### 1.7 Annotations
+- Annotation types: Task, Comment, Reference
+- Slash commands: `/task`, `/comment`, `/reference`
+- Display modes: inline (full text) and collapsed (marker symbols)
+- Annotation panel for sidebar viewing
+- Task completion tracking
+- Highlight span support (associate annotations with text)
+- Storage as HTML comments: `<!-- ::type:: text -->`
+
+#### 1.8 Project Management
 - New project (creates .ff package)
 - Open project (file picker for .ff packages)
 - Recent projects list
@@ -335,6 +344,12 @@ final final/
 - [ ] Sidebar and editor respect theme
 - [ ] Theme persists after restart
 
+**Annotations:**
+- [x] Can create annotations via /task, /comment, /reference
+- [x] Annotations display inline and collapsed modes
+- [x] Annotation panel shows all annotations
+- [x] Tasks can be marked complete
+
 **Status bar:**
 - [ ] Word count updates in both modes
 - [ ] Current section name displayed
@@ -346,12 +361,11 @@ final final/
 
 | Phase | Features |
 |-------|----------|
-| 2 | Annotations (Task, Rewrite, Link, Comment with inline/sidebar modes) |
-| 3 | Zotero integration (citations, bibliography) |
-| 4 | Version control (Git-based, auto-commits, named versions) |
-| 5 | Export (Pandoc, templates) |
-| 6 | Reference pane (Finder-style folders for PDFs, images, docs) |
-| 7 | Sync (Cloudflare DO or CloudKit) |
+| 2 | Zotero integration (citations, bibliography) |
+| 3 | Version control (Git-based, auto-commits, named versions) |
+| 4 | Export (Pandoc, templates) |
+| 5 | Reference pane (Finder-style folders for PDFs, images, docs) |
+| 6 | Sync (Cloudflare DO or CloudKit) |
 
 ---
 

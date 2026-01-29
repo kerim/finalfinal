@@ -36,17 +36,17 @@ The app isn't notarized, so macOS will warn about an unidentified developer.
 | Color themes | Multiple themes (Dawn, Dusk, Ocean, Forest, Parchment) |
 | Import/Export | Markdown import and export |
 | Word counting | Real-time word and character statistics |
+| Annotations | Task, Comment, Reference markers with inline/collapsed modes and panel view |
 
 ## Planned Features
 
 | Phase | Features |
 |-------|----------|
-| 2 | Annotations (Task, Rewrite, Comment markers) |
-| 3 | Zotero integration (citations, bibliography) |
-| 4 | Version control (Git-based history) |
-| 5 | Export (Pandoc integration, templates) |
-| 6 | Reference pane (PDFs, images, web pages) |
-| 7 | Sync (CloudKit or Cloudflare DO) |
+| 2 | Zotero integration (citations, bibliography) |
+| 3 | Version control (Git-based history) |
+| 4 | Export (Pandoc integration, templates) |
+| 5 | Reference pane (PDFs, images, web pages) |
+| 6 | Sync (CloudKit or Cloudflare DO) |
 
 ## Architecture
 
