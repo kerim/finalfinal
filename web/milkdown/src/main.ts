@@ -13,6 +13,9 @@ import { slashFactory, SlashProvider } from '@milkdown/plugin-slash';
 
 import { focusModePlugin, setFocusModeEnabled } from './focus-mode-plugin';
 import { sectionBreakPlugin, sectionBreakNode } from './section-break-plugin';
+import { annotationPlugin, annotationNode, createAnnotationMarkdown, AnnotationType } from './annotation-plugin';
+import { annotationDisplayPlugin, setAnnotationDisplayModes as setDisplayModes, getAnnotationDisplayModes } from './annotation-display-plugin';
+import { highlightPlugin, highlightMark } from './highlight-plugin';
 import { textToMdOffset, mdToTextOffset } from './cursor-mapping';
 import './styles.css';
 
@@ -87,6 +90,13 @@ declare global {
       insertAtCursor: (text: string) => void;
       insertBreak: () => void;
       focus: () => void;
+      // Annotation API
+      setAnnotationDisplayModes: (modes: Record<string, string>) => void;
+      getAnnotations: () => Array<{ type: string; text: string; offset: number; completed?: boolean }>;
+      scrollToAnnotation: (offset: number) => void;
+      insertAnnotation: (type: string) => void;
+      // Highlight API
+      toggleHighlight: () => boolean;
     };
   }
 }
@@ -112,6 +122,9 @@ const slashCommands: SlashCommand[] = [
   { label: '/h1', replacement: '# ', description: 'Heading 1' },
   { label: '/h2', replacement: '## ', description: 'Heading 2' },
   { label: '/h3', replacement: '### ', description: 'Heading 3' },
+  { label: '/task', replacement: '', description: 'Insert task annotation', isNodeInsertion: true },
+  { label: '/comment', replacement: '', description: 'Insert comment annotation', isNodeInsertion: true },
+  { label: '/reference', replacement: '', description: 'Insert reference annotation', isNodeInsertion: true },
 ];
 
 // === Slash menu UI state ===
@@ -263,6 +276,27 @@ function executeSlashCommand(index: number) {
         tr = tr.delete(cmdStart, from);           // Delete the "/break" text
         tr = tr.insert(parentStart, node);        // Insert section_break BEFORE the paragraph
       }
+      view.dispatch(tr);
+    } else if (cmd.isNodeInsertion && ['/task', '/comment', '/reference'].includes(cmd.label)) {
+      // Insert annotation node with empty text content
+      const annotationType = cmd.label.slice(1) as AnnotationType; // Remove leading '/'
+      const nodeType = annotationNode.type(editorInstance.ctx);
+      const schema = view.state.schema;
+
+      // Create annotation node with empty text child
+      const node = nodeType.create(
+        { type: annotationType, isCompleted: false },
+        schema.text(' ')  // Start with a space so user can type
+      );
+
+      // Delete the slash command and insert the annotation node inline
+      let tr = view.state.tr.delete(cmdStart, from);
+      tr = tr.insert(cmdStart, node);
+
+      // Position cursor inside the annotation text (after marker, inside text span)
+      // The annotation node starts at cmdStart, content starts at cmdStart + 1
+      tr = tr.setSelection(view.state.selection.constructor.near(tr.doc.resolve(cmdStart + 2)));
+
       view.dispatch(tr);
     } else {
       // Standard text replacement
@@ -465,11 +499,21 @@ async function initEditor() {
         ctx.set(defaultValueCtx, '');
       })
       .config(configureSlash)
-      .use(sectionBreakPlugin)  // BEFORE commonmark to intercept HTML before filtering
+      // Plugin order matters:
+      // 1. commonmark/gfm must be first (base schema)
+      // 2. Custom plugins extend the schema after base is established
+      // 3. sectionBreak/annotation must be before commonmark to intercept HTML comments
+      //    before they get filtered out
+      // 4. highlightPlugin MUST be after commonmark to survive parse-serialize cycle
+      //    (fixes ==text== not persisting when switching to CodeMirror)
+      .use(sectionBreakPlugin)  // Intercept <!-- ::break:: --> before commonmark filters it
+      .use(annotationPlugin)    // Intercept annotation comments before filtering
       .use(commonmark)
       .use(gfm)
+      .use(highlightPlugin)     // ==highlight== syntax - AFTER commonmark for serialization
       .use(history)
       .use(focusModePlugin)
+      .use(annotationDisplayPlugin)  // Controls annotation visibility
       .use(slash)
       .create();
 
@@ -567,6 +611,12 @@ window.FinalFinal = {
   getContent() {
     const content = editorInstance ? editorInstance.action(getMarkdown()) : currentContent;
     const trimmed = content.trim();
+
+    // Debug: Log markdown serialization to trace highlight persistence
+    const hasHighlightSyntax = /==.+==/.test(content);
+    if (hasHighlightSyntax) {
+      console.log('[Highlight Debug] getContent: ==text== syntax found in serialized markdown');
+    }
 
     // Empty/minimal document may serialize to just a section break marker - treat as empty
     if (trimmed === '' || trimmed === '<!-- ::break:: -->') {
@@ -953,6 +1003,138 @@ window.FinalFinal = {
       view.focus();
     } catch {
       // Focus failed, ignore
+    }
+  },
+
+  // === Annotation API ===
+
+  setAnnotationDisplayModes(modes: Record<string, string>) {
+    setDisplayModes(modes);
+    // Trigger redecoration by dispatching an empty transaction
+    if (editorInstance) {
+      try {
+        const view = editorInstance.ctx.get(editorViewCtx);
+        view.dispatch(view.state.tr);
+      } catch {
+        // Dispatch failed, ignore
+      }
+    }
+  },
+
+  getAnnotations() {
+    if (!editorInstance) return [];
+
+    const annotations: Array<{ type: string; text: string; offset: number; completed?: boolean }> = [];
+
+    try {
+      const view = editorInstance.ctx.get(editorViewCtx);
+      const { doc } = view.state;
+
+      doc.descendants((node, pos) => {
+        if (node.type.name === 'annotation') {
+          // Text is now content of the node, not an attribute
+          const text = node.textContent || '';
+          annotations.push({
+            type: node.attrs.type,
+            text: text.trim(),
+            offset: pos,
+            completed: node.attrs.type === 'task' ? node.attrs.isCompleted : undefined,
+          });
+        }
+        return true;
+      });
+    } catch {
+      // Traversal failed, return empty
+    }
+
+    return annotations;
+  },
+
+  scrollToAnnotation(offset: number) {
+    this.scrollToOffset(offset);
+  },
+
+  insertAnnotation(type: string) {
+    if (!editorInstance) return;
+    if (!['task', 'comment', 'reference'].includes(type)) return;
+
+    try {
+      const view = editorInstance.ctx.get(editorViewCtx);
+      const { from } = view.state.selection;
+      const nodeType = annotationNode.type(editorInstance.ctx);
+      const schema = view.state.schema;
+
+      // Create annotation node with a space as initial content
+      const node = nodeType.create(
+        { type: type as AnnotationType, isCompleted: false },
+        schema.text(' ')
+      );
+
+      let tr = view.state.tr.insert(from, node);
+      // Position cursor inside the text area (after marker)
+      tr = tr.setSelection(view.state.selection.constructor.near(tr.doc.resolve(from + 2)));
+      view.dispatch(tr);
+      view.focus();
+    } catch {
+      // Insert failed, ignore
+    }
+  },
+
+  toggleHighlight(): boolean {
+    if (!editorInstance) return false;
+
+    try {
+      const view = editorInstance.ctx.get(editorViewCtx);
+      const { from, to, empty } = view.state.selection;
+
+      // Require a selection - highlighting empty text makes no sense
+      if (empty) {
+        console.log('[Highlight Debug] toggleHighlight: empty selection, returning false');
+        return false;
+      }
+
+      // Get the highlight mark type from the schema
+      const markType = highlightMark.type(editorInstance.ctx);
+      console.log('[Highlight Debug] toggleHighlight: markType =', markType?.name);
+
+      // Check if the selection already has the highlight mark
+      const { doc } = view.state;
+      let hasHighlight = false;
+      doc.nodesBetween(from, to, (node) => {
+        if (markType.isInSet(node.marks)) {
+          hasHighlight = true;
+        }
+      });
+
+      console.log('[Highlight Debug] toggleHighlight: selection from', from, 'to', to, 'hasHighlight =', hasHighlight);
+
+      let tr = view.state.tr;
+      if (hasHighlight) {
+        // Remove the highlight mark
+        tr = tr.removeMark(from, to, markType);
+        console.log('[Highlight Debug] toggleHighlight: removing highlight mark');
+      } else {
+        // Add the highlight mark
+        tr = tr.addMark(from, to, markType.create());
+        console.log('[Highlight Debug] toggleHighlight: adding highlight mark');
+      }
+
+      view.dispatch(tr);
+      view.focus();
+
+      // Log the markdown after toggling
+      setTimeout(() => {
+        const md = window.FinalFinal.getContent();
+        console.log('[Highlight Debug] toggleHighlight: markdown after toggle:\n', md);
+        // Check if ==text== is present
+        const hasEqualsSyntax = /==.+==/.test(md);
+        console.log('[Highlight Debug] toggleHighlight: ==text== syntax present:', hasEqualsSyntax);
+      }, 100);
+
+      return true;
+    } catch (e) {
+      console.error('[Highlight Debug] toggleHighlight error:', e);
+      return false;
     }
   },
 };

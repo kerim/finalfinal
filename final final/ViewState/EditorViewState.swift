@@ -13,6 +13,12 @@ extension Notification.Name {
     static let didSaveCursorPosition = Notification.Name("didSaveCursorPosition")
     /// Posted when sidebar requests scroll to a section
     static let scrollToSection = Notification.Name("scrollToSection")
+    /// Posted when annotation display modes change - editors should update rendering
+    static let annotationDisplayModesChanged = Notification.Name("annotationDisplayModesChanged")
+    /// Posted to insert an annotation at the current cursor position (for keyboard shortcuts Cmd+Shift+T/C/R)
+    static let insertAnnotation = Notification.Name("insertAnnotation")
+    /// Posted to toggle highlight mark on selected text (Cmd+Shift+H)
+    static let toggleHighlight = Notification.Name("toggleHighlight")
 }
 
 enum EditorMode: String, CaseIterable {
@@ -61,8 +67,32 @@ class EditorViewState {
     var sections: [SectionViewModel] = []
     var statusFilter: SectionStatus?
 
+    // MARK: - Annotation State (Phase 2)
+    var annotations: [AnnotationViewModel] = []
+
+    /// Display mode for each annotation type (inline or collapsed)
+    var annotationDisplayModes: [AnnotationType: AnnotationDisplayMode] = [
+        .task: .inline,
+        .comment: .collapsed,
+        .reference: .collapsed
+    ]
+
+    /// Type filters - which annotation types are visible in the panel
+    var annotationTypeFilters: Set<AnnotationType> = Set(AnnotationType.allCases)
+
+    /// Whether the annotation panel is visible
+    var isAnnotationPanelVisible: Bool = true
+
+    /// Global "panel only" mode - when true, ALL annotations are hidden from editor
+    /// (regardless of per-type display mode settings)
+    var isPanelOnlyMode: Bool = false
+
+    /// Hide completed tasks from the annotation panel
+    var hideCompletedTasks: Bool = false
+
     // MARK: - Database Observation
     private var observationTask: Task<Void, Never>?
+    private var annotationObservationTask: Task<Void, Never>?
 
     /// When true, ValueObservation updates are ignored (used during drag-drop reorder)
     var isObservationSuppressed = false
@@ -72,17 +102,17 @@ class EditorViewState {
     func startObserving(database: ProjectDatabase, projectId: String) {
         stopObserving()  // Cancel any existing observation
 
-        observationTask = Task {
+        observationTask = Task { [weak self] in
             do {
                 for try await dbSections in database.observeSections(for: projectId) {
-                    guard !Task.isCancelled else { break }
+                    guard !Task.isCancelled, let self else { break }
 
                     print("[OBSERVE] Received \(dbSections.count) sections from database")
-                    print("[OBSERVE] isObservationSuppressed: \(isObservationSuppressed)")
+                    print("[OBSERVE] isObservationSuppressed: \(self.isObservationSuppressed)")
                     print("[OBSERVE] DB section order: \(dbSections.map { "\($0.sortOrder):\($0.title)[H\($0.headerLevel)]" })")
 
                     // Skip updates when observation is suppressed (during drag-drop reorder)
-                    guard !isObservationSuppressed else {
+                    guard !self.isObservationSuppressed else {
                         print("[OBSERVE] SKIPPED due to suppression flag")
                         continue
                     }
@@ -106,6 +136,27 @@ class EditorViewState {
     func stopObserving() {
         observationTask?.cancel()
         observationTask = nil
+        annotationObservationTask?.cancel()
+        annotationObservationTask = nil
+    }
+
+    /// Start observing annotations from database for reactive UI updates
+    func startObservingAnnotations(database: ProjectDatabase, contentId: String) {
+        annotationObservationTask?.cancel()
+
+        annotationObservationTask = Task { [weak self] in
+            do {
+                for try await dbAnnotations in database.observeAnnotations(for: contentId) {
+                    guard !Task.isCancelled, let self else { break }
+
+                    // Convert to view models
+                    let viewModels = dbAnnotations.map { AnnotationViewModel(from: $0) }
+                    self.annotations = viewModels
+                }
+            } catch {
+                print("[OBSERVE] Annotation observation error: \(error)")
+            }
+        }
     }
 
     /// Recalculate parentId for all sections based on document order and header levels
@@ -179,6 +230,59 @@ class EditorViewState {
     var zoomedSection: SectionViewModel? {
         guard let zoomId = zoomedSectionId else { return nil }
         return sections.first { $0.id == zoomId }
+    }
+
+    // MARK: - Annotation Filtering
+
+    /// Annotations to display in panel (filtered by type and completion status)
+    var displayAnnotations: [AnnotationViewModel] {
+        annotations.filter { annotation in
+            // Must match type filter
+            guard annotationTypeFilters.contains(annotation.type) else { return false }
+
+            // Hide completed tasks if filter is on
+            if hideCompletedTasks && annotation.type == .task && annotation.isCompleted {
+                return false
+            }
+
+            return true
+        }
+    }
+
+    /// Toggle visibility of an annotation type in the panel
+    func toggleAnnotationTypeFilter(_ type: AnnotationType) {
+        if annotationTypeFilters.contains(type) {
+            annotationTypeFilters.remove(type)
+        } else {
+            annotationTypeFilters.insert(type)
+        }
+    }
+
+    /// Set display mode for an annotation type
+    func setAnnotationDisplayMode(_ mode: AnnotationDisplayMode, for type: AnnotationType) {
+        annotationDisplayModes[type] = mode
+    }
+
+    /// Get display mode for an annotation type
+    func displayMode(for type: AnnotationType) -> AnnotationDisplayMode {
+        annotationDisplayModes[type] ?? .inline
+    }
+
+    /// Toggle annotation panel visibility
+    func toggleAnnotationPanel() {
+        isAnnotationPanelVisible.toggle()
+    }
+
+    /// Get annotation counts by type (single-pass)
+    var annotationCounts: [AnnotationType: Int] {
+        annotations.reduce(into: [:]) { counts, annotation in
+            counts[annotation.type, default: 0] += 1
+        }
+    }
+
+    /// Get incomplete task count
+    var incompleteTaskCount: Int {
+        annotations.filter { $0.type == .task && !$0.isCompleted }.count
     }
 
     // MARK: - Stats Update

@@ -129,6 +129,12 @@ struct CodeMirrorEditor: NSViewRepresentable {
         private var isCleanedUp = false
         private var toggleObserver: NSObjectProtocol?
         private var insertBreakObserver: NSObjectProtocol?
+        private var annotationDisplayModesObserver: NSObjectProtocol?
+        private var insertAnnotationObserver: NSObjectProtocol?
+        private var toggleHighlightObserver: NSObjectProtocol?
+
+        /// Last sent annotation display modes (to avoid redundant calls)
+        private var lastAnnotationDisplayModes: [AnnotationType: AnnotationDisplayMode] = [:]
 
         /// Pending cursor position that is being restored (set before JS call, cleared after)
         private var pendingCursorRestore: CursorPosition?
@@ -168,6 +174,38 @@ struct CodeMirrorEditor: NSViewRepresentable {
             ) { [weak self] _ in
                 self?.insertSectionBreak()
             }
+
+            // Subscribe to annotation display modes changes
+            annotationDisplayModesObserver = NotificationCenter.default.addObserver(
+                forName: .annotationDisplayModesChanged,
+                object: nil,
+                queue: .main
+            ) { [weak self] notification in
+                if let modes = notification.userInfo?["modes"] as? [AnnotationType: AnnotationDisplayMode] {
+                    let isPanelOnly = notification.userInfo?["isPanelOnly"] as? Bool ?? false
+                    self?.setAnnotationDisplayModes(modes, isPanelOnly: isPanelOnly)
+                }
+            }
+
+            // Subscribe to insert annotation notifications (keyboard shortcuts)
+            insertAnnotationObserver = NotificationCenter.default.addObserver(
+                forName: .insertAnnotation,
+                object: nil,
+                queue: .main
+            ) { [weak self] notification in
+                if let type = notification.userInfo?["type"] as? AnnotationType {
+                    self?.insertAnnotation(type: type)
+                }
+            }
+
+            // Subscribe to toggle highlight notification (Cmd+Shift+H)
+            toggleHighlightObserver = NotificationCenter.default.addObserver(
+                forName: .toggleHighlight,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                self?.toggleHighlight()
+            }
         }
 
         deinit {
@@ -176,6 +214,15 @@ struct CodeMirrorEditor: NSViewRepresentable {
                 NotificationCenter.default.removeObserver(observer)
             }
             if let observer = insertBreakObserver {
+                NotificationCenter.default.removeObserver(observer)
+            }
+            if let observer = annotationDisplayModesObserver {
+                NotificationCenter.default.removeObserver(observer)
+            }
+            if let observer = insertAnnotationObserver {
+                NotificationCenter.default.removeObserver(observer)
+            }
+            if let observer = toggleHighlightObserver {
                 NotificationCenter.default.removeObserver(observer)
             }
         }
@@ -191,6 +238,18 @@ struct CodeMirrorEditor: NSViewRepresentable {
             if let observer = insertBreakObserver {
                 NotificationCenter.default.removeObserver(observer)
                 insertBreakObserver = nil
+            }
+            if let observer = annotationDisplayModesObserver {
+                NotificationCenter.default.removeObserver(observer)
+                annotationDisplayModesObserver = nil
+            }
+            if let observer = insertAnnotationObserver {
+                NotificationCenter.default.removeObserver(observer)
+                insertAnnotationObserver = nil
+            }
+            if let observer = toggleHighlightObserver {
+                NotificationCenter.default.removeObserver(observer)
+                toggleHighlightObserver = nil
             }
             webView = nil
         }
@@ -418,6 +477,40 @@ struct CodeMirrorEditor: NSViewRepresentable {
                       let words = dict["words"] as? Int, let chars = dict["characters"] as? Int else { return }
                 self.onStatsChange(words, chars)
             }
+        }
+
+        // MARK: - Annotation API
+
+        /// Set annotation display modes (no-op in source mode, but call for consistency)
+        /// - Parameters:
+        ///   - modes: Per-type display modes (inline/collapsed)
+        ///   - isPanelOnly: Global toggle to hide all annotations from editor
+        func setAnnotationDisplayModes(_ modes: [AnnotationType: AnnotationDisplayMode], isPanelOnly: Bool = false) {
+            guard isEditorReady, let webView else { return }
+
+            var modeDict: [String: String] = [:]
+            for (type, mode) in modes {
+                modeDict[type.rawValue] = mode.rawValue
+            }
+            // Add special key for global panel-only mode
+            modeDict["__panelOnly"] = isPanelOnly ? "true" : "false"
+
+            guard let jsonData = try? JSONSerialization.data(withJSONObject: modeDict),
+                  let jsonString = String(data: jsonData, encoding: .utf8) else { return }
+
+            webView.evaluateJavaScript("window.FinalFinal.setAnnotationDisplayModes(\(jsonString))") { _, _ in }
+        }
+
+        /// Insert an annotation at the current cursor position
+        func insertAnnotation(type: AnnotationType) {
+            guard isEditorReady, let webView else { return }
+            webView.evaluateJavaScript("window.FinalFinal.insertAnnotation('\(type.rawValue)')") { _, _ in }
+        }
+
+        /// Toggle highlight mark on selected text (Cmd+Shift+H)
+        func toggleHighlight() {
+            guard isEditorReady, let webView else { return }
+            webView.evaluateJavaScript("window.FinalFinal.toggleHighlight()") { _, _ in }
         }
     }
 }

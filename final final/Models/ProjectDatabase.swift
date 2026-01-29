@@ -149,6 +149,30 @@ final class ProjectDatabase: Sendable {
             }
         }
 
+        // Phase 2: Annotations (task, comment, reference) stored as HTML comments in markdown
+        migrator.registerMigration("v5_annotations") { db in
+            try db.create(table: "annotation") { t in
+                t.primaryKey("id", .text)
+                t.column("contentId", .text).notNull()
+                    .references("content", onDelete: .cascade)
+                t.column("sectionId", .text)
+                    .references("section", onDelete: .setNull)
+                t.column("type", .text).notNull()
+                    .check(sql: "type IN ('task', 'comment', 'reference')")
+                t.column("text", .text).notNull()
+                t.column("isCompleted", .boolean).notNull().defaults(to: false)
+                t.column("charOffset", .integer).notNull()
+                t.column("highlightStart", .integer)
+                t.column("highlightEnd", .integer)
+                t.column("createdAt", .datetime).notNull()
+                t.column("updatedAt", .datetime).notNull()
+            }
+
+            try db.create(index: "annotation_contentId", on: "annotation", columns: ["contentId"])
+            try db.create(index: "annotation_type", on: "annotation", columns: ["type"])
+            try db.create(index: "annotation_sectionId", on: "annotation", columns: ["sectionId"])
+        }
+
         try migrator.migrate(dbWriter)
     }
 
@@ -182,6 +206,34 @@ final class ProjectDatabase: Sendable {
                 continuation.finish(throwing: error)
             } onChange: { sections in
                 continuation.yield(sections)
+            }
+
+            continuation.onTermination = { _ in
+                cancellable.cancel()
+            }
+        }
+    }
+
+    /// Returns an async sequence of annotation updates for reactive UI
+    /// Uses ValueObservation to automatically push updates when annotations change
+    func observeAnnotations(for contentId: String) -> AsyncThrowingStream<[Annotation], Error> {
+        let observation = ValueObservation
+            .tracking { db in
+                try Annotation
+                    .filter(Annotation.Columns.contentId == contentId)
+                    .order(Annotation.Columns.charOffset)
+                    .fetchAll(db)
+            }
+            .removeDuplicates()
+
+        return AsyncThrowingStream { continuation in
+            let cancellable = observation.start(
+                in: dbWriter,
+                scheduling: .async(onQueue: .main)
+            ) { error in
+                continuation.finish(throwing: error)
+            } onChange: { annotations in
+                continuation.yield(annotations)
             }
 
             continuation.onTermination = { _ in

@@ -32,6 +32,10 @@ final class DocumentManager {
     /// The current project's title
     private(set) var projectTitle: String?
 
+    /// The current content's ID in the database (for annotation binding)
+    /// Cached on project open to avoid repeated database fetches
+    private(set) var contentId: String?
+
     /// Whether there are unsaved changes (tracked by content updates)
     var hasUnsavedChanges: Bool = false
 
@@ -92,6 +96,7 @@ final class DocumentManager {
         self.projectURL = packageURL
         self.projectId = project.id
         self.projectTitle = title
+        self.contentId = try? database.fetchContent(for: project.id)?.id
         self.hasUnsavedChanges = false
 
         // Add to recent projects
@@ -122,6 +127,7 @@ final class DocumentManager {
         self.projectURL = url
         self.projectId = project.id
         self.projectTitle = project.title
+        self.contentId = try? database.fetchContent(for: project.id)?.id
         self.hasUnsavedChanges = false
 
         // Add to recent projects
@@ -141,6 +147,7 @@ final class DocumentManager {
         projectURL = nil
         projectId = nil
         projectTitle = nil
+        contentId = nil
         hasUnsavedChanges = false
 
         print("[DocumentManager] Project closed")

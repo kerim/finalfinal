@@ -18,6 +18,7 @@
 		20AFD8B3E9B9181745AD26B8 /* FinalFinalTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E843650744C2F13D1618667 /* FinalFinalTests.swift */; };
 		20C24A349BE36122136559B4 /* codemirror.html in Resources */ = {isa = PBXBuildFile; fileRef = 92D034519ECAC7C488B3DDB2 /* codemirror.html */; };
 		21F0559EDFDBA7FFB28AAD5D /* ThemeCommands.swift in Sources */ = {isa = PBXBuildFile; fileRef = 36487B030EB59318DB746D86 /* ThemeCommands.swift */; };
+		2607C5DF7DE82A639CC52E8D /* AnnotationFilterBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 988DC867E52B507551B94D73 /* AnnotationFilterBar.swift */; };
 		27788FB6CF7677E47103E1D6 /* EditorViewState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 31C89F3A4269349290CD8F03 /* EditorViewState.swift */; };
 		2A5EB4F121ED5781FDD710A7 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AD4BB30F275702838E8D3F8 /* AppDelegate.swift */; };
 		35FA3CC0FED14ED1D7FD9000 /* TagPillView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65E7386521E240F08687F38B /* TagPillView.swift */; };
@@ -26,8 +27,10 @@
 		47DBF3857C5C06C046A299AD /* OutlineParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A1E8A83A78A7909AA1289DB /* OutlineParser.swift */; };
 		49989C588EFAF924B6BF9400 /* Document.swift in Sources */ = {isa = PBXBuildFile; fileRef = 54B0DE603A99327D920573B6 /* Document.swift */; };
 		49ACC632B2B50DFDBED9954B /* DocumentManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 44DE11B8C0AD43E4C7DA35BF /* DocumentManager.swift */; };
+		4AA86A11D7EC52D97D029274 /* Annotation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7311920CB617B184B124B6F4 /* Annotation.swift */; };
 		5428AB4DBE5F4E61BBD3DFAC /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = 980503AFBDB8FC8CEF6F8BFE /* GRDB */; };
 		5AF10728B84222571BDBB8A1 /* DraggableCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B94BA0DFF06C7D3B1B7F38F5 /* DraggableCardView.swift */; };
+		5B5AFBF103A6E02BD4EB4898 /* Database+Annotations.swift in Sources */ = {isa = PBXBuildFile; fileRef = 728F6240519F3BDA2753E515 /* Database+Annotations.swift */; };
 		5C07BE1D08BFF8C132BC10C7 /* StatusDot.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F774D004F48293691E2241C /* StatusDot.swift */; };
 		5DC993888BDFB3602E1FA2AA /* EditorSchemeHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE6D9836DD14A789629A10CB /* EditorSchemeHandler.swift */; };
 		63072A9E8DE3BC6324759AE9 /* ProjectDatabase.swift in Sources */ = {isa = PBXBuildFile; fileRef = DFB3FE823FEA8DAD86CD01A9 /* ProjectDatabase.swift */; };
@@ -48,12 +51,16 @@
 		AC1816323A52499CA6DCFD2A /* SectionReconciler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61DE6BB00F5D1EF8A75439EB /* SectionReconciler.swift */; };
 		ACAF912B9BF42D9FD97B82C2 /* Database+CRUD.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13133CB5518EA086A3120EDE /* Database+CRUD.swift */; };
 		AD8451C7428BC1E2016746D1 /* StatusBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF41CB39EB2C5BD4E30A2CDA /* StatusBar.swift */; };
+		B170D8E5C33C7D7D14A350D4 /* AnnotationSyncService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6253961779E064C92D1B172E /* AnnotationSyncService.swift */; };
+		C3333CCD923C6BDE144086D9 /* AnnotationViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B220BEC12CB629DCB165D755 /* AnnotationViewModel.swift */; };
 		D0208FE27BA4FBD4AADFD905 /* SectionCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 92AF8BACE222B0C414BF2E8C /* SectionCardView.swift */; };
 		D1576467EE827142AA4F49BE /* ProjectStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = D567C1445BFF0160D8410001 /* ProjectStore.swift */; };
 		D6304F1494A8C62545B5D22B /* DemoProjectManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = BBC3D73969C6FC77A4A46FEC /* DemoProjectManager.swift */; };
 		D6A0D3C2D59070E808EFA6C9 /* ProjectPackage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 734874328EB5518EAC0C2517 /* ProjectPackage.swift */; };
 		E028FEF9DCA9E380AE542AF2 /* RecentProject.swift in Sources */ = {isa = PBXBuildFile; fileRef = 87363EA3909D1FDA8BFDB5F1 /* RecentProject.swift */; };
+		E46F3ED58DA8FEDB5213C283 /* AnnotationCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5903AE3511C621FF3093E3C9 /* AnnotationCardView.swift */; };
 		FA5C8D9CA08A0BB702BD0C7B /* HashBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0CEC9B25AB24040A17CC1589 /* HashBar.swift */; };
+		FA6E217F7950A15AEDE69960 /* AnnotationPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC5B8A956E441E29032AE5F9 /* AnnotationPanel.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -82,12 +89,16 @@
 		4F774D004F48293691E2241C /* StatusDot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusDot.swift; sourceTree = "<group>"; };
 		54B0DE603A99327D920573B6 /* Document.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Document.swift; sourceTree = "<group>"; };
 		5741EAE0DDD338AB4D025101 /* final final.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "final final.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		5903AE3511C621FF3093E3C9 /* AnnotationCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnnotationCardView.swift; sourceTree = "<group>"; };
 		5A1E8A83A78A7909AA1289DB /* OutlineParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutlineParser.swift; sourceTree = "<group>"; };
 		5FD87E27CB1257814D589880 /* Database+Sections.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Database+Sections.swift"; sourceTree = "<group>"; };
 		61DE6BB00F5D1EF8A75439EB /* SectionReconciler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SectionReconciler.swift; sourceTree = "<group>"; };
+		6253961779E064C92D1B172E /* AnnotationSyncService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnnotationSyncService.swift; sourceTree = "<group>"; };
 		65E7386521E240F08687F38B /* TagPillView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TagPillView.swift; sourceTree = "<group>"; };
 		66C895E42D3FA5D90DC0B575 /* milkdown.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = milkdown.js; sourceTree = "<group>"; };
 		6AD4BB30F275702838E8D3F8 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+		728F6240519F3BDA2753E515 /* Database+Annotations.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Database+Annotations.swift"; sourceTree = "<group>"; };
+		7311920CB617B184B124B6F4 /* Annotation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Annotation.swift; sourceTree = "<group>"; };
 		734874328EB5518EAC0C2517 /* ProjectPackage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectPackage.swift; sourceTree = "<group>"; };
 		73EA833CAD13B84DA71C0544 /* CodeMirrorEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodeMirrorEditor.swift; sourceTree = "<group>"; };
 		748760007DC30115235FC8D6 /* GoalPopover.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoalPopover.swift; sourceTree = "<group>"; };
@@ -100,13 +111,16 @@
 		92AF8BACE222B0C414BF2E8C /* SectionCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SectionCardView.swift; sourceTree = "<group>"; };
 		92D034519ECAC7C488B3DDB2 /* codemirror.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; path = codemirror.html; sourceTree = "<group>"; };
 		96F9CD7F12EED09B5367DA7C /* codemirror.css */ = {isa = PBXFileReference; lastKnownFileType = text.css; path = codemirror.css; sourceTree = "<group>"; };
+		988DC867E52B507551B94D73 /* AnnotationFilterBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnnotationFilterBar.swift; sourceTree = "<group>"; };
 		9B422289970724FBD8F8FFDC /* FileCommands.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileCommands.swift; sourceTree = "<group>"; };
 		ABFC8351EA2CEE315AFD46C8 /* OutlineFilterBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutlineFilterBar.swift; sourceTree = "<group>"; };
+		B220BEC12CB629DCB165D755 /* AnnotationViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnnotationViewModel.swift; sourceTree = "<group>"; };
 		B94BA0DFF06C7D3B1B7F38F5 /* DraggableCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DraggableCardView.swift; sourceTree = "<group>"; };
 		BBC3D73969C6FC77A4A46FEC /* DemoProjectManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DemoProjectManager.swift; sourceTree = "<group>"; };
 		BC27954DE76B2ADD62BBFF00 /* Section.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Section.swift; sourceTree = "<group>"; };
 		BF41CB39EB2C5BD4E30A2CDA /* StatusBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusBar.swift; sourceTree = "<group>"; };
 		C4E5542284D791AA71E83BE0 /* milkdown.css */ = {isa = PBXFileReference; lastKnownFileType = text.css; path = milkdown.css; sourceTree = "<group>"; };
+		CC5B8A956E441E29032AE5F9 /* AnnotationPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnnotationPanel.swift; sourceTree = "<group>"; };
 		CE6D9836DD14A789629A10CB /* EditorSchemeHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorSchemeHandler.swift; sourceTree = "<group>"; };
 		CF113F2ADAA8371F7C810BF0 /* OutlineNode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutlineNode.swift; sourceTree = "<group>"; };
 		D567C1445BFF0160D8410001 /* ProjectStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectStore.swift; sourceTree = "<group>"; };
@@ -168,6 +182,17 @@
 			path = Utils;
 			sourceTree = "<group>";
 		};
+		3270F435FFB5953CF0EBBCAE /* AnnotationPanel */ = {
+			isa = PBXGroup;
+			children = (
+				5903AE3511C621FF3093E3C9 /* AnnotationCardView.swift */,
+				988DC867E52B507551B94D73 /* AnnotationFilterBar.swift */,
+				CC5B8A956E441E29032AE5F9 /* AnnotationPanel.swift */,
+				B220BEC12CB629DCB165D755 /* AnnotationViewModel.swift */,
+			);
+			path = AnnotationPanel;
+			sourceTree = "<group>";
+		};
 		32D736F5D00C9F506D5A9A60 /* Theme */ = {
 			isa = PBXGroup;
 			children = (
@@ -216,7 +241,9 @@
 		863FDB9EBD7F0987C81E6ECA /* Models */ = {
 			isa = PBXGroup;
 			children = (
+				7311920CB617B184B124B6F4 /* Annotation.swift */,
 				E9A8D79672E775EA73854D93 /* Database.swift */,
+				728F6240519F3BDA2753E515 /* Database+Annotations.swift */,
 				13133CB5518EA086A3120EDE /* Database+CRUD.swift */,
 				5FD87E27CB1257814D589880 /* Database+Sections.swift */,
 				54B0DE603A99327D920573B6 /* Document.swift */,
@@ -259,6 +286,7 @@
 		8CB164527A344E1D70DECB0B /* Services */ = {
 			isa = PBXGroup;
 			children = (
+				6253961779E064C92D1B172E /* AnnotationSyncService.swift */,
 				BBC3D73969C6FC77A4A46FEC /* DemoProjectManager.swift */,
 				44DE11B8C0AD43E4C7DA35BF /* DocumentManager.swift */,
 				5A1E8A83A78A7909AA1289DB /* OutlineParser.swift */,
@@ -274,6 +302,7 @@
 			children = (
 				02E925EEE027AE829C229AAA /* ContentView.swift */,
 				BF41CB39EB2C5BD4E30A2CDA /* StatusBar.swift */,
+				3270F435FFB5953CF0EBBCAE /* AnnotationPanel */,
 				B6F6A7853E44572DC6A576EF /* Sidebar */,
 			);
 			path = Views;
@@ -424,10 +453,17 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				4AA86A11D7EC52D97D029274 /* Annotation.swift in Sources */,
+				E46F3ED58DA8FEDB5213C283 /* AnnotationCardView.swift in Sources */,
+				2607C5DF7DE82A639CC52E8D /* AnnotationFilterBar.swift in Sources */,
+				FA6E217F7950A15AEDE69960 /* AnnotationPanel.swift in Sources */,
+				B170D8E5C33C7D7D14A350D4 /* AnnotationSyncService.swift in Sources */,
+				C3333CCD923C6BDE144086D9 /* AnnotationViewModel.swift in Sources */,
 				2A5EB4F121ED5781FDD710A7 /* AppDelegate.swift in Sources */,
 				0127F846C37CAFAFA0455C60 /* CodeMirrorEditor.swift in Sources */,
 				790667B521454C125B0FE74B /* ColorScheme.swift in Sources */,
 				7ACE3361E6A474E6D99062E1 /* ContentView.swift in Sources */,
+				5B5AFBF103A6E02BD4EB4898 /* Database+Annotations.swift in Sources */,
 				ACAF912B9BF42D9FD97B82C2 /* Database+CRUD.swift in Sources */,
 				762C4F8744B0DB84218E14EF /* Database+Sections.swift in Sources */,
 				45869BA1A8791DA0E428B1BD /* Database.swift in Sources */,
