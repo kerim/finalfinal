@@ -115,6 +115,8 @@ extension Notification.Name {
     static let projectDidClose = Notification.Name("projectDidClose")
     /// Posted after a new project has been created (for UI updates)
     static let projectDidCreate = Notification.Name("projectDidCreate")
+    /// Posted when a project fails integrity check (userInfo: "report" -> IntegrityReport, "url" -> URL)
+    static let projectIntegrityError = Notification.Name("projectIntegrityError")
 }
 
 // MARK: - File Operation Handlers
@@ -168,6 +170,19 @@ struct FileOperations {
                     print("[FileOperations] Project opened, hasOpenProject: \(DocumentManager.shared.hasOpenProject)")
                     #endif
                     NotificationCenter.default.post(name: .projectDidOpen, object: nil)
+                } catch let error as IntegrityError {
+                    // Post notification for ContentView to show integrity alert
+                    if let report = error.integrityReport {
+                        print("[FileOperations] Integrity error, posting notification for: \(url.path)")
+                        NotificationCenter.default.post(
+                            name: .projectIntegrityError,
+                            object: nil,
+                            userInfo: ["report": report, "url": url]
+                        )
+                    } else {
+                        print("[FileOperations] IntegrityError with nil report: \(error)")
+                        showErrorAlert("Could Not Open Project", error: error)
+                    }
                 } catch {
                     print("[FileOperations] Failed to open project: \(error)")
                     showErrorAlert("Could Not Open Project", error: error)

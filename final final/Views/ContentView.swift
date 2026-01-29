@@ -23,6 +23,10 @@ struct ContentView: View {
     @State private var sectionSyncService = SectionSyncService()
     @State private var annotationSyncService = AnnotationSyncService()
 
+    /// Integrity alert state
+    @State private var integrityReport: IntegrityReport?
+    @State private var pendingProjectURL: URL?
+
     /// Use the shared DocumentManager for project lifecycle
     private var documentManager: DocumentManager { DocumentManager.shared }
 
@@ -168,7 +172,27 @@ Use this content to verify that:
                 editorState: editorState,
                 syncService: sectionSyncService,
                 onOpened: { await handleProjectOpened() },
-                onClosed: { handleProjectClosed() }
+                onClosed: { handleProjectClosed() },
+                onIntegrityError: { report, url in
+                    pendingProjectURL = url
+                    integrityReport = report
+                }
+            )
+            .integrityAlert(
+                report: $integrityReport,
+                isDemoProject: pendingProjectURL.map { documentManager.isDemoProject(at: $0) } ?? false,
+                onRepair: { report in
+                    Task { await handleRepair(report: report) }
+                },
+                onRecreateDemo: {
+                    Task { await handleRecreateDemo() }
+                },
+                onOpenAnyway: { report in
+                    Task { await handleOpenAnyway(report: report) }
+                },
+                onCancel: {
+                    handleIntegrityCancel()
+                }
             )
     }
 
@@ -1025,6 +1049,20 @@ Use this content to verify that:
                 await configureForCurrentProject()
                 return
             }
+        } catch let error as IntegrityError {
+            // Show integrity alert for corrupted projects
+            if let report = error.integrityReport {
+                // Get the URL from the report
+                pendingProjectURL = report.packageURL
+                integrityReport = report
+                return
+            }
+            // Fallback for nil report - should not normally happen
+            print("[ContentView] IntegrityError with nil report: \(error)")
+        } catch DocumentManager.DocumentError.noProjectInDatabase {
+            // Database may have been wiped (e.g., by migration with eraseDatabaseOnSchemaChange)
+            // Fall through to demo project
+            print("[ContentView] noProjectInDatabase - database may have been wiped, falling back to demo")
         } catch {
             print("[ContentView] Failed to restore last project: \(error)")
         }
@@ -1126,6 +1164,33 @@ Use this content to verify that:
             if existingSections.isEmpty {
                 await sectionSyncService.syncNow(editorState.content)
             }
+        } catch let error as IntegrityError {
+            // Show integrity alert for corrupted demo project
+            if let report = error.integrityReport {
+                pendingProjectURL = demoPath
+                integrityReport = report
+                return
+            }
+            // Fallback for nil report - should not normally happen
+            print("[ContentView] Demo IntegrityError with nil report: \(error.localizedDescription)")
+            editorState.content = demoContent
+            editorState.sections = parseDemoSections()
+            recalculateParentRelationships()
+        } catch DocumentManager.DocumentError.noProjectInDatabase {
+            // Demo database corrupted or wiped - delete and recreate
+            print("[ContentView] Demo database corrupted (noProjectInDatabase), recreating...")
+            do {
+                try FileManager.default.removeItem(at: demoPath)
+                try documentManager.newProject(at: demoPath, title: "Demo", initialContent: demoContent)
+                await configureForCurrentProject()
+                return
+            } catch {
+                print("[ContentView] Failed to recreate demo: \(error.localizedDescription)")
+                // Fall back to in-memory mode
+                editorState.content = demoContent
+                editorState.sections = parseDemoSections()
+                recalculateParentRelationships()
+            }
         } catch {
             print("[ContentView] Failed to initialize demo project: \(error.localizedDescription)")
             // Fall back to in-memory mode
@@ -1176,6 +1241,110 @@ Use this content to verify that:
         editorState.sections = []
         editorState.annotations = []
         editorState.content = ""
+    }
+
+    // MARK: - Integrity Alert Handlers
+
+    /// Handle repair action from integrity alert
+    /// Loops until all repairable issues are fixed or an unrepairable issue is encountered
+    private func handleRepair(report: IntegrityReport) async {
+        guard let url = pendingProjectURL else { return }
+
+        var currentReport = report
+        var repairAttempts = 0
+        let maxRepairAttempts = 5  // Prevent infinite loops
+
+        do {
+            // Loop to repair all issues (some repairs reveal new issues)
+            while currentReport.canAutoRepair && repairAttempts < maxRepairAttempts {
+                repairAttempts += 1
+                print("[ContentView] Repair attempt \(repairAttempts) for \(currentReport.issues.count) issue(s)")
+
+                let result = try documentManager.repairProject(report: currentReport)
+                print("[ContentView] Repair result: \(result.message)")
+
+                guard result.success else {
+                    // Repair failed - keep showing the alert with failure info
+                    print("[ContentView] Repair failed for issues: \(result.failedIssues.map { $0.description })")
+                    return
+                }
+
+                // Re-validate after repair to check for remaining/new issues
+                currentReport = try documentManager.checkIntegrity(at: url)
+
+                if currentReport.isHealthy {
+                    break
+                }
+                // Loop continues if there are more repairable issues
+            }
+
+            if currentReport.isHealthy {
+                try documentManager.openProject(at: url)
+                await configureForCurrentProject()
+                pendingProjectURL = nil
+                integrityReport = nil
+            } else if !currentReport.hasCriticalIssues {
+                // Non-critical, non-repairable issues remain - force open with warning
+                print("[ContentView] Opening with non-critical issues: \(currentReport.issues.map { $0.description })")
+                try documentManager.forceOpenProject(at: url)
+                await configureForCurrentProject()
+                pendingProjectURL = nil
+                integrityReport = nil
+            } else {
+                // Critical unrepairable issues remain - show updated alert
+                integrityReport = currentReport
+            }
+        } catch {
+            print("[ContentView] Repair failed: \(error.localizedDescription)")
+            // Keep alert showing so user can cancel
+        }
+    }
+
+    /// Handle recreate demo action from integrity alert
+    private func handleRecreateDemo() async {
+        guard let url = pendingProjectURL, documentManager.isDemoProject(at: url) else {
+            pendingProjectURL = nil
+            return
+        }
+
+        do {
+            // Delete the corrupted demo
+            let repairService = ProjectRepairService(packageURL: url)
+            try repairService.deletePackage()
+
+            // Recreate fresh demo
+            await openDemoProjectIfNeeded()
+        } catch {
+            print("[ContentView] Failed to recreate demo: \(error.localizedDescription)")
+        }
+
+        pendingProjectURL = nil
+    }
+
+    /// Handle "open anyway" action from integrity alert (unsafe)
+    private func handleOpenAnyway(report: IntegrityReport) async {
+        guard let url = pendingProjectURL else { return }
+
+        print("[ContentView] Opening project despite integrity issues (user chose unsafe)")
+        for issue in report.issues {
+            print("[ContentView] Warning: \(issue.description)")
+        }
+
+        do {
+            try documentManager.forceOpenProject(at: url)
+            await configureForCurrentProject()
+        } catch {
+            print("[ContentView] Failed to force-open project: \(error.localizedDescription)")
+        }
+
+        pendingProjectURL = nil
+        integrityReport = nil
+    }
+
+    /// Handle cancel action from integrity alert
+    private func handleIntegrityCancel() {
+        pendingProjectURL = nil
+        // Could optionally open demo project or show welcome state
     }
 
     /// Temporary: Parse demo content into sections for testing
@@ -1279,7 +1448,8 @@ extension View {
         editorState: EditorViewState,
         syncService: SectionSyncService,
         onOpened: @escaping () async -> Void,
-        onClosed: @escaping () -> Void
+        onClosed: @escaping () -> Void,
+        onIntegrityError: @escaping (IntegrityReport, URL) -> Void
     ) -> some View {
         self
             .onReceive(NotificationCenter.default.publisher(for: .newProject)) { _ in
@@ -1314,6 +1484,12 @@ extension View {
             }
             .onReceive(NotificationCenter.default.publisher(for: .projectDidClose)) { _ in
                 onClosed()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .projectIntegrityError)) { notification in
+                if let report = notification.userInfo?["report"] as? IntegrityReport,
+                   let url = notification.userInfo?["url"] as? URL {
+                    onIntegrityError(report, url)
+                }
             }
     }
 }

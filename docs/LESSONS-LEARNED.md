@@ -495,3 +495,56 @@ private static func enforceHierarchyAsync(editorState: EditorViewState, ...) asy
 5. **async/await instead of DispatchQueue** - modern, structured concurrency
 
 **General principle:** When in-memory state corrections compete with async observation delivery, block observation updates during the correction window using a state machine, and await persistence completion before re-enabling observation.
+
+---
+
+## GRDB Configuration
+
+### Never Use eraseDatabaseOnSchemaChange in Production
+
+**Problem:** User data was being completely wiped when opening projects. All tables existed with correct schema, but all data rows were empty.
+
+**Root Cause:** GRDB's `DatabaseMigrator` has an `eraseDatabaseOnSchemaChange` option that's useful during development but catastrophic in production:
+
+```swift
+// DANGEROUS - destroys all data on ANY schema change
+var migrator = DatabaseMigrator()
+#if DEBUG
+migrator.eraseDatabaseOnSchemaChange = true  // DO NOT USE
+#endif
+```
+
+When enabled, if GRDB detects any difference between the current schema and migrations, it:
+1. Drops ALL tables
+2. Recreates tables from migrations
+3. **All user data is permanently lost**
+
+This triggers on seemingly innocuous changes like:
+- Modifying column defaults
+- Adding indexes
+- Changing column constraints
+- Even recompiling with different Swift optimization levels
+
+**Solution:** Never use `eraseDatabaseOnSchemaChange`. Instead:
+
+1. **Write proper incremental migrations** that preserve data:
+```swift
+migrator.registerMigration("v2_add_column") { db in
+    try db.alter(table: "section") { t in
+        t.add(column: "newField", .text).defaults(to: "")
+    }
+}
+```
+
+2. **Use GRDB's migration versioning** - migrations run once and are tracked in `grdb_migrations` table
+
+3. **Test migrations on copies of real databases** before deploying
+
+**Detection:** If you see:
+- All tables exist with correct schema
+- `grdb_migrations` table shows all migrations completed
+- All data tables are empty (0 rows)
+
+This is the signature of `eraseDatabaseOnSchemaChange` having wiped the database.
+
+**Recovery:** Data cannot be recovered once wiped. The repair service can recreate structural records (project, content) but original content is lost forever.

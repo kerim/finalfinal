@@ -147,11 +147,57 @@ class DemoProjectManager {
         try db.updateSectionTags(id: id, tags: tags)
     }
 
+    // MARK: - Recreate Demo
+
+    /// Delete and recreate the demo project from scratch
+    /// Use this when the demo project is corrupted beyond repair
+    /// - Parameter demoContent: The markdown content to initialize the fresh demo with
+    func recreateDemo(with demoContent: String) async throws {
+        let fm = FileManager.default
+
+        // Close current project if it's the demo
+        projectDatabase = nil
+        projectId = nil
+        error = nil
+
+        // Delete existing demo if it exists
+        if fm.fileExists(atPath: Self.demoPath.path) {
+            try fm.removeItem(at: Self.demoPath)
+            print("[DemoProjectManager] Deleted corrupted demo project")
+        }
+
+        // Create fresh demo
+        try createNewProject(with: demoContent)
+        print("[DemoProjectManager] Recreated fresh demo project")
+    }
+
+    /// Check integrity of the demo project
+    /// - Returns: IntegrityReport with any issues found, or nil if demo doesn't exist
+    func checkDemoIntegrity() -> IntegrityReport? {
+        let fm = FileManager.default
+
+        guard fm.fileExists(atPath: Self.demoPath.path) else {
+            return nil  // Demo doesn't exist yet - not an integrity issue
+        }
+
+        let checker = ProjectIntegrityChecker(packageURL: Self.demoPath)
+        do {
+            return try checker.validate()
+        } catch {
+            // If we can't even check integrity, treat as critical
+            return IntegrityReport(
+                issues: [.sqliteCorruption(message: error.localizedDescription)],
+                packageURL: Self.demoPath
+            )
+        }
+    }
+
     // MARK: - Errors
 
     enum DemoProjectError: Error, LocalizedError {
         case notInitialized
         case noProjectFound
+        case integrityCheckFailed(IntegrityReport)
 
         var errorDescription: String? {
             switch self {
@@ -159,6 +205,9 @@ class DemoProjectManager {
                 return "Demo project manager not initialized"
             case .noProjectFound:
                 return "No project found in database"
+            case .integrityCheckFailed(let report):
+                let descriptions = report.issues.map { $0.description }.joined(separator: "; ")
+                return "Demo project integrity check failed: \(descriptions)"
             }
         }
     }
