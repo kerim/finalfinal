@@ -190,7 +190,8 @@ struct MilkdownEditor: NSViewRepresentable {
             ) { [weak self] notification in
                 if let modes = notification.userInfo?["modes"] as? [AnnotationType: AnnotationDisplayMode] {
                     let isPanelOnly = notification.userInfo?["isPanelOnly"] as? Bool ?? false
-                    self?.setAnnotationDisplayModes(modes, isPanelOnly: isPanelOnly)
+                    let hideCompletedTasks = notification.userInfo?["hideCompletedTasks"] as? Bool ?? false
+                    self?.setAnnotationDisplayModes(modes, isPanelOnly: isPanelOnly, hideCompletedTasks: hideCompletedTasks)
                 }
             }
 
@@ -270,7 +271,12 @@ struct MilkdownEditor: NSViewRepresentable {
         /// - Parameters:
         ///   - modes: Per-type display modes (inline/collapsed)
         ///   - isPanelOnly: Global toggle to hide all annotations from editor
-        func setAnnotationDisplayModes(_ modes: [AnnotationType: AnnotationDisplayMode], isPanelOnly: Bool = false) {
+        ///   - hideCompletedTasks: Filter to hide completed task annotations
+        func setAnnotationDisplayModes(
+            _ modes: [AnnotationType: AnnotationDisplayMode],
+            isPanelOnly: Bool = false,
+            hideCompletedTasks: Bool = false
+        ) {
             guard isEditorReady, let webView else { return }
 
             // Convert to JSON-friendly format
@@ -278,8 +284,9 @@ struct MilkdownEditor: NSViewRepresentable {
             for (type, mode) in modes {
                 modeDict[type.rawValue] = mode.rawValue
             }
-            // Add special key for global panel-only mode
+            // Add special keys for global settings
             modeDict["__panelOnly"] = isPanelOnly ? "true" : "false"
+            modeDict["__hideCompletedTasks"] = hideCompletedTasks ? "true" : "false"
 
             guard let jsonData = try? JSONSerialization.data(withJSONObject: modeDict),
                   let jsonString = String(data: jsonData, encoding: .utf8) else { return }

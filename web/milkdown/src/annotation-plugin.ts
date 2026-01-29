@@ -29,7 +29,8 @@ export const completedTaskMarker = '☑';
 
 // Regex to parse annotation HTML comments: <!-- ::type:: content -->
 // For tasks: <!-- ::task:: [ ] text --> or <!-- ::task:: [x] text -->
-const annotationRegex = /^<!--\s*::(\w+)::\s*(.+?)\s*-->$/s;
+// Note: (.*?) allows empty content for newly created annotations
+const annotationRegex = /^<!--\s*::(\w+)::\s*(.*?)\s*-->$/s;
 const taskCheckboxRegex = /^\s*\[([ xX])\]\s*(.*)$/s;
 
 // Remark plugin to convert HTML comments to annotation nodes
@@ -230,6 +231,19 @@ const annotationNodeView = $view(annotationNode, () => (ctx: Ctx) => {
       dom.title = text;
     };
 
+    // Initialize tooltip data from node content
+    const initialText = node.textContent || '';
+    dom.dataset.text = initialText;
+    dom.title = initialText;
+
+    // Track text changes via MutationObserver to keep tooltip updated
+    const textObserver = new MutationObserver(updateTooltip);
+    textObserver.observe(contentDOM, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+    });
+
     return {
       dom,
       contentDOM,
@@ -259,7 +273,7 @@ const annotationNodeView = $view(annotationNode, () => (ctx: Ctx) => {
         return true;
       },
       destroy: () => {
-        // Cleanup if needed
+        textObserver.disconnect();
       },
     };
   };

@@ -14,7 +14,7 @@ import { slashFactory, SlashProvider } from '@milkdown/plugin-slash';
 import { focusModePlugin, setFocusModeEnabled } from './focus-mode-plugin';
 import { sectionBreakPlugin, sectionBreakNode } from './section-break-plugin';
 import { annotationPlugin, annotationNode, createAnnotationMarkdown, AnnotationType } from './annotation-plugin';
-import { annotationDisplayPlugin, setAnnotationDisplayModes as setDisplayModes, getAnnotationDisplayModes } from './annotation-display-plugin';
+import { annotationDisplayPlugin, setAnnotationDisplayModes as setDisplayModes, getAnnotationDisplayModes, setHideCompletedTasks } from './annotation-display-plugin';
 import { highlightPlugin, highlightMark } from './highlight-plugin';
 import { textToMdOffset, mdToTextOffset } from './cursor-mapping';
 import './styles.css';
@@ -95,6 +95,7 @@ declare global {
       getAnnotations: () => Array<{ type: string; text: string; offset: number; completed?: boolean }>;
       scrollToAnnotation: (offset: number) => void;
       insertAnnotation: (type: string) => void;
+      setHideCompletedTasks: (enabled: boolean) => void;
       // Highlight API
       toggleHighlight: () => boolean;
     };
@@ -281,21 +282,20 @@ function executeSlashCommand(index: number) {
       // Insert annotation node with empty text content
       const annotationType = cmd.label.slice(1) as AnnotationType; // Remove leading '/'
       const nodeType = annotationNode.type(editorInstance.ctx);
-      const schema = view.state.schema;
 
-      // Create annotation node with empty text child
+      // Create annotation node with no text content (enables :empty placeholder CSS)
       const node = nodeType.create(
-        { type: annotationType, isCompleted: false },
-        schema.text(' ')  // Start with a space so user can type
+        { type: annotationType, isCompleted: false }
+        // No text content - allows CSS :empty::before placeholder to show
       );
 
       // Delete the slash command and insert the annotation node inline
       let tr = view.state.tr.delete(cmdStart, from);
       tr = tr.insert(cmdStart, node);
 
-      // Position cursor inside the annotation text (after marker, inside text span)
-      // The annotation node starts at cmdStart, content starts at cmdStart + 1
-      tr = tr.setSelection(view.state.selection.constructor.near(tr.doc.resolve(cmdStart + 2)));
+      // Position cursor inside the annotation's content area
+      // cmdStart = start of annotation node, cmdStart + 1 = inside node's content
+      tr = tr.setSelection(Selection.near(tr.doc.resolve(cmdStart + 1)));
 
       view.dispatch(tr);
     } else {
@@ -611,12 +611,6 @@ window.FinalFinal = {
   getContent() {
     const content = editorInstance ? editorInstance.action(getMarkdown()) : currentContent;
     const trimmed = content.trim();
-
-    // Debug: Log markdown serialization to trace highlight persistence
-    const hasHighlightSyntax = /==.+==/.test(content);
-    if (hasHighlightSyntax) {
-      console.log('[Highlight Debug] getContent: ==text== syntax found in serialized markdown');
-    }
 
     // Empty/minimal document may serialize to just a section break marker - treat as empty
     if (trimmed === '' || trimmed === '<!-- ::break:: -->') {
@@ -1062,21 +1056,34 @@ window.FinalFinal = {
       const view = editorInstance.ctx.get(editorViewCtx);
       const { from } = view.state.selection;
       const nodeType = annotationNode.type(editorInstance.ctx);
-      const schema = view.state.schema;
 
-      // Create annotation node with a space as initial content
+      // Create annotation node with no text content (enables :empty placeholder CSS)
       const node = nodeType.create(
-        { type: type as AnnotationType, isCompleted: false },
-        schema.text(' ')
+        { type: type as AnnotationType, isCompleted: false }
+        // No text content - allows CSS :empty::before placeholder to show
       );
 
       let tr = view.state.tr.insert(from, node);
-      // Position cursor inside the text area (after marker)
-      tr = tr.setSelection(view.state.selection.constructor.near(tr.doc.resolve(from + 2)));
+      // Position cursor inside the annotation's content area
+      // from = start of annotation node, from + 1 = inside node's content
+      tr = tr.setSelection(Selection.near(tr.doc.resolve(from + 1)));
       view.dispatch(tr);
       view.focus();
     } catch {
       // Insert failed, ignore
+    }
+  },
+
+  setHideCompletedTasks(enabled: boolean) {
+    setHideCompletedTasks(enabled);
+    // Trigger redecoration by dispatching an empty transaction
+    if (editorInstance) {
+      try {
+        const view = editorInstance.ctx.get(editorViewCtx);
+        view.dispatch(view.state.tr);
+      } catch {
+        // Dispatch failed, ignore
+      }
     }
   },
 
@@ -1089,13 +1096,11 @@ window.FinalFinal = {
 
       // Require a selection - highlighting empty text makes no sense
       if (empty) {
-        console.log('[Highlight Debug] toggleHighlight: empty selection, returning false');
         return false;
       }
 
       // Get the highlight mark type from the schema
       const markType = highlightMark.type(editorInstance.ctx);
-      console.log('[Highlight Debug] toggleHighlight: markType =', markType?.name);
 
       // Check if the selection already has the highlight mark
       const { doc } = view.state;
@@ -1106,34 +1111,20 @@ window.FinalFinal = {
         }
       });
 
-      console.log('[Highlight Debug] toggleHighlight: selection from', from, 'to', to, 'hasHighlight =', hasHighlight);
-
       let tr = view.state.tr;
       if (hasHighlight) {
         // Remove the highlight mark
         tr = tr.removeMark(from, to, markType);
-        console.log('[Highlight Debug] toggleHighlight: removing highlight mark');
       } else {
         // Add the highlight mark
         tr = tr.addMark(from, to, markType.create());
-        console.log('[Highlight Debug] toggleHighlight: adding highlight mark');
       }
 
       view.dispatch(tr);
       view.focus();
 
-      // Log the markdown after toggling
-      setTimeout(() => {
-        const md = window.FinalFinal.getContent();
-        console.log('[Highlight Debug] toggleHighlight: markdown after toggle:\n', md);
-        // Check if ==text== is present
-        const hasEqualsSyntax = /==.+==/.test(md);
-        console.log('[Highlight Debug] toggleHighlight: ==text== syntax present:', hasEqualsSyntax);
-      }, 100);
-
       return true;
-    } catch (e) {
-      console.error('[Highlight Debug] toggleHighlight error:', e);
+    } catch {
       return false;
     }
   },

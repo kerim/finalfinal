@@ -27,8 +27,9 @@ class AnnotationSyncService {
 
     /// Pattern to match annotation comments: <!-- ::type:: content -->
     /// Groups: 1=type, 2=content (may include [ ] or [x] for tasks)
+    /// Note: (.*?) allows empty content for newly created annotations
     private let annotationPattern = try! NSRegularExpression(
-        pattern: #"<!--\s*::(\w+)::\s*(.+?)\s*-->"#,
+        pattern: #"<!--\s*::(\w+)::\s*(.*?)\s*-->"#,
         options: [.dotMatchesLineSeparators]
     )
 
@@ -338,6 +339,9 @@ class AnnotationSyncService {
         newText: String,
         isCompleted: Bool
     ) -> AnnotationReplaceResult {
+        // Normalize and sanitize the new text
+        let normalizedText = normalizeAnnotationText(newText)
+
         let nsMarkdown = markdown as NSString
         let fullRange = NSRange(location: 0, length: nsMarkdown.length)
         let targetBucket = oldCharOffset / 50
@@ -362,9 +366,9 @@ class AnnotationSyncService {
             switch annotationType {
             case .task:
                 let checkbox = isCompleted ? "[x]" : "[ ]"
-                newAnnotation = "<!-- ::\(annotationType.rawValue):: \(checkbox) \(newText) -->"
+                newAnnotation = "<!-- ::\(annotationType.rawValue):: \(checkbox) \(normalizedText) -->"
             case .comment, .reference:
-                newAnnotation = "<!-- ::\(annotationType.rawValue):: \(newText) -->"
+                newAnnotation = "<!-- ::\(annotationType.rawValue):: \(normalizedText) -->"
             }
 
             // Replace the old annotation with the new one
@@ -381,6 +385,31 @@ class AnnotationSyncService {
         // No match found - return original
         print("[AnnotationSyncService] Warning: No annotation found near offset \(oldCharOffset) for replacement")
         return AnnotationReplaceResult(markdown: markdown, newCharOffset: oldCharOffset)
+    }
+
+    /// Normalize annotation text for safe storage in HTML comment syntax
+    /// - Converts newlines to spaces (multi-line to single line)
+    /// - Escapes --> sequences that would break HTML comment
+    /// - Normalizes multiple spaces to single space
+    private func normalizeAnnotationText(_ text: String) -> String {
+        var normalized = text
+
+        // Convert all line endings to spaces (Windows \r\n, Unix \n, old Mac \r)
+        normalized = normalized
+            .replacingOccurrences(of: "\r\n", with: " ")
+            .replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: "\r", with: " ")
+
+        // Escape --> sequences that would prematurely close the HTML comment
+        // Use a Unicode lookalike dash (en-dash) to preserve visual appearance
+        normalized = normalized.replacingOccurrences(of: "-->", with: "–->")
+
+        // Normalize multiple consecutive spaces to single space
+        while normalized.contains("  ") {
+            normalized = normalized.replacingOccurrences(of: "  ", with: " ")
+        }
+
+        return normalized.trimmingCharacters(in: .whitespaces)
     }
 
     /// Update annotation completion in markdown string

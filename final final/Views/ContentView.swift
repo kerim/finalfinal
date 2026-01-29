@@ -196,7 +196,11 @@ Use this content to verify that:
             NotificationCenter.default.post(
                 name: .annotationDisplayModesChanged,
                 object: nil,
-                userInfo: ["modes": newModes, "isPanelOnly": editorState.isPanelOnlyMode]
+                userInfo: [
+                    "modes": newModes,
+                    "isPanelOnly": editorState.isPanelOnlyMode,
+                    "hideCompletedTasks": editorState.hideCompletedTasks
+                ]
             )
         }
         .onChange(of: editorState.isPanelOnlyMode) { _, newValue in
@@ -204,7 +208,23 @@ Use this content to verify that:
             NotificationCenter.default.post(
                 name: .annotationDisplayModesChanged,
                 object: nil,
-                userInfo: ["modes": editorState.annotationDisplayModes, "isPanelOnly": newValue]
+                userInfo: [
+                    "modes": editorState.annotationDisplayModes,
+                    "isPanelOnly": newValue,
+                    "hideCompletedTasks": editorState.hideCompletedTasks
+                ]
+            )
+        }
+        .onChange(of: editorState.hideCompletedTasks) { _, newValue in
+            // Notify editors when hide completed tasks filter changes
+            NotificationCenter.default.post(
+                name: .annotationDisplayModesChanged,
+                object: nil,
+                userInfo: [
+                    "modes": editorState.annotationDisplayModes,
+                    "isPanelOnly": editorState.isPanelOnlyMode,
+                    "hideCompletedTasks": newValue
+                ]
             )
         }
     }

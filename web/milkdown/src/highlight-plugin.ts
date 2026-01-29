@@ -8,7 +8,6 @@ import type { Root, Text } from 'mdast';
 
 // Remark plugin to parse ==highlight== in text nodes
 const remarkHighlightPlugin = $remark('highlight', () => () => (tree: Root) => {
-  console.log('[Highlight Debug] remarkHighlightPlugin: parsing tree');
   visit(tree, 'text', (node: Text, index: number | undefined, parent: any) => {
     if (!parent || index === undefined) return;
 
@@ -22,7 +21,6 @@ const remarkHighlightPlugin = $remark('highlight', () => () => (tree: Root) => {
     }));
 
     if (matches.length === 0) return;
-    console.log('[Highlight Debug] remarkHighlightPlugin: found ==highlight== in text:', value, 'matches:', matches);
 
     // Split the text node into parts
     const newNodes: any[] = [];
@@ -80,7 +78,6 @@ const highlightMark = $mark('highlight', () => ({
   toMarkdown: {
     match: (mark: any) => mark.type.name === 'highlight',
     runner: (state: any, mark: any) => {
-      console.log('[Highlight Debug] highlightMark toMarkdown: serializing highlight mark');
       state.withMark(mark, 'highlight', undefined, {
         open: '==',
         close: '==',

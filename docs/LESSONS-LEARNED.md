@@ -20,6 +20,40 @@ const decorations = DecorationSet.create(doc, [
 ]);
 ```
 
+### Decoration.node() Creates Wrapper Elements
+
+**Problem:** CSS tooltip using `::after` with `content: attr(data-text)` showed "t" instead of the annotation text, even though the NodeView had the correct `data-text` attribute.
+
+**Root Cause:** `Decoration.node()` creates a **wrapper element** around the NodeView DOM. The wrapper receives the decoration's attributes (like `class`), but NOT the attributes on the inner NodeView element.
+
+```html
+<!-- DOM structure when Decoration.node() is applied -->
+<div class="ff-annotation-collapsed">  <!-- Wrapper: HAS class, NO data-text -->
+  <span class="ff-annotation" data-text="actual text">  <!-- NodeView: HAS data-text -->
+    ...
+  </span>
+</div>
+```
+
+The CSS `::after` attaches to the wrapper (which has the class), but `attr(data-text)` fails because the wrapper lacks that attribute. The "t" is a rendering artifact from the failed lookup.
+
+**Solution:** Include any attributes needed by CSS selectors in the decoration attributes:
+
+```typescript
+// Wrong - only class on wrapper
+Decoration.node(pos, pos + node.nodeSize, {
+  class: 'ff-annotation-collapsed',
+})
+
+// Right - data-text also on wrapper
+Decoration.node(pos, pos + node.nodeSize, {
+  class: 'ff-annotation-collapsed',
+  'data-text': node.textContent,
+})
+```
+
+**General principle:** When using `Decoration.node()`, any attributes needed by CSS pseudo-elements (`::before`, `::after`) must be explicitly added to the decoration attributes, not just the NodeView.
+
 ---
 
 ## SwiftUI / WebKit
