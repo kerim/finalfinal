@@ -36,9 +36,9 @@ final class ProjectDatabase: Sendable {
     private func migrate() throws {
         var migrator = DatabaseMigrator()
 
-        #if DEBUG
-        migrator.eraseDatabaseOnSchemaChange = true
-        #endif
+        // Note: eraseDatabaseOnSchemaChange removed - it was causing databases to be wiped
+        // on schema changes, leading to "noProjectInDatabase" errors. Migrations (v1-v4) are
+        // stable and handle schema evolution properly.
 
         migrator.registerMigration("v1_initial") { db in
             try db.create(table: "project") { t in

@@ -42,9 +42,8 @@ struct AppDatabase: Sendable {
     private func migrate() throws {
         var migrator = DatabaseMigrator()
 
-        #if DEBUG
-        migrator.eraseDatabaseOnSchemaChange = true
-        #endif
+        // Note: eraseDatabaseOnSchemaChange removed - it was causing databases to be wiped
+        // on schema changes. Migrations are stable and handle schema evolution properly.
 
         // AppDatabase stores app-level state only (recent projects, global settings)
         // Project data (content, outline) is stored in per-project ProjectDatabase

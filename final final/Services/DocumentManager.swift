@@ -103,10 +103,26 @@ final class DocumentManager {
     /// Open an existing project at the specified URL
     /// - Parameter url: Path to the .ff package
     /// - Returns: The project ID
+    /// - Throws: IntegrityError if critical integrity issues are found
     @discardableResult
     func openProject(at url: URL) throws -> String {
         // Close any existing project first
         closeProject()
+
+        // Integrity check BEFORE opening database
+        let checker = ProjectIntegrityChecker(packageURL: url)
+        let report = try checker.validate()
+
+        if report.hasCriticalIssues {
+            throw IntegrityError.corrupted(report)
+        }
+
+        // Log any non-critical issues
+        if !report.isHealthy {
+            for issue in report.issues {
+                print("[DocumentManager] Warning: \(issue.description)")
+            }
+        }
 
         // Validate and open the package
         let package = try ProjectPackage.open(at: url)
@@ -132,6 +148,45 @@ final class DocumentManager {
 
         print("[DocumentManager] Opened project: \(project.title) at \(url.path)")
         return project.id
+    }
+
+    /// Open a project bypassing integrity checks (use with caution)
+    /// For use after user explicitly chooses "Open Anyway"
+    /// - Returns: The project ID, or nil if no project record exists
+    /// - Throws: Package or database errors (but NOT missing project record)
+    @discardableResult
+    func forceOpenProject(at url: URL) throws -> String? {
+        // Close any existing project first
+        closeProject()
+
+        let package = try ProjectPackage.open(at: url)
+        let database = try ProjectDatabase(package: package)
+
+        // Explicitly handle "no project" vs database errors
+        let project: Project?
+        do {
+            project = try database.fetchProject()
+        } catch {
+            // Log but don't fail - we're force-opening
+            print("[DocumentManager] Force-open: fetchProject error (continuing): \(error)")
+            project = nil
+        }
+
+        self.projectDatabase = database
+        self.projectURL = url
+        self.projectId = project?.id
+        self.projectTitle = project?.title ?? url.deletingPathExtension().lastPathComponent
+        self.hasUnsavedChanges = false
+
+        if let project = project {
+            addToRecentProjects(url: url, title: project.title)
+            saveAsLastProject(url: url)
+            print("[DocumentManager] Force-opened project: \(project.title) at \(url.path)")
+        } else {
+            print("[DocumentManager] Force-opened project (no record) at \(url.path)")
+        }
+
+        return project?.id
     }
 
     /// Close the current project
@@ -405,6 +460,32 @@ final class DocumentManager {
         }
     }
 
+    // MARK: - Integrity Operations
+
+    /// Check project integrity without opening
+    /// - Parameter url: Path to the .ff package
+    /// - Returns: IntegrityReport with any issues found
+    func checkIntegrity(at url: URL) throws -> IntegrityReport {
+        let checker = ProjectIntegrityChecker(packageURL: url)
+        return try checker.validate()
+    }
+
+    /// Repair a project at the specified URL
+    /// - Parameter report: The integrity report from checkIntegrity
+    /// - Returns: RepairResult with details of what was repaired
+    func repairProject(report: IntegrityReport) throws -> RepairResult {
+        let repairService = ProjectRepairService(packageURL: report.packageURL)
+        return try repairService.repair(report: report)
+    }
+
+    /// Check if a URL points to the demo project
+    func isDemoProject(at url: URL) -> Bool {
+        let projectsFolder = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("final final Projects")
+        let demoPath = projectsFolder.appendingPathComponent("demo.ff")
+        return url.standardizedFileURL == demoPath.standardizedFileURL
+    }
+
     // MARK: - Errors
 
     enum DocumentError: Error, LocalizedError {
@@ -413,6 +494,7 @@ final class DocumentManager {
         case failedToCreateProject
         case bookmarkResolutionFailed
         case securityScopedAccessDenied
+        case integrityCheckFailed(IntegrityReport)
 
         var errorDescription: String? {
             switch self {
@@ -426,7 +508,18 @@ final class DocumentManager {
                 return "Could not access the project file. It may have been moved or deleted."
             case .securityScopedAccessDenied:
                 return "Permission denied to access the project file"
+            case .integrityCheckFailed(let report):
+                let descriptions = report.issues.map { $0.description }.joined(separator: "; ")
+                return "Project integrity check failed: \(descriptions)"
             }
+        }
+
+        /// Get the integrity report if this is an integrity error
+        var integrityReport: IntegrityReport? {
+            if case .integrityCheckFailed(let report) = self {
+                return report
+            }
+            return nil
         }
     }
 }

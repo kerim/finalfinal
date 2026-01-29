@@ -17,6 +17,11 @@ class SectionSyncService {
     private var projectDatabase: ProjectDatabase?
     private var projectId: String?
 
+    /// Whether the service is properly configured with database and project ID
+    var isConfigured: Bool {
+        projectDatabase != nil && projectId != nil
+    }
+
     /// When true, suppresses sync operations
     /// Set during drag operations to prevent race conditions
     var isSyncSuppressed: Bool = false
@@ -33,6 +38,32 @@ class SectionSyncService {
     func configure(database: ProjectDatabase, projectId: String) {
         self.projectDatabase = database
         self.projectId = projectId
+    }
+
+    /// Verify the service is properly configured
+    /// - Throws: SyncConfigurationError if not configured
+    func verifyConfiguration() throws {
+        if projectDatabase == nil {
+            throw SyncConfigurationError.noDatabase
+        }
+        if projectId == nil {
+            throw SyncConfigurationError.noProjectId
+        }
+    }
+
+    /// Errors related to sync service configuration
+    enum SyncConfigurationError: Error, LocalizedError {
+        case noDatabase
+        case noProjectId
+
+        var errorDescription: String? {
+            switch self {
+            case .noDatabase:
+                return "SectionSyncService not configured: no database"
+            case .noProjectId:
+                return "SectionSyncService not configured: no project ID"
+            }
+        }
     }
 
     /// Cancel any pending debounced sync operation
