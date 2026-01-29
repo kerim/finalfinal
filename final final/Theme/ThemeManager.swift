@@ -10,10 +10,19 @@ import SwiftUI
 final class ThemeManager {
     static let shared = ThemeManager()
 
-    private(set) var currentTheme: AppColorScheme = .light
+    private(set) var currentTheme: AppColorScheme = .highContrastDay
     private var hasLoadedFromDatabase = false
 
     private let settingsKey = "selectedThemeId"
+
+    /// Migration map from old theme IDs to new ones
+    private let themeMigrationMap: [String: String] = [
+        "light": "high-contrast-day",
+        "sepia": "low-contrast-day",
+        "dark": "high-contrast-night",
+        "solarized-dark": "low-contrast-night",
+        "solarized-light": "low-contrast-day"
+    ]
 
     private init() {
         // Don't load from database in init - database may not be ready yet
@@ -57,12 +66,28 @@ final class ThemeManager {
         }
 
         do {
-            if let savedId = try database.getSetting(key: settingsKey),
-               let theme = AppColorScheme.all.first(where: { $0.id == savedId }) {
-                currentTheme = theme
-                #if DEBUG
-                print("[ThemeManager] Loaded theme: \(theme.name)")
-                #endif
+            if let savedId = try database.getSetting(key: settingsKey) {
+                // Check if this is an old theme ID that needs migration
+                let themeId = themeMigrationMap[savedId] ?? savedId
+
+                if let theme = AppColorScheme.all.first(where: { $0.id == themeId }) {
+                    currentTheme = theme
+                    #if DEBUG
+                    print("[ThemeManager] Loaded theme: \(theme.name)")
+                    #endif
+
+                    // If we migrated, save the new ID
+                    if savedId != themeId {
+                        #if DEBUG
+                        print("[ThemeManager] Migrated theme from '\(savedId)' to '\(themeId)'")
+                        #endif
+                        try database.setSetting(key: settingsKey, value: themeId)
+                    }
+                } else {
+                    #if DEBUG
+                    print("[ThemeManager] Unknown theme ID '\(savedId)', using default")
+                    #endif
+                }
             } else {
                 #if DEBUG
                 print("[ThemeManager] No saved theme, using default")

@@ -1,87 +1,131 @@
-# Plan: Fix Duplicate NSSavePanel on New Project
+# Plan: Migrate Themes from Academic Writer
 
-## Problem
+## Overview
 
-When pressing Cmd+N for "New Project", **two NSSavePanels** are created. The user discovered this by dragging one panel aside and seeing another identical panel behind it.
+Replace the current 5 placeholder themes with 4 carefully designed themes from Academic Writer. Extend them for the more complex UI (sidebar, annotations, status colors). Improve typography (18px font, 1.75 line height).
 
-## Root Cause
+## User Requirements
 
-**Duplicate notification observers.** Both AppDelegate and ContentView listen for `.newProject` and `.openProject` notifications, each calling `FileOperations.handleNewProject()` / `handleOpenProject()` independently.
+1. Use Academic Writer's 4 theme palettes
+2. Avoid dark blue URLs on dark backgrounds (use per-theme accent colors)
+3. Follow usability guidelines (WCAG contrast)
+4. Increase default font to 18px
+5. Increase line height to 1.75
 
-### Observer #1: AppDelegate.swift (lines 64-78)
-```swift
-NotificationCenter.default.addObserver(forName: .newProject, ...) { _ in
-    FileOperations.handleNewProject()
-}
-NotificationCenter.default.addObserver(forName: .openProject, ...) { _ in
-    FileOperations.handleOpenProject()
-}
-```
+## The 4 New Themes
 
-### Observer #2: ContentView.swift (lines 1455-1460)
-```swift
-.onReceive(NotificationCenter.default.publisher(for: .newProject)) { _ in
-    FileOperations.handleNewProject()
-}
-.onReceive(NotificationCenter.default.publisher(for: .openProject)) { _ in
-    FileOperations.handleOpenProject()
-}
-```
-
-### Flow
-1. User presses Cmd+N
-2. FileCommands posts `.newProject` notification
-3. AppDelegate observer → creates save panel #1
-4. ContentView observer → creates save panel #2
-
-## Solution
-
-**Remove the duplicate observers from ContentView.** Keep the AppDelegate observers because:
-- AppDelegate always exists, even when no windows are open
-- It handles File menu commands before any ContentView is created
-- ContentView observers are redundant once AppDelegate handles these
+| Shortcut | Theme | Background | Text | Accent |
+|----------|-------|------------|------|--------|
+| Cmd+Opt+1 | High Contrast Day | #ffffff | #1a1a1a | #0066cc (blue) |
+| Cmd+Opt+2 | Low Contrast Day | #faf8f5 (parchment) | #3d3a36 | #8b7355 (golden brown) |
+| Cmd+Opt+3 | High Contrast Night | #0a0a0a (OLED) | #f5deb3 (amber) | #ffb74d (orange) |
+| Cmd+Opt+4 | Low Contrast Night | #2e3440 (Nord) | #d8dee9 | #88c0d0 (cyan) |
 
 ## Files to Modify
 
-`final final/Views/ContentView.swift`
+### 1. `final final/Theme/ColorScheme.swift`
 
-## Changes
+**Changes:**
+- Add `AnnotationColors` struct with task, taskCompleted, comment, reference
+- Add to `AppColorScheme`: `annotationColors`, `highlightBackground`, `tooltipBackground`, `tooltipText`
+- Extend `cssVariables` to include new variables
+- Replace 5 themes with 4 new ones:
+  - `.highContrastDay` (id: "high-contrast-day")
+  - `.lowContrastDay` (id: "low-contrast-day")
+  - `.highContrastNight` (id: "high-contrast-night")
+  - `.lowContrastNight` (id: "low-contrast-night")
+- Per-theme status colors (brighter for dark themes)
+- Per-theme annotation colors (light blue/purple on dark, deeper on light)
 
-Remove the `.newProject` and `.openProject` handlers from the `withFileNotifications` modifier (around lines 1455-1460):
+### 2. `final final/Theme/ThemeManager.swift`
 
-```swift
-// REMOVE these two .onReceive handlers:
-.onReceive(NotificationCenter.default.publisher(for: .newProject)) { _ in
-    FileOperations.handleNewProject()
-}
-.onReceive(NotificationCenter.default.publisher(for: .openProject)) { _ in
-    FileOperations.handleOpenProject()
-}
+**Changes:**
+- Add migration logic in `loadThemeFromDatabase()` for old theme IDs:
+  - "light" -> "high-contrast-day"
+  - "sepia" -> "low-contrast-day"
+  - "dark" -> "high-contrast-night"
+  - "solarized-dark" -> "low-contrast-night"
+  - "solarized-light" -> "low-contrast-day"
+
+### 3. `web/milkdown/src/styles.css`
+
+**Changes:**
+- Add `font-size: 18px` to body
+- Change `.milkdown p` line-height from 1.6 to 1.75
+- CSS variables already support annotation colors (fallbacks exist)
+
+### 4. `web/codemirror/src/styles.css`
+
+**Changes:**
+- Change `.cm-editor` font-size from 16px to 18px
+- Change line-height from 1.6 to 1.75
+
+### 5. Rebuild web assets
+
+```bash
+cd web && pnpm build
 ```
 
-Keep all other handlers in `withFileNotifications` (`.closeProject`, `.saveProject`, `.importMarkdown`, `.exportMarkdown`, `.projectDidOpen`, `.projectDidCreate`, `.projectDidClose`, `.projectIntegrityError`).
+## Color Specifications
 
-## Code Review Notes
-
-**Validated by swift-code-reviewer:**
-- Removing ContentView observers is correct - panel-opening operations are stateless
-- AppDelegate always exists, handles commands even with zero windows
-- ContentView observers for `.projectDidOpen`, `.projectDidCreate`, etc. should remain (they need view state)
-- Only `.newProject` and `.openProject` are duplicated
-
-**Optional improvement (not required for fix):** Store AppDelegate observer references for consistency:
-```swift
-private var newProjectObserver: Any?
-private var openProjectObserver: Any?
+### High Contrast Day (Light)
 ```
-This is a minor consistency improvement - AppDelegate lives forever so cleanup isn't strictly needed.
+Sidebar: #f5f5f5 bg, #1a1a1a text, divider #e0e0e0
+Selection: rgba(0, 102, 204, 0.25)
+Status: writing #2563eb, next #ea580c, waiting #ca8a04, review #9333ea, final #16a34a
+Annotations: task #d97706, completed #059669, comment #2563eb, reference #7c3aed
+Highlight: rgba(255, 235, 59, 0.4)
+Tooltip: bg #1f2937, text #f3f4f6
+```
+
+### Low Contrast Day (Parchment)
+```
+Sidebar: #f0ebe4 bg, #3d3a36 text, divider #d8d0c4
+Selection: rgba(139, 115, 85, 0.25)
+Status: same as High Contrast Day
+Annotations: same as High Contrast Day
+Highlight: rgba(255, 193, 7, 0.35)
+Tooltip: bg #3d3a36, text #faf8f5
+```
+
+### High Contrast Night (OLED Amber)
+```
+Sidebar: #1a1a1a bg, #f5deb3 text, divider #333333
+Selection: rgba(255, 183, 77, 0.3)
+Status: writing #60a5fa, next #fb923c, waiting #fcd34d, review #c084fc, final #4ade80
+Annotations: task #fbbf24, completed #34d399, comment #60a5fa, reference #a78bfa
+Highlight: rgba(255, 183, 77, 0.25)
+Tooltip: bg #f5deb3, text #0a0a0a (inverted)
+```
+
+### Low Contrast Night (Nord)
+```
+Sidebar: #3b4252 bg, #d8dee9 text, divider #4c566a
+Selection: rgba(136, 192, 208, 0.25)
+Status: writing #81a1c1, next #d08770, waiting #ebcb8b, review #b48ead, final #a3be8c
+Annotations: task #ebcb8b, completed #a3be8c, comment #88c0d0, reference #b48ead
+Highlight: rgba(235, 203, 139, 0.25)
+Tooltip: bg #eceff4, text #2e3440
+```
+
+## Implementation Order
+
+1. Update ColorScheme.swift with new theme definitions
+2. Update ThemeManager.swift with migration logic
+3. Update milkdown/styles.css (font size, line height)
+4. Update codemirror/styles.css (font size, line height)
+5. Rebuild web: `cd web && pnpm build`
+6. Build and test: `xcodebuild -scheme "final final" -destination 'platform=macOS' build`
 
 ## Verification
 
-1. Build: `xcodebuild -scheme "final final" -destination 'platform=macOS' build`
-2. Launch the app
-3. Press Cmd+N to open "New Project" dialog
-4. Verify only ONE save panel appears
-5. Enter a name and click Save
-6. Verify dialog dismisses smoothly and project opens
-7. Also test Cmd+O (Open Project) - should show only ONE open panel
+- [ ] All 4 themes accessible via Cmd+Opt+1-4
+- [ ] Editor text readable on all themes
+- [ ] Sidebar text readable on all themes
+- [ ] Links visible (no dark blue on dark backgrounds)
+- [ ] Status dots visible in sidebar
+- [ ] Annotations visible in editor
+- [ ] Font size is 18px
+- [ ] Line height is 1.75
+- [ ] Theme persists after restart
+- [ ] Old theme IDs migrate correctly

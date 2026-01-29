@@ -13,6 +13,7 @@ html, body {
   background: var(--editor-bg);
   color: var(--editor-text);
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  font-size: 18px;
 }
 
 #editor {
@@ -34,7 +35,7 @@ html, body {
 .milkdown h1 { font-size: 2em; }
 .milkdown h2 { font-size: 1.5em; }
 .milkdown h3 { font-size: 1.25em; }
-.milkdown p { margin: 0.75em 0; line-height: 1.6; }
+.milkdown p { margin: 0.75em 0; line-height: 1.75; }
 
 /* Code */
 .milkdown code { background: rgba(128, 128, 128, 0.1); padding: 0.2em 0.4em; border-radius: 3px; font-family: 'SF Mono', Menlo, Monaco, monospace; }
