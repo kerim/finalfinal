@@ -105,13 +105,14 @@ interface SlashCommand {
   replacement: string;
   description: string;
   isNodeInsertion?: boolean; // If true, uses custom node insertion instead of text
+  headingLevel?: 1 | 2 | 3;  // For heading commands, transforms paragraph to heading node
 }
 
 const slashCommands: SlashCommand[] = [
   { label: '/break', replacement: '', description: 'Insert section break', isNodeInsertion: true },
-  { label: '/h1', replacement: '# ', description: 'Heading 1' },
-  { label: '/h2', replacement: '## ', description: 'Heading 2' },
-  { label: '/h3', replacement: '### ', description: 'Heading 3' },
+  { label: '/h1', replacement: '', description: 'Heading 1', headingLevel: 1 },
+  { label: '/h2', replacement: '', description: 'Heading 2', headingLevel: 2 },
+  { label: '/h3', replacement: '', description: 'Heading 3', headingLevel: 3 },
 ];
 
 // === Slash menu UI state ===
@@ -264,8 +265,38 @@ function executeSlashCommand(index: number) {
         tr = tr.insert(parentStart, node);        // Insert section_break BEFORE the paragraph
       }
       view.dispatch(tr);
+    } else if (cmd.headingLevel) {
+      // Transform paragraph to heading
+      // Use direct schema lookup (avoids import path uncertainty)
+      const headingType = view.state.schema.nodes.heading;
+
+      if (!headingType) {
+        console.error('[Milkdown] Heading schema not found');
+        return;
+      }
+
+      // Get full paragraph content and extract text after slash command
+      const parentStart = $from.before($from.depth);
+      const parentEnd = $from.after($from.depth);
+      const fullText = view.state.doc.textBetween(parentStart + 1, parentEnd - 1, '\n');
+      const slashPos = textBefore.lastIndexOf('/');
+      const textAfterCommand = fullText.slice(slashPos + currentFilter.length).trim();
+
+      // Create heading node with level attribute
+      const heading = textAfterCommand
+        ? headingType.create({ level: cmd.headingLevel }, view.state.schema.text(textAfterCommand))
+        : headingType.create({ level: cmd.headingLevel });
+
+      // Replace entire parent paragraph with heading
+      let tr = view.state.tr.replaceWith(parentStart, parentEnd, heading);
+
+      // Position cursor at end of heading content
+      const cursorPos = parentStart + 1 + (textAfterCommand ? textAfterCommand.length : 0);
+      tr = tr.setSelection(Selection.near(tr.doc.resolve(Math.min(cursorPos, tr.doc.content.size - 1))));
+
+      view.dispatch(tr);
     } else {
-      // Standard text replacement
+      // Standard text replacement (fallback for future commands)
       const tr = view.state.tr
         .delete(cmdStart, from)
         .insertText(cmd.replacement, cmdStart);
