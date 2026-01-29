@@ -266,8 +266,7 @@ function executeSlashCommand(index: number) {
       }
       view.dispatch(tr);
     } else if (cmd.headingLevel) {
-      // Transform paragraph to heading
-      // Use direct schema lookup (avoids import path uncertainty)
+      // Transform to heading (works for both paragraphs and existing headings)
       const headingType = view.state.schema.nodes.heading;
 
       if (!headingType) {
@@ -275,23 +274,31 @@ function executeSlashCommand(index: number) {
         return;
       }
 
-      // Get full paragraph content and extract text after slash command
+      // Get parent block boundaries and full text content
       const parentStart = $from.before($from.depth);
       const parentEnd = $from.after($from.depth);
       const fullText = view.state.doc.textBetween(parentStart + 1, parentEnd - 1, '\n');
-      const slashPos = textBefore.lastIndexOf('/');
-      const textAfterCommand = fullText.slice(slashPos + currentFilter.length).trim();
+
+      // Calculate slash position within fullText directly (not textBefore)
+      const slashPosInFull = fullText.lastIndexOf('/');
+
+      // Preserve text before AND after the slash command (without adding space)
+      const textBeforeSlash = fullText.slice(0, slashPosInFull);
+      const textAfterCommand = fullText.slice(slashPosInFull + currentFilter.length);
+
+      // Concatenate directly (don't use join(' ') which adds unwanted space)
+      const combinedText = (textBeforeSlash + textAfterCommand).trim();
 
       // Create heading node with level attribute
-      const heading = textAfterCommand
-        ? headingType.create({ level: cmd.headingLevel }, view.state.schema.text(textAfterCommand))
+      const heading = combinedText
+        ? headingType.create({ level: cmd.headingLevel }, view.state.schema.text(combinedText))
         : headingType.create({ level: cmd.headingLevel });
 
-      // Replace entire parent paragraph with heading
+      // Replace parent block (works for both paragraph and heading nodes)
       let tr = view.state.tr.replaceWith(parentStart, parentEnd, heading);
 
       // Position cursor at end of heading content
-      const cursorPos = parentStart + 1 + (textAfterCommand ? textAfterCommand.length : 0);
+      const cursorPos = parentStart + 1 + (combinedText ? combinedText.length : 0);
       tr = tr.setSelection(Selection.near(tr.doc.resolve(Math.min(cursorPos, tr.doc.content.size - 1))));
 
       view.dispatch(tr);
@@ -438,7 +445,10 @@ function configureSlash(ctx: Ctx) {
   slashProviderInstance = new SlashProvider({
     content: slashMenuElement,
     shouldShow(view) {
-      const content = this.getContent(view);
+      // Pass custom matchNode to allow slash commands in both paragraphs and headings
+      const content = this.getContent(view, (node) =>
+        node.type.name === 'paragraph' || node.type.name === 'heading'
+      );
       const now = Date.now();
 
       // Suppress re-showing during command execution

@@ -63,8 +63,26 @@ function slashCompletions(context: CompletionContext): CompletionResult | null {
         detail: 'Heading 1',
         apply: (view: EditorView, _completion: any, from: number, to: number) => {
           console.log(`[SLASH DEBUG] apply /h1: from=${from}, to=${to}, text="${view.state.sliceDoc(from, to)}"`);
+          // Transform entire line to heading
+          const line = view.state.doc.lineAt(from);
+          const lineText = line.text;
+
+          // Calculate slash position from `from` parameter
+          const slashPosInLine = from - line.from;
+          // Use actual matched length (to - from) instead of hardcoded command length
+          const matchedLength = to - from;
+
+          // Extract text before slash and after the matched command
+          const textBeforeSlash = lineText.slice(0, slashPosInLine);
+          const textAfterCommand = lineText.slice(slashPosInLine + matchedLength);
+
+          // Remove existing heading markers, concatenate directly (no join with space)
+          const cleanBefore = textBeforeSlash.replace(/^#+\s*/, '');
+          const combinedText = (cleanBefore + textAfterCommand).trim();
+
+          // Replace entire line with new heading
           view.dispatch({
-            changes: { from, to, insert: '# ' }
+            changes: { from: line.from, to: line.to, insert: `# ${combinedText}` }
           });
           pendingSlashUndo = true;
           console.log('[SLASH DEBUG] pendingSlashUndo set to true');
@@ -75,8 +93,26 @@ function slashCompletions(context: CompletionContext): CompletionResult | null {
         detail: 'Heading 2',
         apply: (view: EditorView, _completion: any, from: number, to: number) => {
           console.log(`[SLASH DEBUG] apply /h2: from=${from}, to=${to}, text="${view.state.sliceDoc(from, to)}"`);
+          // Transform entire line to heading
+          const line = view.state.doc.lineAt(from);
+          const lineText = line.text;
+
+          // Calculate slash position from `from` parameter
+          const slashPosInLine = from - line.from;
+          // Use actual matched length (to - from) instead of hardcoded command length
+          const matchedLength = to - from;
+
+          // Extract text before slash and after the matched command
+          const textBeforeSlash = lineText.slice(0, slashPosInLine);
+          const textAfterCommand = lineText.slice(slashPosInLine + matchedLength);
+
+          // Remove existing heading markers, concatenate directly (no join with space)
+          const cleanBefore = textBeforeSlash.replace(/^#+\s*/, '');
+          const combinedText = (cleanBefore + textAfterCommand).trim();
+
+          // Replace entire line with new heading
           view.dispatch({
-            changes: { from, to, insert: '## ' }
+            changes: { from: line.from, to: line.to, insert: `## ${combinedText}` }
           });
           pendingSlashUndo = true;
           console.log('[SLASH DEBUG] pendingSlashUndo set to true');
@@ -87,8 +123,26 @@ function slashCompletions(context: CompletionContext): CompletionResult | null {
         detail: 'Heading 3',
         apply: (view: EditorView, _completion: any, from: number, to: number) => {
           console.log(`[SLASH DEBUG] apply /h3: from=${from}, to=${to}, text="${view.state.sliceDoc(from, to)}"`);
+          // Transform entire line to heading
+          const line = view.state.doc.lineAt(from);
+          const lineText = line.text;
+
+          // Calculate slash position from `from` parameter
+          const slashPosInLine = from - line.from;
+          // Use actual matched length (to - from) instead of hardcoded command length
+          const matchedLength = to - from;
+
+          // Extract text before slash and after the matched command
+          const textBeforeSlash = lineText.slice(0, slashPosInLine);
+          const textAfterCommand = lineText.slice(slashPosInLine + matchedLength);
+
+          // Remove existing heading markers, concatenate directly (no join with space)
+          const cleanBefore = textBeforeSlash.replace(/^#+\s*/, '');
+          const combinedText = (cleanBefore + textAfterCommand).trim();
+
+          // Replace entire line with new heading
           view.dispatch({
-            changes: { from, to, insert: '### ' }
+            changes: { from: line.from, to: line.to, insert: `### ${combinedText}` }
           });
           pendingSlashUndo = true;
           console.log('[SLASH DEBUG] pendingSlashUndo set to true');

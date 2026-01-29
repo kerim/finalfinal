@@ -202,6 +202,7 @@ class SectionSyncService {
         lastSyncedContent = markdown
 
         // Note: UI updates happen automatically via ValueObservation in EditorViewState
+        // Hierarchy enforcement is handled via onChange in ContentView
     }
 
     /// Sync zoomed content without replacing the full sections array

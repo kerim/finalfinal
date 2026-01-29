@@ -67,6 +67,10 @@ class EditorViewState {
     /// When true, ValueObservation updates are ignored (used during drag-drop reorder)
     var isObservationSuppressed = false
 
+    /// Callback invoked after sections are updated from database observation
+    /// Used by ContentView to enforce hierarchy constraints after slash command changes
+    var onSectionsUpdated: (() -> Void)?
+
     /// Start observing sections from database for reactive UI updates
     /// Call this once during initialization after database is ready
     func startObserving(database: ProjectDatabase, projectId: String) {
@@ -95,6 +99,9 @@ class EditorViewState {
                     self.sections = viewModels
                     self.recalculateParentRelationships()
                     print("[OBSERVE] Updated. Current order: \(self.sections.map { "\($0.sortOrder):\($0.title)[H\($0.headerLevel)]" })")
+
+                    // Notify observers (e.g., for hierarchy enforcement)
+                    self.onSectionsUpdated?()
                 }
             } catch {
                 print("[OBSERVE] ERROR: \(error)")

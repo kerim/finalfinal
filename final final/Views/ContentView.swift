@@ -642,6 +642,100 @@ Use this content to verify that:
         return nil  // No valid parent found
     }
 
+    /// Check if hierarchy constraints are violated (without modifying)
+    /// Returns true if any section violates the hierarchy rules
+    private func hasHierarchyViolations() -> Bool {
+        Self.hasHierarchyViolations(in: editorState.sections)
+    }
+
+    /// Static version for use in closures
+    private static func hasHierarchyViolations(in sections: [SectionViewModel]) -> Bool {
+        for (index, section) in sections.enumerated() {
+            let predecessorLevel = index > 0 ? sections[index - 1].headerLevel : 0
+
+            // First section must be H1
+            if index == 0 && section.headerLevel != 1 {
+                return true
+            }
+
+            // Max level is predecessor + 1
+            let maxLevel = predecessorLevel == 0 ? 1 : min(6, predecessorLevel + 1)
+            if section.headerLevel > maxLevel {
+                return true
+            }
+        }
+        return false
+    }
+
+    /// Check and enforce hierarchy constraints only if violations exist
+    /// This prevents infinite loops from onChange -> enforceHierarchy -> onChange
+    private func enforceHierarchyConstraintsIfNeeded() {
+        guard hasHierarchyViolations() else { return }
+        enforceHierarchyConstraints()
+        rebuildDocumentContent()
+    }
+
+    /// Static version for use in closures - enforces hierarchy on provided sections array
+    private static func enforceHierarchyConstraintsStatic(
+        sections: inout [SectionViewModel],
+        syncService: SectionSyncService
+    ) {
+        var changed = true
+        var passes = 0
+        let maxPasses = 10
+
+        while changed && passes < maxPasses {
+            changed = false
+            passes += 1
+
+            var newSections: [SectionViewModel] = []
+
+            for (index, section) in sections.enumerated() {
+                let predecessorLevel = index > 0 ? newSections[index - 1].headerLevel : 0
+
+                // First section must be H1
+                if index == 0 && section.headerLevel != 1 {
+                    changed = true
+                    let newMarkdown = syncService.updateHeaderLevel(in: section.markdownContent, to: 1)
+                    newSections.append(section.withUpdates(headerLevel: 1, markdownContent: newMarkdown))
+                    continue
+                }
+
+                // Max level is predecessor + 1
+                let maxLevel = predecessorLevel == 0 ? 1 : min(6, predecessorLevel + 1)
+                if section.headerLevel > maxLevel {
+                    changed = true
+                    let newMarkdown = syncService.updateHeaderLevel(in: section.markdownContent, to: maxLevel)
+                    newSections.append(section.withUpdates(headerLevel: maxLevel, markdownContent: newMarkdown))
+                } else {
+                    newSections.append(section)
+                }
+            }
+
+            sections = newSections
+        }
+    }
+
+    /// Static version for use in closures - rebuilds document content from sections
+    private static func rebuildDocumentContentStatic(editorState: EditorViewState) {
+        let sectionsToRebuild: [SectionViewModel]
+        if let zoomedIds = editorState.zoomedSectionIds {
+            sectionsToRebuild = editorState.sections
+                .filter { zoomedIds.contains($0.id) }
+                .sorted { $0.sortOrder < $1.sortOrder }
+        } else {
+            sectionsToRebuild = editorState.sections
+        }
+
+        editorState.content = sectionsToRebuild
+            .map { section in
+                var content = section.markdownContent
+                if !content.hasSuffix("\n") { content += "\n" }
+                return content
+            }
+            .joined()
+    }
+
     /// Ensure no section is more than 1 level deeper than its predecessor
     /// Uses iterative transformation with already-processed predecessors for correct constraint checking
     private func enforceHierarchyConstraints() {
@@ -769,6 +863,26 @@ Use this content to verify that:
 
         // Configure sync service with database
         sectionSyncService.configure(database: db, projectId: pid)
+
+        // Wire up hierarchy enforcement after sections are updated from database
+        // This ensures slash commands that create new headings trigger rebalancing
+        editorState.onSectionsUpdated = { [weak editorState, weak sectionSyncService] in
+            guard let editorState = editorState,
+                  let sectionSyncService = sectionSyncService else { return }
+            // Skip during drag operations (which handle hierarchy separately)
+            guard !sectionSyncService.isSyncSuppressed else { return }
+            guard editorState.contentState == .idle else { return }
+
+            // Check and enforce hierarchy constraints if violations exist
+            if Self.hasHierarchyViolations(in: editorState.sections) {
+                Self.enforceHierarchyConstraintsStatic(
+                    sections: &editorState.sections,
+                    syncService: sectionSyncService
+                )
+                // Rebuild document content from corrected sections
+                Self.rebuildDocumentContentStatic(editorState: editorState)
+            }
+        }
 
         // Start reactive observation
         editorState.startObserving(database: db, projectId: pid)
