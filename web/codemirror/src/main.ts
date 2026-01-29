@@ -7,6 +7,17 @@ import { syntaxHighlighting, defaultHighlightStyle } from '@codemirror/language'
 import { autocompletion, CompletionContext, CompletionResult } from '@codemirror/autocomplete';
 import './styles.css';
 
+// Annotation types matching Milkdown
+type AnnotationType = 'task' | 'comment' | 'reference';
+type AnnotationDisplayMode = 'inline' | 'collapsed' | 'hidden';
+
+interface ParsedAnnotation {
+  type: AnnotationType;
+  text: string;
+  offset: number;
+  completed?: boolean;  // Match Milkdown API naming
+}
+
 declare global {
   interface Window {
     FinalFinal: {
@@ -22,6 +33,13 @@ declare global {
       insertAtCursor: (text: string) => void;
       insertBreak: () => void;
       focus: () => void;
+      // Annotation API
+      setAnnotationDisplayModes: (modes: Record<string, string>) => void;
+      getAnnotations: () => ParsedAnnotation[];
+      scrollToAnnotation: (offset: number) => void;
+      insertAnnotation: (type: string) => void;
+      // Highlight API
+      toggleHighlight: () => boolean;
     };
     __CODEMIRROR_DEBUG__?: {
       editorReady: boolean;
@@ -146,6 +164,39 @@ function slashCompletions(context: CompletionContext): CompletionResult | null {
           });
           pendingSlashUndo = true;
           console.log('[SLASH DEBUG] pendingSlashUndo set to true');
+        }
+      },
+      {
+        label: '/task',
+        detail: 'Insert task annotation',
+        apply: (view: EditorView, _completion: any, from: number, to: number) => {
+          view.dispatch({
+            changes: { from, to, insert: '<!-- ::task:: [ ]  -->' },
+            selection: { anchor: from + 17 }  // Position cursor inside the task
+          });
+          pendingSlashUndo = true;
+        }
+      },
+      {
+        label: '/comment',
+        detail: 'Insert comment annotation',
+        apply: (view: EditorView, _completion: any, from: number, to: number) => {
+          view.dispatch({
+            changes: { from, to, insert: '<!-- ::comment::  -->' },
+            selection: { anchor: from + 17 }  // Position cursor inside the comment
+          });
+          pendingSlashUndo = true;
+        }
+      },
+      {
+        label: '/reference',
+        detail: 'Insert reference annotation',
+        apply: (view: EditorView, _completion: any, from: number, to: number) => {
+          view.dispatch({
+            changes: { from, to, insert: '<!-- ::reference::  -->' },
+            selection: { anchor: from + 19 }  // Position cursor inside the reference
+          });
+          pendingSlashUndo = true;
         }
       }
     ]
@@ -440,6 +491,150 @@ window.FinalFinal = {
   focus() {
     if (!editorView) return;
     editorView.focus();
+  },
+
+  // Annotation API methods
+  setAnnotationDisplayModes(modes: Record<string, string>) {
+    // In source mode, annotations are shown as raw markdown text
+    // Display modes don't visually change anything, but we log for consistency
+    console.log('[CodeMirror] setAnnotationDisplayModes (no-op in source mode):', modes);
+  },
+
+  getAnnotations(): ParsedAnnotation[] {
+    if (!editorView) return [];
+
+    const content = editorView.state.doc.toString();
+    const annotations: ParsedAnnotation[] = [];
+
+    // Parse annotation HTML comments: <!-- ::type:: content -->
+    const annotationRegex = /<!--\s*::(\w+)::\s*(.+?)\s*-->/gs;
+    const taskCheckboxRegex = /^\s*\[([ xX])\]\s*(.*)$/s;
+    const validTypes = ['task', 'comment', 'reference'];
+
+    let match;
+    while ((match = annotationRegex.exec(content)) !== null) {
+      const [, typeStr, rawContent] = match;
+
+      if (!validTypes.includes(typeStr)) continue;
+
+      const type = typeStr as AnnotationType;
+      let text = rawContent;
+      let isCompleted = false;
+
+      // Parse task checkbox
+      if (type === 'task') {
+        const checkboxMatch = rawContent.match(taskCheckboxRegex);
+        if (checkboxMatch) {
+          isCompleted = checkboxMatch[1].toLowerCase() === 'x';
+          text = checkboxMatch[2];
+        }
+      }
+
+      annotations.push({
+        type,
+        text: text.trim(),
+        offset: match.index,
+        completed: type === 'task' ? isCompleted : undefined
+      });
+    }
+
+    return annotations;
+  },
+
+  scrollToAnnotation(offset: number) {
+    if (!editorView) return;
+    const pos = Math.min(offset, editorView.state.doc.length);
+    editorView.dispatch({
+      selection: { anchor: pos },
+      effects: EditorView.scrollIntoView(pos, { y: 'center', yMargin: 100 })
+    });
+    editorView.focus();
+    console.log('[CodeMirror] scrollToAnnotation:', offset);
+  },
+
+  insertAnnotation(type: string) {
+    if (!editorView) return;
+
+    const validTypes = ['task', 'comment', 'reference'];
+    if (!validTypes.includes(type)) {
+      console.warn('[CodeMirror] insertAnnotation: invalid type', type);
+      return;
+    }
+
+    const { from, to } = editorView.state.selection.main;
+    let insertText: string;
+    let cursorOffset: number;
+
+    if (type === 'task') {
+      insertText = '<!-- ::task:: [ ]  -->';
+      cursorOffset = 17;
+    } else if (type === 'comment') {
+      insertText = '<!-- ::comment::  -->';
+      cursorOffset = 17;
+    } else {
+      insertText = '<!-- ::reference::  -->';
+      cursorOffset = 19;
+    }
+
+    editorView.dispatch({
+      changes: { from, to, insert: insertText },
+      selection: { anchor: from + cursorOffset }
+    });
+    editorView.focus();
+    console.log('[CodeMirror] insertAnnotation:', type);
+  },
+
+  toggleHighlight(): boolean {
+    if (!editorView) return false;
+
+    const { from, to } = editorView.state.selection.main;
+
+    // Require a selection
+    if (from === to) {
+      console.log('[CodeMirror] toggleHighlight: no selection');
+      return false;
+    }
+
+    const selectedText = editorView.state.sliceDoc(from, to);
+
+    // Check if already highlighted (wrapped in ==)
+    const beforeStart = from >= 2 ? editorView.state.sliceDoc(from - 2, from) : '';
+    const afterEnd = to + 2 <= editorView.state.doc.length ? editorView.state.sliceDoc(to, to + 2) : '';
+
+    if (beforeStart === '==' && afterEnd === '==') {
+      // Remove highlight - delete the surrounding ==
+      editorView.dispatch({
+        changes: [
+          { from: from - 2, to: from, insert: '' },
+          { from: to, to: to + 2, insert: '' }
+        ],
+        selection: { anchor: from - 2, head: to - 2 }
+      });
+      console.log('[CodeMirror] toggleHighlight: removed');
+      return true;
+    }
+
+    // Check if selection itself includes the == delimiters
+    if (selectedText.startsWith('==') && selectedText.endsWith('==') && selectedText.length > 4) {
+      // Remove highlight by replacing with content minus delimiters
+      const innerText = selectedText.slice(2, -2);
+      editorView.dispatch({
+        changes: { from, to, insert: innerText },
+        selection: { anchor: from, head: from + innerText.length }
+      });
+      console.log('[CodeMirror] toggleHighlight: removed (included delimiters)');
+      return true;
+    }
+
+    // Add highlight
+    const highlighted = '==' + selectedText + '==';
+    editorView.dispatch({
+      changes: { from, to, insert: highlighted },
+      selection: { anchor: from + 2, head: to + 2 }
+    });
+    editorView.focus();
+    console.log('[CodeMirror] toggleHighlight: added');
+    return true;
   }
 };
 

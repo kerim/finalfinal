@@ -25,6 +25,42 @@ struct EditorCommands: Commands {
                 NotificationCenter.default.post(name: .insertSectionBreak, object: nil)
             }
             .keyboardShortcut(.return, modifiers: [.command, .shift])
+
+            Divider()
+
+            // Highlight command
+            Button("Toggle Highlight") {
+                NotificationCenter.default.post(name: .toggleHighlight, object: nil)
+            }
+            .keyboardShortcut("h", modifiers: [.command, .shift])
+
+            // Annotation commands
+            Button("Insert Task") {
+                NotificationCenter.default.post(
+                    name: .insertAnnotation,
+                    object: nil,
+                    userInfo: ["type": AnnotationType.task]
+                )
+            }
+            .keyboardShortcut("t", modifiers: [.command, .shift])
+
+            Button("Insert Comment") {
+                NotificationCenter.default.post(
+                    name: .insertAnnotation,
+                    object: nil,
+                    userInfo: ["type": AnnotationType.comment]
+                )
+            }
+            .keyboardShortcut("c", modifiers: [.command, .shift])
+
+            Button("Insert Reference") {
+                NotificationCenter.default.post(
+                    name: .insertAnnotation,
+                    object: nil,
+                    userInfo: ["type": AnnotationType.reference]
+                )
+            }
+            .keyboardShortcut("r", modifiers: [.command, .shift])
         }
     }
 }

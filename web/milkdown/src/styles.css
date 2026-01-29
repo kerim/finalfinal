@@ -63,3 +63,149 @@ html, body {
 .slash-menu[data-show="false"] {
   display: none !important;
 }
+
+/* === Annotation Styles === */
+
+/* Base annotation container (Hybrid pattern) */
+.ff-annotation {
+  display: inline;
+  font-size: 0.9em;
+  padding: 0 2px;
+  border-radius: 2px;
+  vertical-align: baseline;
+  background: rgba(128, 128, 128, 0.05);
+}
+
+/* Non-editable marker */
+.ff-annotation-marker {
+  user-select: none;
+  margin-right: 2px;
+}
+
+/* Editable text area */
+.ff-annotation-text {
+  outline: none;
+  min-width: 1em;
+  display: inline;
+}
+
+/* Empty annotation placeholder */
+.ff-annotation-text:empty::before {
+  content: 'type here...';
+  color: var(--editor-muted, #999);
+  font-style: italic;
+}
+
+/* Task annotation */
+.ff-annotation-task {
+  color: var(--annotation-task, #f59e0b);
+}
+
+.ff-annotation-task.ff-annotation-completed {
+  color: var(--annotation-task-completed, #10b981);
+}
+
+/* Comment annotation */
+.ff-annotation-comment {
+  color: var(--annotation-comment, #3b82f6);
+}
+
+/* Reference annotation */
+.ff-annotation-reference {
+  color: var(--annotation-reference, #8b5cf6);
+}
+
+/* Hidden mode (panel-only) */
+.ff-annotation-hidden {
+  display: none !important;
+}
+
+/* Collapsed mode - marker only, hide text */
+.ff-annotation-collapsed {
+  opacity: 0.6;
+  position: relative;
+  background: transparent;
+  padding: 0;
+}
+
+/* Hide the text in collapsed mode */
+.ff-annotation-collapsed .ff-annotation-text {
+  display: none;
+}
+
+/* Remove margin from marker when collapsed */
+.ff-annotation-collapsed .ff-annotation-marker {
+  margin-right: 0;
+}
+
+/* Tooltip for collapsed annotations - shows full text on hover */
+.ff-annotation-collapsed::after {
+  content: attr(data-text);
+  position: absolute;
+  left: 50%;
+  bottom: 100%;
+  transform: translateX(-50%);
+  padding: 6px 10px;
+  background: var(--tooltip-bg, #1f2937);
+  color: var(--tooltip-text, #f3f4f6);
+  font-size: 12px;
+  line-height: 1.4;
+  border-radius: 6px;
+  white-space: pre-wrap;
+  max-width: 280px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.15s ease, visibility 0.15s ease;
+  z-index: 1000;
+  pointer-events: none;
+  margin-bottom: 4px;
+}
+
+/* Arrow for tooltip */
+.ff-annotation-collapsed::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: 100%;
+  transform: translateX(-50%);
+  border: 5px solid transparent;
+  border-top-color: var(--tooltip-bg, #1f2937);
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.15s ease, visibility 0.15s ease;
+  z-index: 1001;
+  margin-bottom: -1px;
+}
+
+/* Show tooltip on hover */
+.ff-annotation-collapsed:hover::after,
+.ff-annotation-collapsed:hover::before {
+  opacity: 1;
+  visibility: visible;
+}
+
+/* Hover states */
+.ff-annotation:hover {
+  opacity: 1;
+  background: rgba(128, 128, 128, 0.1);
+}
+
+/* === Highlight Styles === */
+
+/* Highlight mark for ==text== */
+.ff-highlight,
+mark.ff-highlight {
+  background-color: var(--highlight-bg, rgba(255, 235, 59, 0.4));
+  color: inherit;
+  padding: 0 2px;
+  border-radius: 2px;
+}
+
+/* Dark mode adjustment */
+@media (prefers-color-scheme: dark) {
+  .ff-highlight,
+  mark.ff-highlight {
+    background-color: var(--highlight-bg, rgba(255, 235, 59, 0.25));
+  }
+}

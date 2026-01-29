@@ -13,6 +13,9 @@ import { slashFactory, SlashProvider } from '@milkdown/plugin-slash';
 
 import { focusModePlugin, setFocusModeEnabled } from './focus-mode-plugin';
 import { sectionBreakPlugin, sectionBreakNode } from './section-break-plugin';
+import { annotationPlugin, annotationNode, createAnnotationMarkdown, AnnotationType } from './annotation-plugin';
+import { annotationDisplayPlugin, setAnnotationDisplayModes as setDisplayModes, getAnnotationDisplayModes, setHideCompletedTasks } from './annotation-display-plugin';
+import { highlightPlugin, highlightMark } from './highlight-plugin';
 import { textToMdOffset, mdToTextOffset } from './cursor-mapping';
 import './styles.css';
 
@@ -87,6 +90,14 @@ declare global {
       insertAtCursor: (text: string) => void;
       insertBreak: () => void;
       focus: () => void;
+      // Annotation API
+      setAnnotationDisplayModes: (modes: Record<string, string>) => void;
+      getAnnotations: () => Array<{ type: string; text: string; offset: number; completed?: boolean }>;
+      scrollToAnnotation: (offset: number) => void;
+      insertAnnotation: (type: string) => void;
+      setHideCompletedTasks: (enabled: boolean) => void;
+      // Highlight API
+      toggleHighlight: () => boolean;
     };
   }
 }
@@ -113,6 +124,9 @@ const slashCommands: SlashCommand[] = [
   { label: '/h1', replacement: '', description: 'Heading 1', headingLevel: 1 },
   { label: '/h2', replacement: '', description: 'Heading 2', headingLevel: 2 },
   { label: '/h3', replacement: '', description: 'Heading 3', headingLevel: 3 },
+  { label: '/task', replacement: '', description: 'Insert task annotation', isNodeInsertion: true },
+  { label: '/comment', replacement: '', description: 'Insert comment annotation', isNodeInsertion: true },
+  { label: '/reference', replacement: '', description: 'Insert reference annotation', isNodeInsertion: true },
 ];
 
 // === Slash menu UI state ===
@@ -300,6 +314,26 @@ function executeSlashCommand(index: number) {
       // Position cursor at end of heading content
       const cursorPos = parentStart + 1 + (combinedText ? combinedText.length : 0);
       tr = tr.setSelection(Selection.near(tr.doc.resolve(Math.min(cursorPos, tr.doc.content.size - 1))));
+
+      view.dispatch(tr);
+    } else if (cmd.isNodeInsertion && ['/task', '/comment', '/reference'].includes(cmd.label)) {
+      // Insert annotation node with empty text content
+      const annotationType = cmd.label.slice(1) as AnnotationType; // Remove leading '/'
+      const nodeType = annotationNode.type(editorInstance.ctx);
+
+      // Create annotation node with no text content (enables :empty placeholder CSS)
+      const node = nodeType.create(
+        { type: annotationType, isCompleted: false }
+        // No text content - allows CSS :empty::before placeholder to show
+      );
+
+      // Delete the slash command and insert the annotation node inline
+      let tr = view.state.tr.delete(cmdStart, from);
+      tr = tr.insert(cmdStart, node);
+
+      // Position cursor inside the annotation's content area
+      // cmdStart = start of annotation node, cmdStart + 1 = inside node's content
+      tr = tr.setSelection(Selection.near(tr.doc.resolve(cmdStart + 1)));
 
       view.dispatch(tr);
     } else {
@@ -506,11 +540,21 @@ async function initEditor() {
         ctx.set(defaultValueCtx, '');
       })
       .config(configureSlash)
-      .use(sectionBreakPlugin)  // BEFORE commonmark to intercept HTML before filtering
+      // Plugin order matters:
+      // 1. commonmark/gfm must be first (base schema)
+      // 2. Custom plugins extend the schema after base is established
+      // 3. sectionBreak/annotation must be before commonmark to intercept HTML comments
+      //    before they get filtered out
+      // 4. highlightPlugin MUST be after commonmark to survive parse-serialize cycle
+      //    (fixes ==text== not persisting when switching to CodeMirror)
+      .use(sectionBreakPlugin)  // Intercept <!-- ::break:: --> before commonmark filters it
+      .use(annotationPlugin)    // Intercept annotation comments before filtering
       .use(commonmark)
       .use(gfm)
+      .use(highlightPlugin)     // ==highlight== syntax - AFTER commonmark for serialization
       .use(history)
       .use(focusModePlugin)
+      .use(annotationDisplayPlugin)  // Controls annotation visibility
       .use(slash)
       .create();
 
@@ -994,6 +1038,135 @@ window.FinalFinal = {
       view.focus();
     } catch {
       // Focus failed, ignore
+    }
+  },
+
+  // === Annotation API ===
+
+  setAnnotationDisplayModes(modes: Record<string, string>) {
+    setDisplayModes(modes);
+    // Trigger redecoration by dispatching an empty transaction
+    if (editorInstance) {
+      try {
+        const view = editorInstance.ctx.get(editorViewCtx);
+        view.dispatch(view.state.tr);
+      } catch {
+        // Dispatch failed, ignore
+      }
+    }
+  },
+
+  getAnnotations() {
+    if (!editorInstance) return [];
+
+    const annotations: Array<{ type: string; text: string; offset: number; completed?: boolean }> = [];
+
+    try {
+      const view = editorInstance.ctx.get(editorViewCtx);
+      const { doc } = view.state;
+
+      doc.descendants((node, pos) => {
+        if (node.type.name === 'annotation') {
+          // Text is now content of the node, not an attribute
+          const text = node.textContent || '';
+          annotations.push({
+            type: node.attrs.type,
+            text: text.trim(),
+            offset: pos,
+            completed: node.attrs.type === 'task' ? node.attrs.isCompleted : undefined,
+          });
+        }
+        return true;
+      });
+    } catch {
+      // Traversal failed, return empty
+    }
+
+    return annotations;
+  },
+
+  scrollToAnnotation(offset: number) {
+    this.scrollToOffset(offset);
+  },
+
+  insertAnnotation(type: string) {
+    if (!editorInstance) return;
+    if (!['task', 'comment', 'reference'].includes(type)) return;
+
+    try {
+      const view = editorInstance.ctx.get(editorViewCtx);
+      const { from } = view.state.selection;
+      const nodeType = annotationNode.type(editorInstance.ctx);
+
+      // Create annotation node with no text content (enables :empty placeholder CSS)
+      const node = nodeType.create(
+        { type: type as AnnotationType, isCompleted: false }
+        // No text content - allows CSS :empty::before placeholder to show
+      );
+
+      let tr = view.state.tr.insert(from, node);
+      // Position cursor inside the annotation's content area
+      // from = start of annotation node, from + 1 = inside node's content
+      tr = tr.setSelection(Selection.near(tr.doc.resolve(from + 1)));
+      view.dispatch(tr);
+      view.focus();
+    } catch {
+      // Insert failed, ignore
+    }
+  },
+
+  setHideCompletedTasks(enabled: boolean) {
+    setHideCompletedTasks(enabled);
+    // Trigger redecoration by dispatching an empty transaction
+    if (editorInstance) {
+      try {
+        const view = editorInstance.ctx.get(editorViewCtx);
+        view.dispatch(view.state.tr);
+      } catch {
+        // Dispatch failed, ignore
+      }
+    }
+  },
+
+  toggleHighlight(): boolean {
+    if (!editorInstance) return false;
+
+    try {
+      const view = editorInstance.ctx.get(editorViewCtx);
+      const { from, to, empty } = view.state.selection;
+
+      // Require a selection - highlighting empty text makes no sense
+      if (empty) {
+        return false;
+      }
+
+      // Get the highlight mark type from the schema
+      const markType = highlightMark.type(editorInstance.ctx);
+
+      // Check if the selection already has the highlight mark
+      const { doc } = view.state;
+      let hasHighlight = false;
+      doc.nodesBetween(from, to, (node) => {
+        if (markType.isInSet(node.marks)) {
+          hasHighlight = true;
+        }
+      });
+
+      let tr = view.state.tr;
+      if (hasHighlight) {
+        // Remove the highlight mark
+        tr = tr.removeMark(from, to, markType);
+      } else {
+        // Add the highlight mark
+        tr = tr.addMark(from, to, markType.create());
+      }
+
+      view.dispatch(tr);
+      view.focus();
+
+      return true;
+    } catch {
+      return false;
     }
   },
 };

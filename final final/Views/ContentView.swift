@@ -21,6 +21,7 @@ struct ContentView: View {
     @State private var editorState = EditorViewState()
     @State private var cursorPositionToRestore: CursorPosition?
     @State private var sectionSyncService = SectionSyncService()
+    @State private var annotationSyncService = AnnotationSyncService()
 
     /// Use the shared DocumentManager for project lifecycle
     private var documentManager: DocumentManager { DocumentManager.shared }
@@ -185,9 +186,46 @@ Use this content to verify that:
         .onChange(of: editorState.content) { _, newValue in
             guard editorState.contentState == .idle else { return }
             sectionSyncService.contentChanged(newValue, zoomedIds: editorState.zoomedSectionIds)
+            annotationSyncService.contentChanged(newValue)
         }
         .onChange(of: editorState.zoomedSectionId) { _, newValue in
             sectionSyncService.isContentZoomed = (newValue != nil)
+        }
+        .onChange(of: editorState.annotationDisplayModes) { _, newModes in
+            // Notify editors when display modes change
+            NotificationCenter.default.post(
+                name: .annotationDisplayModesChanged,
+                object: nil,
+                userInfo: [
+                    "modes": newModes,
+                    "isPanelOnly": editorState.isPanelOnlyMode,
+                    "hideCompletedTasks": editorState.hideCompletedTasks
+                ]
+            )
+        }
+        .onChange(of: editorState.isPanelOnlyMode) { _, newValue in
+            // Notify editors when panel-only mode changes
+            NotificationCenter.default.post(
+                name: .annotationDisplayModesChanged,
+                object: nil,
+                userInfo: [
+                    "modes": editorState.annotationDisplayModes,
+                    "isPanelOnly": newValue,
+                    "hideCompletedTasks": editorState.hideCompletedTasks
+                ]
+            )
+        }
+        .onChange(of: editorState.hideCompletedTasks) { _, newValue in
+            // Notify editors when hide completed tasks filter changes
+            NotificationCenter.default.post(
+                name: .annotationDisplayModesChanged,
+                object: nil,
+                userInfo: [
+                    "modes": editorState.annotationDisplayModes,
+                    "isPanelOnly": editorState.isPanelOnlyMode,
+                    "hideCompletedTasks": newValue
+                ]
+            )
         }
     }
 
@@ -848,12 +886,89 @@ Use this content to verify that:
 
     @ViewBuilder
     private var detailView: some View {
-        VStack(spacing: 0) {
-            editorView
-            StatusBar(editorState: editorState)
+        HSplitView {
+            // Main editor area
+            VStack(spacing: 0) {
+                editorView
+                StatusBar(editorState: editorState)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(themeManager.currentTheme.editorBackground)
+
+            // Annotation panel (conditionally shown)
+            if editorState.isAnnotationPanelVisible {
+                AnnotationPanel(
+                    editorState: editorState,
+                    onScrollToAnnotation: { offset in
+                        editorState.scrollTo(offset: offset)
+                    },
+                    onToggleCompletion: { annotation in
+                        toggleAnnotationCompletion(annotation)
+                    },
+                    onUpdateAnnotationText: { annotation, newText in
+                        handleAnnotationTextUpdate(annotation, newText: newText)
+                    }
+                )
+            }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(themeManager.currentTheme.editorBackground)
+    }
+
+    /// Toggle annotation completion and update both markdown and database
+    private func toggleAnnotationCompletion(_ annotation: AnnotationViewModel) {
+        // Toggle local state
+        annotation.isCompleted.toggle()
+
+        // Update markdown content
+        editorState.content = annotationSyncService.updateTaskCompletion(
+            in: editorState.content,
+            at: annotation.charOffset,
+            isCompleted: annotation.isCompleted
+        )
+
+        // Database will be updated via sync service when content changes
+    }
+
+    /// Handle annotation text update from sidebar editing
+    private func handleAnnotationTextUpdate(_ annotation: AnnotationViewModel, newText: String) {
+        // 1. Suppress sync to prevent feedback loop
+        annotationSyncService.isSyncSuppressed = true
+
+        // 2. Reconstruct markdown with new text
+        let result = annotationSyncService.replaceAnnotationText(
+            in: editorState.content,
+            annotationId: annotation.id,
+            oldCharOffset: annotation.charOffset,
+            annotationType: annotation.type,
+            oldText: annotation.text,
+            newText: newText,
+            isCompleted: annotation.isCompleted
+        )
+
+        // 3. Update database atomically (text + charOffset)
+        if let db = documentManager.projectDatabase {
+            do {
+                try db.updateAnnotation(
+                    id: annotation.id,
+                    text: newText,
+                    charOffset: result.newCharOffset
+                )
+            } catch {
+                print("[ContentView] Error updating annotation: \(error.localizedDescription)")
+            }
+        }
+
+        // 4. Update local view model
+        annotation.text = newText
+        annotation.charOffset = result.newCharOffset
+
+        // 5. Push to editor
+        editorState.content = result.markdown
+
+        // 6. Re-enable sync after delay
+        Task {
+            try? await Task.sleep(for: .milliseconds(100))
+            annotationSyncService.isSyncSuppressed = false
+        }
     }
 
     @ViewBuilder
@@ -920,12 +1035,14 @@ Use this content to verify that:
     /// Configure UI for the currently open project
     private func configureForCurrentProject() async {
         guard let db = documentManager.projectDatabase,
-              let pid = documentManager.projectId else {
+              let pid = documentManager.projectId,
+              let cid = documentManager.contentId else {
             return
         }
 
-        // Configure sync service with database
+        // Configure sync services with database
         sectionSyncService.configure(database: db, projectId: pid)
+        annotationSyncService.configure(database: db, contentId: cid)
 
         // Wire up hierarchy enforcement after sections are updated from database
         // This ensures slash commands that create new headings trigger rebalancing
@@ -949,6 +1066,7 @@ Use this content to verify that:
 
         // Start reactive observation
         editorState.startObserving(database: db, projectId: pid)
+        editorState.startObservingAnnotations(database: db, contentId: cid)
 
         // Load content
         do {
@@ -1021,6 +1139,7 @@ Use this content to verify that:
         // Stop existing observation
         editorState.stopObserving()
         sectionSyncService.cancelPendingSync()
+        annotationSyncService.cancelPendingSync()
 
         // Set flag to prevent polling from overwriting empty content during reset
         editorState.isResettingContent = true
@@ -1028,6 +1147,7 @@ Use this content to verify that:
         // Reset state
         editorState.content = ""
         editorState.sections = []
+        editorState.annotations = []
         editorState.zoomedSectionId = nil
         editorState.fullDocumentBeforeZoom = nil
         editorState.zoomedSectionIds = nil
@@ -1044,14 +1164,16 @@ Use this content to verify that:
         // Stop observation FIRST to prevent any further syncs
         editorState.stopObserving()
         sectionSyncService.cancelPendingSync()
+        annotationSyncService.cancelPendingSync()
 
         // Reset zoom state (these don't trigger database writes)
         editorState.zoomedSectionId = nil
         editorState.fullDocumentBeforeZoom = nil
         editorState.zoomedSectionIds = nil
 
-        // Clear sections and content (UI state only, observation is already stopped)
+        // Clear sections, annotations and content (UI state only, observation is already stopped)
         editorState.sections = []
+        editorState.annotations = []
         editorState.content = ""
     }
 
