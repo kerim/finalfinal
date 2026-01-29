@@ -91,6 +91,12 @@ class EditorViewState {
                         continue
                     }
 
+                    // Skip updates during content transitions (zoom, hierarchy enforcement)
+                    guard contentState == .idle else {
+                        print("[OBSERVE] SKIPPED due to contentState: \(contentState)")
+                        continue
+                    }
+
                     // Convert to view models
                     let viewModels = dbSections.map { SectionViewModel(from: $0) }
 

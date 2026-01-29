@@ -736,6 +736,69 @@ Use this content to verify that:
             .joined()
     }
 
+    /// Async hierarchy enforcement with completion-based state clearing
+    /// Uses contentState to block ValueObservation during enforcement, preventing race conditions
+    @MainActor
+    private static func enforceHierarchyAsync(
+        editorState: EditorViewState,
+        syncService: SectionSyncService
+    ) async {
+        // Set state to block observation updates during enforcement
+        editorState.contentState = .hierarchyEnforcement
+        defer {
+            editorState.contentState = .idle
+        }
+
+        print("[HIERARCHY] Starting async enforcement")
+        print("[HIERARCHY] Before: \(editorState.sections.map { "H\($0.headerLevel):\($0.title)" })")
+
+        // Enforce hierarchy constraints
+        enforceHierarchyConstraintsStatic(
+            sections: &editorState.sections,
+            syncService: syncService
+        )
+
+        print("[HIERARCHY] After enforcement: \(editorState.sections.map { "H\($0.headerLevel):\($0.title)" })")
+
+        // Rebuild document content from corrected sections
+        rebuildDocumentContentStatic(editorState: editorState)
+
+        // Persist corrected sections to database (wait for completion)
+        await persistEnforcedSections(editorState: editorState)
+
+        print("[HIERARCHY] Enforcement complete, state reset to idle")
+    }
+
+    /// Persist enforced sections directly to database
+    /// Called after hierarchy enforcement to ensure corrected levels are saved
+    @MainActor
+    private static func persistEnforcedSections(editorState: EditorViewState) async {
+        guard let db = DocumentManager.shared.projectDatabase,
+              let pid = DocumentManager.shared.projectId else {
+            print("[HIERARCHY] Cannot persist: no database or project ID")
+            return
+        }
+
+        print("[HIERARCHY] Persisting \(editorState.sections.count) enforced sections")
+
+        var changes: [SectionChange] = []
+        for (index, viewModel) in editorState.sections.enumerated() {
+            let updates = SectionUpdates(
+                headerLevel: viewModel.headerLevel,
+                sortOrder: index,
+                markdownContent: viewModel.markdownContent
+            )
+            changes.append(.update(id: viewModel.id, updates: updates))
+        }
+
+        do {
+            try db.applySectionChanges(changes, for: pid)
+            print("[HIERARCHY] Persisted \(changes.count) section updates")
+        } catch {
+            print("[HIERARCHY] Error persisting enforced sections: \(error)")
+        }
+    }
+
     /// Ensure no section is more than 1 level deeper than its predecessor
     /// Uses iterative transformation with already-processed predecessors for correct constraint checking
     private func enforceHierarchyConstraints() {
@@ -875,12 +938,12 @@ Use this content to verify that:
 
             // Check and enforce hierarchy constraints if violations exist
             if Self.hasHierarchyViolations(in: editorState.sections) {
-                Self.enforceHierarchyConstraintsStatic(
-                    sections: &editorState.sections,
-                    syncService: sectionSyncService
-                )
-                // Rebuild document content from corrected sections
-                Self.rebuildDocumentContentStatic(editorState: editorState)
+                Task { @MainActor in
+                    await Self.enforceHierarchyAsync(
+                        editorState: editorState,
+                        syncService: sectionSyncService
+                    )
+                }
             }
         }
 

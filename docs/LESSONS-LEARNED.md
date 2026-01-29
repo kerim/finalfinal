@@ -410,3 +410,54 @@ setContent(markdown: string) {
 ```
 
 **General principle:** When a function has both an optimization (skip if unchanged) and a fix for edge cases, ensure the edge case handling runs before the optimization can bypass it.
+
+---
+
+## GRDB ValueObservation
+
+### Race Condition: In-Memory Corrections vs Async Observation Delivery
+
+**Problem:** Hierarchy enforcement corrected section header levels in memory, but the sidebar kept showing the old (uncorrected) levels.
+
+**Root Cause:** ValueObservation delivers database updates asynchronously. When enforcement modified sections in memory:
+
+```
+T+0ms:    User types /h1 (H2 -> H1)
+T+500ms:  Database updated with new header
+T+501ms:  ValueObservation delivers update
+T+502ms:  Enforcement corrects sibling H3 -> H2 in MEMORY
+T+503ms:  ValueObservation delivers AGAIN (same DB change, async)
+T+504ms:  sections = viewModels  // OVERWRITES in-memory corrections!
+```
+
+The second observation delivery reverted the in-memory corrections before they could be persisted.
+
+**Solution:** Use a state machine to block observation updates during enforcement:
+
+```swift
+// In startObserving() - check state before applying updates
+guard contentState == .idle else {
+    print("[OBSERVE] SKIPPED due to contentState: \(contentState)")
+    continue
+}
+
+// In enforcement function - use async with state blocking
+@MainActor
+private static func enforceHierarchyAsync(editorState: EditorViewState, ...) async {
+    editorState.contentState = .hierarchyEnforcement
+    defer { editorState.contentState = .idle }
+
+    enforceConstraints(...)
+    rebuildContent(...)
+    await persistToDatabase(...)  // Wait for completion before clearing state
+}
+```
+
+**Key elements:**
+1. **State machine enum** (`EditorContentState: idle | zoomTransition | hierarchyEnforcement`)
+2. **Check state in observation loop** - skip updates when not `.idle`
+3. **Use `defer` for cleanup** - guarantees state reset even on errors
+4. **Persist before clearing state** - wait for database write to complete
+5. **async/await instead of DispatchQueue** - modern, structured concurrency
+
+**General principle:** When in-memory state corrections compete with async observation delivery, block observation updates during the correction window using a state machine, and await persistence completion before re-enabling observation.
