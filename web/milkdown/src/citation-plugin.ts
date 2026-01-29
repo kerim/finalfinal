@@ -340,7 +340,7 @@ const citationNodeView = $view(citationNode, (ctx: Ctx) => {
   return (node, view, getPos) => {
     console.log('[CitationNodeView] VIEW CREATED for node:', node.attrs.citekeys);
     const attrs = node.attrs as CitationAttrs;
-    const citekeys = attrs.citekeys.split(',').filter(k => k.trim());
+    // NOTE: citekeys is computed fresh inside updateDisplay() to avoid stale closure
 
     // State
     let isEditMode = false;
@@ -355,12 +355,15 @@ const citationNodeView = $view(citationNode, (ctx: Ctx) => {
         return; // Don't update while editing
       }
 
+      // Compute citekeys fresh from current attrs (not stale closure)
+      const citekeys = attrs.citekeys.split(',').filter(k => k.trim());
+
       const engine = getCiteprocEngine();
       let displayText = '';
       let isResolved = true;
       let tooltipText = '';
 
-      console.log('[CitationNodeView] updateDisplay called for citekeys:', citekeys);
+      console.log('[CitationNodeView] updateDisplay called for citekeys:', citekeys, 'from attrs.citekeys:', attrs.citekeys);
 
       if (citekeys.length === 0) {
         displayText = '[?]';
@@ -450,15 +453,20 @@ const citationNodeView = $view(citationNode, (ctx: Ctx) => {
         // Update node with new attributes
         const pos = typeof getPos === 'function' ? getPos() : null;
         if (pos !== null && pos !== undefined) {
-          const tr = view.state.tr.setNodeMarkup(pos, undefined, {
-            citekeys: parsed.citekeys.join(','),
-            locators: JSON.stringify(parsed.locators),
-            prefix: parsed.prefix,
-            suffix: parsed.suffix,
-            suppressAuthor: parsed.suppressAuthor,
-            rawSyntax: newText.trim(),
-          });
-          view.dispatch(tr);
+          // Safety check: verify node still exists (may have been deleted while editing)
+          const currentNode = view.state.doc.nodeAt(pos);
+          if (currentNode && currentNode.type.name === 'citation') {
+            console.log('[CitationNodeView] exitEditMode updating attrs:', parsed.citekeys);
+            const tr = view.state.tr.setNodeMarkup(pos, undefined, {
+              citekeys: parsed.citekeys.join(','),
+              locators: JSON.stringify(parsed.locators),
+              prefix: parsed.prefix,
+              suffix: parsed.suffix,
+              suppressAuthor: parsed.suppressAuthor,
+              rawSyntax: newText.trim(),
+            });
+            view.dispatch(tr);
+          }
         }
       }
 

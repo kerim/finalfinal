@@ -211,11 +211,17 @@ const annotationNodeView = $view(annotationNode, (ctx: Ctx) => {
         e.stopPropagation();
         const pos = typeof getPos === 'function' ? getPos() : null;
         if (pos !== null && pos !== undefined) {
-          const tr = view.state.tr.setNodeMarkup(pos, undefined, {
-            ...node.attrs,
-            isCompleted: !isCompleted,
-          });
-          view.dispatch(tr);
+          // Get CURRENT node state at click time (not stale closure value)
+          const currentNode = view.state.doc.nodeAt(pos);
+          if (currentNode && currentNode.type.name === 'annotation') {
+            const currentCompleted = currentNode.attrs.isCompleted;
+            console.log('[AnnotationNodeView] Toggle clicked, current:', currentCompleted, '-> new:', !currentCompleted);
+            const tr = view.state.tr.setNodeMarkup(pos, undefined, {
+              ...currentNode.attrs,
+              isCompleted: !currentCompleted,
+            });
+            view.dispatch(tr);
+          }
         }
       });
     }
