@@ -1096,6 +1096,25 @@ Use this content to verify that:
             editorState.content = demoContent
             await sectionSyncService.syncNow(demoContent)
         }
+
+        // Connect to Zotero (just verify it's available - search is on-demand)
+        Task {
+            await connectToZotero()
+        }
+    }
+
+    /// Connect to Zotero (via Better BibTeX) - just verifies availability
+    /// Search happens on-demand via JSON-RPC when user types /cite
+    private func connectToZotero() async {
+        let zotero = ZoteroService.shared
+
+        do {
+            try await zotero.connect()
+            print("[ContentView] Zotero/BBT is available for citation search")
+        } catch {
+            print("[ContentView] Zotero connection failed: \(error.localizedDescription)")
+            // Silent failure - Zotero is optional dependency
+        }
     }
 
     /// Open demo project for backwards compatibility during transition
@@ -1152,6 +1171,7 @@ Use this content to verify that:
         editorState.zoomedSectionId = nil
         editorState.fullDocumentBeforeZoom = nil
         editorState.zoomedSectionIds = nil
+        editorState.isCitationLibraryPushed = false
 
         // Configure for new project
         await configureForCurrentProject()

@@ -16,6 +16,10 @@ import { sectionBreakPlugin, sectionBreakNode } from './section-break-plugin';
 import { annotationPlugin, annotationNode, createAnnotationMarkdown, AnnotationType } from './annotation-plugin';
 import { annotationDisplayPlugin, setAnnotationDisplayModes as setDisplayModes, getAnnotationDisplayModes, setHideCompletedTasks } from './annotation-display-plugin';
 import { highlightPlugin, highlightMark } from './highlight-plugin';
+import { citationPlugin } from './citation-plugin';
+import { citationDisplayPlugin } from './citation-display';
+import { setCitationLibrary, showCitationSearchPopup, hideSearchPopup, isSearchPopupVisible, getCitationLibrarySize, searchCitationsCallback } from './citation-search';
+import { getCiteprocEngine, CSLItem } from './citeproc-engine';
 import { textToMdOffset, mdToTextOffset } from './cursor-mapping';
 import './styles.css';
 
@@ -98,6 +102,12 @@ declare global {
       setHideCompletedTasks: (enabled: boolean) => void;
       // Highlight API
       toggleHighlight: () => boolean;
+      // Citation API
+      setCitationLibrary: (items: CSLItem[]) => void;
+      setCitationStyle: (styleXML: string) => void;
+      getBibliographyCitekeys: () => string[];
+      getCitationCount: () => number;
+      searchCitationsCallback: (items: CSLItem[]) => void;
     };
   }
 }
@@ -127,6 +137,7 @@ const slashCommands: SlashCommand[] = [
   { label: '/task', replacement: '', description: 'Insert task annotation', isNodeInsertion: true },
   { label: '/comment', replacement: '', description: 'Insert comment annotation', isNodeInsertion: true },
   { label: '/reference', replacement: '', description: 'Insert reference annotation', isNodeInsertion: true },
+  { label: '/cite', replacement: '', description: 'Insert citation', isNodeInsertion: true },
 ];
 
 // === Slash menu UI state ===
@@ -336,6 +347,20 @@ function executeSlashCommand(index: number) {
       tr = tr.setSelection(Selection.near(tr.doc.resolve(cmdStart + 1)));
 
       view.dispatch(tr);
+    } else if (cmd.label === '/cite') {
+      // Show citation search popup (custom UI, not slash menu)
+      showCitationSearchPopup(cmdStart, view);
+      // Don't dispatch transaction - the popup will handle insertion
+      // Just hide the slash menu and reset state
+      if (slashProviderInstance) {
+        slashProviderInstance.hide();
+      }
+      filteredCommands = [];
+      // Re-enable slash menu after popup closes (handled by popup blur/select)
+      requestAnimationFrame(() => {
+        suppressSlashMenu = false;
+      });
+      return; // Early return - don't set pendingSlashUndo
     } else {
       // Standard text replacement (fallback for future commands)
       const tr = view.state.tr
@@ -547,14 +572,17 @@ async function initEditor() {
       //    before they get filtered out
       // 4. highlightPlugin MUST be after commonmark to survive parse-serialize cycle
       //    (fixes ==text== not persisting when switching to CodeMirror)
+      // 5. citationPlugin MUST be before commonmark to parse [@citekey] syntax
       .use(sectionBreakPlugin)  // Intercept <!-- ::break:: --> before commonmark filters it
       .use(annotationPlugin)    // Intercept annotation comments before filtering
+      .use(citationPlugin)      // Parse [@citekey] citations before commonmark
       .use(commonmark)
       .use(gfm)
       .use(highlightPlugin)     // ==highlight== syntax - AFTER commonmark for serialization
       .use(history)
       .use(focusModePlugin)
       .use(annotationDisplayPlugin)  // Controls annotation visibility
+      .use(citationDisplayPlugin)    // Citation node view for formatted display
       .use(slash)
       .create();
 
@@ -1168,6 +1196,70 @@ window.FinalFinal = {
     } catch {
       return false;
     }
+  },
+
+  // === Citation API ===
+
+  setCitationLibrary(items: CSLItem[]) {
+    // Update search index
+    setCitationLibrary(items);
+    // Update citeproc engine
+    getCiteprocEngine().setBibliography(items);
+    // Trigger re-render of any existing citations
+    if (editorInstance) {
+      try {
+        const view = editorInstance.ctx.get(editorViewCtx);
+        view.dispatch(view.state.tr);
+      } catch {
+        // Dispatch failed, ignore
+      }
+    }
+  },
+
+  setCitationStyle(styleXML: string) {
+    getCiteprocEngine().setStyle(styleXML);
+    // Trigger re-render of citations
+    if (editorInstance) {
+      try {
+        const view = editorInstance.ctx.get(editorViewCtx);
+        view.dispatch(view.state.tr);
+      } catch {
+        // Dispatch failed, ignore
+      }
+    }
+  },
+
+  getBibliographyCitekeys(): string[] {
+    if (!editorInstance) return [];
+
+    const citekeys: string[] = [];
+
+    try {
+      const view = editorInstance.ctx.get(editorViewCtx);
+      const { doc } = view.state;
+
+      doc.descendants((node) => {
+        if (node.type.name === 'citation') {
+          const keys = (node.attrs.citekeys as string || '').split(',').filter(k => k.trim());
+          citekeys.push(...keys);
+        }
+        return true;
+      });
+    } catch {
+      // Traversal failed
+    }
+
+    // Return unique citekeys
+    return [...new Set(citekeys)];
+  },
+
+  getCitationCount(): number {
+    return getCitationLibrarySize();
+  },
+
+  searchCitationsCallback(items: CSLItem[]) {
+    // Forward callback from Swift to citation-search module
+    searchCitationsCallback(items);
   },
 };
 

@@ -21,9 +21,14 @@ struct SectionCardView: View {
     var body: some View {
 
         VStack(alignment: .leading, spacing: 4) {
-            // Header row: HashBar on left, StatusDot on right
+            // Header row: HashBar/BibIcon on left, StatusDot on right
             HStack {
-                HashBar(level: section.headerLevel, isPseudoSection: section.isPseudoSection)
+                if section.isBibliography {
+                    // Bibliography section gets book icon instead of hash bar
+                    BibliographyIcon()
+                } else {
+                    HashBar(level: section.headerLevel, isPseudoSection: section.isPseudoSection)
+                }
                 Spacer()
                 StatusDot(status: $section.status)
             }
@@ -34,7 +39,11 @@ struct SectionCardView: View {
                 .lineLimit(2)
                 .italic(section.isPseudoSection)
 
-            metadataRow
+            if section.isBibliography {
+                bibliographyMetadataRow
+            } else {
+                metadataRow
+            }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
@@ -83,6 +92,35 @@ struct SectionCardView: View {
             wordCountView
         }
         .font(.system(size: 11))
+    }
+
+    private var bibliographyMetadataRow: some View {
+        HStack(spacing: 8) {
+            // Citation count badge (extracted from word count as proxy)
+            let citationCount = estimateCitationCount()
+            if citationCount > 0 {
+                Text("\(citationCount) refs")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(themeManager.currentTheme.sidebarText.opacity(0.6))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(themeManager.currentTheme.sidebarText.opacity(0.08))
+                    .clipShape(Capsule())
+            }
+
+            Spacer()
+        }
+        .font(.system(size: 11))
+    }
+
+    /// Estimate citation count from bibliography content
+    /// Each entry typically ends with a DOI/URL or period-newline pattern
+    private func estimateCitationCount() -> Int {
+        let content = section.markdownContent
+        // Count entries by looking for double newlines (bibliography entries are separated by blank lines)
+        let entries = content.components(separatedBy: "\n\n").filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        // Subtract 1 for the header
+        return max(0, entries.count - 1)
     }
 
     private var wordCountView: some View {
@@ -143,6 +181,7 @@ class SectionViewModel: Identifiable {
     var sortOrder: Int
     var headerLevel: Int
     var isPseudoSection: Bool  // Stored, not computed
+    var isBibliography: Bool   // Auto-generated bibliography section
     var title: String
     var markdownContent: String
     var status: SectionStatus
@@ -160,6 +199,7 @@ class SectionViewModel: Identifiable {
         self.sortOrder = section.sortOrder
         self.headerLevel = section.headerLevel
         self.isPseudoSection = section.isPseudoSection
+        self.isBibliography = section.isBibliography
         self.title = section.title
         self.markdownContent = section.markdownContent
         self.status = section.status
@@ -190,6 +230,7 @@ class SectionViewModel: Identifiable {
             sortOrder: sortOrder,
             headerLevel: headerLevel,
             isPseudoSection: isPseudoSection,
+            isBibliography: isBibliography,
             title: title,
             markdownContent: markdownContent,
             status: status,
@@ -210,6 +251,7 @@ class SectionViewModel: Identifiable {
         sortOrder: Int? = nil,
         headerLevel: Int? = nil,
         isPseudoSection: Bool? = nil,
+        isBibliography: Bool? = nil,
         markdownContent: String? = nil,
         startOffset: Int? = nil
     ) -> SectionViewModel {
@@ -220,6 +262,7 @@ class SectionViewModel: Identifiable {
             sortOrder: sortOrder ?? self.sortOrder,
             headerLevel: headerLevel ?? self.headerLevel,
             isPseudoSection: isPseudoSection ?? self.isPseudoSection,
+            isBibliography: isBibliography ?? self.isBibliography,
             title: self.title,
             markdownContent: markdownContent ?? self.markdownContent,
             status: self.status,
@@ -231,6 +274,16 @@ class SectionViewModel: Identifiable {
         let copy = SectionViewModel(from: section)
         copy.aggregateWordCount = self.aggregateWordCount
         return copy
+    }
+}
+
+/// Bibliography section icon (book emoji)
+struct BibliographyIcon: View {
+    @Environment(ThemeManager.self) private var themeManager
+
+    var body: some View {
+        Text("📚")
+            .font(.system(size: 14))
     }
 }
 

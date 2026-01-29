@@ -173,6 +173,13 @@ final class ProjectDatabase: Sendable {
             try db.create(index: "annotation_sectionId", on: "annotation", columns: ["sectionId"])
         }
 
+        // Phase 1.8: Bibliography section flag for auto-generated bibliography
+        migrator.registerMigration("v6_bibliography") { db in
+            try db.alter(table: "section") { t in
+                t.add(column: "isBibliography", .boolean).notNull().defaults(to: false)
+            }
+        }
+
         try migrator.migrate(dbWriter)
     }
 

@@ -2,7 +2,7 @@
 
 Attribution for code, libraries, and inspiration used in final final.
 
-**Last updated:** 2026-01-29 (Phase 1.7 Annotations)
+**Last updated:** 2026-01-29 (Phase 1.8 Zotero Citations)
 
 ---
 
@@ -23,6 +23,8 @@ Attribution for code, libraries, and inspiration used in final final.
 | @milkdown/kit | ^7.8.0 | MIT | Mirone | https://github.com/Milkdown/milkdown |
 | @milkdown/components | ^7.8.0 | MIT | Mirone | https://github.com/Milkdown/milkdown |
 | @milkdown/plugin-slash | ^7.8.0 | MIT | Mirone | https://github.com/Milkdown/milkdown |
+| citeproc | ^2.4.63 | CPAL/AGPLv3 | Frank Bennett | https://github.com/Juris-M/citeproc-js |
+| fuse.js | ^7.0.0 | Apache 2.0 | Kiro Risk | https://github.com/krisk/Fuse |
 | unist-util-visit | ^5.0.0 | MIT | Titus Wormer | https://github.com/syntax-tree/unist-util-visit |
 
 #### CodeMirror Editor
@@ -45,6 +47,13 @@ Attribution for code, libraries, and inspiration used in final final.
 | ProseMirror | MIT | Marijn Haverbeke | Rich text editing framework |
 | remark | MIT | Titus Wormer | Markdown parsing/serialization |
 | unified | MIT | Titus Wormer | Text processing pipeline |
+
+#### CSL Resources (bundled in app)
+
+| Resource | License | Author | URL |
+|----------|---------|--------|-----|
+| chicago-author-date.csl | CC BY-SA 3.0 | Andrew Dunning | https://github.com/citation-style-language/styles |
+| locales-en-US.xml | CC BY-SA 3.0 | CSL Team | https://github.com/citation-style-language/locales |
 
 ---
 
@@ -113,4 +122,5 @@ See: http://www.apache.org/licenses/LICENSE-2.0
 
 | Date | Phase | Changes |
 |------|-------|---------|
+| 2026-01-29 | 1.8 | Added citeproc-js, fuse.js, CSL style/locale files for Zotero citation integration |
 | 2026-01-29 | 1.7 | Initial KARMA.md created; documented all bundled dependencies and inspiration sources |

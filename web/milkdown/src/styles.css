@@ -209,3 +209,54 @@ mark.ff-highlight {
     background-color: var(--highlight-bg, rgba(255, 235, 59, 0.25));
   }
 }
+
+/* === Citation Styles === */
+
+/* Base citation container */
+.ff-citation {
+  display: inline;
+  font-size: 0.95em;
+  padding: 1px 4px;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+/* Resolved citation (valid citekey) */
+.ff-citation-resolved {
+  color: var(--citation-resolved, #059669);
+  background: rgba(5, 150, 105, 0.08);
+}
+
+.ff-citation-resolved:hover {
+  background: rgba(5, 150, 105, 0.15);
+}
+
+/* Unresolved citation (unknown citekey) */
+.ff-citation-unresolved {
+  color: var(--citation-unresolved, #dc2626);
+  background: rgba(220, 38, 38, 0.08);
+}
+
+.ff-citation-unresolved:hover {
+  background: rgba(220, 38, 38, 0.15);
+}
+
+/* Citation in edit mode */
+.ff-citation-editing {
+  font-family: 'SF Mono', Menlo, Monaco, monospace;
+  font-size: 0.9em;
+  background: rgba(128, 128, 128, 0.1);
+  color: var(--editor-text);
+  outline: 2px solid var(--accent-color, #007aff);
+  outline-offset: 1px;
+}
+
+/* Citation search popup results */
+.ff-citation-search-item:hover {
+  background: var(--editor-selection, rgba(0, 122, 255, 0.15)) !important;
+}
+
+.ff-citation-search-item.selected {
+  background: var(--editor-selection, #e8f0fe);
+}

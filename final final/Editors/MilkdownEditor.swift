@@ -55,6 +55,7 @@ struct MilkdownEditor: NSViewRepresentable {
         )
         configuration.userContentController.addUserScript(errorScript)
         configuration.userContentController.add(context.coordinator, name: "errorHandler")
+        configuration.userContentController.add(context.coordinator, name: "searchCitations")
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = context.coordinator
@@ -139,6 +140,7 @@ struct MilkdownEditor: NSViewRepresentable {
         private var annotationDisplayModesObserver: NSObjectProtocol?
         private var insertAnnotationObserver: NSObjectProtocol?
         private var toggleHighlightObserver: NSObjectProtocol?
+        private var citationLibraryObserver: NSObjectProtocol?
 
         /// Pending cursor position that is being restored (set before JS call, cleared after)
         private var pendingCursorRestore: CursorPosition?
@@ -214,6 +216,17 @@ struct MilkdownEditor: NSViewRepresentable {
             ) { [weak self] _ in
                 self?.toggleHighlight()
             }
+
+            // Subscribe to citation library updates from Zotero
+            citationLibraryObserver = NotificationCenter.default.addObserver(
+                forName: .citationLibraryChanged,
+                object: nil,
+                queue: .main
+            ) { [weak self] notification in
+                if let json = notification.userInfo?["json"] as? String {
+                    self?.setCitationLibrary(json)
+                }
+            }
         }
 
         deinit {
@@ -231,6 +244,9 @@ struct MilkdownEditor: NSViewRepresentable {
                 NotificationCenter.default.removeObserver(observer)
             }
             if let observer = toggleHighlightObserver {
+                NotificationCenter.default.removeObserver(observer)
+            }
+            if let observer = citationLibraryObserver {
                 NotificationCenter.default.removeObserver(observer)
             }
         }
@@ -258,6 +274,10 @@ struct MilkdownEditor: NSViewRepresentable {
             if let observer = toggleHighlightObserver {
                 NotificationCenter.default.removeObserver(observer)
                 toggleHighlightObserver = nil
+            }
+            if let observer = citationLibraryObserver {
+                NotificationCenter.default.removeObserver(observer)
+                citationLibraryObserver = nil
             }
             webView = nil
         }
@@ -306,6 +326,38 @@ struct MilkdownEditor: NSViewRepresentable {
         func toggleHighlight() {
             guard isEditorReady, let webView else { return }
             webView.evaluateJavaScript("window.FinalFinal.toggleHighlight()") { _, _ in }
+        }
+
+        /// Push citation library to the editor for search and formatting
+        func setCitationLibrary(_ itemsJSON: String) {
+            guard isEditorReady, let webView else { return }
+            // Escape backticks for template literal
+            let escaped = itemsJSON.replacingOccurrences(of: "`", with: "\\`")
+            webView.evaluateJavaScript("window.FinalFinal.setCitationLibrary(JSON.parse(`\(escaped)`))") { _, _ in }
+        }
+
+        /// Set CSL style for citation formatting
+        func setCitationStyle(_ styleXML: String) {
+            guard isEditorReady, let webView else { return }
+            let escaped = styleXML.replacingOccurrences(of: "`", with: "\\`")
+            webView.evaluateJavaScript("window.FinalFinal.setCitationStyle(`\(escaped)`)") { _, _ in }
+        }
+
+        /// Get all citekeys used in the document (for bibliography generation)
+        func getBibliographyCitekeys(completion: @escaping ([String]) -> Void) {
+            guard isEditorReady, let webView else {
+                completion([])
+                return
+            }
+            webView.evaluateJavaScript("JSON.stringify(window.FinalFinal.getBibliographyCitekeys())") { result, _ in
+                guard let json = result as? String,
+                      let data = json.data(using: .utf8),
+                      let keys = try? JSONDecoder().decode([String].self, from: data) else {
+                    completion([])
+                    return
+                }
+                completion(keys)
+            }
         }
 
         func saveCursorPositionBeforeCleanup() {
@@ -395,7 +447,7 @@ struct MilkdownEditor: NSViewRepresentable {
             webView.evaluateJavaScript("window.FinalFinal.scrollCursorToCenter()") { _, _ in }
         }
 
-        // Handle JS error messages from WKScriptMessageHandler
+        // Handle JS messages from WKScriptMessageHandler
         nonisolated func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
             #if DEBUG
             if message.name == "errorHandler", let body = message.body as? [String: Any] {
@@ -404,6 +456,78 @@ struct MilkdownEditor: NSViewRepresentable {
                 print("[MilkdownEditor] JS \(msgType.uppercased()): \(errorMsg)")
             }
             #endif
+
+            // Handle citation search requests from web editor
+            if message.name == "searchCitations", let query = message.body as? String {
+                Task { @MainActor in
+                    await self.handleCitationSearch(query)
+                }
+            }
+        }
+
+        /// Handle citation search request from web editor
+        /// Splits multi-term queries: first term goes to BBT, additional terms filter client-side
+        @MainActor
+        private func handleCitationSearch(_ query: String) async {
+            guard let webView else { return }
+
+            print("[MilkdownEditor] Citation search: '\(query)'")
+
+            // Split query into terms (BBT search only supports single-term reliably)
+            let terms = query.trimmingCharacters(in: .whitespaces)
+                .components(separatedBy: .whitespaces)
+                .filter { !$0.isEmpty }
+
+            guard !terms.isEmpty else {
+                sendCitationSearchCallback(webView: webView, json: "[]")
+                return
+            }
+
+            // Use first term for BBT search
+            let searchTerm = terms[0]
+            let filterTerms = Array(terms.dropFirst()).map { $0.lowercased() }
+
+            do {
+                var items = try await ZoteroService.shared.search(query: searchTerm)
+
+                // Client-side filtering for additional terms
+                if !filterTerms.isEmpty {
+                    items = items.filter { item in
+                        let searchText = item.searchText.lowercased()
+                        return filterTerms.allSatisfy { searchText.contains($0) }
+                    }
+                }
+
+                print("[MilkdownEditor] Search returned \(items.count) results (filter terms: \(filterTerms))")
+
+                // Encode results as JSON
+                let encoder = JSONEncoder()
+                encoder.outputFormatting = [.sortedKeys]
+                let data = try encoder.encode(items)
+                guard let jsonString = String(data: data, encoding: .utf8) else {
+                    sendCitationSearchCallback(webView: webView, json: "[]")
+                    return
+                }
+
+                sendCitationSearchCallback(webView: webView, json: jsonString)
+            } catch {
+                print("[MilkdownEditor] Citation search error: \(error.localizedDescription)")
+                sendCitationSearchCallback(webView: webView, json: "[]")
+            }
+        }
+
+        /// Send search results back to web editor via callback
+        @MainActor
+        private func sendCitationSearchCallback(webView: WKWebView, json: String) {
+            // Escape for JavaScript template literal:
+            // 1. Backslashes first (to avoid double-escaping)
+            // 2. Backticks (template delimiter)
+            // 3. ${  (template interpolation)
+            let escaped = json
+                .replacingOccurrences(of: "\\", with: "\\\\")
+                .replacingOccurrences(of: "`", with: "\\`")
+                .replacingOccurrences(of: "${", with: "\\${")
+            webView.evaluateJavaScript("window.FinalFinal.searchCitationsCallback(JSON.parse(`\(escaped)`))") { _, _ in }
         }
 
         func shouldPushContent(_ newContent: String) -> Bool {
