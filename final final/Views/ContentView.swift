@@ -1452,12 +1452,6 @@ extension View {
         onIntegrityError: @escaping (IntegrityReport, URL) -> Void
     ) -> some View {
         self
-            .onReceive(NotificationCenter.default.publisher(for: .newProject)) { _ in
-                FileOperations.handleNewProject()
-            }
-            .onReceive(NotificationCenter.default.publisher(for: .openProject)) { _ in
-                FileOperations.handleOpenProject()
-            }
             .onReceive(NotificationCenter.default.publisher(for: .closeProject)) { _ in
                 FileOperations.handleCloseProject()
             }

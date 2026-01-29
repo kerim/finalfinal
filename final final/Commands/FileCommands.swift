@@ -143,7 +143,10 @@ struct FileOperations {
                     #if DEBUG
                     print("[FileOperations] Project created, hasOpenProject: \(DocumentManager.shared.hasOpenProject)")
                     #endif
-                    NotificationCenter.default.post(name: .projectDidCreate, object: nil)
+                    // Defer notification to allow panel to fully dismiss
+                    DispatchQueue.main.async {
+                        NotificationCenter.default.post(name: .projectDidCreate, object: nil)
+                    }
                 } catch {
                     print("[FileOperations] Failed to create project: \(error)")
                     showErrorAlert("Could Not Create Project", error: error)
@@ -169,16 +172,21 @@ struct FileOperations {
                     #if DEBUG
                     print("[FileOperations] Project opened, hasOpenProject: \(DocumentManager.shared.hasOpenProject)")
                     #endif
-                    NotificationCenter.default.post(name: .projectDidOpen, object: nil)
+                    // Defer notification to allow panel to fully dismiss
+                    DispatchQueue.main.async {
+                        NotificationCenter.default.post(name: .projectDidOpen, object: nil)
+                    }
                 } catch let error as IntegrityError {
                     // Post notification for ContentView to show integrity alert
                     if let report = error.integrityReport {
                         print("[FileOperations] Integrity error, posting notification for: \(url.path)")
-                        NotificationCenter.default.post(
-                            name: .projectIntegrityError,
-                            object: nil,
-                            userInfo: ["report": report, "url": url]
-                        )
+                        DispatchQueue.main.async {
+                            NotificationCenter.default.post(
+                                name: .projectIntegrityError,
+                                object: nil,
+                                userInfo: ["report": report, "url": url]
+                            )
+                        }
                     } else {
                         print("[FileOperations] IntegrityError with nil report: \(error)")
                         showErrorAlert("Could Not Open Project", error: error)
@@ -262,11 +270,14 @@ struct FileOperations {
                                 let title = saveURL.deletingPathExtension().lastPathComponent
                                 try DocumentManager.shared.newProject(at: saveURL, title: title)
                                 try DocumentManager.shared.saveContent(content)
-                                NotificationCenter.default.post(
-                                    name: .projectDidCreate,
-                                    object: nil,
-                                    userInfo: ["content": content]
-                                )
+                                // Defer notification to allow panel to fully dismiss
+                                DispatchQueue.main.async {
+                                    NotificationCenter.default.post(
+                                        name: .projectDidCreate,
+                                        object: nil,
+                                        userInfo: ["content": content]
+                                    )
+                                }
                             } catch {
                                 print("[FileOperations] Failed to import: \(error)")
                                 showErrorAlert("Could Not Import File", error: error)
