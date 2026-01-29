@@ -179,6 +179,7 @@ Use this content to verify that:
         } detail: {
             detailView
         }
+        .navigationTitle(documentManager.projectTitle ?? "Untitled")
         .task {
             AppDelegate.shared?.editorState = editorState
             await initializeProject()
