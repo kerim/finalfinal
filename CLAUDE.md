@@ -109,6 +109,11 @@ When asked to commit changes:
 
 Never commit only the files you remember working on - always check for other modifications that may have been made earlier in the session.
 
+**Commit message format:** Use multiple `-m` flags instead of heredocs (heredocs fail in sandbox):
+```bash
+git commit -m "Title" -m "Body line 1" -m "Body line 2"
+```
+
 ## Documentation
 
 - `docs/plans/` - Feature plans (protected from overwrites)
@@ -178,6 +183,7 @@ Or use the reflect command for instruction improvements:
 - [x] **Phase 1.6** - Outline sidebar with section management (2026-01-26)
 - [x] **Phase 1.6b** - Editor ↔ sidebar sync with database wiring (2026-01-27)
 - [x] **Phase 1.7** - Annotations (task, comment, reference) (2026-01-29)
+- [x] **Phase 1.8** - Zotero citation integration (2026-01-29)
 
 ## Phase 1 Verification
 
@@ -192,3 +198,6 @@ Or use the reflect command for instruction improvements:
 - [x] Themes switch correctly
 - [x] Drag-drop reordering with hierarchy constraints
 - [x] Section metadata (status, tags, word goals) persists
+- [ ] /cite command opens citation search (requires Zotero + BBT)
+- [ ] Citations render as formatted inline text (Author, Year)
+- [ ] Bibliography section auto-generates from citations

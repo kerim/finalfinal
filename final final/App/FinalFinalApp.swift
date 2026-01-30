@@ -8,11 +8,13 @@ import SwiftUI
 @main
 struct FinalFinalApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+    @State private var versionHistoryCoordinator = VersionHistoryCoordinator()
 
     var body: some Scene {
         WindowGroup {
             ContentView()
                 .environment(ThemeManager.shared)
+                .environment(versionHistoryCoordinator)
         }
         .commands {
             FileCommands()
@@ -27,5 +29,12 @@ struct FinalFinalApp: App {
             PreferencesView()
                 .environment(ThemeManager.shared)
         }
+
+        Window("Version History", id: "version-history") {
+            VersionHistoryWindow()
+                .environment(ThemeManager.shared)
+                .environment(versionHistoryCoordinator)
+        }
+        .defaultSize(width: 1200, height: 800)
     }
 }

@@ -9,6 +9,9 @@
 import SwiftUI
 import WebKit
 
+// Shared configuration for localStorage persistence across editor toggles
+private let sharedDataStore = WKWebsiteDataStore.default()
+
 struct CodeMirrorEditor: NSViewRepresentable {
     @Binding var content: String
     @Binding var cursorPositionToRestore: CursorPosition?
@@ -21,6 +24,7 @@ struct CodeMirrorEditor: NSViewRepresentable {
 
     func makeNSView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
+        configuration.websiteDataStore = sharedDataStore  // Persist localStorage across editor toggles
         configuration.setURLSchemeHandler(EditorSchemeHandler(), forURLScheme: "editor")
 
         // === Error handler script to capture JS errors ===

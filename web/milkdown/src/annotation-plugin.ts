@@ -176,8 +176,11 @@ const annotationNode = $node('annotation', () => ({
 
 // NodeView for custom rendering with non-editable marker
 // This allows the marker to be completely non-editable while text is editable
-const annotationNodeView = $view(annotationNode, () => (ctx: Ctx) => {
+// NOTE: $view expects (ctx) => NodeViewConstructor, NOT () => (ctx) => NodeViewConstructor
+const annotationNodeView = $view(annotationNode, (ctx: Ctx) => {
+  console.log('[AnnotationNodeView] FACTORY CALLED');
   return (node, view, getPos) => {
+    console.log('[AnnotationNodeView] VIEW CREATED for node:', node.attrs.type);
     const { type, isCompleted } = node.attrs as AnnotationAttrs;
 
     // Create the wrapper span
@@ -208,11 +211,17 @@ const annotationNodeView = $view(annotationNode, () => (ctx: Ctx) => {
         e.stopPropagation();
         const pos = typeof getPos === 'function' ? getPos() : null;
         if (pos !== null && pos !== undefined) {
-          const tr = view.state.tr.setNodeMarkup(pos, undefined, {
-            ...node.attrs,
-            isCompleted: !isCompleted,
-          });
-          view.dispatch(tr);
+          // Get CURRENT node state at click time (not stale closure value)
+          const currentNode = view.state.doc.nodeAt(pos);
+          if (currentNode && currentNode.type.name === 'annotation') {
+            const currentCompleted = currentNode.attrs.isCompleted;
+            console.log('[AnnotationNodeView] Toggle clicked, current:', currentCompleted, '-> new:', !currentCompleted);
+            const tr = view.state.tr.setNodeMarkup(pos, undefined, {
+              ...currentNode.attrs,
+              isCompleted: !currentCompleted,
+            });
+            view.dispatch(tr);
+          }
         }
       });
     }
@@ -236,19 +245,25 @@ const annotationNodeView = $view(annotationNode, () => (ctx: Ctx) => {
     dom.dataset.text = initialText;
     dom.title = initialText;
 
-    // Track text changes via MutationObserver to keep tooltip updated
-    const textObserver = new MutationObserver(updateTooltip);
-    textObserver.observe(contentDOM, {
-      childList: true,
-      subtree: true,
-      characterData: true,
-    });
+    // DIAGNOSTIC: Commenting out MutationObserver to test if it causes infinite loop
+    // The tooltip can be updated via update() or on blur instead
+    // const textObserver = new MutationObserver(updateTooltip);
+    // textObserver.observe(contentDOM, {
+    //   childList: true,
+    //   subtree: true,
+    //   characterData: true,
+    // });
+    const textObserver = { disconnect: () => {} }; // Stub for destroy()
 
     return {
       dom,
       contentDOM,
       update: (updatedNode) => {
-        if (updatedNode.type.name !== 'annotation') return false;
+        console.log('[AnnotationNodeView] update() called, type:', updatedNode.type.name);
+        if (updatedNode.type.name !== 'annotation') {
+          console.log('[AnnotationNodeView] update() returning FALSE - type mismatch');
+          return false;
+        }
 
         // Update attributes
         const newAttrs = updatedNode.attrs as AnnotationAttrs;
@@ -267,13 +282,29 @@ const annotationNodeView = $view(annotationNode, () => (ctx: Ctx) => {
         }
         markerSpan.textContent = newMarker;
 
-        // Update tooltip
-        updateTooltip();
+        // Skip tooltip update during update() - let MutationObserver handle it
+        // This prevents potential DOM modification during ProseMirror's update cycle
+        // updateTooltip();
 
+        console.log('[AnnotationNodeView] update() returning TRUE');
         return true;
       },
       destroy: () => {
         textObserver.disconnect();
+      },
+      // Tell ProseMirror to ignore mutations we make to the wrapper DOM
+      // (tooltip updates via MutationObserver). Only content changes in contentDOM matter.
+      ignoreMutation: (mutation: MutationRecord) => {
+        // Ignore attribute changes on the wrapper (our tooltip updates)
+        if (mutation.type === 'attributes' && mutation.target === dom) {
+          return true;
+        }
+        // Ignore changes to the marker span (non-editable)
+        if (markerSpan.contains(mutation.target as Node)) {
+          return true;
+        }
+        // Let ProseMirror handle contentDOM changes normally
+        return false;
       },
     };
   };

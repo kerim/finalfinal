@@ -71,7 +71,8 @@ class SectionReconciler {
         }
 
         // Unmatched DB sections were deleted from markdown
-        for section in sortedDB where !matchedDBIds.contains(section.id) {
+        // EXCEPT bibliography sections which are managed separately by BibliographySyncService
+        for section in sortedDB where !matchedDBIds.contains(section.id) && !section.isBibliography {
             changes.append(.delete(id: section.id))
         }
 

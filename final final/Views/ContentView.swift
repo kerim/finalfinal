@@ -18,14 +18,22 @@ struct CursorPosition: Equatable {
 // swiftlint:disable:next type_body_length
 struct ContentView: View {
     @Environment(ThemeManager.self) private var themeManager
+    @Environment(VersionHistoryCoordinator.self) private var versionHistoryCoordinator
+    @Environment(\.openWindow) private var openWindow
     @State private var editorState = EditorViewState()
     @State private var cursorPositionToRestore: CursorPosition?
     @State private var sectionSyncService = SectionSyncService()
     @State private var annotationSyncService = AnnotationSyncService()
+    @State private var bibliographySyncService = BibliographySyncService()
+    @State private var autoBackupService = AutoBackupService()
 
     /// Integrity alert state
     @State private var integrityReport: IntegrityReport?
     @State private var pendingProjectURL: URL?
+
+    /// Version history dialog state
+    @State private var showSaveVersionDialog = false
+    @State private var saveVersionName = ""
 
     /// Use the shared DocumentManager for project lifecycle
     private var documentManager: DocumentManager { DocumentManager.shared }
@@ -178,6 +186,21 @@ Use this content to verify that:
                     integrityReport = report
                 }
             )
+            .withVersionNotifications(
+                onSaveVersion: { showSaveVersionDialog = true },
+                onShowHistory: {
+                    // Prepare coordinator with current state before opening window
+                    if let db = documentManager.projectDatabase,
+                       let pid = documentManager.projectId {
+                        versionHistoryCoordinator.prepareForOpen(
+                            database: db,
+                            projectId: pid,
+                            sections: editorState.sections
+                        )
+                        openWindow(id: "version-history")
+                    }
+                }
+            )
             .integrityAlert(
                 report: $integrityReport,
                 isDemoProject: pendingProjectURL.map { documentManager.isDemoProject(at: $0) } ?? false,
@@ -194,6 +217,17 @@ Use this content to verify that:
                     handleIntegrityCancel()
                 }
             )
+            .alert("Save Version", isPresented: $showSaveVersionDialog) {
+                TextField("Version name", text: $saveVersionName)
+                Button("Cancel", role: .cancel) {
+                    saveVersionName = ""
+                }
+                Button("Save") {
+                    Task { await handleSaveVersion() }
+                }
+            } message: {
+                Text("Enter a name for this version:")
+            }
     }
 
     @ViewBuilder
@@ -212,6 +246,20 @@ Use this content to verify that:
             guard editorState.contentState == .idle else { return }
             sectionSyncService.contentChanged(newValue, zoomedIds: editorState.zoomedSectionIds)
             annotationSyncService.contentChanged(newValue)
+
+            // Check for citation changes and update bibliography if needed
+            if let projectId = documentManager.projectId {
+                let citekeys = BibliographySyncService.extractCitekeys(from: newValue)
+                if !citekeys.isEmpty {
+                    bibliographySyncService.checkAndUpdateBibliography(
+                        currentCitekeys: citekeys,
+                        projectId: projectId
+                    )
+                }
+            }
+
+            // Trigger auto-backup timer on content change
+            autoBackupService.contentDidChange()
         }
         .onChange(of: editorState.zoomedSectionId) { _, newValue in
             sectionSyncService.isContentZoomed = (newValue != nil)
@@ -1082,6 +1130,8 @@ Use this content to verify that:
         // Configure sync services with database
         sectionSyncService.configure(database: db, projectId: pid)
         annotationSyncService.configure(database: db, contentId: cid)
+        bibliographySyncService.configure(database: db, projectId: pid)
+        autoBackupService.configure(database: db, projectId: pid)
 
         // Wire up hierarchy enforcement after sections are updated from database
         // This ensures slash commands that create new headings trigger rebalancing
@@ -1133,6 +1183,25 @@ Use this content to verify that:
             print("[ContentView] Safety net: Demo project has empty content, loading demo content")
             editorState.content = demoContent
             await sectionSyncService.syncNow(demoContent)
+        }
+
+        // Connect to Zotero (just verify it's available - search is on-demand)
+        Task {
+            await connectToZotero()
+        }
+    }
+
+    /// Connect to Zotero (via Better BibTeX) - just verifies availability
+    /// Search happens on-demand via JSON-RPC when user types /cite
+    private func connectToZotero() async {
+        let zotero = ZoteroService.shared
+
+        do {
+            try await zotero.connect()
+            print("[ContentView] Zotero/BBT is available for citation search")
+        } catch {
+            print("[ContentView] Zotero connection failed: \(error.localizedDescription)")
+            // Silent failure - Zotero is optional dependency
         }
     }
 
@@ -1206,6 +1275,8 @@ Use this content to verify that:
         editorState.stopObserving()
         sectionSyncService.cancelPendingSync()
         annotationSyncService.cancelPendingSync()
+        bibliographySyncService.reset()
+        autoBackupService.reset()
 
         // Set flag to prevent polling from overwriting empty content during reset
         editorState.isResettingContent = true
@@ -1217,6 +1288,7 @@ Use this content to verify that:
         editorState.zoomedSectionId = nil
         editorState.fullDocumentBeforeZoom = nil
         editorState.zoomedSectionIds = nil
+        editorState.isCitationLibraryPushed = false
 
         // Configure for new project
         await configureForCurrentProject()
@@ -1227,10 +1299,17 @@ Use this content to verify that:
 
     /// Handle project closed notification
     private func handleProjectClosed() {
+        // Create auto-backup before closing if there are unsaved changes
+        Task {
+            await autoBackupService.projectWillClose()
+        }
+
         // Stop observation FIRST to prevent any further syncs
         editorState.stopObserving()
         sectionSyncService.cancelPendingSync()
         annotationSyncService.cancelPendingSync()
+        bibliographySyncService.reset()
+        autoBackupService.reset()
 
         // Reset zoom state (these don't trigger database writes)
         editorState.zoomedSectionId = nil
@@ -1241,6 +1320,34 @@ Use this content to verify that:
         editorState.sections = []
         editorState.annotations = []
         editorState.content = ""
+    }
+
+    // MARK: - Version History Handlers
+
+    /// Handle save version command (Cmd+Shift+S)
+    private func handleSaveVersion() async {
+        guard let db = documentManager.projectDatabase,
+              let pid = documentManager.projectId else {
+            print("[ContentView] Cannot save version: no project open")
+            return
+        }
+
+        let name = saveVersionName.isEmpty ? nil : saveVersionName
+        let service = SnapshotService(database: db, projectId: pid)
+
+        do {
+            if let versionName = name {
+                let snapshot = try service.createManualSnapshot(name: versionName)
+                print("[ContentView] Created manual snapshot: \(snapshot.displayName)")
+            } else {
+                let snapshot = try service.createAutoSnapshot()
+                print("[ContentView] Created auto snapshot: \(snapshot.id)")
+            }
+        } catch {
+            print("[ContentView] Failed to create snapshot: \(error)")
+        }
+
+        saveVersionName = ""
     }
 
     // MARK: - Integrity Alert Handlers
@@ -1484,6 +1591,21 @@ extension View {
                    let url = notification.userInfo?["url"] as? URL {
                     onIntegrityError(report, url)
                 }
+            }
+    }
+
+    /// Adds version history notification handlers
+    @MainActor
+    func withVersionNotifications(
+        onSaveVersion: @escaping () -> Void,
+        onShowHistory: @escaping () -> Void
+    ) -> some View {
+        self
+            .onReceive(NotificationCenter.default.publisher(for: .saveVersion)) { _ in
+                onSaveVersion()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .showVersionHistory)) { _ in
+                onShowHistory()
             }
     }
 }

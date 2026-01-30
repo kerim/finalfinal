@@ -10,7 +10,13 @@
     "additionalWritePaths": [
       "/Users/niyaro/Library/Developer/Xcode/DerivedData",
       "/Users/niyaro/Library/Caches/org.swift.swiftpm",
-      "/Users/niyaro/Library/Developer/CoreSimulator"
-    ]
+      "/Users/niyaro/Library/Developer/CoreSimulator",
+      "/tmp/claude-501"
+    ],
+    "network": {
+      "allowedHosts": [
+        "registry.npmjs.org"
+      ]
+    }
   }
 }

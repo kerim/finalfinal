@@ -173,6 +173,45 @@ final class ProjectDatabase: Sendable {
             try db.create(index: "annotation_sectionId", on: "annotation", columns: ["sectionId"])
         }
 
+        // Phase 1.8: Bibliography section flag for auto-generated bibliography
+        migrator.registerMigration("v6_bibliography") { db in
+            try db.alter(table: "section") { t in
+                t.add(column: "isBibliography", .boolean).notNull().defaults(to: false)
+            }
+        }
+
+        // Phase 2: Version history (snapshots)
+        migrator.registerMigration("v7_snapshots") { db in
+            try db.create(table: "snapshot") { t in
+                t.primaryKey("id", .text)
+                t.column("projectId", .text).notNull()
+                    .references("project", onDelete: .cascade)
+                t.column("name", .text)  // NULL for auto-backups
+                t.column("createdAt", .datetime).notNull()
+                t.column("isAutomatic", .boolean).notNull()
+                t.column("previewMarkdown", .text).notNull()
+            }
+
+            try db.create(index: "snapshot_createdAt", on: "snapshot", columns: ["createdAt"])
+            try db.create(index: "snapshot_projectId", on: "snapshot", columns: ["projectId"])
+
+            try db.create(table: "snapshotSection") { t in
+                t.primaryKey("id", .text)
+                t.column("snapshotId", .text).notNull()
+                    .references("snapshot", onDelete: .cascade)
+                t.column("originalSectionId", .text)  // Plain TEXT, no FK (sections can be deleted)
+                t.column("title", .text).notNull()
+                t.column("markdownContent", .text).notNull()
+                t.column("headerLevel", .integer).notNull()
+                t.column("sortOrder", .integer).notNull()
+                t.column("status", .text)
+                t.column("tags", .text).notNull().defaults(to: "[]")
+                t.column("wordGoal", .integer)
+            }
+
+            try db.create(index: "snapshotSection_snapshotId", on: "snapshotSection", columns: ["snapshotId"])
+        }
+
         try migrator.migrate(dbWriter)
     }
 
