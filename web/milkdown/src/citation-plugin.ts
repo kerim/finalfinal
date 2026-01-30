@@ -332,6 +332,256 @@ function parseEditedCitation(text: string): {
   return { citekeys, locators, prefix, suffix, suppressAuthor };
 }
 
+// Citation edit popup state (module-level singleton)
+let editPopup: HTMLElement | null = null;
+let editPopupInput: HTMLInputElement | null = null;
+let editPopupPreview: HTMLElement | null = null;
+let editingNodePos: number | null = null;
+let editingView: EditorView | null = null;
+let editPopupBlurTimeout: ReturnType<typeof setTimeout> | null = null;
+
+// Import EditorView type for popup functions
+import type { EditorView } from '@milkdown/kit/prose/view';
+
+// Create the edit popup structure (singleton, reused)
+function createEditPopup(): HTMLElement {
+  if (editPopup) return editPopup;
+
+  // Create popup container
+  const popup = document.createElement('div');
+  popup.className = 'ff-citation-edit-popup';
+  popup.style.cssText = `
+    position: fixed;
+    z-index: 10000;
+    background: var(--bg-primary, #fff);
+    border: 1px solid var(--border-color, #ccc);
+    border-radius: 6px;
+    padding: 8px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    min-width: 280px;
+    display: none;
+  `;
+
+  // Create input element
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'ff-citation-edit-input';
+  input.spellcheck = false;
+  input.style.cssText = `
+    width: 100%;
+    padding: 6px 8px;
+    border: 1px solid var(--border-color, #ccc);
+    border-radius: 4px;
+    font-family: monospace;
+    font-size: 13px;
+    background: var(--bg-secondary, #f5f5f5);
+    color: var(--text-primary, #333);
+    box-sizing: border-box;
+  `;
+
+  // Create preview element
+  const preview = document.createElement('div');
+  preview.className = 'ff-citation-edit-preview';
+  preview.style.cssText = `
+    margin-top: 6px;
+    padding: 6px 8px;
+    background: var(--bg-tertiary, #eee);
+    border-radius: 4px;
+    font-size: 13px;
+    color: var(--text-secondary, #666);
+  `;
+
+  // Create hint element
+  const hint = document.createElement('div');
+  hint.className = 'ff-citation-edit-hint';
+  hint.textContent = 'Enter to save • Escape to cancel';
+  hint.style.cssText = `
+    margin-top: 6px;
+    font-size: 11px;
+    color: var(--text-tertiary, #999);
+    text-align: center;
+  `;
+
+  // Assemble popup
+  popup.appendChild(input);
+  popup.appendChild(preview);
+  popup.appendChild(hint);
+
+  // Event handlers
+  input.addEventListener('input', () => {
+    updateEditPreview();
+  });
+
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      commitEdit(input.value);
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      cancelEdit();
+    }
+  });
+
+  input.addEventListener('blur', () => {
+    // Delay to allow click-through to other citations
+    editPopupBlurTimeout = setTimeout(() => {
+      if (editPopup?.style.display !== 'none') {
+        commitEdit(input.value);
+      }
+    }, 150);
+  });
+
+  input.addEventListener('focus', () => {
+    // Cancel any pending blur commit if we refocused
+    if (editPopupBlurTimeout) {
+      clearTimeout(editPopupBlurTimeout);
+      editPopupBlurTimeout = null;
+    }
+  });
+
+  editPopup = popup;
+  editPopupInput = input;
+  editPopupPreview = preview;
+
+  document.body.appendChild(popup);
+  return popup;
+}
+
+// Update preview based on current input
+function updateEditPreview(): void {
+  if (!editPopupInput || !editPopupPreview) return;
+
+  const text = editPopupInput.value;
+  const parsed = parseEditedCitation(text);
+
+  if (parsed && parsed.citekeys.length > 0) {
+    const engine = getCiteprocEngine();
+    const allResolved = parsed.citekeys.every(k => engine.hasItem(k));
+
+    if (allResolved) {
+      try {
+        const formatted = engine.formatCitation(parsed.citekeys, {
+          suppressAuthor: parsed.suppressAuthor,
+          locator: parsed.locators[0] || undefined,
+          prefix: parsed.prefix,
+          suffix: parsed.suffix,
+        });
+        editPopupPreview.textContent = formatted;
+        editPopupPreview.style.color = 'var(--text-secondary, #666)';
+      } catch (e) {
+        editPopupPreview.textContent = `(${parsed.citekeys.join('; ')})`;
+        editPopupPreview.style.color = 'var(--text-secondary, #666)';
+      }
+    } else {
+      // Show unresolved keys with ?
+      const display = parsed.citekeys.map(k =>
+        engine.hasItem(k) ? engine.getShortCitation(k) : `${k}?`
+      ).join('; ');
+      editPopupPreview.textContent = `(${display})`;
+      editPopupPreview.style.color = 'var(--warning-color, #c9a227)';
+    }
+  } else {
+    editPopupPreview.textContent = 'Invalid citation syntax';
+    editPopupPreview.style.color = 'var(--error-color, #c00)';
+  }
+}
+
+// Show the citation edit popup
+function showCitationEditPopup(pos: number, view: EditorView, attrs: CitationAttrs): void {
+  console.log('[CitationEditPopup] showCitationEditPopup called, pos:', pos);
+
+  // If popup already open, commit current edit first
+  if (editingNodePos !== null && editingView && editPopupInput) {
+    commitEdit(editPopupInput.value);
+  }
+
+  // Store editing context
+  editingNodePos = pos;
+  editingView = view;
+
+  // Create popup if needed
+  const popup = createEditPopup();
+  const input = editPopupInput!;
+
+  // Get raw syntax
+  const rawSyntax = attrs.rawSyntax || serializeCitation(attrs);
+
+  // Position popup below the citation
+  const coords = view.coordsAtPos(pos);
+  popup.style.left = `${coords.left}px`;
+  popup.style.top = `${coords.bottom + 4}px`;
+
+  // Populate and show
+  input.value = rawSyntax;
+  popup.style.display = 'block';
+
+  // Update preview
+  updateEditPreview();
+
+  // Focus and select all
+  input.focus();
+  input.select();
+}
+
+// Commit the edit
+function commitEdit(newSyntax: string): void {
+  console.log('[CitationEditPopup] commitEdit called with:', newSyntax);
+
+  const pos = editingNodePos;
+  const view = editingView;
+
+  if (pos === null || !view) {
+    hideEditPopup();
+    return;
+  }
+
+  // Parse the edited syntax
+  const parsed = parseEditedCitation(newSyntax);
+
+  if (parsed && parsed.citekeys.length > 0) {
+    // Verify node still exists at position
+    const currentNode = view.state.doc.nodeAt(pos);
+    if (currentNode && currentNode.type.name === 'citation') {
+      console.log('[CitationEditPopup] Updating citation attrs:', parsed.citekeys);
+      const tr = view.state.tr.setNodeMarkup(pos, undefined, {
+        citekeys: parsed.citekeys.join(','),
+        locators: JSON.stringify(parsed.locators),
+        prefix: parsed.prefix,
+        suffix: parsed.suffix,
+        suppressAuthor: parsed.suppressAuthor,
+        rawSyntax: newSyntax.trim(),
+      });
+      view.dispatch(tr);
+    }
+  }
+
+  hideEditPopup();
+  // Refocus editor
+  view.focus();
+}
+
+// Cancel the edit
+function cancelEdit(): void {
+  console.log('[CitationEditPopup] cancelEdit called');
+  const view = editingView;
+  hideEditPopup();
+  // Refocus editor
+  view?.focus();
+}
+
+// Hide the popup and clear state
+function hideEditPopup(): void {
+  if (editPopup) {
+    editPopup.style.display = 'none';
+  }
+  if (editPopupBlurTimeout) {
+    clearTimeout(editPopupBlurTimeout);
+    editPopupBlurTimeout = null;
+  }
+  editingNodePos = null;
+  editingView = null;
+}
+
 // NodeView for custom rendering with formatted citation display
 // This must be in the same file as citationNode to maintain atom identity with $view
 // NOTE: $view expects (ctx) => NodeViewConstructor, NOT () => (ctx) => NodeViewConstructor
@@ -342,20 +592,12 @@ const citationNodeView = $view(citationNode, (ctx: Ctx) => {
     const attrs = node.attrs as CitationAttrs;
     // NOTE: citekeys is computed fresh inside updateDisplay() to avoid stale closure
 
-    // State
-    let isEditMode = false;
-    let documentClickHandler: ((e: MouseEvent) => void) | null = null;
-
     // Create DOM structure
     const dom = document.createElement('span');
     dom.className = 'ff-citation';
 
     // Update display content
     const updateDisplay = () => {
-      if (isEditMode) {
-        return; // Don't update while editing
-      }
-
       // Compute citekeys fresh from current attrs (not stale closure)
       const citekeys = attrs.citekeys.split(',').filter(k => k.trim());
 
@@ -420,103 +662,13 @@ const citationNodeView = $view(citationNode, (ctx: Ctx) => {
       dom.dataset.rawsyntax = attrs.rawSyntax;
     };
 
-    // Enter edit mode
-    const enterEditMode = () => {
-      console.log('[CitationNodeView] enterEditMode() called');
-      if (isEditMode) return;
-      isEditMode = true;
-
-      // Show raw syntax
-      const rawSyntax = attrs.rawSyntax || serializeCitation(attrs);
-      dom.textContent = rawSyntax;
-      dom.className = 'ff-citation ff-citation-editing';
-      dom.contentEditable = 'true';
-      dom.focus();
-
-      // Select all text
-      const range = document.createRange();
-      range.selectNodeContents(dom);
-      const sel = window.getSelection();
-      sel?.removeAllRanges();
-      sel?.addRange(range);
-
-      // Add document listener to catch clicks outside
-      // (blur events unreliable in ProseMirror NodeViews)
-      const handler = (e: MouseEvent) => {
-        if (!dom.contains(e.target as Node)) {
-          exitEditMode();
-        }
-      };
-      documentClickHandler = handler;
-      // setTimeout(0) to avoid catching the entering click
-      setTimeout(() => {
-        document.addEventListener('mousedown', handler, true);
-      }, 0);
-    };
-
-    // Exit edit mode and parse changes
-    const exitEditMode = () => {
-      console.log('[CitationNodeView] exitEditMode() called, isEditMode:', isEditMode);
-      if (!isEditMode) return;
-      isEditMode = false;
-
-      // Remove document listener
-      if (documentClickHandler) {
-        document.removeEventListener('mousedown', documentClickHandler, true);
-        documentClickHandler = null;
-      }
-
-      dom.contentEditable = 'false';
-
-      const newText = dom.textContent || '';
-
-      // Parse the edited text
-      const parsed = parseEditedCitation(newText);
-      if (parsed && parsed.citekeys.length > 0) {
-        // Update node with new attributes
-        const pos = typeof getPos === 'function' ? getPos() : null;
-        if (pos !== null && pos !== undefined) {
-          // Safety check: verify node still exists (may have been deleted while editing)
-          const currentNode = view.state.doc.nodeAt(pos);
-          if (currentNode && currentNode.type.name === 'citation') {
-            console.log('[CitationNodeView] exitEditMode updating attrs:', parsed.citekeys);
-            const tr = view.state.tr.setNodeMarkup(pos, undefined, {
-              citekeys: parsed.citekeys.join(','),
-              locators: JSON.stringify(parsed.locators),
-              prefix: parsed.prefix,
-              suffix: parsed.suffix,
-              suppressAuthor: parsed.suppressAuthor,
-              rawSyntax: newText.trim(),
-            });
-            view.dispatch(tr);
-          }
-        }
-      }
-
-      updateDisplay();
-    };
-
-    // Click handler
+    // Click handler - open popup
     dom.addEventListener('click', (e) => {
       e.preventDefault();
       e.stopPropagation();
-
-      if (!isEditMode) {
-        enterEditMode();
-      }
-    });
-
-    // Blur handler
-    dom.addEventListener('blur', () => {
-      exitEditMode();
-    });
-
-    // Keyboard handler
-    dom.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' || e.key === 'Escape') {
-        e.preventDefault();
-        e.stopPropagation();
-        dom.blur();
+      const pos = typeof getPos === 'function' ? getPos() : null;
+      if (pos !== null && pos !== undefined) {
+        showCitationEditPopup(pos, view, node.attrs as CitationAttrs);
       }
     });
 
@@ -537,23 +689,12 @@ const citationNodeView = $view(citationNode, (ctx: Ctx) => {
         return true;
       },
       destroy: () => {
-        // Clean up document listener if destroyed while editing
-        if (documentClickHandler) {
-          document.removeEventListener('mousedown', documentClickHandler, true);
-          documentClickHandler = null;
-        }
+        // Nothing to clean up - popup is singleton
       },
-      // Prevent ProseMirror from handling selection inside
-      stopEvent: (event: Event) => {
-        if (isEditMode) {
-          return true; // Let us handle events in edit mode
-        }
-        return false;
-      },
-      // Ignore selection changes while editing
-      ignoreMutation: (mutation: MutationRecord) => {
-        return isEditMode;
-      },
+      // Let ProseMirror handle events normally (no edit mode)
+      stopEvent: () => false,
+      // Ignore mutations to this node
+      ignoreMutation: () => true,
     };
   };
 });
