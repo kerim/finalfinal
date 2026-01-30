@@ -41,6 +41,18 @@ struct FileCommands: Commands {
                 NotificationCenter.default.post(name: .saveProject, object: nil)
             }
             .keyboardShortcut("s", modifiers: .command)
+
+            Divider()
+
+            Button("Save Version...") {
+                NotificationCenter.default.post(name: .saveVersion, object: nil)
+            }
+            .keyboardShortcut("s", modifiers: [.command, .shift])
+
+            Button("Version History...") {
+                NotificationCenter.default.post(name: .showVersionHistory, object: nil)
+            }
+            .keyboardShortcut("v", modifiers: [.command, .option])
         }
 
         CommandGroup(replacing: .importExport) {
@@ -117,6 +129,12 @@ extension Notification.Name {
     static let projectDidCreate = Notification.Name("projectDidCreate")
     /// Posted when a project fails integrity check (userInfo: "report" -> IntegrityReport, "url" -> URL)
     static let projectIntegrityError = Notification.Name("projectIntegrityError")
+
+    // Version history notifications
+    /// Posted when user wants to save a named version (Cmd+Shift+S)
+    static let saveVersion = Notification.Name("saveVersion")
+    /// Posted when user wants to show version history (Cmd+Option+V)
+    static let showVersionHistory = Notification.Name("showVersionHistory")
 }
 
 // MARK: - File Operation Handlers
