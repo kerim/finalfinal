@@ -180,7 +180,7 @@ struct VersionHistoryWindow: View {
                 Divider()
 
                 // Right: Selected backup (half of remaining)
-                if let _ = selectedSnapshot {
+                if selectedSnapshot != nil {
                     DocumentPreviewView(
                         title: "Selected Backup",
                         sections: selectedSnapshotSections.map { SnapshotSectionViewModel(from: $0) },

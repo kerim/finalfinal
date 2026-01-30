@@ -258,14 +258,18 @@ struct SectionPreviewRow: View {
     @ViewBuilder
     private var restoreButtons: some View {
         HStack(spacing: 4) {
-            Button(action: { onRestore(.replace) }) {
+            Button {
+                onRestore(.replace)
+            } label: {
                 Label("Replace", systemImage: "arrow.uturn.backward")
                     .font(.caption)
             }
             .buttonStyle(.bordered)
             .help("Replace current section with this backup")
 
-            Button(action: { onRestore(.duplicate) }) {
+            Button {
+                onRestore(.duplicate)
+            } label: {
                 Label("Insert", systemImage: "doc.on.doc")
                     .font(.caption)
             }
