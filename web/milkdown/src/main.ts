@@ -21,7 +21,7 @@ import { citationPlugin, CSLItem } from './citation-plugin';
 // Debug: Log plugin array contents at import time
 console.log('[Milkdown] citationPlugin imported, length:', citationPlugin.length);
 console.log('[Milkdown] citationPlugin contents:', citationPlugin.map(p => typeof p === 'function' ? p.name || 'anonymous' : p));
-import { setCitationLibrary, showCitationSearchPopup, hideSearchPopup, isSearchPopupVisible, getCitationLibrarySize, searchCitationsCallback } from './citation-search';
+import { setCitationLibrary, showCitationSearchPopup, hideSearchPopup, isSearchPopupVisible, getCitationLibrarySize, searchCitationsCallback, restoreCitationLibrary } from './citation-search';
 import { getCiteprocEngine } from './citeproc-engine';
 import { textToMdOffset, mdToTextOffset } from './cursor-mapping';
 import './styles.css';
@@ -590,6 +590,9 @@ async function initEditor() {
       .create();
 
     root.appendChild(editorInstance.ctx.get(editorViewCtx).dom);
+
+    // Restore citation library from localStorage (survives editor toggle)
+    restoreCitationLibrary();
   } catch (e) {
     console.error('[Milkdown] Init failed:', e);
     throw e;

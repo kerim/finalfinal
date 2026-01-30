@@ -9,6 +9,9 @@
 import SwiftUI
 import WebKit
 
+// Shared configuration for localStorage persistence across editor toggles
+private let sharedDataStore = WKWebsiteDataStore.default()
+
 struct MilkdownEditor: NSViewRepresentable {
     @Binding var content: String
     @Binding var focusModeEnabled: Bool
@@ -22,6 +25,7 @@ struct MilkdownEditor: NSViewRepresentable {
 
     func makeNSView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
+        configuration.websiteDataStore = sharedDataStore  // Persist localStorage across editor toggles
         configuration.setURLSchemeHandler(EditorSchemeHandler(), forURLScheme: "editor")
 
         // === PHASE 4: Add error handler script to capture JS errors ===

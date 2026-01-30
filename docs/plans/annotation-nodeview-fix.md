@@ -6,6 +6,7 @@
 |-------|--------|-------|
 | Annotation toggle only works once | ✅ FIXED | Reading current node state at click time |
 | Citation stays in edit mode | ✅ FIXED | Document-level mousedown listener bypasses unreliable blur |
+| Citation data lost after editor toggle | ✅ FIXED | localStorage caching + shared WKWebsiteDataStore |
 
 ---
 
@@ -122,6 +123,90 @@ destroy: () => {
 |------|---------|
 | `web/milkdown/src/annotation-plugin.ts` | Fixed click handler to read current node state |
 | `web/milkdown/src/citation-plugin.ts` | Added document-level mousedown listener to exit edit mode reliably |
+
+---
+
+---
+
+## Issue 3: Citation Data Lost After Editor Toggle (FIXED)
+
+### Root Cause
+When toggling between Milkdown and CodeMirror (Cmd+/):
+1. The WKWebView for Milkdown is **destroyed and recreated**
+2. The citeproc engine singleton and `cachedItems` array live in JavaScript memory
+3. When the new Milkdown WebView loads, these are both empty
+4. Citations try to render against an empty engine → shows unresolved `(citekey?)` in red
+
+### Solution Applied
+
+**Part 1: Swift - Shared Persistent Data Store**
+
+Both editors now share the same `WKWebsiteDataStore` for localStorage persistence:
+
+In `MilkdownEditor.swift` and `CodeMirrorEditor.swift`:
+```swift
+// Module level
+private let sharedDataStore = WKWebsiteDataStore.default()
+
+// In makeNSView()
+let configuration = WKWebViewConfiguration()
+configuration.websiteDataStore = sharedDataStore
+```
+
+**Part 2: JavaScript - localStorage Caching**
+
+In `citation-search.ts`:
+```typescript
+const CITATION_CACHE_KEY = 'ff-citation-library';
+
+// setCitationLibrary() now persists to localStorage
+export function setCitationLibrary(items: CSLItem[]): void {
+  cachedItems = items;
+  try {
+    localStorage.setItem(CITATION_CACHE_KEY, JSON.stringify(items));
+  } catch (e) {
+    console.warn('[Citation Search] Failed to cache library:', e);
+  }
+}
+
+// searchCitationsCallback() also persists accumulated items
+
+// New restoration function
+export function restoreCitationLibrary(): void {
+  try {
+    const stored = localStorage.getItem(CITATION_CACHE_KEY);
+    if (stored) {
+      const items = JSON.parse(stored) as CSLItem[];
+      cachedItems = items;
+      getCiteprocEngine().setBibliography(items);
+    }
+  } catch (e) {
+    console.warn('[Citation Search] Failed to restore library:', e);
+  }
+}
+```
+
+In `main.ts`, `restoreCitationLibrary()` is called at end of `initEditor()`.
+
+### Verification
+- Insert citation via `/cite` → shows `(Author Year)`
+- Press Cmd+/ to switch to CodeMirror
+- Press Cmd+/ to switch back to Milkdown
+- Citation still shows `(Author Year)` ✅
+- Quit and reopen app → citation still resolves ✅
+
+---
+
+## Files Modified
+
+| File | Changes |
+|------|---------|
+| `web/milkdown/src/annotation-plugin.ts` | Fixed click handler to read current node state |
+| `web/milkdown/src/citation-plugin.ts` | Added document-level mousedown listener to exit edit mode reliably |
+| `final final/Editors/MilkdownEditor.swift` | Added shared WKWebsiteDataStore for localStorage persistence |
+| `final final/Editors/CodeMirrorEditor.swift` | Added shared WKWebsiteDataStore for localStorage persistence |
+| `web/milkdown/src/citation-search.ts` | Added localStorage caching and restoration |
+| `web/milkdown/src/main.ts` | Import and call `restoreCitationLibrary()` on init |
 
 ---
 

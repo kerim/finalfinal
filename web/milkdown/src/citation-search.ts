@@ -6,6 +6,9 @@ import { EditorView } from '@milkdown/kit/prose/view';
 import { Selection } from '@milkdown/kit/prose/state';
 import { CSLItem, getCiteprocEngine } from './citeproc-engine';
 
+// localStorage key for citation library persistence across editor toggles
+const CITATION_CACHE_KEY = 'ff-citation-library';
+
 // Search popup state
 let searchPopup: HTMLElement | null = null;
 let selectedIndex = 0;
@@ -25,6 +28,12 @@ let isSearching = false;
 // Initialize search with library items (legacy - now just caches items for citeproc)
 export function setCitationLibrary(items: CSLItem[]): void {
   cachedItems = items;
+  // Persist to localStorage for restoration after editor toggle
+  try {
+    localStorage.setItem(CITATION_CACHE_KEY, JSON.stringify(items));
+  } catch (e) {
+    console.warn('[Citation Search] Failed to cache library:', e);
+  }
 }
 
 // Search citations via Swift bridge (calls Zotero JSON-RPC)
@@ -63,11 +72,33 @@ export function searchCitationsCallback(items: CSLItem[]): void {
 
     // Update citeproc engine with all cached items so citations can render
     getCiteprocEngine().setBibliography(cachedItems);
+
+    // Persist accumulated items to localStorage
+    try {
+      localStorage.setItem(CITATION_CACHE_KEY, JSON.stringify(cachedItems));
+    } catch (e) {
+      console.warn('[Citation Search] Failed to cache library:', e);
+    }
   } catch (error) {
     isSearching = false;
     console.error('[Citation Search] Callback error:', error);
     filteredResults = [];
     updateResultsDisplay([]);
+  }
+}
+
+// Restore citation library from localStorage (called on editor init)
+export function restoreCitationLibrary(): void {
+  try {
+    const stored = localStorage.getItem(CITATION_CACHE_KEY);
+    if (stored) {
+      const items = JSON.parse(stored) as CSLItem[];
+      cachedItems = items;
+      getCiteprocEngine().setBibliography(items);
+      console.log('[Citation Search] Restored', items.length, 'cached items from localStorage');
+    }
+  } catch (e) {
+    console.warn('[Citation Search] Failed to restore library:', e);
   }
 }
 
