@@ -1,0 +1,8 @@
+name luaotfload.universal-darwin
+category Package
+revision 57908
+shortdesc universal-darwin files of luaotfload
+containersize 348
+containerchecksum 4dd3c702670e73d04eea57bf563a015a719461d388c496074cbef47b1bcd728b1e33306363057f100f3d50cc29ce9d3ffa471d2948a6352ee5f6140a8b001935
+binfiles arch=universal-darwin size=1
+ bin/universal-darwin/luaotfload-tool

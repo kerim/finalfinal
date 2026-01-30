@@ -1,0 +1,101 @@
+%%
+%% This is file `fontspec.sty',
+%% generated with the docstrip utility.
+%%
+%% The original source files were:
+%%
+%% fontspec.dtx  (with options: `fontspec,load')
+%% fontspec-code-vars.dtx  (with options: `options')
+%% fontspec-code-msg.dtx  (with options: `options')
+%% fontspec-code-opening.dtx  (with options: `options')
+%% fontspec-code-load.dtx  (with options: `fontspec,load')
+%% ------------------------------------------------
+%% The FONTSPEC package  <latex3.github.io/fontspec>
+%% ------------------------------------------------
+%% Copyright  2022-2025  The LaTeX project,  LPPL "maintainer"
+%% Copyright  2004-2022  Will Robertson
+%% Copyright  2009-2013  Khaled Hosny
+%% ------------------------------------------------
+%% This package is free software and may be redistributed and/or modified under
+%% the conditions of the LaTeX Project Public License, version 1.3c or higher
+%% (your choice): <http://www.latex-project.org/lppl/>.
+%% ------------------------------------------------
+%%^^A%%  fontspec.dtx -- part of FONTSPEC <latex3.github.io/fontspec>
+%%^^A%%  Metadata for the package, including files and versioning
+
+\RequirePackage{xparse}
+\ProvidesExplPackage{fontspec}%
+  {2025/09/29}{2.9g}{Font selection for XeLaTeX and LuaLaTeX}
+
+%%^^A%%  fontspec-code-vars.dtx -- part of FONTSPEC <latex3.github.io/fontspec>
+\bool_new:N \g__fontspec_cfg_bool
+\bool_new:N \g__fontspec_math_bool
+
+%%^^A%%  fontspec-code-msg.dtx -- part of FONTSPEC <latex3.github.io/fontspec>
+\msg_new:nnn {fontspec} {cm-default-obsolete}
+ {
+  The~"cm-default"~package~option~is~obsolete.
+ }
+\msg_new:nnn {fontspec} {enc-obsolete}
+ {
+  The~"#1"~package~option~is~obsolete.~TU~is~the~default~encoding.
+ }
+\msg_new:nnn {fontspec} {math-opt-unknown}
+ {
+  The~ global~ option~ 'math=#1'~ is~ not~ recognised.~ It~ will~ be~ ignored.
+ }
+
+%%^^A%%  fontspec-code-opening.dtx -- part of FONTSPEC <latex3.github.io/fontspec>
+\DeclareKeys
+  {
+    ,math    .bool_gset:N = \g__fontspec_math_bool
+    ,math    .usage:n     =  preamble
+    ,math / unknown .code:n = { } % \msg_warning:nnn {fontspec} {math-opt-unknown} {#1}
+    ,no-math .bool_gset_inverse:N = \g__fontspec_math_bool
+    ,no-math .usage:n             =  preamble
+    ,config  .bool_gset:N = \g__fontspec_cfg_bool
+    ,config  .usage:n     = load
+    ,no-config  .bool_gset_inverse:N = \g__fontspec_cfg_bool
+    ,no-config  .usage:n             = load
+    ,cm-default  .code:n = { \msg_warning:nn  {fontspec} {cm-default-obsolete} }
+    ,euenc       .code:n = { \msg_warning:nnn {fontspec} {enc-obsolete}{euenc} }
+    ,tuenc       .code:n = { \msg_warning:nnn {fontspec} {enc-obsolete}{tuenc} }
+    ,quiet .code:n =
+      {
+        \msg_redirect_module:nnn { fontspec } { warning } { info }
+        \msg_redirect_module:nnn { fontspec } { info } { none }
+      }
+    ,silent .code:n =
+      {
+        \msg_redirect_module:nnn { fontspec } { warning } { none }
+        \msg_redirect_module:nnn { fontspec } { info } { none }
+      }
+    ,verbose .code:n =
+      {
+        \msg_redirect_module:nnn { fontspec } { warning } { warning }
+        \msg_redirect_module:nnn { fontspec } { info } { info }
+      }
+  }
+\SetKeys{config,math}
+\ProcessKeyOptions
+
+%%^^A%%  fontspec-code-load.dtx -- part of FONTSPEC <latex3.github.io/fontspec>
+\sys_if_engine_luatex:T
+  {
+    \RequirePackage{luaotfload}
+    \lua_now:e{require("fontspec")}
+    \RequirePackage{fontspec-luatex}
+    \endinput
+  }
+\sys_if_engine_xetex:T
+  {
+    \RequirePackage{fontspec-xetex}
+    \endinput
+  }
+\msg_new:nnn {fontspec} {cannot-use-pdftex}
+  {
+    The~ fontspec~ package~ requires~ either~ XeTeX~ or~ LuaTeX.\\\\
+    You~ must~ change~ your~ typesetting~ engine~ to,~ e.g.,~
+    "xelatex"~ or~ "lualatex"~ instead~ of~ "latex"~ or~ "pdflatex".
+  }
+\msg_fatal:nn {fontspec} {cannot-use-pdftex}

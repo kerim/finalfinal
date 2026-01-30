@@ -1,0 +1,20 @@
+name kvdefinekeys
+category Package
+revision 53193
+shortdesc Define keys for use in the kvsetkeys package
+longdesc The package provides a macro \kv@define@key (analogous to
+longdesc keyval's \define@key, to define keys for use by kvsetkeys.
+containersize 2092
+containerchecksum 2a03840307805bd6fe30be9c108982bc472912c11c8cec25737ebc4042e48af8fe4f1a76124536874bea8c554f003a9c52b8a72d2f6900bc6872ffef8649c40e
+doccontainersize 296808
+doccontainerchecksum c540045ec1c8bd7fea3000dd0ebc8adac64da7ccc24b0becb9b9c32c9dda6e5e11a77b57bee667bd2ddbddf347bd8af069907e087d543898a92ebaedf3fa4b7c
+srccontainersize 5112
+srccontainerchecksum 0944a3f6f8e8cd8c189767944a74d5dbf09fcccd94cfdd2e67018f4a3542ce2ca4b8b7e3cb440345eb299584707962ed903f2fd8c832fad6cb850b29c7a99af6
+runfiles size=2
+ texmf-dist/tex/generic/kvdefinekeys/kvdefinekeys.sty
+catalogue-contact-bugs https://github.com/ho-tex/kvdefinekeys/issues
+catalogue-contact-repository https://github.com/ho-tex/kvdefinekeys
+catalogue-ctan /macros/latex/contrib/kvdefinekeys
+catalogue-license lppl1.3c
+catalogue-topics keyval
+catalogue-version 1.6

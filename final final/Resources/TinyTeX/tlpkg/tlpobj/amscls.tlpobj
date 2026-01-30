@@ -1,0 +1,35 @@
+name amscls
+category Package
+revision 55378
+shortdesc AMS document classes for LaTeX
+longdesc This bundle contains three AMS classes, amsart (for writing
+longdesc articles for the AMS), amsbook (for books) and amsproc (for
+longdesc proceedings), together with some supporting material. This
+longdesc material forms one branch of what was originally the AMS-LaTeX
+longdesc distribution. The other branch, amsmath, is now maintained and
+longdesc distributed separately. The user documentation can be found in
+longdesc the package amscls-doc.
+containersize 32224
+containerchecksum eb39dc97a860047d764884663a1f541aa95a2d559dd55cb25f6b7c6c46617e6c33fe55a9fdc37b211c613333911df6e260768f43ae9630a208ecc7fb774891e5
+doccontainersize 1072480
+doccontainerchecksum c2e563bd239f36b0db3bdbfe1ccb4a0adec0c22af25b557ed748897a99672f05f36f2bba6e51827c6fdd60b351079809b15c0367d075566c5e48682c23108fe2
+srccontainersize 365984
+srccontainerchecksum 7a96a464f9826a515191174b6e33016c7161c7547ed70ca78cac256cac68b4340a2b3bd9608f79df106c3eb2383b8d6895012a2cc6dee0c76d53d116679f4c6b
+runfiles size=79
+ texmf-dist/bibtex/bst/amscls/amsalpha.bst
+ texmf-dist/bibtex/bst/amscls/amsplain.bst
+ texmf-dist/tex/latex/amscls/amsart.cls
+ texmf-dist/tex/latex/amscls/amsbook.cls
+ texmf-dist/tex/latex/amscls/amsbooka.sty
+ texmf-dist/tex/latex/amscls/amsdtx.cls
+ texmf-dist/tex/latex/amscls/amsldoc.cls
+ texmf-dist/tex/latex/amscls/amsmidx.sty
+ texmf-dist/tex/latex/amscls/amsproc.cls
+ texmf-dist/tex/latex/amscls/amsthm.sty
+ texmf-dist/tex/latex/amscls/upref.sty
+catalogue-also amslatex amscls-doc
+catalogue-contact-home http://www.ams.org/tex/amslatex.html
+catalogue-ctan /macros/latex/required/amscls
+catalogue-license lppl1.3c
+catalogue-topics class maths
+catalogue-version 2.20.6

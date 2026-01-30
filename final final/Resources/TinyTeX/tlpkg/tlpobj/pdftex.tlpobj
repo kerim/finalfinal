@@ -1,0 +1,44 @@
+name pdftex
+category TLCore
+revision 74113
+shortdesc A TeX extension for direct creation of PDF
+longdesc An extension of TeX which can directly generate PDF documents
+longdesc as well as DVI output. All current free TeX distributions
+longdesc including TeX Live, MacTeX and MiKTeX include pdfTeX (Plain
+longdesc TeX) and pdfLaTeX (LaTeX), among many other formats based on
+longdesc the pdfTeX engine.
+depend cm
+depend dehyph
+depend etex
+depend hyph-utf8
+depend hyphen-base
+depend knuth-lib
+depend kpathsea
+depend pdftex.ARCH
+depend plain
+depend tex-ini-files
+execute AddFormat name=etex engine=pdftex patterns=language.def           options="-translate-file=cp227.tcx *etex.ini"           fmttriggers=cm,dehyph,etex,hyph-utf8,hyphen-base,knuth-lib,plain
+execute AddFormat name=pdfetex engine=pdftex patterns=language.def           options="-translate-file=cp227.tcx *pdfetex.ini"           fmttriggers=cm,dehyph,etex,hyph-utf8,hyphen-base,knuth-lib,plain,tex-ini-files
+execute AddFormat name=pdftex engine=pdftex patterns=language.def           options="-translate-file=cp227.tcx *pdfetex.ini"           fmttriggers=cm,dehyph,etex,hyph-utf8,hyphen-base,knuth-lib,plain,tex-ini-files
+execute addMap dummy-space.map
+containersize 39588
+containerchecksum 12150665a45d81682a7d355d02f98f1e9035dd720b81622717eafad2973a504c5f648d50e73c521e2dca984ff69afe2fbe0ac8255912478a7ddf2b568740a225
+doccontainersize 3216692
+doccontainerchecksum 068d430f0c77ca5ab988d43913d394675d5180c0f1a8b5a772881906dd0a0e3c2f464417d4be3ea19fcc8b359d8d42f2d5167535c32c299a1f5c44ad1b462254
+runfiles size=68
+ texmf-dist/fonts/map/dvips/dummy-space/dummy-space.map
+ texmf-dist/fonts/tfm/public/pdftex/dummy-space.tfm
+ texmf-dist/fonts/tfm/public/pdftex/pdftexspace.tfm
+ texmf-dist/fonts/type1/public/pdftex/dummy-space.pfb
+ texmf-dist/fonts/type1/public/pdftex/pdftexspace.pfb
+ texmf-dist/fonts/type1/public/pdftex/pdftexspace.ps
+ texmf-dist/scripts/simpdftex/simpdftex
+ texmf-dist/tex/generic/config/pdftex-dvi.tex
+ texmf-dist/tex/generic/pdftex/glyphtounicode.tex
+ texmf-dist/tex/generic/pdftex/pdfcolor.tex
+catalogue-contact-bugs https://mailman.ntg.nl/mailman/listinfo/ntg-pdftex
+catalogue-contact-home http://www.pdftex.org
+catalogue-contact-repository https://tug.org/svn/pdftex/branches/stable
+catalogue-contact-support https://lists.tug.org/pdftex
+catalogue-license gpl
+catalogue-topics engine

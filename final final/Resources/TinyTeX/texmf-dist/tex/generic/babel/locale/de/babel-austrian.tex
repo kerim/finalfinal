@@ -1,0 +1,19 @@
+% This file is part of babel. For further details see:
+% https://www.ctan.org/pkg/babel
+\ifx\BabelBeforeIni\undefined
+  \PackageError{babel}%
+    {This file is a component of babel and cannot\MessageBreak
+     be loaded directly. I'll stop immediately}%
+    {Just use babel as documented.}%
+  \stop
+\fi
+\BabelBeforeIni{de-AT}{%
+  \BabelDefinitionFile{0}{austrian}{%
+    \PackageWarning{babel}{%
+      The name 'austrian' with the 'ldf' mechanism is\MessageBreak
+      assigned to the old 1901 variant of Austrian German.\MessageBreak
+      For modern Austrian German, use the name 'naustrian'.\MessageBreak
+      Reported}%
+    \def\BabelIniTag{de-AT-1901}}%
+}
+\endinput

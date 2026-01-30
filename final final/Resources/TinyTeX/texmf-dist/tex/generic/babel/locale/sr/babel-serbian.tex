@@ -1,0 +1,19 @@
+% This file is part of babel. For further details see:
+% https://www.ctan.org/pkg/babel
+\ifx\BabelBeforeIni\undefined
+  \PackageError{babel}%
+    {This file is a component of babel and cannot\MessageBreak
+     be loaded directly. I'll stop immediately}%
+    {Just use babel as documented.}%
+  \stop
+\fi
+\BabelBeforeIni{sr}{%
+  \BabelDefinitionFile{0}{serbian}{%
+    \PackageWarning{babel}{%
+      The name 'serbian' with the 'ldf' mechanism is\MessageBreak
+      currently assigned to the Latin script. For\MessageBreak
+      the Cyrillic script, use the name 'serbianc'.\MessageBreak
+      Reported}%
+    \def\BabelIniTag{sr-Latn}}%
+}
+\endinput

@@ -1,0 +1,26 @@
+name epstopdf-pkg
+category Package
+revision 71084
+shortdesc Call epstopdf "on the fly"
+longdesc The package adds support for EPS files in the graphicx package
+longdesc when running under pdfTeX. If an EPS graphic is detected, the
+longdesc package spawns a process to convert the EPS to PDF, using the
+longdesc script epstopdf. This of course requires that shell escape is
+longdesc enabled for the pdfTeX run.
+depend epstopdf
+containersize 4192
+containerchecksum 2d22c7a5a869d3b9590dfe5e776e0ec65bcaeba339704b0fdf4ed4cda9032e307e7a5ad01fd0e7da4ead7aa014b29d12c41dd3c99932f11e665a6ed47da25523
+doccontainersize 354368
+doccontainerchecksum 36688e2f193d128183def792ccd67b5493d79d80656efbf6603538228358dde2bdfd495c7c45a56b260ac3afe2e66f8f9dec3e5d6692bb7ab04a55e714f5ee8c
+srccontainersize 11996
+srccontainerchecksum a2e6cf4ecd3691e3db77e6f8a79cf36b3959a27f0d3be7a322d897975ad01864c04c1aba56427f32a78d8bf07c7218cf027342a239fa9a7fc2205f8c4c815448
+runfiles size=6
+ texmf-dist/tex/latex/epstopdf-pkg/epstopdf-base.sty
+ texmf-dist/tex/latex/epstopdf-pkg/epstopdf.sty
+catalogue-also epstopdf
+catalogue-contact-bugs https://github.com/ho-tex/epstopdf/issues
+catalogue-contact-repository https://github.com/ho-tex/epstopdf
+catalogue-ctan /macros/latex/contrib/epstopdf-pkg
+catalogue-license lppl1.3
+catalogue-topics graphics-epspdf callback
+catalogue-version 2.11

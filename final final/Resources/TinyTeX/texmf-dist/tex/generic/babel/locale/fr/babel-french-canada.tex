@@ -1,0 +1,45 @@
+% This file is part of babel. For further details see:
+% https://www.ctan.org/pkg/babel
+\ifx\BabelBeforeIni\undefined
+  \PackageError{babel}%
+    {This file is a component of babel and cannot\MessageBreak
+     be loaded directly. I'll stop immediately}%
+    {Just use babel as documented.}%
+  \stop
+\fi
+\BabelBeforeIni{fr-CA}{%
+}
+
+\ifcase\bbl@engine\or\or % XeTeX
+
+% Partly based on babel-french, by Daniel Flipo
+\IfBabelIntercharT{punctuation.space}{%
+  \providecommand{\BabelFrenchGuillemetSpace}{%
+    \leavevmode\nobreak\hskip.8\fontdimen2\font
+      plus.3\fontdimen3\font
+      minus.8\fontdimen4\font\relax}%
+  \providecommand{\BabelFrenchColonSpace}{\nobreakspace}%
+%
+  \babelcharclass{\CurrentOption}{colon}{:}%
+  \babelcharclass{\CurrentOption}{leftguillemet}{«}%
+  \babelcharclass{\CurrentOption}{rightguillemet}{»}%
+  \babelcharclass{\CurrentOption}{opening}{([\{}% just make != default
+%
+  \babelinterchar[label=punctuation.space]{\CurrentOption}%
+    {default, rightguillemet}{colon}{\BabelFrenchColonSpace}%
+  \babelinterchar[label=punctuation.space]{\CurrentOption}%
+    {leftguillemet}{default}{\BabelFrenchGuillemetSpace}%
+  \babelinterchar[label=punctuation.space]{\CurrentOption}%
+    {default}{rightguillemet}{\BabelFrenchGuillemetSpace}%
+%
+% Here boundary means essentialy space:
+  \babelinterchar[label=punctuation.space]{\CurrentOption}%
+    {boundary}{colon}{\ifhmode\unskip\nobreak\fi\BabelFrenchColonSpace}%
+  \babelinterchar[label=punctuation.space]{\CurrentOption}%
+    {leftguillemet}{boundary}{\BabelFrenchGuillemetSpace\ignorespaces}%
+  \babelinterchar[label=punctuation.space]{\CurrentOption}%
+    {boundary}{rightguillemet}{\ifhmode\unskip\fi\BabelFrenchGuillemetSpace}%
+}
+
+\fi
+\endinput

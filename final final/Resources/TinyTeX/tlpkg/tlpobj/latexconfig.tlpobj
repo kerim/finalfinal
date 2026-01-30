@@ -1,0 +1,9 @@
+name latexconfig
+category Package
+revision 68923
+shortdesc configuration files for LaTeX-related formats
+containersize 2240
+containerchecksum 22e233cad5742691da573249b3f9cd4ea0c6ccf4e31a757837d710ca863e0cccd089106e523e40fb541255f3795d963273ccdf70211f19ff3caecb30d7fefcbe
+runfiles size=2
+ texmf-dist/tex/latex/latexconfig/epstopdf-sys.cfg
+ texmf-dist/tex/latex/latexconfig/lualatexiniconfig.tex

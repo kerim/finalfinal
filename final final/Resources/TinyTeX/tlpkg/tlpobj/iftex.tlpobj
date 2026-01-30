@@ -1,0 +1,28 @@
+name iftex
+category Package
+revision 73115
+shortdesc Am I running under pdfTeX, XeTeX or LuaTeX?
+longdesc The package, which works both for Plain TeX and for LaTeX,
+longdesc defines the \ifPDFTeX, \ifXeTeX, and \ifLuaTeX conditionals for
+longdesc testing which engine is being used for typesetting. The package
+longdesc also provides the \RequirePDFTeX, \RequireXeTeX, and
+longdesc \RequireLuaTeX commands which throw an error if pdfTeX, XeTeX
+longdesc or LuaTeX (respectively) is not the engine in use.
+containersize 3244
+containerchecksum 39761a9fe27652d444f3ff119c891c25af859b1dc8e8e21419cc44a45443bc8cebd631168b46dbd70853d2b84c88586972c7f471bd0a504d0b6afeec13ad6b7b
+doccontainersize 229360
+doccontainerchecksum ca80b5babff8f78624e2908b55c3f9b9cf4e9f3f3ffa777c965e20f00e8bc71840c694cd50c94042c1cd0037b88e3260f29a57a3b39abbe0b6e498245e86ae5e
+runfiles size=7
+ texmf-dist/tex/generic/iftex/ifetex.sty
+ texmf-dist/tex/generic/iftex/ifluatex.sty
+ texmf-dist/tex/generic/iftex/ifpdf.sty
+ texmf-dist/tex/generic/iftex/iftex.sty
+ texmf-dist/tex/generic/iftex/ifvtex.sty
+ texmf-dist/tex/generic/iftex/ifxetex.sty
+catalogue-also ifetex ifluatex ifpdf ifvtex ifxetex
+catalogue-contact-bugs https://github.com/latex3/iftex/issues
+catalogue-contact-repository https://github.com/latex3/iftex
+catalogue-ctan /macros/generic/iftex
+catalogue-license lppl1.3c
+catalogue-topics env-query macro-gen
+catalogue-version 1.0g

@@ -1,0 +1,22 @@
+name ctablestack
+category Package
+revision 38514
+shortdesc Catcode table stable support
+longdesc This package provides a method for defining category code table
+longdesc stacks in LuaTeX. It builds on code provided by the 2015/10/01
+longdesc release of LaTeX2e (also available as ltluatex.sty for plain
+longdesc users). It is required by the luatexbase package (v1.0 onward)
+longdesc which uses ctablestack to provide a back-compatibility form of
+longdesc this concept.
+containersize 1128
+containerchecksum 3485fbd1bebf80814645c1be3e7358a959637439fa17cbbf7c2478ca73c4312cab82eed2aedb5403dfe94b0cfc09ee3e9c8182c08d3708608a267da235ab30a0
+doccontainersize 151908
+doccontainerchecksum 2c74b9d2aa44b25952307e4593b4a792cb5d98b78619efef82ddfb134ee3da64de87973db30f3e5d5788ce5e6ef138fca2cabc4ed412c97cfa7b3dc6c3ed1060
+srccontainersize 2524
+srccontainerchecksum c39356d4d78cc8121b20e572fe59879541ab533ceab64e68f17a346723aad4f73103df79b1711feb12337e5e2dcb56222b00a9b36ddcbc04fb5e946831340d6d
+runfiles size=1
+ texmf-dist/tex/luatex/ctablestack/ctablestack.sty
+catalogue-ctan /macros/luatex/generic/ctablestack
+catalogue-license lppl1.3
+catalogue-topics luatex
+catalogue-version 1.0

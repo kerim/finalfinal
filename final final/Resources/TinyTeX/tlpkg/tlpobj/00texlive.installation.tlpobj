@@ -1,0 +1,17 @@
+name 00texlive.installation
+category TLCore
+depend opt_autobackup:0
+depend opt_backupdir:tlpkg/backups
+depend opt_create_formats:1
+depend opt_desktop_integration:0
+depend opt_file_assocs:0
+depend opt_generate_updmap:0
+depend opt_install_docfiles:0
+depend opt_install_srcfiles:0
+depend opt_location:https://ctan.math.illinois.edu/systems/texlive/tlnet
+depend opt_post_code:1
+depend opt_sys_bin:/usr/local/bin
+depend opt_sys_info:/usr/local/share/info
+depend opt_sys_man:/usr/local/share/man
+depend opt_w32_multi_user:0
+depend setting_available_architectures:universal-darwin

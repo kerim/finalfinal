@@ -548,3 +548,56 @@ migrator.registerMigration("v2_add_column") { db in
 This is the signature of `eraseDatabaseOnSchemaChange` having wiped the database.
 
 **Recovery:** Data cannot be recovered once wiped. The repair service can recreate structural records (project, content) but original content is lost forever.
+
+---
+
+## XeTeX / PDF Export
+
+### Use -output-driver for Paths with Spaces
+
+**Problem:** When the app bundle path contains spaces (e.g., "final final.app"), xelatex fails with error 32512 when calling xdvipdfmx:
+
+```
+sh: /Users/.../Build/Products/Debug/final: No such file or directory
+```
+
+**Root Cause:** XeTeX internally calls xdvipdfmx via shell without quoting the path. The shell interprets the space as an argument separator:
+
+```
+# What xelatex runs internally:
+/path/to/final final.app/.../xdvipdfmx args
+
+# Shell interprets as:
+Command: /path/to/final
+Arg 1: final.app/.../xdvipdfmx
+Arg 2: args
+```
+
+**What doesn't work:**
+- Setting `XDVIPDFMX` environment variable (xelatex ignores it)
+- Setting `SELFAUTOLOC` and other kpathsea variables (only affects package resolution)
+- Putting wrapper scripts in PATH (xelatex uses absolute path, not PATH lookup)
+- Copying binaries to temp directory (breaks TeX package resolution)
+
+**Solution:** Use XeTeX's documented `-output-driver` command-line option to specify the XDV-to-PDF driver command:
+
+```swift
+// 1. Create symlink to TinyTeX at space-free path (for package resolution)
+let symlinkURL = tempDir.appendingPathComponent("TinyTeX")
+try fm.createSymbolicLink(at: symlinkURL, withDestinationURL: bundledTinyTeXURL)
+
+// 2. Create xdvipdfmx wrapper script at space-free path
+let wrapperScript = """
+    #!/bin/bash
+    exec "\(tinyTeXBin)/xdvipdfmx" "$@"
+    """
+try wrapperScript.write(to: wrapperURL, atomically: true, encoding: .utf8)
+
+// 3. Pass to xelatex via -output-driver option (through Pandoc)
+arguments.append(contentsOf: ["--pdf-engine", xelatexPath])
+arguments.append(contentsOf: ["--pdf-engine-opt", "-output-driver=\(wrapperURL.path)"])
+```
+
+**Reference:** [XeTeX Reference Guide](https://mirrors.mit.edu/CTAN/info/xetexref/xetex-reference.pdf) - the `-output-driver=CMD` option "use CMD as the XDV-to-PDF driver instead of xdvipdfmx"
+
+**General principle:** When bundling TeX in macOS apps, avoid spaces in the app name. If unavoidable, use `-output-driver` to redirect xdvipdfmx calls through a wrapper script at a space-free path.

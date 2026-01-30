@@ -1,0 +1,99 @@
+$Id: tl-key-extension.txt 73493 2025-01-17 22:28:29Z karl $
+(Public domain.)
+
+How to update TeX Live distribution signing key
+===============================================
+
+This must be done every year! It's not optional.
+
+shut down networking service
+
+cp gpg directory from USB stick to computer
+
+export GNUPGHOME=...<COPY OF USBSTICK gpg directory>
+export KEYID=0xC78B82D8C79512F79CC0D7C80D5E5D9106BAB6BC
+gpg --edit-key $KEYID
+> key 2
+	# selects the expiring key, check!
+> expire
+> 16m
+	# choose something after the release of the next TL
+> save
+
+# export public key for import into svn and TUG account
+gpg -a --export $KEYID > texlive.asc
+
+# update USB drive with new stuff, remove from home,
+rm -rf $GNUPGHOME
+unset GNUPGHOME
+
+# send keys
+# make sure that .gnupg/dirmngr.conf does NOT contain hkp-cacert lines!!!
+
+# upload to keyservers. No other good key servers currently known.
+keyservers=(
+  "hkps://keys.openpgp.org/"
+  "hkps://keyserver.ubuntu.com/"
+)
+for ks in ${keyservers[@]} ; do 
+  gpg --send-key --keyserver $ks $KEYID
+done
+
+## upload to keys.openpgp.org:
+#gpg --export $KEYID | curl -T - https://keys.openpgp.org
+## this will give an URL to associate key with email, visit it!
+
+# to check if it's there:
+gpg --list-key --keyserver hkp://keyserver.ubuntu.com:80 tex-live
+
+# The new GPG servers strip signatures due to signature poisoning
+# attacks, so we tell people to download the key from our web site.
+
+# update TeX Live repository
+export GNUPGHOME=/home/texlive/Master/tlpkg/gpg # wherever svn checkout
+# use gpg version 1 here!!!
+gpg1 --import texlive.asc
+
+svn commit
+
+# 
+# On the TUG server. Get the exported public key in
+#   texlive.asc, see above how to export it.
+# This needs to be done with the owner of the .gnupg directory,
+#   since group access is disallowed by gpg.
+gpg --homedir /home/texlive/.gnupg --import texlive.asc
+
+# can view that .asc with:
+gpg --homedir /home/texlive/.gnupg texlive.asc
+
+# update web-accessible public key, keeping old files but updating symlink:
+cp texlive.asc ~www/texlive/files/texlive`date +%Y`.asc
+ln -s texlive`date +%Y`.asc ~www/texlive/files/texlive.asc
+
+# update key example on web page, as in:
+cd /home/httpd/html/texlive/
+co -l verify.html
+$EDITOR !$
+ci -u -m"`date +%Y` key update"
+
+
+ General info: 
+. tlgpg runs a gpg command with the above TL .gnupg directory, etc.
+
+. tl-sign-file (uses tlgpg) is used to sign texlive.tlpdb.sha512.
+
+. tlgpg-verify foo[.asc] will check for expired key, per below.
+  tl-sign-file uses this to make sure it is not signing with an expired key.
+
+. (tl)gpg foo.asc will sometimes report expiration info.
+
+. given files updated in Master/tlpkg/gpg, can export into asc:
+  gpg --homedir ..../Master/tlpkg/gpg --export -a $KEYID >tl.asc
+
+. gpg --verify --verbose foo.asc reports some info.
+
+. but exit status is zero even with expired keys; to check,
+  use --status-file and inspect:
+gpg --verify --verbose --status-file=/tmp/st foo.asc
+
+. see tlgpg, tlgpg-verify, tl-sign-file, TLCrypto.pm for full implementation.

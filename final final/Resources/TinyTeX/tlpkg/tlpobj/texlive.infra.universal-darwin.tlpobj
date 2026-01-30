@@ -1,0 +1,11 @@
+name texlive.infra.universal-darwin
+category TLCore
+revision 70811
+shortdesc universal-darwin files of texlive.infra
+containersize 308364
+containerchecksum 3dde77d9741572de25bdb99ea4d3ed77bccdd09000bb30513c2e443eae58aadae6ce972e42fede96a1f8f418c9b26693e17f0f4bb7e0c4d790a107cc117542d1
+binfiles arch=universal-darwin size=246
+ bin/universal-darwin/mktexlsr
+ bin/universal-darwin/tlmgr
+ tlpkg/installer/lz4/lz4.universal-darwin
+ tlpkg/installer/xz/xz.universal-darwin

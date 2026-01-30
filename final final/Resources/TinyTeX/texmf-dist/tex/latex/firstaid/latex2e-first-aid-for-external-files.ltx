@@ -1,0 +1,380 @@
+%%
+%% This is file `latex2e-first-aid-for-external-files.ltx',
+%% generated with the docstrip utility.
+%%
+%% The original source files were:
+%%
+%% latex2e-first-aid-for-external-files.dtx  (with options: `kernel')
+%% 
+%% The source is maintained by the LaTeX Project team and bug
+%% reports for it can be opened at https://latex-project.org/bugs/
+%% (but please observe conditions on bug reports sent to that address!)
+%% 
+%% 
+%% Copyright (C) 2020-2025
+%% The LaTeX Project and any individual authors listed elsewhere
+%% in this file.
+%% 
+%% This file was generated from file(s) of the Standard LaTeX `First Aid Bundle'.
+%% ------------------------------------------------------------------------------
+%% 
+%% It may be distributed and/or modified under the
+%% conditions of the LaTeX Project Public License, either version 1.3c
+%% of this license or (at your option) any later version.
+%% The latest version of this license is in
+%%    https://www.latex-project.org/lppl.txt
+%% and version 1.3c or later is part of all distributions of LaTeX
+%% version 2005/12/01 or later.
+%% 
+%% This file may only be distributed together with a copy of the LaTeX
+%% `First Aid Bundle'. You may however distribute the LaTeX `First Aid Bundle'
+%% without such generated files.
+%% 
+%% File: latex2e-first-aid-for-external-files.dtx (C) Copyright 2020-2025
+%%
+%% The LaTeX Project and any individual authors listed elsewhere
+%% in this file.
+\def\LaTeXFirstAidDate{2025/11/03}
+\def\LaTeXFirstAidVersion{v1.1r}
+\ProvidesFile{latex2e-first-aid-for-external-files.ltx}
+             [\LaTeXFirstAidDate\space \LaTeXFirstAidVersion\space
+               LaTeX kernel fixes to external files and packages]
+\ExplSyntaxOn
+\cs_new:Npn\FirstAidNeededT#1#2#3{
+  \exp_args:Ncx\str_if_eq:onTF{ver@#1.#2}{#3}
+      { \typeout{==>~ First~ Aid~ for~ #1.#2~ applied! } }
+      { \typeout{==>~ First~ Aid~ for~ #1.#2~ no~ longer~ applied!^^J
+          \@spaces Expected:^^J
+          \@spaces\@spaces #3^^J
+          \@spaces but~ found:^^J
+          \@spaces\@spaces \use:c{ver@#1.#2}^^J
+          \@spaces so~ I'm~ assuming~ it~ got~ fixed.
+      } }
+  \exp_args:Ncx\str_if_eq:onT{ver@#1.#2}{#3}
+}
+\ExplSyntaxOff
+\AddToHook{file/dinbrief.cls/after}[firstaid]{%
+  \FirstAidNeededT{dinbrief}{cls}{2000/03/02 LaTeX2e class}%
+                  {\AddToHook{env/document/begin}{\begingroup}}%
+}
+\AddToHook{package/unicode-math/after}{%
+  \AddToHook{cmd/mod@math@codes/after}{\mathcode`\|=28796 }}
+\ExplSyntaxOn
+\AddToHook{file/pgfpages.sty/after}[firstaid]{
+  \cs_gset_eq:NN \shipout \pgfpages@originalshipout
+  \cs_set_eq:NN \pgfpages@originalshipout \tex_shipout:D
+  \cs_set_eq:NN \tex_shipout:D \pgfpages@interceptshipout
+}
+\ExplSyntaxOff
+\ExplSyntaxOn
+\AddToHook{file/pgfmorepages.sty/after}[firstaid]{
+  \cs_set_nopar:Npn \pgfhookintoshipout {
+    \cs_set_eq:NN \pgfpages@originalshipout \tex_shipout:D
+    \cs_set_eq:NN \tex_shipout:D \pgfpages@interceptshipout
+  }
+}
+\ExplSyntaxOff
+\AddToHook{file/babel.sty/before}[firstaid]{\def\BabelCaseHack{}}
+\AddToHook{file/songs.sty/after}[firstaid]{%
+  \FirstAidNeededT{songs}{sty}{2018/09/12 v3.1 Songs package}%
+                  {%
+     \renewcommand\SB@obeylines{%
+         \let\obeyedline\SB@par%
+         \obeylines%
+         \let\@par\SB@@par%
+       }}%
+}
+\AddToHook{file/crop.sty/after}[firstaid]{%
+  \FirstAidNeededT{crop}{sty}{2017/11/19 1.10 crop marks (mf)}%
+                  {%
+  \ifdim\stockwidth  > 0pt \else \stockwidth\paperwidth \fi
+  \ifdim\stockheight > 0pt \else \stockheight\paperheight \fi
+  \renewcommand*\CROP@genreflect[1]{%
+    \leavevmode
+    \dimen0\CROP@horigin
+    \kern2\dimen0
+    \begingroup
+    \set@typeset@protect %change protect
+    \reflectbox{%
+        \hb@xt@\paperwidth{%
+            \vbox to\paperheight{%
+                #1%
+                \vss
+            }%
+            \hss
+        }%
+    }%
+   \endgroup
+   }
+  }%
+}
+\AddToHook{file/bigfoot.sty/after}{%
+   \ifnum\count10<\insc@unt
+     \global\count10=\insc@unt
+   \fi
+    \def\FN@allmarks#1{\@elt{#1}%
+      \ifnum#1<\count256 %<--- problem: 266 isn't the counter for marks
+        \expandafter\FN@allmarks\expandafter{\number\numexpr#1+\@ne}%
+        \fi}%
+}
+\AddToHook{file/marginfix.sty/after}[firstaid]{%
+  \FirstAidNeededT{marginfix}{sty}%
+       {2020/05/06 v1.2 Fix Margin Paragraphs}%
+     {\let \@outputbox@attachfloats \@combinefloats}%
+}
+\AddToHook{file/ulem.sty/after}[firstaid]{%
+   \def\@hspace#1{\begingroup\setlength\skip@{#1}%
+                  \edef\x{\endgroup\hskip\the\skip@\relax}\x}%
+   }
+\AddToHook{file/varwidth.sty/after}[firstaid]{%
+  \FirstAidNeededT{varwidth}{sty}%
+       {2009/03/30 ver 0.92; \space Variable-width minipages}%
+     {%
+\def\@vwid@sift{%
+  \skip@\lastskip\unskip
+  \ifdim\lastskip=\z@\unskip\fi   % <---- the first aid here (not just unskip)
+  \dimen@\lastkern\unkern
+  \count@\lastpenalty\unpenalty
+  \setbox\z@\lastbox
+  \ifvoid\z@ \advance\sift@deathcycles\@ne \else \sift@deathcycles\z@ \fi
+  \ifnum\sift@deathcycles>33
+    \let\@vwid@sift\relax
+    \PackageWarning{varwidth}{Failed to reprocess entire contents}%
+  \fi
+  \ifnum\count@=\@vwid@preeqp \@vwid@eqmodefalse\fi
+  \ifnum\count@=\@vwid@posteqp \@vwid@eqmodetrue\fi
+  \ifnum\count@=\@vwid@toppen % finished
+    \let\@vwid@sift\relax
+  \else\ifnum\count@=\@vwid@offsets
+    \@vwid@setoffsets
+  \else
+    \ifnum\count@=\@vwid@postw
+    \else
+      \@vwid@resetb % reset box \z@ or measure it
+    \fi
+    \@vwid@append
+  \fi\fi
+  \@vwid@sift}%
+     }%
+   }
+\AddToHook{file/german.sty/after}[firstaid]{%
+  \FirstAidNeededT{german}{sty}{1998/07/08 v2.5e Support for writing german texts (br)}
+                  {%
+\let\grmn@active@dq@\@active@dq
+\def\@active@dq{\protect\grmn@active@dq@}%
+\germanTeX
+}%
+}
+\AddToHook{file/ngerman.sty/after}[firstaid]{%
+  \FirstAidNeededT{ngerman}{sty}{1998/07/08 v2.5e Support for writing german texts (br)}
+                  {%
+\let\grmn@active@dq@\@active@dq
+\def\@active@dq{\protect\grmn@active@dq@}%
+\ngermanTeX
+}%
+}
+\AddToHook{file/underscore.sty/after}[firstaid]{%
+  \FirstAidNeededT{underscore}{sty}{2006/09/13}{\RequirePackage{underscore-ltx}}}
+\AddToHook{package/acro/after}[firstaid]{%
+  \FirstAidNeededT{acro}{sty}{2022/04/01 v3.8 typeset acronyms
+                              and other abbreviations (CN)}
+     {\UseName{prop_new:c}{l__acro_tmpa_prop}%
+       \acsetup{patch/longtable=false}%
+     }%
+}
+\AddToHook{package/chemformula/before}[firstaid]{%
+  \RequirePackage{l3keys2e}%
+}
+\AddToHook{package/chemnum/after}[firstaid]{%
+  \FirstAidNeededT{chemnum}{sty}{2021/01/21 v1.3a a comprehensive
+             approach for the numbering of chemical compounds (CN)}
+    {\UseName{prop_new:c}{l__chemnum_tmpa_prop}}%
+}
+\AddToHook{package/cleveref/after}[firstaid]{%
+  \FirstAidNeededT{cleveref}{sty}{2018/03/27 v0.21.4 Intelligent cross-referencing}
+     {%
+       \def\cref@getref#1#2{%
+         \expandafter\let\expandafter#2\csname r@#1@cref\endcsname%
+         \expandafter\expandafter\expandafter\def%
+           \expandafter\expandafter\expandafter#2%
+           \expandafter\expandafter\expandafter{%
+             \expandafter\@firstoffive#2}}% <-------- five
+       \def\cpageref@getref#1#2{%
+         \expandafter\let\expandafter#2\csname r@#1@cref\endcsname%
+         \expandafter\expandafter\expandafter\def%
+           \expandafter\expandafter\expandafter#2%
+           \expandafter\expandafter\expandafter{%
+             \expandafter\@secondoffive#2}}% <----------- five
+      \AddToHook{begindocument}[cleveref]{%
+         \def\label@noarg#1{%
+          \cref@old@label{#1}%
+          \@bsphack%
+          \protected@edef\@tempa{{page}{\the\c@page}}%   <--- should be protected
+          \setcounter{page}{1}%
+          \protected@edef\@tempb{\thepage}%              <--- should be protected
+          \expandafter\setcounter\@tempa%
+          \cref@constructprefix{page}{\cref@result}%
+          \protected@write\@auxout{}%
+            {\string\newlabel{#1@cref}{{\cref@currentlabel}%
+            {[\@tempb][\arabic{page}][\cref@result]\thepage}{}{}{}}}% <----- five
+          \@esphack}%
+        \def\label@optarg[#1]#2{%
+          \cref@old@label{#2}%
+          \@bsphack%
+          \protected@edef\@tempa{{page}{\the\c@page}}%    <--- should be protected
+          \setcounter{page}{1}%
+          \protected@edef\@tempb{\thepage}%               <--- should be protected
+          \expandafter\setcounter\@tempa%
+          \cref@constructprefix{page}{\cref@result}%
+          \protected@edef\cref@currentlabel{%
+            \expandafter\cref@override@label@type%
+              \cref@currentlabel\@nil{#1}}%
+          \protected@write\@auxout{}%
+            {\string\newlabel{#2@cref}{{\cref@currentlabel}%
+            {[\@tempb][\arabic{page}][\cref@result]\thepage}{}{}{}}}% <------- five
+          \@esphack}%
+          }
+       \newcommand\firstaid@cref@smugglelabel{\let\cref@currentlabel\cref@gcurrentlabel@temp}
+       \newcommand\firstaid@cref@updatelabeldata[1]{%
+        \cref@constructprefix{#1}{\cref@result}%
+         \@ifundefined{cref@#1@alias}%
+           {\def\@tempa{#1}}%
+           {\def\@tempa{\csname cref@#1@alias\endcsname}}%
+         \protected@xdef\cref@gcurrentlabel@temp{%
+           [\@tempa][\arabic{#1}][\cref@result]%
+           \csname p@#1\expandafter\endcsname\csname the#1\endcsname}%
+         \aftergroup\firstaid@cref@smugglelabel
+           }
+       \newif\iftag@
+       \AddToHook{label}[firstaid/cleveref]
+         {\ifx
+           \@currentcounter\@empty
+          \else
+           \iftag@\else
+           \firstaid@cref@updatelabeldata{\@currentcounter}%
+           \fi
+          \fi}
+      \AddToHook{begindocument}[cleveref]
+        {
+         \IfPackageAtLeastT{amsmath}{2025-05-18}
+           {
+             \def\ltx@label#1{\cref@label{#1}}
+             \def\label@in@display@noarg#1{\cref@old@label@in@display{#1}}
+             \def\label@in@mmeasure@noarg#1{%
+               \begingroup
+                \measuring@false%
+                \cref@old@label@in@display{#1}%
+               \endgroup}%
+           }
+        }
+      }%
+}
+\AddToHook{package/arydshln/after}[firstaid]{%
+  \FirstAidNeededT{arydshln}{sty}{2019/02/21 v1.76 }
+  {%
+\protected\def\adl@@vlineL#1#2#3#4{\adl@ivline#4\@nil{#1}{#2}%
+        \xdef\adl@colsL{\adl@colsL
+                \@elt{#3}{\number\@tempcnta}{\number\@tempcntb}%
+                        {\adl@dashcolor}{\adl@gapcolor}}}%
+\protected\def\adl@@vlineR#1#2#3#4{\adl@ivline#4\@nil{#1}{#2}%
+        \xdef\adl@colsR{%
+                \@elt{#3}{\number\@tempcnta}{\number\@tempcntb}%
+                        {\adl@dashcolor}{\adl@gapcolor}%
+                \adl@colsR}}%
+\let\adl@act@@vlineL\adl@@vlineL
+\let\adl@act@@vlineR\adl@@vlineR
+  }%
+}
+\AddToHook{begindocument}[calc-noop]{}
+\DeclareHookRule{begindocument}{calc-noop}{voids}{calc}
+\def\@themark{{}{}}
+\AddToHook{class/smfart/after}[firstaid]{%
+  \FirstAidNeededT{smfart}{cls}{2021/03/28 v1.6
+  Classe LaTeX pour les articles publies par la SMF}
+     {%
+       \def\leftmark{\expandafter\@leftmark\botmark\@empty\@empty}%
+       \def\rightmark{\expandafter\@rightmark\firstmark\@empty\@empty}%
+     }}
+\AddToHook{class/smfbook/after}[firstaid]{%
+  \FirstAidNeededT{smfbook}{cls}{2021/03/28 v1.6
+  Classe LaTeX pour les monographies editees par la SMF}
+     {%
+       \def\leftmark{\expandafter\@leftmark\botmark\@empty\@empty}%
+       \def\rightmark{\expandafter\@rightmark\firstmark\@empty\@empty}%
+     }}
+\ExplSyntaxOn
+\cs_set:Npn \__shipout_force_immediate_writes: {
+  \cs_gset_eq:NN \iow_shipout:Nn \iow_now:Nn
+  \cs_gset_eq:NN \lua_shipout:n \lua_now:n
+  \cs_gset_eq:NN \__kernel_write_saved: \write
+  \cs_gset:Npn \write {\immediate \__kernel_write_saved:}
+  \global\advance\c@page\m@ne
+}
+\ExplSyntaxOff
+\ExplSyntaxOn
+\AddToHook{class/amsart/after}{
+  \DeclareRobustCommand*\markboth[2]{%
+      \mark_insert:nn{2e-left}{#1}
+      \mark_insert:nn{2e-right}{#2}
+      \tl_if_empty:nF{#2}{ \mark_insert:nn{2e-right-nonempty}{#2} }
+  }
+  \cs_set:Npn \leftmark {\mark_use_last:nn{page}{2e-left}}
+  \cs_set:Npn \rightmark {\mark_use_first:nn{page}{2e-right}}
+}
+\AddToHook{class/amsproc/after}{
+  \DeclareRobustCommand*\markboth[2]{%
+      \mark_insert:nn{2e-left}{#1}
+      \mark_insert:nn{2e-right}{#2}
+      \tl_if_empty:nF{#2}{ \mark_insert:nn{2e-right-nonempty}{#2} }
+  }
+  \cs_set:Npn \leftmark {\mark_use_last:nn{page}{2e-left}}
+  \cs_set:Npn \rightmark {\mark_use_first:nn{page}{2e-right}}
+}
+\ExplSyntaxOff
+\AddToHook{package/listings/after}[firstaid]{%
+  \FirstAidNeededT{listings}{sty}{2024/09/23 1.10c (Carsten Heinz)}
+  {%
+   \def\@tempa#1#2#3{%
+     \gdef\lstnewenvironment@##1##2##3##4##5{%
+       \begingroup
+       \global\@namedef{end##2}{\lstenv@Error{##2}}%
+       \global\@namedef{##2}{\def\lstenv@name{##2}%
+           \begingroup \lst@setcatcodes \catcode\active=\active
+           \csname##2@\endcsname}%
+       \let\l@ngrel@x\global %<----
+      % The above was a bit of a hack in listings, making a command that
+      % was supposed to be either \long or \relax suddenly applying \global
+      %
+      % Since this doesn't any longer work with 2025/11
+      % let's replace it by an equally dubious hack :-() in this situation
+       \let\pr@tectedrel@x\global
+      % In order to work with both 2025/11 and earlier we keep both settings!
+      %
+       \let\@xargdef\lstenv@xargdef
+       \expandafter\new@command\csname##2@\endcsname##3%
+           {\lsthk@PreSet ##4%
+            \ifx\@currenvir\lstenv@name
+                \def\lstenv@endstring{#1#2##1#3}%
+            \else
+                \def\lstenv@endstring{#1##1}%
+            \fi
+            \@namedef{end##2}{\lst@DeInit ##5\endgroup
+                             \lst@doendpe \@ignoretrue}%
+            \lsthk@DisplayStyle
+            \let\lst@EndProcessListing\lstenv@SkipToEnd
+            \lst@Init\lstenv@backslash
+            \lst@ifprint
+                \expandafter\expandafter\expandafter\lstenv@Process
+            \else
+                \expandafter\lstenv@SkipToEnd
+            \fi
+            \lst@insertargs}%
+       \endgroup}%
+   }
+   \let\lst@arg\@empty \lst@XConvert{end}\{\}\@nil
+   \expandafter\@tempa\lst@arg
+  }%
+}
+\endinput
+%%
+%% End of file `latex2e-first-aid-for-external-files.ltx'.

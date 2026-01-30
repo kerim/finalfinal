@@ -1,0 +1,25 @@
+name texlive-scripts-extra.universal-darwin
+category TLCore
+revision 71749
+shortdesc universal-darwin files of texlive-scripts-extra
+containersize 912
+containerchecksum 07a00a45067dfe0338eb09eda96a6b172a53076c71cd4ff7af5dbefff122ca88d04f101265ff8cfa7b522f8b9a4c727d5faa53639fdc7fdcc3f7fea13e16453b
+binfiles arch=universal-darwin size=18
+ bin/universal-darwin/allcm
+ bin/universal-darwin/allec
+ bin/universal-darwin/allneeded
+ bin/universal-darwin/dvi2fax
+ bin/universal-darwin/dvired
+ bin/universal-darwin/e2pall
+ bin/universal-darwin/kpsepath
+ bin/universal-darwin/kpsetool
+ bin/universal-darwin/kpsewhere
+ bin/universal-darwin/kpsexpand
+ bin/universal-darwin/mkocp
+ bin/universal-darwin/mkofm
+ bin/universal-darwin/ps2frag
+ bin/universal-darwin/pslatex
+ bin/universal-darwin/texconfig
+ bin/universal-darwin/texconfig-dialog
+ bin/universal-darwin/texconfig-sys
+ bin/universal-darwin/texlinks

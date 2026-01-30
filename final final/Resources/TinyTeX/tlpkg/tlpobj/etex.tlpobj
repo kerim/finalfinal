@@ -1,0 +1,29 @@
+name etex
+category Package
+revision 73850
+shortdesc An extended version of TeX, from the NTS project
+longdesc An extended version of TeX (capable of running as if it were
+longdesc unmodified TeX). E-TeX has been specified by the LaTeX team as
+longdesc the base engine for LaTeX2e. Thus, LaTeX programmers may assume
+longdesc e-TeX functionality, along with additional extensions. The
+longdesc pdftex engine and others directly incorporate the e-TeX
+longdesc extensions. The etex program in most distributions is an
+longdesc incarnation of pdftex running in DVI mode. The development
+longdesc source for e-TeX is the TeX Live source repository, although
+longdesc further extensions have taken place in the pdftex and other
+longdesc engine sources, keeping e-TeX stable.
+containersize 11572
+containerchecksum 78bec7371541769eeb3e9d8dda666be6557091f824cb93960e7ad083ce54a90012524b16c0294cfcdadf475b2707db0e32437f70b085270359232267f184b1d3
+doccontainersize 327336
+doccontainerchecksum 1d9c780aea8d9a1bdca1a898f2c688bcdf55ea382ee4a4a3e9825f46cd70f724a4e9f1da8dba79362b368f765f7f0eee326545d34e03939448a6bfc862c3d1b6
+runfiles size=11
+ texmf-dist/fonts/source/public/etex/xbmc10.mf
+ texmf-dist/fonts/tfm/public/etex/xbmc10.tfm
+ texmf-dist/tex/plain/etex/etex.src
+ texmf-dist/tex/plain/etex/etexdefs.lib
+catalogue-alias e-tex
+catalogue-contact-bugs https://lists.tug.org/tex-k
+catalogue-contact-repository https://tug.org/svn/texlive/trunk/Build/source/texk/web2c/etexdir
+catalogue-contact-support https://lists.tug.org/tex-k
+catalogue-license knuth
+catalogue-topics engine

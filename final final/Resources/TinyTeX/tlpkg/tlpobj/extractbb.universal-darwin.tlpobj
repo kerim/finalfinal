@@ -1,0 +1,8 @@
+name extractbb.universal-darwin
+category Package
+revision 72890
+shortdesc universal-darwin files of extractbb
+containersize 344
+containerchecksum 25268d447e110755df190e46be731648131a9e0c5e22b1d719836215c4f9178a5f699eb4f644646e0e062b01ece1580466e447b48c6dadbdd124ec51dd8d0d8c
+binfiles arch=universal-darwin size=1
+ bin/universal-darwin/extractbb

@@ -1,0 +1,24 @@
+name dehyph
+category Package
+revision 48599
+shortdesc German hyphenation patterns for traditional orthography
+longdesc The package provides older hyphenation patterns for the German
+longdesc language. Please note that by default only pdfLaTeX uses these
+longdesc patterns (mainly for backwards compatibility). The older
+longdesc packages ghyphen and gnhyph are now bundled together with
+longdesc dehyph, and are no longer be updated. Both XeLaTeX and LuaLaTeX
+longdesc use the current German hyphenation patterns taken from
+longdesc Hyphenation patterns in UTF-8, and using the Experimental
+longdesc hyphenation patterns for the German language package it is
+longdesc possible to make pdfLaTeX use the new German patterns as well.
+containersize 46556
+containerchecksum 2dc4ee5b4389549c032f3a4d87740ab3c5e296a1ef109a6b673656a82ca4c317ca774f39f61417568b8ccbeac787c4058184fc893d53799bbf0b042ba5aca9a2
+runfiles size=57
+ texmf-dist/tex/generic/dehyph/README
+ texmf-dist/tex/generic/dehyph/dehyphn.tex
+ texmf-dist/tex/generic/dehyph/dehypht.tex
+ texmf-dist/tex/generic/dehyph/dehyphtex.tex
+catalogue-alias ghyphen gnhyph
+catalogue-ctan /language/hyphenation/dehyph
+catalogue-license lppl1
+catalogue-topics german hyphenation

@@ -1,0 +1,32 @@
+name filehook
+category Package
+revision 64822
+shortdesc Hooks for input files
+longdesc The package provides several file hooks (AtBegin, AtEnd, ...)
+longdesc for files read by \input, \include and \InputIfFileExists.
+longdesc General hooks for all such files (e.g. all \included ones) and
+longdesc file specific hooks only used for named files are provided; two
+longdesc hooks are provided for the end of \included files -- one
+longdesc before, and one after the final \clearpage.
+containersize 4944
+containerchecksum caa1f239fc8300f2925e94e860df3ac76637e337d57f599446c6b5f059fbba026fa9e440f4272b7e37ca9921731cddcbdd403c16e42b9c49e302452dc940fa27
+doccontainersize 308660
+doccontainerchecksum 7c86e322cbdade28c03b65580c992adff2fa112ae65b28c1485419c457a7f930614337eee70bb6cc2e9c386dab866e4e657c0b8d394c975c6af3a8b2fe651cec
+srccontainersize 14340
+srccontainerchecksum c9683da993eb365559e7d47e6c81235065e9ac74c9c334e9e1d9c040c9cde0ae135301b83e49c27307a6f3bc529c24d8f597dbdf377256d03c8d149e69c03bfd
+runfiles size=14
+ texmf-dist/tex/latex/filehook/filehook-2019.sty
+ texmf-dist/tex/latex/filehook/filehook-2020.sty
+ texmf-dist/tex/latex/filehook/filehook-fink.sty
+ texmf-dist/tex/latex/filehook/filehook-listings.sty
+ texmf-dist/tex/latex/filehook/filehook-memoir.sty
+ texmf-dist/tex/latex/filehook/filehook-scrlfile.sty
+ texmf-dist/tex/latex/filehook/filehook.sty
+ texmf-dist/tex/latex/filehook/pgf-filehook.sty
+catalogue-contact-bugs https://github.com/MartinScharrer/filehook/issues
+catalogue-contact-home https://github.com/MartinScharrer/filehook
+catalogue-contact-repository https://github.com/MartinScharrer/filehook.git
+catalogue-ctan /macros/latex/contrib/filehook
+catalogue-license lppl1.3c
+catalogue-topics macro-supp
+catalogue-version 0.8b

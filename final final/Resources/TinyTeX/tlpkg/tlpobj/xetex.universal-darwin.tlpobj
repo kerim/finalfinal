@@ -1,0 +1,12 @@
+name xetex.universal-darwin
+category TLCore
+revision 74520
+shortdesc universal-darwin files of xetex
+containersize 15376608
+containerchecksum 896137ccee5145c56d43351f8f9a21bd73bd836c7fa0634df3a85448490d4fddae4b8c846e0055974db531bbfe583dc6eff05930de58bf330555302626b63ae1
+binfiles arch=universal-darwin size=14832
+ bin/universal-darwin/teckit_compile
+ bin/universal-darwin/xelatex
+ bin/universal-darwin/xelatex-unsafe
+ bin/universal-darwin/xetex
+ bin/universal-darwin/xetex-unsafe

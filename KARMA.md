@@ -2,7 +2,7 @@
 
 Attribution for code, libraries, and inspiration used in final final.
 
-**Last updated:** 2026-01-29 (Phase 1.8 Zotero Citations)
+**Last updated:** 2026-01-30 (Export Feature - PDF support)
 
 ---
 
@@ -47,6 +47,14 @@ Attribution for code, libraries, and inspiration used in final final.
 | ProseMirror | MIT | Marijn Haverbeke | Rich text editing framework |
 | remark | MIT | Titus Wormer | Markdown parsing/serialization |
 | unified | MIT | Titus Wormer | Text processing pipeline |
+
+### TeX Distribution (bundled in app)
+
+| Package | Version | License | Author | URL |
+|---------|---------|---------|--------|-----|
+| TinyTeX | 2025 | GPL-2+ | Yihui Xie | https://yihui.org/tinytex/ |
+
+TinyTeX is a lightweight TeX Live distribution used for PDF export via xelatex/xdvipdfmx.
 
 #### CSL Resources (bundled in app)
 
@@ -122,5 +130,6 @@ See: http://www.apache.org/licenses/LICENSE-2.0
 
 | Date | Phase | Changes |
 |------|-------|---------|
+| 2026-01-30 | Export | Added TinyTeX for PDF export support |
 | 2026-01-29 | 1.8 | Added citeproc-js, fuse.js, CSL style/locale files for Zotero citation integration |
 | 2026-01-29 | 1.7 | Initial KARMA.md created; documented all bundled dependencies and inspiration sources |

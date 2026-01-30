@@ -1,0 +1,8 @@
+name xetexconfig
+category Package
+revision 45845
+shortdesc crop.cfg for XeLaTeX
+containersize 532
+containerchecksum 62b130d16ac01845df5acb1a10e487408208b0c4369d58892a83a42609b3dc92589195540154d1e07a9cb528e8e4ca65009dfef236efd53b9cfbce0a942c5b01
+runfiles size=1
+ texmf-dist/tex/xelatex/xetexconfig/crop.cfg

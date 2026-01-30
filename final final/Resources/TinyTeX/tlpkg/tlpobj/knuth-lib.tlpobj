@@ -1,0 +1,43 @@
+name knuth-lib
+category Package
+revision 57963
+shortdesc Core TeX and Metafont sources from Knuth
+longdesc A collection of core TeX and Metafont macro files from DEK,
+longdesc apart from the plain format and base. Includes the MF logo
+longdesc font(s), webmac.tex, etc.
+containersize 30508
+containerchecksum 47d50b1966dc5a3adf4921c297d9ed5917035e917098154fc08d1c72ebd0ba70ebfa41735c7ae52c5087d62242bcfa9b0b49914c6da4f392e2d4c56a6d72807d
+runfiles size=47
+ texmf-dist/fonts/source/public/knuth-lib/3test.mf
+ texmf-dist/fonts/source/public/knuth-lib/6test.mf
+ texmf-dist/fonts/source/public/knuth-lib/expr.mf
+ texmf-dist/fonts/source/public/knuth-lib/grayf.mf
+ texmf-dist/fonts/source/public/knuth-lib/io.mf
+ texmf-dist/fonts/source/public/knuth-lib/logo.mf
+ texmf-dist/fonts/source/public/knuth-lib/logo10.mf
+ texmf-dist/fonts/source/public/knuth-lib/logo8.mf
+ texmf-dist/fonts/source/public/knuth-lib/logo9.mf
+ texmf-dist/fonts/source/public/knuth-lib/logobf10.mf
+ texmf-dist/fonts/source/public/knuth-lib/logosl10.mf
+ texmf-dist/fonts/source/public/knuth-lib/manfnt.mf
+ texmf-dist/fonts/source/public/knuth-lib/null.mf
+ texmf-dist/fonts/source/public/knuth-lib/rtest.mf
+ texmf-dist/fonts/source/public/knuth-lib/slant.mf
+ texmf-dist/fonts/source/public/knuth-lib/test.mf
+ texmf-dist/fonts/source/public/knuth-lib/waits.mf
+ texmf-dist/fonts/source/public/knuth-lib/ztest.mf
+ texmf-dist/fonts/tfm/public/knuth-lib/logo10.tfm
+ texmf-dist/fonts/tfm/public/knuth-lib/logo8.tfm
+ texmf-dist/fonts/tfm/public/knuth-lib/logo9.tfm
+ texmf-dist/fonts/tfm/public/knuth-lib/logobf10.tfm
+ texmf-dist/fonts/tfm/public/knuth-lib/logosl10.tfm
+ texmf-dist/fonts/tfm/public/knuth-lib/manfnt.tfm
+ texmf-dist/tex/generic/knuth-lib/null.tex
+ texmf-dist/tex/plain/knuth-lib/manmac.tex
+ texmf-dist/tex/plain/knuth-lib/mftmac.tex
+ texmf-dist/tex/plain/knuth-lib/story.tex
+ texmf-dist/tex/plain/knuth-lib/testfont.tex
+ texmf-dist/tex/plain/knuth-lib/webmac.tex
+catalogue-ctan /systems/knuth/dist/lib
+catalogue-license knuth
+catalogue-topics collection

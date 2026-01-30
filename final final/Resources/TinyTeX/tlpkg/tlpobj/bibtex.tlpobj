@@ -1,0 +1,41 @@
+name bibtex
+category Package
+revision 76790
+shortdesc Process bibliographies (bib files) for LaTeX or other formats
+longdesc BibTeX allows the user to store his citation data in generic
+longdesc form, while printing citations in a document in the form
+longdesc specified by a BibTeX style, to be specified in the document
+longdesc itself (one often needs a LaTeX citation-style package, such as
+longdesc natbib, as well). BibTeX knows nothing about Unicode sorting
+longdesc algorithms or scripts, although it will pass on whatever bytes
+longdesc it reads. Its descendant bibtexu does support Unicode, via the
+longdesc ICU library. The older alternative bibtex8 supports 8-bit
+longdesc character sets. Another Unicode-aware alternative is the
+longdesc (independently developed) biber program, used with the BibLaTeX
+longdesc package to typeset its output.
+depend bibtex.ARCH
+depend kpathsea
+containersize 14888
+containerchecksum 0ce7dca227ba69b46224c7412237c3eeda1c43c432839c26f7c1aeb9cf7a32d31f0275d0c7346f31dd38ca58899c273607931e0850a1b46d10ee945670e12f6a
+doccontainersize 399560
+doccontainerchecksum d6c8f6e9bd0ce4701355593defbc31f593147026c92c268ceb1d1fe15ea12e6d1d3f7f1b121532159f4caaa3eea8adb7c17ff89585b1f84f773721178d0aaeca
+runfiles size=51
+ texmf-dist/bibtex/bib/base/xampl.bib
+ texmf-dist/bibtex/bst/base/abbrv.bst
+ texmf-dist/bibtex/bst/base/acm.bst
+ texmf-dist/bibtex/bst/base/alpha.bst
+ texmf-dist/bibtex/bst/base/apalike.bst
+ texmf-dist/bibtex/bst/base/ieeetr.bst
+ texmf-dist/bibtex/bst/base/plain.bst
+ texmf-dist/bibtex/bst/base/siam.bst
+ texmf-dist/bibtex/bst/base/unsrt.bst
+ texmf-dist/tex/generic/bibtex/apalike.sty
+ texmf-dist/tex/generic/bibtex/apalike.tex
+catalogue-contact-bugs https://lists.tug.org/tex-k
+catalogue-contact-home https://tug.org/bibtex
+catalogue-contact-repository https://tug.org/svn/texlive/trunk/Build/source/texk/web2c/
+catalogue-contact-support https://lists.tug.org/tex-k
+catalogue-ctan /biblio/bibtex/base
+catalogue-license knuth
+catalogue-topics biblio bibtex-doc bibtex-supp
+catalogue-version 0.99e

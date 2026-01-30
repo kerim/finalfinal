@@ -1,0 +1,20 @@
+name texlive-scripts.universal-darwin
+category TLCore
+revision 64356
+shortdesc universal-darwin files of texlive-scripts
+containersize 580
+containerchecksum b690e013b2fffec8c1380d5050c185631efc3fc3b7bf159ab6de770fbe98c2353ab42ffae97971c0412f99b566aee06d81030d2bcf5d712c6cabc028b6cc2985
+binfiles arch=universal-darwin size=13
+ bin/universal-darwin/fmtutil
+ bin/universal-darwin/fmtutil-sys
+ bin/universal-darwin/fmtutil-user
+ bin/universal-darwin/man
+ bin/universal-darwin/mktexfmt
+ bin/universal-darwin/mktexmf
+ bin/universal-darwin/mktexpk
+ bin/universal-darwin/mktextfm
+ bin/universal-darwin/rungs
+ bin/universal-darwin/texhash
+ bin/universal-darwin/updmap
+ bin/universal-darwin/updmap-sys
+ bin/universal-darwin/updmap-user

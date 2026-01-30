@@ -1,0 +1,34 @@
+name latex-bin
+category TLCore
+revision 77033
+shortdesc LaTeX executables and man pages
+depend babel
+depend cm
+depend dehyph
+depend firstaid
+depend graphics
+depend hyph-utf8
+depend hyphen-base
+depend knuth-lib
+depend l3backend
+depend l3kernel
+depend latex
+depend latex-bin.ARCH
+depend latex-fonts
+depend latexconfig
+depend lm
+depend lua-uni-algos
+depend luahbtex
+depend luaotfload
+depend luatex
+depend pdftex
+depend tex-ini-files
+depend unicode-data
+execute AddFormat name=dvilualatex engine=luatex           patterns=language.dat,language.dat.lua           options="dvilualatex.ini"           fmttriggers=l3backend,l3kernel,latex,firstaid,babel,cm,hyphen-base,knuth-lib,latex-fonts,tex-ini-files,unicode-data,lm,lua-uni-algos,luaotfload
+execute AddFormat name=latex engine=pdftex           patterns=language.dat           options="-translate-file=cp227.tcx *latex.ini"           fmttriggers=l3backend,l3kernel,latex,firstaid,babel,cm,hyphen-base,knuth-lib,latex-fonts,tex-ini-files,unicode-data,dehyph,hyph-utf8
+execute AddFormat name=lualatex engine=luahbtex           patterns=language.dat,language.dat.lua           options="lualatex.ini"           fmttriggers=l3backend,l3kernel,latex,firstaid,babel,cm,hyphen-base,knuth-lib,latex-fonts,tex-ini-files,unicode-data,lm,lua-uni-algos,luaotfload
+execute AddFormat name=pdflatex engine=pdftex           patterns=language.dat           options="-translate-file=cp227.tcx *pdflatex.ini"           fmttriggers=l3backend,l3kernel,latex,firstaid,babel,cm,hyphen-base,knuth-lib,latex-fonts,tex-ini-files,unicode-data,dehyph,hyph-utf8
+containersize 600
+containerchecksum e992f71fd145ad3451c9ba6a0b8a07fb8ddd635aa32f6dd4386a901e2ddd3a7ee9d9ef108bd4618a52876c6809c0583ed71984bce393f6f3233a45b5a3edf2b4
+doccontainersize 56596
+doccontainerchecksum 629e60765794c99185862e59c1ead3e37aaf94f3844609f448f5ccb0b7a6801d84de1303aee31bc45fb926c642918e2424bca10a1b347941871aeed0d2fef138

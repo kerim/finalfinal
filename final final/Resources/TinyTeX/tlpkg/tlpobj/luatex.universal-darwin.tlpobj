@@ -1,0 +1,11 @@
+name luatex.universal-darwin
+category TLCore
+revision 74677
+shortdesc universal-darwin files of luatex
+containersize 3067912
+containerchecksum 3c66ced0c1ed0c00e5c4f7a35305d6228d5edd7cfe0917759a7ae273bc610f3d5e4d360d5db0236381143f5d7a27cc185c2d07a1c3d6ece74538a4480598608d
+binfiles arch=universal-darwin size=3175
+ bin/universal-darwin/dviluatex
+ bin/universal-darwin/luatex
+ bin/universal-darwin/texlua
+ bin/universal-darwin/texluac

@@ -1,0 +1,33 @@
+name luatexbase
+category Package
+revision 52663
+shortdesc Basic resource management for LuaTeX code
+longdesc The LaTeX kernel (LaTeX2e 2015/10/01 onward) builds in support
+longdesc for LuaTeX functionality, also available as ltluatex.tex for
+longdesc users of plain TeX and those with older LaTeX kernel
+longdesc implementations. This support is based on ideas taken from the
+longdesc original luatexbase package, but there are interface
+longdesc differences. This 'stub' package provides a compatibility layer
+longdesc to allow existing packages to upgrade smoothly to the new
+longdesc support structure.
+depend ctablestack
+containersize 3508
+containerchecksum cb187dcd0f9e454a3b9d021b802ac6f7d09c3eee68adb5da31035f5b7bb36d2938ca940505ee08c8410ee0e5e5c81ffdd21617ea5ba0e9ca7b58abb6ede3defb
+doccontainersize 263752
+doccontainerchecksum 5dc696009e84662fc56443d7a5d61b3f30adbfeae3cf7176e81e676087d0fe580cb0575add49999ea8d5651850b7562c775b0727de01934465f3613ab7344be3
+srccontainersize 8444
+srccontainerchecksum ebb46d5d4c3f6ccfdbc758f9dab64d7e83c2fe988f7da6852dfd5e786bc757f2438f86010a695eb2e780a02830f15dea941de7fb5bdd6e6561df0774b476dd5a
+runfiles size=11
+ texmf-dist/tex/luatex/luatexbase/luatexbase-attr.sty
+ texmf-dist/tex/luatex/luatexbase/luatexbase-cctb.sty
+ texmf-dist/tex/luatex/luatexbase/luatexbase-compat.sty
+ texmf-dist/tex/luatex/luatexbase/luatexbase-loader.sty
+ texmf-dist/tex/luatex/luatexbase/luatexbase-mcb.sty
+ texmf-dist/tex/luatex/luatexbase/luatexbase-modutils.sty
+ texmf-dist/tex/luatex/luatexbase/luatexbase-regs.sty
+ texmf-dist/tex/luatex/luatexbase/luatexbase.loader.lua
+ texmf-dist/tex/luatex/luatexbase/luatexbase.sty
+catalogue-ctan /macros/luatex/generic/luatexbase
+catalogue-license lppl1.3
+catalogue-topics luatex
+catalogue-version 1.3

@@ -1,0 +1,23 @@
+name modes
+category Package
+revision 77365
+shortdesc A collection of Metafont mode_def's
+longdesc The modes file collects all known Metafont modes for printing
+longdesc or display devices, of whatever printing technology. Special
+longdesc provision is made for write-white printers, and a 'landscape'
+longdesc mode is available, for making suitable fonts for printers with
+longdesc pixels whose aspect is non-square. The file also provides
+longdesc definitions that make \specials identifying the mode in
+longdesc Metafont's GF output, and put coding information and other
+longdesc Xerox-world information in the TFM file.
+containersize 27464
+containerchecksum 8cc8477bb125e5a8254283e54cddb5ce1a8d1b968b89bf5ba6f2d28c1d91cdbaac61d47322db0803c2a6d82ecbe00da65be511e5898136e94640e9cb414f9302
+doccontainersize 265132
+doccontainerchecksum cd639b246b25876061d90538dc7b70f4057b1cb222c98654e54093ed97d4643ffb0fc0929cfd6b8fc71a86ffcc76cc78eb84c38b3838aa6ae993ff501263a375
+runfiles size=24
+ texmf-dist/fonts/source/public/modes/modes.mf
+catalogue-contact-support https://lists.tug.org/tex-k
+catalogue-ctan /fonts/modes
+catalogue-license pd
+catalogue-topics font-devel
+catalogue-version 4.4

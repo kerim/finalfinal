@@ -1,0 +1,31 @@
+name xcolor
+category Package
+revision 72484
+shortdesc Driver-independent color extensions for LaTeX and pdfLaTeX
+longdesc The package starts from the basic facilities of the color
+longdesc package, and provides easy driver-independent access to several
+longdesc kinds of color tints, shades, tones, and mixes of arbitrary
+longdesc colors. It allows a user to select a document-wide target color
+longdesc model and offers complete tools for conversion between eight
+longdesc color models. Additionally, there is a command for alternating
+longdesc row colors plus repeated non-aligned material (like horizontal
+longdesc lines) in tables. Colors can be mixed like
+longdesc \color{red!30!green!40!blue}.
+containersize 18284
+containerchecksum 255a76dd0879aa6f5a8be38f84ba307cfa7595c7e2b4b9d92cc85867139a17951f230c10dc130dc1c10c612436adaa47a9222556e8dad126e91ef5b8b12d558a
+doccontainersize 935032
+doccontainerchecksum 010f65991bbb53c03a7539735e7d7b58d978cfd84cbbf2be9e4f07e13c9b52c158560e5936f18fd940395262c2d886a427c272435de5302cdb306cca21feb1f3
+srccontainersize 77232
+srccontainerchecksum e61e4dba30fdcaf8df7759e4f8a718f6c256419b05729b2009007de0dee4af2ff023277997b2693f2edf0d7a4872849a00897325385afbfc364c69966d993ca0
+runfiles size=34
+ texmf-dist/dvips/xcolor/xcolor.pro
+ texmf-dist/tex/latex/xcolor/svgnam.def
+ texmf-dist/tex/latex/xcolor/x11nam.def
+ texmf-dist/tex/latex/xcolor/xcolor-2022-06-12.sty
+ texmf-dist/tex/latex/xcolor/xcolor.sty
+catalogue-contact-bugs https://github.com/latex3/xcolor/issues
+catalogue-contact-home https://github.com/latex3/xcolor
+catalogue-ctan /macros/latex/contrib/xcolor
+catalogue-license lppl1.3c
+catalogue-topics colour
+catalogue-version 3.02

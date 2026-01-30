@@ -1,0 +1,27 @@
+name natbib
+category Package
+revision 20668
+shortdesc Flexible bibliography support
+longdesc The bundle provides a package that implements both author-year
+longdesc and numbered references, as well as much detailed of support
+longdesc for other bibliography use. Also Provided are versions of the
+longdesc standard BibTeX styles that are compatible with
+longdesc natbib--plainnat, unsrtnat, abbrnat. The bibliography styles
+longdesc produced by custom-bib are designed from the start to be
+longdesc compatible with natbib.
+containersize 16616
+containerchecksum 7e78ab76bd86a864eeccef86a64fb28b6b063d5a12210da80f0c5a5608df429fc2939580b88263dc50fd68d841580a12358617e20a0048ccbc9e148ba04d5f26
+doccontainersize 423668
+doccontainerchecksum afe78103a6ba2d58c6f6ba6927101cb481abb1b028c4cc09dca59296d30978c636e837c248eb4f8fa44aa8fa7f6db1e1b6855afac9d99b0cfa030dbad6e59edc
+srccontainersize 64136
+srccontainerchecksum ac850d6b92e7cf538f564d052593319ec1b1366d74dbf86e55f0c59ab3a01ad79b780378e816289aedf9b645774cbde56b7d186abafa8d1ddaa6c32d676141eb
+runfiles size=33
+ texmf-dist/bibtex/bst/natbib/abbrvnat.bst
+ texmf-dist/bibtex/bst/natbib/plainnat.bst
+ texmf-dist/bibtex/bst/natbib/unsrtnat.bst
+ texmf-dist/tex/latex/natbib/bibentry.sty
+ texmf-dist/tex/latex/natbib/natbib.sty
+catalogue-ctan /macros/latex/contrib/natbib
+catalogue-license lppl
+catalogue-topics bibtex-supp
+catalogue-version 8.31b

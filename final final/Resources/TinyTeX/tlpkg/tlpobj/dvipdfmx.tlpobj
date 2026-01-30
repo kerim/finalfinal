@@ -1,0 +1,41 @@
+name dvipdfmx
+category TLCore
+revision 76377
+shortdesc An extended version of dvipdfm
+longdesc Dvipdfmx (formerly dvipdfm-cjk) is a development of dvipdfm
+longdesc created to support multi-byte character encodings and large
+longdesc character sets for East Asian languages. Dvipdfmx, if "called"
+longdesc with the name dvipdfm, operates in a "dvipdfm compatibility"
+longdesc mode, so that users of the both packages need only keep one
+longdesc executable. A secondary design goal is to support as many "PDF"
+longdesc features as does pdfTeX. The current version of the package is
+longdesc no longer maintained on CTAN as a separate entity; development
+longdesc now takes place within the TeX Live framework, and it is no
+longdesc longer available as a separate package. For download, support,
+longdesc and other information, please see TeX Live. However, the
+longdesc information on this page is maintained and should be current.
+depend dvipdfmx.ARCH
+depend extractbb
+depend glyphlist
+depend texlive-scripts-extra
+postaction script file=tlpkg/tlpostcode/dvipdfmx.pl
+containersize 26976
+containerchecksum 83dc7dd26a4d85683dbc5f17781b2f6fa03b90bc1ebca28facc92f7366e3e3a701f3501704c6a5afb03c2c666ecf4d658e9abb31e5f6a034ba5f2ea3a1666fad
+doccontainersize 3135876
+doccontainerchecksum 9de85b265904e5dd280745e010462f42637873a104ba326617b57ff87d68bdecbd9abfc886cbd5d659f352bb1316d09dc2da8d61183b44fa10e7f16f249caed1
+runfiles size=41
+ texmf-dist/dvipdfmx/dvipdfmx-unsafe.cfg
+ texmf-dist/dvipdfmx/dvipdfmx.cfg
+ texmf-dist/fonts/cmap/dvipdfmx/EUC-UCS2
+ texmf-dist/fonts/cmap/dvipdfmx/README
+ texmf-dist/fonts/cmap/dvipdfmx/UTF8-UCS2
+ texmf-dist/fonts/map/dvipdfmx/cid-x.map
+ texmf-dist/fonts/map/dvipdfmx/ckx.map
+ tlpkg/tlpostcode/dvipdfmx.pl
+catalogue-alias xdvipdfmx
+catalogue-contact-bugs https://lists.tug.org/dvipdfmx
+catalogue-contact-home https://tug.org/dvipdfmx/
+catalogue-contact-repository https://tug.org/svn/texlive/trunk/Build/source/texk/dvipdfm-x/
+catalogue-contact-support https://lists.tug.org/dvipdfmx
+catalogue-license gpl
+catalogue-topics dvi-pdf

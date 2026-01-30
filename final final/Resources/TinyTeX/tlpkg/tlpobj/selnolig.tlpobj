@@ -1,0 +1,39 @@
+name selnolig
+category Package
+revision 68747
+shortdesc Selectively disable typographic ligatures
+longdesc The package suppresses typographic ligatures selectively, i.e.,
+longdesc based on predefined search patterns. The search patterns focus
+longdesc on ligatures deemed inappropriate because they span morpheme
+longdesc boundaries. For example, the word shelfful, which is mentioned
+longdesc in the TeXbook as a word for which the ff ligature might be
+longdesc inappropriate, is automatically typeset as shelf\/ful rather
+longdesc than as shel{ff}ul. For English and German language documents,
+longdesc the package provides extensive rules for the selective
+longdesc suppression of so-called "common" ligatures. These comprise the
+longdesc ff, fi, fl, ffi, and ffl ligatures as well as the ft and fft
+longdesc ligatures. Other f-ligatures, such as fb, fh, fj and fk, are
+longdesc suppressed globally, while exceptions are made for names and
+longdesc words of non-English/German origin, such as Kafka and fjord.
+longdesc For English language documents, the package further provides
+longdesc ligature suppression macros for a number of so-called
+longdesc "discretionary" or "rare" ligatures such as ct, st, and sp. The
+longdesc package requires use of a recent LuaLaTeX format (for example
+longdesc those from TeX Live 2012 or 2013, or MiKTeX 2.9).
+containersize 53988
+containerchecksum 8dd7baa476f72549830f2571615af2374b9d74da69c16f2999708201b7404c46118e7a6046ef8dff39935d3b94373140819497508b2a8982cc928a5dbfc6eaac
+doccontainersize 509908
+doccontainerchecksum c36e55066eadd959f625fcb72fb89ab2ca51f3411ba9bc81c38d2ac3f18ffd792fd95c33178c0607e3958cdbd81c031193d1b6c712906a2c9cdac4178ace6ceb
+runfiles size=59
+ texmf-dist/tex/lualatex/selnolig/selnolig-english-hyphex.sty
+ texmf-dist/tex/lualatex/selnolig/selnolig-english-patterns.sty
+ texmf-dist/tex/lualatex/selnolig/selnolig-german-hyphex.sty
+ texmf-dist/tex/lualatex/selnolig/selnolig-german-patterns.sty
+ texmf-dist/tex/lualatex/selnolig/selnolig.lua
+ texmf-dist/tex/lualatex/selnolig/selnolig.sty
+catalogue-also autotype
+catalogue-contact-repository https://github.com/micoloretan/selnolig
+catalogue-ctan /macros/luatex/latex/selnolig
+catalogue-license lppl1.3
+catalogue-topics typesetting luatex
+catalogue-version 0.302

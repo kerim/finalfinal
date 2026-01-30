@@ -1,0 +1,1015 @@
+%%
+%% This is file `hvtex.def',
+%% generated with the docstrip utility.
+%%
+%% The original source files were:
+%%
+%% hyperref.dtx  (with options: `vtex,outlines')
+%% 
+%% Copyright
+%% 1995-2001 Sebastian Rahtz, with portions written by David Carlisle and Heiko Oberdiek
+%% 2001-2015 Heiko Oberdiek
+%% 2016-2019 Oberdiek Package Support Group
+%% 2019-2025 LaTeX Project
+%%      https://github.com/latex3/hyperref/issues
+%% 
+%% This file is part of the `Hyperref Bundle'.
+%% -------------------------------------------
+%% 
+%% This work may be distributed and/or modified under the
+%% conditions of the LaTeX Project Public License, either version 1.3
+%% of this license or (at your option) any later version.
+%% The latest version of this license is in
+%%   http://www.latex-project.org/lppl.txt
+%% and version 1.3 or later is part of all distributions of LaTeX
+%% version 2005/12/01 or later.
+%% 
+%% This work has the LPPL maintenance status `maintained'.
+%% 
+%% The Current Maintainer of this work is the LaTeX Project.
+%% 
+%% The list of all files belonging to the `Hyperref Bundle' is
+%% given in the file `manifest.txt'.
+%% 
+%% File: hyperref.dtx
+\ProvidesFile{hvtex.def}
+  [2025-07-12 v7.01o %
+  Hyperref driver for VTeX in PDF/PS mode]
+\Hy@VersionCheck{hvtex.def}
+\providecommand*{\XR@ext}{pdf}
+\edef\Hy@VTeXversion{%
+  \ifx\VTeXversion\@undefined
+    \z@
+  \else
+    \ifx\VTeXversion\relax
+      \z@
+    \else
+      \VTeXversion
+    \fi
+  \fi
+}
+\begingroup
+  \ifnum\Hy@VTeXversion<660 %
+    \gdef\Hy@PutCatalog#1{%
+      \Hy@WarningNoLine{%
+        VTeX 6.59g or above required for pdfpagelabels%
+      }%
+    }%
+  \else
+    \gdef\Hy@PutCatalog#1{%
+      \Hy@vt@PutCatalog#1/PageLabels<<>>\@nil
+    }%
+    \gdef\Hy@vt@PutCatalog#1/PageLabels<<#2>>#3\@nil{%
+      \ifx\\#2\\%
+      \else
+        \immediate\special{!pdfpagelabels #2}%
+      \fi
+    }%
+  \fi
+\endgroup
+\ifHy@pdfpagelabels
+  \def\HyPL@StorePageLabel#1{%
+    \toks@\expandafter{\HyPL@Labels}%
+    \xdef\HyPL@Labels{%
+      \the\toks@
+      \the\Hy@abspage<<#1>>%
+    }%
+  }%
+  \AddToHook{enddocument/afteraux}{%
+    \HyPL@SetPageLabels
+  }%
+\fi
+\begingroup\expandafter\expandafter\expandafter\endgroup
+\expandafter\ifx\csname pdf@escapestring\endcsname\relax
+  \begingroup
+    \catcode`\|=0 %
+    \@makeother\\%
+  |@firstofone{|endgroup
+    |def|Hy@pstringdef#1#2{%
+      |begingroup
+        |edef~{|string~}%
+        |xdef|Hy@gtemp{#2}%
+      |endgroup
+      |let#1|Hy@gtemp
+      |@onelevel@sanitize#1%
+      |edef#1{|expandafter|Hy@ExchangeBackslash#1\|@nil}%
+      |edef#1{|expandafter|Hy@ExchangeLeftParenthesis#1(|@nil}%
+      |edef#1{|expandafter|Hy@ExchangeRightParenthesis#1)|@nil}%
+    }%
+    |def|Hy@ExchangeBackslash#1\#2|@nil{%
+      #1%
+      |ifx|\#2|\%%
+      |else
+        \\%
+        |Hy@ReturnAfterFi{%
+          |Hy@ExchangeBackslash#2|@nil
+        }%
+      |fi
+    }%
+  }%
+  \def\Hy@ExchangeLeftParenthesis#1(#2\@nil{%
+    #1%
+    \ifx\\#2\\%
+    \else
+      \@backslashchar(%
+      \Hy@ReturnAfterFi{%
+        \Hy@ExchangeLeftParenthesis#2\@nil
+      }%
+    \fi
+  }%
+  \def\Hy@ExchangeRightParenthesis#1)#2\@nil{%
+    #1%
+    \ifx\\#2\\%
+    \else
+      \@backslashchar)%
+      \Hy@ReturnAfterFi{%
+        \Hy@ExchangeRightParenthesis#2\@nil
+      }%
+    \fi
+  }%
+\else
+  \def\Hy@pstringdef#1#2{%
+    \begingroup
+      \edef~{\string~}%
+      \xdef\Hy@gtemp{\pdf@escapestring{#2}}%
+    \endgroup
+    \let#1\Hy@gtemp
+  }%
+\fi
+\ifcsname mediaheight\endcsname
+  \ifHy@setpagesize
+     \providecommand*{\VTeXInitMediaSize}{%
+       \ifnum\mag=\@m
+        \ifdim\stockwidth>\z@
+          \ifdim\stockheight>\z@
+           \setlength\mediaheight\stockheight
+           \setlength\mediawidth\stockwidth
+          \else
+            \ifdim\paperwidth>\z@
+              \ifdim\paperheight>\z@
+                \setlength\mediaheight\paperheight
+                \setlength\mediawidth\paperwidth
+              \fi
+            \fi
+          \fi
+        \else
+          \ifdim\stockwidth=\z@
+            \ifdim\paperwidth>\z@
+              \ifdim\paperheight>\z@
+                \setlength\mediaheight\paperheight
+                \setlength\mediawidth\paperwidth
+              \fi
+            \fi
+          \fi
+        \fi
+       \fi
+     }%
+     \Hy@AtBeginDocument{\VTeXInitMediaSize}%
+  \fi
+  \Hy@DisableOption{setpagesize}%
+\fi
+\providecommand*\@pdfview{xyz}
+\providecommand*\@pdfborder{0 0 1}
+\providecommand*\@pdfborderstyle{}
+\let\CurrentBorderColor\@linkbordercolor
+\Hy@WrapperDef\hyper@anchor#1{%
+  \Hy@SaveLastskip
+  \Hy@VerboseAnchor{#1}%
+  \begingroup
+    \let\protect=\string
+    \hyper@chars
+    \special{!aname \HyperDestNameFilter{#1};\@pdfview}%
+  \endgroup
+  \Hy@activeanchortrue
+  \Hy@colorlink\@anchorcolor\anchor@spot\Hy@endcolorlink
+  \Hy@activeanchorfalse
+  \Hy@RestoreLastskip
+}
+\Hy@WrapperDef\hyper@anchorstart#1{%
+  \Hy@SaveLastskip
+  \Hy@VerboseAnchor{#1}%
+  \begingroup
+    \hyper@chars
+    \special{!aname \HyperDestNameFilter{#1};\@pdfview}%
+  \endgroup
+  \Hy@activeanchortrue
+}
+\def\hyper@anchorend{%
+  \Hy@activeanchorfalse
+  \Hy@RestoreLastskip
+}
+\def\@urltype{url}
+\def\Hy@undefinedname{UNDEFINED}
+\def\hyper@linkstart#1#2{%
+  \Hy@VerboseLinkStart{#1}{#2}%
+  \Hy@pstringdef\Hy@pstringURI{#2}%
+  \expandafter\Hy@colorlink\csname @#1color\endcsname
+  \@ifundefined{@#1bordercolor}{%
+    \let\CurrentBorderColor\relax
+  }{%
+    \edef\CurrentBorderColor{%
+      \csname @#1bordercolor\endcsname
+    }%
+  }%
+  \def\Hy@tempa{#1}%
+  \ifx\Hy@tempa\@urltype
+    \special{!%
+      aref <u=/Type/Action/S/URI/URI(\Hy@pstringURI)%
+        \ifHy@href@ismap
+          /IsMap true%
+        \fi
+        \Hy@href@nextactionraw
+        >;%
+      a=<%
+        \ifHy@pdfa /F 4\fi
+        \Hy@setpdfborder
+        \ifx\CurrentBorderColor\relax
+        \else
+          /C [\CurrentBorderColor]%
+        \fi
+      >%
+    }%
+  \else
+    \protected@edef\Hy@testname{#2}%
+    \ifx\Hy@testname\@empty
+      \Hy@Warning{%
+        Empty destination name,\MessageBreak
+        using `\Hy@undefinedname'%
+      }%
+      \let\Hy@testname\Hy@undefinedname
+    \fi
+    \special{!%
+      aref \expandafter\HyperDestNameFilter
+           \expandafter{\Hy@testname};%
+      a=<%
+        \ifHy@pdfa /F 4\fi
+        \Hy@setpdfborder
+        \ifx\CurrentBorderColor\relax
+        \else
+          /C [\CurrentBorderColor]%
+        \fi
+      >%
+    }%
+  \fi
+}
+\def\hyper@linkend{%
+  \special{!endaref}%
+  \Hy@endcolorlink
+}
+\def\hyper@linkfile#1#2#3{%
+  \leavevmode
+  \def\Hy@pstringF{#2}%
+  \Hy@CleanupFile\Hy@pstringF
+  \special{!%
+    aref <%
+    \ifnum\Hy@VTeXversion>753 \ifHy@pdfnewwindow n\fi\fi
+    f=\Hy@pstringF>#3;%
+    a=<%
+      \ifHy@pdfa /F 4\fi
+      \Hy@setpdfborder
+      \ifx\@filebordercolor\relax
+      \else
+        /C [\@filebordercolor]%
+      \fi
+    >%
+  }%
+  \Hy@colorlink\@filecolor
+    #1\Hy@xspace@end
+  \Hy@endcolorlink
+  \special{!endaref}%
+}
+\def\hyper@linkurl#1#2{%
+  \begingroup
+    \Hy@pstringdef\Hy@pstringURI{#2}%
+    \hyper@chars
+    \leavevmode
+    \special{!%
+      aref <u=/Type/Action/S/URI/URI(\Hy@pstringURI)%
+        \ifHy@href@ismap
+          /IsMap true%
+        \fi
+        \Hy@href@nextactionraw
+        >;%
+      a=<%
+        \ifHy@pdfa /F 4\fi
+        \Hy@setpdfborder
+        \ifx\@urlbordercolor\relax
+        \else
+          /C [\@urlbordercolor]%
+        \fi
+      >%
+    }%
+    \Hy@colorlink\@urlcolor
+      #1\Hy@xspace@end
+    \Hy@endcolorlink
+    \special{!endaref}%
+  \endgroup
+}
+\def\hyper@link#1#2#3{%
+  \Hy@VerboseLinkStart{#1}{#2}%
+  \@ifundefined{@#1bordercolor}{%
+    \let\CurrentBorderColor\relax
+  }{%
+    \edef\CurrentBorderColor{\csname @#1bordercolor\endcsname}%
+  }%
+  \leavevmode
+  \protected@edef\Hy@testname{#2}%
+  \ifx\Hy@testname\@empty
+    \Hy@Warning{%
+      Empty destination name,\MessageBreak
+      using `\Hy@undefinedname'%
+    }%
+    \let\Hy@testname\Hy@undefinedname
+  \fi
+  \special{!%
+    aref \expandafter\HyperDestNameFilter
+         \expandafter{\Hy@testname};%
+    a=<%
+      \ifHy@pdfa /F 4\fi
+      \Hy@setpdfborder
+      \ifx\CurrentBorderColor\relax
+      \else
+        /C [\CurrentBorderColor]%
+      \fi
+    >%
+  }%
+  \expandafter
+  \Hy@colorlink\csname @#1color\endcsname
+    #3\Hy@xspace@end
+  \Hy@endcolorlink
+  \special{!endaref}%
+}
+\def\hyper@image#1#2{%
+  \hyper@linkurl{#2}{#1}%
+}
+\def\@hyper@launch run:#1\\#2#3{%
+  \Hy@pstringdef\Hy@pstringF{#1}%
+  \Hy@pstringdef\Hy@pstringP{#3}%
+  \leavevmode
+  \special{!aref %
+    <u=%
+      /Type/Action%
+      /S/Launch%
+      /F(\Hy@pstringF)%
+      \Hy@SetNewWindow
+      \ifx\\#3\\%
+      \else
+        /Win<</F(\Hy@pstringF)/P(\Hy@pstringP)>>%
+      \fi
+      \Hy@href@nextactionraw
+    >;%
+    a=<%
+      \ifHy@pdfa /F 4\fi
+      \Hy@setpdfborder
+      \ifx\@runbordercolor\relax
+      \else
+        /C[\@runbordercolor]%
+      \fi
+    >%
+  }%
+  \Hy@colorlink\@runcolor
+    #2\Hy@xspace@end
+  \Hy@endcolorlink
+  \special{!endaref}%
+}
+\def\Acrobatmenu#1#2{%
+  \EdefEscapeName\Hy@temp@menu{#1}%
+  \Hy@Acrobatmenu{#1}{#2}{%
+    \special{!%
+      aref <u=/S /Named /N /\Hy@temp@menu>;%
+      a=<%
+        \ifHy@pdfa /F 4\fi
+        \Hy@setpdfborder
+        \ifx\@menubordercolor\relax
+        \else
+          /C[\@menubordercolor]%
+        \fi
+      >%
+    }%
+    \Hy@colorlink\@menucolor
+      #2\Hy@xspace@end
+    \Hy@endcolorlink
+    \special{!endaref}%
+  }%
+}
+\ifnum\Hy@VTeXversion<702 %
+\else
+  \def\hyper@pagetransition{%
+    \ifx\@pdfpagetransition\relax
+    \else
+      \ifx\@pdfpagetransition\@empty
+      \else
+        \hvtex@parse@trans\@pdfpagetransition
+      \fi
+    \fi
+  }%
+  \def\hvtex@trans@effect@Blinds{\def\hvtex@trans@code{B}}%
+  \def\hvtex@trans@effect@Box{\def\hvtex@trans@code{X}}%
+  \def\hvtex@trans@effect@Dissolve{\def\hvtex@trans@code{D}}%
+  \def\hvtex@trans@effect@Glitter{\def\hvtex@trans@code{G}}%
+  \def\hvtex@trans@effect@Split{\def\hvtex@trans@code{S}}%
+  \def\hvtex@trans@effect@Wipe{\def\hvtex@trans@code{W}}%
+  \def\hvtex@trans@effect@R{\def\hvtex@trans@code{R}}%
+  \def\hvtex@par@dimension{/Dm}%
+  \def\hvtex@par@direction{/Di}%
+  \def\hvtex@par@duration{/D}%
+  \def\hvtex@par@motion{/M}%
+  \def\hvtex@gettoken{%
+    \expandafter\hvtex@gettoken@\hvtex@buffer\@nil
+  }%
+  \def\hvtex@gettoken@#1 #2\@nil{%
+    \edef\hvtex@token{#1}%
+    \edef\hvtex@buffer{#2}%
+  }%
+  \def\hvtex@parse@trans#1{%
+    \let\hvtex@trans@code\@empty
+    \let\hvtex@param@dimension\@empty
+    \let\hvtex@param@direction\@empty
+    \let\hvtex@param@duration\@empty
+    \let\hvtex@param@motion\@empty
+    \edef\hvtex@buffer{#1\space}%
+    \hvtex@gettoken
+    \ifx\hvtex@token\@empty
+      \ifx\hvtex@buffer\@empty
+      \else
+        \hvtex@gettoken
+      \fi
+    \fi
+    \csname hvtex@trans@effect@\hvtex@token\endcsname
+    \hvtex@trans@params
+  }%
+  \def\hvtex@trans@params{%
+    \ifx\hvtex@buffer\@empty
+    \else
+      \hvtex@gettoken
+      \let\hvtex@trans@par\hvtex@token
+      \ifx\hvtex@buffer\@empty
+      \else
+        \hvtex@gettoken
+        \ifx\hvtex@trans@par\hvtex@par@duration
+          \let\hvtex@param@duration\hvtex@token
+        \else \ifx\hvtex@trans@par\hvtex@par@motion
+          \expandafter\edef\expandafter\hvtex@param@motion
+            \expandafter{\expandafter\@gobble\hvtex@token}%
+        \else \ifx\hvtex@trans@par\hvtex@par@dimension
+          \expandafter\edef\expandafter\hvtex@param@dimension
+            \expandafter{\expandafter\@gobble\hvtex@token}%
+        \else \ifx\hvtex@trans@par\hvtex@par@direction
+          \let\hvtex@param@direction\hvtex@token
+        \fi\fi\fi\fi
+      \fi
+    \fi
+    \ifx\hvtex@buffer\@empty
+      \let\next\hvtex@produce@trans
+    \else
+      \let\next\hvtex@trans@params
+    \fi
+    \next
+  }%
+  \def\hvtex@produce@trans{%
+    \let\vtex@trans@special\@empty
+    \if S\hvtex@trans@code
+      \edef\vtex@trans@special{\hvtex@trans@code
+        \hvtex@param@dimension\hvtex@param@motion}%
+    \else\if B\hvtex@trans@code
+      \edef\vtex@trans@special{%
+        \hvtex@trans@code\hvtex@param@dimension
+      }%
+    \else\if X\hvtex@trans@code
+      \edef\vtex@trans@special{%
+        \hvtex@trans@code\hvtex@param@motion
+      }%
+    \else\if W\hvtex@trans@code
+      \edef\vtex@trans@special{%
+        \hvtex@trans@code\hvtex@param@direction
+      }%
+    \else\if D\hvtex@trans@code
+      \let\vtex@trans@special\hvtex@trans@code
+    \else\if R\hvtex@trans@code
+      \let\vtex@trans@special\hvtex@trans@code
+    \else\if G\hvtex@trans@code
+      \edef\vtex@trans@special{%
+        \hvtex@trans@code\hvtex@param@direction
+      }%
+    \fi\fi\fi\fi\fi\fi\fi
+    \ifx\vtex@trans@special\@empty
+    \else
+      \ifx\hvtex@param@duration\@empty
+      \else
+        \setlength{\dimen@}{\hvtex@param@duration\p@}%
+        \multiply\dimen@\@m
+        \edef\vtex@trans@special{%
+          \vtex@trans@special,\strip@pt\dimen@
+        }%
+      \fi
+      \special{!trans \vtex@trans@special}%
+    \fi
+  }%
+  \def\hyper@pageduration{%
+    \ifx\@pdfpageduration\relax
+    \else
+      \ifx\@pdfpageduration\@empty
+        \special{!duration-}%
+      \else
+        \special{!duration \@pdfpageduration}%
+      \fi
+    \fi
+  }%
+  \g@addto@macro\Hy@EveryPageBoxHook{%
+    \hyper@pagetransition
+    \hyper@pageduration
+  }%
+\fi
+\ifx\@pdfproducer\relax
+  \def\@pdfproducer{VTeX}%
+  \ifnum\Hy@VTeXversion>\z@
+    \count@\VTeXversion
+    \divide\count@ 100 %
+    \edef\@pdfproducer{\@pdfproducer\space v\the\count@}%
+    \multiply\count@ -100 %
+    \advance\count@\VTeXversion
+    \edef\@pdfproducer{%
+      \@pdfproducer
+      .\ifnum\count@<10 0\fi\the\count@
+      \ifx\VTeXOS\@undefined\else
+        \ifnum\VTeXOS>0 %
+          \ifnum\VTeXOS<6 %
+            \space(%
+            \ifcase\VTeXOS
+            \or Windows\or Linux\or OS/2\or MacOS\or MacOS/X%
+            \fi
+            )%
+          \fi
+        \fi
+      \fi
+      ,\space
+      \ifnum\OpMode=\@ne PDF\else PS\fi
+      \space backend%
+      \ifx\gexmode\@undefined\else
+        \ifnum\gexmode>\z@\space with GeX\fi
+      \fi
+    }%
+  \fi
+\fi
+\def\PDF@SetupDoc{%
+  \ifx\@pdfpagescrop\@empty
+  \else
+    \special{!pdfinfo b=<\@pdfpagescrop>}%
+  \fi
+  \ifx\@pdfstartpage\@empty
+  \else
+    \ifx\@pdfstartview\@empty
+    \else
+      \special{!onopen Page\@pdfstartpage}%
+    \fi
+  \fi
+  \special{!pdfinfo p=</\@pdfpagemode>}%
+  \ifx\@baseurl\@empty
+  \else
+    \special{!pdfinfo u=<<</Base (\@baseurl)>>>}%
+  \fi
+  \special{!pdfinfo v=<<<%
+    \ifHy@pdftoolbar\else /HideToolbar true\fi
+    \ifHy@pdfmenubar\else /HideMenubar true\fi
+    \ifHy@pdfwindowui\else /HideWindowUI true\fi
+    \ifHy@pdffitwindow /FitWindow true\fi
+    \ifHy@pdfcenterwindow /CenterWindow true\fi
+    \ifHy@pdfdisplaydoctitle /DisplayDocTitle true\fi
+    \Hy@UseNameKey{NonFullScreenPageMode}\@pdfnonfullscreenpagemode
+    \Hy@UseNameKey{Direction}\@pdfdirection
+    \Hy@UseNameKey{ViewArea}\@pdfviewarea
+    \Hy@UseNameKey{ViewClip}\@pdfviewclip
+    \Hy@UseNameKey{PrintArea}\@pdfprintarea
+    \Hy@UseNameKey{PrintClip}\@pdfprintclip
+    \Hy@UseNameKey{PrintScaling}\@pdfprintscaling
+    \Hy@UseNameKey{Duplex}\@pdfduplex
+    \ifx\@pdfpicktraybypdfsize\@empty
+    \else
+      /PickTrayByPDFSize \@pdfpicktraybypdfsize
+    \fi
+    \ifx\@pdfprintpagerange\@empty
+    \else
+      /PrintPageRange[\@pdfprintpagerange]%
+    \fi
+    \ifx\@pdfnumcopies\@empty
+    \else
+      /NumCopies \@pdfnumcopies
+    \fi
+  >>>}%
+  \ifx\@pdfpagelayout\@empty
+  \else
+    \special{!pdfinfo l=</\@pdfpagelayout\space>}%
+  \fi
+}%
+\HyInfo@AddonUnsupportedtrue
+\define@key{Hyp}{pdfcreationdate}{%
+  \Hy@Warning{%
+    VTeX does not support pdfcreationdate.\MessageBreak
+    Therefore its setting is ignored%
+  }%
+}
+\define@key{Hyp}{pdfmoddate}{%
+  \Hy@Warning{%
+    VTeX does not support pdfmoddate.\MessageBreak
+    Therefore its setting is ignored%
+  }%
+}
+\def\PDF@FinishDoc{%
+  \Hy@UseMaketitleInfos
+  \HyInfo@TrappedUnsupported
+  \special{!pdfinfo a=<\@pdfauthor>}%
+  \special{!pdfinfo t=<\@pdftitle>}%
+  \special{!pdfinfo s=<\@pdfsubject>}%
+  \special{!pdfinfo c=<\@pdfcreator>}%
+  \ifx\@pdfproducer\relax
+  \else
+    \special{!pdfinfo r=<\@pdfproducer>}%
+  \fi
+  \special{!pdfinfo k=<\@pdfkeywords>}%
+  \Hy@DisableOption{pdfauthor}%
+  \Hy@DisableOption{pdftitle}%
+  \Hy@DisableOption{pdfsubject}%
+  \Hy@DisableOption{pdfcreator}%
+  \Hy@DisableOption{addtopdfcreator}%
+  \Hy@DisableOption{pdfcreationdate}%
+  \Hy@DisableOption{pdfcreationdate}%
+  \Hy@DisableOption{pdfmoddate}%
+  \Hy@DisableOption{pdfproducer}%
+  \Hy@DisableOption{pdfkeywords}%
+  \Hy@DisableOption{pdftrapped}%
+  \Hy@DisableOption{pdfinfo}%
+}
+\def\Hy@writebookmark#1#2#3#4#5{%
+    % section number, text, label, level, file
+  \ifx\WriteBookmarks\relax%
+  \else
+    \ifnum#4>\Hy@bookmarksdepth\relax
+    \else
+      \@@writetorep{#1}{#2}{#3}{#4}{#5}%
+    \fi
+  \fi
+}
+\def\Hy@currentbookmarklevel{0}
+\def\Hy@numberline#1{#1 }
+\def\@@writetorep#1#2#3#4#5{%
+  \begingroup
+    \edef\Hy@tempa{#5}%
+    \ifx\Hy@tempa\Hy@bookmarkstype
+      \edef\Hy@level{#4}%
+      \ifx\Hy@levelcheck Y%
+        \@tempcnta\Hy@level\relax
+        \advance\@tempcnta by -1 %
+        \ifnum\Hy@currentbookmarklevel<\@tempcnta
+          \advance\@tempcnta by -\Hy@currentbookmarklevel\relax
+          \advance\@tempcnta by 1 %
+          \Hy@Warning{%
+            Difference (\the\@tempcnta) between bookmark levels is %
+            greater \MessageBreak than one, level fixed%
+          }%
+          \@tempcnta\Hy@currentbookmarklevel
+          \advance\@tempcnta by 1 %
+          \edef\Hy@level{\the\@tempcnta}%
+        \fi
+      \else
+        \global\let\Hy@levelcheck Y%
+      \fi
+      \global\let\Hy@currentbookmarklevel\Hy@level
+      \@tempcnta\Hy@level\relax
+      \expandafter\xdef\csname Parent\Hy@level\endcsname{#3}%
+      \advance\@tempcnta by -1 %
+      \edef\Hy@tempa{#3}%
+      \edef\Hy@tempb{\csname Parent\the\@tempcnta\endcsname}%
+      \ifx\Hy@tempa\Hy@tempb
+        \Hy@Warning{%
+          The anchor of a bookmark and its parent's must not%
+          \MessageBreak be the same. Added a new anchor%
+        }%
+        \phantomsection
+      \fi
+      \ifHy@bookmarksnumbered
+        \let\numberline\Hy@numberline
+        \let\booknumberline\Hy@numberline
+        \let\partnumberline\Hy@numberline
+        \let\chapternumberline\Hy@numberline
+      \else
+        \let\numberline\@gobble
+        \let\booknumberline\@gobble
+        \let\partnumberline\@gobble
+        \let\chapternumberline\@gobble
+      \fi
+      \pdfstringdef\Hy@tempa{#2}%
+      \HyPsd@SanitizeForOutFile\Hy@tempa
+      \if@filesw
+        \stepcounter{bookmark@seq@number}%
+        \@ifundefined{@outlinefile}{%
+        }{%
+          \protected@write\@outlinefile{}{%
+            \protect\BOOKMARK
+              [\Hy@level][\@bookmarkopenstatus{\Hy@level}]{#3}%
+              {\Hy@tempa}{\Hy@tempb}%
+              \@percentchar\space\thebookmark@seq@number
+          }%
+        }%
+      \fi
+    \fi
+  \endgroup
+}
+\newcounter{bookmark@seq@number}
+\begingroup
+  \lccode`(=`{%
+  \lccode`)=`}%
+  \lccode`1=\z@
+  \lccode`2=\z@
+  \lccode`3=\z@
+  \lccode`5=\z@
+  \lccode`7=\z@
+  \lccode`\#=\z@
+  \lccode`\`=\z@
+  \lccode`\{=\z@
+  \lccode`\}=\z@
+\lowercase{%
+  \endgroup
+  \def\HyPsd@SanitizeForOutFile#1{%
+    \@onelevel@sanitize\Hy@tempa
+    \escapechar`\\%
+    \edef\Hy@tempa{%
+      \expandafter\HyPsd@SanitizeOut@BraceLeft\Hy@tempa(\@nil
+    }%
+    \edef\Hy@tempa{%
+      \expandafter\HyPsd@SanitizeOut@BraceRight\Hy@tempa)\@nil
+    }%
+  }%
+  \def\HyPsd@SanitizeOut@BraceLeft#1(#2\@nil{%
+    #1%
+    \ifx\\#2\\%
+      \expandafter\@gobble
+    \else
+      \expandafter\@firstofone
+    \fi
+    {%
+      \string\173%
+      \HyPsd@SanitizeOut@BraceLeft#2\@nil
+    }%
+  }%
+  \def\HyPsd@SanitizeOut@BraceRight#1)#2\@nil{%
+    #1%
+    \ifx\\#2\\%
+      \expandafter\@gobble
+    \else
+      \expandafter\@firstofone
+    \fi
+    {%
+      \string\175%
+      \HyPsd@SanitizeOut@BraceRight#2\@nil
+    }%
+  }%
+}
+\newcommand{\currentpdfbookmark}{%
+  \pdfbookmark[\Hy@currentbookmarklevel]%
+}
+\newcommand{\subpdfbookmark}{%
+  \@tempcnta\Hy@currentbookmarklevel
+  \Hy@StepCount\@tempcnta
+  \expandafter\pdfbookmark\expandafter[\the\@tempcnta]%
+}
+\newcommand{\belowpdfbookmark}[2]{%
+  \@tempcnta\Hy@currentbookmarklevel
+  \Hy@StepCount\@tempcnta
+  \expandafter\pdfbookmark\expandafter[\the\@tempcnta]{#1}{#2}%
+  \advance\@tempcnta by -1 %
+  \xdef\Hy@currentbookmarklevel{\the\@tempcnta}%
+}
+\renewcommand\pdfbookmark[3][0]{%
+  \Hy@writebookmark{}{#2}{#3.#1}{#1}{toc}%
+  \hyper@anchorstart{#3.#1}\hyper@anchorend
+}
+\def\BOOKMARK{%
+  \@ifnextchar[{\@BOOKMARK}{\@@BOOKMARK[1][-]}%
+}
+\def\@BOOKMARK[#1]{%
+  \@ifnextchar[{\@@BOOKMARK[{#1}]}{\@@BOOKMARK[{#1}][-]}%
+}
+\RequirePackage{rerunfilecheck}[2009/12/10]
+\def\Hy@OutlineRerunCheck{%
+  \RerunFileCheck{\jobname.out}{%
+    \immediate\closeout\@outlinefile
+  }{%
+    Rerun to get outlines right\MessageBreak
+    or use package `bookmark'%
+  }%
+}
+\newcount\@serial@counter\@serial@counter=1\relax
+\begingroup
+  \catcode`\'=12 %
+  \ifnum\Hy@VTeXversion<650 %
+    \catcode`\"=12 %
+    \gdef\hv@pdf@char#1#2#3{%
+      \char
+      \ifcase'#1#2#3 %
+         "00\or"01\or"02\or"03\or"04\or"05\or"06\or"07%
+      \or"08\or"09\or"0A\or"0B\or"0C\or"0D\or"0E\or"0F%
+      \or"10\or"11\or"12\or"13\or"14\or"15\or"16\or"17%
+      \or"18\or"19\or"1A\or"1B\or"1C\or"1D\or"1E\or"1F%
+      \or"20\or"21\or"22\or"23\or"24\or"25\or"26\or"27%
+      \or"28\or"29\or"2A\or"2B\or"2C\or"2D\or"2E\or"2F%
+      \or"30\or"31\or"32\or"33\or"34\or"35\or"36\or"37%
+      \or"38\or"39\or"3A\or"3B\or"3C\or"3D\or"3E\or"3F%
+      \or"40\or"41\or"42\or"43\or"44\or"45\or"46\or"47%
+      \or"48\or"49\or"4A\or"4B\or"4C\or"4D\or"4E\or"4F%
+      \or"50\or"51\or"52\or"53\or"54\or"55\or"56\or"57%
+      \or"58\or"59\or"5A\or"5B\or"5C\or"5D\or"5E\or"5F%
+      \or"60\or"61\or"62\or"63\or"64\or"65\or"66\or"67%
+      \or"68\or"69\or"6A\or"6B\or"6C\or"6D\or"6E\or"6F%
+      \or"70\or"71\or"72\or"73\or"74\or"75\or"76\or"77%
+      \or"78\or"79\or"7A\or"7B\or"7C\or"7D\or"7E\or"7F%
+      \or"80\or"81\or"82\or"83\or"84\or"85\or"86\or"87%
+      \or"88\or"89\or"8A\or"8B\or"8C\or"8D\or"8E\or"8F%
+      \or"90\or"91\or"92\or"93\or"94\or"95\or"96\or"97%
+      \or"98\or"99\or"9A\or"9B\or"9C\or"9D\or"9E\or"9F%
+      \or"A0\or"A1\or"A2\or"A3\or"A4\or"A5\or"A6\or"A7%
+      \or"A8\or"A9\or"AA\or"AB\or"AC\or"AD\or"AE\or"AF%
+      \or"B0\or"B1\or"B2\or"B3\or"B4\or"B5\or"B6\or"B7%
+      \or"B8\or"B9\or"BA\or"BB\or"BC\or"BD\or"BE\or"BF%
+      \or"C0\or"C1\or"C2\or"C3\or"C4\or"C5\or"C6\or"C7%
+      \or"C8\or"C9\or"CA\or"CB\or"CC\or"CD\or"CE\or"CF%
+      \or"D0\or"D1\or"D2\or"D3\or"D4\or"D5\or"D6\or"D7%
+      \or"D8\or"D9\or"DA\or"DB\or"DC\or"DD\or"DE\or"DF%
+      \or"E0\or"E1\or"E2\or"E3\or"E4\or"E5\or"E6\or"E7%
+      \or"E8\or"E9\or"EA\or"EB\or"EC\or"ED\or"EE\or"EF%
+      \or"F0\or"F1\or"F2\or"F3\or"F4\or"F5\or"F6\or"F7%
+      \or"F8\or"F9\or"FA\or"FB\or"FC\or"FD\or"FE\or"FF%
+      \fi
+    }%
+  \else
+    \gdef\hv@pdf@char{\char'}%
+  \fi
+\endgroup
+\def\@@BOOKMARK[#1][#2]#3#4#5{%
+  \expandafter\edef\csname @count@#3\endcsname{%
+    \the\@serial@counter
+  }%
+  \edef\@mycount{\the\@serial@counter}%
+  \Hy@StepCount\@serial@counter
+  \edef\@parcount{%
+    \expandafter\ifx\csname @count@#5\endcsname\relax
+      0%
+    \else
+      \csname @count@#5\endcsname
+    \fi
+  }%
+  \immediate\special{%
+    !outline \HyperDestNameFilter{#3};p=\@parcount,i=\@mycount,%
+    s=\ifx#2-c\else o\fi,t=#4%
+  }%
+}%
+\def\ReadBookmarks{%
+  \begingroup
+    \def\0{\hv@pdf@char 0}%
+    \def\1{\hv@pdf@char 1}%
+    \def\2{\hv@pdf@char 2}%
+    \def\3{\hv@pdf@char 3}%
+    \def\({(}%
+    \def\){)}%
+    \def\do##1{%
+      \ifnum\catcode`##1=\active
+        \@makeother##1%
+      \else
+        \ifnum\catcode`##1=6 %
+          \@makeother##1%
+        \fi
+      \fi
+    }%
+    \dospecials
+    \Hy@safe@activestrue
+    \InputIfFileExists{\jobname.out}{}{}%
+  \endgroup
+  \ifx\WriteBookmarks\relax
+  \else
+    \if@filesw
+      \newwrite\@outlinefile
+      \Hy@OutlineRerunCheck
+      \immediate\openout\@outlinefile=\jobname.out\relax
+    \fi
+  \fi
+}
+\ifHy@implicit
+\else
+  \expandafter\endinput
+\fi
+\newlength\Hy@SectionHShift
+\def\Hy@SectionAnchorHref#1{%
+  \ifx\protect\@typeset@protect
+    \Hy@@SectionAnchor{#1}%
+  \fi
+}
+\DeclareRobustCommand*{\Hy@@SectionAnchor}[1]{%
+  \leavevmode
+  \hbox to 0pt{%
+    \kern-\Hy@SectionHShift
+    \Hy@raisedlink{%
+      \hyper@anchorstart{#1}\hyper@anchorend
+    }%
+    \hss
+  }%
+}
+\AddToNoCaseChangeList{\Hy@@SectionAnchor}
+\@ifundefined{hyper@nopatch@sectioning}
+{
+\let\H@old@ssect\@ssect
+\def\@ssect#1#2#3#4#5{%
+  \Hy@MakeCurrentHrefAuto{section*}%
+  \setlength{\Hy@SectionHShift}{#1}%
+  \begingroup
+    \toks@{\H@old@ssect{#1}{#2}{#3}{#4}}%
+    \toks\tw@\expandafter{%
+      \expandafter\Hy@SectionAnchorHref\expandafter{\@currentHref}%
+      #5%
+    }%
+  \edef\x{\endgroup
+    \the\toks@{\the\toks\tw@}%
+  }\x
+}
+\let\H@old@schapter\@schapter
+\def\@schapter#1{%
+  \begingroup
+    \let\@mkboth\@gobbletwo
+    \Hy@MakeCurrentHrefAuto{\Hy@chapapp*}%
+    \Hy@raisedlink{%
+      \hyper@anchorstart{\@currentHref}\hyper@anchorend
+    }%
+  \endgroup
+  \H@old@schapter{#1}%
+}
+\@ifundefined{@chapter}{}{%
+  \let\Hy@org@chapter\@chapter
+  \def\@chapter{%
+    \def\Hy@next{%
+      \Hy@MakeCurrentHrefAuto{\Hy@chapapp*}%
+      \Hy@raisedlink{%
+        \hyper@anchorstart{\@currentHref}\hyper@anchorend
+      }%
+    }%
+    \ifnum\c@secnumdepth>\m@ne
+      \@ifundefined{if@mainmatter}%
+      \iftrue{\csname if@mainmatter\endcsname}%
+        \let\Hy@next\relax
+      \fi
+    \fi
+    \Hy@next
+    \Hy@org@chapter
+  }%
+}
+\let\H@old@part\@part
+\@ifundefined{chapter}
+  {\let\Hy@secnum@part\z@}
+  {\let\Hy@secnum@part\m@ne}
+\def\@part{%
+  \ifnum\Hy@secnum@part>\c@secnumdepth
+    \phantomsection
+  \fi
+  \H@old@part
+}
+\let\H@old@spart\@spart
+\def\@spart#1{%
+  \Hy@MakeCurrentHrefAuto{part*}%
+  \Hy@raisedlink{%
+    \hyper@anchorstart{\@currentHref}\hyper@anchorend
+  }%
+  \H@old@spart{#1}%
+}
+\let\H@old@sect\@sect
+\def\@sect#1#2#3#4#5#6[#7]#8{%
+  \ifnum #2>\c@secnumdepth
+    \expandafter\@firstoftwo
+  \else
+    \expandafter\@secondoftwo
+  \fi
+  {%
+    \Hy@MakeCurrentHrefAuto{section*}%
+    \setlength{\Hy@SectionHShift}{#3}%
+    \begingroup
+      \toks@{\H@old@sect{#1}{#2}{#3}{#4}{#5}{#6}[{#7}]}%
+      \toks\tw@\expandafter{%
+        \expandafter\Hy@SectionAnchorHref\expandafter{\@currentHref}%
+        #8%
+      }%
+    \edef\x{\endgroup
+      \the\toks@{\the\toks\tw@}%
+    }\x
+  }{%
+    \H@old@sect{#1}{#2}{#3}{#4}{#5}{#6}[{#7}]{#8}%
+  }%
+}
+}{}
+\expandafter\def\csname Parent-4\endcsname{}
+\expandafter\def\csname Parent-3\endcsname{}
+\expandafter\def\csname Parent-2\endcsname{}
+\expandafter\def\csname Parent-1\endcsname{}
+\expandafter\def\csname Parent0\endcsname{}
+\expandafter\def\csname Parent1\endcsname{}
+\expandafter\def\csname Parent2\endcsname{}
+\expandafter\def\csname Parent3\endcsname{}
+\expandafter\def\csname Parent4\endcsname{}
+\endinput
+%%
+%% End of file `hvtex.def'.

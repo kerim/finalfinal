@@ -1,0 +1,12 @@
+name dvipdfmx.universal-darwin
+category TLCore
+revision 74936
+shortdesc universal-darwin files of dvipdfmx
+containersize 812000
+containerchecksum 0f6c82beee74ffeaa3174e3e61d50c1e47b701fc7e4c8ef71cda708c212725ea6009f9d51a36d8ce8dd7909da025e1b341447a1136972a4b7a30fb55d78c6633
+binfiles arch=universal-darwin size=534
+ bin/universal-darwin/dvipdfm
+ bin/universal-darwin/dvipdfmx
+ bin/universal-darwin/dvipdft
+ bin/universal-darwin/ebb
+ bin/universal-darwin/xdvipdfmx

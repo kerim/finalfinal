@@ -1,0 +1,34 @@
+name symbol
+category Package
+revision 77161
+catalogue urw-base35
+shortdesc URW 'Base 35' font pack for LaTeX
+longdesc A set of fonts for use as "drop-in" replacements for Adobe's
+longdesc basic set, comprising: Century Schoolbook (substituting for
+longdesc Adobe's New Century Schoolbook); Dingbats (substituting for
+longdesc Adobe's Zapf Dingbats); Nimbus Mono L (substituting for Adobe's
+longdesc Courier); Nimbus Roman No9 L (substituting for Adobe's Times);
+longdesc Nimbus Sans L (substituting for Adobe's Helvetica); Standard
+longdesc Symbols L (substituting for Adobe's Symbol); URW Bookman; URW
+longdesc Chancery L Medium Italic (substituting for Adobe's Zapf
+longdesc Chancery); URW Gothic L Book (substituting for Adobe's Avant
+longdesc Garde); and URW Palladio L (substituting for Adobe's Palatino).
+execute addMap usy.map
+containersize 36104
+containerchecksum 058eb735dc19f76b9431069de9f5ce2fcbeb1d52a1e49906744e824c48567c0e9c76dc09dec6d078e5c3c79caa08f1cabad8933f9dcfec47b5385d62328154b5
+runfiles size=25
+ texmf-dist/dvips/symbol/config.usy
+ texmf-dist/fonts/afm/adobe/symbol/psyb.afm
+ texmf-dist/fonts/afm/adobe/symbol/psyr.afm
+ texmf-dist/fonts/afm/urw/symbol/usyr.afm
+ texmf-dist/fonts/map/dvips/symbol/usy.map
+ texmf-dist/fonts/tfm/adobe/symbol/psyr.tfm
+ texmf-dist/fonts/tfm/monotype/symbol/msyr.tfm
+ texmf-dist/fonts/tfm/urw35vf/symbol/usyr.tfm
+ texmf-dist/fonts/type1/urw/symbol/usyr.pfb
+ texmf-dist/fonts/type1/urw/symbol/usyr.pfm
+ texmf-dist/tex/latex/symbol/uusy.fd
+catalogue-also tex-gyre
+catalogue-ctan /fonts/urw/base35
+catalogue-license gpl
+catalogue-topics font font-type1 font-collection

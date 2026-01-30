@@ -1,0 +1,39 @@
+name lua-uni-algos
+category Package
+revision 76195
+shortdesc Unicode algorithms for LuaTeX
+longdesc Lua code working with Unicode data has to deal with quite some
+longdesc challenges. For example there are many canonically equivalent
+longdesc sequences which should be treated in the same way, and even
+longdesc identifying a single character becomes quite different once you
+longdesc have to deal with all kinds of combining characters, emoji
+longdesc sequences and syllables in different scripts. Therefore
+longdesc lua-uni-algos wants to build a collection of small libraries
+longdesc implementing algorithms to deal with lots of the details in
+longdesc Unicode, such that authors of LuaTeX packages can focus on
+longdesc their actual functionality instead of having to fight against
+longdesc the peculiarities of Unicode. Given that this package provides
+longdesc Lua modules, it is only useful in Lua(HB)TeX. Additionally, it
+longdesc expects an up-to-date version of the unicode-data package to be
+longdesc present. This package is intended for package authors only; no
+longdesc user-level functionality provided.
+containersize 12332
+containerchecksum 50022083eb3659c994e571d9bd9c9a916b9b47e34c2776e73515afdff0361b49fac8da59c1532a578a5518c70236983be4bbb2412845a30064d421ba3c85bf66
+doccontainersize 77452
+doccontainerchecksum 02a2c56cf312ead2e97ecd5b561a7a4ee326f42915d89b03d6f7450143d9682e01e5dfb5f1cb1b8739ed9beca053c760546f94c47ddd1d612c7f3a00789a1da3
+runfiles size=20
+ texmf-dist/tex/luatex/lua-uni-algos/lua-uni-algos.lua
+ texmf-dist/tex/luatex/lua-uni-algos/lua-uni-case.lua
+ texmf-dist/tex/luatex/lua-uni-algos/lua-uni-data-parser.lua
+ texmf-dist/tex/luatex/lua-uni-algos/lua-uni-data-preload.lua
+ texmf-dist/tex/luatex/lua-uni-algos/lua-uni-data.lua
+ texmf-dist/tex/luatex/lua-uni-algos/lua-uni-graphemes.lua
+ texmf-dist/tex/luatex/lua-uni-algos/lua-uni-normalize.lua
+ texmf-dist/tex/luatex/lua-uni-algos/lua-uni-parse.lua
+ texmf-dist/tex/luatex/lua-uni-algos/lua-uni-stage-tables.lua
+ texmf-dist/tex/luatex/lua-uni-algos/lua-uni-words.lua
+catalogue-contact-repository https://github.com/latex3/lua-uni-algos
+catalogue-ctan /macros/luatex/generic/lua-uni-algos
+catalogue-license lppl1.3
+catalogue-topics luatex unicode
+catalogue-version 0.5

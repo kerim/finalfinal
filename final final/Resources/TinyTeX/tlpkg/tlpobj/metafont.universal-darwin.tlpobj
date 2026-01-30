@@ -1,0 +1,10 @@
+name metafont.universal-darwin
+category Package
+revision 74380
+shortdesc universal-darwin files of metafont
+containersize 474536
+containerchecksum bc866f84a4b96b5d63bbc50b18bad854896ea8518f158fedac905041d2c3199ad6e6419c81ce81d11235b5fd6ed120f7ee3c9a18144f2fc260ae5e6a71429d62
+binfiles arch=universal-darwin size=567
+ bin/universal-darwin/inimf
+ bin/universal-darwin/mf
+ bin/universal-darwin/mf-nowin

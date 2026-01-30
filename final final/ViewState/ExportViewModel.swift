@@ -238,9 +238,25 @@ final class ExportViewModel {
     }
 
     private func showExportErrorAlert(error: Error) {
+        let fullErrorMessage = error.localizedDescription
+
+        // Truncate for display (first 200 chars + indicator)
+        let displayMessage: String
+        if fullErrorMessage.count > 200 {
+            let truncated = String(fullErrorMessage.prefix(200))
+            displayMessage = truncated + "...\n\n(Full error copied to clipboard)"
+
+            // Copy full error to clipboard
+            let pasteboard = NSPasteboard.general
+            pasteboard.clearContents()
+            pasteboard.setString(fullErrorMessage, forType: .string)
+        } else {
+            displayMessage = fullErrorMessage
+        }
+
         let alert = NSAlert()
         alert.messageText = "Export Failed"
-        alert.informativeText = error.localizedDescription
+        alert.informativeText = displayMessage
         alert.alertStyle = .critical
         alert.addButton(withTitle: "OK")
         alert.runModal()

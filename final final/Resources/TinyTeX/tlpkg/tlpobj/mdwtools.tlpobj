@@ -1,0 +1,34 @@
+name mdwtools
+category Package
+revision 15878
+shortdesc Miscellaneous tools by Mark Wooding
+longdesc This collection of tools includes: support for short commands
+longdesc starting with @, macros to sanitise the OT1 encoding of the
+longdesc cmtt fonts; a 'do after' command; improved footnote support;
+longdesc mathenv for various alignment in maths; list handling; mdwmath
+longdesc which adds some minor changes to LaTeX maths; a rewrite of
+longdesc LaTeX's tabular and array environments; verbatim handling; and
+longdesc syntax diagrams.
+containersize 19108
+containerchecksum bd78773e42fe20cce637a8fbc7c0e3f4f37ed50810190ffcc035a20c83508b6b7de7f7432b7bba8fbd039ba62f43a5b5e1f4839acb3fe62b425b650f23ff71bd
+doccontainersize 1605404
+doccontainerchecksum 06c8619d8bcce2c5cf9f5fce65318521bbb0c2ce53acd6b1793d0fe19a8f7a32c36ff68f355b6809491cec365d09f5f14b0589ddcbea6c5b48900d11fda4867f
+srccontainersize 104804
+srccontainerchecksum b3e6ba09116dd83187a55f205527c318d9afb4742404bc21b12e0be3b754140ecba82642154d92947cbc0706f0f9d3e6d876bc27108f13373d3c9d6ede4d7f5c
+runfiles size=31
+ texmf-dist/tex/latex/mdwtools/at.sty
+ texmf-dist/tex/latex/mdwtools/cmtt.sty
+ texmf-dist/tex/latex/mdwtools/doafter.sty
+ texmf-dist/tex/latex/mdwtools/footnote.sty
+ texmf-dist/tex/latex/mdwtools/mTTcmtt.fd
+ texmf-dist/tex/latex/mdwtools/mTTenc.def
+ texmf-dist/tex/latex/mdwtools/mathenv.sty
+ texmf-dist/tex/latex/mdwtools/mdwlist.sty
+ texmf-dist/tex/latex/mdwtools/mdwmath.sty
+ texmf-dist/tex/latex/mdwtools/mdwtab.sty
+ texmf-dist/tex/latex/mdwtools/sverb.sty
+ texmf-dist/tex/latex/mdwtools/syntax.sty
+catalogue-ctan /macros/latex/contrib/mdwtools
+catalogue-license gpl
+catalogue-topics list-supp notes footnote syntax maths macro-supp table verbatim
+catalogue-version 1.05.4

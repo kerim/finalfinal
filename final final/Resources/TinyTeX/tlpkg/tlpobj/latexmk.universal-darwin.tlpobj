@@ -1,0 +1,8 @@
+name latexmk.universal-darwin
+category Package
+revision 57908
+shortdesc universal-darwin files of latexmk
+containersize 340
+containerchecksum ab302c69dbd2644803a243082de3dfea1d441950f40d04ac2dbc660eca3c7038a6faa6fbcc0e703411a922918c8f2d40837b307ad8a41b27e34a2297ce1c1268
+binfiles arch=universal-darwin size=1
+ bin/universal-darwin/latexmk

@@ -1,0 +1,22 @@
+name graphics-cfg
+category Package
+revision 41448
+shortdesc Sample configuration files for LaTeX color and graphics
+longdesc This bundle includes color.cfg and graphics.cfg files that set
+longdesc default "driver" options for the color and graphics packages.
+longdesc It contains support for defaulting the new LuaTeX option which
+longdesc was added to graphics and color in the 2016-02-01 release. The
+longdesc LuaTeX option is only used for LuaTeX versions from 0.87, older
+longdesc versions use the pdfTeX option as before.
+containersize 1160
+containerchecksum e1015d360b56f63f1b9790daf16e2101e6af995bd1e45288ea604ae94e20196cab22e7e54d318aa79fa386123032a928be70a57154d409321e04f03ecf97ab75
+doccontainersize 876
+doccontainerchecksum dbcfdf635c2816f305205915119e1f6acba816c17b683622a8a32c361d75338376426b258c1fa3271abc1d7ad2a520ac85092a7b3bfbac6463106449bc906ae4
+runfiles size=2
+ texmf-dist/tex/latex/graphics-cfg/color.cfg
+ texmf-dist/tex/latex/graphics-cfg/graphics.cfg
+catalogue-also color graphics
+catalogue-contact-repository https://github.com/latex3/graphics-cfg
+catalogue-ctan /macros/latex/contrib/graphics-cfg
+catalogue-license pd
+catalogue-topics graphics colour

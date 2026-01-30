@@ -1,0 +1,9 @@
+name epstopdf.universal-darwin
+category Package
+revision 57908
+shortdesc universal-darwin files of epstopdf
+containersize 364
+containerchecksum 9c9a2e56d91c80e9f2938f16565017a7db0e828c987a9dd5b56aad28dc3c26d9057d7ea74011b215fcff5857981d75d7b7bdc0a3fecb83c7d3205261beda5c29
+binfiles arch=universal-darwin size=2
+ bin/universal-darwin/epstopdf
+ bin/universal-darwin/repstopdf

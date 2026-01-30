@@ -1,0 +1,30 @@
+name unicode-math
+category Package
+revision 75152
+shortdesc Unicode mathematics support for XeTeX and LuaTeX
+longdesc This package provides a comprehensive implementation of unicode
+longdesc maths for XeLaTeX and LuaLaTeX. Unicode maths requires an
+longdesc OpenType mathematics font, of which there are now a number
+longdesc available via CTAN. While backwards compatibility is strived
+longdesc for, there are some differences between the legacy mathematical
+longdesc definitions in LaTeX and amsmath, and the Unicode mathematics
+longdesc definitions. Care should be taken when transitioning from a
+longdesc legacy workflow to a Unicode-based one.
+depend fontspec
+depend lm-math
+containersize 42248
+containerchecksum 261dd713342636721115e0a84ae56041cac64ed0ec6b66e41abfa2885a4985cf8209a1a186411eac38e354fdfb846e0cbcfc539302c007511c27765eec4bf378
+doccontainersize 3336284
+doccontainerchecksum 32cdf4feff085ad2a2ba00909d769e336269560b33b56b6ccaaeb429f7768863f1bff9ef1a735615f7df9e82ddaea1af05fb37ccba04e3d913a57995785d43ed
+srccontainersize 36932
+srccontainerchecksum 62f36d4ba7115370932fc5256f39cc74c4317d59fec76dfe1a15175fca53d0cf371cb55480d40fe534f64317a10b67ba35e22468fc631ad7b678e4ddda862cbc
+runfiles size=126
+ texmf-dist/tex/latex/unicode-math/unicode-math-luatex.sty
+ texmf-dist/tex/latex/unicode-math/unicode-math-table.tex
+ texmf-dist/tex/latex/unicode-math/unicode-math-xetex.sty
+ texmf-dist/tex/latex/unicode-math/unicode-math.sty
+catalogue-contact-repository https://github.com/latex3/unicode-math
+catalogue-ctan /macros/unicodetex/latex/unicode-math
+catalogue-license lppl1.3c
+catalogue-topics maths font-use luatex xetex unicode
+catalogue-version 0.8r

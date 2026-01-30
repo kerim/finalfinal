@@ -1,0 +1,107 @@
+%%
+%% This is file `xr-hyper.sty',
+%% generated with the docstrip utility.
+%%
+%% The original source files were:
+%%
+%% xr-hyper.dtx  (with options: `package')
+%% 
+%% Copyright
+%% 1995-2001 Sebastian Rahtz, with portions written by David Carlisle and Heiko Oberdiek
+%% 2001-2015 Heiko Oberdiek
+%% 2016-2019 Oberdiek Package Support Group
+%% 2019-2025 LaTeX Project
+%%      https://github.com/latex3/hyperref/issues
+%% 
+%% This file is part of the `Hyperref Bundle'.
+%% -------------------------------------------
+%% 
+%% This work may be distributed and/or modified under the
+%% conditions of the LaTeX Project Public License, either version 1.3
+%% of this license or (at your option) any later version.
+%% The latest version of this license is in
+%%   http://www.latex-project.org/lppl.txt
+%% and version 1.3 or later is part of all distributions of LaTeX
+%% version 2005/12/01 or later.
+%% 
+%% This work has the LPPL maintenance status `maintained'.
+%% 
+%% The Current Maintainer of this work is the LaTeX Project.
+%% 
+%% The list of all files belonging to the `Hyperref Bundle' is
+%% given in the file `manifest.txt'.
+%% 
+%% File: xr-hyper.dtx Copyright (C) 1993-2025 David Carlisle
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{xr-hyper}
+         [2025-07-12 v7.01o eXternal References (DPC)]
+\def\externaldocument{\@testopt\XR@cite{}}
+\let\externalcitedocument\externaldocument
+\def\XR@cite[#1]{\@testopt{\XR@[#1]}{}}
+\def\XR@[#1][#2]#3{\@testopt{\XR@@{#1}{#2}{#3}}{#3.\XR@ext}}
+\def\XR@@nocite{nocite}
+\long\def\@gobblefour  #1#2#3#4{}
+\long\def\@firstoffour #1#2#3#4{#1}
+\long\def\@secondoffour#1#2#3#4{#2}
+\long\def\@thirdoffour #1#2#3#4{#3}
+\long\def\@fourthoffour #1#2#3#4{#4}
+\def\XR@addURL#1{\XR@@dURL#1{}{}{}{}\\}
+\def\XR@@dURL#1#2#3#4#5\\{%
+     \unexpanded{{#1}{#2}{#3}{#4}}{\XR@URL}%
+  }%
+\providecommand\XR@ext{pdf}
+\def\XR@@#1#2#3[#4]{{%
+  \makeatletter
+  \def\XR@prefix{#1}%
+   \def\XR@nocite{#2}%
+   \ifx\XR@nocite\XR@@nocite
+     \let\XR@bibcite\vadjust
+   \else
+     \let\XR@bibcite\bibcite
+   \fi
+  \def\XR@URL{#4}%
+  \set@curr@file{#3}%
+  \filename@parse\@curr@file
+  \XR@next\@curr@file.aux\relax\\}}
+\def\XR@next#1\relax#2\\{%
+  \edef\XR@list{#2}%
+  \XR@loop{#1}}
+\def\XR@aux{%
+  \ifx\XR@list\@empty\else\expandafter\XR@explist\fi}
+\def\XR@explist{\expandafter\XR@next\XR@list\\}
+\def\XR@loop#1{\openin\@inputcheck{#1}\relax
+  \ifeof\@inputcheck
+    \PackageWarning{xr}{^^JNo file #1^^JLABELS NOT IMPORTED.^^J}%
+    \expandafter\XR@aux
+  \else
+    \PackageInfo{xr}{IMPORTING LABELS FROM #1}%
+    \expandafter\XR@read\fi}
+\def\XR@read{%
+  \read\@inputcheck to\XR@line
+  \expandafter\XR@test\XR@line...\XR@}
+\long\def\XR@test#1#2#3#4\XR@{%
+  \let\XR@tempa\@gobblefour
+  \ifx#1\newlabel
+    \let\XR@tempa\@firstoffour
+  \else\ifx#1\XR@bibcite
+    \let\XR@tempa\@secondoffour
+  \else\ifx#1\@input
+     \let\XR@tempa\@thirdoffour
+  \else\ifx#1\new@label@record
+     \let\XR@tempa\@fourthoffour
+  \fi\fi\fi\fi
+   \XR@tempa
+    {%
+     \expandafter\protected@xdef\csname r@\XR@prefix#2\endcsname{\XR@addURL{#3}}%
+    }%
+    {\expandafter\bibcite\expandafter{\XR@prefix#2}{#3}}%
+    {\edef\XR@list{\XR@list\filename@area#2\relax}}%
+    {%
+      \edef\next{\noexpand\new@label@record{\XR@prefix#2}{\unexpanded{#3}{xr-url}{\XR@URL}}}%
+      \next
+    }
+  \ifeof\@inputcheck\expandafter\XR@aux
+  \else\expandafter\XR@read\fi}
+\endinput
+%%
+%% End of file `xr-hyper.sty'.

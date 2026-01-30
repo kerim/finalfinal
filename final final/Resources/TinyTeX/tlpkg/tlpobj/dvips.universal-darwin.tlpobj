@@ -1,0 +1,9 @@
+name dvips.universal-darwin
+category TLCore
+revision 73806
+shortdesc universal-darwin files of dvips
+containersize 297100
+containerchecksum 0f3d2bf205022b8189c893a6859b36b5ad8d65f3dbe87fa47f017d934a1289e3881ce452e771f5d30d7cd30fa866da0305d7eb8e23055d2219f5035ea2a25e18
+binfiles arch=universal-darwin size=248
+ bin/universal-darwin/afm2tfm
+ bin/universal-darwin/dvips

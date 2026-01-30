@@ -1,0 +1,11 @@
+name pdftex.universal-darwin
+category TLCore
+revision 75293
+shortdesc universal-darwin files of pdftex
+containersize 1695652
+containerchecksum 35337bf76e98be93b3c9067f6677d408a153759615711695f6cebdab0032b3656e53c7d336dfca69d3eff30ae3d03f84c1c0fb9f1c92315ac933ab5f86315623
+binfiles arch=universal-darwin size=1408
+ bin/universal-darwin/etex
+ bin/universal-darwin/pdfetex
+ bin/universal-darwin/pdftex
+ bin/universal-darwin/simpdftex

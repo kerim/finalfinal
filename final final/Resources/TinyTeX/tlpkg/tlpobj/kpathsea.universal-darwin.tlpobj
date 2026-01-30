@@ -1,0 +1,11 @@
+name kpathsea.universal-darwin
+category TLCore
+revision 73806
+shortdesc universal-darwin files of kpathsea
+containersize 84944
+containerchecksum c1d08a88667caa69a9b5dd7e6bb559fce2f3c5a4c4f9f7e059c5207847dff1254cbc43a6a80b51223b9d3f58e6d24a53bd0763a650f682f9551c76ed7850242b
+binfiles arch=universal-darwin size=154
+ bin/universal-darwin/kpseaccess
+ bin/universal-darwin/kpsereadlink
+ bin/universal-darwin/kpsestat
+ bin/universal-darwin/kpsewhich

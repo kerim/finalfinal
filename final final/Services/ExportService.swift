@@ -156,8 +156,24 @@ actor ExportService {
             "--output", outputURL.path
         ]
 
-        // Add reference document for docx/odt
-        if let refPath = referenceDocPath, format != .pdf {
+        // Add PDF engine for PDF exports
+        if format == ExportFormat.pdf {
+            // Use bundled TinyTeX with -output-driver to work around spaces in path
+            // Reference: XeTeX's -output-driver option specifies the XDV-to-PDF driver
+            if let tinyTeX = try? prepareBundledTinyTeX() {
+                arguments.append(contentsOf: ["--pdf-engine", tinyTeX.xelatexPath])
+                arguments.append(contentsOf: ["--pdf-engine-opt", tinyTeX.outputDriverArg])
+            } else if let bundledPath = ExportService.bundledXelatexPath {
+                // Direct path fallback (may fail if app path has spaces)
+                arguments.append(contentsOf: ["--pdf-engine", bundledPath])
+            } else {
+                // System xelatex fallback
+                arguments.append(contentsOf: ["--pdf-engine", "xelatex"])
+            }
+        }
+
+        // Add reference document for docx/odt (not applicable for PDF)
+        if let refPath = referenceDocPath, format != ExportFormat.pdf {
             arguments.append(contentsOf: ["--reference-doc", refPath])
         }
 
@@ -197,6 +213,9 @@ actor ExportService {
     // MARK: - Pandoc Execution
 
     /// Run Pandoc with the given arguments
+    /// - Parameters:
+    ///   - path: Path to Pandoc executable
+    ///   - arguments: Command line arguments
     private func runPandoc(at path: String, arguments: [String]) async throws {
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
@@ -218,7 +237,8 @@ actor ExportService {
                         continuation.resume()
                     } else {
                         let errorData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
-                        let errorMessage = String(data: errorData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "Unknown error"
+                        let errorMessage = String(data: errorData, encoding: .utf8)?
+                            .trimmingCharacters(in: .whitespacesAndNewlines) ?? "Unknown error"
                         continuation.resume(throwing: ExportError.pandocFailed(
                             exitCode: Int(proc.terminationStatus),
                             message: errorMessage
@@ -260,6 +280,69 @@ extension ExportService {
     /// Get path to bundled reference document
     static var bundledReferenceDocPath: String? {
         Bundle.main.url(forResource: "reference", withExtension: "docx", subdirectory: "Export")?.path
+    }
+
+    /// Get path to bundled TinyTeX xelatex binary (direct path, may fail if app path has spaces)
+    static var bundledXelatexPath: String? {
+        // xelatex is a symlink to xetex in TinyTeX
+        Bundle.main.url(forResource: "xelatex", withExtension: nil, subdirectory: "TinyTeX/bin/universal-darwin")?.path
+    }
+
+    /// Get URL to bundled TinyTeX directory
+    static var bundledTinyTeXURL: URL? {
+        Bundle.main.url(forResource: "TinyTeX", withExtension: nil, subdirectory: nil)
+    }
+}
+
+// MARK: - TinyTeX Symlink Preparation
+
+extension ExportService {
+
+    /// Prepare bundled TinyTeX for use via symlink and XeTeX's -output-driver option.
+    /// This avoids issues when the app bundle path contains spaces (e.g., "final final.app").
+    ///
+    /// The problem: xelatex internally calls xdvipdfmx via shell without quoting the path.
+    /// If the path contains spaces, the shell command breaks.
+    ///
+    /// The solution: XeTeX's documented `-output-driver` option specifies the command
+    /// used to convert XDV to PDF. We create an xdvipdfmx wrapper at a space-free path
+    /// and tell xelatex to use it via this option.
+    ///
+    /// Reference: https://mirrors.mit.edu/CTAN/info/xetexref/xetex-reference.pdf
+    ///
+    /// - Returns: Tuple of (xelatex path, output-driver argument), or nil if unavailable
+    private func prepareBundledTinyTeX() throws -> (xelatexPath: String, outputDriverArg: String)? {
+        guard let bundledTinyTeXURL = ExportService.bundledTinyTeXURL else {
+            return nil
+        }
+
+        let fm = FileManager.default
+        let tempDir = fm.temporaryDirectory
+
+        // Create symlink to TinyTeX in temp directory (no spaces in path)
+        let symlinkURL = tempDir.appendingPathComponent("TinyTeX")
+        try? fm.removeItem(at: symlinkURL)
+        try fm.createSymbolicLink(at: symlinkURL, withDestinationURL: bundledTinyTeXURL)
+
+        // Paths via symlink (no spaces)
+        let tinyTeXBin = symlinkURL.appendingPathComponent("bin/universal-darwin").path
+
+        // Create xdvipdfmx wrapper that properly calls the real binary
+        // This wrapper is at a space-free path, so xelatex can invoke it safely
+        let xdvipdfmxWrapperURL = tempDir.appendingPathComponent("xdvipdfmx-wrapper")
+        let xdvipdfmxWrapper = """
+            #!/bin/bash
+            exec "\(tinyTeXBin)/xdvipdfmx" "$@"
+            """
+        try? fm.removeItem(at: xdvipdfmxWrapperURL)
+        try xdvipdfmxWrapper.write(to: xdvipdfmxWrapperURL, atomically: true, encoding: .utf8)
+        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: xdvipdfmxWrapperURL.path)
+
+        // Return xelatex path via symlink (for package resolution) and output-driver argument
+        let xelatexPath = tinyTeXBin + "/xelatex"
+        let outputDriverArg = "-output-driver=\(xdvipdfmxWrapperURL.path)"
+
+        return (xelatexPath, outputDriverArg)
     }
 }
 

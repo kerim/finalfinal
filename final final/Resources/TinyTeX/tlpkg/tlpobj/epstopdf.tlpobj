@@ -1,0 +1,29 @@
+name epstopdf
+category Package
+revision 71782
+shortdesc Convert EPS to PDF using Ghostscript
+longdesc Epstopdf is a Perl script that converts an EPS file to an
+longdesc 'encapsulated' PDF file (a single page file whose media box is
+longdesc the same as the original EPS's bounding box). The resulting
+longdesc file suitable for inclusion by pdfTeX as an image. The script
+longdesc is adapted to run both on Windows and on Unix-alike systems.
+longdesc The script makes use of Ghostscript for the actual conversion
+longdesc to PDF. It assumes Ghostscript version 6.51 or later, and (by
+longdesc default) suppresses its automatic rotation of pages where most
+longdesc of the text is not horizontal. LaTeX users may make use of the
+longdesc epstopdf package, which will run the epstopdf script "on the
+longdesc fly", thus giving the illusion that pdfLaTeX is accepting EPS
+longdesc graphic files.
+depend epstopdf.ARCH
+containersize 14936
+containerchecksum 323b20d556be6e076303045a1484190c08deac0da6a9d31a0a4f24ec96da2f0fd159260b3a5e456500ee15727fff19d1dbc7e8c893adf88571f5ecf656d5afbd
+doccontainersize 29252
+doccontainerchecksum bfc6808dbc8860eb426916e55231bb91a63051520454595ed4929f297f3ac5dd4a20e88b6b9eaf4993b057621053c2cc0e7190e01049b767ac8a3b3f0f99885c
+runfiles size=11
+ texmf-dist/scripts/epstopdf/epstopdf.pl
+catalogue-also epstopdf-pkg
+catalogue-contact-home https://tug.org/epstopdf/
+catalogue-ctan /support/epstopdf
+catalogue-license other-free
+catalogue-topics graphics-epspdf
+catalogue-version 2.36

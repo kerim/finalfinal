@@ -1,0 +1,24 @@
+name float
+category Package
+revision 15878
+shortdesc Improved interface for floating objects
+longdesc Improves the interface for defining floating objects such as
+longdesc figures and tables. Introduces the boxed float, the ruled float
+longdesc and the plaintop float. You can define your own floats and
+longdesc improve the behaviour of the old ones. The package also
+longdesc provides the H float modifier option of the obsolete here
+longdesc package. You can select this as automatic default with
+longdesc \floatplacement{figure}{H}.
+containersize 2712
+containerchecksum 4a5270ca2945915464ba25b7996dfbd4771ca5f477e4bf248183bc340b7051c042d9566908acac881782af74a59154f4163bc7879a21e042e1c31d67237fc6a8
+doccontainersize 112620
+doccontainerchecksum 6f713c71361c1536bb086e7638b770ffe58e97aa01bd59bbab779f71cb485b9c06322d7d89e7d87cc8f77a0c7f18f4174fd4ec47b62556faa32d82fead0b7377
+srccontainersize 12572
+srccontainerchecksum 9e577ba84dcac612e4105e597ca2385da3dafb39327189caf30e5728b85a380b5a90363b8bf9070a0464aca2130bcf9419d030bd6c39d51f9a17b0a7dd578d5f
+runfiles size=2
+ texmf-dist/tex/latex/float/float.sty
+catalogue-also rotfloat
+catalogue-ctan /macros/latex/contrib/float
+catalogue-license lppl
+catalogue-topics float
+catalogue-version 1.3d

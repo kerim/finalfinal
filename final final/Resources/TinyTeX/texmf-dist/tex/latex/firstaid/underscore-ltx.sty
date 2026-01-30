@@ -1,0 +1,56 @@
+%%
+%% This is file `underscore-ltx.sty',
+%% generated with the docstrip utility.
+%%
+%% The original source files were:
+%%
+%% latex2e-first-aid-for-external-files.dtx  (with options: `underscore-ltx')
+%% 
+%% The source is maintained by the LaTeX Project team and bug
+%% reports for it can be opened at https://latex-project.org/bugs/
+%% (but please observe conditions on bug reports sent to that address!)
+%% 
+%% 
+%% Copyright (C) 2020-2025
+%% The LaTeX Project and any individual authors listed elsewhere
+%% in this file.
+%% 
+%% This file was generated from file(s) of the Standard LaTeX `First Aid Bundle'.
+%% ------------------------------------------------------------------------------
+%% 
+%% It may be distributed and/or modified under the
+%% conditions of the LaTeX Project Public License, either version 1.3c
+%% of this license or (at your option) any later version.
+%% The latest version of this license is in
+%%    https://www.latex-project.org/lppl.txt
+%% and version 1.3c or later is part of all distributions of LaTeX
+%% version 2005/12/01 or later.
+%% 
+%% This file may only be distributed together with a copy of the LaTeX
+%% `First Aid Bundle'. You may however distribute the LaTeX `First Aid Bundle'
+%% without such generated files.
+%% 
+%% File: latex2e-first-aid-for-external-files.dtx (C) Copyright 2020-2025
+%%
+%% The LaTeX Project and any individual authors listed elsewhere
+%% in this file.
+\ProvidesPackage{underscore-ltx}[2023/09/20 LaTeX firstaid to make underscore protected ]
+\begingroup
+ \catcode`\_=\active
+ \protected\gdef _{%
+   \ifincsname %
+      \string_%
+   \else
+      \ifx\protect\@typeset@protect
+         \ifmmode \sb \else \BreakableUnderscore \fi
+      \else
+         \ifx\protect\@unexpandable@protect \noexpand_%
+         \else \protect_%
+      \fi\fi
+    \fi
+    }
+  \global\let\ActiveUnderscore=_
+\endgroup
+\endinput
+%%
+%% End of file `underscore-ltx.sty'.

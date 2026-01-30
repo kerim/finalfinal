@@ -1,0 +1,32 @@
+name zapfding
+category Package
+revision 77161
+catalogue urw-base35
+shortdesc URW 'Base 35' font pack for LaTeX
+longdesc A set of fonts for use as "drop-in" replacements for Adobe's
+longdesc basic set, comprising: Century Schoolbook (substituting for
+longdesc Adobe's New Century Schoolbook); Dingbats (substituting for
+longdesc Adobe's Zapf Dingbats); Nimbus Mono L (substituting for Adobe's
+longdesc Courier); Nimbus Roman No9 L (substituting for Adobe's Times);
+longdesc Nimbus Sans L (substituting for Adobe's Helvetica); Standard
+longdesc Symbols L (substituting for Adobe's Symbol); URW Bookman; URW
+longdesc Chancery L Medium Italic (substituting for Adobe's Zapf
+longdesc Chancery); URW Gothic L Book (substituting for Adobe's Avant
+longdesc Garde); and URW Palladio L (substituting for Adobe's Palatino).
+execute addMap uzd.map
+containersize 46940
+containerchecksum 20b91c6136a12eb88b104d1171e1c9d7f09f592f70231404af9eadeee2c29d00e957a4628697649436476fd5385a39843bef0007959897c87a6789af3ab21eb5
+runfiles size=24
+ texmf-dist/dvips/zapfding/config.uzd
+ texmf-dist/fonts/afm/adobe/zapfding/pzdr.afm
+ texmf-dist/fonts/afm/urw/zapfding/uzdr.afm
+ texmf-dist/fonts/map/dvips/zapfding/uzd.map
+ texmf-dist/fonts/tfm/adobe/zapfding/pzdr.tfm
+ texmf-dist/fonts/tfm/urw35vf/zapfding/uzdr.tfm
+ texmf-dist/fonts/type1/urw/zapfding/uzdr.pfb
+ texmf-dist/fonts/type1/urw/zapfding/uzdr.pfm
+ texmf-dist/tex/latex/zapfding/uuzd.fd
+catalogue-also tex-gyre
+catalogue-ctan /fonts/urw/base35
+catalogue-license gpl
+catalogue-topics font font-type1 font-collection

@@ -1,0 +1,26 @@
+name mfware
+category TLCore
+revision 76790
+shortdesc Supporting tools for Metafont: gftodvi, gftopk, gftype, mft
+longdesc A collection of programs (as web source) for processing the
+longdesc output of Metafont. They include: gftodvi (for making proof
+longdesc sheets of letters); gftopk (translate gf bitmap files to pk
+longdesc bitmaps); gftype (human-readable dump of gf files); mft
+longdesc (prettyprint Metafont source).
+depend mfware.ARCH
+containersize 3296
+containerchecksum 76924f5d24abda97c9c757c7b0c979688aea5763c740d67e7d4305bc91b5eb75ecf76a7f6b66ae5e977177cd32381f8481e61ee11f4081f9d8c0b1d40b8fc32c
+doccontainersize 107884
+doccontainerchecksum 87485dc5163196d2a3e7bad62a7d7e648ddc1e35738e9f8cad092e3a6e54390bf94c4ffd427729ec974faf009fc368e2cf97d12aac8f9ed48526dbbd3b908609
+runfiles size=4
+ texmf-dist/mft/base/README
+ texmf-dist/mft/base/cmbase.mft
+ texmf-dist/mft/base/mplain.mft
+ texmf-dist/mft/base/plain.mft
+catalogue-alias gftodvi gftopk gftype mft
+catalogue-contact-bugs https://lists.tug.org/tex-k
+catalogue-contact-repository https://tug.org/svn/texlive/trunk/Build/source/texk/web2c/
+catalogue-contact-support https://lists.tug.org/tex-k
+catalogue-ctan /systems/knuth/dist/mfware
+catalogue-license pd
+catalogue-topics collection

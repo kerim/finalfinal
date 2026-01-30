@@ -1,0 +1,26 @@
+name latexmk
+category Package
+revision 75540
+shortdesc Fully automated LaTeX document generation
+longdesc Latexmk completely automates the process of generating a LaTeX
+longdesc document. Given the source files for a document, latexmk issues
+longdesc the appropriate sequence of commands to generate a .dvi, .ps,
+longdesc .pdf or hardcopy version of the document. An important feature
+longdesc is the "preview continuous mode", where the script watches all
+longdesc of the source files (primary file and included TeX and graphics
+longdesc files), and reruns LaTeX, etc., whenever a source file has
+longdesc changed. Thus a previewer can offer a display of the document's
+longdesc latest state.
+depend latexmk.ARCH
+containersize 123912
+containerchecksum aba6fcf53b429ca48d2dc56f647156a67c2353d811a35bb34febcbaee5725e4880fe9228bfb39a92a8994b4805731757e9d5a44639b95bf39f2a2a9c167e009c
+doccontainersize 580740
+doccontainerchecksum 515c961ece1de2bee84fe45a8b3333cf9b142203981d9430b447c319c127fc861d20ccb191021207f1fb7aa4bc223ad969ac4bebb39d0ffc2f88669e457098c9
+runfiles size=134
+ texmf-dist/scripts/latexmk/latexmk.pl
+catalogue-also latexn prv arara
+catalogue-contact-home https://www.cantab.net/users/johncollins/latexmk/index.html
+catalogue-ctan /support/latexmk
+catalogue-license gpl2
+catalogue-topics compilation
+catalogue-version 4.87

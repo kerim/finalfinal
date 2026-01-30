@@ -1,0 +1,205 @@
+StartFontMetrics 2.0
+Comment Creation Date: 16th September 2009
+Notice Copyright 2003--2009 by B. Jackowski and J.M. Nowacki (on behalf of TeX USERS GROUPS).
+Comment Supported by CSTUG, DANTE eV, GUST, GUTenberg, NTG, and TUG.
+Comment This work is released under the GUST Font License.
+Comment For the most recent version of this license see
+Comment http://www.gust.org.pl/fonts/licenses/GUST-FONT-LICENSE.txt or
+Comment http://tug.org/fonts/licenses/GUST-FONT-LICENSE.txt
+Comment This work has the LPPL maintenance status `maintained'.
+Comment The Current Maintainer of this work is Bogus\l{}aw Jackowski and Janusz M. Nowacki.
+Comment This work consists of the files listed in the MANIFEST-Latin-Modern.txt file.
+FontName LMMathSymbols8-Regular
+FullName LMMathSymbols8-Regular
+FamilyName LMMathSymbols8
+Weight Normal
+ItalicAngle -14.0362
+IsFixedPitch false
+UnderlinePosition -117
+UnderlineThickness 36
+FontBBox -30 -955 1185 779
+Ascender 694.44444
+Descender -194.44444
+CapHeight 683.33333
+XHeight 430.55556
+Version 2.003
+EncodingScheme FontSpecific
+Comment PFM parameters: LMMathSymbols8 0 0 0xFF
+Comment FONTIDENTIFIER LMMATHSYMBOLS8
+Comment CODINGSCHEME TEX MATH SYMBOLS
+Comment DESIGNSIZE 8.0 pt
+Comment CHECKSUM O 14274462005
+Comment SPACE 0 plus 0 minus 0
+Comment QUAD 1062.52
+Comment EXTRASPACE 0
+Comment NUM 696.331 408.833 457.443
+Comment DENOM 749.109 392.166
+Comment SUP 415.417 352.917 284.721
+Comment SUB 125 250
+Comment SUPDROP 395.834
+Comment SUBDROP 62.5
+Comment DELIM 1487.5 1137.5
+Comment AXISHEIGHT 250
+StartCharMetrics 130
+C 0 ; WX 826.400 ; N minus ; B 0 -104 826 604 ;
+C 1 ; WX 295.143 ; N periodcentered ; B 0 43 295 457 ;
+C 2 ; WX 826.400 ; N multiply ; B 0 -104 826 604 ;
+C 3 ; WX 531.258 ; N asteriskmath ; B 0 35 531 465 ;
+C 4 ; WX 826.400 ; N divide ; B 0 -104 826 604 ;
+C 5 ; WX 531.258 ; N diamondmath ; B 0 43 531 457 ;
+C 6 ; WX 826.400 ; N plusminus ; B 0 -104 826 604 ;
+C 7 ; WX 826.400 ; N minusplus ; B 0 -104 826 604 ;
+C 8 ; WX 826.400 ; N circleplus ; B 0 -104 826 604 ;
+C 9 ; WX 826.400 ; N circleminus ; B 0 -104 826 604 ;
+C 10 ; WX 826.400 ; N circlemultiply ; B 0 -104 826 604 ;
+C 11 ; WX 826.400 ; N circledivide ; B 0 -104 826 604 ;
+C 12 ; WX 826.400 ; N circledot ; B 0 -104 826 604 ;
+C 13 ; WX 1062.500 ; N circlecopyrt ; B 0 -194 1063 694 ;
+C 14 ; WX 531.258 ; N openbullet ; B 0 43 531 457 ;
+C 15 ; WX 531.258 ; N bullet ; B 0 43 531 457 ;
+C 16 ; WX 826.400 ; N equivasymptotic ; B 0 17 826 483 ;
+C 17 ; WX 826.400 ; N equivalence ; B 0 17 826 483 ;
+C 18 ; WX 826.400 ; N reflexsubset ; B 0 -169 826 669 ;
+C 19 ; WX 826.400 ; N reflexsuperset ; B 0 -169 826 669 ;
+C 20 ; WX 826.400 ; N lessequal ; B 0 -169 826 669 ;
+C 21 ; WX 826.400 ; N greaterequal ; B 0 -169 826 669 ;
+C 22 ; WX 826.400 ; N precedesequal ; B 0 -169 826 669 ;
+C 23 ; WX 826.400 ; N followsequal ; B 0 -169 826 669 ;
+C 24 ; WX 826.400 ; N similar ; B 0 122 826 378 ;
+C 25 ; WX 826.400 ; N approxequal ; B 0 -5 826 505 ;
+C 26 ; WX 826.400 ; N propersubset ; B 0 -63 826 563 ;
+C 27 ; WX 826.400 ; N propersuperset ; B 0 -63 826 563 ;
+C 28 ; WX 1062.500 ; N lessmuch ; B 0 -63 1063 563 ;
+C 29 ; WX 1062.500 ; N greatermuch ; B 0 -63 1063 563 ;
+C 30 ; WX 826.400 ; N precedes ; B 0 -63 826 563 ;
+C 31 ; WX 826.400 ; N follows ; B 0 -63 826 563 ;
+C 32 ; WX 1062.500 ; N arrowleft ; B 0 122 1063 378 ;
+C 33 ; WX 1062.500 ; N arrowright ; B 0 122 1063 378 ;
+C 34 ; WX 531.258 ; N arrowup ; B 0 -194 531 694 ;
+C 35 ; WX 531.258 ; N arrowdown ; B 0 -194 531 694 ;
+C 36 ; WX 1062.500 ; N arrowboth ; B 0 122 1063 378 ;
+C 37 ; WX 1062.500 ; N arrownortheast ; B 0 -194 1063 694 ;
+C 38 ; WX 1062.500 ; N arrowsoutheast ; B 0 -194 1063 694 ;
+C 39 ; WX 826.400 ; N similarequal ; B 0 17 826 483 ;
+C 40 ; WX 1062.500 ; N arrowdblleft ; B 0 122 1063 378 ;
+C 41 ; WX 1062.500 ; N arrowdblright ; B 0 122 1063 378 ;
+C 42 ; WX 649.316 ; N arrowdblup ; B 0 -194 649 694 ;
+C 43 ; WX 649.316 ; N arrowdbldown ; B 0 -194 649 694 ;
+C 44 ; WX 1062.500 ; N arrowdblboth ; B 0 122 1063 378 ;
+C 45 ; WX 1062.500 ; N arrownorthwest ; B 0 -194 1063 694 ;
+C 46 ; WX 1062.500 ; N arrowsouthwest ; B 0 -194 1063 694 ;
+C 47 ; WX 826.400 ; N proportional ; B 0 0 826 431 ;
+C 48 ; WX 288.195 ; N prime ; B 0 0 288 556 ;
+C 49 ; WX 1062.500 ; N infinity ; B 0 0 1063 431 ;
+C 50 ; WX 708.344 ; N element ; B 0 -63 708 563 ;
+C 51 ; WX 708.344 ; N owner ; B 0 -63 708 563 ;
+C 52 ; WX 944.458 ; N triangle ; B 0 -194 944 694 ;
+C 53 ; WX 944.458 ; N triangleinv ; B 0 -194 944 694 ;
+C 54 ; WX 0.000 ; N negationslash ; B 0 -194 0 694 ;
+C 55 ; WX 0.000 ; N mapsto ; B 0 122 0 378 ;
+C 56 ; WX 590.286 ; N universal ; B 0 0 590 694 ;
+C 57 ; WX 590.286 ; N existential ; B 0 0 590 694 ;
+C 58 ; WX 708.344 ; N logicalnot ; B 0 0 708 431 ;
+C 59 ; WX 531.258 ; N emptyset ; B 0 -56 531 750 ;
+C 60 ; WX 767.371 ; N Rfractur ; B 0 0 767 694 ;
+C 61 ; WX 767.371 ; N Ifractur ; B 0 0 767 694 ;
+C 62 ; WX 826.400 ; N latticetop ; B 0 0 826 694 ;
+C 63 ; WX 826.400 ; N perpendicular ; B 0 0 826 694 ;
+C 64 ; WX 649.316 ; N aleph ; B 0 0 649 694 ;
+C 65 ; WX 849.455 ; N A ; B 0 0 849 683 ;
+C 66 ; WX 694.667 ; N B ; B 0 0 695 683 ;
+C 67 ; WX 562.647 ; N C ; B 0 0 563 683 ;
+C 68 ; WX 821.750 ; N D ; B 0 0 822 683 ;
+C 69 ; WX 560.772 ; N E ; B 0 0 561 683 ;
+C 70 ; WX 758.333 ; N F ; B 0 0 758 683 ;
+C 71 ; WX 631.000 ; N G ; B 0 -97 631 683 ;
+C 72 ; WX 904.250 ; N H ; B 0 0 904 683 ;
+C 73 ; WX 585.500 ; N I ; B 0 0 585 683 ;
+C 74 ; WX 720.150 ; N J ; B 0 -97 720 683 ;
+C 75 ; WX 807.444 ; N K ; B 0 0 807 683 ;
+C 76 ; WX 730.703 ; N L ; B 0 0 731 683 ;
+C 77 ; WX 1264.522 ; N M ; B 0 0 1265 683 ;
+C 78 ; WX 869.108 ; N N ; B 0 0 869 683 ;
+C 79 ; WX 841.609 ; N O ; B 0 0 842 683 ;
+C 80 ; WX 743.310 ; N P ; B 0 0 743 683 ;
+C 81 ; WX 867.722 ; N Q ; B 0 -97 868 683 ;
+C 82 ; WX 906.889 ; N R ; B 0 0 907 683 ;
+C 83 ; WX 643.412 ; N S ; B 0 0 643 683 ;
+C 84 ; WX 586.319 ; N T ; B 0 0 586 683 ;
+C 85 ; WX 662.818 ; N U ; B 0 0 663 683 ;
+C 86 ; WX 656.194 ; N V ; B 0 0 656 683 ;
+C 87 ; WX 1054.636 ; N W ; B 0 0 1055 683 ;
+C 88 ; WX 756.359 ; N X ; B 0 0 756 683 ;
+C 89 ; WX 705.842 ; N Y ; B 0 -97 706 683 ;
+C 90 ; WX 763.622 ; N Z ; B 0 0 764 683 ;
+C 91 ; WX 708.344 ; N union ; B 0 0 708 556 ;
+C 92 ; WX 708.344 ; N intersection ; B 0 0 708 556 ;
+C 93 ; WX 708.344 ; N unionmulti ; B 0 0 708 556 ;
+C 94 ; WX 708.344 ; N logicaland ; B 0 0 708 556 ;
+C 95 ; WX 708.344 ; N logicalor ; B 0 0 708 556 ;
+C 96 ; WX 649.316 ; N turnstileleft ; B 0 0 649 694 ;
+C 97 ; WX 649.316 ; N turnstileright ; B 0 0 649 694 ;
+C 98 ; WX 472.229 ; N floorleft ; B 0 -250 472 750 ;
+C 99 ; WX 472.229 ; N floorright ; B 0 -250 472 750 ;
+C 100 ; WX 472.229 ; N ceilingleft ; B 0 -250 472 750 ;
+C 101 ; WX 472.229 ; N ceilingright ; B 0 -250 472 750 ;
+C 102 ; WX 531.258 ; N braceleft ; B 0 -250 531 750 ;
+C 103 ; WX 531.258 ; N braceright ; B 0 -250 531 750 ;
+C 104 ; WX 413.200 ; N angbracketleft ; B 0 -250 413 750 ;
+C 105 ; WX 413.200 ; N angbracketright ; B 0 -250 413 750 ;
+C 106 ; WX 295.143 ; N bar ; B 0 -250 295 750 ;
+C 107 ; WX 531.258 ; N bardbl ; B 0 -250 531 750 ;
+C 108 ; WX 531.258 ; N arrowbothv ; B 0 -250 531 750 ;
+C 109 ; WX 649.316 ; N arrowdblbothv ; B 0 -250 649 750 ;
+C 110 ; WX 531.258 ; N backslash ; B 0 -250 531 750 ;
+C 111 ; WX 295.143 ; N wreathproduct ; B 0 -194 295 694 ;
+C 112 ; WX 885.429 ; N radical ; B 0 -955 885 45 ;
+C 113 ; WX 795.846 ; N coproduct ; B 0 0 796 683 ;
+C 114 ; WX 885.429 ; N nabla ; B 0 0 885 683 ;
+C 115 ; WX 443.583 ; N integral ; B 0 -194 444 694 ;
+C 116 ; WX 708.344 ; N unionsq ; B 0 0 708 556 ;
+C 117 ; WX 708.344 ; N intersectionsq ; B 0 0 708 556 ;
+C 118 ; WX 826.400 ; N subsetsqequal ; B 0 -169 826 669 ;
+C 119 ; WX 826.400 ; N supersetsqequal ; B 0 -169 826 669 ;
+C 120 ; WX 472.229 ; N section ; B 0 -194 472 694 ;
+C 121 ; WX 472.229 ; N dagger ; B 0 -194 472 694 ;
+C 122 ; WX 472.229 ; N daggerdbl ; B 0 -194 472 694 ;
+C 123 ; WX 649.316 ; N paragraph ; B 0 -194 649 694 ;
+C 124 ; WX 826.400 ; N club ; B 0 -130 826 694 ;
+C 125 ; WX 826.400 ; N diamond ; B 0 -130 826 694 ;
+C 126 ; WX 826.400 ; N heart ; B 0 -130 826 694 ;
+C 127 ; WX 826.400 ; N spade ; B 0 -130 826 694 ;
+C 172 ; WX 826.400 ; N lessorequalslant ; B 0 -169 826 669 ;
+C 173 ; WX 826.400 ; N greaterorequalslant ; B 0 -169 826 669 ;
+EndCharMetrics
+StartKernData
+StartKernPairs 26
+KPX I prime 29.514
+KPX T prime 29.514
+KPX V prime 29.514
+KPX K prime 59.029
+KPX D prime 88.543
+KPX N prime 88.543
+KPX P prime 88.543
+KPX R prime 88.543
+KPX U prime 88.543
+KPX W prime 88.543
+KPX Y prime 88.543
+KPX E prime 118.057
+KPX F prime 118.057
+KPX G prime 118.057
+KPX H prime 118.057
+KPX O prime 118.057
+KPX Q prime 118.057
+KPX B prime 147.571
+KPX C prime 147.571
+KPX L prime 147.571
+KPX M prime 147.571
+KPX S prime 147.571
+KPX X prime 147.571
+KPX Z prime 147.571
+KPX J prime 177.086
+KPX A prime 206.600
+EndKernPairs
+EndKernData
+EndFontMetrics

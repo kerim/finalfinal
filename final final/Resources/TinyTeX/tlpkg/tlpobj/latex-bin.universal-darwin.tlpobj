@@ -1,0 +1,11 @@
+name latex-bin.universal-darwin
+category TLCore
+revision 57908
+shortdesc universal-darwin files of latex-bin
+containersize 376
+containerchecksum 45abdf9fec79500491f0f3c5511aa2a8a25521ee9bf648e9f81ea667c194aac2bdf76267e0f4276cfbd70e4b8f3c1f109129c77030138ba43f51f4e6e0d291f8
+binfiles arch=universal-darwin size=4
+ bin/universal-darwin/dvilualatex
+ bin/universal-darwin/latex
+ bin/universal-darwin/lualatex
+ bin/universal-darwin/pdflatex

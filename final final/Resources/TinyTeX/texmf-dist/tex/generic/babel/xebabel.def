@@ -1,0 +1,472 @@
+%%
+%% This is file `xebabel.def',
+%% generated with the docstrip utility.
+%%
+%% The original source files were:
+%%
+%% babel.dtx  (with options: `xetex')
+%% 
+%%
+%% Copyright (C) 2012-2026 Javier Bezos and Johannes L. Braams.
+%% Copyright (C) 1989-2012 Johannes L. Braams and
+%%           any individual authors listed elsewhere in this file.
+%% All rights reserved.
+%%
+%%
+%% This file is part of the Babel system.
+%% --------------------------------------
+%%
+%% It may be distributed and/or modified under the
+%% conditions of the LaTeX Project Public License, either version 1.3
+%% of this license or (at your option) any later version.
+%% The latest version of this license is in
+%%   http://www.latex-project.org/lppl.txt
+%% and version 1.3 or later is part of all distributions of LaTeX
+%% version 2003/12/01 or later.
+%%
+%% This work has the LPPL maintenance status "maintained".
+%%
+%% The Current Maintainer of this work is Javier Bezos.
+%%
+%% The list of derived (unpacked) files belonging to the distribution
+%% and covered by LPPL is defined by the unpacking scripts (with
+%% extension |.ins|) which are part of the distribution.
+%%
+\def\BabelStringsDefault{unicode}
+\let\xebbl@stop\relax
+\AddBabelHook{xetex}{encodedcommands}{%
+  \def\bbl@tempa{#1}%
+  \ifx\bbl@tempa\@empty
+    \XeTeXinputencoding"bytes"%
+  \else
+    \XeTeXinputencoding"#1"%
+  \fi
+  \def\xebbl@stop{\XeTeXinputencoding"utf8"}}
+\AddBabelHook{xetex}{stopcommands}{%
+  \xebbl@stop
+  \let\xebbl@stop\relax}
+\def\bbl@input@classes{% Used in CJK intraspaces
+  \input{load-unicode-xetex-classes.tex}%
+  \let\bbl@input@classes\relax}
+\def\bbl@intraspace#1 #2 #3\@@{%
+  \bbl@csarg\gdef{xeisp@\languagename}%
+    {\XeTeXlinebreakskip #1em plus #2em minus #3em\relax}}
+\def\bbl@intrapenalty#1\@@{%
+  \bbl@csarg\gdef{xeipn@\languagename}%
+    {\XeTeXlinebreakpenalty #1\relax}}
+\def\bbl@provide@intraspace{%
+  \bbl@xin@{/s}{/\bbl@cl{lnbrk}}%
+  \ifin@\else\bbl@xin@{/c}{/\bbl@cl{lnbrk}}\fi
+  \ifin@
+    \bbl@ifunset{bbl@intsp@\languagename}{}%
+      {\expandafter\ifx\csname bbl@intsp@\languagename\endcsname\@empty\else
+        \ifx\bbl@KVP@intraspace\@nnil
+           \bbl@exp{%
+             \\\bbl@intraspace\bbl@cl{intsp}\\\@@}%
+        \fi
+        \ifx\bbl@KVP@intrapenalty\@nnil
+          \bbl@intrapenalty0\@@
+        \fi
+      \fi
+      \ifx\bbl@KVP@intraspace\@nnil\else % We may override the ini
+        \expandafter\bbl@intraspace\bbl@KVP@intraspace\@@
+      \fi
+      \ifx\bbl@KVP@intrapenalty\@nnil\else
+        \expandafter\bbl@intrapenalty\bbl@KVP@intrapenalty\@@
+      \fi
+      \bbl@exp{%
+        \\\bbl@add\<extras\languagename>{%
+          \XeTeXlinebreaklocale "\bbl@cl{tbcp}"%
+          \<bbl@xeisp@\languagename>%
+          \<bbl@xeipn@\languagename>}%
+        \\\bbl@toglobal\<extras\languagename>%
+        \\\bbl@add\<noextras\languagename>{%
+          \XeTeXlinebreaklocale ""}%
+        \\\bbl@toglobal\<noextras\languagename>}%
+      \ifx\bbl@ispacesize\@undefined
+        \gdef\bbl@ispacesize{\bbl@cl{xeisp}}%
+        \ifx\AtBeginDocument\@notprerr
+          \expandafter\@secondoftwo  % to execute right now
+        \fi
+        \AtBeginDocument{\bbl@patchfont{\bbl@ispacesize}}%
+      \fi}%
+  \fi}
+\ifx\DisableBabelHook\@undefined\endinput\fi
+\let\bbl@set@renderer\relax
+\let\bbl@unset@renderer\relax
+\bbl@trace{Font handling with fontspec}
+\AddBabelHook{babel-fontspec}{afterextras}{\bbl@switchfont}
+\AddBabelHook{babel-fontspec}{beforestart}{\bbl@ckeckstdfonts}
+\DisableBabelHook{babel-fontspec}
+\@onlypreamble\babelfont
+\ifx\NewDocumentCommand\@undefined\else % Not plain
+  \NewDocumentCommand\babelfont{O{}mO{}mO{}}{%
+    \bbl@bblfont@o[#1]{#2}[#3,#5]{#4}}
+\fi
+\newcommand\bbl@bblfont@o[2][]{%  1=langs/scripts 2=fam
+  \ifx\fontspec\@undefined
+    \usepackage{fontspec}%
+  \fi
+  \EnableBabelHook{babel-fontspec}%
+  \edef\bbl@tempa{#1}%
+  \def\bbl@tempb{#2}%  Used by \bbl@bblfont
+  \bbl@bblfont}
+\newcommand\bbl@bblfont[2][]{% 1=features 2=fontname, @font=rm|sf|tt
+  \bbl@ifunset{\bbl@tempb family}%
+    {\bbl@providefam{\bbl@tempb}}%
+    {}%
+  % For the default font, just in case:
+  \bbl@ifunset{bbl@lsys@\languagename}{\bbl@provide@lsys{\languagename}}{}%
+  \expandafter\bbl@ifblank\expandafter{\bbl@tempa}%
+    {\bbl@csarg\edef{\bbl@tempb dflt@}{<>{#1}{#2}}% save bbl@rmdflt@
+     \bbl@exp{%
+       \let\<bbl@\bbl@tempb dflt@\languagename>\<bbl@\bbl@tempb dflt@>%
+       \\\bbl@font@set\<bbl@\bbl@tempb dflt@\languagename>%
+                      \<\bbl@tempb default>\<\bbl@tempb family>}}%
+    {\bbl@foreach\bbl@tempa{% i.e., bbl@rmdflt@lang / *scrt
+       \bbl@csarg\def{\bbl@tempb dflt@##1}{<>{#1}{#2}}}}}%
+\def\bbl@providefam#1{%
+  \bbl@exp{%
+    \\\newcommand\<#1default>{}% Just define it
+    \\\bbl@add@list\\\bbl@font@fams{#1}%
+    \\\NewHook{#1family}%
+    \\\DeclareRobustCommand\<#1family>{%
+      \\\not@math@alphabet\<#1family>\relax
+      % \\\prepare@family@series@update{#1}\<#1default>% TODO. Fails
+      \\\fontfamily\<#1default>%
+      \\\UseHook{#1family}%
+      \\\selectfont}%
+    \\\DeclareTextFontCommand{\<text#1>}{\<#1family>}}}
+\def\bbl@nostdfont#1{%
+  \bbl@once{nostdfam-\f@family}%
+    {\bbl@infowarn{The current font is not a babel standard family:\\%
+       #1%
+       \fontname\font\\%
+       There is nothing intrinsically wrong, and you can\\%,
+       ignore this message altogether if you do not need\\%
+       this font. If they are used in the document, be aware\\%
+       'babel' will not set Script and Language for it, so\\%
+       you may consider defining a new family with \string\babelfont.\\%
+       See the manual for further details about \string\babelfont.
+       Reported}}
+   {}}%
+\gdef\bbl@switchfont{%
+  \bbl@ifunset{bbl@lsys@\languagename}{\bbl@provide@lsys{\languagename}}{}%
+  \bbl@exp{%  e.g., Arabic -> arabic
+    \lowercase{\edef\\\bbl@tempa{\bbl@cl{sname}}}}%
+  \bbl@foreach\bbl@font@fams{%
+    \bbl@ifunset{bbl@##1dflt@\languagename}%    (1) language?
+      {\bbl@ifunset{bbl@##1dflt@*\bbl@tempa}%   (2) from script?
+         {\bbl@ifunset{bbl@##1dflt@}%           2=F - (3) from generic?
+           {}%                                  123=F - nothing!
+           {\bbl@exp{%                          3=T - from generic
+              \global\let\<bbl@##1dflt@\languagename>%
+                         \<bbl@##1dflt@>}}}%
+         {\bbl@exp{%                            2=T - from script
+            \global\let\<bbl@##1dflt@\languagename>%
+                       \<bbl@##1dflt@*\bbl@tempa>}}}%
+      {}}%                               1=T - language, already defined
+  \def\bbl@tempa{\bbl@nostdfont{}}%
+  \bbl@foreach\bbl@font@fams{%     don't gather with prev for
+    \bbl@ifunset{bbl@##1dflt@\languagename}%
+      {\bbl@cs{famrst@##1}%
+       \global\bbl@csarg\let{famrst@##1}\relax}%
+      {\bbl@exp{% order is relevant.
+         \\\bbl@add\\\originalTeX{%
+           \\\bbl@font@rst{\bbl@cl{##1dflt}}%
+                          \<##1default>\<##1family>{##1}}%
+         \\\bbl@font@set\<bbl@##1dflt@\languagename>% the main part!
+                        \<##1default>\<##1family>}}}%
+  \bbl@ifrestoring{}{\bbl@tempa}}%
+\ifx\f@family\@undefined\else   % if latex
+  \ifcase\bbl@engine            % if pdftex
+    \let\bbl@ckeckstdfonts\relax
+  \else
+    \def\bbl@ckeckstdfonts{%
+      \begingroup
+        \global\let\bbl@ckeckstdfonts\relax
+        \let\bbl@tempa\@empty
+        \bbl@foreach\bbl@font@fams{%
+          \bbl@ifunset{bbl@##1dflt@}%
+            {\@nameuse{##1family}%
+             \bbl@csarg\gdef{WFF@\f@family}{}% Flag
+             \bbl@exp{\\\bbl@add\\\bbl@tempa{* \<##1family>= \f@family\\\\%
+                \space\space\fontname\font\\\\}}%
+             \bbl@csarg\xdef{##1dflt@}{\f@family}%
+             \expandafter\xdef\csname ##1default\endcsname{\f@family}}%
+            {}}%
+        \ifx\bbl@tempa\@empty\else
+          \bbl@infowarn{The following font families will use the default\\%
+            settings for all or some languages:\\%
+            \bbl@tempa
+            There is nothing intrinsically wrong with it, but\\%
+            'babel' will no set Script and Language, which could\\%
+             be relevant in some languages. If your document uses\\%
+             these families, consider redefining them with \string\babelfont.\\%
+            Reported}%
+        \fi
+      \endgroup}
+  \fi
+\fi
+\def\bbl@font@set#1#2#3{% e.g., \bbl@rmdflt@lang \rmdefault \rmfamily
+  \bbl@xin@{<>}{#1}%
+  \ifin@
+    \bbl@exp{\\\bbl@fontspec@set\\#1\expandafter\@gobbletwo#1\\#3}%
+  \fi
+  \bbl@exp{%              'Unprotected' macros return prev values
+    \def\\#2{#1}%         e.g., \rmdefault{\bbl@rmdflt@lang}
+    \\\bbl@ifsamestring{#2}{\f@family}%
+      {\\#3%
+       \\\bbl@ifsamestring{\f@series}{\bfdefault}{\\\bfseries}{}%
+       \let\\\bbl@tempa\relax}%
+      {}}}
+\def\bbl@fontspec@set#1#2#3#4{% eg \bbl@rmdflt@lang fnt-opt fnt-nme \xxfamily
+  \let\bbl@tempe\bbl@mapselect
+  \edef\bbl@tempb{\bbl@stripslash#4/}% Catcodes hack (better pass it).
+  \bbl@exp{\\\bbl@replace\\\bbl@tempb{\bbl@stripslash\family/}{}}%
+  \let\bbl@mapselect\relax
+  \let\bbl@temp@fam#4%       e.g., '\rmfamily', to be restored below
+  \let#4\@empty      %       Make sure \renewfontfamily is valid
+  \bbl@set@renderer
+  \bbl@exp{%
+    \let\\\bbl@temp@pfam\<\bbl@stripslash#4\space>% e.g., '\rmfamily '
+    \<keys_if_exist:nnF>{fontspec-opentype}{Script/\bbl@cl{sname}}%
+      {\\\newfontscript{\bbl@cl{sname}}{\bbl@cl{sotf}}}%
+    \<keys_if_exist:nnF>{fontspec-opentype}{Language/\bbl@cl{lname}}%
+      {\\\newfontlanguage{\bbl@cl{lname}}{\bbl@cl{lotf}}}%
+    \\\renewfontfamily\\#4%
+      [\bbl@cl{lsys},% xetex removes unknown features :-(
+       \ifcase\bbl@engine\or RawFeature={family=\bbl@tempb},\fi
+       #2]}{#3}% i.e., \bbl@exp{..}{#3}
+  \bbl@unset@renderer
+  \begingroup
+     #4%
+     \xdef#1{\f@family}%     e.g., \bbl@rmdflt@lang{FreeSerif(0)}
+  \endgroup
+  \bbl@xin@{\string>\string s\string s\string u\string b\string*}%
+    {\expandafter\meaning\csname TU/#1/bx/sc\endcsname}%
+  \ifin@
+    \global\bbl@ccarg\let{TU/#1/bx/sc}{TU/#1/b/sc}%
+  \fi
+  \bbl@xin@{\string>\string s\string s\string u\string b\string*}%
+    {\expandafter\meaning\csname TU/#1/bx/scit\endcsname}%
+  \ifin@
+    \global\bbl@ccarg\let{TU/#1/bx/scit}{TU/#1/b/scit}%
+  \fi
+  \let#4\bbl@temp@fam
+  \bbl@exp{\let\<\bbl@stripslash#4\space>}\bbl@temp@pfam
+  \let\bbl@mapselect\bbl@tempe}%
+\def\bbl@font@rst#1#2#3#4{%
+  \bbl@csarg\def{famrst@#4}{\bbl@font@set{#1}#2#3}}
+\def\bbl@font@fams{rm,sf,tt}
+\def\bbl@provide@extra#1{}
+\def\bbl@xenohyph@d{%
+  \bbl@ifset{bbl@prehc@\languagename}%
+    {\ifnum\hyphenchar\font=\defaulthyphenchar
+       \iffontchar\font\bbl@cl{prehc}\relax
+         \hyphenchar\font\bbl@cl{prehc}\relax
+       \else\iffontchar\font"200B
+         \hyphenchar\font"200B
+       \else
+         \bbl@warning
+           {Neither 0 nor ZERO WIDTH SPACE are available\\%
+            in the current font, and therefore the hyphen\\%
+            will be printed. Try changing the fontspec's\\%
+            'HyphenChar' to another value, but be aware\\%
+            this setting is not safe (see the manual).\\%
+            Reported}%
+         \hyphenchar\font\defaulthyphenchar
+       \fi\fi
+     \fi}%
+    {\hyphenchar\font\defaulthyphenchar}}
+\ifnum\xe@alloc@intercharclass<\thr@@
+  \xe@alloc@intercharclass\thr@@
+\fi
+\chardef\bbl@xeclass@default@=\z@
+\chardef\bbl@xeclass@cjkideogram@=\@ne
+\chardef\bbl@xeclass@cjkleftpunctuation@=\tw@
+\chardef\bbl@xeclass@cjkrightpunctuation@=\thr@@
+\chardef\bbl@xeclass@boundary@=4095
+\chardef\bbl@xeclass@ignore@=4096
+\AddBabelHook{babel-interchar}{beforeextras}{%
+  \@nameuse{bbl@xechars@\languagename}}
+\DisableBabelHook{babel-interchar}
+\protected\def\bbl@charclass#1{%
+  \ifnum\count@<\z@
+    \count@-\count@
+    \loop
+      \bbl@exp{%
+        \\\babel@savevariable{\XeTeXcharclass`\Uchar\count@}}%
+      \XeTeXcharclass\count@ \bbl@tempc
+      \ifnum\count@<`#1\relax
+      \advance\count@\@ne
+    \repeat
+  \else
+    \babel@savevariable{\XeTeXcharclass`#1}%
+    \XeTeXcharclass`#1 \bbl@tempc
+  \fi
+  \count@`#1\relax}
+\newcommand\bbl@ifinterchar[1]{%
+  \let\bbl@tempa\@gobble        % Assume to ignore
+  \edef\bbl@tempb{\zap@space#1 \@empty}%
+  \ifx\bbl@KVP@interchar\@nnil\else
+      \bbl@replace\bbl@KVP@interchar{ }{,}%
+      \bbl@foreach\bbl@tempb{%
+        \bbl@xin@{,##1,}{,\bbl@KVP@interchar,}%
+        \ifin@
+          \let\bbl@tempa\@firstofone
+        \fi}%
+  \fi
+  \bbl@tempa}
+\newcommand\IfBabelIntercharT[2]{%
+  \bbl@carg\bbl@add{bbl@icsave@\CurrentOption}{\bbl@ifinterchar{#1}{#2}}}%
+\newcommand\babelcharclass[3]{%
+  \EnableBabelHook{babel-interchar}%
+  \bbl@csarg\newXeTeXintercharclass{xeclass@#2@#1}%
+  \def\bbl@tempb##1{%
+    \ifx##1\@empty\else
+      \ifx##1-%
+        \bbl@upto
+      \else
+        \bbl@charclass{%
+          \ifcat\noexpand##1\relax\bbl@stripslash##1\else\string##1\fi}%
+      \fi
+      \expandafter\bbl@tempb
+    \fi}%
+  \bbl@ifunset{bbl@xechars@#1}%
+    {\toks@{%
+       \babel@savevariable\XeTeXinterchartokenstate
+       \XeTeXinterchartokenstate\@ne
+      }}%
+    {\toks@\expandafter\expandafter\expandafter{%
+       \csname bbl@xechars@#1\endcsname}}%
+  \bbl@csarg\edef{xechars@#1}{%
+    \the\toks@
+    \bbl@usingxeclass\csname bbl@xeclass@#2@#1\endcsname
+    \bbl@tempb#3\@empty}}
+\protected\def\bbl@usingxeclass#1{\count@\z@ \let\bbl@tempc#1}
+\protected\def\bbl@upto{%
+  \ifnum\count@>\z@
+    \advance\count@\@ne
+    \count@-\count@
+  \else\ifnum\count@=\z@
+    \bbl@charclass{-}%
+  \else
+    \bbl@error{double-hyphens-class}{}{}{}%
+  \fi\fi}
+\def\bbl@ignoreinterchar{%
+  \ifnum\language=\l@nohyphenation
+    \expandafter\@gobble
+  \else
+    \expandafter\@firstofone
+  \fi}
+\newcommand\babelinterchar[5][]{%
+  \let\bbl@kv@label\@empty
+  \bbl@forkv{#1}{\bbl@csarg\edef{kv@##1}{##2}}%
+  \@namedef{\zap@space bbl@xeinter@\bbl@kv@label @#3@#4@#2 \@empty}%
+    {\bbl@ignoreinterchar{#5}}%
+  \bbl@csarg\let{ic@\bbl@kv@label @#2}\@firstofone
+  \bbl@exp{\\\bbl@for\\\bbl@tempa{\zap@space#3 \@empty}}{%
+    \bbl@exp{\\\bbl@for\\\bbl@tempb{\zap@space#4 \@empty}}{%
+      \XeTeXinterchartoks
+        \@nameuse{bbl@xeclass@\bbl@tempa @%
+          \bbl@ifunset{bbl@xeclass@\bbl@tempa @#2}{}{#2}} %
+        \@nameuse{bbl@xeclass@\bbl@tempb @%
+          \bbl@ifunset{bbl@xeclass@\bbl@tempb @#2}{}{#2}} %
+        = \expandafter{%
+           \csname bbl@ic@\bbl@kv@label @#2\expandafter\endcsname
+           \csname\zap@space bbl@xeinter@\bbl@kv@label
+              @#3@#4@#2 \@empty\endcsname}}}}
+\DeclareRobustCommand\enablelocaleinterchar[1]{%
+  \bbl@ifunset{bbl@ic@#1@\languagename}%
+    {\bbl@error{unknown-interchar}{#1}{}{}}%
+    {\bbl@csarg\let{ic@#1@\languagename}\@firstofone}}
+\DeclareRobustCommand\disablelocaleinterchar[1]{%
+  \bbl@ifunset{bbl@ic@#1@\languagename}%
+    {\bbl@error{unknown-interchar-b}{#1}{}{}}%
+    {\bbl@csarg\let{ic@#1@\languagename}\@gobble}}
+\providecommand\bbl@provide@intraspace{}
+\bbl@trace{Redefinitions for bidi layout}
+\ifx\bbl@opt@layout\@nnil\else % if layout=..
+\IfBabelLayout{nopars}
+  {}
+  {\edef\bbl@opt@layout{\bbl@opt@layout.pars.}}%
+\def\bbl@startskip{\ifcase\bbl@thepardir\leftskip\else\rightskip\fi}
+\def\bbl@endskip{\ifcase\bbl@thepardir\rightskip\else\leftskip\fi}
+\ifnum\bbl@bidimode>\z@
+\IfBabelLayout{pars}
+  {\def\@hangfrom#1{%
+     \setbox\@tempboxa\hbox{{#1}}%
+     \hangindent\ifcase\bbl@thepardir\wd\@tempboxa\else-\wd\@tempboxa\fi
+     \noindent\box\@tempboxa}
+   \def\raggedright{%
+     \let\\\@centercr
+     \bbl@startskip\z@skip
+     \@rightskip\@flushglue
+     \bbl@endskip\@rightskip
+     \parindent\z@
+     \parfillskip\bbl@startskip}
+   \def\raggedleft{%
+     \let\\\@centercr
+     \bbl@startskip\@flushglue
+     \bbl@endskip\z@skip
+     \parindent\z@
+     \parfillskip\bbl@endskip}}
+  {}
+\fi
+\IfBabelLayout{lists}
+  {\bbl@sreplace\list
+     {\@totalleftmargin\leftmargin}{\@totalleftmargin\bbl@listleftmargin}%
+   \def\bbl@listleftmargin{%
+     \ifcase\bbl@thepardir\leftmargin\else\rightmargin\fi}%
+   \ifcase\bbl@engine
+     \def\labelenumii{)\theenumii(}% pdftex doesn't reverse ()
+     \def\p@enumiii{\p@enumii)\theenumii(}%
+   \fi
+   \bbl@sreplace\@verbatim
+     {\leftskip\@totalleftmargin}%
+     {\bbl@startskip\textwidth
+      \advance\bbl@startskip-\linewidth}%
+   \bbl@sreplace\@verbatim
+     {\rightskip\z@skip}%
+     {\bbl@endskip\z@skip}}%
+  {}
+\IfBabelLayout{contents}
+  {\bbl@sreplace\@dottedtocline{\leftskip}{\bbl@startskip}%
+   \bbl@sreplace\@dottedtocline{\rightskip}{\bbl@endskip}}
+  {}
+\IfBabelLayout{columns}
+  {\bbl@sreplace\@outputdblcol{\hb@xt@\textwidth}{\bbl@outputhbox}%
+   \def\bbl@outputhbox#1{%
+     \hb@xt@\textwidth{%
+       \hskip\columnwidth
+       \hfil
+       {\normalcolor\vrule \@width\columnseprule}%
+       \hfil
+       \hb@xt@\columnwidth{\box\@leftcolumn \hss}%
+       \hskip-\textwidth
+       \hb@xt@\columnwidth{\box\@outputbox \hss}%
+       \hskip\columnsep
+       \hskip\columnwidth}}}%
+  {}
+\IfBabelLayout{counters*}%
+  {\bbl@add\bbl@opt@layout{.counters.}%
+   \AddToHook{shipout/before}{%
+     \let\bbl@tempa\babelsublr
+     \let\babelsublr\@firstofone
+     \let\bbl@save@thepage\thepage
+     \protected@edef\thepage{\thepage}%
+     \let\babelsublr\bbl@tempa}%
+   \AddToHook{shipout/after}{%
+     \let\thepage\bbl@save@thepage}}{}
+\IfBabelLayout{counters}%
+  {\let\bbl@latinarabic=\@arabic
+   \def\@arabic#1{\babelsublr{\bbl@latinarabic#1}}%
+   \let\bbl@asciiroman=\@roman
+   \def\@roman#1{\babelsublr{\ensureascii{\bbl@asciiroman#1}}}%
+   \let\bbl@asciiRoman=\@Roman
+   \def\@Roman#1{\babelsublr{\ensureascii{\bbl@asciiRoman#1}}}}{}
+\fi % end if layout
+\endinput
+%%
+%% End of file `xebabel.def'.
