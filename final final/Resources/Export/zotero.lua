@@ -1,10 +1,12 @@
-
-  print('zotero-live-citations cd1ef3f')
+print('zotero-live-citations cd1ef3f')
+-- Optional version check (don't fail if network unavailable)
+pcall(function()
   local mt, latest = pandoc.mediabag.fetch('https://retorque.re/zotero-better-bibtex/exporting/zotero.lua.revision')
   latest = string.sub(latest, 1, 10)
   if 'cd1ef3f' ~= latest then
     print('new version "' .. latest .. '" available at https://retorque.re/zotero-better-bibtex/exporting')
   end
+end)
 
 do
 local _ENV = _ENV

@@ -20,8 +20,9 @@ enum ZoteroStatus: Sendable, Equatable {
 /// Service to check Zotero availability
 actor ZoteroChecker {
 
-    /// Better BibTeX citation picker endpoint
-    private let caywEndpoint = "http://127.0.0.1:23119/better-bibtex/cayw"
+    /// Better BibTeX JSON-RPC endpoint (status check only, no side effects)
+    /// Note: We use JSON-RPC instead of CAYW because CAYW triggers the citation picker UI
+    private let statusEndpoint = "http://127.0.0.1:23119/better-bibtex/json-rpc"
 
     /// Timeout for connection (fast since it's localhost)
     private let timeoutInterval: TimeInterval = 2.0
@@ -30,7 +31,7 @@ actor ZoteroChecker {
 
     /// Check if Zotero with Better BibTeX is running
     func check() async -> ZoteroStatus {
-        guard let url = URL(string: caywEndpoint) else {
+        guard let url = URL(string: statusEndpoint) else {
             return .error("Invalid URL")
         }
 
@@ -39,8 +40,14 @@ actor ZoteroChecker {
         config.timeoutIntervalForResource = timeoutInterval
         let session = URLSession(configuration: config)
 
+        // Minimal JSON-RPC request to check if BBT is responding
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = Data(#"{"jsonrpc":"2.0","method":"item.search","params":{"query":""},"id":1}"#.utf8)
+
         do {
-            let (_, response) = try await session.data(from: url)
+            let (data, response) = try await session.data(for: request)
 
             guard let httpResponse = response as? HTTPURLResponse else {
                 return .notRunning
@@ -48,6 +55,11 @@ actor ZoteroChecker {
 
             switch httpResponse.statusCode {
             case 200:
+                // Check if response contains valid JSON-RPC result
+                if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                   json["result"] != nil || json["error"] != nil {
+                    return .running
+                }
                 return .running
             case 404:
                 // Zotero running but Better BibTeX not installed or not at expected path

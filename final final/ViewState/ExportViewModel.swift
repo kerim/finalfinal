@@ -141,11 +141,14 @@ final class ExportViewModel {
 
             Task { @MainActor in
                 do {
-                    // Check Zotero and optionally warn
-                    await self.checkZotero()
-                    if !self.isZoteroRunning && ExportSettingsManager.shared.showZoteroWarning {
-                        let shouldContinue = await self.showZoteroWarningAlert()
-                        if !shouldContinue { return }
+                    // Only check Zotero if content has citations
+                    let hasCitations = self.hasPandocCitations(in: content)
+                    if hasCitations {
+                        await self.checkZotero()
+                        if !self.isZoteroRunning && ExportSettingsManager.shared.showZoteroWarning {
+                            let shouldContinue = await self.showZoteroWarningAlert()
+                            if !shouldContinue { return }
+                        }
                     }
 
                     let result = try await self.export(content: content, to: url, format: format)
@@ -158,6 +161,16 @@ final class ExportViewModel {
                 }
             }
         }
+    }
+
+    // MARK: - Citation Detection
+
+    /// Detect Pandoc citations in content (e.g., [@Smith2020])
+    private func hasPandocCitations(in content: String) -> Bool {
+        content.range(
+            of: #"\[[^\]]*@[\w:.-]+[^\]]*\]"#,
+            options: .regularExpression
+        ) != nil
     }
 
     // MARK: - Alerts

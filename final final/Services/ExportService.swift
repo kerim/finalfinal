@@ -108,8 +108,13 @@ actor ExportService {
             throw ExportError.pandocNotFound
         }
 
-        // Check Zotero status (for warnings)
-        let zoteroStatus = await zoteroChecker.check()
+        // Only check Zotero if content appears to have citations
+        let hasCitations = hasPandocCitations(in: content)
+        // Zotero status only matters for citation processing
+        // When no citations, .running means "no issue" (status is irrelevant)
+        let zoteroStatus: ZoteroStatus = hasCitations
+            ? await zoteroChecker.check()
+            : .running
 
         // Get resource paths
         let luaScriptPath = settings.effectiveLuaScriptPath
@@ -164,19 +169,21 @@ actor ExportService {
         // Run Pandoc
         try await runPandoc(at: pandocPath, arguments: arguments)
 
-        // Collect warnings
+        // Collect warnings (only for documents with citations)
         var warnings: [String] = []
-        switch zoteroStatus {
-        case .notRunning:
-            warnings.append("Zotero is not running. Citations were not resolved.")
-        case .betterBibTeXMissing:
-            warnings.append("Better BibTeX is not installed. Citations were not resolved.")
-        case .timeout:
-            warnings.append("Could not connect to Zotero. Citations may not be resolved.")
-        case .error(let msg):
-            warnings.append("Zotero error: \(msg)")
-        case .running:
-            break  // All good
+        if hasCitations {
+            switch zoteroStatus {
+            case .notRunning:
+                warnings.append("Zotero is not running. Citations were not resolved.")
+            case .betterBibTeXMissing:
+                warnings.append("Better BibTeX is not installed. Citations were not resolved.")
+            case .timeout:
+                warnings.append("Could not connect to Zotero. Citations may not be resolved.")
+            case .error(let msg):
+                warnings.append("Zotero error: \(msg)")
+            case .running:
+                break  // All good
+            }
         }
 
         return ExportResult(
@@ -253,5 +260,20 @@ extension ExportService {
     /// Get path to bundled reference document
     static var bundledReferenceDocPath: String? {
         Bundle.main.url(forResource: "reference", withExtension: "docx", subdirectory: "Export")?.path
+    }
+}
+
+// MARK: - Citation Detection
+
+extension ExportService {
+
+    /// Detect Pandoc citations in content
+    /// Matches any bracketed text containing @ followed by a citekey
+    /// Pattern from citation-plugin.ts: \[([^\]]*@[\w:.-][^\]]*)\]
+    private func hasPandocCitations(in content: String) -> Bool {
+        content.range(
+            of: #"\[[^\]]*@[\w:.-]+[^\]]*\]"#,
+            options: .regularExpression
+        ) != nil
     }
 }
