@@ -344,6 +344,7 @@ const citationNodeView = $view(citationNode, (ctx: Ctx) => {
 
     // State
     let isEditMode = false;
+    let documentClickHandler: ((e: MouseEvent) => void) | null = null;
 
     // Create DOM structure
     const dom = document.createElement('span');
@@ -421,6 +422,7 @@ const citationNodeView = $view(citationNode, (ctx: Ctx) => {
 
     // Enter edit mode
     const enterEditMode = () => {
+      console.log('[CitationNodeView] enterEditMode() called');
       if (isEditMode) return;
       isEditMode = true;
 
@@ -437,12 +439,33 @@ const citationNodeView = $view(citationNode, (ctx: Ctx) => {
       const sel = window.getSelection();
       sel?.removeAllRanges();
       sel?.addRange(range);
+
+      // Add document listener to catch clicks outside
+      // (blur events unreliable in ProseMirror NodeViews)
+      const handler = (e: MouseEvent) => {
+        if (!dom.contains(e.target as Node)) {
+          exitEditMode();
+        }
+      };
+      documentClickHandler = handler;
+      // setTimeout(0) to avoid catching the entering click
+      setTimeout(() => {
+        document.addEventListener('mousedown', handler, true);
+      }, 0);
     };
 
     // Exit edit mode and parse changes
     const exitEditMode = () => {
+      console.log('[CitationNodeView] exitEditMode() called, isEditMode:', isEditMode);
       if (!isEditMode) return;
       isEditMode = false;
+
+      // Remove document listener
+      if (documentClickHandler) {
+        document.removeEventListener('mousedown', documentClickHandler, true);
+        documentClickHandler = null;
+      }
+
       dom.contentEditable = 'false';
 
       const newText = dom.textContent || '';
@@ -514,7 +537,11 @@ const citationNodeView = $view(citationNode, (ctx: Ctx) => {
         return true;
       },
       destroy: () => {
-        // Cleanup if needed
+        // Clean up document listener if destroyed while editing
+        if (documentClickHandler) {
+          document.removeEventListener('mousedown', documentClickHandler, true);
+          documentClickHandler = null;
+        }
       },
       // Prevent ProseMirror from handling selection inside
       stopEvent: (event: Event) => {

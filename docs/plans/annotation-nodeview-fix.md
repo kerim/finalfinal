@@ -5,7 +5,7 @@
 | Issue | Status | Notes |
 |-------|--------|-------|
 | Annotation toggle only works once | ✅ FIXED | Reading current node state at click time |
-| Citation stays in edit mode | 🔍 INVESTIGATING | Blur event not firing reliably |
+| Citation stays in edit mode | ✅ FIXED | Document-level mousedown listener bypasses unreliable blur |
 
 ---
 
@@ -37,75 +37,48 @@ Tested by toggling task annotation multiple times - toggle now works correctly i
 
 ---
 
-## Issue 2: Citation Edit Mode (INVESTIGATING)
+## Issue 2: Citation Edit Mode (FIXED)
 
-### Observed Behavior
-1. Citation inserts correctly, displays as `(Friedman 2015)`
-2. Clicking citation enters edit mode, shows `[@friedmanExceptionalStatesChinese2015]`
-3. Clicking away from citation **should** exit edit mode and return to formatted display
-4. **Actual:** Citation stays showing raw syntax `[@citekey]`
+### Root Cause
+The `blur` event on contentEditable elements inside ProseMirror NodeViews doesn't fire reliably when clicking elsewhere in the editor. ProseMirror's focus handling intercepts clicks before the contentEditable element receives a proper blur event.
 
-### Current Implementation
-- `enterEditMode()`: Sets `contentEditable = 'true'`, shows raw syntax
-- `exitEditMode()`: Triggered by `blur` event, sets `contentEditable = 'false'`, calls `updateDisplay()`
-- `blur` event listener on DOM element calls `exitEditMode()`
+### Solution Applied
+Added a document-level `mousedown` listener (capture phase) that detects clicks outside the citation DOM element. This bypasses the unreliable blur event entirely.
 
-### Hypothesis: Blur Event Not Firing
+In `citation-plugin.ts`, the following changes were made:
 
-The `blur` event on contentEditable elements inside ProseMirror NodeViews may not fire reliably when:
-1. User clicks elsewhere in the ProseMirror editor
-2. ProseMirror handles the click and updates selection
-3. Focus management between ProseMirror and contentEditable element is inconsistent
-
-#### Why Blur Might Not Fire
-1. **ProseMirror focus handling**: When clicking elsewhere in the editor, ProseMirror may handle focus in a way that doesn't properly blur nested contentEditable elements
-2. **stopEvent interference**: The NodeView's `stopEvent` returns `true` for all events in edit mode, which might affect focus management
-3. **WKWebView quirks**: Safari/WebKit in WKWebView may have specific behavior around focus/blur in this context
-
-### What Needs Investigation
-
-1. **Verify hypothesis**: Add logging to confirm blur is not firing
-   - Add `console.log` at start of blur handler
-   - Add `console.log` inside `exitEditMode()`
-   - Check if logs appear when clicking away
-
-2. **Test alternative triggers**:
-   - Does pressing Escape work? (Currently should call `dom.blur()`)
-   - Does pressing Enter work?
-   - Does clicking outside the editor entirely (e.g., on sidebar) trigger blur?
-
-3. **Inspect focus state**:
-   - Log `document.activeElement` before and after clicking away
-   - Verify the contentEditable span was actually focused
-
----
-
-## Proposed Fix for Issue 2
-
-If blur is confirmed not to fire reliably, implement a more robust exit mechanism:
-
-### Option A: Document-level mousedown listener
+1. **Added state variable** after `let isEditMode = false;`:
 ```typescript
 let documentClickHandler: ((e: MouseEvent) => void) | null = null;
+```
 
+2. **Updated `enterEditMode()`** to add document listener:
+```typescript
 const enterEditMode = () => {
+  console.log('[CitationNodeView] enterEditMode() called');
   if (isEditMode) return;
   isEditMode = true;
-  // ... existing code ...
+  // ... existing setup code ...
 
   // Add document listener to catch clicks outside
-  documentClickHandler = (e: MouseEvent) => {
+  // (blur events unreliable in ProseMirror NodeViews)
+  const handler = (e: MouseEvent) => {
     if (!dom.contains(e.target as Node)) {
       exitEditMode();
     }
   };
-  // Use setTimeout to avoid catching the entering click
+  documentClickHandler = handler;
+  // setTimeout(0) to avoid catching the entering click
   setTimeout(() => {
-    document.addEventListener('mousedown', documentClickHandler!, true);
+    document.addEventListener('mousedown', handler, true);
   }, 0);
 };
+```
 
+3. **Updated `exitEditMode()`** to remove listener:
+```typescript
 const exitEditMode = () => {
+  console.log('[CitationNodeView] exitEditMode() called, isEditMode:', isEditMode);
   if (!isEditMode) return;
   isEditMode = false;
 
@@ -118,11 +91,28 @@ const exitEditMode = () => {
 };
 ```
 
-### Option B: ProseMirror transaction listener
-Listen for ProseMirror transactions that change selection, and exit edit mode if selection moves outside the citation node.
+4. **Updated `destroy()`** to clean up listener:
+```typescript
+destroy: () => {
+  // Clean up document listener if destroyed while editing
+  if (documentClickHandler) {
+    document.removeEventListener('mousedown', documentClickHandler, true);
+    documentClickHandler = null;
+  }
+},
+```
 
-### Option C: Focus polling (last resort)
-Use `requestAnimationFrame` or `setInterval` to poll whether the element still has focus.
+### Key Implementation Details
+- **Capture phase (`true`)**: Runs before any `stopPropagation` calls
+- **`setTimeout(0)`**: Prevents catching the same click that entered edit mode
+- **Blur handler kept**: Defense-in-depth; `if (!isEditMode) return` guard prevents double execution
+
+### Verification
+- Click citation → shows `[@citekey]`
+- Click elsewhere in editor → returns to `(Author Year)` ✅
+- Press Escape → returns to `(Author Year)` ✅
+- Press Enter → returns to `(Author Year)` ✅
+- Click sidebar → returns to `(Author Year)` ✅
 
 ---
 
@@ -131,17 +121,7 @@ Use `requestAnimationFrame` or `setInterval` to poll whether the element still h
 | File | Changes |
 |------|---------|
 | `web/milkdown/src/annotation-plugin.ts` | Fixed click handler to read current node state |
-| `web/milkdown/src/citation-plugin.ts` | Moved citekeys computation into updateDisplay(), added safety check in exitEditMode() |
-
----
-
-## Next Steps
-
-1. Add diagnostic logging to citation blur/exitEditMode
-2. Test to confirm blur is not firing
-3. Implement Option A (document mousedown listener) if hypothesis confirmed
-4. Build and test
-5. Consider whether annotation-plugin.ts needs similar robustness (currently uses direct click, not contentEditable)
+| `web/milkdown/src/citation-plugin.ts` | Added document-level mousedown listener to exit edit mode reliably |
 
 ---
 
