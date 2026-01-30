@@ -22,10 +22,16 @@ struct ContentView: View {
     @State private var cursorPositionToRestore: CursorPosition?
     @State private var sectionSyncService = SectionSyncService()
     @State private var annotationSyncService = AnnotationSyncService()
+    @State private var autoBackupService = AutoBackupService()
 
     /// Integrity alert state
     @State private var integrityReport: IntegrityReport?
     @State private var pendingProjectURL: URL?
+
+    /// Version history sheet state
+    @State private var showVersionHistorySheet = false
+    @State private var showSaveVersionDialog = false
+    @State private var saveVersionName = ""
 
     /// Use the shared DocumentManager for project lifecycle
     private var documentManager: DocumentManager { DocumentManager.shared }
@@ -178,6 +184,10 @@ Use this content to verify that:
                     integrityReport = report
                 }
             )
+            .withVersionNotifications(
+                onSaveVersion: { showSaveVersionDialog = true },
+                onShowHistory: { showVersionHistorySheet = true }
+            )
             .integrityAlert(
                 report: $integrityReport,
                 isDemoProject: pendingProjectURL.map { documentManager.isDemoProject(at: $0) } ?? false,
@@ -194,6 +204,31 @@ Use this content to verify that:
                     handleIntegrityCancel()
                 }
             )
+            .sheet(isPresented: $showVersionHistorySheet) {
+                if let db = documentManager.projectDatabase,
+                   let pid = documentManager.projectId {
+                    VersionHistorySheet(
+                        database: db,
+                        projectId: pid,
+                        currentContent: editorState.content,
+                        currentSections: editorState.sections,
+                        onRestoreComplete: {
+                            Task { await handleProjectOpened() }
+                        }
+                    )
+                }
+            }
+            .alert("Save Version", isPresented: $showSaveVersionDialog) {
+                TextField("Version name", text: $saveVersionName)
+                Button("Cancel", role: .cancel) {
+                    saveVersionName = ""
+                }
+                Button("Save") {
+                    Task { await handleSaveVersion() }
+                }
+            } message: {
+                Text("Enter a name for this version:")
+            }
     }
 
     @ViewBuilder
@@ -212,6 +247,7 @@ Use this content to verify that:
             guard editorState.contentState == .idle else { return }
             sectionSyncService.contentChanged(newValue, zoomedIds: editorState.zoomedSectionIds)
             annotationSyncService.contentChanged(newValue)
+            autoBackupService.contentDidChange()
         }
         .onChange(of: editorState.zoomedSectionId) { _, newValue in
             sectionSyncService.isContentZoomed = (newValue != nil)
@@ -1082,6 +1118,7 @@ Use this content to verify that:
         // Configure sync services with database
         sectionSyncService.configure(database: db, projectId: pid)
         annotationSyncService.configure(database: db, contentId: cid)
+        autoBackupService.configure(database: db, projectId: pid)
 
         // Wire up hierarchy enforcement after sections are updated from database
         // This ensures slash commands that create new headings trigger rebalancing
@@ -1227,10 +1264,16 @@ Use this content to verify that:
 
     /// Handle project closed notification
     private func handleProjectClosed() {
+        // Create auto-backup before closing if there are unsaved changes
+        Task {
+            await autoBackupService.projectWillClose()
+        }
+
         // Stop observation FIRST to prevent any further syncs
         editorState.stopObserving()
         sectionSyncService.cancelPendingSync()
         annotationSyncService.cancelPendingSync()
+        autoBackupService.reset()
 
         // Reset zoom state (these don't trigger database writes)
         editorState.zoomedSectionId = nil
@@ -1241,6 +1284,34 @@ Use this content to verify that:
         editorState.sections = []
         editorState.annotations = []
         editorState.content = ""
+    }
+
+    // MARK: - Version History Handlers
+
+    /// Handle save version command (Cmd+Shift+S)
+    private func handleSaveVersion() async {
+        guard let db = documentManager.projectDatabase,
+              let pid = documentManager.projectId else {
+            print("[ContentView] Cannot save version: no project open")
+            return
+        }
+
+        let name = saveVersionName.isEmpty ? nil : saveVersionName
+        let service = SnapshotService(database: db, projectId: pid)
+
+        do {
+            if let versionName = name {
+                let snapshot = try service.createManualSnapshot(name: versionName)
+                print("[ContentView] Created manual snapshot: \(snapshot.displayName)")
+            } else {
+                let snapshot = try service.createAutoSnapshot()
+                print("[ContentView] Created auto snapshot: \(snapshot.id)")
+            }
+        } catch {
+            print("[ContentView] Failed to create snapshot: \(error)")
+        }
+
+        saveVersionName = ""
     }
 
     // MARK: - Integrity Alert Handlers
@@ -1484,6 +1555,21 @@ extension View {
                    let url = notification.userInfo?["url"] as? URL {
                     onIntegrityError(report, url)
                 }
+            }
+    }
+
+    /// Adds version history notification handlers
+    @MainActor
+    func withVersionNotifications(
+        onSaveVersion: @escaping () -> Void,
+        onShowHistory: @escaping () -> Void
+    ) -> some View {
+        self
+            .onReceive(NotificationCenter.default.publisher(for: .saveVersion)) { _ in
+                onSaveVersion()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .showVersionHistory)) { _ in
+                onShowHistory()
             }
     }
 }
