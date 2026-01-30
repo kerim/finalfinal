@@ -19,16 +19,21 @@ targets:
       - path: final final
         excludes:
           - "**/.DS_Store"
+          - "Resources/Export"
+      - path: final final/Resources/Export
+        type: folder
+        buildPhase: resources
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.kerim.final-final
         PRODUCT_NAME: final final
         MARKETING_VERSION: "1"
-        CURRENT_PROJECT_VERSION: "0.1.80"
+        CURRENT_PROJECT_VERSION: "0.1.81"
         INFOPLIST_GENERATION_MODE: GeneratedFile
         GENERATE_INFOPLIST_FILE: YES
         SWIFT_VERSION: "5.9"
         MACOSX_DEPLOYMENT_TARGET: "14.0"
+        CODE_SIGN_ENTITLEMENTS: final final/final final.entitlements
     dependencies:
       - package: GRDB
     info:

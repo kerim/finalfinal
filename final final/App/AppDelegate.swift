@@ -76,6 +76,27 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 FileOperations.handleOpenProject()
             }
         }
+
+        // Handle export notifications
+        NotificationCenter.default.addObserver(
+            forName: .exportDocument, object: nil, queue: .main
+        ) { notification in
+            Task { @MainActor in
+                if let format = notification.userInfo?["format"] as? ExportFormat {
+                    ExportOperations.handleExport(format: format)
+                }
+            }
+        }
+
+        // Handle show export preferences
+        NotificationCenter.default.addObserver(
+            forName: .showExportPreferences, object: nil, queue: .main
+        ) { _ in
+            Task { @MainActor in
+                // Open Settings window and switch to Export tab
+                NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+            }
+        }
     }
 
     /// Check if a window is our app's SwiftUI content window (not a system window)

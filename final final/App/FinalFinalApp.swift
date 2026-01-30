@@ -18,7 +18,14 @@ struct FinalFinalApp: App {
             FileCommands()
             ThemeCommands()
             EditorCommands()
+            ExportCommands()
         }
         .handlesExternalEvents(matching: ["open"])
+
+        // Preferences window
+        Settings {
+            PreferencesView()
+                .environment(ThemeManager.shared)
+        }
     }
 }
