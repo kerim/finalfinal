@@ -357,15 +357,44 @@ final final/
 
 ---
 
+## Phase 0.2: Stabilization & Production Readiness
+
+**Goal**: Polish the alpha app for daily use, fix bugs, improve UX
+
+### 0.2.0 — UI Enhancements & New Features
+- Sidebar header level filter (dropdown to show H1-H2, H1-H3, etc.)
+- Hideable editor toolbar (Bold, Italic, Link, Headers)
+- Expanded appearance settings (font family, size, line spacing, line numbers)
+- Find & Replace (Cmd+F, Cmd+Shift+F)
+- Option-click header in editor → zoom to section
+
+### 0.2.1 — Editor & Theme Polish
+- Editor load time optimization
+- Typography improvements (font, line-height, paragraph spacing)
+- Theme consistency audit (all windows/panels)
+- Bibliography card threading fix
+
+### 0.2.2 — Citation System Polish
+- Fix /cite bug with `?` characters
+- Citation picker positioning
+- Multi-citation entry UI
+- Research Zotero native picker
+- PDF export citation formatting
+
+### 0.2.3 — Foundation & Stability
+- Data integrity verification and recovery
+- Error handling framework
+- Performance monitoring
+- Structured logging
+
+---
+
 ## Future Phases (Reference)
 
 | Phase | Features |
 |-------|----------|
-| 2 | Zotero integration (citations, bibliography) |
-| 3 | Version control (Git-based, auto-commits, named versions) |
-| 4 | Export (Pandoc, templates) |
-| 5 | Reference pane (Finder-style folders for PDFs, images, docs) |
-| 6 | Sync (Cloudflare DO or CloudKit) |
+| 0.3 | Reference pane (Finder-style folders for PDFs, images, docs) |
+| 0.4 | Sync (Cloudflare DO or CloudKit) |
 
 ---
 
