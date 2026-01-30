@@ -49,27 +49,44 @@ final class EditorSchemeHandler: NSObject, WKURLSchemeHandler {
     func webView(_ webView: WKWebView, stop urlSchemeTask: WKURLSchemeTask) {}
 
     private func bundleURL(for url: URL) -> URL? {
-        let pathComponents = url.pathComponents.filter { $0 != "/" }
+        // URL format: editor://milkdown/milkdown.html
+        // - host = "milkdown" (editor type)
+        // - path = "/milkdown.html" (filename)
+        // Bundle path: editor/milkdown/milkdown.html
+
+        var pathComponents = url.pathComponents.filter { $0 != "/" }
+
+        // Include host as first path component (editor type: milkdown, codemirror)
+        if let host = url.host, !host.isEmpty {
+            pathComponents.insert(host, at: 0)
+        }
+
         guard !pathComponents.isEmpty else { return nil }
 
-        // URL format: editor://milkdown/milkdown.html
-        // First component is the editor type (milkdown, codemirror)
-        // Last component is the filename
         let filename = pathComponents.last!
         let name = (filename as NSString).deletingPathExtension
         let ext = (filename as NSString).pathExtension
 
-        // Try with subdirectory first (for folder references)
+        // Build subdirectory path: "editor/milkdown" (for folder references)
+        let subfolders = pathComponents.dropLast()
+        let subdirectory: String
+        if subfolders.isEmpty {
+            subdirectory = resourceSubdirectory
+        } else {
+            subdirectory = resourceSubdirectory + "/" + subfolders.joined(separator: "/")
+        }
+
+        // Try folder reference structure first: editor/milkdown/milkdown.html
         if let url = Bundle.main.url(
-            forResource: pathComponents.joined(separator: "/"),
-            withExtension: nil,
-            subdirectory: resourceSubdirectory
+            forResource: name,
+            withExtension: ext.isEmpty ? nil : ext,
+            subdirectory: subdirectory
         ) {
             return url
         }
 
-        // Fall back to flat resources (Xcode default behavior)
-        return Bundle.main.url(forResource: name, withExtension: ext)
+        // Fall back to flat resources (for groups/legacy structure)
+        return Bundle.main.url(forResource: name, withExtension: ext.isEmpty ? nil : ext)
     }
 
     private func mimeType(for url: URL) -> String {

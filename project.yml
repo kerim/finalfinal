@@ -20,7 +20,11 @@ targets:
         excludes:
           - "**/.DS_Store"
           - "Resources/Export"
+          - "Resources/editor"
       - path: final final/Resources/Export
+        type: folder
+        buildPhase: resources
+      - path: final final/Resources/editor
         type: folder
         buildPhase: resources
     settings:
@@ -28,7 +32,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.kerim.final-final
         PRODUCT_NAME: final final
         MARKETING_VERSION: "1"
-        CURRENT_PROJECT_VERSION: "0.1.84"
+        CURRENT_PROJECT_VERSION: "0.1.86"
         INFOPLIST_GENERATION_MODE: GeneratedFile
         GENERATE_INFOPLIST_FILE: YES
         SWIFT_VERSION: "5.9"

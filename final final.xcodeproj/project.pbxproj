@@ -66,6 +66,7 @@
 		ACAF912B9BF42D9FD97B82C2 /* Database+CRUD.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13133CB5518EA086A3120EDE /* Database+CRUD.swift */; };
 		AD8451C7428BC1E2016746D1 /* StatusBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF41CB39EB2C5BD4E30A2CDA /* StatusBar.swift */; };
 		B170D8E5C33C7D7D14A350D4 /* AnnotationSyncService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6253961779E064C92D1B172E /* AnnotationSyncService.swift */; };
+		B17C6E9C011435B07C9EFF38 /* editor in Resources */ = {isa = PBXBuildFile; fileRef = 80D86FAB5657E30D2DC86655 /* editor */; };
 		C3333CCD923C6BDE144086D9 /* AnnotationViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B220BEC12CB629DCB165D755 /* AnnotationViewModel.swift */; };
 		CE292E2BCF5617C406CA10FB /* AutoBackupService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B7205FC48760A149A8B0BF8 /* AutoBackupService.swift */; };
 		D0208FE27BA4FBD4AADFD905 /* SectionCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 92AF8BACE222B0C414BF2E8C /* SectionCardView.swift */; };
@@ -137,6 +138,7 @@
 		788D4C2FB2475A38D3477A97 /* final finalTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "final finalTests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 		7C20C6E92294CD47FFE7539F /* MarkdownUtils.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownUtils.swift; sourceTree = "<group>"; };
 		7EEDC491836013F46E97FAE8 /* MilkdownEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MilkdownEditor.swift; sourceTree = "<group>"; };
+		80D86FAB5657E30D2DC86655 /* editor */ = {isa = PBXFileReference; lastKnownFileType = folder; name = editor; path = "final final/Resources/editor"; sourceTree = SOURCE_ROOT; };
 		87026C4D0F2AEB394A0A85D9 /* PreferencesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreferencesView.swift; sourceTree = "<group>"; };
 		87363EA3909D1FDA8BFDB5F1 /* RecentProject.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecentProject.swift; sourceTree = "<group>"; };
 		87F00396843D1E0300C1624A /* Snapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Snapshot.swift; sourceTree = "<group>"; };
@@ -274,6 +276,7 @@
 		77839AE8F84D5BB394C9439D = {
 			isa = PBXGroup;
 			children = (
+				80D86FAB5657E30D2DC86655 /* editor */,
 				8C997BC2679C3F7349B8B7E8 /* Export */,
 				887202FB500BDC677B0C41F3 /* final final */,
 				96FDF83C9E576F31361DF979 /* final finalTests */,
@@ -492,6 +495,7 @@
 			files = (
 				3F3CDE3F335D3DF046014F49 /* Assets.xcassets in Resources */,
 				91DF49BFF5C5AD124AE4A15E /* Export in Resources */,
+				B17C6E9C011435B07C9EFF38 /* editor in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -674,7 +678,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = "final final/final final.entitlements";
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 0.1.84;
+				CURRENT_PROJECT_VERSION = 0.1.86;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "final final/Info.plist";
 				INFOPLIST_GENERATION_MODE = GeneratedFile;
@@ -697,7 +701,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = "final final/final final.entitlements";
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 0.1.84;
+				CURRENT_PROJECT_VERSION = 0.1.86;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "final final/Info.plist";
 				INFOPLIST_GENERATION_MODE = GeneratedFile;
