@@ -109,6 +109,11 @@ When asked to commit changes:
 
 Never commit only the files you remember working on - always check for other modifications that may have been made earlier in the session.
 
+**Commit message format:** Use multiple `-m` flags instead of heredocs (heredocs fail in sandbox):
+```bash
+git commit -m "Title" -m "Body line 1" -m "Body line 2"
+```
+
 ## Documentation
 
 - `docs/plans/` - Feature plans (protected from overwrites)
