@@ -46,6 +46,8 @@ struct DocumentPreviewView: View {
 
     /// Whether to show restore buttons on hover
     var showRestoreButtons: Bool = false
+    /// Whether to show full content (vs truncated preview)
+    var showFullContent: Bool = false
     var onRestoreSection: ((SnapshotSectionViewModel, SectionRestoreMode) -> Void)?
 
     @Environment(ThemeManager.self) private var themeManager
@@ -77,6 +79,7 @@ struct DocumentPreviewView: View {
                                 isHighlighted: section.id == highlightedSectionId,
                                 isHovered: section.id == hoveredSectionId,
                                 showRestoreButtons: showRestoreButtons,
+                                showFullContent: showFullContent,
                                 onTap: {
                                     onSectionTap?(section)
                                 },
@@ -116,8 +119,27 @@ struct SectionPreviewRow: View {
     let isHighlighted: Bool
     let isHovered: Bool
     let showRestoreButtons: Bool
+    let showFullContent: Bool
     let onTap: () -> Void
     let onRestore: (SectionRestoreMode) -> Void
+
+    init(
+        section: SnapshotSectionViewModel,
+        isHighlighted: Bool,
+        isHovered: Bool,
+        showRestoreButtons: Bool,
+        showFullContent: Bool = false,
+        onTap: @escaping () -> Void,
+        onRestore: @escaping (SectionRestoreMode) -> Void
+    ) {
+        self.section = section
+        self.isHighlighted = isHighlighted
+        self.isHovered = isHovered
+        self.showRestoreButtons = showRestoreButtons
+        self.showFullContent = showFullContent
+        self.onTap = onTap
+        self.onRestore = onRestore
+    }
 
     @Environment(ThemeManager.self) private var themeManager
 
@@ -125,11 +147,7 @@ struct SectionPreviewRow: View {
         VStack(alignment: .leading, spacing: 8) {
             // Header
             HStack {
-                // Indent based on header level
-                Text(String(repeating: "  ", count: max(0, section.headerLevel - 1)))
-                    .font(.body)
-
-                // Header indicator
+                // Header level indicator (flat display, no indent)
                 Text("H\(section.headerLevel)")
                     .font(.caption2)
                     .padding(.horizontal, 4)
@@ -155,13 +173,20 @@ struct SectionPreviewRow: View {
                 }
             }
 
-            // Content preview (first few lines)
-            if let preview = contentPreview {
+            // Content preview (full or truncated, flat display)
+            if showFullContent {
+                // Show full markdown content (excluding header line)
+                if let fullContent = fullContentText {
+                    Text(fullContent)
+                        .font(.body)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
+            } else if let preview = contentPreview {
                 Text(preview)
                     .font(.body)
                     .foregroundStyle(.secondary)
                     .lineLimit(3)
-                    .padding(.leading, CGFloat(section.headerLevel - 1) * 16)
             }
         }
         .padding(.vertical, 8)
@@ -173,6 +198,21 @@ struct SectionPreviewRow: View {
         .contentShape(Rectangle())
         .onTapGesture {
             onTap()
+        }
+        .contextMenu {
+            if showRestoreButtons {
+                Button {
+                    onRestore(.replace)
+                } label: {
+                    Label("Replace Current Section", systemImage: "arrow.uturn.backward")
+                }
+
+                Button {
+                    onRestore(.duplicate)
+                } label: {
+                    Label("Insert as New Section", systemImage: "doc.on.doc")
+                }
+            }
         }
     }
 
@@ -205,22 +245,32 @@ struct SectionPreviewRow: View {
         return preview.isEmpty ? nil : preview
     }
 
+    private var fullContentText: String? {
+        // Extract all content after header line
+        let lines = section.markdownContent.split(separator: "\n", omittingEmptySubsequences: false)
+        guard lines.count > 1 else { return nil }
+
+        let contentLines = lines.dropFirst()
+        let content = contentLines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        return content.isEmpty ? nil : content
+    }
+
     @ViewBuilder
     private var restoreButtons: some View {
         HStack(spacing: 4) {
             Button(action: { onRestore(.replace) }) {
-                Image(systemName: "arrow.uturn.backward")
+                Label("Replace", systemImage: "arrow.uturn.backward")
                     .font(.caption)
             }
             .buttonStyle(.bordered)
-            .help("Replace current section")
+            .help("Replace current section with this backup")
 
             Button(action: { onRestore(.duplicate) }) {
-                Image(systemName: "doc.on.doc")
+                Label("Insert", systemImage: "doc.on.doc")
                     .font(.caption)
             }
             .buttonStyle(.bordered)
-            .help("Insert as new section")
+            .help("Insert as new section at end of document")
         }
     }
 }

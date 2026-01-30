@@ -18,6 +18,8 @@ struct CursorPosition: Equatable {
 // swiftlint:disable:next type_body_length
 struct ContentView: View {
     @Environment(ThemeManager.self) private var themeManager
+    @Environment(VersionHistoryCoordinator.self) private var versionHistoryCoordinator
+    @Environment(\.openWindow) private var openWindow
     @State private var editorState = EditorViewState()
     @State private var cursorPositionToRestore: CursorPosition?
     @State private var sectionSyncService = SectionSyncService()
@@ -28,8 +30,7 @@ struct ContentView: View {
     @State private var integrityReport: IntegrityReport?
     @State private var pendingProjectURL: URL?
 
-    /// Version history sheet state
-    @State private var showVersionHistorySheet = false
+    /// Version history dialog state
     @State private var showSaveVersionDialog = false
     @State private var saveVersionName = ""
 
@@ -186,7 +187,18 @@ Use this content to verify that:
             )
             .withVersionNotifications(
                 onSaveVersion: { showSaveVersionDialog = true },
-                onShowHistory: { showVersionHistorySheet = true }
+                onShowHistory: {
+                    // Prepare coordinator with current state before opening window
+                    if let db = documentManager.projectDatabase,
+                       let pid = documentManager.projectId {
+                        versionHistoryCoordinator.prepareForOpen(
+                            database: db,
+                            projectId: pid,
+                            sections: editorState.sections
+                        )
+                        openWindow(id: "version-history")
+                    }
+                }
             )
             .integrityAlert(
                 report: $integrityReport,
@@ -204,20 +216,6 @@ Use this content to verify that:
                     handleIntegrityCancel()
                 }
             )
-            .sheet(isPresented: $showVersionHistorySheet) {
-                if let db = documentManager.projectDatabase,
-                   let pid = documentManager.projectId {
-                    VersionHistorySheet(
-                        database: db,
-                        projectId: pid,
-                        currentContent: editorState.content,
-                        currentSections: editorState.sections,
-                        onRestoreComplete: {
-                            Task { await handleProjectOpened() }
-                        }
-                    )
-                }
-            }
             .alert("Save Version", isPresented: $showSaveVersionDialog) {
                 TextField("Version name", text: $saveVersionName)
                 Button("Cancel", role: .cancel) {
