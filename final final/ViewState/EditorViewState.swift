@@ -19,6 +19,8 @@ extension Notification.Name {
     static let insertAnnotation = Notification.Name("insertAnnotation")
     /// Posted to toggle highlight mark on selected text (Cmd+Shift+H)
     static let toggleHighlight = Notification.Name("toggleHighlight")
+    /// Posted when citation library should be pushed to editor
+    static let citationLibraryChanged = Notification.Name("citationLibraryChanged")
 }
 
 enum EditorMode: String, CaseIterable {
@@ -89,6 +91,14 @@ class EditorViewState {
 
     /// Hide completed tasks from the annotation panel
     var hideCompletedTasks: Bool = false
+
+    // MARK: - Zotero Integration (Phase 1.8)
+
+    /// Zotero service reference (injected, not owned)
+    weak var zoteroService: ZoteroService?
+
+    /// Whether citation library has been pushed to the editor
+    var isCitationLibraryPushed: Bool = false
 
     // MARK: - Database Observation
     private var observationTask: Task<Void, Never>?

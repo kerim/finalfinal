@@ -142,6 +142,13 @@ class DraggableNSView: NSView, NSDraggingSource {
 
         guard let section = section else { return }
 
+        // Disable drag for bibliography sections
+        if section.isBibliography {
+            didStartDrag = false
+            isInDragSession = false
+            return
+        }
+
         // 1. Compute subtree
         let childIds = isOptionDrag ? collectSubtreeIds(rootId: section.id) : []
         let isSubtreeDrag = isOptionDrag && !childIds.isEmpty

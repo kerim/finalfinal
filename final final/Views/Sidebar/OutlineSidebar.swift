@@ -208,6 +208,15 @@ struct OutlineSidebar: View {
             result = filterToSubtree(sections: result, rootId: zoomId)
         }
 
+        // Pin bibliography sections at the bottom
+        // Sort by: isBibliography (false first), then sortOrder
+        result.sort { a, b in
+            if a.isBibliography != b.isBibliography {
+                return !a.isBibliography  // Non-bibliography first
+            }
+            return a.sortOrder < b.sortOrder
+        }
+
         return result
     }
 

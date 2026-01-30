@@ -45,9 +45,12 @@
 		7ECDA8650F5A11B84724DF8F /* EditorCommands.swift in Sources */ = {isa = PBXBuildFile; fileRef = 03BD491F2B87E03E136E9140 /* EditorCommands.swift */; };
 		8384B00E2738A39290BDCB1B /* ThemeManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27856E54C5B28F839E83F154 /* ThemeManager.swift */; };
 		83EF38E6AD012B11C741891D /* OutlineFilterBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABFC8351EA2CEE315AFD46C8 /* OutlineFilterBar.swift */; };
+		8A96868113B77FF320A4AFB9 /* CSLItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8D61CFAC6D761917B29935C /* CSLItem.swift */; };
+		8CC3FFE851C758FAF0E7DE9B /* BibliographySyncService.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED9246FEA41F18BA08135B2F /* BibliographySyncService.swift */; };
 		90566734810E75E47CEF710E /* MarkdownUtils.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C20C6E92294CD47FFE7539F /* MarkdownUtils.swift */; };
 		91E3EB11EC2C1CFFF280BBB2 /* codemirror.js in Resources */ = {isa = PBXBuildFile; fileRef = 7E3150F9999744FC44CB14B4 /* codemirror.js */; };
 		95DA16BD31941C5CD424F43D /* ProjectRepairService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 437CEEF39F4832F82656EC15 /* ProjectRepairService.swift */; };
+		9E8D8F33D47F7001D135296C /* ZoteroService.swift in Sources */ = {isa = PBXBuildFile; fileRef = E16909CB53D2BCFD8CC1B0BF /* ZoteroService.swift */; };
 		A46237665E070F9A59CF8B87 /* milkdown.css in Resources */ = {isa = PBXBuildFile; fileRef = C4E5542284D791AA71E83BE0 /* milkdown.css */; };
 		A7F047CACD5338BFF13C8336 /* OutlineNode.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF113F2ADAA8371F7C810BF0 /* OutlineNode.swift */; };
 		AC04D7D64FA25ADC4D649125 /* ProjectIntegrityChecker.swift in Sources */ = {isa = PBXBuildFile; fileRef = A12F8033BDC1E3ED37C83195 /* ProjectIntegrityChecker.swift */; };
@@ -124,6 +127,7 @@
 		A12F8033BDC1E3ED37C83195 /* ProjectIntegrityChecker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectIntegrityChecker.swift; sourceTree = "<group>"; };
 		ABFC8351EA2CEE315AFD46C8 /* OutlineFilterBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutlineFilterBar.swift; sourceTree = "<group>"; };
 		B220BEC12CB629DCB165D755 /* AnnotationViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnnotationViewModel.swift; sourceTree = "<group>"; };
+		B8D61CFAC6D761917B29935C /* CSLItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CSLItem.swift; sourceTree = "<group>"; };
 		B94BA0DFF06C7D3B1B7F38F5 /* DraggableCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DraggableCardView.swift; sourceTree = "<group>"; };
 		BBC3D73969C6FC77A4A46FEC /* DemoProjectManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DemoProjectManager.swift; sourceTree = "<group>"; };
 		BC27954DE76B2ADD62BBFF00 /* Section.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Section.swift; sourceTree = "<group>"; };
@@ -134,9 +138,11 @@
 		CF113F2ADAA8371F7C810BF0 /* OutlineNode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutlineNode.swift; sourceTree = "<group>"; };
 		D567C1445BFF0160D8410001 /* ProjectStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectStore.swift; sourceTree = "<group>"; };
 		DFB3FE823FEA8DAD86CD01A9 /* ProjectDatabase.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectDatabase.swift; sourceTree = "<group>"; };
+		E16909CB53D2BCFD8CC1B0BF /* ZoteroService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZoteroService.swift; sourceTree = "<group>"; };
 		E2BEC2E8F18731A82D861A36 /* ProjectRepairServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectRepairServiceTests.swift; sourceTree = "<group>"; };
 		E9A8D79672E775EA73854D93 /* Database.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Database.swift; sourceTree = "<group>"; };
 		EA5B65E36E0BB3661A7CE09A /* SectionSyncService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SectionSyncService.swift; sourceTree = "<group>"; };
+		ED9246FEA41F18BA08135B2F /* BibliographySyncService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BibliographySyncService.swift; sourceTree = "<group>"; };
 		FB81B292D5A8DE802F0AFB6F /* milkdown.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; path = milkdown.html; sourceTree = "<group>"; };
 		FDA7C9F1CFBE9EDB2C4D818C /* OutlineParserTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutlineParserTests.swift; sourceTree = "<group>"; };
 		FE24C13995368C23BC470A26 /* FinalFinalApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FinalFinalApp.swift; sourceTree = "<group>"; };
@@ -252,6 +258,7 @@
 			isa = PBXGroup;
 			children = (
 				7311920CB617B184B124B6F4 /* Annotation.swift */,
+				B8D61CFAC6D761917B29935C /* CSLItem.swift */,
 				E9A8D79672E775EA73854D93 /* Database.swift */,
 				728F6240519F3BDA2753E515 /* Database+Annotations.swift */,
 				13133CB5518EA086A3120EDE /* Database+CRUD.swift */,
@@ -298,6 +305,7 @@
 			isa = PBXGroup;
 			children = (
 				6253961779E064C92D1B172E /* AnnotationSyncService.swift */,
+				ED9246FEA41F18BA08135B2F /* BibliographySyncService.swift */,
 				BBC3D73969C6FC77A4A46FEC /* DemoProjectManager.swift */,
 				44DE11B8C0AD43E4C7DA35BF /* DocumentManager.swift */,
 				5A1E8A83A78A7909AA1289DB /* OutlineParser.swift */,
@@ -306,6 +314,7 @@
 				D567C1445BFF0160D8410001 /* ProjectStore.swift */,
 				61DE6BB00F5D1EF8A75439EB /* SectionReconciler.swift */,
 				EA5B65E36E0BB3661A7CE09A /* SectionSyncService.swift */,
+				E16909CB53D2BCFD8CC1B0BF /* ZoteroService.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -477,6 +486,8 @@
 				B170D8E5C33C7D7D14A350D4 /* AnnotationSyncService.swift in Sources */,
 				C3333CCD923C6BDE144086D9 /* AnnotationViewModel.swift in Sources */,
 				2A5EB4F121ED5781FDD710A7 /* AppDelegate.swift in Sources */,
+				8CC3FFE851C758FAF0E7DE9B /* BibliographySyncService.swift in Sources */,
+				8A96868113B77FF320A4AFB9 /* CSLItem.swift in Sources */,
 				0127F846C37CAFAFA0455C60 /* CodeMirrorEditor.swift in Sources */,
 				790667B521454C125B0FE74B /* ColorScheme.swift in Sources */,
 				7ACE3361E6A474E6D99062E1 /* ContentView.swift in Sources */,
@@ -518,6 +529,7 @@
 				35FA3CC0FED14ED1D7FD9000 /* TagPillView.swift in Sources */,
 				21F0559EDFDBA7FFB28AAD5D /* ThemeCommands.swift in Sources */,
 				8384B00E2738A39290BDCB1B /* ThemeManager.swift in Sources */,
+				9E8D8F33D47F7001D135296C /* ZoteroService.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
