@@ -29,9 +29,10 @@ struct FileCommands: Commands {
 
             Divider()
 
-            // Explicit Close Window to ensure Cmd-W works
-            Button("Close Window") {
-                NSApp.keyWindow?.close()
+            // Close Project (Cmd-W) - closes project and shows picker
+            Button("Close Project") {
+                print("[FileCommands] Posting .closeProject notification")
+                NotificationCenter.default.post(name: .closeProject, object: nil)
             }
             .keyboardShortcut("w", modifiers: .command)
         }
@@ -218,8 +219,36 @@ struct FileOperations {
     }
 
     static func handleCloseProject() {
-        // Check for unsaved changes
-        if DocumentManager.shared.hasUnsavedChanges {
+        print("[FileOperations] handleCloseProject() called")
+        let dm = DocumentManager.shared
+
+        // Check if this is the Getting Started project with modifications
+        if dm.isGettingStartedProject && dm.isGettingStartedModified() {
+            let alert = NSAlert()
+            alert.messageText = "Changes Not Saved"
+            alert.informativeText = "Changes to Getting Started aren't saved. Create a new project to keep your work."
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "Discard")
+            alert.addButton(withTitle: "Create New Project")
+
+            let response = alert.runModal()
+            switch response {
+            case .alertFirstButtonReturn:
+                // Discard - just close
+                dm.closeProject()
+                print("[FileOperations] Posting .projectDidClose notification (Getting Started discard)")
+                NotificationCenter.default.post(name: .projectDidClose, object: nil)
+            case .alertSecondButtonReturn:
+                // Create New Project - show save panel
+                handleCreateFromGettingStarted()
+            default:
+                break
+            }
+            return
+        }
+
+        // Check for unsaved changes (regular projects)
+        if dm.hasUnsavedChanges {
             let alert = NSAlert()
             alert.messageText = "Do you want to save changes before closing?"
             alert.informativeText = "Your changes will be lost if you don't save them."
@@ -233,19 +262,52 @@ struct FileOperations {
             case .alertFirstButtonReturn:
                 // Save then close
                 handleSaveProject()
-                DocumentManager.shared.closeProject()
+                dm.closeProject()
+                print("[FileOperations] Posting .projectDidClose notification (saved)")
                 NotificationCenter.default.post(name: .projectDidClose, object: nil)
             case .alertSecondButtonReturn:
                 // Close without saving
-                DocumentManager.shared.closeProject()
+                dm.closeProject()
+                print("[FileOperations] Posting .projectDidClose notification (no save)")
                 NotificationCenter.default.post(name: .projectDidClose, object: nil)
             default:
                 // Cancel - do nothing
                 break
             }
         } else {
-            DocumentManager.shared.closeProject()
+            dm.closeProject()
+            print("[FileOperations] Posting .projectDidClose notification (no changes)")
             NotificationCenter.default.post(name: .projectDidClose, object: nil)
+        }
+    }
+
+    /// Handle "Create New Project" from Getting Started
+    private static func handleCreateFromGettingStarted() {
+        let dm = DocumentManager.shared
+
+        // Get current content before closing
+        let currentContent = (try? dm.getCurrentContent()) ?? ""
+
+        let savePanel = NSSavePanel()
+        savePanel.title = "Save Your Work"
+        savePanel.nameFieldLabel = "Project Name:"
+        savePanel.nameFieldStringValue = "Untitled"
+        savePanel.allowedContentTypes = [.init(exportedAs: "com.kerim.final-final.document")]
+        savePanel.canCreateDirectories = true
+
+        savePanel.begin { response in
+            guard response == .OK, let url = savePanel.url else { return }
+
+            Task { @MainActor in
+                do {
+                    let title = url.deletingPathExtension().lastPathComponent
+                    try dm.newProject(at: url, title: title, initialContent: currentContent)
+                    // Notify that a new project was created
+                    NotificationCenter.default.post(name: .projectDidCreate, object: nil)
+                } catch {
+                    print("[FileOperations] Failed to create project from Getting Started: \(error)")
+                }
+            }
         }
     }
 

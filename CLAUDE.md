@@ -51,7 +51,7 @@ Custom `editor://` URL scheme + 500ms polling:
 | `Editors/EditorSchemeHandler.swift` | Custom URL scheme handler |
 | `Editors/MilkdownEditor.swift` | WYSIWYG editor WKWebView wrapper |
 | `Editors/CodeMirrorEditor.swift` | Source editor WKWebView wrapper |
-| `Services/DemoProjectManager.swift` | Demo project lifecycle + database access |
+| `Services/DocumentManager.swift` | Project lifecycle + Getting Started + recent projects |
 | `Services/SectionSyncService.swift` | Editor ↔ section sync with debouncing |
 | `Services/OutlineParser.swift` | Markdown headers → outline nodes |
 | `Views/Sidebar/OutlineSidebar.swift` | Section cards with drag-drop reordering |

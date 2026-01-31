@@ -10,7 +10,6 @@ import SwiftUI
 /// View model for integrity alert
 struct IntegrityAlertModel {
     let report: IntegrityReport
-    let isDemoProject: Bool
 
     var title: String {
         if report.hasCriticalIssues {
@@ -46,17 +45,12 @@ struct IntegrityAlertModel {
     var canRepair: Bool {
         report.canAutoRepair
     }
-
-    var showRecreateDemoButton: Bool {
-        isDemoProject
-    }
 }
 
 /// Alert view for displaying integrity issues
 struct IntegrityAlertView: View {
     let model: IntegrityAlertModel
     let onRepair: () -> Void
-    let onRecreateDemo: () -> Void
     let onOpenAnyway: () -> Void
     let onCancel: () -> Void
 
@@ -106,13 +100,6 @@ struct IntegrityAlertView: View {
                     .foregroundStyle(.orange)
                 }
 
-                // Recreate Demo (demo projects only)
-                if model.showRecreateDemoButton {
-                    Button("Recreate Demo", role: .destructive) {
-                        onRecreateDemo()
-                    }
-                }
-
                 // Repair (if possible)
                 if model.canRepair {
                     Button("Repair") {
@@ -139,9 +126,7 @@ extension View {
     @ViewBuilder
     func integrityAlert(
         report: Binding<IntegrityReport?>,
-        isDemoProject: Bool,
         onRepair: @escaping (IntegrityReport) -> Void,
-        onRecreateDemo: @escaping () -> Void,
         onOpenAnyway: @escaping (IntegrityReport) -> Void,
         onCancel: @escaping () -> Void
     ) -> some View {
@@ -153,13 +138,9 @@ extension View {
         ) {
             if let currentReport = report.wrappedValue {
                 IntegrityAlertView(
-                    model: IntegrityAlertModel(report: currentReport, isDemoProject: isDemoProject),
+                    model: IntegrityAlertModel(report: currentReport),
                     onRepair: {
                         onRepair(currentReport)
-                        report.wrappedValue = nil
-                    },
-                    onRecreateDemo: {
-                        onRecreateDemo()
                         report.wrappedValue = nil
                     },
                     onOpenAnyway: {
@@ -185,11 +166,9 @@ extension View {
                     .orphanedSections(count: 3)
                 ],
                 packageURL: URL(fileURLWithPath: "/test/demo.ff")
-            ),
-            isDemoProject: true
+            )
         ),
         onRepair: {},
-        onRecreateDemo: {},
         onOpenAnyway: {},
         onCancel: {}
     )
