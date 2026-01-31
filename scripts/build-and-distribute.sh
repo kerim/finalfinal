@@ -64,7 +64,7 @@ echo "  Generating Xcode project..."
 xcodegen generate
 
 echo "  Building macOS app..."
-xcodebuild -scheme "final final" -destination 'platform=macOS' build
+xcodebuild -scheme "final final" -destination 'platform=macOS' -derivedDataPath "$PROJECT_DIR/build" build
 
 # Verify build succeeded
 BUILD_PATH="$PROJECT_DIR/build/Build/Products/Debug/$APP_NAME.app"
