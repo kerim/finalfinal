@@ -68,7 +68,8 @@ struct ProjectPickerView: View {
                 Button("Open Project...") {
                     handleOpenProject()
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.borderedProminent)
+                .tint(.gray)
             }
             .padding(.top, 8)
 
