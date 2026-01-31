@@ -44,6 +44,7 @@
 		5E65B667DA5C19888B7BF88E /* Typography.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE36F17D91BD28DBE49E98F8 /* Typography.swift */; };
 		63072A9E8DE3BC6324759AE9 /* ProjectDatabase.swift in Sources */ = {isa = PBXBuildFile; fileRef = DFB3FE823FEA8DAD86CD01A9 /* ProjectDatabase.swift */; };
 		639B3B47C550E26A3EE3F0D2 /* PandocLocator.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF38A145CE15C32F45EBB00D /* PandocLocator.swift */; };
+		66B2E33AC24571E9D119C046 /* ChevronButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = A4E5381EEA5442B073C96943 /* ChevronButton.swift */; };
 		6906417635740343EE8F362A /* OutlineParserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FDA7C9F1CFBE9EDB2C4D818C /* OutlineParserTests.swift */; };
 		6D12AEF734B0A4D7D05F681F /* FinalFinalApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE24C13995368C23BC470A26 /* FinalFinalApp.swift */; };
 		75D604E7143573D4BFD533FD /* MilkdownEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7EEDC491836013F46E97FAE8 /* MilkdownEditor.swift */; };
@@ -55,6 +56,7 @@
 		8384B00E2738A39290BDCB1B /* ThemeManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27856E54C5B28F839E83F154 /* ThemeManager.swift */; };
 		83EF38E6AD012B11C741891D /* OutlineFilterBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABFC8351EA2CEE315AFD46C8 /* OutlineFilterBar.swift */; };
 		8A96868113B77FF320A4AFB9 /* CSLItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8D61CFAC6D761917B29935C /* CSLItem.swift */; };
+		8B43E0C82C186ABDE79D9AE8 /* ViewCommands.swift in Sources */ = {isa = PBXBuildFile; fileRef = D678FA29904C6946CACDC1D6 /* ViewCommands.swift */; };
 		8CC3FFE851C758FAF0E7DE9B /* BibliographySyncService.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED9246FEA41F18BA08135B2F /* BibliographySyncService.swift */; };
 		8DF608DC28695AC4BA728238 /* ExportCommands.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55069760CD7C2E13C59E0E39 /* ExportCommands.swift */; };
 		8FC2C94655683E0A57EE671F /* TinyTeX in Resources */ = {isa = PBXBuildFile; fileRef = 76CC075151A2E6342FFE523E /* TinyTeX */; };
@@ -70,6 +72,7 @@
 		B170D8E5C33C7D7D14A350D4 /* AnnotationSyncService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6253961779E064C92D1B172E /* AnnotationSyncService.swift */; };
 		B17C6E9C011435B07C9EFF38 /* editor in Resources */ = {isa = PBXBuildFile; fileRef = 80D86FAB5657E30D2DC86655 /* editor */; };
 		C3333CCD923C6BDE144086D9 /* AnnotationViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B220BEC12CB629DCB165D755 /* AnnotationViewModel.swift */; };
+		CB678DCC05EA528F1C7CF6CF /* NativeToolbarButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1679600B9A0C29D5BB56601 /* NativeToolbarButton.swift */; };
 		CE292E2BCF5617C406CA10FB /* AutoBackupService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B7205FC48760A149A8B0BF8 /* AutoBackupService.swift */; };
 		D0208FE27BA4FBD4AADFD905 /* SectionCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 92AF8BACE222B0C414BF2E8C /* SectionCardView.swift */; };
 		D1576467EE827142AA4F49BE /* ProjectStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = D567C1445BFF0160D8410001 /* ProjectStore.swift */; };
@@ -153,8 +156,10 @@
 		988DC867E52B507551B94D73 /* AnnotationFilterBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnnotationFilterBar.swift; sourceTree = "<group>"; };
 		9B422289970724FBD8F8FFDC /* FileCommands.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileCommands.swift; sourceTree = "<group>"; };
 		A12F8033BDC1E3ED37C83195 /* ProjectIntegrityChecker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectIntegrityChecker.swift; sourceTree = "<group>"; };
+		A4E5381EEA5442B073C96943 /* ChevronButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChevronButton.swift; sourceTree = "<group>"; };
 		ABFC8351EA2CEE315AFD46C8 /* OutlineFilterBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutlineFilterBar.swift; sourceTree = "<group>"; };
 		ADDBB952E065FAA3EC8B0789 /* VersionHistorySheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VersionHistorySheet.swift; sourceTree = "<group>"; };
+		B1679600B9A0C29D5BB56601 /* NativeToolbarButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeToolbarButton.swift; sourceTree = "<group>"; };
 		B188809C6D7BE7E2CB11C3A3 /* ExportSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportSettings.swift; sourceTree = "<group>"; };
 		B220BEC12CB629DCB165D755 /* AnnotationViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnnotationViewModel.swift; sourceTree = "<group>"; };
 		B8D61CFAC6D761917B29935C /* CSLItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CSLItem.swift; sourceTree = "<group>"; };
@@ -170,6 +175,7 @@
 		CF113F2ADAA8371F7C810BF0 /* OutlineNode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutlineNode.swift; sourceTree = "<group>"; };
 		CF38A145CE15C32F45EBB00D /* PandocLocator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PandocLocator.swift; sourceTree = "<group>"; };
 		D567C1445BFF0160D8410001 /* ProjectStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectStore.swift; sourceTree = "<group>"; };
+		D678FA29904C6946CACDC1D6 /* ViewCommands.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ViewCommands.swift; sourceTree = "<group>"; };
 		DFB3FE823FEA8DAD86CD01A9 /* ProjectDatabase.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectDatabase.swift; sourceTree = "<group>"; };
 		E16909CB53D2BCFD8CC1B0BF /* ZoteroService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZoteroService.swift; sourceTree = "<group>"; };
 		E2BEC2E8F18731A82D861A36 /* ProjectRepairServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectRepairServiceTests.swift; sourceTree = "<group>"; };
@@ -211,6 +217,7 @@
 				55069760CD7C2E13C59E0E39 /* ExportCommands.swift */,
 				9B422289970724FBD8F8FFDC /* FileCommands.swift */,
 				36487B030EB59318DB746D86 /* ThemeCommands.swift */,
+				D678FA29904C6946CACDC1D6 /* ViewCommands.swift */,
 			);
 			path = Commands;
 			sourceTree = "<group>";
@@ -328,6 +335,15 @@
 			path = "final final";
 			sourceTree = "<group>";
 		};
+		8A579DFDA89ED4D43AE65852 /* Components */ = {
+			isa = PBXGroup;
+			children = (
+				A4E5381EEA5442B073C96943 /* ChevronButton.swift */,
+				B1679600B9A0C29D5BB56601 /* NativeToolbarButton.swift */,
+			);
+			path = Components;
+			sourceTree = "<group>";
+		};
 		8CB164527A344E1D70DECB0B /* Services */ = {
 			isa = PBXGroup;
 			children = (
@@ -358,6 +374,7 @@
 				64284CE23032DBF7F70EFE87 /* IntegrityAlertView.swift */,
 				BF41CB39EB2C5BD4E30A2CDA /* StatusBar.swift */,
 				3270F435FFB5953CF0EBBCAE /* AnnotationPanel */,
+				8A579DFDA89ED4D43AE65852 /* Components */,
 				F12A96140007B3EB505B5ED5 /* Preferences */,
 				B6F6A7853E44572DC6A576EF /* Sidebar */,
 				08BDF343DB80AF74774B5B6E /* VersionHistory */,
@@ -528,6 +545,7 @@
 				CE292E2BCF5617C406CA10FB /* AutoBackupService.swift in Sources */,
 				8CC3FFE851C758FAF0E7DE9B /* BibliographySyncService.swift in Sources */,
 				8A96868113B77FF320A4AFB9 /* CSLItem.swift in Sources */,
+				66B2E33AC24571E9D119C046 /* ChevronButton.swift in Sources */,
 				0127F846C37CAFAFA0455C60 /* CodeMirrorEditor.swift in Sources */,
 				790667B521454C125B0FE74B /* ColorScheme.swift in Sources */,
 				7ACE3361E6A474E6D99062E1 /* ContentView.swift in Sources */,
@@ -556,6 +574,7 @@
 				D30B35EAC392DBFD98D4C432 /* IntegrityAlertView.swift in Sources */,
 				90566734810E75E47CEF710E /* MarkdownUtils.swift in Sources */,
 				75D604E7143573D4BFD533FD /* MilkdownEditor.swift in Sources */,
+				CB678DCC05EA528F1C7CF6CF /* NativeToolbarButton.swift in Sources */,
 				83EF38E6AD012B11C741891D /* OutlineFilterBar.swift in Sources */,
 				A7F047CACD5338BFF13C8336 /* OutlineNode.swift in Sources */,
 				47DBF3857C5C06C046A299AD /* OutlineParser.swift in Sources */,
@@ -586,6 +605,7 @@
 				D7D157CF0D11B4297B531B0D /* VersionHistorySheet.swift in Sources */,
 				2802A3278F0A84FA184FCCBD /* VersionHistoryWindow.swift in Sources */,
 				3C01E547EFAD7C50604AEB10 /* VersionListView.swift in Sources */,
+				8B43E0C82C186ABDE79D9AE8 /* ViewCommands.swift in Sources */,
 				0C67A14B44BDA954C666F7FD /* ZoteroChecker.swift in Sources */,
 				9E8D8F33D47F7001D135296C /* ZoteroService.swift in Sources */,
 			);

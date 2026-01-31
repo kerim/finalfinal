@@ -161,6 +161,12 @@ struct AppColorScheme: Identifiable, Equatable, Sendable {
         id.contains("night")
     }
 
+    /// Whether this theme requires dark appearance for the app chrome (title bar, toolbar)
+    /// High Contrast Day has a dark sidebar/title bar despite being a "day" theme
+    var requiresDarkAppearance: Bool {
+        isDarkTheme || id == "high-contrast-day"
+    }
+
     /// Returns the keyboard shortcut for this theme, if defined
     var keyboardShortcut: KeyboardShortcut? {
         guard let key = shortcutKey else { return nil }

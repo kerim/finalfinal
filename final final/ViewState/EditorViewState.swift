@@ -85,6 +85,9 @@ class EditorViewState {
     /// Whether the annotation panel is visible
     var isAnnotationPanelVisible: Bool = true
 
+    /// Whether the outline sidebar is visible
+    var isOutlineSidebarVisible: Bool = true
+
     /// Global "panel only" mode - when true, ALL annotations are hidden from editor
     /// (regardless of per-type display mode settings)
     var isPanelOnlyMode: Bool = false
@@ -294,6 +297,11 @@ class EditorViewState {
     /// Toggle annotation panel visibility
     func toggleAnnotationPanel() {
         isAnnotationPanelVisible.toggle()
+    }
+
+    /// Toggle outline sidebar visibility
+    func toggleOutlineSidebar() {
+        isOutlineSidebarVisible.toggle()
     }
 
     /// Get annotation counts by type (single-pass)

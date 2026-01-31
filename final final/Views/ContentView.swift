@@ -26,6 +26,7 @@ struct ContentView: View {
     @State private var annotationSyncService = AnnotationSyncService()
     @State private var bibliographySyncService = BibliographySyncService()
     @State private var autoBackupService = AutoBackupService()
+    @State private var sidebarVisibility: NavigationSplitViewVisibility = .all
 
     /// Integrity alert state
     @State private var integrityReport: IntegrityReport?
@@ -232,73 +233,33 @@ Use this content to verify that:
 
     @ViewBuilder
     private var mainContentView: some View {
-        NavigationSplitView {
+        navigationSplitViewContent
+            .withContentObservers(
+                editorState: editorState,
+                sectionSyncService: sectionSyncService,
+                annotationSyncService: annotationSyncService,
+                bibliographySyncService: bibliographySyncService,
+                autoBackupService: autoBackupService,
+                documentManager: documentManager
+            )
+            .withSidebarSync(
+                editorState: editorState,
+                sidebarVisibility: $sidebarVisibility
+            )
+    }
+
+    @ViewBuilder
+    private var navigationSplitViewContent: some View {
+        NavigationSplitView(columnVisibility: $sidebarVisibility) {
             sidebarView
         } detail: {
             detailView
         }
         .navigationTitle(documentManager.projectTitle ?? "Untitled")
+        .toolbar { annotationPanelToolbar }
         .task {
             AppDelegate.shared?.editorState = editorState
             await initializeProject()
-        }
-        .onChange(of: editorState.content) { _, newValue in
-            guard editorState.contentState == .idle else { return }
-            sectionSyncService.contentChanged(newValue, zoomedIds: editorState.zoomedSectionIds)
-            annotationSyncService.contentChanged(newValue)
-
-            // Check for citation changes and update bibliography if needed
-            if let projectId = documentManager.projectId {
-                let citekeys = BibliographySyncService.extractCitekeys(from: newValue)
-                if !citekeys.isEmpty {
-                    bibliographySyncService.checkAndUpdateBibliography(
-                        currentCitekeys: citekeys,
-                        projectId: projectId
-                    )
-                }
-            }
-
-            // Trigger auto-backup timer on content change
-            autoBackupService.contentDidChange()
-        }
-        .onChange(of: editorState.zoomedSectionId) { _, newValue in
-            sectionSyncService.isContentZoomed = (newValue != nil)
-        }
-        .onChange(of: editorState.annotationDisplayModes) { _, newModes in
-            // Notify editors when display modes change
-            NotificationCenter.default.post(
-                name: .annotationDisplayModesChanged,
-                object: nil,
-                userInfo: [
-                    "modes": newModes,
-                    "isPanelOnly": editorState.isPanelOnlyMode,
-                    "hideCompletedTasks": editorState.hideCompletedTasks
-                ]
-            )
-        }
-        .onChange(of: editorState.isPanelOnlyMode) { _, newValue in
-            // Notify editors when panel-only mode changes
-            NotificationCenter.default.post(
-                name: .annotationDisplayModesChanged,
-                object: nil,
-                userInfo: [
-                    "modes": editorState.annotationDisplayModes,
-                    "isPanelOnly": newValue,
-                    "hideCompletedTasks": editorState.hideCompletedTasks
-                ]
-            )
-        }
-        .onChange(of: editorState.hideCompletedTasks) { _, newValue in
-            // Notify editors when hide completed tasks filter changes
-            NotificationCenter.default.post(
-                name: .annotationDisplayModesChanged,
-                object: nil,
-                userInfo: [
-                    "modes": editorState.annotationDisplayModes,
-                    "isPanelOnly": editorState.isPanelOnlyMode,
-                    "hideCompletedTasks": newValue
-                ]
-            )
         }
     }
 
@@ -350,6 +311,24 @@ Use this content to verify that:
         }
         .frame(minWidth: 250)
         .background(themeManager.currentTheme.sidebarBackground)
+    }
+
+    /// Toolbar content for annotation panel toggle
+    @ToolbarContentBuilder
+    private var annotationPanelToolbar: some ToolbarContent {
+        ToolbarItemGroup(placement: .primaryAction) {
+            NativeToolbarButton(
+                systemSymbolName: "sidebar.right",
+                accessibilityLabel: editorState.isAnnotationPanelVisible
+                    ? "Hide annotations panel"
+                    : "Show annotations panel"
+            ) {
+                editorState.toggleAnnotationPanel()
+            }
+            .help(editorState.isAnnotationPanelVisible
+                  ? "Hide annotations panel (⌘])"
+                  : "Show annotations panel (⌘])")
+        }
     }
 
     private func scrollToSection(_ sectionId: String) {
@@ -1547,6 +1526,12 @@ extension View {
                 }
                 editorState.toggleEditorMode()
             }
+            .onReceive(NotificationCenter.default.publisher(for: .toggleOutlineSidebar)) { _ in
+                editorState.toggleOutlineSidebar()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .toggleAnnotationSidebar)) { _ in
+                editorState.toggleAnnotationPanel()
+            }
     }
 
     /// Adds file menu notification handlers
@@ -1606,6 +1591,94 @@ extension View {
             }
             .onReceive(NotificationCenter.default.publisher(for: .showVersionHistory)) { _ in
                 onShowHistory()
+            }
+    }
+
+    /// Adds content change observers for sync services
+    @MainActor
+    func withContentObservers(
+        editorState: EditorViewState,
+        sectionSyncService: SectionSyncService,
+        annotationSyncService: AnnotationSyncService,
+        bibliographySyncService: BibliographySyncService,
+        autoBackupService: AutoBackupService,
+        documentManager: DocumentManager
+    ) -> some View {
+        self
+            .onChange(of: editorState.content) { _, newValue in
+                guard editorState.contentState == .idle else { return }
+                sectionSyncService.contentChanged(newValue, zoomedIds: editorState.zoomedSectionIds)
+                annotationSyncService.contentChanged(newValue)
+
+                // Check for citation changes and update bibliography if needed
+                if let projectId = documentManager.projectId {
+                    let citekeys = BibliographySyncService.extractCitekeys(from: newValue)
+                    if !citekeys.isEmpty {
+                        bibliographySyncService.checkAndUpdateBibliography(
+                            currentCitekeys: citekeys,
+                            projectId: projectId
+                        )
+                    }
+                }
+
+                // Trigger auto-backup timer on content change
+                autoBackupService.contentDidChange()
+            }
+            .onChange(of: editorState.zoomedSectionId) { _, newValue in
+                sectionSyncService.isContentZoomed = (newValue != nil)
+            }
+            .onChange(of: editorState.annotationDisplayModes) { _, newModes in
+                // Notify editors when display modes change
+                NotificationCenter.default.post(
+                    name: .annotationDisplayModesChanged,
+                    object: nil,
+                    userInfo: [
+                        "modes": newModes,
+                        "isPanelOnly": editorState.isPanelOnlyMode,
+                        "hideCompletedTasks": editorState.hideCompletedTasks
+                    ]
+                )
+            }
+            .onChange(of: editorState.isPanelOnlyMode) { _, newValue in
+                // Notify editors when panel-only mode changes
+                NotificationCenter.default.post(
+                    name: .annotationDisplayModesChanged,
+                    object: nil,
+                    userInfo: [
+                        "modes": editorState.annotationDisplayModes,
+                        "isPanelOnly": newValue,
+                        "hideCompletedTasks": editorState.hideCompletedTasks
+                    ]
+                )
+            }
+            .onChange(of: editorState.hideCompletedTasks) { _, newValue in
+                // Notify editors when hide completed tasks filter changes
+                NotificationCenter.default.post(
+                    name: .annotationDisplayModesChanged,
+                    object: nil,
+                    userInfo: [
+                        "modes": editorState.annotationDisplayModes,
+                        "isPanelOnly": editorState.isPanelOnlyMode,
+                        "hideCompletedTasks": newValue
+                    ]
+                )
+            }
+    }
+
+    /// Adds sidebar visibility sync observers
+    @MainActor
+    func withSidebarSync(
+        editorState: EditorViewState,
+        sidebarVisibility: Binding<NavigationSplitViewVisibility>
+    ) -> some View {
+        self
+            .onChange(of: editorState.isOutlineSidebarVisible) { _, newValue in
+                // Sync editorState -> NavigationSplitView (from keyboard shortcut/menu)
+                sidebarVisibility.wrappedValue = newValue ? .all : .detailOnly
+            }
+            .onChange(of: sidebarVisibility.wrappedValue) { _, newValue in
+                // Sync NavigationSplitView -> editorState (from native chevron)
+                editorState.isOutlineSidebarVisible = (newValue != .detailOnly)
             }
     }
 }
