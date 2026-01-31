@@ -36,7 +36,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.kerim.final-final
         PRODUCT_NAME: final final
         MARKETING_VERSION: "1"
-        CURRENT_PROJECT_VERSION: "0.2.2"
+        CURRENT_PROJECT_VERSION: "0.2.3"
         INFOPLIST_GENERATION_MODE: GeneratedFile
         GENERATE_INFOPLIST_FILE: YES
         SWIFT_VERSION: "5.9"
@@ -47,6 +47,8 @@ targets:
     info:
       path: final final/Info.plist
       properties:
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         CFBundleDisplayName: final final
         CFBundleName: final final
         LSMinimumSystemVersion: "14.0"
