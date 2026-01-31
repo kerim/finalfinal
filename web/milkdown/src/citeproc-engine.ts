@@ -109,6 +109,26 @@ class CiteprocEngine {
     }
   }
 
+  // Add items to the bibliography without replacing existing ones
+  addItems(items: CSLItem[]): void {
+    console.log('[CiteprocEngine] addItems called with', items.length, 'items');
+    items.forEach(item => {
+      // Use citationKey if available, otherwise id
+      const key = (item as any)['citation-key'] || item.citationKey || item.id;
+      this.items.set(key, { ...item, id: key });
+    });
+
+    // Update engine with all item IDs
+    const ids = Array.from(this.items.keys());
+    if (ids.length > 0) {
+      try {
+        this.engine.updateItems(ids);
+      } catch (error) {
+        console.error('[CiteprocEngine] Failed to update items:', error);
+      }
+    }
+  }
+
   // Check if an item exists in the bibliography
   hasItem(citekey: string): boolean {
     const result = this.items.has(citekey);

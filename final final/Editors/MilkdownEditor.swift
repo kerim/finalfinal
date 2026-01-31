@@ -60,6 +60,7 @@ struct MilkdownEditor: NSViewRepresentable {
         configuration.userContentController.addUserScript(errorScript)
         configuration.userContentController.add(context.coordinator, name: "errorHandler")
         configuration.userContentController.add(context.coordinator, name: "searchCitations")
+        configuration.userContentController.add(context.coordinator, name: "openCitationPicker")
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = context.coordinator
@@ -461,10 +462,17 @@ struct MilkdownEditor: NSViewRepresentable {
             }
             #endif
 
-            // Handle citation search requests from web editor
+            // Handle citation search requests from web editor (legacy)
             if message.name == "searchCitations", let query = message.body as? String {
                 Task { @MainActor in
                     await self.handleCitationSearch(query)
+                }
+            }
+
+            // Handle CAYW citation picker request from web editor
+            if message.name == "openCitationPicker", let cmdStart = message.body as? Int {
+                Task { @MainActor in
+                    await self.handleOpenCitationPicker(cmdStart: cmdStart)
                 }
             }
         }
@@ -532,6 +540,140 @@ struct MilkdownEditor: NSViewRepresentable {
                 .replacingOccurrences(of: "`", with: "\\`")
                 .replacingOccurrences(of: "${", with: "\\${")
             webView.evaluateJavaScript("window.FinalFinal.searchCitationsCallback(JSON.parse(`\(escaped)`))") { _, _ in }
+        }
+
+        /// Handle CAYW citation picker request from web editor
+        /// Opens Zotero's native citation picker, returns parsed citation + CSL items
+        @MainActor
+        private func handleOpenCitationPicker(cmdStart: Int) async {
+            guard let webView else {
+                print("[MilkdownEditor DEBUG] handleOpenCitationPicker: webView is nil")
+                return
+            }
+
+            print("[MilkdownEditor DEBUG] === handleOpenCitationPicker called ===")
+            print("[MilkdownEditor DEBUG] cmdStart: \(cmdStart)")
+
+            // Query debug state before calling Zotero
+            webView.evaluateJavaScript("JSON.stringify(window.FinalFinal.getCAYWDebugState())") { result, error in
+                if let error {
+                    print("[MilkdownEditor DEBUG] Pre-picker state query error: \(error)")
+                } else {
+                    print("[MilkdownEditor DEBUG] Pre-picker state: \(String(describing: result))")
+                }
+            }
+
+            do {
+                print("[MilkdownEditor DEBUG] Calling ZoteroService.openCAYWPicker()...")
+
+                // Call CAYW picker - this blocks until user selects references
+                let (parsed, items) = try await ZoteroService.shared.openCAYWPicker()
+
+                print("[MilkdownEditor DEBUG] ZoteroService returned successfully")
+                print("[MilkdownEditor DEBUG] Parsed citekeys: \(parsed.citekeys)")
+                print("[MilkdownEditor DEBUG] Items count: \(items.count)")
+
+                // Bring app back to foreground after Zotero picker closes
+                NSApp.activate(ignoringOtherApps: true)
+
+                // Encode CSL items as JSON for web
+                let encoder = JSONEncoder()
+                encoder.outputFormatting = [.sortedKeys]
+                let itemsData = try encoder.encode(items)
+                guard let itemsJSON = String(data: itemsData, encoding: .utf8) else {
+                    print("[MilkdownEditor] Failed to encode CSL items")
+                    sendCitationPickerError(webView: webView, message: "Failed to encode citation data")
+                    return
+                }
+
+                // Build callback data object
+                let callbackData: [String: Any] = [
+                    "rawSyntax": parsed.rawSyntax,
+                    "citekeys": parsed.citekeys,
+                    "locators": parsed.locatorsJSON,
+                    "prefix": parsed.entries.first?.prefix ?? "",
+                    "suppressAuthor": parsed.entries.first?.suppressAuthor ?? false,
+                    "cmdStart": cmdStart
+                ]
+
+                guard let callbackJSON = try? JSONSerialization.data(withJSONObject: callbackData),
+                      let callbackStr = String(data: callbackJSON, encoding: .utf8) else {
+                    print("[MilkdownEditor] Failed to encode callback data")
+                    sendCitationPickerError(webView: webView, message: "Failed to encode callback data")
+                    return
+                }
+
+                print("[MilkdownEditor DEBUG] CAYW success: \(parsed.citekeys)")
+
+                // Query debug state before callback
+                webView.evaluateJavaScript("JSON.stringify(window.FinalFinal.getCAYWDebugState())") { result, error in
+                    if let error {
+                        print("[MilkdownEditor DEBUG] Pre-callback state query error: \(error)")
+                    } else {
+                        print("[MilkdownEditor DEBUG] Pre-callback state: \(String(describing: result))")
+                    }
+                }
+
+                // Send both parsed data and CSL items to web editor
+                let escapedCallback = callbackStr
+                    .replacingOccurrences(of: "\\", with: "\\\\")
+                    .replacingOccurrences(of: "`", with: "\\`")
+                    .replacingOccurrences(of: "${", with: "\\${")
+                let escapedItems = itemsJSON
+                    .replacingOccurrences(of: "\\", with: "\\\\")
+                    .replacingOccurrences(of: "`", with: "\\`")
+                    .replacingOccurrences(of: "${", with: "\\${")
+
+                let script = "window.FinalFinal.citationPickerCallback(JSON.parse(`\(escapedCallback)`), JSON.parse(`\(escapedItems)`))"
+                print("[MilkdownEditor DEBUG] About to call citationPickerCallback")
+                print("[MilkdownEditor DEBUG] Script length: \(script.count)")
+
+                webView.evaluateJavaScript(script) { result, error in
+                    if let error {
+                        print("[MilkdownEditor DEBUG] evaluateJavaScript ERROR: \(error)")
+                    } else {
+                        print("[MilkdownEditor DEBUG] evaluateJavaScript succeeded, result: \(String(describing: result))")
+                    }
+
+                    // Query debug state after callback
+                    webView.evaluateJavaScript("JSON.stringify(window.FinalFinal.getCAYWDebugState())") { result, error in
+                        if let error {
+                            print("[MilkdownEditor DEBUG] Post-callback state query error: \(error)")
+                        } else {
+                            print("[MilkdownEditor DEBUG] Post-callback state: \(String(describing: result))")
+                        }
+                    }
+                }
+            } catch ZoteroError.userCancelled {
+                // User cancelled - bring app back to foreground, no error
+                NSApp.activate(ignoringOtherApps: true)
+                print("[MilkdownEditor DEBUG] CAYW cancelled by user")
+                sendCitationPickerCancelled(webView: webView)
+            } catch ZoteroError.notRunning {
+                NSApp.activate(ignoringOtherApps: true)
+                print("[MilkdownEditor DEBUG] Zotero not running")
+                sendCitationPickerError(webView: webView, message: "Zotero is not running. Please open Zotero and try again.")
+            } catch {
+                NSApp.activate(ignoringOtherApps: true)
+                print("[MilkdownEditor DEBUG] CAYW error: \(error.localizedDescription)")
+                sendCitationPickerError(webView: webView, message: error.localizedDescription)
+            }
+        }
+
+        /// Send citation picker error to web editor
+        @MainActor
+        private func sendCitationPickerError(webView: WKWebView, message: String) {
+            let escaped = message
+                .replacingOccurrences(of: "\\", with: "\\\\")
+                .replacingOccurrences(of: "`", with: "\\`")
+                .replacingOccurrences(of: "\"", with: "\\\"")
+            webView.evaluateJavaScript("window.FinalFinal.citationPickerError(`\(escaped)`)") { _, _ in }
+        }
+
+        /// Send citation picker cancelled to web editor
+        @MainActor
+        private func sendCitationPickerCancelled(webView: WKWebView) {
+            webView.evaluateJavaScript("window.FinalFinal.citationPickerCancelled()") { _, _ in }
         }
 
         func shouldPushContent(_ newContent: String) -> Bool {
