@@ -1,3 +1,6 @@
+/* Import shared typography */
+@import '../../shared/typography.css';
+
 * {
   box-sizing: border-box;
 }
@@ -9,7 +12,7 @@ html, body {
   overflow: hidden;
   background: var(--editor-bg, #ffffff);
   color: var(--editor-text, #1a1a1a);
-  font-family: var(--editor-font, -apple-system, BlinkMacSystemFont, sans-serif);
+  font-family: var(--font-sans);
 }
 
 #editor {
@@ -35,7 +38,7 @@ html, body {
 
 .cm-editor .cm-scroller {
   padding: 20px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
+  font-family: var(--font-mono);
 }
 
 .cm-editor .cm-content {
@@ -52,10 +55,28 @@ html, body {
 }
 
 /* Markdown syntax highlighting */
-.cm-header { color: var(--editor-text, #1a1a1a); font-weight: 600; }
-.cm-header-1 { font-size: 1.5em; }
-.cm-header-2 { font-size: 1.3em; }
+.cm-header {
+  color: var(--editor-text, #1a1a1a);
+  font-weight: var(--weight-heading, 600);
+  line-height: var(--line-height-heading);
+}
+
+/* Source view headers slightly smaller than WYSIWYG */
+.cm-header-1 {
+  font-size: 1.4em;
+  letter-spacing: var(--tracking-tight);
+}
+
+.cm-header-2 {
+  font-size: 1.25em;
+  letter-spacing: var(--tracking-tight);
+}
+
 .cm-header-3 { font-size: 1.1em; }
+.cm-header-4 { font-size: 1.05em; }
+.cm-header-5 { font-size: 1em; }
+.cm-header-6 { font-size: 0.95em; }
+
 .cm-strong { font-weight: 700; }
 .cm-emphasis { font-style: italic; }
 .cm-link { color: var(--accent-color, #007aff); }

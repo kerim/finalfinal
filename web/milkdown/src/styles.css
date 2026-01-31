@@ -1,4 +1,6 @@
 /* Editor styles with CSS variable support for theming */
+@import '../../shared/typography.css';
+
 :root {
   --editor-bg: #ffffff;
   --editor-text: #000000;
@@ -12,8 +14,9 @@ html, body {
   height: 100%;
   background: var(--editor-bg);
   color: var(--editor-text);
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-  font-size: 18px;
+  font-family: var(--font-sans);
+  font-size: var(--font-size-body);
+  font-weight: var(--weight-body, 400);
 }
 
 #editor {
@@ -31,15 +34,52 @@ html, body {
 .ff-dimmed { opacity: 0.3; transition: opacity 0.2s ease; }
 
 /* Typography */
-.milkdown h1, .milkdown h2, .milkdown h3 { color: var(--editor-text); margin-top: 1.5em; margin-bottom: 0.5em; }
-.milkdown h1 { font-size: 2em; }
-.milkdown h2 { font-size: 1.5em; }
-.milkdown h3 { font-size: 1.25em; }
-.milkdown p { margin: 0.75em 0; line-height: 1.75; }
+.milkdown h1, .milkdown h2, .milkdown h3, .milkdown h4, .milkdown h5, .milkdown h6 {
+  color: var(--editor-text);
+  margin-top: 1.5em;
+  margin-bottom: 0.5em;
+  line-height: var(--line-height-heading);
+  font-weight: var(--weight-heading, 600);
+  text-wrap: balance;
+}
+
+.milkdown h1 {
+  font-size: var(--font-size-h1);
+  letter-spacing: var(--tracking-tight);
+}
+
+.milkdown h2 {
+  font-size: var(--font-size-h2);
+  letter-spacing: var(--tracking-tight);
+}
+
+.milkdown h3 { font-size: var(--font-size-h3); }
+.milkdown h4 { font-size: var(--font-size-h4); }
+.milkdown h5 { font-size: var(--font-size-h5); }
+.milkdown h6 { font-size: var(--font-size-h6); }
+
+.milkdown p {
+  margin: 0.75em 0;
+  line-height: var(--line-height-body);
+  text-wrap: pretty;
+}
 
 /* Code */
-.milkdown code { background: rgba(128, 128, 128, 0.1); padding: 0.2em 0.4em; border-radius: 3px; font-family: 'SF Mono', Menlo, Monaco, monospace; }
-.milkdown pre { background: rgba(128, 128, 128, 0.1); padding: 1em; border-radius: 6px; overflow-x: auto; }
+.milkdown code {
+  background: rgba(128, 128, 128, 0.1);
+  padding: 0.2em 0.4em;
+  border-radius: 3px;
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+}
+
+.milkdown pre {
+  background: rgba(128, 128, 128, 0.1);
+  padding: 1em;
+  border-radius: 6px;
+  overflow-x: auto;
+  font-family: var(--font-mono);
+}
 
 /* Links and lists */
 .milkdown a { color: var(--accent-color); text-decoration: none; }

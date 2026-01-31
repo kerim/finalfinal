@@ -59,7 +59,7 @@ struct OutlineFilterBar: View {
 
             // Word count display (right-aligned)
             Text("\(filteredWordCount) words")
-                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .font(.system(size: TypeScale.smallUI, weight: .medium, design: .monospaced))
                 .foregroundColor(themeManager.currentTheme.sidebarText.opacity(0.6))
         }
         .padding(.horizontal, 12)

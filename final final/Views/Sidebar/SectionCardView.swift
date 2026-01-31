@@ -91,7 +91,7 @@ struct SectionCardView: View {
 
             wordCountView
         }
-        .font(.system(size: 11))
+        .font(.system(size: TypeScale.smallUI))
     }
 
     private var bibliographyMetadataRow: some View {
@@ -100,7 +100,7 @@ struct SectionCardView: View {
             let citationCount = estimateCitationCount()
             if citationCount > 0 {
                 Text("\(citationCount) refs")
-                    .font(.system(size: 10, weight: .medium))
+                    .font(.system(size: TypeScale.smallUI, weight: .medium))
                     .foregroundColor(themeManager.currentTheme.sidebarText.opacity(0.6))
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
@@ -110,7 +110,7 @@ struct SectionCardView: View {
 
             Spacer()
         }
-        .font(.system(size: 11))
+        .font(.system(size: TypeScale.smallUI))
     }
 
     /// Estimate citation count from bibliography content
@@ -125,7 +125,7 @@ struct SectionCardView: View {
 
     private var wordCountView: some View {
         Text(wordCountDisplayText)
-            .font(.system(size: 11, weight: .medium, design: .monospaced))
+            .font(.system(size: TypeScale.smallUI, weight: .medium, design: .monospaced))
             .foregroundColor(wordCountColor)
             .contentShape(Rectangle())
             .onTapGesture(count: 2) {

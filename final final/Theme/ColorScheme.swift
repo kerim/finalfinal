@@ -138,7 +138,27 @@ struct AppColorScheme: Identifiable, Equatable, Sendable {
         --highlight-bg: \(highlightBackground.cssHexWithAlpha);
         --tooltip-bg: \(tooltipBackground.cssHex);
         --tooltip-text: \(tooltipText.cssHex);
+        \(typographyCssVariables)
         """
+    }
+
+    /// Typography CSS variables - adjusted weights for dark themes
+    var typographyCssVariables: String {
+        if isDarkTheme {
+            return """
+                --weight-heading: 500;
+                --weight-body: 300;
+                """
+        }
+        return """
+            --weight-heading: 600;
+            --weight-body: 400;
+            """
+    }
+
+    /// Whether this is a dark theme (for typography weight adjustment)
+    var isDarkTheme: Bool {
+        id.contains("night")
     }
 
     /// Returns the keyboard shortcut for this theme, if defined

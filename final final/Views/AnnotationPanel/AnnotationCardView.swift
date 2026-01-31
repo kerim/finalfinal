@@ -62,7 +62,7 @@ struct AnnotationCardView: View {
 
                     if annotation.hasHighlight {
                         Text("Has highlight")
-                            .font(.system(size: 10))
+                            .font(.system(size: TypeScale.smallUI))
                             .foregroundColor(themeManager.currentTheme.sidebarText.opacity(0.5))
                     }
                 }
@@ -172,7 +172,7 @@ struct AnnotationGroupHeader: View {
         Button(action: onToggle) {
             HStack {
                 Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(.system(size: TypeScale.smallUI, weight: .semibold))
                     .foregroundColor(themeManager.currentTheme.sidebarText.opacity(0.6))
                     .frame(width: 12)
 
