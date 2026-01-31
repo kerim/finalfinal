@@ -51,6 +51,14 @@ The app isn't notarized, so macOS will warn about an unidentified developer.
 | Inline citations | Citations render as formatted text (Author, Year) in WYSIWYG mode |
 | Auto-bibliography | Bibliography section generated from document citations |
 
+**Zotero Setup:**
+
+1. In Zotero settings, under `Advanced`, check `Allow other applications on this computer to communicate with Zotero`
+2. Install [Better BibTeX](https://github.com/retorquere/zotero-better-bibtex/releases)
+3. In the Better BibTeX section of your Zotero settings, set `Automatically pin citation key after X seconds` to `1`
+4. Note: Citation keys need to be **both** set up and pinned in Zotero 8
+5. Restart Zotero
+
 **To use:** Keep Zotero running, type `/cite` in the editor to search and insert.
 
 ### Export
