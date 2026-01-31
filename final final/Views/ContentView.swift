@@ -1028,6 +1028,14 @@ struct ContentView: View {
             if existingSections.isEmpty && !editorState.content.isEmpty {
                 await sectionSyncService.syncNow(editorState.content)
             }
+
+            // Record initial content hash for Getting Started edit detection
+            // This captures post-normalization content after sync
+            if documentManager.isGettingStartedProject {
+                // Small delay to ensure editor has processed content
+                try? await Task.sleep(for: .milliseconds(100))
+                documentManager.recordGettingStartedLoadedContent(editorState.content)
+            }
         } catch {
             print("[ContentView] Failed to load content: \(error.localizedDescription)")
         }

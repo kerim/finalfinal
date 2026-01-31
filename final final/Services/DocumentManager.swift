@@ -66,6 +66,12 @@ final class DocumentManager {
     /// Whether the currently open project is the Getting Started guide
     private(set) var isGettingStartedProject: Bool = false
 
+    /// Whether the user has made edits to Getting Started (vs just viewing)
+    private(set) var gettingStartedUserEdited: Bool = false
+
+    /// Content hash after editor loads (post-normalization)
+    private var gettingStartedLoadedHash: Int?
+
     /// Directory for the temporary Getting Started project
     private var gettingStartedDirectory: URL {
         FileManager.default.temporaryDirectory
@@ -247,6 +253,8 @@ final class DocumentManager {
         contentId = nil
         hasUnsavedChanges = false
         isGettingStartedProject = false
+        gettingStartedLoadedHash = nil
+        gettingStartedUserEdited = false
 
         print("[DocumentManager] Project closed")
     }
@@ -567,20 +575,33 @@ final class DocumentManager {
         return project.id
     }
 
-    /// Check if the Getting Started project has been modified
+    /// Check if the Getting Started project has been modified by the user
     func isGettingStartedModified() -> Bool {
-        guard isGettingStartedProject,
-              let db = projectDatabase,
-              let pid = projectId else {
-            return false
-        }
+        return isGettingStartedProject && gettingStartedUserEdited
+    }
 
-        do {
-            let content = try db.fetchContent(for: pid)
-            let originalContent = loadGettingStartedContent()
-            return content?.markdown != originalContent
-        } catch {
-            return false
+    /// Record the content hash after editor normalizes it
+    /// Call this after the editor has loaded and processed the content
+    func recordGettingStartedLoadedContent(_ markdown: String) {
+        guard isGettingStartedProject else { return }
+        gettingStartedLoadedHash = markdown.hashValue
+        gettingStartedUserEdited = false
+        #if DEBUG
+        print("[DocumentManager] Recorded Getting Started loaded hash")
+        #endif
+    }
+
+    /// Check if content differs from what was loaded (true user edit)
+    /// Call this when content changes to detect actual user edits
+    func checkGettingStartedEdited(currentMarkdown: String) {
+        guard isGettingStartedProject, !gettingStartedUserEdited else { return }
+        guard let loadedHash = gettingStartedLoadedHash else { return }
+
+        if currentMarkdown.hashValue != loadedHash {
+            gettingStartedUserEdited = true
+            #if DEBUG
+            print("[DocumentManager] User edited Getting Started content")
+            #endif
         }
     }
 

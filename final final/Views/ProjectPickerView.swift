@@ -29,10 +29,11 @@ struct ProjectPickerView: View {
             VStack(spacing: 8) {
                 Image(systemName: "doc.text")
                     .font(.system(size: 48))
-                    .foregroundColor(.secondary)
+                    .foregroundColor(themeManager.currentTheme.editorText.opacity(0.5))
                 Text("final final")
                     .font(.title)
                     .fontWeight(.medium)
+                    .foregroundColor(themeManager.currentTheme.editorText)
             }
             .padding(.bottom, 16)
 
@@ -41,13 +42,16 @@ struct ProjectPickerView: View {
                 VStack(alignment: .leading, spacing: 12) {
                     Text("Recent Projects")
                         .font(.headline)
-                        .foregroundColor(.secondary)
+                        .foregroundColor(themeManager.currentTheme.editorTextSecondary)
 
                     VStack(spacing: 4) {
                         ForEach(documentManager.recentProjects.prefix(5)) { entry in
-                            RecentProjectRow(entry: entry) {
-                                openRecentProject(entry)
-                            }
+                            RecentProjectRow(
+                                entry: entry,
+                                action: { openRecentProject(entry) },
+                                textColor: themeManager.currentTheme.editorText,
+                                secondaryColor: themeManager.currentTheme.editorTextSecondary
+                            )
                         }
                     }
                 }
@@ -74,7 +78,7 @@ struct ProjectPickerView: View {
             } label: {
                 Text("Getting Started")
                     .font(.callout)
-                    .foregroundColor(.accentColor)
+                    .foregroundColor(themeManager.currentTheme.accentColor)
             }
             .buttonStyle(.plain)
             .padding(.top, 8)
@@ -158,20 +162,23 @@ struct ProjectPickerView: View {
 private struct RecentProjectRow: View {
     let entry: DocumentManager.RecentProjectEntry
     let action: () -> Void
+    let textColor: Color
+    let secondaryColor: Color
 
     var body: some View {
         Button(action: action) {
             HStack(spacing: 8) {
                 Image(systemName: "doc.fill")
-                    .foregroundColor(.secondary)
+                    .foregroundColor(secondaryColor)
                 Text(entry.title)
+                    .foregroundColor(textColor)
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Spacer()
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
-            .background(Color.primary.opacity(0.05))
+            .background(textColor.opacity(0.05))
             .cornerRadius(6)
         }
         .buttonStyle(.plain)
