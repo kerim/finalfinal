@@ -232,6 +232,9 @@ class SectionSyncService {
         // Track synced content to prevent feedback loops
         lastSyncedContent = markdown
 
+        // Check if user made edits to Getting Started
+        DocumentManager.shared.checkGettingStartedEdited(currentMarkdown: markdown)
+
         // Note: UI updates happen automatically via ValueObservation in EditorViewState
         // Hierarchy enforcement is handled via onChange in ContentView
     }

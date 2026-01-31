@@ -7,7 +7,7 @@ import AppKit
 import GRDB
 
 @MainActor
-class AppDelegate: NSObject, NSApplicationDelegate {
+class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// Static shared reference - required because NSApp.delegate casting
     /// doesn't work with @NSApplicationDelegateAdaptor
     static var shared: AppDelegate?
@@ -18,9 +18,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// Reference to editor state for cleanup on quit
     weak var editorState: EditorViewState?
 
-    /// Notification observers for project lifecycle
-    private var projectDidOpenObserver: Any?
-    private var projectDidCreateObserver: Any?
+    /// Reference to main window for close interception
+    private var mainWindow: NSWindow?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppDelegate.shared = self
@@ -39,27 +38,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             #endif
         }
 
-        // Listen for project open completion to create window if needed
-        // This fires AFTER the project is successfully opened (async dialog completed)
-        projectDidOpenObserver = NotificationCenter.default.addObserver(
-            forName: .projectDidOpen, object: nil, queue: .main
-        ) { [weak self] _ in
-            Task { @MainActor in
-                self?.createWindowIfNeeded()
-            }
-        }
-
-        // Also listen for projectDidCreate (new projects)
-        projectDidCreateObserver = NotificationCenter.default.addObserver(
-            forName: .projectDidCreate, object: nil, queue: .main
-        ) { [weak self] _ in
-            Task { @MainActor in
-                self?.createWindowIfNeeded()
-            }
-        }
-
-        // Handle newProject and openProject when no windows exist
-        // These notifications come from FileCommands when user clicks File > New/Open
+        // Handle newProject and openProject from File menu
         // AppDelegate always exists, so it can handle these even with zero windows
         NotificationCenter.default.addObserver(
             forName: .newProject, object: nil, queue: .main
@@ -97,72 +76,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
             }
         }
-    }
 
-    /// Check if a window is our app's SwiftUI content window (not a system window)
-    private func isAppContentWindow(_ window: NSWindow) -> Bool {
-        guard !(window is NSPanel) else { return false }
-        guard let contentView = window.contentView else { return false }
-
-        // SwiftUI WindowGroup creates windows with NSHostingView as content
-        let viewType = String(describing: type(of: contentView))
-        return viewType.contains("HostingView")
-    }
-
-    /// Create a window if none exists and a project is open
-    private func createWindowIfNeeded() {
-        #if DEBUG
-        print("[AppDelegate] createWindowIfNeeded called")
-        print("[AppDelegate] hasOpenProject: \(DocumentManager.shared.hasOpenProject)")
-        print("[AppDelegate] projectId: \(DocumentManager.shared.projectId ?? "nil")")
-        print("[AppDelegate] Window count: \(NSApp.windows.count)")
-        for (i, window) in NSApp.windows.enumerated() {
-            let contentType = window.contentView.map { String(describing: type(of: $0)) } ?? "nil"
-            print("[AppDelegate] Window \(i): visible=\(window.isVisible), isAppContent=\(isAppContentWindow(window)), class=\(type(of: window)), contentView=\(contentType)")
-        }
-        #endif
-
-        let hasContentWindow = NSApp.windows.contains { window in
-            window.isVisible && isAppContentWindow(window)
-        }
-
-        guard !hasContentWindow else {
-            #if DEBUG
-            print("[AppDelegate] Skipping - content window already exists")
-            #endif
-            return
-        }
-
-        guard DocumentManager.shared.hasOpenProject else {
-            #if DEBUG
-            print("[AppDelegate] Skipping - no project open")
-            #endif
-            return
-        }
-
-        #if DEBUG
-        print("[AppDelegate] Creating window for opened project")
-        #endif
-
-        NSApp.activate(ignoringOtherApps: true)
-
-        // Try to show an existing hidden SwiftUI window first
-        if let existingWindow = NSApp.windows.first(where: {
-            !$0.isVisible && isAppContentWindow($0)
-        }) {
-            #if DEBUG
-            print("[AppDelegate] Showing existing hidden SwiftUI window")
-            #endif
-            existingWindow.makeKeyAndOrderFront(nil)
-            return
-        }
-
-        #if DEBUG
-        print("[AppDelegate] Opening new window via URL scheme")
-        #endif
-        // Use URL scheme to trigger SwiftUI WindowGroup to create window
-        if let url = URL(string: "finalfinal://open") {
-            NSWorkspace.shared.open(url)
+        // Capture main window for Cmd-W interception
+        // Use async to allow SwiftUI to create the window first
+        DispatchQueue.main.async { [weak self] in
+            if let window = NSApp.windows.first {
+                self?.mainWindow = window
+                window.delegate = self
+                #if DEBUG
+                print("[AppDelegate] Set window delegate for Cmd-W interception")
+                #endif
+            }
         }
     }
 
@@ -182,5 +106,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         false
+    }
+
+    // MARK: - NSWindowDelegate
+
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        #if DEBUG
+        print("[AppDelegate] windowShouldClose called (Cmd-W intercepted)")
+        #endif
+
+        // Call project close handler
+        // This handles unsaved changes dialogs, Getting Started prompts, etc.
+        FileOperations.handleCloseProject()
+
+        // Return false to prevent window from actually closing
+        // The project picker will be shown instead
+        return false
     }
 }

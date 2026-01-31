@@ -58,10 +58,58 @@ final class DocumentManager {
     /// UserDefaults key for last opened project bookmark
     private let lastProjectBookmarkKey = "com.kerim.final-final.lastProjectBookmark"
 
+    /// UserDefaults key for last seen app version (for Getting Started)
+    private let lastSeenVersionKey = "com.kerim.final-final.lastSeenVersion"
+
+    // MARK: - Getting Started State
+
+    /// Whether the currently open project is the Getting Started guide
+    private(set) var isGettingStartedProject: Bool = false
+
+    /// Whether the user has made edits to Getting Started (vs just viewing)
+    private(set) var gettingStartedUserEdited: Bool = false
+
+    /// Content hash after editor loads (post-normalization)
+    private var gettingStartedLoadedHash: Int?
+
+    /// Directory for the temporary Getting Started project
+    private var gettingStartedDirectory: URL {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent("final-final-getting-started")
+    }
+
+    /// Path to the Getting Started project
+    private var gettingStartedPath: URL {
+        gettingStartedDirectory.appendingPathComponent("getting-started.ff")
+    }
+
     // MARK: - Initialization
 
     private init() {
         loadRecentProjects()
+    }
+
+    // MARK: - Version Tracking
+
+    /// The last version the user has seen Getting Started for
+    var lastSeenVersion: String? {
+        get { UserDefaults.standard.string(forKey: lastSeenVersionKey) }
+        set { UserDefaults.standard.set(newValue, forKey: lastSeenVersionKey) }
+    }
+
+    /// The current app version from the bundle
+    var currentAppVersion: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1"
+    }
+
+    /// Whether to show Getting Started (first launch or version update)
+    var shouldShowGettingStarted: Bool {
+        lastSeenVersion != currentAppVersion
+    }
+
+    /// Mark that the user has seen Getting Started for the current version
+    func markGettingStartedSeen() {
+        lastSeenVersion = currentAppVersion
     }
 
     // MARK: - Project Lifecycle
@@ -204,6 +252,9 @@ final class DocumentManager {
         projectTitle = nil
         contentId = nil
         hasUnsavedChanges = false
+        isGettingStartedProject = false
+        gettingStartedLoadedHash = nil
+        gettingStartedUserEdited = false
 
         print("[DocumentManager] Project closed")
     }
@@ -465,6 +516,99 @@ final class DocumentManager {
         } catch {
             print("[DocumentManager] Failed to save recent projects: \(error)")
         }
+    }
+
+    // MARK: - Getting Started Project
+
+    /// Load Getting Started content from bundled markdown
+    private func loadGettingStartedContent() -> String {
+        guard let url = Bundle.main.url(forResource: "getting-started", withExtension: "md"),
+              let content = try? String(contentsOf: url, encoding: .utf8) else {
+            return "# Welcome to final final\n\nCreate a new project to get started."
+        }
+        return content
+    }
+
+    /// Open the Getting Started project (creates fresh each time)
+    /// - Returns: The project ID
+    @discardableResult
+    func openGettingStarted() throws -> String {
+        // Close any existing project first
+        closeProject()
+
+        let fm = FileManager.default
+
+        // Always start fresh - delete existing if present
+        if fm.fileExists(atPath: gettingStartedDirectory.path) {
+            try? fm.removeItem(at: gettingStartedDirectory)
+        }
+
+        // Create directory
+        try fm.createDirectory(at: gettingStartedDirectory, withIntermediateDirectories: true)
+
+        // Load bundled content
+        let content = loadGettingStartedContent()
+
+        // Create the package
+        let package = try ProjectPackage.create(at: gettingStartedPath, title: "Getting Started")
+
+        // Create database with initial content
+        let database = try ProjectDatabase.create(package: package, title: "Getting Started", initialContent: content)
+
+        // Fetch the created project ID
+        guard let project = try database.fetchProject() else {
+            throw DocumentError.failedToCreateProject
+        }
+
+        // Set current state
+        self.projectDatabase = database
+        self.projectURL = gettingStartedPath
+        self.projectId = project.id
+        self.projectTitle = "Getting Started"
+        self.contentId = try? database.fetchContent(for: project.id)?.id
+        self.hasUnsavedChanges = false
+        self.isGettingStartedProject = true
+
+        // Do NOT add to recent projects - Getting Started is ephemeral
+
+        print("[DocumentManager] Opened Getting Started project")
+        return project.id
+    }
+
+    /// Check if the Getting Started project has been modified by the user
+    func isGettingStartedModified() -> Bool {
+        return isGettingStartedProject && gettingStartedUserEdited
+    }
+
+    /// Record the content hash after editor normalizes it
+    /// Call this after the editor has loaded and processed the content
+    func recordGettingStartedLoadedContent(_ markdown: String) {
+        guard isGettingStartedProject else { return }
+        gettingStartedLoadedHash = markdown.hashValue
+        gettingStartedUserEdited = false
+        #if DEBUG
+        print("[DocumentManager] Recorded Getting Started loaded hash")
+        #endif
+    }
+
+    /// Check if content differs from what was loaded (true user edit)
+    /// Call this when content changes to detect actual user edits
+    func checkGettingStartedEdited(currentMarkdown: String) {
+        guard isGettingStartedProject, !gettingStartedUserEdited else { return }
+        guard let loadedHash = gettingStartedLoadedHash else { return }
+
+        if currentMarkdown.hashValue != loadedHash {
+            gettingStartedUserEdited = true
+            #if DEBUG
+            print("[DocumentManager] User edited Getting Started content")
+            #endif
+        }
+    }
+
+    /// Get the current content (for pre-populating new project)
+    func getCurrentContent() throws -> String? {
+        guard let db = projectDatabase, let pid = projectId else { return nil }
+        return try db.fetchContent(for: pid)?.markdown
     }
 
     // MARK: - Integrity Operations

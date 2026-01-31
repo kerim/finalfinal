@@ -31,6 +31,8 @@ targets:
       - path: final final/Resources/TinyTeX
         type: folder
         buildPhase: resources
+      - path: final final/Resources/getting-started.md
+        buildPhase: resources
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.kerim.final-final

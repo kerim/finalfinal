@@ -35,143 +35,14 @@ struct ContentView: View {
     @State private var showSaveVersionDialog = false
     @State private var saveVersionName = ""
 
+    /// Getting Started close alert state
+    @State private var showGettingStartedCloseAlert = false
+
+    /// Callback when project is closed (to return to picker)
+    var onProjectClosed: (() -> Void)?
+
     /// Use the shared DocumentManager for project lifecycle
     private var documentManager: DocumentManager { DocumentManager.shared }
-
-    // swiftlint:disable line_length
-    private let demoContent = """
-# Welcome to final final
-
-This is a **WYSIWYG** editor powered by [Milkdown](https://milkdown.dev). \
-The editor supports rich text editing with full markdown compatibility.
-
-You can write prose naturally and see it formatted in real-time. \
-This paragraph demonstrates that the outline sidebar correctly calculates word counts \
-even with *italic* and **bold** formatting mixed throughout the text.
-
-## Getting Started
-
-Start typing to edit this document. Your changes are automatically saved to the project database, so you never have to worry about losing your work.
-
-The sidebar on the left shows an outline of your document structure. You can:
-
-- Click a section to scroll to it
-- Double-click to zoom into that section
-- Drag sections to reorder them
-- Set word goals and track progress
-
-### Quick Tips
-
-Here are some keyboard shortcuts to help you get started:
-
-1. Toggle focus mode with **Cmd+Shift+F** to dim surrounding paragraphs
-2. Switch themes with **Cmd+Opt+1** through **Cmd+Opt+5**
-3. Toggle source view with **Cmd+/** to see raw markdown
-
-> "The first draft is just you telling yourself the story." — Terry Pratchett
-
-### Using Slash Commands
-
-Type `/` followed by a command name to quickly insert content:
-
-- `/break` - Insert a section break marker
-- `/h1` through `/h6` - Insert heading markers
-- Press space after the command to activate it
-
-## Writing Features
-
-The editor includes several features designed for long-form writing projects like novels, academic papers, and documentation.
-
-### Focus Mode
-
-Focus mode dims paragraphs you're not currently editing, helping you concentrate on the text at hand. This is especially useful when working on longer sections where distractions can break your flow.
-
-Enable focus mode with **Cmd+Shift+F** or from the View menu.
-
-### Section Management
-
-Each heading in your document becomes a section in the outline sidebar. Sections can have:
-
-- **Status**: Track progress (Next, Writing, Waiting, Review, Final)
-- **Word Goals**: Set targets and see progress bars
-- **Tags**: Organize with custom labels
-
-### Drag and Drop
-
-Reorganize your document by dragging sections in the sidebar. The editor automatically:
-
-1. Updates heading levels to maintain hierarchy
-2. Preserves section metadata like status and goals
-3. Syncs changes back to the editor immediately
-
-## Advanced Topics
-
-This section covers more advanced features for power users.
-
-### Code Blocks
-
-The editor supports fenced code blocks with syntax highlighting:
-
-```swift
-struct ContentView: View {
-    @State private var content = ""
-
-    var body: some View {
-        Text("Hello, World!")
-    }
-}
-```
-
-### Tables
-
-You can create tables using markdown syntax:
-
-| Feature | Status | Notes |
-|---------|--------|-------|
-| WYSIWYG | Done | Milkdown editor |
-| Source | Done | CodeMirror editor |
-| Outline | Done | Section sidebar |
-| Focus | Done | Paragraph dimming |
-
-### Links and References
-
-The editor supports [inline links](https://example.com) as well as reference-style links for cleaner prose in source mode.
-
-## Project Organization
-
-final final uses a package format (`.ff` files) to store your projects. Each package contains:
-
-- A SQLite database for content and metadata
-- Section information with hierarchy
-- Project settings and preferences
-
-### Multiple Documents
-
-While this demo shows a single document, the full application will support projects with multiple documents organized in a binder-style interface.
-
-### Export Options
-
-When your project is complete, you'll be able to export to various formats including:
-
-- Markdown (`.md`)
-- HTML
-- PDF (via system print)
-- Word documents (`.docx`)
-
-## Conclusion
-
-This demo content provides a comprehensive test of the outline sidebar functionality. It includes multiple heading levels (H1, H2, H3), various markdown formatting, lists, code blocks, and tables.
-
-Use this content to verify that:
-
-1. Scroll-to-section works correctly
-2. Word counts exclude markdown syntax
-3. Section hierarchy is properly detected
-4. Drag-drop reordering maintains document integrity
-"""
-// swiftlint:enable line_length
-// Note: Demo content ends WITH content (no trailing newline)
-// to test that reorderSection() properly normalizes section endings
 
     var body: some View {
         mainContentView
@@ -203,12 +74,8 @@ Use this content to verify that:
             )
             .integrityAlert(
                 report: $integrityReport,
-                isDemoProject: pendingProjectURL.map { documentManager.isDemoProject(at: $0) } ?? false,
                 onRepair: { report in
                     Task { await handleRepair(report: report) }
-                },
-                onRecreateDemo: {
-                    Task { await handleRecreateDemo() }
                 },
                 onOpenAnyway: { report in
                     Task { await handleOpenAnyway(report: report) }
@@ -227,6 +94,17 @@ Use this content to verify that:
                 }
             } message: {
                 Text("Enter a name for this version:")
+            }
+            .alert("Changes Not Saved", isPresented: $showGettingStartedCloseAlert) {
+                Button("Discard") {
+                    documentManager.closeProject()
+                    onProjectClosed?()
+                }
+                Button("Create New Project") {
+                    handleCreateFromGettingStarted()
+                }
+            } message: {
+                Text("Changes to Getting Started aren't saved. Create a new project to keep your work.")
             }
     }
 
@@ -1083,40 +961,17 @@ Use this content to verify that:
         }
     }
 
-    /// Initialize the project - load from database or show welcome state
+    /// Initialize the project - configure for currently open project
     private func initializeProject() async {
-        // Check if a project is already open (e.g., opened via recent projects or file association)
+        // Check if a project is already open (opened by FinalFinalApp)
         if documentManager.hasOpenProject {
             await configureForCurrentProject()
             return
         }
 
-        // Try to restore last project
-        do {
-            if try documentManager.restoreLastProject() {
-                await configureForCurrentProject()
-                return
-            }
-        } catch let error as IntegrityError {
-            // Show integrity alert for corrupted projects
-            if let report = error.integrityReport {
-                // Get the URL from the report
-                pendingProjectURL = report.packageURL
-                integrityReport = report
-                return
-            }
-            // Fallback for nil report - should not normally happen
-            print("[ContentView] IntegrityError with nil report: \(error)")
-        } catch DocumentManager.DocumentError.noProjectInDatabase {
-            // Database may have been wiped (e.g., by migration with eraseDatabaseOnSchemaChange)
-            // Fall through to demo project
-            print("[ContentView] noProjectInDatabase - database may have been wiped, falling back to demo")
-        } catch {
-            print("[ContentView] Failed to restore last project: \(error)")
-        }
-
-        // Fall back to demo project
-        await openDemoProjectIfNeeded()
+        // No project open - this shouldn't happen as FinalFinalApp handles launch state
+        // but if it does, just wait for a project to be opened
+        print("[ContentView] No project open at initialization")
     }
 
     /// Configure UI for the currently open project
@@ -1173,16 +1028,16 @@ Use this content to verify that:
             if existingSections.isEmpty && !editorState.content.isEmpty {
                 await sectionSyncService.syncNow(editorState.content)
             }
+
+            // Record initial content hash for Getting Started edit detection
+            // This captures post-normalization content after sync
+            if documentManager.isGettingStartedProject {
+                // Small delay to ensure editor has processed content
+                try? await Task.sleep(for: .milliseconds(100))
+                documentManager.recordGettingStartedLoadedContent(editorState.content)
+            }
         } catch {
             print("[ContentView] Failed to load content: \(error.localizedDescription)")
-        }
-
-        // Safety net: ensure demo content is displayed even if DB load fails
-        // This handles edge cases where Content record exists but markdown is empty
-        if editorState.content.isEmpty && documentManager.projectTitle == "Demo" {
-            print("[ContentView] Safety net: Demo project has empty content, loading demo content")
-            editorState.content = demoContent
-            await sectionSyncService.syncNow(demoContent)
         }
 
         // Connect to Zotero (just verify it's available - search is on-demand)
@@ -1202,70 +1057,6 @@ Use this content to verify that:
         } catch {
             print("[ContentView] Zotero connection failed: \(error.localizedDescription)")
             // Silent failure - Zotero is optional dependency
-        }
-    }
-
-    /// Open demo project for backwards compatibility during transition
-    private func openDemoProjectIfNeeded() async {
-        let fm = FileManager.default
-        let projectsFolder = fm.urls(for: .documentDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("final final Projects")
-        let demoPath = projectsFolder.appendingPathComponent("demo.ff")
-
-        do {
-            // Create projects folder if needed
-            if !fm.fileExists(atPath: projectsFolder.path) {
-                try fm.createDirectory(at: projectsFolder, withIntermediateDirectories: true)
-            }
-
-            if fm.fileExists(atPath: demoPath.path) {
-                // Open existing demo project
-                try documentManager.openProject(at: demoPath)
-            } else {
-                // Create new demo project WITH content at creation time
-                try documentManager.newProject(at: demoPath, title: "Demo", initialContent: demoContent)
-            }
-
-            await configureForCurrentProject()
-
-            // Ensure sections exist for demo content
-            let existingSections = await sectionSyncService.loadSections()
-            if existingSections.isEmpty {
-                await sectionSyncService.syncNow(editorState.content)
-            }
-        } catch let error as IntegrityError {
-            // Show integrity alert for corrupted demo project
-            if let report = error.integrityReport {
-                pendingProjectURL = demoPath
-                integrityReport = report
-                return
-            }
-            // Fallback for nil report - should not normally happen
-            print("[ContentView] Demo IntegrityError with nil report: \(error.localizedDescription)")
-            editorState.content = demoContent
-            editorState.sections = parseDemoSections()
-            recalculateParentRelationships()
-        } catch DocumentManager.DocumentError.noProjectInDatabase {
-            // Demo database corrupted or wiped - delete and recreate
-            print("[ContentView] Demo database corrupted (noProjectInDatabase), recreating...")
-            do {
-                try FileManager.default.removeItem(at: demoPath)
-                try documentManager.newProject(at: demoPath, title: "Demo", initialContent: demoContent)
-                await configureForCurrentProject()
-                return
-            } catch {
-                print("[ContentView] Failed to recreate demo: \(error.localizedDescription)")
-                // Fall back to in-memory mode
-                editorState.content = demoContent
-                editorState.sections = parseDemoSections()
-                recalculateParentRelationships()
-            }
-        } catch {
-            print("[ContentView] Failed to initialize demo project: \(error.localizedDescription)")
-            // Fall back to in-memory mode
-            editorState.content = demoContent
-            editorState.sections = parseDemoSections()
-            recalculateParentRelationships()
         }
     }
 
@@ -1299,9 +1090,22 @@ Use this content to verify that:
 
     /// Handle project closed notification
     private func handleProjectClosed() {
-        // Create auto-backup before closing if there are unsaved changes
-        Task {
-            await autoBackupService.projectWillClose()
+        // Check if this is the Getting Started project with modifications
+        if documentManager.isGettingStartedProject && documentManager.isGettingStartedModified() {
+            showGettingStartedCloseAlert = true
+            return
+        }
+
+        performProjectClose()
+    }
+
+    /// Actually close the project and reset state
+    private func performProjectClose() {
+        // Create auto-backup before closing if there are unsaved changes (not for Getting Started)
+        if !documentManager.isGettingStartedProject {
+            Task {
+                await autoBackupService.projectWillClose()
+            }
         }
 
         // Stop observation FIRST to prevent any further syncs
@@ -1320,6 +1124,37 @@ Use this content to verify that:
         editorState.sections = []
         editorState.annotations = []
         editorState.content = ""
+
+        // Notify parent to show picker
+        onProjectClosed?()
+    }
+
+    /// Handle "Create New Project" from Getting Started close alert
+    private func handleCreateFromGettingStarted() {
+        // Get current content before closing
+        let currentContent = (try? documentManager.getCurrentContent()) ?? ""
+
+        let savePanel = NSSavePanel()
+        savePanel.title = "Save Your Work"
+        savePanel.nameFieldLabel = "Project Name:"
+        savePanel.nameFieldStringValue = "Untitled"
+        savePanel.allowedContentTypes = [.init(exportedAs: "com.kerim.final-final.document")]
+        savePanel.canCreateDirectories = true
+
+        savePanel.begin { response in
+            guard response == .OK, let url = savePanel.url else { return }
+
+            Task { @MainActor in
+                do {
+                    let title = url.deletingPathExtension().lastPathComponent
+                    try self.documentManager.newProject(at: url, title: title, initialContent: currentContent)
+                    // No need to call onProjectOpened - we're replacing the current project
+                    await self.handleProjectOpened()
+                } catch {
+                    print("[ContentView] Failed to create project from Getting Started: \(error)")
+                }
+            }
+        }
     }
 
     // MARK: - Version History Handlers
@@ -1407,27 +1242,6 @@ Use this content to verify that:
         }
     }
 
-    /// Handle recreate demo action from integrity alert
-    private func handleRecreateDemo() async {
-        guard let url = pendingProjectURL, documentManager.isDemoProject(at: url) else {
-            pendingProjectURL = nil
-            return
-        }
-
-        do {
-            // Delete the corrupted demo
-            let repairService = ProjectRepairService(packageURL: url)
-            try repairService.deletePackage()
-
-            // Recreate fresh demo
-            await openDemoProjectIfNeeded()
-        } catch {
-            print("[ContentView] Failed to recreate demo: \(error.localizedDescription)")
-        }
-
-        pendingProjectURL = nil
-    }
-
     /// Handle "open anyway" action from integrity alert (unsafe)
     private func handleOpenAnyway(report: IntegrityReport) async {
         guard let url = pendingProjectURL else { return }
@@ -1454,79 +1268,6 @@ Use this content to verify that:
         // Could optionally open demo project or show welcome state
     }
 
-    /// Temporary: Parse demo content into sections for testing
-    private func parseDemoSections() -> [SectionViewModel] {
-        var sections: [SectionViewModel] = []
-        let content = editorState.content
-
-        // First pass: find all header positions
-        var headerPositions: [(offset: Int, level: Int, title: String)] = []
-        var currentOffset = 0
-
-        let lines = content.split(separator: "\n", omittingEmptySubsequences: false)
-        for line in lines {
-            let lineStr = String(line)
-            let trimmed = lineStr.trimmingCharacters(in: .whitespaces)
-
-            if let (level, title) = parseHeader(trimmed) {
-                headerPositions.append((currentOffset, level, title))
-            }
-            currentOffset += lineStr.count + 1
-        }
-
-        // Second pass: extract markdown content between headers
-        for (index, header) in headerPositions.enumerated() {
-            let endOffset: Int
-            if index < headerPositions.count - 1 {
-                endOffset = headerPositions[index + 1].offset
-            } else {
-                endOffset = content.count
-            }
-
-            // Extract markdown content for this section
-            let startIdx = content.index(content.startIndex, offsetBy: header.offset)
-            let endIdx = content.index(content.startIndex, offsetBy: min(endOffset, content.count))
-            let markdownContent = String(content[startIdx..<endIdx])
-
-            let section = Section(
-                projectId: "demo",
-                sortOrder: index,
-                headerLevel: header.level,
-                title: header.title,
-                markdownContent: markdownContent,
-                wordCount: countWords(in: markdownContent),
-                startOffset: header.offset
-            )
-            sections.append(SectionViewModel(from: section))
-        }
-
-        return sections
-    }
-
-    private func countWords(in text: String) -> Int {
-        MarkdownUtils.wordCount(for: text)
-    }
-
-    private func parseHeader(_ line: String) -> (Int, String)? {
-        guard line.hasPrefix("#") else { return nil }
-
-        var level = 0
-        var idx = line.startIndex
-
-        while idx < line.endIndex && line[idx] == "#" && level < 6 {
-            level += 1
-            idx = line.index(after: idx)
-        }
-
-        guard level > 0, idx < line.endIndex, line[idx] == " " else { return nil }
-
-        let titleStart = line.index(after: idx)
-        let title = String(line[titleStart...]).trimmingCharacters(in: .whitespaces)
-
-        guard !title.isEmpty else { return nil }
-
-        return (level, title)
-    }
 }
 
 // MARK: - Notification Extensions
@@ -1559,9 +1300,8 @@ extension View {
         onIntegrityError: @escaping (IntegrityReport, URL) -> Void
     ) -> some View {
         self
-            .onReceive(NotificationCenter.default.publisher(for: .closeProject)) { _ in
-                FileOperations.handleCloseProject()
-            }
+            // Note: .closeProject, .newProject, .openProject are handled at FinalFinalApp level
+            // because those handlers don't need view state and the App-level handlers are stable
             .onReceive(NotificationCenter.default.publisher(for: .saveProject)) { _ in
                 FileOperations.handleSaveProject()
             }
