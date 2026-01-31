@@ -47,7 +47,7 @@ struct AnnotationPanel: View {
         HStack {
             Text("Annotations")
                 .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(themeManager.currentTheme.sidebarText)
+                .foregroundStyle(themeManager.currentTheme.sidebarText)
 
             Spacer()
 
@@ -55,23 +55,12 @@ struct AnnotationPanel: View {
             if editorState.incompleteTaskCount > 0 {
                 Text("\(editorState.incompleteTaskCount)")
                     .font(.system(size: TypeScale.smallUI, weight: .medium))
-                    .foregroundColor(.white)
+                    .foregroundStyle(.white)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
                     .background(themeManager.currentTheme.statusColors.next)
-                    .cornerRadius(8)
+                    .clipShape(Capsule())
             }
-
-            // Close button
-            Button {
-                editorState.toggleAnnotationPanel()
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: TypeScale.smallUI, weight: .semibold))
-                    .foregroundColor(themeManager.currentTheme.sidebarText.opacity(0.6))
-            }
-            .buttonStyle(.plain)
-            .help("Close panel")
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)

@@ -4,6 +4,7 @@
 //
 
 import SwiftUI
+import AppKit
 
 @MainActor
 @Observable
@@ -39,6 +40,7 @@ final class ThemeManager {
     func setTheme(_ theme: AppColorScheme) {
         currentTheme = theme
         saveThemeToDatabase()
+        updateAppAppearance(for: theme)
         #if DEBUG
         print("[ThemeManager] Theme changed to: \(theme.name)")
         #endif
@@ -53,6 +55,15 @@ final class ThemeManager {
     /// Returns CSS variables string for web editor injection
     var cssVariables: String {
         currentTheme.cssVariables
+    }
+
+    // MARK: - Appearance
+
+    /// Update the app appearance to match the theme (dark/light mode)
+    private func updateAppAppearance(for theme: AppColorScheme) {
+        NSApp.appearance = theme.requiresDarkAppearance
+            ? NSAppearance(named: .darkAqua)
+            : NSAppearance(named: .aqua)
     }
 
     // MARK: - Persistence
@@ -72,6 +83,7 @@ final class ThemeManager {
 
                 if let theme = AppColorScheme.all.first(where: { $0.id == themeId }) {
                     currentTheme = theme
+                    updateAppAppearance(for: theme)
                     #if DEBUG
                     print("[ThemeManager] Loaded theme: \(theme.name)")
                     #endif

@@ -24,6 +24,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppDelegate.shared = self
 
+        // Disable window tabbing - removes "Show Tab Bar" and "Show All Tabs" from View menu
+        // This app doesn't use a tabbed interface
+        NSWindow.allowsAutomaticWindowTabbing = false
+
         do {
             database = try AppDatabase.makeDefault()
             #if DEBUG

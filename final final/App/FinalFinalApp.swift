@@ -94,6 +94,7 @@ struct FinalFinalApp: App {
         }
         .commands {
             FileCommands()
+            ViewCommands()
             ThemeCommands()
             EditorCommands()
             ExportCommands()
