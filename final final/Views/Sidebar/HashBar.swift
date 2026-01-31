@@ -24,14 +24,14 @@ struct HashBar: View {
             // Standard H1-H6 indicators
             ForEach(1...6, id: \.self) { position in
                 Text("#")
-                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .font(.system(size: TypeScale.smallUI, weight: .medium, design: .monospaced))
                     .foregroundColor(colorFor(position: position))
             }
 
             // Deep header suffix for H7+
             if overflowCount > 0 {
                 Text("+\(overflowCount)")
-                    .font(.system(size: 9, weight: .bold, design: .monospaced))
+                    .font(.system(size: TypeScale.smallUI, weight: .bold, design: .monospaced))
                     .foregroundColor(themeManager.currentTheme.accentColor)
             }
 

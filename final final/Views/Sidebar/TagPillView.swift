@@ -12,7 +12,7 @@ struct TagPill: View {
 
     var body: some View {
         Text(tag)
-            .font(.system(size: 10, weight: .medium))
+            .font(.system(size: TypeScale.smallUI, weight: .medium))
             .foregroundColor(themeManager.currentTheme.accentColor)
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
@@ -42,7 +42,7 @@ struct TagPillsView: View {
                     showingEditor = true
                 } label: {
                     Image(systemName: "tag")
-                        .font(.system(size: 10))
+                        .font(.system(size: TypeScale.smallUI))
                         .foregroundColor(themeManager.currentTheme.sidebarText.opacity(0.4))
                 }
                 .buttonStyle(.plain)

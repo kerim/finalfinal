@@ -54,7 +54,7 @@ struct AnnotationPanel: View {
             // Task count badge
             if editorState.incompleteTaskCount > 0 {
                 Text("\(editorState.incompleteTaskCount)")
-                    .font(.system(size: 10, weight: .medium))
+                    .font(.system(size: TypeScale.smallUI, weight: .medium))
                     .foregroundColor(.white)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
@@ -67,7 +67,7 @@ struct AnnotationPanel: View {
                 editorState.toggleAnnotationPanel()
             } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(.system(size: TypeScale.smallUI, weight: .semibold))
                     .foregroundColor(themeManager.currentTheme.sidebarText.opacity(0.6))
             }
             .buttonStyle(.plain)
