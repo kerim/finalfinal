@@ -11,11 +11,13 @@ struct GoalPopover: View {
     @Binding var isPresented: Bool
     @State private var goalText: String = ""
     @FocusState private var isFocused: Bool
+    @Environment(ThemeManager.self) private var themeManager
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Word Goal")
                 .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(themeManager.currentTheme.sidebarText)
 
             HStack {
                 TextField("e.g., 500", text: $goalText)
@@ -28,7 +30,7 @@ struct GoalPopover: View {
 
                 Text("words")
                     .font(.system(size: 12))
-                    .foregroundColor(.secondary)
+                    .foregroundColor(themeManager.currentTheme.sidebarTextSecondary)
             }
 
             HStack {

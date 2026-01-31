@@ -324,7 +324,7 @@ struct GoalEditorPopover: View {
                     dismiss()
                 }
                 .buttonStyle(.borderless)
-                .foregroundColor(.secondary)
+                .foregroundColor(themeManager.currentTheme.sidebarTextSecondary)
 
                 Spacer()
 

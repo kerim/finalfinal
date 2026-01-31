@@ -2,6 +2,8 @@
 //  ColorScheme.swift
 //  final final
 //
+//  App color schemes using Radix UI 12-step color scales
+//
 
 import SwiftUI
 
@@ -23,31 +25,31 @@ struct StatusColors: Equatable, Sendable {
         }
     }
 
-    /// Default status colors for light themes
+    /// Light theme status colors using Radix scales
     static let light = StatusColors(
-        writing: Color(red: 0.15, green: 0.39, blue: 0.92),  // #2563eb
-        next: Color(red: 0.92, green: 0.35, blue: 0.05),     // #ea580c
-        waiting: Color(red: 0.79, green: 0.54, blue: 0.02),  // #ca8a04
-        review: Color(red: 0.58, green: 0.20, blue: 0.92),   // #9333ea
-        final_: Color(red: 0.09, green: 0.64, blue: 0.26)    // #16a34a
+        writing: RadixScales.blue.step9,       // #0090ff - bright blue
+        next: RadixScales.orange.step9,        // #f76b15 - vibrant orange
+        waiting: RadixScales.yellow.step11,    // #9e6c00 - readable yellow-brown
+        review: RadixScales.violet.step9,      // #6e56cf - purple
+        final_: RadixScales.green.step9        // #30a46c - green
     )
 
-    /// Brighter status colors for dark themes
+    /// Dark theme status colors using Radix scales (brighter for visibility)
     static let dark = StatusColors(
-        writing: Color(red: 0.38, green: 0.65, blue: 0.98),  // #60a5fa
-        next: Color(red: 0.98, green: 0.57, blue: 0.24),     // #fb923c
-        waiting: Color(red: 0.99, green: 0.83, blue: 0.31),  // #fcd34d
-        review: Color(red: 0.75, green: 0.52, blue: 0.99),   // #c084fc
-        final_: Color(red: 0.29, green: 0.87, blue: 0.50)    // #4ade80
+        writing: RadixScales.blueDark.step10,    // #3b9eff - bright blue
+        next: RadixScales.orangeDark.step10,     // #ff801f - bright orange
+        waiting: RadixScales.yellowDark.step11,  // #f5e147 - bright yellow
+        review: RadixScales.violetDark.step11,   // #baa7ff - bright violet
+        final_: RadixScales.greenDark.step11     // #3dd68c - bright green
     )
 
-    /// Nord-themed status colors
+    /// Nord-themed status colors (using slate-based muted tones)
     static let nord = StatusColors(
-        writing: Color(red: 0.51, green: 0.63, blue: 0.76),  // #81a1c1
-        next: Color(red: 0.82, green: 0.53, blue: 0.44),     // #d08770
-        waiting: Color(red: 0.92, green: 0.80, blue: 0.55),  // #ebcb8b
-        review: Color(red: 0.71, green: 0.55, blue: 0.68),   // #b48ead
-        final_: Color(red: 0.64, green: 0.75, blue: 0.55)    // #a3be8c
+        writing: RadixScales.cyanDark.step9,     // #00a2c7 - cyan (nord frost)
+        next: RadixScales.orangeDark.step11,     // #ffa057 - muted orange
+        waiting: RadixScales.amberDark.step11,   // #ffca16 - amber
+        review: RadixScales.violetDark.step11,   // #baa7ff - soft violet
+        final_: RadixScales.greenDark.step11     // #3dd68c - soft green
     )
 }
 
@@ -60,28 +62,28 @@ struct AnnotationColors: Equatable, Sendable {
 }
 
 extension AnnotationColors {
-    /// Light theme annotation colors
+    /// Light theme annotation colors using Radix scales
     static let light = AnnotationColors(
-        task: Color(red: 0.85, green: 0.47, blue: 0.02),     // #d97706
-        taskCompleted: Color(red: 0.02, green: 0.59, blue: 0.41), // #059669
-        comment: Color(red: 0.15, green: 0.39, blue: 0.92),  // #2563eb
-        reference: Color(red: 0.49, green: 0.23, blue: 0.93) // #7c3aed
+        task: RadixScales.amber.step11,          // #ab6400 - amber for tasks
+        taskCompleted: RadixScales.green.step9,  // #30a46c - green for completed
+        comment: RadixScales.blue.step9,         // #0090ff - blue for comments
+        reference: RadixScales.violet.step9      // #6e56cf - violet for references
     )
 
     /// High contrast night annotation colors
     static let highContrastNight = AnnotationColors(
-        task: Color(red: 0.98, green: 0.75, blue: 0.15),     // #fbbf24
-        taskCompleted: Color(red: 0.20, green: 0.83, blue: 0.60), // #34d399
-        comment: Color(red: 0.38, green: 0.65, blue: 0.98),  // #60a5fa
-        reference: Color(red: 0.65, green: 0.55, blue: 0.98) // #a78bfa
+        task: RadixScales.amberDark.step9,         // #ffc53d - bright amber
+        taskCompleted: RadixScales.greenDark.step11, // #3dd68c - bright green
+        comment: RadixScales.blueDark.step10,      // #3b9eff - bright blue
+        reference: RadixScales.violetDark.step11   // #baa7ff - bright violet
     )
 
     /// Nord-themed annotation colors
     static let nord = AnnotationColors(
-        task: Color(red: 0.92, green: 0.80, blue: 0.55),     // #ebcb8b
-        taskCompleted: Color(red: 0.64, green: 0.75, blue: 0.55), // #a3be8c
-        comment: Color(red: 0.53, green: 0.75, blue: 0.82),  // #88c0d0
-        reference: Color(red: 0.71, green: 0.55, blue: 0.68) // #b48ead
+        task: RadixScales.amberDark.step11,        // #ffca16 - soft amber
+        taskCompleted: RadixScales.greenDark.step11, // #3dd68c - soft green
+        comment: RadixScales.cyanDark.step11,      // #4ccce6 - cyan (nord8)
+        reference: RadixScales.violetDark.step11   // #baa7ff - soft violet
     )
 }
 
@@ -90,9 +92,11 @@ struct AppColorScheme: Identifiable, Equatable, Sendable {
     let name: String
     let sidebarBackground: Color
     let sidebarText: Color
+    let sidebarTextSecondary: Color
     let sidebarSelectedBackground: Color
     let editorBackground: Color
     let editorText: Color
+    let editorTextSecondary: Color
     let editorSelection: Color
     let accentColor: Color
     let dividerColor: Color
@@ -120,10 +124,12 @@ struct AppColorScheme: Identifiable, Equatable, Sendable {
         """
         --editor-bg: \(editorBackground.cssHex);
         --editor-text: \(editorText.cssHex);
+        --editor-text-secondary: \(editorTextSecondary.cssHex);
         --editor-selection: \(editorSelection.cssHexWithAlpha);
         --accent-color: \(accentColor.cssHex);
         --sidebar-bg: \(sidebarBackground.cssHex);
         --sidebar-text: \(sidebarText.cssHex);
+        --sidebar-text-secondary: \(sidebarTextSecondary.cssHex);
         --divider-color: \(dividerColor.cssHex);
         --annotation-task: \(annotationColors.task.cssHex);
         --annotation-task-completed: \(annotationColors.taskCompleted.cssHex);
@@ -182,83 +188,103 @@ extension Color {
 // MARK: - Theme Presets
 
 extension AppColorScheme {
-    /// High Contrast Day - White editor with black sidebar
+    /// High Contrast Day - White editor with dark sidebar (Gray + Blue)
+    /// Sidebar: grayDark.step1 bg, grayDark.step12 text
+    /// Editor: gray.step1 bg (white), gray.step12 text
+    /// Accent: blue.step9
     static let highContrastDay = AppColorScheme(
         id: "high-contrast-day",
         name: "High Contrast Day",
-        sidebarBackground: Color(red: 0.10, green: 0.10, blue: 0.10),  // #1a1a1a (black)
-        sidebarText: Color(red: 0.93, green: 0.93, blue: 0.93),        // #ededed (light)
-        sidebarSelectedBackground: Color(red: 0, green: 0.40, blue: 0.80).opacity(0.35), // blue 35%
-        editorBackground: Color.white,                                  // #ffffff
-        editorText: Color(red: 0.10, green: 0.10, blue: 0.10),         // #1a1a1a
-        editorSelection: Color(red: 0, green: 0.40, blue: 0.80).opacity(0.25),
-        accentColor: Color(red: 0, green: 0.40, blue: 0.80),           // #0066cc
-        dividerColor: Color(red: 0.25, green: 0.25, blue: 0.25),       // #404040 (dark divider)
-        statusColors: .dark,  // brighter status colors for dark sidebar
+        sidebarBackground: RadixScales.grayDark.step1,           // #111111
+        sidebarText: RadixScales.grayDark.step12,                // #eeeeee
+        sidebarTextSecondary: RadixScales.grayDark.step11,       // #b4b4b4
+        sidebarSelectedBackground: RadixScales.blue.step9.opacity(0.35),
+        editorBackground: RadixScales.gray.step1,                // #fcfcfc
+        editorText: RadixScales.gray.step12,                     // #202020
+        editorTextSecondary: RadixScales.gray.step11,            // #646464
+        editorSelection: RadixScales.blue.step9.opacity(0.25),
+        accentColor: RadixScales.blue.step9,                     // #0090ff
+        dividerColor: RadixScales.grayDark.step6,                // #3a3a3a
+        statusColors: .dark,
         annotationColors: .light,
-        highlightBackground: Color(red: 1, green: 0.92, blue: 0.23).opacity(0.4), // yellow 40%
-        tooltipBackground: Color(red: 0.12, green: 0.16, blue: 0.22),  // #1f2937
-        tooltipText: Color(red: 0.95, green: 0.96, blue: 0.96),        // #f3f4f6
+        highlightBackground: RadixScales.amber.step9.opacity(0.4),
+        tooltipBackground: RadixScales.grayDark.step3,           // #222222
+        tooltipText: RadixScales.grayDark.step12,                // #eeeeee
         shortcutKey: "1"
     )
 
-    /// Low Contrast Day - Warm parchment tones (reduced contrast)
+    /// Low Contrast Day - Warm parchment tones (Custom Parchment + Amber)
+    /// Sidebar: parchment.step2 bg, parchment.step12 text
+    /// Editor: parchment.step1 bg, parchment.step12 text
+    /// Accent: parchment.step9 (warm brown)
     static let lowContrastDay = AppColorScheme(
         id: "low-contrast-day",
         name: "Low Contrast Day",
-        sidebarBackground: Color(red: 0.91, green: 0.87, blue: 0.82),  // #e8ddd1 - darker parchment
-        sidebarText: Color(red: 0.30, green: 0.28, blue: 0.25),        // #4d4740 - slightly lighter
-        sidebarSelectedBackground: Color(red: 0.55, green: 0.45, blue: 0.33).opacity(0.25), // brown 25%
-        editorBackground: Color(red: 0.94, green: 0.91, blue: 0.86),   // #f0e8db - darker parchment
-        editorText: Color(red: 0.30, green: 0.28, blue: 0.25),         // #4d4740 - slightly lighter
-        editorSelection: Color(red: 0.55, green: 0.45, blue: 0.33).opacity(0.25),
-        accentColor: Color(red: 0.55, green: 0.45, blue: 0.33),        // #8b7355
-        dividerColor: Color(red: 0.82, green: 0.78, blue: 0.71),       // #d1c7b5
+        sidebarBackground: RadixScales.parchment.step3,          // #f3ece0 - visible distinction
+        sidebarText: RadixScales.parchment.step12,               // #3d3425
+        sidebarTextSecondary: RadixScales.parchment.step11,      // #6b5d42
+        sidebarSelectedBackground: RadixScales.parchment.step9.opacity(0.25),
+        editorBackground: RadixScales.parchment.step1,           // #fdfbf7
+        editorText: RadixScales.parchment.step12,                // #3d3425
+        editorTextSecondary: RadixScales.parchment.step11,       // #6b5d42
+        editorSelection: RadixScales.parchment.step9.opacity(0.25),
+        accentColor: RadixScales.parchment.step9,                // #a69676 - warm brown accent
+        dividerColor: RadixScales.parchment.step6,               // #dcd0ba
         statusColors: .light,
         annotationColors: .light,
-        highlightBackground: Color(red: 1, green: 0.76, blue: 0.03).opacity(0.35), // amber 35%
-        tooltipBackground: Color(red: 0.30, green: 0.28, blue: 0.25),  // #4d4740
-        tooltipText: Color(red: 0.94, green: 0.91, blue: 0.86),        // #f0e8db
+        highlightBackground: RadixScales.amber.step9.opacity(0.35),
+        tooltipBackground: RadixScales.parchment.step12,         // #3d3425
+        tooltipText: RadixScales.parchment.step1,                // #fdfbf7
         shortcutKey: "2"
     )
 
-    /// High Contrast Night - OLED black with orange text
+    /// High Contrast Night - OLED black with orange text (Gray Dark + Orange)
+    /// Sidebar: grayDark.step1 bg, orangeDark.step9 text
+    /// Editor: OLED black bg, orangeDark.step9 text
+    /// Accent: orangeDark.step10
     static let highContrastNight = AppColorScheme(
         id: "high-contrast-night",
         name: "High Contrast Night",
-        sidebarBackground: Color(red: 0.10, green: 0.10, blue: 0.10),  // #1a1a1a
-        sidebarText: Color(red: 1.0, green: 0.65, blue: 0.30),         // #ffa64d (orange)
-        sidebarSelectedBackground: Color(red: 1, green: 0.72, blue: 0.30).opacity(0.30), // orange 30%
-        editorBackground: Color(red: 0.04, green: 0.04, blue: 0.04),   // #0a0a0a (OLED)
-        editorText: Color(red: 1.0, green: 0.65, blue: 0.30),          // #ffa64d (orange)
-        editorSelection: Color(red: 1, green: 0.72, blue: 0.30).opacity(0.30),
-        accentColor: Color(red: 1, green: 0.72, blue: 0.30),           // #ffb74d
-        dividerColor: Color(red: 0.20, green: 0.20, blue: 0.20),       // #333333
+        sidebarBackground: RadixScales.grayDark.step1,           // #111111
+        sidebarText: RadixScales.orangeDark.step9,               // #f76b15
+        sidebarTextSecondary: RadixScales.orangeDark.step11,     // #ffa057
+        sidebarSelectedBackground: RadixScales.orangeDark.step10.opacity(0.30),
+        editorBackground: RadixScales.oledBlack,                 // #0a0a0a
+        editorText: RadixScales.orangeDark.step9,                // #f76b15
+        editorTextSecondary: RadixScales.orangeDark.step11,      // #ffa057
+        editorSelection: RadixScales.orangeDark.step10.opacity(0.30),
+        accentColor: RadixScales.orangeDark.step10,              // #ff801f
+        dividerColor: RadixScales.grayDark.step6,                // #3a3a3a
         statusColors: .dark,
         annotationColors: .highContrastNight,
-        highlightBackground: Color(red: 1, green: 0.72, blue: 0.30).opacity(0.25), // orange 25%
-        tooltipBackground: Color(red: 1.0, green: 0.65, blue: 0.30),   // inverted - orange bg
-        tooltipText: Color(red: 0.04, green: 0.04, blue: 0.04),        // inverted - black text
+        highlightBackground: RadixScales.orangeDark.step10.opacity(0.25),
+        tooltipBackground: RadixScales.orangeDark.step9,         // inverted - orange bg
+        tooltipText: RadixScales.oledBlack,                      // inverted - black text
         shortcutKey: "3"
     )
 
-    /// Low Contrast Night - Nord palette
+    /// Low Contrast Night - Nord-inspired palette (Slate Dark + Cyan)
+    /// Sidebar: slateDark.step2 bg, slateDark.step11 text
+    /// Editor: slateDark.step1 bg, slateDark.step11 text
+    /// Accent: cyanDark.step9
     static let lowContrastNight = AppColorScheme(
         id: "low-contrast-night",
         name: "Low Contrast Night",
-        sidebarBackground: Color(red: 0.23, green: 0.26, blue: 0.32),  // #3b4252 (nord1)
-        sidebarText: Color(red: 0.85, green: 0.87, blue: 0.91),        // #d8dee9 (nord4)
-        sidebarSelectedBackground: Color(red: 0.53, green: 0.75, blue: 0.82).opacity(0.25), // cyan 25%
-        editorBackground: Color(red: 0.18, green: 0.20, blue: 0.25),   // #2e3440 (nord0)
-        editorText: Color(red: 0.85, green: 0.87, blue: 0.91),         // #d8dee9
-        editorSelection: Color(red: 0.53, green: 0.75, blue: 0.82).opacity(0.25),
-        accentColor: Color(red: 0.53, green: 0.75, blue: 0.82),        // #88c0d0 (nord8)
-        dividerColor: Color(red: 0.30, green: 0.34, blue: 0.42),       // #4c566a (nord3)
+        sidebarBackground: RadixScales.slateDark.step2,          // #18191b
+        sidebarText: RadixScales.slateDark.step11,               // #b0b4ba
+        sidebarTextSecondary: RadixScales.slateDark.step10,      // #777b84
+        sidebarSelectedBackground: RadixScales.cyanDark.step9.opacity(0.25),
+        editorBackground: RadixScales.slateDark.step1,           // #111113
+        editorText: RadixScales.slateDark.step11,                // #b0b4ba
+        editorTextSecondary: RadixScales.slateDark.step10,       // #777b84
+        editorSelection: RadixScales.cyanDark.step9.opacity(0.25),
+        accentColor: RadixScales.cyanDark.step9,                 // #00a2c7
+        dividerColor: RadixScales.slateDark.step6,               // #363a3f
         statusColors: .nord,
         annotationColors: .nord,
-        highlightBackground: Color(red: 0.92, green: 0.80, blue: 0.55).opacity(0.25), // amber 25%
-        tooltipBackground: Color(red: 0.93, green: 0.94, blue: 0.96),  // #eceff4 (nord6)
-        tooltipText: Color(red: 0.18, green: 0.20, blue: 0.25),        // #2e3440 (nord0)
+        highlightBackground: RadixScales.amberDark.step9.opacity(0.25),
+        tooltipBackground: RadixScales.slateDark.step12,         // #edeef0
+        tooltipText: RadixScales.slateDark.step1,                // #111113
         shortcutKey: "4"
     )
 

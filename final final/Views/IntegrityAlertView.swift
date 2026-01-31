@@ -60,6 +60,8 @@ struct IntegrityAlertView: View {
     let onOpenAnyway: () -> Void
     let onCancel: () -> Void
 
+    @Environment(ThemeManager.self) private var themeManager
+
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             // Header
@@ -73,7 +75,7 @@ struct IntegrityAlertView: View {
 
             // Message
             Text(model.message)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(themeManager.currentTheme.editorTextSecondary)
 
             // Issues list
             VStack(alignment: .leading, spacing: 8) {

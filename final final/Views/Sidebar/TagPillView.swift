@@ -61,7 +61,7 @@ struct TagPillsView: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Tags (comma-separated)")
                 .font(.system(size: 11, weight: .medium))
-                .foregroundColor(.secondary)
+                .foregroundColor(themeManager.currentTheme.sidebarTextSecondary)
 
             TextField("research, draft, urgent", text: $editingText)
                 .textFieldStyle(.roundedBorder)

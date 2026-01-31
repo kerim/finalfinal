@@ -174,7 +174,7 @@ struct VersionHistorySheet: View {
         VStack {
             Spacer()
             Text("Select a version to compare")
-                .foregroundStyle(.secondary)
+                .foregroundStyle(themeManager.currentTheme.editorTextSecondary)
             Spacer()
         }
     }
@@ -186,11 +186,12 @@ struct VersionHistorySheet: View {
             Spacer()
             Image(systemName: "clock.arrow.circlepath")
                 .font(.system(size: 48))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(themeManager.currentTheme.editorTextSecondary)
             Text("No Version History")
                 .font(.headline)
+                .foregroundStyle(themeManager.currentTheme.editorText)
             Text("Version history will appear here when you save versions or when auto-backups are created.")
-                .foregroundStyle(.secondary)
+                .foregroundStyle(themeManager.currentTheme.editorTextSecondary)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 300)
             Spacer()
@@ -205,11 +206,12 @@ struct VersionHistorySheet: View {
             Spacer()
             Image(systemName: "exclamationmark.triangle")
                 .font(.system(size: 48))
-                .foregroundStyle(.orange)
+                .foregroundStyle(themeManager.currentTheme.accentColor)
             Text("Error Loading History")
                 .font(.headline)
+                .foregroundStyle(themeManager.currentTheme.editorText)
             Text(message)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(themeManager.currentTheme.editorTextSecondary)
             Button("Try Again") {
                 Task { await loadSnapshots() }
             }

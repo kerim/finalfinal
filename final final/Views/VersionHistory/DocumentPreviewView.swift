@@ -60,7 +60,7 @@ struct DocumentPreviewView: View {
             HStack {
                 Text(title)
                     .font(.headline)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(themeManager.currentTheme.editorTextSecondary)
                 Spacer()
             }
             .padding(.horizontal)
@@ -165,7 +165,7 @@ struct SectionPreviewRow: View {
                 // Word count
                 Text("\(section.wordCount) words")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(themeManager.currentTheme.editorTextSecondary)
 
                 // Restore buttons (shown on hover)
                 if showRestoreButtons && isHovered {
@@ -179,13 +179,13 @@ struct SectionPreviewRow: View {
                 if let fullContent = fullContentText {
                     Text(fullContent)
                         .font(.body)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(themeManager.currentTheme.editorTextSecondary)
                         .textSelection(.enabled)
                 }
             } else if let preview = contentPreview {
                 Text(preview)
                     .font(.body)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(themeManager.currentTheme.editorTextSecondary)
                     .lineLimit(3)
             }
         }

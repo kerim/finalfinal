@@ -80,6 +80,7 @@
 		E46A01D58B8F56C1034EB422 /* Snapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = 87F00396843D1E0300C1624A /* Snapshot.swift */; };
 		E46F3ED58DA8FEDB5213C283 /* AnnotationCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5903AE3511C621FF3093E3C9 /* AnnotationCardView.swift */; };
 		F0FB047FF7AE11991447AF4E /* SnapshotService.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB51F453D350DBA8D3632F22 /* SnapshotService.swift */; };
+		F59EF64CCCF90C58F831BC04 /* RadixScales.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C9A6AA1550623CEDFA4ACB8 /* RadixScales.swift */; };
 		FA5C8D9CA08A0BB702BD0C7B /* HashBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0CEC9B25AB24040A17CC1589 /* HashBar.swift */; };
 		FA6E217F7950A15AEDE69960 /* AnnotationPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC5B8A956E441E29032AE5F9 /* AnnotationPanel.swift */; };
 		FF68398B6345837AE88A9AB1 /* ProjectRepairServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E2BEC2E8F18731A82D861A36 /* ProjectRepairServiceTests.swift */; };
@@ -103,6 +104,7 @@
 		0E843650744C2F13D1618667 /* FinalFinalTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FinalFinalTests.swift; sourceTree = "<group>"; };
 		109DDCE3DD312B1666618AD5 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		13133CB5518EA086A3120EDE /* Database+CRUD.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Database+CRUD.swift"; sourceTree = "<group>"; };
+		1C9A6AA1550623CEDFA4ACB8 /* RadixScales.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RadixScales.swift; sourceTree = "<group>"; };
 		2070D9DD040736953F1CAA08 /* ZoteroChecker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZoteroChecker.swift; sourceTree = "<group>"; };
 		27856E54C5B28F839E83F154 /* ThemeManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThemeManager.swift; sourceTree = "<group>"; };
 		2AAD6FB6258FBF011A89ECFC /* ColorScheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ColorScheme.swift; sourceTree = "<group>"; };
@@ -244,6 +246,7 @@
 			isa = PBXGroup;
 			children = (
 				2AAD6FB6258FBF011A89ECFC /* ColorScheme.swift */,
+				1C9A6AA1550623CEDFA4ACB8 /* RadixScales.swift */,
 				27856E54C5B28F839E83F154 /* ThemeManager.swift */,
 			);
 			path = Theme;
@@ -257,13 +260,6 @@
 				3BB70B8A6DD5904EC181116A /* VersionHistoryCoordinator.swift */,
 			);
 			path = ViewState;
-			sourceTree = "<group>";
-		};
-		535445C68646BB21AC81EDC4 /* ViewModels */ = {
-			isa = PBXGroup;
-			children = (
-			);
-			path = ViewModels;
 			sourceTree = "<group>";
 		};
 		5D30D849AC613F46C575C190 /* Products */ = {
@@ -323,7 +319,6 @@
 				8CB164527A344E1D70DECB0B /* Services */,
 				32D736F5D00C9F506D5A9A60 /* Theme */,
 				286B8E2A62BC888E4FCC6A09 /* Utils */,
-				535445C68646BB21AC81EDC4 /* ViewModels */,
 				8F65F393516BACB7429D8A52 /* Views */,
 				3F528C948E209CDF817C3EC8 /* ViewState */,
 			);
@@ -569,6 +564,7 @@
 				D6A0D3C2D59070E808EFA6C9 /* ProjectPackage.swift in Sources */,
 				95DA16BD31941C5CD424F43D /* ProjectRepairService.swift in Sources */,
 				D1576467EE827142AA4F49BE /* ProjectStore.swift in Sources */,
+				F59EF64CCCF90C58F831BC04 /* RadixScales.swift in Sources */,
 				E028FEF9DCA9E380AE542AF2 /* RecentProject.swift in Sources */,
 				0ED46619B703DCB8610330F3 /* Section.swift in Sources */,
 				D0208FE27BA4FBD4AADFD905 /* SectionCardView.swift in Sources */,
@@ -682,7 +678,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = "final final/final final.entitlements";
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 0.1.87;
+				CURRENT_PROJECT_VERSION = 0.2.2;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "final final/Info.plist";
 				INFOPLIST_GENERATION_MODE = GeneratedFile;
@@ -705,7 +701,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = "final final/final final.entitlements";
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 0.1.87;
+				CURRENT_PROJECT_VERSION = 0.2.2;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "final final/Info.plist";
 				INFOPLIST_GENERATION_MODE = GeneratedFile;

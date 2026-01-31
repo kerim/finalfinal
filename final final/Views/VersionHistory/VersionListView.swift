@@ -59,9 +59,9 @@ struct VersionListView: View {
         ScrollViewReader { proxy in
             List(selection: $selectedSnapshotId) {
                 ForEach(groupedSnapshots, id: \.title) { group in
-                    SwiftUI.Section(header: Text(group.title).font(.caption).foregroundStyle(.secondary)) {
+                    SwiftUI.Section(header: Text(group.title).font(.caption).foregroundStyle(themeManager.currentTheme.sidebarTextSecondary)) {
                         ForEach(group.snapshots) { snapshot in
-                            SnapshotRowView(snapshot: snapshot)
+                            SnapshotRowView(snapshot: snapshot, theme: themeManager.currentTheme)
                                 .tag(snapshot.id)
                                 .id(snapshot.id)
                         }
@@ -69,6 +69,7 @@ struct VersionListView: View {
                 }
             }
             .listStyle(.sidebar)
+            .scrollContentBackground(.hidden)
             .onChange(of: selectedSnapshotId) { _, newValue in
                 if let id = newValue {
                     onSelectSnapshot(id)
@@ -85,6 +86,7 @@ struct VersionListView: View {
 /// Individual row for a snapshot in the list
 struct SnapshotRowView: View {
     let snapshot: Snapshot
+    let theme: AppColorScheme
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -99,13 +101,14 @@ struct SnapshotRowView: View {
                 // Display name
                 Text(snapshot.displayName)
                     .font(.body)
+                    .foregroundStyle(theme.sidebarText)
                     .lineLimit(1)
             }
 
             // Time
             Text(formattedTime)
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(theme.sidebarTextSecondary)
         }
         .padding(.vertical, 4)
     }

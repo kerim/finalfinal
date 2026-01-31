@@ -207,7 +207,7 @@ struct VersionHistoryWindow: View {
         VStack {
             Spacer()
             Text("Select a version to compare")
-                .foregroundStyle(.secondary)
+                .foregroundStyle(themeManager.currentTheme.editorTextSecondary)
             Spacer()
         }
     }
@@ -219,11 +219,12 @@ struct VersionHistoryWindow: View {
             Spacer()
             Image(systemName: "exclamationmark.triangle")
                 .font(.system(size: 48))
-                .foregroundStyle(.orange)
+                .foregroundStyle(themeManager.currentTheme.accentColor)
             Text("Project Closed")
                 .font(.headline)
+                .foregroundStyle(themeManager.currentTheme.editorText)
             Text("The project was closed. Restore operations are disabled.")
-                .foregroundStyle(.secondary)
+                .foregroundStyle(themeManager.currentTheme.editorTextSecondary)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 300)
             Button("Close Window") {
@@ -241,11 +242,12 @@ struct VersionHistoryWindow: View {
             Spacer()
             Image(systemName: "questionmark.circle")
                 .font(.system(size: 48))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(themeManager.currentTheme.editorTextSecondary)
             Text("No Project Data")
                 .font(.headline)
+                .foregroundStyle(themeManager.currentTheme.editorText)
             Text("Open a project and try again.")
-                .foregroundStyle(.secondary)
+                .foregroundStyle(themeManager.currentTheme.editorTextSecondary)
             Button("Close") {
                 dismiss()
             }
@@ -261,11 +263,12 @@ struct VersionHistoryWindow: View {
             Spacer()
             Image(systemName: "clock.arrow.circlepath")
                 .font(.system(size: 48))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(themeManager.currentTheme.editorTextSecondary)
             Text("No Version History")
                 .font(.headline)
+                .foregroundStyle(themeManager.currentTheme.editorText)
             Text("Version history will appear here when you save versions or when auto-backups are created.")
-                .foregroundStyle(.secondary)
+                .foregroundStyle(themeManager.currentTheme.editorTextSecondary)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 300)
             Spacer()
@@ -280,11 +283,12 @@ struct VersionHistoryWindow: View {
             Spacer()
             Image(systemName: "exclamationmark.triangle")
                 .font(.system(size: 48))
-                .foregroundStyle(.orange)
+                .foregroundStyle(themeManager.currentTheme.accentColor)
             Text("Error Loading History")
                 .font(.headline)
+                .foregroundStyle(themeManager.currentTheme.editorText)
             Text(message)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(themeManager.currentTheme.editorTextSecondary)
             Button("Try Again") {
                 Task { await loadSnapshots() }
             }
