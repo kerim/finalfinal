@@ -77,6 +77,8 @@ The app isn't notarized, so macOS will warn about an unidentified developer.
 | Feature | Description |
 |---------|-------------|
 | Package format | `.ff` package with embedded SQLite database |
+| Project picker | Shown on launch with recent projects and quick actions |
+| Getting Started | Interactive guide accessible from Help menu or project picker |
 | Recent projects | Quick access to recently opened projects |
 | Color themes | Dawn, Dusk, Ocean, Forest, Parchment |
 
@@ -112,6 +114,8 @@ See `CLAUDE.md` for detailed architecture documentation.
 |----------|--------|
 | Cmd+/ | Toggle WYSIWYG/Source mode |
 | Cmd+Shift+F | Toggle focus mode |
+| Cmd+[ | Toggle outline sidebar |
+| Cmd+] | Toggle annotations sidebar |
 | Cmd+S | Save |
 | Cmd+N | New project |
 | Cmd+O | Open project |

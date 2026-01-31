@@ -355,6 +355,15 @@ final final/
 - [ ] Current section name displayed
 - [ ] Editor mode indicator shown
 
+**Onboarding:**
+- [x] Project picker shown on launch when no project is open
+- [x] Getting Started guide accessible from Help menu
+- [x] Getting Started accessible from project picker
+
+**Sidebar toggles:**
+- [x] Cmd+[ toggles outline sidebar
+- [x] Cmd+] toggles annotations sidebar
+
 ---
 
 ## Phase 0.2: Stabilization & Production Readiness

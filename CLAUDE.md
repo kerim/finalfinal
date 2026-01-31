@@ -184,6 +184,7 @@ Or use the reflect command for instruction improvements:
 - [x] **Phase 1.6b** - Editor ↔ sidebar sync with database wiring (2026-01-27)
 - [x] **Phase 1.7** - Annotations (task, comment, reference) (2026-01-29)
 - [x] **Phase 1.8** - Zotero citation integration (2026-01-29)
+- [x] **Phase 1.9** - Onboarding (project picker, Getting Started guide, sidebar toggles) (2026-01-31)
 
 ## Phase 1 Verification
 

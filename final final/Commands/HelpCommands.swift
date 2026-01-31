@@ -14,9 +14,7 @@ struct HelpCommands: Commands {
     var body: some Commands {
         CommandGroup(replacing: .help) {
             Button("Getting Started") {
-                print("[HelpCommands] Getting Started button clicked")
                 onGettingStarted()
-                print("[HelpCommands] onGettingStarted callback completed")
             }
 
             Divider()
