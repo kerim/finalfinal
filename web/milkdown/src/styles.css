@@ -6,6 +6,9 @@
   --accent-color: #007aff;
 }
 
+/* Global link theming - ensures injected HTML (e.g., citeproc) uses theme colors */
+a { color: var(--accent-color); }
+
 html, body {
   margin: 0;
   padding: 0;
