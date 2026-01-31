@@ -1011,8 +1011,9 @@ struct ContentView: View {
             // Record initial content hash for Getting Started edit detection
             // This captures post-normalization content after sync
             if documentManager.isGettingStartedProject {
-                // Small delay to ensure editor has processed content
-                try? await Task.sleep(for: .milliseconds(100))
+                // Wait for editor to fully load and normalize content
+                // Editor polling interval is 500ms, so wait 1000ms to be safe
+                try? await Task.sleep(for: .milliseconds(1000))
                 documentManager.recordGettingStartedLoadedContent(editorState.content)
             }
         } catch {

@@ -93,15 +93,18 @@ struct FinalFinalApp: App {
             }
         }
         .commands {
+            // HelpCommands first to ensure Help menu is created before other commands
+            HelpCommands(onGettingStarted: {
+                // Post notification to handle in view hierarchy
+                print("[FinalFinalApp] HelpCommands callback - posting .openGettingStarted")
+                NotificationCenter.default.post(name: .openGettingStarted, object: nil)
+                print("[FinalFinalApp] HelpCommands callback - notification posted")
+            })
             FileCommands()
             ViewCommands()
             ThemeCommands()
             EditorCommands()
             ExportCommands()
-            HelpCommands(onGettingStarted: {
-                // Post notification to handle in view hierarchy
-                NotificationCenter.default.post(name: .openGettingStarted, object: nil)
-            })
         }
         .handlesExternalEvents(matching: ["open"])
 
