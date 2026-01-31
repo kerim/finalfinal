@@ -40,6 +40,10 @@ declare global {
       insertAnnotation: (type: string) => void;
       // Highlight API
       toggleHighlight: () => boolean;
+      // Citation API (CAYW picker callbacks)
+      citationPickerCallback: (data: any, items: any[]) => void;
+      citationPickerCancelled: () => void;
+      citationPickerError: (message: string) => void;
     };
     __CODEMIRROR_DEBUG__?: {
       editorReady: boolean;
@@ -52,6 +56,9 @@ declare global {
 
 // Track slash command execution for smart undo
 let pendingSlashUndo = false;
+
+// Track pending CAYW citation picker request
+let pendingCAYWRange: { start: number; end: number } | null = null;
 
 // Slash command completions for section breaks and other commands
 function slashCompletions(context: CompletionContext): CompletionResult | null {
@@ -197,6 +204,22 @@ function slashCompletions(context: CompletionContext): CompletionResult | null {
             selection: { anchor: from + 19 }  // Position cursor inside the reference
           });
           pendingSlashUndo = true;
+        }
+      },
+      {
+        label: '/cite',
+        detail: 'Insert citation from Zotero',
+        apply: (view: EditorView, _completion: any, from: number, to: number) => {
+          console.log('[CodeMirror /cite] Opening CAYW picker, from:', from, 'to:', to);
+          // Store the range to replace (the /cite text)
+          pendingCAYWRange = { start: from, end: to };
+          // Call Swift to open CAYW picker
+          if ((window as any).webkit?.messageHandlers?.openCitationPicker) {
+            (window as any).webkit.messageHandlers.openCitationPicker.postMessage(from);
+          } else {
+            console.warn('[CodeMirror /cite] Swift message handler not available');
+            pendingCAYWRange = null;
+          }
         }
       }
     ]
@@ -635,6 +658,49 @@ window.FinalFinal = {
     editorView.focus();
     console.log('[CodeMirror] toggleHighlight: added');
     return true;
+  },
+
+  // Citation API (CAYW picker callbacks)
+  citationPickerCallback(data: any, _items: any[]) {
+    console.log('[CodeMirror] citationPickerCallback:', data);
+    if (!editorView || !pendingCAYWRange) {
+      console.warn('[CodeMirror] citationPickerCallback: no editor or pending range');
+      pendingCAYWRange = null;
+      return;
+    }
+
+    const { start, end } = pendingCAYWRange;
+    pendingCAYWRange = null;
+
+    // Build Pandoc citation syntax: [@citekey1; @citekey2]
+    const citekeys = data.citekeys as string[];
+    const rawSyntax = data.rawSyntax as string || `[@${citekeys.join('; @')}]`;
+
+    console.log('[CodeMirror] Inserting citation:', rawSyntax);
+
+    // Replace /cite with the citation syntax
+    editorView.dispatch({
+      changes: { from: start, to: end, insert: rawSyntax },
+      selection: { anchor: start + rawSyntax.length }
+    });
+    editorView.focus();
+  },
+
+  citationPickerCancelled() {
+    console.log('[CodeMirror] citationPickerCancelled');
+    pendingCAYWRange = null;
+    if (editorView) {
+      editorView.focus();
+    }
+  },
+
+  citationPickerError(message: string) {
+    console.error('[CodeMirror] citationPickerError:', message);
+    pendingCAYWRange = null;
+    alert(message);
+    if (editorView) {
+      editorView.focus();
+    }
   }
 };
 

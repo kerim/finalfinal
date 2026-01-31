@@ -118,6 +118,8 @@ declare global {
       citationPickerCallback: (data: CAYWCallbackData, items: CSLItem[]) => void;
       citationPickerCancelled: () => void;
       citationPickerError: (message: string) => void;
+      // Edit citation callback (for clicking existing citations)
+      editCitationCallback: (data: EditCitationCallbackData, items: CSLItem[]) => void;
       // Debug API
       getCAYWDebugState: () => { pendingCAYWRange: { start: number; end: number } | null; hasEditor: boolean; docSize: number | null };
     };
@@ -611,6 +613,16 @@ interface CAYWCallbackData {
   cmdStart: number;
 }
 
+// Interface for edit citation callback data from Swift
+interface EditCitationCallbackData {
+  pos: number;           // Position of the citation node to update
+  rawSyntax: string;
+  citekeys: string[];
+  locators: string;
+  prefix: string;
+  suppressAuthor: boolean;
+}
+
 /**
  * Handle successful CAYW picker callback from Swift
  * Inserts citation node at the stored position range
@@ -736,6 +748,54 @@ function handleCAYWError(message: string): void {
     const view = editorInstance.ctx.get(editorViewCtx);
     view.focus();
   }
+}
+
+/**
+ * Handle edit citation callback from Swift
+ * Updates an existing citation node at the specified position
+ */
+function handleEditCitationCallback(data: EditCitationCallbackData, items: CSLItem[]): void {
+  console.log('[EditCitation] === handleEditCitationCallback called ===');
+  console.log('[EditCitation] data:', JSON.stringify(data));
+  console.log('[EditCitation] items count:', items.length);
+
+  if (!editorInstance) {
+    console.error('[EditCitation] FAIL: No editor instance');
+    return;
+  }
+
+  // Add items to citeproc engine (use addItems with array, not addItem)
+  const engine = getCiteprocEngine();
+  engine.addItems(items);
+  console.log('[EditCitation] Added', items.length, 'items to citeproc engine');
+
+  const view = editorInstance.ctx.get(editorViewCtx);
+  const pos = data.pos;
+
+  // Verify node at position is a citation
+  const node = view.state.doc.nodeAt(pos);
+  if (!node || node.type.name !== 'citation') {
+    console.error('[EditCitation] FAIL: No citation node at pos', pos, 'found:', node?.type.name);
+    return;
+  }
+
+  console.log('[EditCitation] Found citation node at pos', pos);
+
+  // Update the citation node with new attributes
+  const citekeyStr = data.citekeys.join(',');
+  const tr = view.state.tr.setNodeMarkup(pos, undefined, {
+    citekeys: citekeyStr,
+    locators: data.locators,
+    prefix: data.prefix,
+    suffix: '',
+    suppressAuthor: data.suppressAuthor,
+    rawSyntax: data.rawSyntax,
+  });
+
+  view.dispatch(tr);
+  view.focus();
+
+  console.log('[EditCitation] SUCCESS: Citation updated with citekeys:', citekeyStr);
 }
 
 async function initEditor() {
@@ -1410,6 +1470,9 @@ window.FinalFinal = {
     setCitationLibrary(items);
     // Update citeproc engine
     getCiteprocEngine().setBibliography(items);
+    // Notify citation nodes that library has been updated
+    // This allows them to re-render with formatted display
+    document.dispatchEvent(new CustomEvent('citation-library-updated'));
     // Trigger re-render of any existing citations
     if (editorInstance) {
       try {
@@ -1480,6 +1543,11 @@ window.FinalFinal = {
 
   citationPickerError(message: string) {
     handleCAYWError(message);
+  },
+
+  // Edit citation callback (for clicking existing citations)
+  editCitationCallback(data: EditCitationCallbackData, items: CSLItem[]) {
+    handleEditCitationCallback(data, items);
   },
 
   // Debug API for Swift to query CAYW state

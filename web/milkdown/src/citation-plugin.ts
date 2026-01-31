@@ -662,15 +662,21 @@ const citationNodeView = $view(citationNode, (ctx: Ctx) => {
       dom.dataset.rawsyntax = attrs.rawSyntax;
     };
 
-    // Click handler - open popup
+    // Click handler - open in-app edit popup for citation editing
     dom.addEventListener('click', (e) => {
       e.preventDefault();
       e.stopPropagation();
       const pos = typeof getPos === 'function' ? getPos() : null;
       if (pos !== null && pos !== undefined) {
-        showCitationEditPopup(pos, view, node.attrs as CitationAttrs);
+        const nodeAttrs = node.attrs as CitationAttrs;
+        // Always use in-app popup for editing citation attributes
+        showCitationEditPopup(pos, view, nodeAttrs);
       }
     });
+
+    // Listen for citation library updates to re-render formatted display
+    const onLibraryUpdate = () => updateDisplay();
+    document.addEventListener('citation-library-updated', onLibraryUpdate);
 
     // Initial render
     updateDisplay();
@@ -689,7 +695,8 @@ const citationNodeView = $view(citationNode, (ctx: Ctx) => {
         return true;
       },
       destroy: () => {
-        // Nothing to clean up - popup is singleton
+        // Clean up event listener
+        document.removeEventListener('citation-library-updated', onLibraryUpdate);
       },
       // Let ProseMirror handle events normally (no edit mode)
       stopEvent: () => false,

@@ -336,8 +336,14 @@ struct MilkdownEditor: NSViewRepresentable {
         /// Push citation library to the editor for search and formatting
         func setCitationLibrary(_ itemsJSON: String) {
             guard isEditorReady, let webView else { return }
-            // Escape backticks for template literal
-            let escaped = itemsJSON.replacingOccurrences(of: "`", with: "\\`")
+            // Escape for JavaScript template literal:
+            // 1. Backslashes first (to avoid double-escaping)
+            // 2. Backticks (template delimiter)
+            // 3. ${  (template interpolation)
+            let escaped = itemsJSON
+                .replacingOccurrences(of: "\\", with: "\\\\")
+                .replacingOccurrences(of: "`", with: "\\`")
+                .replacingOccurrences(of: "${", with: "\\${")
             webView.evaluateJavaScript("window.FinalFinal.setCitationLibrary(JSON.parse(`\(escaped)`))") { _, _ in }
         }
 
@@ -425,6 +431,22 @@ struct MilkdownEditor: NSViewRepresentable {
             restoreCursorPositionIfNeeded()
             focusEditor()
             startPolling()
+
+            // Push cached citation library to editor (ensures citations format correctly
+            // when switching from CodeMirror where CSL items were fetched)
+            pushCachedCitationLibrary()
+        }
+
+        /// Push cached CSL items from ZoteroService to the editor's citeproc engine
+        private func pushCachedCitationLibrary() {
+            let zotero = ZoteroService.shared
+            let cachedJSON = zotero.cachedItemsJSON()
+
+            // Only push if there are cached items
+            if cachedJSON != "[]" {
+                print("[MilkdownEditor] Pushing \(zotero.cachedItems.count) cached CSL items to editor")
+                setCitationLibrary(cachedJSON)
+            }
         }
 
         /// Focus the editor so user can start typing immediately

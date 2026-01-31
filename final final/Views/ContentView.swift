@@ -250,7 +250,9 @@ Use this content to verify that:
             // Check for citation changes and update bibliography if needed
             if let projectId = documentManager.projectId {
                 let citekeys = BibliographySyncService.extractCitekeys(from: newValue)
+                print("[ContentView] Bibliography check - extracted \(citekeys.count) citekeys: \(citekeys)")
                 if !citekeys.isEmpty {
+                    print("[ContentView] Calling checkAndUpdateBibliography with \(citekeys.count) citekeys")
                     bibliographySyncService.checkAndUpdateBibliography(
                         currentCitekeys: citekeys,
                         projectId: projectId

@@ -76,25 +76,46 @@ final class BibliographySyncService {
         currentCitekeys: [String],
         projectId: String
     ) {
+        print("[BibliographySyncService] checkAndUpdateBibliography called with \(currentCitekeys.count) citekeys")
+
         // Skip if auto-update is disabled
-        guard isAutoUpdateEnabled else { return }
+        guard isAutoUpdateEnabled else {
+            print("[BibliographySyncService] SKIP: auto-update disabled")
+            return
+        }
 
         // Skip if currently syncing
-        guard state == .idle else { return }
+        guard state == .idle else {
+            print("[BibliographySyncService] SKIP: currently syncing (state=\(state))")
+            return
+        }
 
         // Check if citekeys have changed
         let currentSet = Set(currentCitekeys)
-        guard currentSet != lastKnownCitekeys else { return }
+        guard currentSet != lastKnownCitekeys else {
+            print("[BibliographySyncService] SKIP: citekeys unchanged (last=\(lastKnownCitekeys))")
+            return
+        }
+
+        print("[BibliographySyncService] Citekeys changed: \(lastKnownCitekeys) -> \(currentSet)")
+        print("[BibliographySyncService] Starting debounce (2s)...")
 
         // Debounce the update
         debounceTask?.cancel()
         debounceTask = Task { [weak self] in
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled else {
+                print("[BibliographySyncService] Debounce task cancelled before sleep")
+                return
+            }
 
             // Wait for debounce interval
             try? await Task.sleep(nanoseconds: UInt64(2_000_000_000))
 
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled else {
+                print("[BibliographySyncService] Debounce task cancelled after sleep")
+                return
+            }
+            print("[BibliographySyncService] Debounce complete, calling performBibliographyUpdate")
             await self?.performBibliographyUpdate(citekeys: currentCitekeys, projectId: projectId)
         }
     }
@@ -123,29 +144,45 @@ final class BibliographySyncService {
     // MARK: - Private Methods
 
     private func performBibliographyUpdate(citekeys: [String], projectId: String) async {
-        guard let database else { return }
+        print("[BibliographySyncService] performBibliographyUpdate START with \(citekeys.count) citekeys")
+
+        guard let database else {
+            print("[BibliographySyncService] ERROR: database is nil")
+            return
+        }
 
         let zoteroService = ZoteroService.shared
-        guard zoteroService.isConnected else { return }
+        guard zoteroService.isConnected else {
+            print("[BibliographySyncService] ERROR: Zotero not connected")
+            return
+        }
 
+        print("[BibliographySyncService] Setting state to syncing")
         state = .syncing
-        defer { state = .idle }
+        defer {
+            state = .idle
+            print("[BibliographySyncService] State reset to idle")
+        }
 
         // Update last known citekeys
         lastKnownCitekeys = Set(citekeys)
+        print("[BibliographySyncService] Updated lastKnownCitekeys to \(lastKnownCitekeys)")
 
         // Skip if no citations
         guard !citekeys.isEmpty else {
+            print("[BibliographySyncService] SKIP: no citekeys")
             // Could optionally remove bibliography section here
             return
         }
 
         // Check for missing items and fetch them from Zotero
         let missingKeys = citekeys.filter { !zoteroService.hasItem(citekey: $0) }
+        print("[BibliographySyncService] Missing keys to fetch: \(missingKeys)")
         if !missingKeys.isEmpty {
             do {
                 print("[BibliographySyncService] Fetching \(missingKeys.count) missing items: \(missingKeys)")
-                _ = try await zoteroService.fetchItemsForCitekeys(missingKeys)
+                let fetched = try await zoteroService.fetchItemsForCitekeys(missingKeys)
+                print("[BibliographySyncService] Fetched \(fetched.count) items")
             } catch {
                 print("[BibliographySyncService] Failed to fetch items: \(error)")
             }
@@ -153,11 +190,16 @@ final class BibliographySyncService {
 
         // Generate bibliography markdown (items now in cache)
         let bibliographyContent = generateBibliographyMarkdown(citekeys: citekeys)
+        print("[BibliographySyncService] Generated bibliography content (\(bibliographyContent.count) chars)")
 
         // Check if content actually changed
         let contentHash = bibliographyContent.hashValue
-        guard contentHash != lastGeneratedHash else { return }
+        guard contentHash != lastGeneratedHash else {
+            print("[BibliographySyncService] SKIP: content hash unchanged (\(contentHash))")
+            return
+        }
         lastGeneratedHash = contentHash
+        print("[BibliographySyncService] Content hash changed, updating section...")
 
         // Find or create bibliography section
         do {
@@ -166,6 +208,7 @@ final class BibliographySyncService {
                 projectId: projectId,
                 database: database
             )
+            print("[BibliographySyncService] Bibliography section updated successfully")
         } catch {
             print("[BibliographySyncService] Failed to update bibliography: \(error)")
         }
