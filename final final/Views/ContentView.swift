@@ -1421,14 +1421,13 @@ extension View {
                 annotationSyncService.contentChanged(newValue)
 
                 // Check for citation changes and update bibliography if needed
+                // Always call even when citekeys is empty - this triggers bibliography removal
                 if let projectId = documentManager.projectId {
                     let citekeys = BibliographySyncService.extractCitekeys(from: newValue)
-                    if !citekeys.isEmpty {
-                        bibliographySyncService.checkAndUpdateBibliography(
-                            currentCitekeys: citekeys,
-                            projectId: projectId
-                        )
-                    }
+                    bibliographySyncService.checkAndUpdateBibliography(
+                        currentCitekeys: citekeys,
+                        projectId: projectId
+                    )
                 }
 
                 // Trigger auto-backup timer on content change

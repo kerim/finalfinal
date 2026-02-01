@@ -171,9 +171,10 @@ class EditorViewState {
                         }
                         self.previousBibliographyHash = currentHash
                     } else {
-                        // Bibliography was removed - reset hash so next creation triggers notification
+                        // Bibliography was removed - post notification to rebuild content and reset hash
                         if self.previousBibliographyHash != nil {
-                            print("[OBSERVE] Bibliography section removed, resetting hash")
+                            print("[OBSERVE] Bibliography section removed, posting notification and resetting hash")
+                            NotificationCenter.default.post(name: .bibliographySectionChanged, object: nil)
                             self.previousBibliographyHash = nil
                         }
                     }

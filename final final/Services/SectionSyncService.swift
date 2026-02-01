@@ -188,8 +188,9 @@ class SectionSyncService {
     /// that already contains `<!-- ::auto-bibliography:: -->` markers
     private func stripAutoBibliography(from markdown: String) -> String {
         // Pattern: <!-- ::auto-bibliography:: --> ... <!-- ::end-auto-bibliography:: -->
+        // Flexible whitespace to handle variations in pasted content
         // with optional trailing newline
-        let pattern = #"<!-- ::auto-bibliography:: -->[\s\S]*?<!-- ::end-auto-bibliography:: -->\n?"#
+        let pattern = #"<!--\s*::\s*auto-bibliography\s*::\s*-->[\s\S]*?<!--\s*::\s*end-auto-bibliography\s*::\s*-->\n?"#
         return markdown.replacingOccurrences(of: pattern, with: "", options: .regularExpression)
     }
 
