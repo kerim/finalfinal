@@ -271,44 +271,26 @@ struct ContentView: View {
     }
 
     private func reorderSection(_ request: SectionReorderRequest) {
-        print("[REORDER] === START ===")
-        // swiftlint:disable:next line_length
-        print("[REORDER] id=\(request.sectionId) target=\(request.targetSectionId ?? "nil") level=\(request.newLevel) parent=\(request.newParentId ?? "nil") subtree=\(request.isSubtreeDrag) children=\(request.childIds)")
-        print("[REORDER] Current sections count: \(editorState.sections.count)")
-        print("[REORDER] Section titles in order: \(editorState.sections.map { "\($0.title)[H\($0.headerLevel)]" })")
-
         sectionSyncService.cancelPendingSync()
 
         // Validate
         if request.newParentId == request.sectionId {
-            print("[REORDER] ERROR: newParentId equals sectionId - circular reference prevented")
             return
         }
         guard let fromIndex = editorState.sections.firstIndex(where: { $0.id == request.sectionId }) else {
-            print("[REORDER] ERROR: Section \(request.sectionId) not found in editorState.sections!")
             return
         }
-        print("[REORDER] fromIndex=\(fromIndex)")
 
         // Use the target section ID passed from OutlineSidebar (stable across zoom/filtering)
         let targetSectionId = request.targetSectionId
 
         // Early return for self-drop at same position (no-op)
         if targetSectionId == request.sectionId {
-            print("[REORDER] SKIP: Self-drop at same position")
             return
         }
 
         let sectionToMove = editorState.sections[fromIndex]
         let oldLevel = sectionToMove.headerLevel
-        print("[REORDER] Moving section: '\(sectionToMove.title)' from index \(fromIndex), oldLevel=\(oldLevel)")
-
-        if let targetId = targetSectionId,
-           let targetSection = editorState.sections.first(where: { $0.id == targetId }) {
-            print("[REORDER] Target section: '\(targetSection.title)' (insert AFTER this)")
-        } else {
-            print("[REORDER] Target section: nil (insert at beginning)")
-        }
 
         // Branch: Subtree drag vs single-card drag
         if request.isSubtreeDrag && !request.childIds.isEmpty {
@@ -324,10 +306,8 @@ struct ContentView: View {
 
         // Work with a local copy to batch all SwiftUI updates
         var sections = editorState.sections
-        print("[REORDER-SINGLE] Working with local copy of \(sections.count) sections")
 
         // 1. Promote orphaned children (on local copy)
-        print("[REORDER-SINGLE] Step 1: Promoting orphaned children...")
         promoteOrphanedChildrenInPlace(
             sections: &sections,
             movedSectionId: request.sectionId,
@@ -337,24 +317,19 @@ struct ContentView: View {
 
         // 2. Re-find section after promotions
         guard let currentFromIndex = sections.firstIndex(where: { $0.id == request.sectionId }) else {
-            print("[REORDER-SINGLE] ERROR: Section disappeared after promotions!")
             return
         }
-        print("[REORDER-SINGLE] Step 2: currentFromIndex after promotions = \(currentFromIndex)")
 
         // 3. Remove the section
         var removed = sections.remove(at: currentFromIndex)
-        print("[REORDER-SINGLE] Step 3: Removed section '\(removed.title)' from index \(currentFromIndex)")
 
         // 4. Find insertion point
         var finalIndex: Int
         if let targetId = targetSectionId,
            let targetIdx = sections.firstIndex(where: { $0.id == targetId }) {
             finalIndex = targetIdx + 1
-            print("[REORDER-SINGLE] Step 4: Found target at idx \(targetIdx), finalIndex = \(finalIndex)")
         } else {
             finalIndex = 0
-            print("[REORDER-SINGLE] Step 4: No target, finalIndex = 0")
         }
         finalIndex = min(max(0, finalIndex), sections.count)
 
@@ -369,14 +344,12 @@ struct ContentView: View {
                 headerLevel: request.newLevel,
                 markdownContent: newMarkdown
             )
-            print("[REORDER-SINGLE] Step 5: Updated level from \(oldLevel) to \(request.newLevel)")
         } else {
             removed = removed.withUpdates(parentId: request.newParentId)
         }
 
         // 6. Insert at calculated position
         sections.insert(removed, at: finalIndex)
-        print("[REORDER-SINGLE] Step 6: Inserted '\(removed.title)' at finalIndex \(finalIndex)")
 
         // 7. Finalize (shared logic)
         finalizeSectionReorder(sections: sections)
@@ -386,9 +359,6 @@ struct ContentView: View {
     private func reorderSubtree(request: SectionReorderRequest, fromIndex: Int, oldLevel: Int) {
         let targetSectionId = request.targetSectionId
         let levelDelta = request.newLevel - oldLevel  // How much to shift all levels
-
-        print("[REORDER-SUBTREE] levelDelta=\(levelDelta) (newLevel=\(request.newLevel) - oldLevel=\(oldLevel))")
-        print("[REORDER-SUBTREE] Moving \(request.childIds.count + 1) sections together")
 
         // Work with a local copy
         var sections = editorState.sections
@@ -402,7 +372,6 @@ struct ContentView: View {
                 sectionsToMove.append(section)
             }
         }
-        print("[REORDER-SUBTREE] Step 1: Collected \(sectionsToMove.count) sections to move")
 
         // 2. Remove all sections being moved (in reverse order to maintain indices)
         let indicesToRemove = allIdsToMove.compactMap { id in
@@ -412,17 +381,14 @@ struct ContentView: View {
         for idx in indicesToRemove {
             sections.remove(at: idx)
         }
-        print("[REORDER-SUBTREE] Step 2: Removed \(allIdsToMove.count) sections from original positions")
 
         // 3. Find insertion point
         var insertionIndex: Int
         if let targetId = targetSectionId,
            let targetIdx = sections.firstIndex(where: { $0.id == targetId }) {
             insertionIndex = targetIdx + 1
-            print("[REORDER-SUBTREE] Step 3: Found target at idx \(targetIdx), insertionIndex = \(insertionIndex)")
         } else {
             insertionIndex = 0
-            print("[REORDER-SUBTREE] Step 3: No target, insertionIndex = 0")
         }
         insertionIndex = min(max(0, insertionIndex), sections.count)
 
@@ -444,7 +410,6 @@ struct ContentView: View {
                     markdownContent: newMarkdown
                 )
                 adjustedSections.append(adjusted)
-                print("[REORDER-SUBTREE] Step 4: Parent '\(section.title)' H\(section.headerLevel) -> H\(newSectionLevel)")
             } else {
                 // Child section - apply delta but parent will be recalculated later
                 let newMarkdown = sectionSyncService.updateHeaderLevel(
@@ -456,7 +421,6 @@ struct ContentView: View {
                     markdownContent: newMarkdown
                 )
                 adjustedSections.append(adjusted)
-                print("[REORDER-SUBTREE] Step 4: Child '\(section.title)' H\(section.headerLevel) -> H\(newSectionLevel)")
             }
         }
 
@@ -464,7 +428,6 @@ struct ContentView: View {
         for (offset, section) in adjustedSections.enumerated() {
             sections.insert(section, at: insertionIndex + offset)
         }
-        print("[REORDER-SUBTREE] Step 5: Inserted \(adjustedSections.count) sections at index \(insertionIndex)")
 
         // 6. Finalize (shared logic)
         finalizeSectionReorder(sections: sections)
@@ -483,42 +446,29 @@ struct ContentView: View {
             )
             currentOffset += mutableSections[index].markdownContent.count
         }
-        print("[REORDER-FINALIZE] Recalculated sortOrders and offsets")
 
         // Single atomic update to trigger SwiftUI
         editorState.sections = mutableSections
-        print("[REORDER-FINALIZE] Updated editorState.sections")
-        print("[REORDER-FINALIZE] Final order: \(editorState.sections.map { "\($0.sortOrder):\($0.title)[H\($0.headerLevel)]" })")
 
         // Recalculate parent relationships and enforce hierarchy
         recalculateParentRelationships()
         enforceHierarchyConstraints()
-        print("[REORDER-FINALIZE] Recalculated parent relationships and enforced hierarchy")
 
         // Rebuild document content (zoom-aware)
         rebuildDocumentContent()
-        print("[REORDER-FINALIZE] Rebuilt document content")
 
         // Persist reordered sections to database
-        print("[REORDER-FINALIZE] Dispatching persistReorderedSections()...")
         Task {
             await persistReorderedSections()
         }
-        print("[REORDER] === END ===")
     }
 
     /// Persist current sections to database after reorder
     private func persistReorderedSections() async {
-        print("[PERSIST] === START ===")
-        print("[PERSIST] isObservationSuppressed: \(editorState.isObservationSuppressed)")
-
         guard let db = documentManager.projectDatabase,
               let pid = documentManager.projectId else {
-            print("[PERSIST] ERROR: Database or projectId is nil!")
             return
         }
-
-        print("[PERSIST] Building changes for \(editorState.sections.count) sections")
 
         // Build change set for all sections with updated sortOrder and potentially new levels
         var changes: [SectionChange] = []
@@ -533,17 +483,14 @@ struct ContentView: View {
                 parentId: .some(viewModel.parentId)  // Use .some to explicitly set (even if nil)
             )
             changes.append(.update(id: viewModel.id, updates: updates))
-            print("[PERSIST] Change \(index): '\(viewModel.title)' sortOrder=\(index), level=\(viewModel.headerLevel)")
         }
 
         do {
             try db.applySectionChanges(changes, for: pid)
-            print("[PERSIST] SUCCESS: \(changes.count) changes applied to database")
             // ValueObservation will automatically update the sidebar
         } catch {
-            print("[PERSIST] ERROR: \(error)")
+            print("[ContentView] Error persisting sections: \(error)")
         }
-        print("[PERSIST] === END ===")
     }
 
     /// Promote orphaned children in-place on a local array (avoids multiple SwiftUI updates)
@@ -595,15 +542,9 @@ struct ContentView: View {
 
     /// Rebuild document content based on zoom state (extracted for reuse)
     private func rebuildDocumentContent() {
-        print("[REBUILD-DEBUG] rebuildDocumentContent called")
-        print("[REBUILD-DEBUG]   contentState: \(editorState.contentState)")
-        print("[REBUILD-DEBUG]   sections count: \(editorState.sections.count)")
-        print("[REBUILD-DEBUG]   current content length: \(editorState.content.count)")
-
         // Guard against rebuilding during editor transition - this would overwrite content
         // that hasn't been synced to sections yet
         guard editorState.contentState != .editorTransition else {
-            print("[REBUILD-DEBUG] SKIPPING - during editor transition")
             return
         }
 
@@ -612,14 +553,8 @@ struct ContentView: View {
             sectionsToRebuild = editorState.sections
                 .filter { zoomedIds.contains($0.id) }
                 .sorted { $0.sortOrder < $1.sortOrder }
-            print("[REBUILD-DEBUG]   zoomed mode: \(sectionsToRebuild.count) sections")
         } else {
             sectionsToRebuild = editorState.sections
-            print("[REBUILD-DEBUG]   full document: \(sectionsToRebuild.count) sections")
-        }
-
-        for (idx, section) in sectionsToRebuild.enumerated() {
-            print("[REBUILD-DEBUG]   [\(idx)] '\(section.title)' len:\(section.markdownContent.count)")
         }
 
         let newContent = sectionsToRebuild
@@ -630,7 +565,6 @@ struct ContentView: View {
             }
             .joined()
 
-        print("[REBUILD-DEBUG]   new content length: \(newContent.count)")
         editorState.content = newContent
     }
 
@@ -774,24 +708,17 @@ struct ContentView: View {
             editorState.contentState = .idle
         }
 
-        print("[HIERARCHY] Starting async enforcement")
-        print("[HIERARCHY] Before: \(editorState.sections.map { "H\($0.headerLevel):\($0.title)" })")
-
         // Enforce hierarchy constraints
         enforceHierarchyConstraintsStatic(
             sections: &editorState.sections,
             syncService: syncService
         )
 
-        print("[HIERARCHY] After enforcement: \(editorState.sections.map { "H\($0.headerLevel):\($0.title)" })")
-
         // Rebuild document content from corrected sections
         rebuildDocumentContentStatic(editorState: editorState)
 
         // Persist corrected sections to database (wait for completion)
         await persistEnforcedSections(editorState: editorState)
-
-        print("[HIERARCHY] Enforcement complete, state reset to idle")
     }
 
     /// Persist enforced sections directly to database
@@ -800,11 +727,8 @@ struct ContentView: View {
     private static func persistEnforcedSections(editorState: EditorViewState) async {
         guard let db = DocumentManager.shared.projectDatabase,
               let pid = DocumentManager.shared.projectId else {
-            print("[HIERARCHY] Cannot persist: no database or project ID")
             return
         }
-
-        print("[HIERARCHY] Persisting \(editorState.sections.count) enforced sections")
 
         var changes: [SectionChange] = []
         for (index, viewModel) in editorState.sections.enumerated() {
@@ -818,9 +742,8 @@ struct ContentView: View {
 
         do {
             try db.applySectionChanges(changes, for: pid)
-            print("[HIERARCHY] Persisted \(changes.count) section updates")
         } catch {
-            print("[HIERARCHY] Error persisting enforced sections: \(error)")
+            print("[ContentView] Error persisting enforced sections: \(error)")
         }
     }
 
@@ -1337,12 +1260,10 @@ extension View {
             }
             .onReceive(NotificationCenter.default.publisher(for: .toggleEditorMode)) { _ in
                 // Mark transition state BEFORE requesting toggle
-                print("[EDITOR-TOGGLE] Starting editor transition")
                 editorState.contentState = .editorTransition
                 editorState.requestEditorModeToggle()
             }
             .onReceive(NotificationCenter.default.publisher(for: .didSaveCursorPosition)) { notification in
-                print("[EDITOR-TOGGLE] didSaveCursorPosition received, content length: \(editorState.content.count)")
                 if let position = notification.userInfo?["position"] as? CursorPosition {
                     cursorRestore.wrappedValue = position
                 }
@@ -1351,7 +1272,6 @@ extension View {
                 // Use async to ensure SwiftUI has processed the mode change
                 Task { @MainActor in
                     try? await Task.sleep(for: .milliseconds(100))
-                    print("[EDITOR-TOGGLE] Clearing editorTransition state")
                     editorState.contentState = .idle
                 }
             }

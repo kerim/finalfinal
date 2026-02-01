@@ -179,12 +179,9 @@ function handleAddCitationClick(): void {
 
   const citation = getCitationAtCursor(editorView);
   if (!citation) {
-    console.warn('[CodeMirror] handleAddCitationClick: no citation at cursor');
     hideCitationAddButton();
     return;
   }
-
-  console.log('[CodeMirror] Add citation clicked, existing:', citation.text);
 
   // Store the range for merging later
   pendingAppendMode = true;
@@ -195,7 +192,6 @@ function handleAddCitationClick(): void {
   if ((window as any).webkit?.messageHandlers?.openCitationPicker) {
     (window as any).webkit.messageHandlers.openCitationPicker.postMessage(-1);
   } else {
-    console.warn('[CodeMirror] Swift message handler not available');
     pendingAppendMode = false;
     pendingAppendRange = null;
   }
@@ -246,26 +242,17 @@ function slashCompletions(context: CompletionContext): CompletionResult | null {
       {
         label: '/break',
         detail: 'Insert section break',
-        apply: (view: EditorView, _completion: any, from: number, to: number) => {
-          console.log(`[SLASH DEBUG] apply: from=${from}, to=${to}, text="${view.state.sliceDoc(from, to)}"`);
-          console.log(
-            `[SLASH DEBUG] doc BEFORE dispatch (around from): "${view.state.sliceDoc(Math.max(0, from - 5), from)}|${view.state.sliceDoc(from, to)}|${view.state.sliceDoc(to, to + 20)}"`
-          );
-          view.dispatch({
+        apply: (_view: EditorView, _completion: any, from: number, to: number) => {
+          editorView?.dispatch({
             changes: { from, to, insert: '<!-- ::break:: -->\n\n' },
           });
-          console.log(
-            `[SLASH DEBUG] doc AFTER dispatch (around from): "${view.state.sliceDoc(Math.max(0, from - 5), from + 30)}"`
-          );
           pendingSlashUndo = true;
-          console.log('[SLASH DEBUG] pendingSlashUndo set to true');
         },
       },
       {
         label: '/h1',
         detail: 'Heading 1',
         apply: (view: EditorView, _completion: any, from: number, to: number) => {
-          console.log(`[SLASH DEBUG] apply /h1: from=${from}, to=${to}, text="${view.state.sliceDoc(from, to)}"`);
           // Transform entire line to heading
           const line = view.state.doc.lineAt(from);
           const lineText = line.text;
@@ -288,14 +275,12 @@ function slashCompletions(context: CompletionContext): CompletionResult | null {
             changes: { from: line.from, to: line.to, insert: `# ${combinedText}` },
           });
           pendingSlashUndo = true;
-          console.log('[SLASH DEBUG] pendingSlashUndo set to true');
         },
       },
       {
         label: '/h2',
         detail: 'Heading 2',
         apply: (view: EditorView, _completion: any, from: number, to: number) => {
-          console.log(`[SLASH DEBUG] apply /h2: from=${from}, to=${to}, text="${view.state.sliceDoc(from, to)}"`);
           // Transform entire line to heading
           const line = view.state.doc.lineAt(from);
           const lineText = line.text;
@@ -318,14 +303,12 @@ function slashCompletions(context: CompletionContext): CompletionResult | null {
             changes: { from: line.from, to: line.to, insert: `## ${combinedText}` },
           });
           pendingSlashUndo = true;
-          console.log('[SLASH DEBUG] pendingSlashUndo set to true');
         },
       },
       {
         label: '/h3',
         detail: 'Heading 3',
         apply: (view: EditorView, _completion: any, from: number, to: number) => {
-          console.log(`[SLASH DEBUG] apply /h3: from=${from}, to=${to}, text="${view.state.sliceDoc(from, to)}"`);
           // Transform entire line to heading
           const line = view.state.doc.lineAt(from);
           const lineText = line.text;
@@ -348,7 +331,6 @@ function slashCompletions(context: CompletionContext): CompletionResult | null {
             changes: { from: line.from, to: line.to, insert: `### ${combinedText}` },
           });
           pendingSlashUndo = true;
-          console.log('[SLASH DEBUG] pendingSlashUndo set to true');
         },
       },
       {
@@ -387,15 +369,13 @@ function slashCompletions(context: CompletionContext): CompletionResult | null {
       {
         label: '/cite',
         detail: 'Insert citation from Zotero',
-        apply: (view: EditorView, _completion: any, from: number, to: number) => {
-          console.log('[CodeMirror /cite] Opening CAYW picker, from:', from, 'to:', to);
+        apply: (_view: EditorView, _completion: any, from: number, to: number) => {
           // Store the range to replace (the /cite text)
           pendingCAYWRange = { start: from, end: to };
           // Call Swift to open CAYW picker
           if ((window as any).webkit?.messageHandlers?.openCitationPicker) {
             (window as any).webkit.messageHandlers.openCitationPicker.postMessage(from);
           } else {
-            console.warn('[CodeMirror /cite] Swift message handler not available');
             pendingCAYWRange = null;
           }
         },
@@ -415,22 +395,6 @@ window.__CODEMIRROR_DEBUG__ = {
   lastContentLength: 0,
   lastStatsUpdate: '',
 };
-
-// === Diagnostic logging for cursor position debugging ===
-let _debugSeq = 0;
-const _debugLog: Array<{ seq: number; ts: string; msg: string }> = [];
-
-function debugLog(msg: string) {
-  const seq = ++_debugSeq;
-  const ts = performance.now().toFixed(2);
-  console.log(`[CM DEBUG ${seq}] T=${ts}ms: ${msg}`);
-  _debugLog.push({ seq, ts, msg });
-  // Keep only last 50 entries
-  if (_debugLog.length > 50) _debugLog.shift();
-}
-
-// Expose debug log for Swift to query
-(window as any).__CM_DEBUG_LOG__ = _debugLog;
 
 function initEditor() {
   const container = document.getElementById('editor');
@@ -456,7 +420,6 @@ function initEditor() {
         {
           key: 'Mod-z',
           run: (view) => {
-            console.log(`[SLASH DEBUG] Mod-z keymap, pendingSlashUndo=${pendingSlashUndo}`);
             if (pendingSlashUndo) {
               // Undo the slash command insertion
               undo(view);
@@ -465,7 +428,6 @@ function initEditor() {
               const pos = view.state.selection.main.head;
               if (pos > 0) {
                 const charBefore = view.state.sliceDoc(pos - 1, pos);
-                console.log(`[SLASH DEBUG] charBefore="${charBefore}"`);
                 if (charBefore === '/') {
                   view.dispatch({
                     changes: { from: pos - 1, to: pos, insert: '' },
@@ -537,7 +499,6 @@ function initEditor() {
   });
 
   window.__CODEMIRROR_DEBUG__!.editorReady = true;
-  console.log('[CodeMirror] Editor initialized');
 }
 
 function wrapSelection(wrapper: string) {
@@ -570,20 +531,14 @@ function countWords(text: string): number {
 // Register window.FinalFinal API
 window.FinalFinal = {
   setContent(markdown: string) {
-    debugLog(`setContent START, ${markdown.length} chars`);
     if (!editorView) {
-      debugLog('setContent: no editorView');
       return;
     }
     const prevLen = editorView.state.doc.length;
-    const prevCursor = editorView.state.selection.main.head;
     editorView.dispatch({
       changes: { from: 0, to: prevLen, insert: markdown },
     });
-    const newLen = editorView.state.doc.length;
-    const newCursor = editorView.state.selection.main.head;
     window.__CODEMIRROR_DEBUG__!.lastContentLength = markdown.length;
-    debugLog(`setContent DONE, prevLen=${prevLen}, newLen=${newLen}, prevCursor=${prevCursor}, newCursor=${newCursor}`);
   },
 
   getContent(): string {
@@ -593,7 +548,6 @@ window.FinalFinal = {
 
   setFocusMode(_enabled: boolean) {
     // Focus mode is WYSIWYG-only; ignore in source mode
-    console.log('[CodeMirror] setFocusMode ignored (source mode)');
   },
 
   getStats() {
@@ -610,7 +564,6 @@ window.FinalFinal = {
     editorView.dispatch({
       effects: EditorView.scrollIntoView(pos, { y: 'start', yMargin: 50 }),
     });
-    console.log('[CodeMirror] scrollToOffset:', offset);
   },
 
   setTheme(cssVariables: string) {
@@ -625,7 +578,9 @@ window.FinalFinal = {
         propsToRemove.push(prop);
       }
     }
-    propsToRemove.forEach((prop) => root.style.removeProperty(prop));
+    for (const prop of propsToRemove) {
+      root.style.removeProperty(prop);
+    }
 
     // Set new CSS variables
     const pairs = cssVariables.split(';').filter((s) => s.trim());
@@ -635,35 +590,26 @@ window.FinalFinal = {
         root.style.setProperty(key, value);
       }
     });
-    console.log('[CodeMirror] Theme applied with', pairs.length, 'variables');
   },
 
   getCursorPosition(): { line: number; column: number } {
-    debugLog('getCursorPosition START');
     if (!editorView) {
-      debugLog('getCursorPosition: editor not ready, returning line 1 col 0');
       return { line: 1, column: 0 };
     }
     try {
       const pos = editorView.state.selection.main.head;
-      const docLen = editorView.state.doc.length;
       const line = editorView.state.doc.lineAt(pos);
-      const result = {
+      return {
         line: line.number, // CodeMirror lines are 1-indexed
         column: pos - line.from,
       };
-      debugLog(`getCursorPosition DONE: pos=${pos}, docLen=${docLen}, line=${result.line}, col=${result.column}`);
-      return result;
-    } catch (e) {
-      debugLog(`getCursorPosition error: ${e}`);
+    } catch (_e) {
       return { line: 1, column: 0 };
     }
   },
 
   setCursorPosition(lineCol: { line: number; column: number }) {
-    debugLog(`setCursorPosition START: line=${lineCol.line}, col=${lineCol.column}`);
     if (!editorView) {
-      debugLog('setCursorPosition: editor not ready');
       return;
     }
     try {
@@ -679,18 +625,13 @@ window.FinalFinal = {
 
       const pos = lineInfo.from + safeCol;
 
-      debugLog(`setCursorPosition: lineCount=${lineCount}, safeLine=${safeLine}, safeCol=${safeCol}, pos=${pos}`);
-
-      const cursorBefore = editorView.state.selection.main.head;
       editorView.dispatch({
         selection: { anchor: pos },
         effects: EditorView.scrollIntoView(pos, { y: 'center' }),
       });
-      const cursorAfter = editorView.state.selection.main.head;
-      debugLog(`setCursorPosition DONE: cursorBefore=${cursorBefore}, cursorAfter=${cursorAfter}`);
       editorView.focus();
-    } catch (e) {
-      debugLog(`setCursorPosition failed: ${e}`);
+    } catch (_e) {
+      // Cursor positioning failed
     }
   },
 
@@ -703,10 +644,9 @@ window.FinalFinal = {
         const viewportHeight = window.innerHeight;
         const targetScrollY = coords.top + window.scrollY - viewportHeight / 2;
         window.scrollTo({ top: Math.max(0, targetScrollY), behavior: 'instant' });
-        console.log('[CodeMirror] scrollCursorToCenter: scrolled to', targetScrollY);
       }
-    } catch (e) {
-      console.warn('[CodeMirror] scrollCursorToCenter failed:', e);
+    } catch (_e) {
+      // Scroll failed
     }
   },
 
@@ -718,7 +658,6 @@ window.FinalFinal = {
       selection: { anchor: from + text.length },
     });
     editorView.focus();
-    console.log('[CodeMirror] insertAtCursor: inserted', text.length, 'chars');
   },
 
   insertBreak() {
@@ -751,10 +690,9 @@ window.FinalFinal = {
   },
 
   // Annotation API methods
-  setAnnotationDisplayModes(modes: Record<string, string>) {
+  setAnnotationDisplayModes(_modes: Record<string, string>) {
     // In source mode, annotations are shown as raw markdown text
-    // Display modes don't visually change anything, but we log for consistency
-    console.log('[CodeMirror] setAnnotationDisplayModes (no-op in source mode):', modes);
+    // Display modes don't visually change anything
   },
 
   getAnnotations(): ParsedAnnotation[] {
@@ -806,7 +744,6 @@ window.FinalFinal = {
       effects: EditorView.scrollIntoView(pos, { y: 'center', yMargin: 100 }),
     });
     editorView.focus();
-    console.log('[CodeMirror] scrollToAnnotation:', offset);
   },
 
   insertAnnotation(type: string) {
@@ -814,7 +751,6 @@ window.FinalFinal = {
 
     const validTypes = ['task', 'comment', 'reference'];
     if (!validTypes.includes(type)) {
-      console.warn('[CodeMirror] insertAnnotation: invalid type', type);
       return;
     }
 
@@ -838,7 +774,6 @@ window.FinalFinal = {
       selection: { anchor: from + cursorOffset },
     });
     editorView.focus();
-    console.log('[CodeMirror] insertAnnotation:', type);
   },
 
   toggleHighlight(): boolean {
@@ -848,7 +783,6 @@ window.FinalFinal = {
 
     // Require a selection
     if (from === to) {
-      console.log('[CodeMirror] toggleHighlight: no selection');
       return false;
     }
 
@@ -867,7 +801,6 @@ window.FinalFinal = {
         ],
         selection: { anchor: from - 2, head: to - 2 },
       });
-      console.log('[CodeMirror] toggleHighlight: removed');
       return true;
     }
 
@@ -879,7 +812,6 @@ window.FinalFinal = {
         changes: { from, to, insert: innerText },
         selection: { anchor: from, head: from + innerText.length },
       });
-      console.log('[CodeMirror] toggleHighlight: removed (included delimiters)');
       return true;
     }
 
@@ -890,17 +822,12 @@ window.FinalFinal = {
       selection: { anchor: from + 2, head: to + 2 },
     });
     editorView.focus();
-    console.log('[CodeMirror] toggleHighlight: added');
     return true;
   },
 
   // Citation API (CAYW picker callbacks)
   citationPickerCallback(data: any, _items: any[]) {
-    console.log('[CodeMirror] citationPickerCallback:', data);
-    console.log('[CodeMirror] pendingAppendMode:', pendingAppendMode, 'pendingAppendRange:', pendingAppendRange);
-
     if (!editorView) {
-      console.warn('[CodeMirror] citationPickerCallback: no editor');
       pendingCAYWRange = null;
       pendingAppendMode = false;
       pendingAppendRange = null;
@@ -913,8 +840,6 @@ window.FinalFinal = {
       const existing = editorView.state.sliceDoc(start, end);
       const rawSyntax = (data.rawSyntax as string) || `[@${(data.citekeys as string[]).join('; @')}]`;
       const merged = mergeCitations(existing, rawSyntax);
-
-      console.log('[CodeMirror] Append mode - existing:', existing, 'new:', rawSyntax, 'merged:', merged);
 
       editorView.dispatch({
         changes: { from: start, to: end, insert: merged },
@@ -930,7 +855,6 @@ window.FinalFinal = {
 
     // Normal insertion mode
     if (!pendingCAYWRange) {
-      console.warn('[CodeMirror] citationPickerCallback: no pending range');
       return;
     }
 
@@ -941,8 +865,6 @@ window.FinalFinal = {
     const citekeys = data.citekeys as string[];
     const rawSyntax = (data.rawSyntax as string) || `[@${citekeys.join('; @')}]`;
 
-    console.log('[CodeMirror] Inserting citation:', rawSyntax);
-
     // Replace /cite with the citation syntax
     editorView.dispatch({
       changes: { from: start, to: end, insert: rawSyntax },
@@ -952,7 +874,6 @@ window.FinalFinal = {
   },
 
   citationPickerCancelled() {
-    console.log('[CodeMirror] citationPickerCancelled');
     pendingCAYWRange = null;
     pendingAppendMode = false;
     pendingAppendRange = null;
@@ -979,5 +900,3 @@ if (document.readyState === 'loading') {
 } else {
   initEditor();
 }
-
-console.log('[CodeMirror] window.FinalFinal API registered');

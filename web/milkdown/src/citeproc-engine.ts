@@ -56,10 +56,10 @@ interface CiteprocSys {
 // Arrays are per-citation (indexed to match citekeys order)
 // Single values apply to the entire cluster
 export interface CitationOptions {
-  suppressAuthors?: boolean[];  // Per-citation suppress flags
-  locators?: string[];          // Per-citation locators (page numbers, etc.)
-  prefix?: string;              // Applies to first citation in cluster
-  suffix?: string;              // Applies to last citation in cluster
+  suppressAuthors?: boolean[]; // Per-citation suppress flags
+  locators?: string[]; // Per-citation locators (page numbers, etc.)
+  prefix?: string; // Applies to first citation in cluster
+  suffix?: string; // Applies to last citation in cluster
 }
 
 class CiteprocEngine {
@@ -90,7 +90,6 @@ class CiteprocEngine {
 
   // Set the bibliography items
   setBibliography(items: CSLItem[]): void {
-    console.log('[CiteprocEngine] setBibliography called with', items.length, 'items');
     this.items.clear();
     items.forEach((item) => {
       // Use citationKey if available, otherwise id
@@ -101,19 +100,17 @@ class CiteprocEngine {
 
     // Update engine with new item IDs
     const ids = Array.from(this.items.keys());
-    console.log('[CiteprocEngine] Keys after setBibliography:', ids);
     if (ids.length > 0) {
       try {
         this.engine.updateItems(ids);
-      } catch (error) {
-        console.error('[CiteprocEngine] Failed to update items:', error);
+      } catch (_error) {
+        // Update failed
       }
     }
   }
 
   // Add items to the bibliography without replacing existing ones
   addItems(items: CSLItem[]): void {
-    console.log('[CiteprocEngine] addItems called with', items.length, 'items');
     items.forEach((item) => {
       // Use citationKey if available, otherwise id
       const key = (item as any)['citation-key'] || item.citationKey || item.id;
@@ -125,17 +122,15 @@ class CiteprocEngine {
     if (ids.length > 0) {
       try {
         this.engine.updateItems(ids);
-      } catch (error) {
-        console.error('[CiteprocEngine] Failed to update items:', error);
+      } catch (_error) {
+        // Update failed
       }
     }
   }
 
   // Check if an item exists in the bibliography
   hasItem(citekey: string): boolean {
-    const result = this.items.has(citekey);
-    console.log(`[CiteprocEngine] hasItem("${citekey}") =`, result, '| available keys:', Array.from(this.items.keys()));
-    return result;
+    return this.items.has(citekey);
   }
 
   // Get an item by citekey

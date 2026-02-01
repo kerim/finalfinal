@@ -54,11 +54,6 @@ const remarkAnnotationPlugin = $remark('annotation', () => () => (tree: Root) =>
 
     const match = normalizedValue.match(annotationRegex);
     if (!match) {
-      // Diagnostic: log unmatched annotation-like comments
-      if (value.includes('::') && value.startsWith('<!--')) {
-        console.log('[AnnotationPlugin] Unmatched annotation-like comment:', JSON.stringify(value));
-        console.log('[AnnotationPlugin] Normalized version:', JSON.stringify(normalizedValue));
-      }
       return;
     }
 
@@ -213,9 +208,7 @@ const annotationNode = $node('annotation', () => ({
 // This allows the marker to be completely non-editable while text is editable
 // NOTE: $view expects (ctx) => NodeViewConstructor, NOT () => (ctx) => NodeViewConstructor
 const annotationNodeView = $view(annotationNode, (_ctx: Ctx) => {
-  console.log('[AnnotationNodeView] FACTORY CALLED');
   return (node, view, getPos) => {
-    console.log('[AnnotationNodeView] VIEW CREATED for node:', node.attrs.type);
     const { type, isCompleted } = node.attrs as AnnotationAttrs;
 
     // Create the wrapper span
@@ -248,12 +241,6 @@ const annotationNodeView = $view(annotationNode, (_ctx: Ctx) => {
           const currentNode = view.state.doc.nodeAt(pos);
           if (currentNode && currentNode.type.name === 'annotation') {
             const currentCompleted = currentNode.attrs.isCompleted;
-            console.log(
-              '[AnnotationNodeView] Toggle clicked, current:',
-              currentCompleted,
-              '-> new:',
-              !currentCompleted
-            );
             const tr = view.state.tr.setNodeMarkup(pos, undefined, {
               ...currentNode.attrs,
               isCompleted: !currentCompleted,
@@ -283,23 +270,14 @@ const annotationNodeView = $view(annotationNode, (_ctx: Ctx) => {
     dom.dataset.text = initialText;
     dom.title = initialText;
 
-    // DIAGNOSTIC: Commenting out MutationObserver to test if it causes infinite loop
-    // The tooltip can be updated via update() or on blur instead
-    // const textObserver = new MutationObserver(updateTooltip);
-    // textObserver.observe(contentDOM, {
-    //   childList: true,
-    //   subtree: true,
-    //   characterData: true,
-    // });
+    // MutationObserver disabled - tooltip updated via update() instead
     const textObserver = { disconnect: () => {} }; // Stub for destroy()
 
     return {
       dom,
       contentDOM,
       update: (updatedNode) => {
-        console.log('[AnnotationNodeView] update() called, type:', updatedNode.type.name);
         if (updatedNode.type.name !== 'annotation') {
-          console.log('[AnnotationNodeView] update() returning FALSE - type mismatch');
           return false;
         }
 
@@ -322,11 +300,6 @@ const annotationNodeView = $view(annotationNode, (_ctx: Ctx) => {
         }
         markerSpan.textContent = newMarker;
 
-        // Skip tooltip update during update() - let MutationObserver handle it
-        // This prevents potential DOM modification during ProseMirror's update cycle
-        // updateTooltip();
-
-        console.log('[AnnotationNodeView] update() returning TRUE');
         return true;
       },
       destroy: () => {

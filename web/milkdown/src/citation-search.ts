@@ -31,8 +31,8 @@ export function setCitationLibrary(items: CSLItem[]): void {
   // Persist to localStorage for restoration after editor toggle
   try {
     localStorage.setItem(CITATION_CACHE_KEY, JSON.stringify(items));
-  } catch (e) {
-    console.warn('[Citation Search] Failed to cache library:', e);
+  } catch (_e) {
+    // Cache storage failed
   }
 }
 
@@ -51,7 +51,6 @@ function searchCitationsViaSwift(query: string): void {
     (window as any).webkit.messageHandlers.searchCitations.postMessage(query);
   } else {
     // Fallback: no Swift bridge available (dev mode)
-    console.warn('[Citation Search] Swift bridge not available');
     updateResultsDisplay([]);
   }
 }
@@ -76,8 +75,8 @@ export function searchCitationsCallback(items: CSLItem[]): void {
     // Persist accumulated items to localStorage
     try {
       localStorage.setItem(CITATION_CACHE_KEY, JSON.stringify(cachedItems));
-    } catch (e) {
-      console.warn('[Citation Search] Failed to cache library:', e);
+    } catch (_e) {
+      // Cache storage failed
     }
   } catch (error) {
     _isSearching = false;
@@ -95,10 +94,9 @@ export function restoreCitationLibrary(): void {
       const items = JSON.parse(stored) as CSLItem[];
       cachedItems = items;
       getCiteprocEngine().setBibliography(items);
-      console.log('[Citation Search] Restored', items.length, 'cached items from localStorage');
     }
-  } catch (e) {
-    console.warn('[Citation Search] Failed to restore library:', e);
+  } catch (_e) {
+    // Restore failed
   }
 }
 
@@ -304,19 +302,14 @@ function selectItem(index: number): void {
 // Insert citation at cursor
 function insertCitation(citekey: string): void {
   if (!currentView) {
-    console.error('[Citation Search] No editor view');
     hideSearchPopup();
     return;
   }
-
-  const engine = getCiteprocEngine();
-  console.log('[Citation Search] Inserting:', citekey, 'engine has?', engine.hasItem(citekey));
 
   const { state, dispatch } = currentView;
   const citationType = state.schema.nodes.citation;
 
   if (!citationType) {
-    console.error('[Citation Search] citation node type not found');
     hideSearchPopup();
     return;
   }
@@ -329,8 +322,7 @@ function insertCitation(citekey: string): void {
   try {
     $from = state.doc.resolve(from);
     _$to = state.doc.resolve(to);
-  } catch (e) {
-    console.error('[Citation Search] Invalid positions:', { from, to, error: e });
+  } catch (_e) {
     hideSearchPopup();
     return;
   }
@@ -338,7 +330,6 @@ function insertCitation(citekey: string): void {
   // Step 2: Verify parent accepts inline content
   const parent = $from.parent;
   if (!parent.inlineContent) {
-    console.error('[Citation Search] Parent node does not accept inline content:', parent.type.name);
     hideSearchPopup();
     return;
   }
@@ -354,8 +345,7 @@ function insertCitation(citekey: string): void {
       suppressAuthor: false,
       rawSyntax: `[@${citekey}]`,
     });
-  } catch (e) {
-    console.error('[Citation Search] Failed to create citation node:', e);
+  } catch (_e) {
     hideSearchPopup();
     return;
   }
@@ -371,19 +361,15 @@ function insertCitation(citekey: string): void {
 
     dispatch(tr);
     currentView.focus();
-    console.log('[Citation Search] Inserted citation node:', citekey);
-  } catch (e) {
-    console.error('[Citation Search] Node insertion failed:', e);
-
+  } catch (_e) {
     // Fallback: insert as text (user will see raw markdown until reload)
     try {
       const textNode = state.schema.text(`[@${citekey}]`);
       const tr = state.tr.replaceRangeWith(from, to, textNode);
       dispatch(tr);
       currentView.focus();
-      console.warn('[Citation Search] Inserted as text fallback:', citekey);
-    } catch (e2) {
-      console.error('[Citation Search] Text fallback also failed:', e2);
+    } catch (_e2) {
+      // Text fallback also failed
     }
   }
 

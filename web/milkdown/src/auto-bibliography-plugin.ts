@@ -32,10 +32,7 @@ const autoBibStartNode = $node('auto_bibliography_start', () => ({
 
   parseDOM: [{ tag: 'span.auto-bib-start' }],
 
-  toDOM: (_node: Node) => [
-    'span',
-    { class: 'auto-bib-start', contenteditable: 'false' },
-  ],
+  toDOM: (_node: Node) => ['span', { class: 'auto-bib-start', contenteditable: 'false' }],
 
   parseMarkdown: {
     match: (node: any) => node.type === 'autoBibliographyStart',
@@ -61,10 +58,7 @@ const autoBibEndNode = $node('auto_bibliography_end', () => ({
 
   parseDOM: [{ tag: 'span.auto-bib-end' }],
 
-  toDOM: (_node: Node) => [
-    'span',
-    { class: 'auto-bib-end', contenteditable: 'false' },
-  ],
+  toDOM: (_node: Node) => ['span', { class: 'auto-bib-end', contenteditable: 'false' }],
 
   parseMarkdown: {
     match: (node: any) => node.type === 'autoBibliographyEnd',
@@ -81,8 +75,4 @@ const autoBibEndNode = $node('auto_bibliography_end', () => ({
   },
 }));
 
-export const autoBibliographyPlugin: MilkdownPlugin[] = [
-  remarkPlugin,
-  autoBibStartNode,
-  autoBibEndNode,
-].flat();
+export const autoBibliographyPlugin: MilkdownPlugin[] = [remarkPlugin, autoBibStartNode, autoBibEndNode].flat();

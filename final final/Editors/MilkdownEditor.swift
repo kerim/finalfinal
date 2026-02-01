@@ -452,7 +452,6 @@ struct MilkdownEditor: NSViewRepresentable {
         private func saveAndNotify() {
             guard isEditorReady, let webView, !isCleanedUp else {
                 // Editor not ready - post notification with start position
-                print("[EDITOR-TOGGLE] MilkdownEditor.saveAndNotify: editor not ready")
                 NotificationCenter.default.post(
                     name: .didSaveCursorPosition,
                     object: nil,
@@ -464,7 +463,6 @@ struct MilkdownEditor: NSViewRepresentable {
             // RACE CONDITION FIX: If we have a pending cursor restore that hasn't completed,
             // use that position instead of reading from the editor (which would return wrong value)
             if let pending = pendingCursorRestore {
-                print("[EDITOR-TOGGLE] MilkdownEditor.saveAndNotify: using pending cursor restore")
                 NotificationCenter.default.post(
                     name: .didSaveCursorPosition,
                     object: nil,
@@ -473,30 +471,24 @@ struct MilkdownEditor: NSViewRepresentable {
                 return
             }
 
-            print("[EDITOR-TOGGLE] MilkdownEditor.saveAndNotify: syncing content before cursor save")
-
             // CONTENT SYNC: Fetch and save content BEFORE cursor to prevent content loss during toggle
             webView.evaluateJavaScript("window.FinalFinal.getContent()") { [weak self] contentResult, contentError in
                 guard let self, !self.isCleanedUp else {
-                    print("[EDITOR-TOGGLE] MilkdownEditor content sync: self cleaned up")
                     self?.saveCursorAndNotify()
                     return
                 }
 
                 if let content = contentResult as? String {
-                    print("[EDITOR-TOGGLE] MilkdownEditor content sync: got \(content.count) chars")
                     // DEFENSIVE: Don't overwrite non-empty content with empty content
                     // This can happen when Milkdown fails to initialize (JS exception)
                     let existingContent = self.contentBinding.wrappedValue
                     if content.isEmpty && !existingContent.isEmpty {
-                        print("[EDITOR-TOGGLE] MilkdownEditor content sync: SKIPPING empty - binding has \(existingContent.count) chars")
+                        // Skip - don't overwrite good content with empty
                     } else {
                         // Update binding immediately to ensure content is preserved
                         self.lastPushedContent = content
                         self.contentBinding.wrappedValue = content
                     }
-                } else {
-                    print("[EDITOR-TOGGLE] MilkdownEditor content sync: failed - \(String(describing: contentError))")
                 }
 
                 // Now save cursor position
@@ -525,7 +517,6 @@ struct MilkdownEditor: NSViewRepresentable {
                     position = CursorPosition(line: line, column: column)
                 }
 
-                print("[EDITOR-TOGGLE] MilkdownEditor cursor saved: line \(position.line), col \(position.column)")
                 NotificationCenter.default.post(
                     name: .didSaveCursorPosition,
                     object: nil,
@@ -788,31 +779,12 @@ struct MilkdownEditor: NSViewRepresentable {
         @MainActor
         private func handleOpenCitationPicker(cmdStart: Int) async {
             guard let webView else {
-                print("[MilkdownEditor DEBUG] handleOpenCitationPicker: webView is nil")
                 return
             }
 
-            print("[MilkdownEditor DEBUG] === handleOpenCitationPicker called ===")
-            print("[MilkdownEditor DEBUG] cmdStart: \(cmdStart)")
-
-            // Query debug state before calling Zotero
-            webView.evaluateJavaScript("JSON.stringify(window.FinalFinal.getCAYWDebugState())") { result, error in
-                if let error {
-                    print("[MilkdownEditor DEBUG] Pre-picker state query error: \(error)")
-                } else {
-                    print("[MilkdownEditor DEBUG] Pre-picker state: \(String(describing: result))")
-                }
-            }
-
             do {
-                print("[MilkdownEditor DEBUG] Calling ZoteroService.openCAYWPicker()...")
-
                 // Call CAYW picker - this blocks until user selects references
                 let (parsed, items) = try await ZoteroService.shared.openCAYWPicker()
-
-                print("[MilkdownEditor DEBUG] ZoteroService returned successfully")
-                print("[MilkdownEditor DEBUG] Parsed citekeys: \(parsed.citekeys)")
-                print("[MilkdownEditor DEBUG] Items count: \(items.count)")
 
                 // Bring app back to foreground after Zotero picker closes
                 NSApp.activate(ignoringOtherApps: true)
@@ -822,7 +794,6 @@ struct MilkdownEditor: NSViewRepresentable {
                 encoder.outputFormatting = [.sortedKeys]
                 let itemsData = try encoder.encode(items)
                 guard let itemsJSON = String(data: itemsData, encoding: .utf8) else {
-                    print("[MilkdownEditor] Failed to encode CSL items")
                     sendCitationPickerError(webView: webView, message: "Failed to encode citation data")
                     return
                 }
@@ -839,20 +810,8 @@ struct MilkdownEditor: NSViewRepresentable {
 
                 guard let callbackJSON = try? JSONSerialization.data(withJSONObject: callbackData),
                       let callbackStr = String(data: callbackJSON, encoding: .utf8) else {
-                    print("[MilkdownEditor] Failed to encode callback data")
                     sendCitationPickerError(webView: webView, message: "Failed to encode callback data")
                     return
-                }
-
-                print("[MilkdownEditor DEBUG] CAYW success: \(parsed.citekeys)")
-
-                // Query debug state before callback
-                webView.evaluateJavaScript("JSON.stringify(window.FinalFinal.getCAYWDebugState())") { result, error in
-                    if let error {
-                        print("[MilkdownEditor DEBUG] Pre-callback state query error: \(error)")
-                    } else {
-                        print("[MilkdownEditor DEBUG] Pre-callback state: \(String(describing: result))")
-                    }
                 }
 
                 // Send both parsed data and CSL items to web editor
@@ -866,37 +825,16 @@ struct MilkdownEditor: NSViewRepresentable {
                     .replacingOccurrences(of: "${", with: "\\${")
 
                 let script = "window.FinalFinal.citationPickerCallback(JSON.parse(`\(escapedCallback)`), JSON.parse(`\(escapedItems)`))"
-                print("[MilkdownEditor DEBUG] About to call citationPickerCallback")
-                print("[MilkdownEditor DEBUG] Script length: \(script.count)")
-
-                webView.evaluateJavaScript(script) { result, error in
-                    if let error {
-                        print("[MilkdownEditor DEBUG] evaluateJavaScript ERROR: \(error)")
-                    } else {
-                        print("[MilkdownEditor DEBUG] evaluateJavaScript succeeded, result: \(String(describing: result))")
-                    }
-
-                    // Query debug state after callback
-                    webView.evaluateJavaScript("JSON.stringify(window.FinalFinal.getCAYWDebugState())") { result, error in
-                        if let error {
-                            print("[MilkdownEditor DEBUG] Post-callback state query error: \(error)")
-                        } else {
-                            print("[MilkdownEditor DEBUG] Post-callback state: \(String(describing: result))")
-                        }
-                    }
-                }
+                webView.evaluateJavaScript(script) { _, _ in }
             } catch ZoteroError.userCancelled {
                 // User cancelled - bring app back to foreground, no error
                 NSApp.activate(ignoringOtherApps: true)
-                print("[MilkdownEditor DEBUG] CAYW cancelled by user")
                 sendCitationPickerCancelled(webView: webView)
             } catch ZoteroError.notRunning {
                 NSApp.activate(ignoringOtherApps: true)
-                print("[MilkdownEditor DEBUG] Zotero not running")
                 sendCitationPickerError(webView: webView, message: "Zotero is not running. Please open Zotero and try again.")
             } catch {
                 NSApp.activate(ignoringOtherApps: true)
-                print("[MilkdownEditor DEBUG] CAYW error: \(error.localizedDescription)")
                 sendCitationPickerError(webView: webView, message: error.localizedDescription)
             }
         }

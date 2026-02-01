@@ -284,7 +284,6 @@ struct CodeMirrorEditor: NSViewRepresentable {
         private func saveAndNotify() {
             guard isEditorReady, let webView, !isCleanedUp else {
                 // Editor not ready - post notification with start position
-                print("[EDITOR-TOGGLE] CodeMirrorEditor.saveAndNotify: editor not ready")
                 NotificationCenter.default.post(
                     name: .didSaveCursorPosition,
                     object: nil,
@@ -296,7 +295,6 @@ struct CodeMirrorEditor: NSViewRepresentable {
             // RACE CONDITION FIX: If we have a pending cursor restore that hasn't completed,
             // use that position instead of reading from the editor (which would return wrong value)
             if let pending = pendingCursorRestore {
-                print("[EDITOR-TOGGLE] CodeMirrorEditor.saveAndNotify: using pending cursor restore")
                 NotificationCenter.default.post(
                     name: .didSaveCursorPosition,
                     object: nil,
@@ -305,23 +303,17 @@ struct CodeMirrorEditor: NSViewRepresentable {
                 return
             }
 
-            print("[EDITOR-TOGGLE] CodeMirrorEditor.saveAndNotify: syncing content before cursor save")
-
             // CONTENT SYNC: Fetch and save content BEFORE cursor to prevent content loss during toggle
-            webView.evaluateJavaScript("window.FinalFinal.getContent()") { [weak self] contentResult, contentError in
+            webView.evaluateJavaScript("window.FinalFinal.getContent()") { [weak self] contentResult, _ in
                 guard let self, !self.isCleanedUp else {
-                    print("[EDITOR-TOGGLE] CodeMirrorEditor content sync: self cleaned up")
                     self?.saveCursorAndNotify()
                     return
                 }
 
                 if let content = contentResult as? String {
-                    print("[EDITOR-TOGGLE] CodeMirrorEditor content sync: got \(content.count) chars")
                     // Update binding immediately to ensure content is preserved
                     self.lastPushedContent = content
                     self.contentBinding.wrappedValue = content
-                } else {
-                    print("[EDITOR-TOGGLE] CodeMirrorEditor content sync: failed - \(String(describing: contentError))")
                 }
 
                 // Now save cursor position
@@ -350,7 +342,6 @@ struct CodeMirrorEditor: NSViewRepresentable {
                     position = CursorPosition(line: line, column: column)
                 }
 
-                print("[EDITOR-TOGGLE] CodeMirrorEditor cursor saved: line \(position.line), col \(position.column)")
                 NotificationCenter.default.post(
                     name: .didSaveCursorPosition,
                     object: nil,

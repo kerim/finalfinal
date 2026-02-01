@@ -506,13 +506,11 @@ function createEditPopup(): HTMLElement {
     // Store current input for merging later
     pendingAppendMode = true;
     pendingAppendBase = editPopupInput?.value || '';
-    console.log('[CitationEditPopup] Add button clicked, pendingAppendBase:', pendingAppendBase);
     // Call native picker via Swift bridge
     // Pass -1 to indicate append mode (not a fresh insertion)
     if (typeof (window as any).webkit?.messageHandlers?.openCitationPicker?.postMessage === 'function') {
       (window as any).webkit.messageHandlers.openCitationPicker.postMessage(-1);
     } else {
-      console.warn('[CitationEditPopup] Swift bridge not available');
       pendingAppendMode = false;
       pendingAppendBase = '';
     }
@@ -603,8 +601,6 @@ export function updateEditPreview(): void {
 
 // Show the citation edit popup
 function showCitationEditPopup(pos: number, view: EditorView, attrs: CitationAttrs): void {
-  console.log('[CitationEditPopup] showCitationEditPopup called, pos:', pos);
-
   // If popup already open, commit current edit first
   if (editingNodePos !== null && editingView && editPopupInput) {
     commitEdit(editPopupInput.value);
@@ -640,8 +636,6 @@ function showCitationEditPopup(pos: number, view: EditorView, attrs: CitationAtt
 
 // Commit the edit
 function commitEdit(newSyntax: string): void {
-  console.log('[CitationEditPopup] commitEdit called with:', newSyntax);
-
   const pos = editingNodePos;
   const view = editingView;
 
@@ -657,7 +651,6 @@ function commitEdit(newSyntax: string): void {
     // Verify node still exists at position
     const currentNode = view.state.doc.nodeAt(pos);
     if (currentNode && currentNode.type.name === 'citation') {
-      console.log('[CitationEditPopup] Updating citation attrs:', parsed.citekeys);
       const tr = view.state.tr.setNodeMarkup(pos, undefined, {
         citekeys: parsed.citekeys.join(','),
         locators: JSON.stringify(parsed.locators),
@@ -677,7 +670,6 @@ function commitEdit(newSyntax: string): void {
 
 // Cancel the edit
 function cancelEdit(): void {
-  console.log('[CitationEditPopup] cancelEdit called');
   const view = editingView;
   hideEditPopup();
   // Refocus editor
@@ -700,10 +692,8 @@ function hideEditPopup(): void {
 // NodeView for custom rendering with formatted citation display
 // This must be in the same file as citationNode to maintain atom identity with $view
 // NOTE: $view expects (ctx) => NodeViewConstructor, NOT () => (ctx) => NodeViewConstructor
-const citationNodeView = $view(citationNode, (ctx: Ctx) => {
-  console.log('[CitationNodeView] FACTORY CALLED - ctx:', !!ctx);
+const citationNodeView = $view(citationNode, (_ctx: Ctx) => {
   return (node, view, getPos) => {
-    console.log('[CitationNodeView] VIEW CREATED for node:', node.attrs.citekeys);
     const attrs = node.attrs as CitationAttrs;
     // NOTE: citekeys is computed fresh inside updateDisplay() to avoid stale closure
 
@@ -720,13 +710,6 @@ const citationNodeView = $view(citationNode, (ctx: Ctx) => {
       let displayText = '';
       let isResolved = true;
       let tooltipText = '';
-
-      console.log(
-        '[CitationNodeView] updateDisplay called for citekeys:',
-        citekeys,
-        'from attrs.citekeys:',
-        attrs.citekeys
-      );
 
       if (citekeys.length === 0) {
         displayText = '[?]';
@@ -783,7 +766,6 @@ const citationNodeView = $view(citationNode, (ctx: Ctx) => {
       }
 
       // Update DOM
-      console.log('[CitationNodeView] Display result:', { displayText, isResolved, citekeys });
       dom.textContent = displayText;
       dom.title = tooltipText;
       dom.className = `ff-citation ${isResolved ? 'ff-citation-resolved' : 'ff-citation-unresolved'}`;

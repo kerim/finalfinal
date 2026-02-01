@@ -16,6 +16,7 @@ import {
   setHideCompletedTasks,
 } from './annotation-display-plugin';
 import { type AnnotationType, annotationNode, annotationPlugin } from './annotation-plugin';
+import { autoBibliographyPlugin } from './auto-bibliography-plugin';
 import {
   type CSLItem,
   citationNode,
@@ -28,18 +29,6 @@ import {
   mergeCitations,
   updateEditPreview,
 } from './citation-plugin';
-import { focusModePlugin, setFocusModeEnabled } from './focus-mode-plugin';
-import { highlightMark, highlightPlugin } from './highlight-plugin';
-import { sectionBreakNode, sectionBreakPlugin } from './section-break-plugin';
-import { autoBibliographyPlugin } from './auto-bibliography-plugin';
-
-// Debug: Log plugin array contents at import time
-console.log('[Milkdown] citationPlugin imported, length:', citationPlugin.length);
-console.log(
-  '[Milkdown] citationPlugin contents:',
-  citationPlugin.map((p) => (typeof p === 'function' ? p.name || 'anonymous' : p))
-);
-
 // Keep citation-search for cache restoration and library size check
 import {
   getCitationLibrary,
@@ -49,6 +38,9 @@ import {
 } from './citation-search';
 import { getCiteprocEngine } from './citeproc-engine';
 import { mdToTextOffset, textToMdOffset } from './cursor-mapping';
+import { focusModePlugin, setFocusModeEnabled } from './focus-mode-plugin';
+import { highlightMark, highlightPlugin } from './highlight-plugin';
+import { sectionBreakNode, sectionBreakPlugin } from './section-break-plugin';
 import './styles.css';
 
 /**
@@ -189,14 +181,11 @@ function requestCitationResolutionInternal(keys: string[]): void {
 
     if (keysToResolve.length === 0) return;
 
-    console.log('[CitationResolution] Requesting resolution for:', keysToResolve);
-
     // Call Swift message handler
     if (typeof (window as any).webkit?.messageHandlers?.resolveCitekeys?.postMessage === 'function') {
       (window as any).webkit.messageHandlers.resolveCitekeys.postMessage(keysToResolve);
     } else {
-      console.warn('[CitationResolution] Swift bridge not available');
-      // Clear pending state since resolution won't happen
+      // Swift bridge not available - clear pending state since resolution won't happen
       clearPendingResolution(keysToResolve);
     }
   }, 500);
@@ -648,26 +637,13 @@ let pendingCAYWRange: { start: number; end: number } | null = null;
  * @param cmdEnd - Cursor position at end of /cite (where user stopped typing)
  */
 function openCAYWPicker(cmdStart: number, cmdEnd: number): void {
-  console.log('[CAYW DEBUG] === openCAYWPicker called ===');
-  console.log('[CAYW DEBUG] cmdStart:', cmdStart, 'cmdEnd:', cmdEnd);
-
-  if (editorInstance) {
-    const docContent = editorInstance.action(getMarkdown());
-    console.log('[CAYW DEBUG] Document content (first 100):', docContent.substring(0, 100));
-    console.log('[CAYW DEBUG] Document length:', docContent.length);
-  }
-
   pendingCAYWRange = { start: cmdStart, end: cmdEnd };
-  console.log('[CAYW DEBUG] Stored pendingCAYWRange:', JSON.stringify(pendingCAYWRange));
 
   // Call Swift message handler (only pass cmdStart, Swift doesn't need end)
   if (typeof (window as any).webkit?.messageHandlers?.openCitationPicker?.postMessage === 'function') {
-    console.log('[CAYW DEBUG] Calling Swift message handler...');
     (window as any).webkit.messageHandlers.openCitationPicker.postMessage(cmdStart);
-    console.log('[CAYW DEBUG] Swift message handler called successfully');
   } else {
     // Fallback: no Swift bridge available (dev mode)
-    console.warn('[CAYW DEBUG] Swift bridge not available');
     pendingCAYWRange = null;
   }
 }
@@ -697,22 +673,13 @@ interface EditCitationCallbackData {
  * Inserts citation node at the stored position range, or appends to existing citation in edit popup
  */
 function handleCAYWCallback(data: CAYWCallbackData, items: CSLItem[]): void {
-  console.log('[CAYW DEBUG] === handleCAYWCallback called ===');
-  console.log('[CAYW DEBUG] data:', JSON.stringify(data));
-  console.log('[CAYW DEBUG] items count:', items.length);
-  console.log('[CAYW DEBUG] pendingCAYWRange at callback entry:', JSON.stringify(pendingCAYWRange));
-  console.log('[CAYW DEBUG] editorInstance exists:', !!editorInstance);
-  console.log('[CAYW DEBUG] isPendingAppendMode:', isPendingAppendMode());
-
   if (!editorInstance) {
-    console.error('[CAYW DEBUG] FAIL: No editor instance');
     return;
   }
 
   // Check for append mode - merging new citations with existing ones in edit popup
   if (isPendingAppendMode()) {
     const pendingBase = getPendingAppendBase();
-    console.log('[CAYW DEBUG] Append mode active, base:', pendingBase);
 
     // Update citeproc engine with new items
     const engine = getCiteprocEngine();
@@ -721,7 +688,6 @@ function handleCAYWCallback(data: CAYWCallbackData, items: CSLItem[]): void {
 
     // Merge the citations
     const merged = mergeCitations(pendingBase, data.rawSyntax);
-    console.log('[CAYW DEBUG] Merged citation:', merged);
 
     // Update the edit popup input
     const editInput = getEditPopupInput();
@@ -731,12 +697,10 @@ function handleCAYWCallback(data: CAYWCallbackData, items: CSLItem[]): void {
       // Keep the popup open and input focused so user can make further edits
       // or press Enter to commit
       editInput.focus();
-      console.log('[CAYW DEBUG] Append mode complete - popup updated with merged citation');
     } else {
       // Popup was closed, focus the editor
       const view = editorInstance.ctx.get(editorViewCtx);
       view.focus();
-      console.log('[CAYW DEBUG] Append mode complete - popup was closed');
     }
 
     // Clear append mode state
@@ -746,28 +710,23 @@ function handleCAYWCallback(data: CAYWCallbackData, items: CSLItem[]): void {
 
   // Use stored range instead of querying cursor (cursor position unreliable after focus change)
   if (!pendingCAYWRange) {
-    console.error('[CAYW DEBUG] FAIL: pendingCAYWRange is null/undefined');
     return;
   }
 
   const { start, end } = pendingCAYWRange;
-  console.log('[CAYW DEBUG] Using range: start=', start, 'end=', end);
 
   // Update citeproc engine with the new items
   const engine = getCiteprocEngine();
   engine.addItems(items);
-  console.log('[CAYW DEBUG] Added items to citeproc engine');
 
   // Update citation library cache
   setCitationLibrary(items);
-  console.log('[CAYW DEBUG] Updated citation library cache');
 
   // Insert citation node
   const view = editorInstance.ctx.get(editorViewCtx);
   const nodeType = citationNode.type(editorInstance.ctx);
 
   const citekeyStr = data.citekeys.join(',');
-  console.log('[CAYW DEBUG] Creating node with citekeys:', citekeyStr);
 
   const node = nodeType.create({
     citekeys: citekeyStr,
@@ -777,56 +736,35 @@ function handleCAYWCallback(data: CAYWCallbackData, items: CSLItem[]): void {
     suppressAuthor: data.suppressAuthor,
     rawSyntax: data.rawSyntax,
   });
-  console.log('[CAYW DEBUG] Node created, nodeSize:', node.nodeSize);
-
-  // Log document state before insert
-  const docSize = view.state.doc.content.size;
-  const docContent = view.state.doc.textContent;
-  console.log('[CAYW DEBUG] Document state before insert:');
-  console.log('[CAYW DEBUG]   docSize:', docSize);
-  console.log('[CAYW DEBUG]   docContent (first 100):', docContent.substring(0, 100));
-  console.log('[CAYW DEBUG]   start:', start, 'end:', end);
-  console.log('[CAYW DEBUG]   text at range:', docContent.substring(start, Math.min(end, docContent.length)));
 
   // Validate range is within document bounds
+  const docSize = view.state.doc.content.size;
   if (start < 0 || end > docSize || start > end) {
-    console.error('[CAYW DEBUG] FAIL: Invalid range - start:', start, 'end:', end, 'docSize:', docSize);
     pendingCAYWRange = null;
     return;
   }
 
   try {
-    console.log('[CAYW DEBUG] Attempting replaceRangeWith...');
     // Delete from start to end (removes /cite text) and insert citation node
     let tr = view.state.tr.replaceRangeWith(start, end, node);
-    console.log('[CAYW DEBUG] Transaction created successfully');
 
     // Set cursor after the inserted citation node
     const insertPos = start + node.nodeSize;
-    console.log('[CAYW DEBUG] Setting selection at:', insertPos);
     tr = tr.setSelection(Selection.near(tr.doc.resolve(insertPos)));
 
-    console.log('[CAYW DEBUG] Dispatching transaction...');
     view.dispatch(tr);
-    console.log('[CAYW DEBUG] Transaction dispatched');
-
     view.focus();
-    console.log('[CAYW DEBUG] SUCCESS: Citation inserted, citekeys:', citekeyStr);
-  } catch (e) {
-    console.error('[CAYW DEBUG] EXCEPTION:', e);
-    console.error('[CAYW DEBUG] Exception stack:', (e as Error).stack);
+  } catch (_e) {
+    // Citation insertion failed
   }
 
   pendingCAYWRange = null;
-  console.log('[CAYW DEBUG] Cleared pendingCAYWRange');
 }
 
 /**
  * Handle CAYW picker cancelled by user
  */
 function handleCAYWCancelled(): void {
-  console.log('[CAYW DEBUG] === handleCAYWCancelled called ===');
-  console.log('[CAYW DEBUG] pendingCAYWRange was:', JSON.stringify(pendingCAYWRange));
   pendingCAYWRange = null;
 
   // Focus editor
@@ -840,9 +778,6 @@ function handleCAYWCancelled(): void {
  * Handle CAYW picker error
  */
 function handleCAYWError(message: string): void {
-  console.error('[CAYW DEBUG] === handleCAYWError called ===');
-  console.error('[CAYW DEBUG] Error message:', message);
-  console.log('[CAYW DEBUG] pendingCAYWRange was:', JSON.stringify(pendingCAYWRange));
   pendingCAYWRange = null;
 
   // Show alert to user
@@ -860,19 +795,13 @@ function handleCAYWError(message: string): void {
  * Updates an existing citation node at the specified position
  */
 function handleEditCitationCallback(data: EditCitationCallbackData, items: CSLItem[]): void {
-  console.log('[EditCitation] === handleEditCitationCallback called ===');
-  console.log('[EditCitation] data:', JSON.stringify(data));
-  console.log('[EditCitation] items count:', items.length);
-
   if (!editorInstance) {
-    console.error('[EditCitation] FAIL: No editor instance');
     return;
   }
 
   // Add items to citeproc engine (use addItems with array, not addItem)
   const engine = getCiteprocEngine();
   engine.addItems(items);
-  console.log('[EditCitation] Added', items.length, 'items to citeproc engine');
 
   const view = editorInstance.ctx.get(editorViewCtx);
   const pos = data.pos;
@@ -880,11 +809,8 @@ function handleEditCitationCallback(data: EditCitationCallbackData, items: CSLIt
   // Verify node at position is a citation
   const node = view.state.doc.nodeAt(pos);
   if (!node || node.type.name !== 'citation') {
-    console.error('[EditCitation] FAIL: No citation node at pos', pos, 'found:', node?.type.name);
     return;
   }
-
-  console.log('[EditCitation] Found citation node at pos', pos);
 
   // Update the citation node with new attributes
   const citekeyStr = data.citekeys.join(',');
@@ -899,8 +825,6 @@ function handleEditCitationCallback(data: EditCitationCallbackData, items: CSLIt
 
   view.dispatch(tr);
   view.focus();
-
-  console.log('[EditCitation] SUCCESS: Citation updated with citekeys:', citekeyStr);
 }
 
 async function initEditor() {
@@ -945,8 +869,7 @@ async function initEditor() {
 
     // RACE CONDITION FIX: If content was set before editor was ready, load it now
     // This handles the case where Swift calls initialize() before initEditor() completes
-    if (currentContent && currentContent.trim()) {
-      console.log('[Milkdown] Loading pending content after init:', currentContent.length, 'chars');
+    if (currentContent?.trim()) {
       window.FinalFinal.setContent(currentContent);
     }
   } catch (e) {
@@ -1046,13 +969,6 @@ window.FinalFinal = {
           return;
         }
 
-        // Diagnostic: Log parsed document structure
-        console.log('[Milkdown] Parsed doc node count:', doc.content.childCount);
-        console.log('[Milkdown] Parsed doc size:', doc.content.size);
-        doc.content.forEach((node, offset, index) => {
-          console.log(`[Milkdown] Node[${index}]: type=${node.type.name}, textContent="${node.textContent.slice(0, 50)}..."`);
-        });
-
         const { from } = view.state.selection;
         const docSize = view.state.doc.content.size;
         let tr = view.state.tr.replace(0, docSize, new Slice(doc.content, 0, 0));
@@ -1131,7 +1047,9 @@ window.FinalFinal = {
         propsToRemove.push(prop);
       }
     }
-    propsToRemove.forEach((prop) => root.style.removeProperty(prop));
+    for (const prop of propsToRemove) {
+      root.style.removeProperty(prop);
+    }
 
     // Set new CSS variables
     cssVariables

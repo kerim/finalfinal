@@ -57,12 +57,18 @@ body {
 
 /* Typography */
 /* Target both .milkdown and .ProseMirror for compatibility */
-.milkdown h1, .ProseMirror h1,
-.milkdown h2, .ProseMirror h2,
-.milkdown h3, .ProseMirror h3,
-.milkdown h4, .ProseMirror h4,
-.milkdown h5, .ProseMirror h5,
-.milkdown h6, .ProseMirror h6 {
+.milkdown h1,
+.ProseMirror h1,
+.milkdown h2,
+.ProseMirror h2,
+.milkdown h3,
+.ProseMirror h3,
+.milkdown h4,
+.ProseMirror h4,
+.milkdown h5,
+.ProseMirror h5,
+.milkdown h6,
+.ProseMirror h6 {
   color: var(--editor-heading-text, var(--editor-text));
   margin-top: 1.5em;
   margin-bottom: 0.5em;
@@ -71,37 +77,45 @@ body {
   text-wrap: balance;
 }
 
-.milkdown h1, .ProseMirror h1 {
+.milkdown h1,
+.ProseMirror h1 {
   font-size: var(--font-size-h1);
   letter-spacing: var(--tracking-tight);
 }
 
-.milkdown h2, .ProseMirror h2 {
+.milkdown h2,
+.ProseMirror h2 {
   font-size: var(--font-size-h2);
   letter-spacing: var(--tracking-tight);
 }
 
-.milkdown h3, .ProseMirror h3 {
+.milkdown h3,
+.ProseMirror h3 {
   font-size: var(--font-size-h3);
 }
-.milkdown h4, .ProseMirror h4 {
+.milkdown h4,
+.ProseMirror h4 {
   font-size: var(--font-size-h4);
 }
-.milkdown h5, .ProseMirror h5 {
+.milkdown h5,
+.ProseMirror h5 {
   font-size: var(--font-size-h5);
 }
-.milkdown h6, .ProseMirror h6 {
+.milkdown h6,
+.ProseMirror h6 {
   font-size: var(--font-size-h6);
 }
 
-.milkdown p, .ProseMirror p {
+.milkdown p,
+.ProseMirror p {
   margin: 0.75em 0;
   line-height: var(--line-height-body);
   text-wrap: pretty;
 }
 
 /* Code */
-.milkdown code, .ProseMirror code {
+.milkdown code,
+.ProseMirror code {
   background: rgba(128, 128, 128, 0.1);
   padding: 0.2em 0.4em;
   border-radius: 3px;
@@ -109,7 +123,8 @@ body {
   font-size: 0.9em;
 }
 
-.milkdown pre, .ProseMirror pre {
+.milkdown pre,
+.ProseMirror pre {
   background: rgba(128, 128, 128, 0.1);
   padding: 1em;
   border-radius: 6px;
@@ -118,21 +133,27 @@ body {
 }
 
 /* Links and lists */
-.milkdown a, .ProseMirror a {
+.milkdown a,
+.ProseMirror a {
   color: var(--accent-color);
   text-decoration: none;
 }
-.milkdown a:hover, .ProseMirror a:hover {
+.milkdown a:hover,
+.ProseMirror a:hover {
   text-decoration: underline;
 }
-.milkdown ul, .ProseMirror ul,
-.milkdown ol, .ProseMirror ol {
+.milkdown ul,
+.ProseMirror ul,
+.milkdown ol,
+.ProseMirror ol {
   padding-left: 1.5em;
 }
-.milkdown li, .ProseMirror li {
+.milkdown li,
+.ProseMirror li {
   margin: 0.25em 0;
 }
-.milkdown blockquote, .ProseMirror blockquote {
+.milkdown blockquote,
+.ProseMirror blockquote {
   border-left: 4px solid var(--accent-color);
   margin: 1em 0;
   padding-left: 1em;
