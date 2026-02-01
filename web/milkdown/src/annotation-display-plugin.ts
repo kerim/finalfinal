@@ -14,10 +14,12 @@ export type AnnotationDisplayMode = 'inline' | 'collapsed';
 export const annotationDisplayPluginKey = new PluginKey('annotation-display');
 
 // Current display modes per type
+// NOTE: These defaults MUST match Swift's defaults in EditorViewState.swift
+// Swift's onChange only fires when values change, not on initialization
 const displayModes: Record<AnnotationType, AnnotationDisplayMode> = {
   task: 'inline',
-  comment: 'collapsed',
-  reference: 'collapsed',
+  comment: 'inline',
+  reference: 'inline',
 };
 
 // Global "panel only" mode - hides all annotations from editor

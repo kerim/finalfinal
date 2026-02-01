@@ -75,8 +75,8 @@ class EditorViewState {
     /// Display mode for each annotation type (inline or collapsed)
     var annotationDisplayModes: [AnnotationType: AnnotationDisplayMode] = [
         .task: .inline,
-        .comment: .collapsed,
-        .reference: .collapsed
+        .comment: .inline,
+        .reference: .inline
     ]
 
     /// Type filters - which annotation types are visible in the panel
