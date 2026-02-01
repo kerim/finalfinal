@@ -239,10 +239,11 @@ final class BibliographySyncService {
             entries.append(entry)
         }
 
-        // Build markdown
-        var markdown = "# Bibliography\n\n"
+        // Build markdown with markers (so OutlineParser skips this section)
+        var markdown = "<!-- ::auto-bibliography:: -->\n"
+        markdown += "# Bibliography\n\n"
         markdown += entries.joined(separator: "\n\n")
-        markdown += "\n"
+        markdown += "\n<!-- ::end-auto-bibliography:: -->\n"
 
         return markdown
     }
@@ -343,46 +344,38 @@ final class BibliographySyncService {
         projectId: String,
         database: ProjectDatabase
     ) async throws {
-        // Find existing bibliography section
-        let existingBib = try database.read { db in
-            try Section
+        // ATOMIC: Check and create/update in single write transaction
+        // This prevents race conditions where multiple calls see "no bibliography"
+        // and both try to create one (causing duplicates on app relaunch)
+        try database.write { db in
+            // Check for existing bibliography INSIDE the write transaction
+            if var existingBib = try Section
                 .filter(Section.Columns.projectId == projectId)
                 .filter(Section.Columns.isBibliography == true)
-                .fetchOne(db)
-        }
-
-        if var bibSection = existingBib {
-            // Update existing section
-            bibSection.markdownContent = content
-            bibSection.title = "Bibliography"
-            bibSection.updatedAt = Date()
-            bibSection.recalculateWordCount()
-
-            try database.write { db in
-                try bibSection.update(db)
-            }
-        } else {
-            // Create new bibliography section
-            // Get max sort order
-            let maxSortOrder = try database.read { db in
-                try Section
+                .fetchOne(db) {
+                // Update existing section
+                existingBib.markdownContent = content
+                existingBib.title = "Bibliography"
+                existingBib.updatedAt = Date()
+                existingBib.recalculateWordCount()
+                try existingBib.update(db)
+            } else {
+                // Create new bibliography section
+                let maxSortOrder = try Section
                     .filter(Section.Columns.projectId == projectId)
                     .order(Section.Columns.sortOrder.desc)
                     .fetchOne(db)?.sortOrder ?? 0
-            }
 
-            var newSection = Section(
-                projectId: projectId,
-                sortOrder: maxSortOrder + 1,
-                headerLevel: 1,
-                isBibliography: true,
-                title: "Bibliography",
-                markdownContent: content,
-                status: .final_
-            )
-            newSection.recalculateWordCount()
-
-            try database.write { db in
+                var newSection = Section(
+                    projectId: projectId,
+                    sortOrder: maxSortOrder + 1,
+                    headerLevel: 1,
+                    isBibliography: true,
+                    title: "Bibliography",
+                    markdownContent: content,
+                    status: .final_
+                )
+                newSection.recalculateWordCount()
                 try newSection.insert(db)
             }
         }

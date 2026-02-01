@@ -300,6 +300,7 @@ class SectionSyncService {
         var headers: [ParsedHeader] = []
         var currentOffset = 0
         var inCodeBlock = false
+        var inAutoBibliography = false  // Track auto-bibliography section (managed by BibliographySyncService)
 
         // Track section boundaries
         struct SectionBoundary {
@@ -323,7 +324,17 @@ class SectionSyncService {
                 inCodeBlock = !inCodeBlock
             }
 
-            if !inCodeBlock {
+            // Track auto-bibliography section (managed by BibliographySyncService)
+            // Headers inside this section should not create separate sidebar sections
+            if trimmed == "<!-- ::auto-bibliography:: -->" {
+                inAutoBibliography = true
+            }
+            if trimmed == "<!-- ::end-auto-bibliography:: -->" {
+                inAutoBibliography = false
+            }
+
+            // Skip headers inside code blocks or auto-bibliography sections
+            if !inCodeBlock && !inAutoBibliography {
                 // Check for pseudo-section marker
                 if trimmed == "<!-- ::break:: -->" {
                     // Pseudo-sections inherit level from preceding header (not 0!)

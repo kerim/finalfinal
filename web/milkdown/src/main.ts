@@ -31,6 +31,7 @@ import {
 import { focusModePlugin, setFocusModeEnabled } from './focus-mode-plugin';
 import { highlightMark, highlightPlugin } from './highlight-plugin';
 import { sectionBreakNode, sectionBreakPlugin } from './section-break-plugin';
+import { autoBibliographyPlugin } from './auto-bibliography-plugin';
 
 // Debug: Log plugin array contents at import time
 console.log('[Milkdown] citationPlugin imported, length:', citationPlugin.length);
@@ -925,6 +926,7 @@ async function initEditor() {
       // 5. citationPlugin MUST be before commonmark to parse [@citekey] syntax
       .use(sectionBreakPlugin) // Intercept <!-- ::break:: --> before commonmark filters it
       .use(annotationPlugin) // Intercept annotation comments before filtering
+      .use(autoBibliographyPlugin) // Intercept auto-bibliography markers before filtering
       .use(citationPlugin) // Parse [@citekey] citations before commonmark
       .use(commonmark)
       .use(gfm)
