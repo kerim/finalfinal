@@ -60,7 +60,7 @@ struct AppearancePreferencesPane: View {
 
     // Local state for editing
     @State private var fontSize: CGFloat = AppearanceSettingsManager.defaultFontSize
-    @State private var selectedLineHeight: LineHeightPreset = .oneAndHalf
+    @State private var selectedLineHeight: LineHeightPreset = .normal
     @State private var selectedFontFamily: String = ""
     @State private var textColor: Color = .primary
     @State private var headerColor: Color = .primary
@@ -106,8 +106,8 @@ struct AppearancePreferencesPane: View {
                 Picker("Theme", selection: Binding(
                     get: { themeManager.currentTheme.id },
                     set: { newId in
-                        // When changing themes, clear all appearance overrides
-                        themeManager.setThemeAndClearOverrides(byId: newId)
+                        // Preserve appearance overrides when changing theme via Settings
+                        themeManager.setTheme(byId: newId)
                         loadCurrentSettings()
                     }
                 )) {
@@ -117,7 +117,7 @@ struct AppearancePreferencesPane: View {
                 }
                 .pickerStyle(.menu)
 
-                Text("Changing theme clears all appearance overrides.")
+                Text("Appearance overrides are preserved. Use View → Theme menu to reset to defaults.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -158,7 +158,7 @@ struct AppearancePreferencesPane: View {
                     isOverridden: appearanceManager.isLineHeightOverridden(),
                     onReset: {
                         appearanceManager.clearLineHeight()
-                        selectedLineHeight = .oneAndHalf
+                        selectedLineHeight = .normal
                     }
                 ) {
                     Picker("", selection: $selectedLineHeight) {
@@ -422,12 +422,7 @@ struct AppearancePreferencesPane: View {
         fontSize = settings.fontSize ?? AppearanceSettingsManager.defaultFontSize
 
         // Map line height value back to preset
-        if let lineHeightPreset = settings.lineHeight {
-            selectedLineHeight = lineHeightPreset
-        } else {
-            // Default is 1.75 which doesn't map to a preset, use oneAndHalf as closest
-            selectedLineHeight = .oneAndHalf
-        }
+        selectedLineHeight = settings.lineHeight ?? .normal
 
         selectedFontFamily = settings.fontFamily ?? ""
 

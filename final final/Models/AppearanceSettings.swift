@@ -48,30 +48,36 @@ enum ColumnWidthPreset: String, Codable, Sendable, CaseIterable, Identifiable {
 /// Line height preset options
 enum LineHeightPreset: String, Codable, Sendable, CaseIterable, Identifiable {
     case single = "single"
-    case oneAndHalf = "one-and-half"
-    case double = "double"
-    case twoAndHalf = "two-and-half"
+    case tight = "tight"
+    case normal = "normal"
+    case relaxed = "relaxed"
+    case loose = "loose"
 
     var id: String { rawValue }
 
     var displayName: String {
         switch self {
-        case .single: return "1.0 (Single)"
-        case .oneAndHalf: return "1.5"
-        case .double: return "2.0 (Double)"
-        case .twoAndHalf: return "2.5"
+        case .single: return "1.15 (Single)"
+        case .tight: return "1.4 (Tight)"
+        case .normal: return "1.75 (Default)"
+        case .relaxed: return "2.0 (Relaxed)"
+        case .loose: return "2.25 (Loose)"
         }
     }
 
     /// CSS line-height value
     var value: Double {
         switch self {
-        case .single: return 1.0
-        case .oneAndHalf: return 1.5
-        case .double: return 2.0
-        case .twoAndHalf: return 2.5
+        case .single: return 1.15
+        case .tight: return 1.4
+        case .normal: return 1.75
+        case .relaxed: return 2.0
+        case .loose: return 2.25
         }
     }
+
+    /// The default preset that matches the CSS default
+    static let `default`: LineHeightPreset = .normal
 }
 
 // MARK: - Codable Color
@@ -346,6 +352,9 @@ final class AppearanceSettingsManager {
 
         if let headerColor = settings.headerColor {
             css.append("--editor-heading-text: \(headerColor.cssHex);")
+            #if DEBUG
+            print("[AppearanceSettings] Header color override: \(headerColor.cssHex)")
+            #endif
         }
 
         if let accentColor = settings.accentColor {

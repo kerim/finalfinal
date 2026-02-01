@@ -56,7 +56,11 @@ final class ThemeManager {
     func setThemeAndClearOverrides(byId id: String) {
         if let theme = AppColorScheme.all.first(where: { $0.id == id }) {
             AppearanceSettingsManager.shared.resetToDefaults()
-            setTheme(theme)
+            // Small delay ensures SwiftUI observes the reset before theme change
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(50))
+                setTheme(theme)
+            }
         }
     }
 
