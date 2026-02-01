@@ -92,7 +92,12 @@ class SectionReconciler {
         in sections: [Section],
         excluding: Set<String>
     ) -> Section? {
-        let available = sections.filter { !excluding.contains($0.id) }
+        // Filter out already-matched IDs and bibliography sections.
+        // Bibliography exclusion is needed because:
+        // 1. OutlineParser markers prevent parsed headers FROM the bibliography
+        // 2. But we also need to prevent parsed headers from matching TO the bibliography
+        //    section via Tier 3 proximity matching. BibliographySyncService owns this section.
+        let available = sections.filter { !excluding.contains($0.id) && !$0.isBibliography }
 
         // Tier 1: Exact position match (most common - edits within a section)
         if let match = available.first(where: { $0.sortOrder == header.position }) {

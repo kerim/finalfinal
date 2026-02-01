@@ -106,6 +106,7 @@ struct OutlineParser {
         var headers: [ParsedHeader] = []
         var currentOffset = 0
         var inCodeBlock = false
+        var inAutoBibliography = false  // Track auto-generated bibliography section
 
         for line in markdown.split(separator: "\n", omittingEmptySubsequences: false) {
             let lineStr = String(line)
@@ -116,8 +117,17 @@ struct OutlineParser {
                 inCodeBlock = !inCodeBlock
             }
 
-            // Parse header if not in code block
-            if !inCodeBlock, let header = parseHeaderLine(trimmed, at: currentOffset) {
+            // Track auto-bibliography section (managed by BibliographySyncService)
+            if trimmed == "<!-- ::auto-bibliography:: -->" {
+                inAutoBibliography = true
+            }
+            if trimmed == "<!-- ::end-auto-bibliography:: -->" {
+                inAutoBibliography = false
+            }
+
+            // Parse header if not in code block AND not in auto-bibliography
+            if !inCodeBlock && !inAutoBibliography,
+               let header = parseHeaderLine(trimmed, at: currentOffset) {
                 headers.append(header)
             }
 

@@ -351,3 +351,11 @@ mark.ff-highlight {
 .ff-citation-search-item.selected {
   background: var(--editor-selection, #e8f0fe);
 }
+
+/* === Auto-Bibliography Markers === */
+
+/* Auto-bibliography markers - invisible in editor but preserved in DOM */
+.auto-bib-start,
+.auto-bib-end {
+  display: none;
+}
