@@ -1,21 +1,20 @@
-import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter } from '@codemirror/view';
-import { EditorState } from '@codemirror/state';
+import { autocompletion, type CompletionContext, type CompletionResult } from '@codemirror/autocomplete';
+import { defaultKeymap, history, redo, undo } from '@codemirror/commands';
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
+import { defaultHighlightStyle, syntaxHighlighting } from '@codemirror/language';
 import { languages } from '@codemirror/language-data';
-import { defaultKeymap, history, undo, redo } from '@codemirror/commands';
-import { syntaxHighlighting, defaultHighlightStyle } from '@codemirror/language';
-import { autocompletion, CompletionContext, CompletionResult } from '@codemirror/autocomplete';
+import { EditorState } from '@codemirror/state';
+import { EditorView, highlightActiveLine, highlightActiveLineGutter, keymap, lineNumbers } from '@codemirror/view';
 import './styles.css';
 
 // Annotation types matching Milkdown
 type AnnotationType = 'task' | 'comment' | 'reference';
-type AnnotationDisplayMode = 'inline' | 'collapsed' | 'hidden';
 
 interface ParsedAnnotation {
   type: AnnotationType;
   text: string;
   offset: number;
-  completed?: boolean;  // Match Milkdown API naming
+  completed?: boolean; // Match Milkdown API naming
 }
 
 declare global {
@@ -73,14 +72,18 @@ function slashCompletions(context: CompletionContext): CompletionResult | null {
         detail: 'Insert section break',
         apply: (view: EditorView, _completion: any, from: number, to: number) => {
           console.log(`[SLASH DEBUG] apply: from=${from}, to=${to}, text="${view.state.sliceDoc(from, to)}"`);
-          console.log(`[SLASH DEBUG] doc BEFORE dispatch (around from): "${view.state.sliceDoc(Math.max(0,from-5), from)}|${view.state.sliceDoc(from, to)}|${view.state.sliceDoc(to, to+20)}"`);
+          console.log(
+            `[SLASH DEBUG] doc BEFORE dispatch (around from): "${view.state.sliceDoc(Math.max(0, from - 5), from)}|${view.state.sliceDoc(from, to)}|${view.state.sliceDoc(to, to + 20)}"`
+          );
           view.dispatch({
-            changes: { from, to, insert: '<!-- ::break:: -->\n\n' }
+            changes: { from, to, insert: '<!-- ::break:: -->\n\n' },
           });
-          console.log(`[SLASH DEBUG] doc AFTER dispatch (around from): "${view.state.sliceDoc(Math.max(0,from-5), from+30)}"`);
+          console.log(
+            `[SLASH DEBUG] doc AFTER dispatch (around from): "${view.state.sliceDoc(Math.max(0, from - 5), from + 30)}"`
+          );
           pendingSlashUndo = true;
           console.log('[SLASH DEBUG] pendingSlashUndo set to true');
-        }
+        },
       },
       {
         label: '/h1',
@@ -106,11 +109,11 @@ function slashCompletions(context: CompletionContext): CompletionResult | null {
 
           // Replace entire line with new heading
           view.dispatch({
-            changes: { from: line.from, to: line.to, insert: `# ${combinedText}` }
+            changes: { from: line.from, to: line.to, insert: `# ${combinedText}` },
           });
           pendingSlashUndo = true;
           console.log('[SLASH DEBUG] pendingSlashUndo set to true');
-        }
+        },
       },
       {
         label: '/h2',
@@ -136,11 +139,11 @@ function slashCompletions(context: CompletionContext): CompletionResult | null {
 
           // Replace entire line with new heading
           view.dispatch({
-            changes: { from: line.from, to: line.to, insert: `## ${combinedText}` }
+            changes: { from: line.from, to: line.to, insert: `## ${combinedText}` },
           });
           pendingSlashUndo = true;
           console.log('[SLASH DEBUG] pendingSlashUndo set to true');
-        }
+        },
       },
       {
         label: '/h3',
@@ -166,11 +169,11 @@ function slashCompletions(context: CompletionContext): CompletionResult | null {
 
           // Replace entire line with new heading
           view.dispatch({
-            changes: { from: line.from, to: line.to, insert: `### ${combinedText}` }
+            changes: { from: line.from, to: line.to, insert: `### ${combinedText}` },
           });
           pendingSlashUndo = true;
           console.log('[SLASH DEBUG] pendingSlashUndo set to true');
-        }
+        },
       },
       {
         label: '/task',
@@ -178,10 +181,10 @@ function slashCompletions(context: CompletionContext): CompletionResult | null {
         apply: (view: EditorView, _completion: any, from: number, to: number) => {
           view.dispatch({
             changes: { from, to, insert: '<!-- ::task:: [ ]  -->' },
-            selection: { anchor: from + 17 }  // Position cursor inside the task
+            selection: { anchor: from + 17 }, // Position cursor inside the task
           });
           pendingSlashUndo = true;
-        }
+        },
       },
       {
         label: '/comment',
@@ -189,10 +192,10 @@ function slashCompletions(context: CompletionContext): CompletionResult | null {
         apply: (view: EditorView, _completion: any, from: number, to: number) => {
           view.dispatch({
             changes: { from, to, insert: '<!-- ::comment::  -->' },
-            selection: { anchor: from + 17 }  // Position cursor inside the comment
+            selection: { anchor: from + 17 }, // Position cursor inside the comment
           });
           pendingSlashUndo = true;
-        }
+        },
       },
       {
         label: '/reference',
@@ -200,12 +203,12 @@ function slashCompletions(context: CompletionContext): CompletionResult | null {
         apply: (view: EditorView, _completion: any, from: number, to: number) => {
           view.dispatch({
             changes: { from, to, insert: '<!-- ::reference::  -->' },
-            selection: { anchor: from + 19 }  // Position cursor inside the reference
+            selection: { anchor: from + 19 }, // Position cursor inside the reference
           });
           pendingSlashUndo = true;
-        }
-      }
-    ]
+        },
+      },
+    ],
   };
 }
 
@@ -218,7 +221,7 @@ let editorView: EditorView | null = null;
 window.__CODEMIRROR_DEBUG__ = {
   editorReady: false,
   lastContentLength: 0,
-  lastStatsUpdate: ''
+  lastStatsUpdate: '',
 };
 
 // === Diagnostic logging for cursor position debugging ===
@@ -256,7 +259,7 @@ function initEditor() {
       autocompletion({ override: [slashCompletions] }),
       keymap.of([
         // Filter out Mod-/ (toggle comment) from default keymap to allow Swift to handle mode toggle
-        ...defaultKeymap.filter(k => k.key !== 'Mod-/'),
+        ...defaultKeymap.filter((k) => k.key !== 'Mod-/'),
         // Custom undo: after slash command, also removes the "/" trigger
         {
           key: 'Mod-z',
@@ -273,7 +276,7 @@ function initEditor() {
                 console.log(`[SLASH DEBUG] charBefore="${charBefore}"`);
                 if (charBefore === '/') {
                   view.dispatch({
-                    changes: { from: pos - 1, to: pos, insert: '' }
+                    changes: { from: pos - 1, to: pos, insert: '' },
                   });
                 }
               }
@@ -282,22 +285,40 @@ function initEditor() {
             }
             // Normal undo
             return undo(view);
-          }
+          },
         },
         // Redo bindings (Mac and Windows)
         { key: 'Mod-Shift-z', run: (view) => redo(view) },
         { key: 'Mod-y', run: (view) => redo(view) },
         // Cmd+B: Bold
-        { key: 'Mod-b', run: () => { wrapSelection('**'); return true; } },
+        {
+          key: 'Mod-b',
+          run: () => {
+            wrapSelection('**');
+            return true;
+          },
+        },
         // Cmd+I: Italic
-        { key: 'Mod-i', run: () => { wrapSelection('*'); return true; } },
+        {
+          key: 'Mod-i',
+          run: () => {
+            wrapSelection('*');
+            return true;
+          },
+        },
         // Cmd+K: Link
-        { key: 'Mod-k', run: () => { insertLink(); return true; } },
+        {
+          key: 'Mod-k',
+          run: () => {
+            insertLink();
+            return true;
+          },
+        },
       ]),
       EditorView.lineWrapping,
       EditorView.theme({
         '&': { height: '100%' },
-        '.cm-scroller': { overflow: 'auto' }
+        '.cm-scroller': { overflow: 'auto' },
       }),
       // Reset pendingSlashUndo on any editing key
       EditorView.domEventHandlers({
@@ -307,14 +328,14 @@ function initEditor() {
             pendingSlashUndo = false;
           }
           return false;
-        }
-      })
-    ]
+        },
+      }),
+    ],
   });
 
   editorView = new EditorView({
     state,
-    parent: container
+    parent: container,
   });
 
   window.__CODEMIRROR_DEBUG__!.editorReady = true;
@@ -328,7 +349,7 @@ function wrapSelection(wrapper: string) {
   const wrapped = wrapper + selected + wrapper;
   editorView.dispatch({
     changes: { from, to, insert: wrapped },
-    selection: { anchor: from + wrapper.length, head: to + wrapper.length }
+    selection: { anchor: from + wrapper.length, head: to + wrapper.length },
   });
 }
 
@@ -340,12 +361,12 @@ function insertLink() {
   const inserted = `[${linkText}](url)`;
   editorView.dispatch({
     changes: { from, to, insert: inserted },
-    selection: { anchor: from + 1, head: from + 1 + linkText.length }
+    selection: { anchor: from + 1, head: from + 1 + linkText.length },
   });
 }
 
 function countWords(text: string): number {
-  return text.split(/\s+/).filter(w => w.length > 0).length;
+  return text.split(/\s+/).filter((w) => w.length > 0).length;
 }
 
 // Register window.FinalFinal API
@@ -359,7 +380,7 @@ window.FinalFinal = {
     const prevLen = editorView.state.doc.length;
     const prevCursor = editorView.state.selection.main.head;
     editorView.dispatch({
-      changes: { from: 0, to: prevLen, insert: markdown }
+      changes: { from: 0, to: prevLen, insert: markdown },
     });
     const newLen = editorView.state.doc.length;
     const newCursor = editorView.state.selection.main.head;
@@ -372,7 +393,7 @@ window.FinalFinal = {
     return editorView.state.doc.toString();
   },
 
-  setFocusMode(enabled: boolean) {
+  setFocusMode(_enabled: boolean) {
     // Focus mode is WYSIWYG-only; ignore in source mode
     console.log('[CodeMirror] setFocusMode ignored (source mode)');
   },
@@ -389,16 +410,16 @@ window.FinalFinal = {
     if (!editorView) return;
     const pos = Math.min(offset, editorView.state.doc.length);
     editorView.dispatch({
-      effects: EditorView.scrollIntoView(pos, { y: 'start', yMargin: 50 })
+      effects: EditorView.scrollIntoView(pos, { y: 'start', yMargin: 50 }),
     });
     console.log('[CodeMirror] scrollToOffset:', offset);
   },
 
   setTheme(cssVariables: string) {
     const root = document.documentElement;
-    const pairs = cssVariables.split(';').filter(s => s.trim());
-    pairs.forEach(pair => {
-      const [key, value] = pair.split(':').map(s => s.trim());
+    const pairs = cssVariables.split(';').filter((s) => s.trim());
+    pairs.forEach((pair) => {
+      const [key, value] = pair.split(':').map((s) => s.trim());
       if (key && value) {
         root.style.setProperty(key, value);
       }
@@ -417,8 +438,8 @@ window.FinalFinal = {
       const docLen = editorView.state.doc.length;
       const line = editorView.state.doc.lineAt(pos);
       const result = {
-        line: line.number,  // CodeMirror lines are 1-indexed
-        column: pos - line.from
+        line: line.number, // CodeMirror lines are 1-indexed
+        column: pos - line.from,
       };
       debugLog(`getCursorPosition DONE: pos=${pos}, docLen=${docLen}, line=${result.line}, col=${result.column}`);
       return result;
@@ -452,7 +473,7 @@ window.FinalFinal = {
       const cursorBefore = editorView.state.selection.main.head;
       editorView.dispatch({
         selection: { anchor: pos },
-        effects: EditorView.scrollIntoView(pos, { y: 'center' })
+        effects: EditorView.scrollIntoView(pos, { y: 'center' }),
       });
       const cursorAfter = editorView.state.selection.main.head;
       debugLog(`setCursorPosition DONE: cursorBefore=${cursorBefore}, cursorAfter=${cursorAfter}`);
@@ -469,7 +490,7 @@ window.FinalFinal = {
       const coords = editorView.coordsAtPos(pos);
       if (coords) {
         const viewportHeight = window.innerHeight;
-        const targetScrollY = coords.top + window.scrollY - (viewportHeight / 2);
+        const targetScrollY = coords.top + window.scrollY - viewportHeight / 2;
         window.scrollTo({ top: Math.max(0, targetScrollY), behavior: 'instant' });
         console.log('[CodeMirror] scrollCursorToCenter: scrolled to', targetScrollY);
       }
@@ -483,7 +504,7 @@ window.FinalFinal = {
     const { from, to } = editorView.state.selection.main;
     editorView.dispatch({
       changes: { from, to, insert: text },
-      selection: { anchor: from + text.length }
+      selection: { anchor: from + text.length },
     });
     editorView.focus();
     console.log('[CodeMirror] insertAtCursor: inserted', text.length, 'chars');
@@ -501,11 +522,7 @@ window.FinalFinal = {
 
   // === Batch initialization for faster startup ===
 
-  initialize(options: {
-    content: string;
-    theme: string;
-    cursorPosition: { line: number; column: number } | null;
-  }) {
+  initialize(options: { content: string; theme: string; cursorPosition: { line: number; column: number } | null }) {
     // Apply theme first
     this.setTheme(options.theme);
 
@@ -563,7 +580,7 @@ window.FinalFinal = {
         type,
         text: text.trim(),
         offset: match.index,
-        completed: type === 'task' ? isCompleted : undefined
+        completed: type === 'task' ? isCompleted : undefined,
       });
     }
 
@@ -575,7 +592,7 @@ window.FinalFinal = {
     const pos = Math.min(offset, editorView.state.doc.length);
     editorView.dispatch({
       selection: { anchor: pos },
-      effects: EditorView.scrollIntoView(pos, { y: 'center', yMargin: 100 })
+      effects: EditorView.scrollIntoView(pos, { y: 'center', yMargin: 100 }),
     });
     editorView.focus();
     console.log('[CodeMirror] scrollToAnnotation:', offset);
@@ -607,7 +624,7 @@ window.FinalFinal = {
 
     editorView.dispatch({
       changes: { from, to, insert: insertText },
-      selection: { anchor: from + cursorOffset }
+      selection: { anchor: from + cursorOffset },
     });
     editorView.focus();
     console.log('[CodeMirror] insertAnnotation:', type);
@@ -635,9 +652,9 @@ window.FinalFinal = {
       editorView.dispatch({
         changes: [
           { from: from - 2, to: from, insert: '' },
-          { from: to, to: to + 2, insert: '' }
+          { from: to, to: to + 2, insert: '' },
         ],
-        selection: { anchor: from - 2, head: to - 2 }
+        selection: { anchor: from - 2, head: to - 2 },
       });
       console.log('[CodeMirror] toggleHighlight: removed');
       return true;
@@ -649,22 +666,22 @@ window.FinalFinal = {
       const innerText = selectedText.slice(2, -2);
       editorView.dispatch({
         changes: { from, to, insert: innerText },
-        selection: { anchor: from, head: from + innerText.length }
+        selection: { anchor: from, head: from + innerText.length },
       });
       console.log('[CodeMirror] toggleHighlight: removed (included delimiters)');
       return true;
     }
 
     // Add highlight
-    const highlighted = '==' + selectedText + '==';
+    const highlighted = `==${selectedText}==`;
     editorView.dispatch({
       changes: { from, to, insert: highlighted },
-      selection: { anchor: from + 2, head: to + 2 }
+      selection: { anchor: from + 2, head: to + 2 },
     });
     editorView.focus();
     console.log('[CodeMirror] toggleHighlight: added');
     return true;
-  }
+  },
 };
 
 // Initialize on DOM ready

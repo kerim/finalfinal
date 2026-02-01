@@ -1,6 +1,6 @@
-import { defineConfig, Plugin } from 'vite';
-import { resolve } from 'path';
-import { writeFileSync } from 'fs';
+import { writeFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { defineConfig, type Plugin } from 'vite';
 
 // Plugin to generate static HTML without type="module"
 // ES modules don't work with custom URL schemes (editor://) due to CORS

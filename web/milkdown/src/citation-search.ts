@@ -2,9 +2,9 @@
 // Provides /cite slash command with Swift-bridged search via JSON-RPC
 // Inserts Pandoc-style citations at cursor
 
-import { EditorView } from '@milkdown/kit/prose/view';
 import { Selection } from '@milkdown/kit/prose/state';
-import { CSLItem, getCiteprocEngine } from './citeproc-engine';
+import type { EditorView } from '@milkdown/kit/prose/view';
+import { type CSLItem, getCiteprocEngine } from './citeproc-engine';
 
 // localStorage key for citation library persistence across editor toggles
 const CITATION_CACHE_KEY = 'ff-citation-library';
@@ -23,7 +23,7 @@ let cachedItems: CSLItem[] = [];
 let searchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
 // Track if search is in progress
-let isSearching = false;
+let _isSearching = false;
 
 // Initialize search with library items (legacy - now just caches items for citeproc)
 export function setCitationLibrary(items: CSLItem[]): void {
@@ -46,7 +46,7 @@ function searchCitationsViaSwift(query: string): void {
 
   // Call Swift message handler
   if (typeof (window as any).webkit?.messageHandlers?.searchCitations?.postMessage === 'function') {
-    isSearching = true;
+    _isSearching = true;
     updateSearchingState();
     (window as any).webkit.messageHandlers.searchCitations.postMessage(query);
   } else {
@@ -59,10 +59,10 @@ function searchCitationsViaSwift(query: string): void {
 // Callback from Swift with search results
 export function searchCitationsCallback(items: CSLItem[]): void {
   try {
-    isSearching = false;
+    _isSearching = false;
     // Cache results for citeproc
     for (const item of items) {
-      const existing = cachedItems.find(i => i.id === item.id);
+      const existing = cachedItems.find((i) => i.id === item.id);
       if (!existing) {
         cachedItems.push(item);
       }
@@ -80,7 +80,7 @@ export function searchCitationsCallback(items: CSLItem[]): void {
       console.warn('[Citation Search] Failed to cache library:', e);
     }
   } catch (error) {
-    isSearching = false;
+    _isSearching = false;
     console.error('[Citation Search] Callback error:', error);
     filteredResults = [];
     updateResultsDisplay([]);
@@ -177,7 +177,7 @@ function createPopup(): HTMLElement {
 // Create result item element
 function createResultItem(item: CSLItem, index: number, isSelected: boolean): HTMLElement {
   const div = document.createElement('div');
-  div.className = 'ff-citation-search-item' + (isSelected ? ' selected' : '');
+  div.className = `ff-citation-search-item${isSelected ? ' selected' : ''}`;
   div.dataset.index = String(index);
   div.style.cssText = `
     padding: 8px 12px;
@@ -186,10 +186,13 @@ function createResultItem(item: CSLItem, index: number, isSelected: boolean): HT
   `;
 
   // Author(s)
-  const authorNames = item.author?.map(a => a.family || a.literal || a.given || '').filter(Boolean) || [];
-  const authorText = authorNames.length > 0
-    ? (authorNames.length > 2 ? `${authorNames[0]} et al.` : authorNames.join(' & '))
-    : 'Unknown';
+  const authorNames = item.author?.map((a) => a.family || a.literal || a.given || '').filter(Boolean) || [];
+  const authorText =
+    authorNames.length > 0
+      ? authorNames.length > 2
+        ? `${authorNames[0]} et al.`
+        : authorNames.join(' & ')
+      : 'Unknown';
 
   // Year
   const year = item.issued?.['date-parts']?.[0]?.[0] || item.issued?.raw?.match(/\d{4}/)?.[0] || 'n.d.';
@@ -258,9 +261,7 @@ function updateResultsDisplay(items: CSLItem[]): void {
   if (items.length === 0) {
     const noResults = document.createElement('div');
     noResults.style.cssText = 'padding: 16px; text-align: center; color: var(--editor-muted, #999);';
-    noResults.textContent = query.trim()
-      ? 'No matching citations found.'
-      : 'Type to search your Zotero library...';
+    noResults.textContent = query.trim() ? 'No matching citations found.' : 'Type to search your Zotero library...';
     resultsContainer.appendChild(noResults);
     return;
   }
@@ -279,9 +280,7 @@ function updateSelection(): void {
   items.forEach((item, i) => {
     const isSelected = i === selectedIndex;
     item.classList.toggle('selected', isSelected);
-    (item as HTMLElement).style.background = isSelected
-      ? 'var(--editor-selection, #e8f0fe)'
-      : '';
+    (item as HTMLElement).style.background = isSelected ? 'var(--editor-selection, #e8f0fe)' : '';
   });
 
   // Scroll into view
@@ -326,10 +325,10 @@ function insertCitation(citekey: string): void {
   const to = state.selection.from;
 
   // Step 1: Validate positions using resolve() - catches out-of-range errors
-  let $from, $to;
+  let $from, _$to;
   try {
     $from = state.doc.resolve(from);
-    $to = state.doc.resolve(to);
+    _$to = state.doc.resolve(to);
   } catch (e) {
     console.error('[Citation Search] Invalid positions:', { from, to, error: e });
     hideSearchPopup();
@@ -498,7 +497,7 @@ export function hideSearchPopup(): void {
   currentView = null;
   filteredResults = [];
   selectedIndex = 0;
-  isSearching = false;
+  _isSearching = false;
 }
 
 // Check if popup is visible

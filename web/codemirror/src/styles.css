@@ -1,11 +1,12 @@
 /* Import shared typography */
-@import '../../shared/typography.css';
+@import "../../shared/typography.css";
 
 * {
   box-sizing: border-box;
 }
 
-html, body {
+html,
+body {
   margin: 0;
   padding: 0;
   height: 100%;
@@ -72,15 +73,32 @@ html, body {
   letter-spacing: var(--tracking-tight);
 }
 
-.cm-header-3 { font-size: 1.1em; }
-.cm-header-4 { font-size: 1.05em; }
-.cm-header-5 { font-size: 1em; }
-.cm-header-6 { font-size: 0.95em; }
+.cm-header-3 {
+  font-size: 1.1em;
+}
+.cm-header-4 {
+  font-size: 1.05em;
+}
+.cm-header-5 {
+  font-size: 1em;
+}
+.cm-header-6 {
+  font-size: 0.95em;
+}
 
-.cm-strong { font-weight: 700; }
-.cm-emphasis { font-style: italic; }
-.cm-link { color: var(--accent-color, #007aff); }
-.cm-url { color: var(--accent-color, #007aff); opacity: 0.7; }
+.cm-strong {
+  font-weight: 700;
+}
+.cm-emphasis {
+  font-style: italic;
+}
+.cm-link {
+  color: var(--accent-color, #007aff);
+}
+.cm-url {
+  color: var(--accent-color, #007aff);
+  opacity: 0.7;
+}
 .cm-code {
   background: var(--editor-selection, rgba(0, 122, 255, 0.1));
   border-radius: 3px;

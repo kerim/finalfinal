@@ -2,7 +2,7 @@
 // Provides citation formatting using citeproc-js library
 // Requires CSL style and locale XML files
 
-// @ts-ignore - citeproc doesn't have type definitions
+// @ts-expect-error - citeproc doesn't have type definitions
 import CSL from 'citeproc';
 
 // Import bundled CSL style and locale via Vite's ?raw suffix
@@ -90,7 +90,7 @@ class CiteprocEngine {
   setBibliography(items: CSLItem[]): void {
     console.log('[CiteprocEngine] setBibliography called with', items.length, 'items');
     this.items.clear();
-    items.forEach(item => {
+    items.forEach((item) => {
       // Use citationKey if available, otherwise id
       // Note: bracket notation for hyphenated JSON key from Swift encoding
       const key = (item as any)['citation-key'] || item.citationKey || item.id;
@@ -112,7 +112,7 @@ class CiteprocEngine {
   // Check if an item exists in the bibliography
   hasItem(citekey: string): boolean {
     const result = this.items.has(citekey);
-    console.log('[CiteprocEngine] hasItem("' + citekey + '") =', result, '| available keys:', Array.from(this.items.keys()));
+    console.log(`[CiteprocEngine] hasItem("${citekey}") =`, result, '| available keys:', Array.from(this.items.keys()));
     return result;
   }
 
@@ -126,15 +126,15 @@ class CiteprocEngine {
     if (citekeys.length === 0) return '';
 
     // Filter to only existing citekeys
-    const validKeys = citekeys.filter(key => this.items.has(key));
+    const validKeys = citekeys.filter((key) => this.items.has(key));
     if (validKeys.length === 0) {
       // Return unresolved indicator
-      return citekeys.map(k => `${k}?`).join('; ');
+      return citekeys.map((k) => `${k}?`).join('; ');
     }
 
     try {
       // Build citation cluster
-      const citationItems = validKeys.map(key => ({
+      const citationItems = validKeys.map((key) => ({
         id: key,
         ...(options?.suppressAuthor ? { 'suppress-author': true } : {}),
         ...(options?.locator ? { locator: options.locator } : {}),
@@ -151,7 +151,7 @@ class CiteprocEngine {
       const result = this.engine.processCitationCluster(citation, [], []);
 
       // result[1] is an array of [index, formattedString] pairs
-      if (result && result[1] && result[1].length > 0) {
+      if (result?.[1] && result[1].length > 0) {
         return result[1][0][1];
       }
 
@@ -166,7 +166,7 @@ class CiteprocEngine {
   generateBibliography(citekeys?: string[]): string[] {
     try {
       // If specific citekeys provided, update items to only those
-      const keysToUse = citekeys?.filter(k => this.items.has(k)) || Array.from(this.items.keys());
+      const keysToUse = citekeys?.filter((k) => this.items.has(k)) || Array.from(this.items.keys());
 
       if (keysToUse.length === 0) {
         return [];
@@ -195,11 +195,11 @@ class CiteprocEngine {
     }
 
     // Convert HTML entries to plain text (citeproc outputs HTML)
-    const plainEntries = entries.map(entry => {
+    const plainEntries = entries.map((entry) => {
       return entry
-        .replace(/<\/?i>/g, '*')           // Italics to markdown
-        .replace(/<\/?b>/g, '**')          // Bold to markdown
-        .replace(/<[^>]+>/g, '')           // Strip remaining HTML
+        .replace(/<\/?i>/g, '*') // Italics to markdown
+        .replace(/<\/?b>/g, '**') // Bold to markdown
+        .replace(/<[^>]+>/g, '') // Strip remaining HTML
         .replace(/&amp;/g, '&')
         .replace(/&lt;/g, '<')
         .replace(/&gt;/g, '>')

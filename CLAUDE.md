@@ -14,6 +14,11 @@ xcodebuild -scheme "final final" -destination 'platform=macOS' build
 
 # Full rebuild
 cd web && pnpm build && cd .. && xcodegen generate && xcodebuild -scheme "final final" -destination 'platform=macOS' build
+
+# Lint web editors (TypeScript/CSS)
+cd web && pnpm lint          # Check for issues
+cd web && pnpm lint:fix      # Auto-fix issues
+cd web && pnpm format        # Format files
 ```
 
 Web output goes to `final final/Resources/editor/` which Xcode bundles.

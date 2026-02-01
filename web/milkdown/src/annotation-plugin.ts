@@ -4,11 +4,11 @@
 // Serializes to <!-- ::type:: content --> HTML comments
 // Types: task (☐/☑), comment (◇), reference (▤)
 
-import { MilkdownPlugin, Ctx } from '@milkdown/kit/ctx';
-import { Node } from '@milkdown/kit/prose/model';
+import type { Ctx, MilkdownPlugin } from '@milkdown/kit/ctx';
+import type { Node } from '@milkdown/kit/prose/model';
 import { $node, $remark, $view } from '@milkdown/kit/utils';
-import { visit } from 'unist-util-visit';
 import type { Root } from 'mdast';
+import { visit } from 'unist-util-visit';
 
 // Annotation type definitions
 export type AnnotationType = 'task' | 'comment' | 'reference';
@@ -77,7 +77,7 @@ const annotationNode = $node('annotation', () => ({
   group: 'inline',
   inline: true,
   // Remove atom: true to allow text content
-  content: 'text*',  // Allow text children for editable content
+  content: 'text*', // Allow text children for editable content
   selectable: true,
   draggable: false,
 
@@ -106,11 +106,9 @@ const annotationNode = $node('annotation', () => ({
       marker = completedTaskMarker;
     }
 
-    const classes = [
-      'ff-annotation',
-      `ff-annotation-${type}`,
-      isCompleted ? 'ff-annotation-completed' : '',
-    ].filter(Boolean).join(' ');
+    const classes = ['ff-annotation', `ff-annotation-${type}`, isCompleted ? 'ff-annotation-completed' : '']
+      .filter(Boolean)
+      .join(' ');
 
     // Get text content for data-text attribute (for tooltips and display modes)
     const textContent = node.textContent || '';
@@ -128,7 +126,7 @@ const annotationNode = $node('annotation', () => ({
       // Marker span (non-editable)
       ['span', { class: 'ff-annotation-marker', contenteditable: 'false' }, marker],
       // Text span (editable, contains ProseMirror content)
-      ['span', { class: 'ff-annotation-text' }, 0],  // 0 = contentDOM hole
+      ['span', { class: 'ff-annotation-text' }, 0], // 0 = contentDOM hole
     ];
   },
 
@@ -177,7 +175,7 @@ const annotationNode = $node('annotation', () => ({
 // NodeView for custom rendering with non-editable marker
 // This allows the marker to be completely non-editable while text is editable
 // NOTE: $view expects (ctx) => NodeViewConstructor, NOT () => (ctx) => NodeViewConstructor
-const annotationNodeView = $view(annotationNode, (ctx: Ctx) => {
+const annotationNodeView = $view(annotationNode, (_ctx: Ctx) => {
   console.log('[AnnotationNodeView] FACTORY CALLED');
   return (node, view, getPos) => {
     console.log('[AnnotationNodeView] VIEW CREATED for node:', node.attrs.type);
@@ -185,11 +183,9 @@ const annotationNodeView = $view(annotationNode, (ctx: Ctx) => {
 
     // Create the wrapper span
     const dom = document.createElement('span');
-    dom.className = [
-      'ff-annotation',
-      `ff-annotation-${type}`,
-      isCompleted ? 'ff-annotation-completed' : '',
-    ].filter(Boolean).join(' ');
+    dom.className = ['ff-annotation', `ff-annotation-${type}`, isCompleted ? 'ff-annotation-completed' : '']
+      .filter(Boolean)
+      .join(' ');
     dom.dataset.type = type;
     dom.dataset.completed = String(isCompleted);
 
@@ -215,7 +211,12 @@ const annotationNodeView = $view(annotationNode, (ctx: Ctx) => {
           const currentNode = view.state.doc.nodeAt(pos);
           if (currentNode && currentNode.type.name === 'annotation') {
             const currentCompleted = currentNode.attrs.isCompleted;
-            console.log('[AnnotationNodeView] Toggle clicked, current:', currentCompleted, '-> new:', !currentCompleted);
+            console.log(
+              '[AnnotationNodeView] Toggle clicked, current:',
+              currentCompleted,
+              '-> new:',
+              !currentCompleted
+            );
             const tr = view.state.tr.setNodeMarkup(pos, undefined, {
               ...currentNode.attrs,
               isCompleted: !currentCompleted,
@@ -234,7 +235,7 @@ const annotationNodeView = $view(annotationNode, (ctx: Ctx) => {
     dom.appendChild(contentDOM);
 
     // Update tooltip when text changes
-    const updateTooltip = () => {
+    const _updateTooltip = () => {
       const text = contentDOM.textContent || '';
       dom.dataset.text = text;
       dom.title = text;
@@ -273,7 +274,9 @@ const annotationNodeView = $view(annotationNode, (ctx: Ctx) => {
           'ff-annotation',
           `ff-annotation-${newAttrs.type}`,
           newAttrs.isCompleted ? 'ff-annotation-completed' : '',
-        ].filter(Boolean).join(' ');
+        ]
+          .filter(Boolean)
+          .join(' ');
 
         // Update marker
         let newMarker = annotationMarkers[newAttrs.type];
@@ -311,11 +314,7 @@ const annotationNodeView = $view(annotationNode, (ctx: Ctx) => {
 });
 
 // Export the plugin array
-export const annotationPlugin: MilkdownPlugin[] = [
-  remarkAnnotationPlugin,
-  annotationNode,
-  annotationNodeView,
-].flat();
+export const annotationPlugin: MilkdownPlugin[] = [remarkAnnotationPlugin, annotationNode, annotationNodeView].flat();
 
 // Export node and helper for use in slash commands
 export { annotationNode };

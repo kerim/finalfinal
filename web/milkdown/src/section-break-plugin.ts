@@ -1,11 +1,11 @@
 // Section Break Plugin for Milkdown
 // Renders as § in editor, serializes to <!-- ::break:: --> in markdown
 
-import { MilkdownPlugin } from '@milkdown/kit/ctx';
-import { Node } from '@milkdown/kit/prose/model';
+import type { MilkdownPlugin } from '@milkdown/kit/ctx';
+import type { Node } from '@milkdown/kit/prose/model';
 import { $node, $remark } from '@milkdown/kit/utils';
-import { visit } from 'unist-util-visit';
 import type { Root } from 'mdast';
+import { visit } from 'unist-util-visit';
 
 // Remark plugin to convert HTML comments to section_break nodes
 // Uses unist-util-visit for proper tree traversal
@@ -56,10 +56,7 @@ const sectionBreakNode = $node('section_break', () => ({
 }));
 
 // Export the plugin array
-export const sectionBreakPlugin: MilkdownPlugin[] = [
-  remarkPlugin,
-  sectionBreakNode,
-].flat();
+export const sectionBreakPlugin: MilkdownPlugin[] = [remarkPlugin, sectionBreakNode].flat();
 
 // Export the node for use in slash commands
 export { sectionBreakNode };

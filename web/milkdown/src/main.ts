@@ -1,29 +1,42 @@
 // Milkdown WYSIWYG Editor for final final
 // Uses window.FinalFinal API for Swift ↔ JS communication
 
-import { Editor, defaultValueCtx, editorViewCtx, parserCtx, Ctx } from '@milkdown/kit/core';
+import { type Ctx, defaultValueCtx, Editor, editorViewCtx, parserCtx } from '@milkdown/kit/core';
+import { history } from '@milkdown/kit/plugin/history';
 import { commonmark } from '@milkdown/kit/preset/commonmark';
 import { gfm } from '@milkdown/kit/preset/gfm';
-import { history } from '@milkdown/kit/plugin/history';
-import { undo, redo } from '@milkdown/kit/prose/history';
-import { getMarkdown } from '@milkdown/kit/utils';
+import { redo, undo } from '@milkdown/kit/prose/history';
 import { Slice } from '@milkdown/kit/prose/model';
 import { Selection } from '@milkdown/kit/prose/state';
-import { slashFactory, SlashProvider } from '@milkdown/plugin-slash';
-
+import { getMarkdown } from '@milkdown/kit/utils';
+import { SlashProvider, slashFactory } from '@milkdown/plugin-slash';
+import {
+  annotationDisplayPlugin,
+  setAnnotationDisplayModes as setDisplayModes,
+  setHideCompletedTasks,
+} from './annotation-display-plugin';
+import { type AnnotationType, annotationNode, annotationPlugin } from './annotation-plugin';
+import { type CSLItem, citationPlugin } from './citation-plugin';
 import { focusModePlugin, setFocusModeEnabled } from './focus-mode-plugin';
-import { sectionBreakPlugin, sectionBreakNode } from './section-break-plugin';
-import { annotationPlugin, annotationNode, createAnnotationMarkdown, AnnotationType } from './annotation-plugin';
-import { annotationDisplayPlugin, setAnnotationDisplayModes as setDisplayModes, getAnnotationDisplayModes, setHideCompletedTasks } from './annotation-display-plugin';
-import { highlightPlugin, highlightMark } from './highlight-plugin';
-import { citationPlugin, CSLItem } from './citation-plugin';
+import { highlightMark, highlightPlugin } from './highlight-plugin';
+import { sectionBreakNode, sectionBreakPlugin } from './section-break-plugin';
 
 // Debug: Log plugin array contents at import time
 console.log('[Milkdown] citationPlugin imported, length:', citationPlugin.length);
-console.log('[Milkdown] citationPlugin contents:', citationPlugin.map(p => typeof p === 'function' ? p.name || 'anonymous' : p));
-import { setCitationLibrary, showCitationSearchPopup, hideSearchPopup, isSearchPopupVisible, getCitationLibrarySize, searchCitationsCallback, restoreCitationLibrary } from './citation-search';
+console.log(
+  '[Milkdown] citationPlugin contents:',
+  citationPlugin.map((p) => (typeof p === 'function' ? p.name || 'anonymous' : p))
+);
+
+import {
+  getCitationLibrarySize,
+  restoreCitationLibrary,
+  searchCitationsCallback,
+  setCitationLibrary,
+  showCitationSearchPopup,
+} from './citation-search';
 import { getCiteprocEngine } from './citeproc-engine';
-import { textToMdOffset, mdToTextOffset } from './cursor-mapping';
+import { mdToTextOffset, textToMdOffset } from './cursor-mapping';
 import './styles.css';
 
 /**
@@ -32,22 +45,22 @@ import './styles.css';
  */
 function stripMarkdownSyntax(line: string): string {
   return line
-    .replace(/^\||\|$/g, '')            // leading/trailing pipes (table)
-    .replace(/\|/g, ' ')                // internal pipes (table cells)
-    .replace(/^#+\s*/, '')              // headings
-    .replace(/^\s*[-*+]\s*/, '')        // unordered list items
-    .replace(/^\s*\d+\.\s*/, '')        // ordered list items
-    .replace(/^\s*>\s*/, '')            // blockquotes
-    .replace(/~~(.+?)~~/g, '$1')        // strikethrough
-    .replace(/\*\*(.+?)\*\*/g, '$1')    // bold
-    .replace(/__(.+?)__/g, '$1')        // bold alt
-    .replace(/\*(.+?)\*/g, '$1')        // italic
-    .replace(/_([^_]+)_/g, '$1')        // italic alt
-    .replace(/`([^`]+)`/g, '$1')        // inline code
+    .replace(/^\||\|$/g, '') // leading/trailing pipes (table)
+    .replace(/\|/g, ' ') // internal pipes (table cells)
+    .replace(/^#+\s*/, '') // headings
+    .replace(/^\s*[-*+]\s*/, '') // unordered list items
+    .replace(/^\s*\d+\.\s*/, '') // ordered list items
+    .replace(/^\s*>\s*/, '') // blockquotes
+    .replace(/~~(.+?)~~/g, '$1') // strikethrough
+    .replace(/\*\*(.+?)\*\*/g, '$1') // bold
+    .replace(/__(.+?)__/g, '$1') // bold alt
+    .replace(/\*(.+?)\*/g, '$1') // italic
+    .replace(/_([^_]+)_/g, '$1') // italic alt
+    .replace(/`([^`]+)`/g, '$1') // inline code
     .replace(/!\[([^\]]*)\]\([^)]+\)/g, '$1') // images
-    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')  // links
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1') // links
     .trim()
-    .replace(/\s+/g, ' ');              // normalize whitespace
+    .replace(/\s+/g, ' '); // normalize whitespace
 }
 
 /**
@@ -80,7 +93,6 @@ function findTableStartLine(lines: string[], targetLine: number): number | null 
   }
   return startLine;
 }
-
 
 declare global {
   interface Window {
@@ -135,7 +147,7 @@ interface SlashCommand {
   replacement: string;
   description: string;
   isNodeInsertion?: boolean; // If true, uses custom node insertion instead of text
-  headingLevel?: 1 | 2 | 3;  // For heading commands, transforms paragraph to heading node
+  headingLevel?: 1 | 2 | 3; // For heading commands, transforms paragraph to heading node
 }
 
 const slashCommands: SlashCommand[] = [
@@ -161,7 +173,7 @@ let lastSlashShowTime = 0; // Debounce: prevents immediate hide after show
 function createSlashMenu(): HTMLElement {
   const menu = document.createElement('div');
   menu.className = 'slash-menu';
-  menu.setAttribute('data-show', 'false');  // Prevent flash on load
+  menu.setAttribute('data-show', 'false'); // Prevent flash on load
   menu.style.cssText = `
     position: absolute;
     padding: 4px 0;
@@ -179,7 +191,7 @@ function createSlashMenu(): HTMLElement {
 
 function createMenuItem(cmd: SlashCommand, index: number, isSelected: boolean): HTMLElement {
   const item = document.createElement('div');
-  item.className = 'slash-menu-item' + (isSelected ? ' selected' : '');
+  item.className = `slash-menu-item${isSelected ? ' selected' : ''}`;
   item.dataset.index = String(index);
   item.style.cssText = `
     padding: 6px 12px;
@@ -206,7 +218,7 @@ function createMenuItem(cmd: SlashCommand, index: number, isSelected: boolean): 
   });
   item.addEventListener('mouseenter', () => {
     selectedIndex = index;
-    updateMenuSelection();  // Only update styles, don't recreate DOM
+    updateMenuSelection(); // Only update styles, don't recreate DOM
   });
 
   return item;
@@ -223,9 +235,8 @@ function updateSlashMenu(filter: string) {
 
   // Filter commands based on what user typed after /
   const query = filter.slice(1).toLowerCase(); // Remove leading /
-  filteredCommands = slashCommands.filter(cmd =>
-    cmd.label.toLowerCase().includes(query) ||
-    cmd.description.toLowerCase().includes(query)
+  filteredCommands = slashCommands.filter(
+    (cmd) => cmd.label.toLowerCase().includes(query) || cmd.description.toLowerCase().includes(query)
   );
 
   if (filteredCommands.length === 0) {
@@ -253,9 +264,7 @@ function updateMenuSelection() {
   items.forEach((item, i) => {
     const isSelected = i === selectedIndex;
     item.classList.toggle('selected', isSelected);
-    (item as HTMLElement).style.background = isSelected
-      ? 'var(--editor-selection, #e8f0fe)'
-      : '';
+    (item as HTMLElement).style.background = isSelected ? 'var(--editor-selection, #e8f0fe)' : '';
   });
 }
 
@@ -295,8 +304,8 @@ function executeSlashCommand(index: number) {
         tr = tr.replaceWith(parentStart, parentEnd, node);
       } else {
         // Paragraph has other content - insert break BEFORE paragraph, delete only /break text
-        tr = tr.delete(cmdStart, from);           // Delete the "/break" text
-        tr = tr.insert(parentStart, node);        // Insert section_break BEFORE the paragraph
+        tr = tr.delete(cmdStart, from); // Delete the "/break" text
+        tr = tr.insert(parentStart, node); // Insert section_break BEFORE the paragraph
       }
       view.dispatch(tr);
     } else if (cmd.headingLevel) {
@@ -372,9 +381,7 @@ function executeSlashCommand(index: number) {
       return; // Early return - don't set pendingSlashUndo
     } else {
       // Standard text replacement (fallback for future commands)
-      const tr = view.state.tr
-        .delete(cmdStart, from)
-        .insertText(cmd.replacement, cmdStart);
+      const tr = view.state.tr.delete(cmdStart, from).insertText(cmd.replacement, cmdStart);
       view.dispatch(tr);
     }
 
@@ -419,7 +426,7 @@ function handleSlashKeydown(e: KeyboardEvent): boolean {
       if (/\/\w*$/.test(textBefore)) {
         // Perform second undo (removes the "/" trigger)
         undo(view.state, view.dispatch);
-        pendingSlashRedo = true;  // Enable smart redo
+        pendingSlashRedo = true; // Enable smart redo
       }
 
       pendingSlashUndo = false;
@@ -449,7 +456,7 @@ function handleSlashKeydown(e: KeyboardEvent): boolean {
       redo(view.state, view.dispatch);
 
       pendingSlashRedo = false;
-      pendingSlashUndo = true;  // Allow smart undo again
+      pendingSlashUndo = true; // Allow smart undo again
 
       // Re-enable menu after transaction settles
       requestAnimationFrame(() => {
@@ -478,14 +485,14 @@ function handleSlashKeydown(e: KeyboardEvent): boolean {
     e.preventDefault();
     e.stopPropagation();
     selectedIndex = (selectedIndex + 1) % filteredCommands.length;
-    updateMenuSelection();  // Only update styles, don't recreate DOM
+    updateMenuSelection(); // Only update styles, don't recreate DOM
     return true;
   }
   if (e.key === 'ArrowUp') {
     e.preventDefault();
     e.stopPropagation();
     selectedIndex = (selectedIndex - 1 + filteredCommands.length) % filteredCommands.length;
-    updateMenuSelection();  // Only update styles, don't recreate DOM
+    updateMenuSelection(); // Only update styles, don't recreate DOM
     return true;
   }
   if (e.key === 'Enter' || e.key === 'Tab') {
@@ -514,9 +521,7 @@ function configureSlash(ctx: Ctx) {
     content: slashMenuElement,
     shouldShow(view) {
       // Pass custom matchNode to allow slash commands in both paragraphs and headings
-      const content = this.getContent(view, (node) =>
-        node.type.name === 'paragraph' || node.type.name === 'heading'
-      );
+      const content = this.getContent(view, (node) => node.type.name === 'paragraph' || node.type.name === 'heading');
       const now = Date.now();
 
       // Suppress re-showing during command execution
@@ -582,15 +587,15 @@ async function initEditor() {
       // 4. highlightPlugin MUST be after commonmark to survive parse-serialize cycle
       //    (fixes ==text== not persisting when switching to CodeMirror)
       // 5. citationPlugin MUST be before commonmark to parse [@citekey] syntax
-      .use(sectionBreakPlugin)  // Intercept <!-- ::break:: --> before commonmark filters it
-      .use(annotationPlugin)    // Intercept annotation comments before filtering
-      .use(citationPlugin)      // Parse [@citekey] citations before commonmark
+      .use(sectionBreakPlugin) // Intercept <!-- ::break:: --> before commonmark filters it
+      .use(annotationPlugin) // Intercept annotation comments before filtering
+      .use(citationPlugin) // Parse [@citekey] citations before commonmark
       .use(commonmark)
       .use(gfm)
-      .use(highlightPlugin)     // ==highlight== syntax - AFTER commonmark for serialization
+      .use(highlightPlugin) // ==highlight== syntax - AFTER commonmark for serialization
       .use(history)
       .use(focusModePlugin)
-      .use(annotationDisplayPlugin)  // Controls annotation visibility
+      .use(annotationDisplayPlugin) // Controls annotation visibility
       // citationNodeView is now included in citationPlugin (same file = correct atom identity)
       .use(slash)
       .create();
@@ -613,7 +618,6 @@ async function initEditor() {
       currentContent = editorInstance!.action(getMarkdown());
     }
   };
-
 }
 
 window.FinalFinal = {
@@ -633,9 +637,7 @@ window.FinalFinal = {
         const doc = view.state.doc;
 
         // Check if already a valid empty paragraph (optimization: skip if already correct)
-        if (doc.childCount === 1 &&
-            doc.firstChild?.type.name === 'paragraph' &&
-            doc.firstChild?.textContent === '') {
+        if (doc.childCount === 1 && doc.firstChild?.type.name === 'paragraph' && doc.firstChild?.textContent === '') {
           currentContent = markdown;
           return;
         }
@@ -710,7 +712,7 @@ window.FinalFinal = {
 
   getStats() {
     const content = this.getContent();
-    const words = content.split(/\s+/).filter(w => w.length > 0).length;
+    const words = content.split(/\s+/).filter((w) => w.length > 0).length;
     return { words, characters: content.length };
   },
 
@@ -739,10 +741,13 @@ window.FinalFinal = {
 
   setTheme(cssVariables: string) {
     const root = document.documentElement;
-    cssVariables.split(';').filter(s => s.trim()).forEach(pair => {
-      const [key, value] = pair.split(':').map(s => s.trim());
-      if (key && value) root.style.setProperty(key, value);
-    });
+    cssVariables
+      .split(';')
+      .filter((s) => s.trim())
+      .forEach((pair) => {
+        const [key, value] = pair.split(':').map((s) => s.trim());
+        if (key && value) root.style.setProperty(key, value);
+      });
   },
 
   getCursorPosition(): { line: number; column: number } {
@@ -818,18 +823,14 @@ window.FinalFinal = {
         }
 
         // Partial match (for long lines)
-        if (stripped && parentText &&
-            parentText.startsWith(stripped) &&
-            stripped.length >= 10) {
+        if (stripped && parentText && parentText.startsWith(stripped) && stripped.length >= 10) {
           line = i + 1;
           matched = true;
           break;
         }
 
         // Reverse partial match
-        if (stripped && parentText &&
-            stripped.startsWith(parentText) &&
-            parentText.length >= 10) {
+        if (stripped && parentText && stripped.startsWith(parentText) && parentText.length >= 10) {
           line = i + 1;
           matched = true;
           break;
@@ -1034,7 +1035,7 @@ window.FinalFinal = {
       const coords = view.coordsAtPos(head);
       if (coords) {
         const viewportHeight = window.innerHeight;
-        const targetScrollY = coords.top + window.scrollY - (viewportHeight / 2);
+        const targetScrollY = coords.top + window.scrollY - viewportHeight / 2;
         window.scrollTo({ top: Math.max(0, targetScrollY), behavior: 'instant' });
       }
     } catch {
@@ -1083,11 +1084,7 @@ window.FinalFinal = {
 
   // === Batch initialization for faster startup ===
 
-  initialize(options: {
-    content: string;
-    theme: string;
-    cursorPosition: { line: number; column: number } | null;
-  }) {
+  initialize(options: { content: string; theme: string; cursorPosition: { line: number; column: number } | null }) {
     // Apply theme first (doesn't require editor instance)
     this.setTheme(options.theme);
 
@@ -1275,7 +1272,7 @@ window.FinalFinal = {
 
       doc.descendants((node) => {
         if (node.type.name === 'citation') {
-          const keys = (node.attrs.citekeys as string || '').split(',').filter(k => k.trim());
+          const keys = ((node.attrs.citekeys as string) || '').split(',').filter((k) => k.trim());
           citekeys.push(...keys);
         }
         return true;

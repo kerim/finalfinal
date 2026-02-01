@@ -4,9 +4,13 @@
   "private": true,
   "scripts": {
     "build": "pnpm -r build",
-    "dev": "pnpm -r dev"
+    "dev": "pnpm -r dev",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "format": "biome format --write ."
   },
   "devDependencies": {
+    "@biomejs/biome": "^2.3.13",
     "typescript": "^5.3.0"
   }
 }

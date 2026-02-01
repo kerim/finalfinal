@@ -1,5 +1,5 @@
 /* Editor styles with CSS variable support for theming */
-@import '../../shared/typography.css';
+@import "../../shared/typography.css";
 
 :root {
   --editor-bg: #ffffff;
@@ -9,9 +9,12 @@
 }
 
 /* Global link theming - ensures injected HTML (e.g., citeproc) uses theme colors */
-a { color: var(--accent-color); }
+a {
+  color: var(--accent-color);
+}
 
-html, body {
+html,
+body {
   margin: 0;
   padding: 0;
   height: 100%;
@@ -28,16 +31,33 @@ html, body {
   outline: none;
 }
 
-.milkdown { background: var(--editor-bg); color: var(--editor-text); }
-.milkdown .editor { outline: none; }
-.ProseMirror { outline: none; }
-.ProseMirror ::selection { background: var(--editor-selection); }
+.milkdown {
+  background: var(--editor-bg);
+  color: var(--editor-text);
+}
+.milkdown .editor {
+  outline: none;
+}
+.ProseMirror {
+  outline: none;
+}
+.ProseMirror ::selection {
+  background: var(--editor-selection);
+}
 
 /* Focus mode dimming */
-.ff-dimmed { opacity: 0.3; transition: opacity 0.2s ease; }
+.ff-dimmed {
+  opacity: 0.3;
+  transition: opacity 0.2s ease;
+}
 
 /* Typography */
-.milkdown h1, .milkdown h2, .milkdown h3, .milkdown h4, .milkdown h5, .milkdown h6 {
+.milkdown h1,
+.milkdown h2,
+.milkdown h3,
+.milkdown h4,
+.milkdown h5,
+.milkdown h6 {
   color: var(--editor-text);
   margin-top: 1.5em;
   margin-bottom: 0.5em;
@@ -56,10 +76,18 @@ html, body {
   letter-spacing: var(--tracking-tight);
 }
 
-.milkdown h3 { font-size: var(--font-size-h3); }
-.milkdown h4 { font-size: var(--font-size-h4); }
-.milkdown h5 { font-size: var(--font-size-h5); }
-.milkdown h6 { font-size: var(--font-size-h6); }
+.milkdown h3 {
+  font-size: var(--font-size-h3);
+}
+.milkdown h4 {
+  font-size: var(--font-size-h4);
+}
+.milkdown h5 {
+  font-size: var(--font-size-h5);
+}
+.milkdown h6 {
+  font-size: var(--font-size-h6);
+}
 
 .milkdown p {
   margin: 0.75em 0;
@@ -85,27 +113,42 @@ html, body {
 }
 
 /* Links and lists */
-.milkdown a { color: var(--accent-color); text-decoration: none; }
-.milkdown a:hover { text-decoration: underline; }
-.milkdown ul, .milkdown ol { padding-left: 1.5em; }
-.milkdown li { margin: 0.25em 0; }
-.milkdown blockquote { border-left: 4px solid var(--accent-color); margin: 1em 0; padding-left: 1em; opacity: 0.9; }
+.milkdown a {
+  color: var(--accent-color);
+  text-decoration: none;
+}
+.milkdown a:hover {
+  text-decoration: underline;
+}
+.milkdown ul,
+.milkdown ol {
+  padding-left: 1.5em;
+}
+.milkdown li {
+  margin: 0.25em 0;
+}
+.milkdown blockquote {
+  border-left: 4px solid var(--accent-color);
+  margin: 1em 0;
+  padding-left: 1em;
+  opacity: 0.9;
+}
 
 /* Section break - compact visual separator */
 .section-break {
   display: block;
   color: var(--editor-muted, #999);
   font-size: 1.5em;
-  line-height: 1;  /* Keep symbol compact - no extra vertical space */
+  line-height: 1; /* Keep symbol compact - no extra vertical space */
   text-align: left;
   user-select: all;
   cursor: default;
-  margin: 8px 0;  /* Fixed small margin for minimal visual footprint */
+  margin: 8px 0; /* Fixed small margin for minimal visual footprint */
 }
 
 /* Hide slash menu when SlashProvider sets data-show="false" */
 .slash-menu[data-show="false"] {
-  display: none !important;
+  display: none;
 }
 
 /* === Annotation Styles === */
@@ -135,7 +178,7 @@ html, body {
 
 /* Empty annotation placeholder */
 .ff-annotation-text:empty::before {
-  content: 'type here...';
+  content: "type here...";
   color: var(--editor-muted, #999);
   font-style: italic;
 }
@@ -161,7 +204,7 @@ html, body {
 
 /* Hidden mode (panel-only) */
 .ff-annotation-hidden {
-  display: none !important;
+  display: none;
 }
 
 /* Collapsed mode - marker only, hide text */
@@ -200,7 +243,9 @@ html, body {
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
   opacity: 0;
   visibility: hidden;
-  transition: opacity 0.15s ease, visibility 0.15s ease;
+  transition:
+    opacity 0.15s ease,
+    visibility 0.15s ease;
   z-index: 1000;
   pointer-events: none;
   margin-bottom: 4px;
@@ -208,7 +253,7 @@ html, body {
 
 /* Arrow for tooltip */
 .ff-annotation-collapsed::before {
-  content: '';
+  content: "";
   position: absolute;
   left: 50%;
   bottom: 100%;
@@ -217,7 +262,9 @@ html, body {
   border-top-color: var(--tooltip-bg, #1f2937);
   opacity: 0;
   visibility: hidden;
-  transition: opacity 0.15s ease, visibility 0.15s ease;
+  transition:
+    opacity 0.15s ease,
+    visibility 0.15s ease;
   z-index: 1001;
   margin-bottom: -1px;
 }
@@ -288,7 +335,7 @@ mark.ff-highlight {
 
 /* Citation in edit mode */
 .ff-citation-editing {
-  font-family: 'SF Mono', Menlo, Monaco, monospace;
+  font-family: "SF Mono", Menlo, Monaco, monospace;
   font-size: 0.9em;
   background: rgba(128, 128, 128, 0.1);
   color: var(--editor-text);
@@ -298,7 +345,7 @@ mark.ff-highlight {
 
 /* Citation search popup results */
 .ff-citation-search-item:hover {
-  background: var(--editor-selection, rgba(0, 122, 255, 0.15)) !important;
+  background: var(--editor-selection, rgba(0, 122, 255, 0.15));
 }
 
 .ff-citation-search-item.selected {

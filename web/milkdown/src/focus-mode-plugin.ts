@@ -1,9 +1,9 @@
 // Focus mode plugin using ProseMirror Decoration system
 // NOT DOM manipulation - critical for ProseMirror reconciliation
 
-import { $prose } from '@milkdown/kit/utils';
 import { Plugin, PluginKey } from '@milkdown/kit/prose/state';
 import { Decoration, DecorationSet } from '@milkdown/kit/prose/view';
+import { $prose } from '@milkdown/kit/utils';
 
 export const focusModePluginKey = new PluginKey('focus-mode');
 
@@ -33,14 +33,14 @@ export const focusModePlugin = $prose(() => {
 
         // Find the block containing the cursor
         let currentBlockStart = 0;
-        let currentBlockEnd = doc.content.size;
+        let _currentBlockEnd = doc.content.size;
 
         doc.descendants((node, pos) => {
           if (node.isBlock && node.isTextblock) {
             const nodeEnd = pos + node.nodeSize;
             if (currentPos >= pos && currentPos <= nodeEnd) {
               currentBlockStart = pos;
-              currentBlockEnd = nodeEnd;
+              _currentBlockEnd = nodeEnd;
             }
           }
           return true;
@@ -53,9 +53,7 @@ export const focusModePlugin = $prose(() => {
             const isCurrent = pos === currentBlockStart;
 
             if (!isCurrent) {
-              decorations.push(
-                Decoration.node(pos, nodeEnd, { class: 'ff-dimmed' })
-              );
+              decorations.push(Decoration.node(pos, nodeEnd, { class: 'ff-dimmed' }));
             }
           }
           return true;

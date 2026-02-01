@@ -1,10 +1,10 @@
 // Highlight Plugin for Milkdown
 // Renders ==text== as highlighted text marks
 
-import { MilkdownPlugin } from '@milkdown/kit/ctx';
+import type { MilkdownPlugin } from '@milkdown/kit/ctx';
 import { $mark, $remark } from '@milkdown/kit/utils';
-import { visit } from 'unist-util-visit';
 import type { Root, Text } from 'mdast';
+import { visit } from 'unist-util-visit';
 
 // Remark plugin to parse ==highlight== in text nodes
 const remarkHighlightPlugin = $remark('highlight', () => () => (tree: Root) => {
@@ -14,7 +14,7 @@ const remarkHighlightPlugin = $remark('highlight', () => () => (tree: Root) => {
     const value = node.value;
 
     // Use matchAll to avoid global regex state issues
-    const matches = [...value.matchAll(/==([^=]+)==/g)].map(m => ({
+    const matches = [...value.matchAll(/==([^=]+)==/g)].map((m) => ({
       start: m.index!,
       end: m.index! + m[0].length,
       text: m[1],
@@ -59,10 +59,7 @@ const remarkHighlightPlugin = $remark('highlight', () => () => (tree: Root) => {
 
 // Define the highlight mark
 const highlightMark = $mark('highlight', () => ({
-  parseDOM: [
-    { tag: 'mark.ff-highlight' },
-    { tag: 'mark', getAttrs: () => ({}) },
-  ],
+  parseDOM: [{ tag: 'mark.ff-highlight' }, { tag: 'mark', getAttrs: () => ({}) }],
 
   toDOM: () => ['mark', { class: 'ff-highlight' }, 0],
 
@@ -88,10 +85,7 @@ const highlightMark = $mark('highlight', () => ({
 
 // Export the plugin array
 // Note: Input rule for ==text== removed - remark plugin handles parsing from markdown
-export const highlightPlugin: MilkdownPlugin[] = [
-  remarkHighlightPlugin,
-  highlightMark,
-].flat();
+export const highlightPlugin: MilkdownPlugin[] = [remarkHighlightPlugin, highlightMark].flat();
 
 // Export the mark for programmatic use
 export { highlightMark };

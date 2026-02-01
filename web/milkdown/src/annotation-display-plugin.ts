@@ -4,17 +4,17 @@
 // Completed task filtering hides completed tasks when enabled
 // Uses ProseMirror decorations - NOT DOM manipulation
 
-import { $prose } from '@milkdown/kit/utils';
 import { Plugin, PluginKey } from '@milkdown/kit/prose/state';
 import { Decoration, DecorationSet } from '@milkdown/kit/prose/view';
-import { AnnotationType } from './annotation-plugin';
+import { $prose } from '@milkdown/kit/utils';
+import type { AnnotationType } from './annotation-plugin';
 
 export type AnnotationDisplayMode = 'inline' | 'collapsed';
 
 export const annotationDisplayPluginKey = new PluginKey('annotation-display');
 
 // Current display modes per type
-let displayModes: Record<AnnotationType, AnnotationDisplayMode> = {
+const displayModes: Record<AnnotationType, AnnotationDisplayMode> = {
   task: 'inline',
   comment: 'collapsed',
   reference: 'collapsed',
@@ -36,12 +36,12 @@ export function setAnnotationDisplayModes(modes: Record<string, string>) {
 
   // Handle global panel-only mode
   if ('__panelOnly' in modes) {
-    isPanelOnlyMode = modes['__panelOnly'] === 'true';
+    isPanelOnlyMode = modes.__panelOnly === 'true';
   }
 
   // Handle hide completed tasks filter
   if ('__hideCompletedTasks' in modes) {
-    hideCompletedTasks = modes['__hideCompletedTasks'] === 'true';
+    hideCompletedTasks = modes.__hideCompletedTasks === 'true';
   }
 
   for (const [type, mode] of Object.entries(modes)) {

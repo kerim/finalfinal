@@ -2,12 +2,12 @@
 // Parses Pandoc-style citations: [@citekey], [@a; @b], [@key, p. 42]
 // Renders as inline atomic nodes with formatted display
 
-import { MilkdownPlugin, Ctx } from '@milkdown/kit/ctx';
-import { Node } from '@milkdown/kit/prose/model';
+import type { Ctx, MilkdownPlugin } from '@milkdown/kit/ctx';
+import type { Node } from '@milkdown/kit/prose/model';
 import { $node, $remark, $view } from '@milkdown/kit/utils';
-import { visit } from 'unist-util-visit';
 import type { Root } from 'mdast';
-import { getCiteprocEngine, CSLItem } from './citeproc-engine';
+import { visit } from 'unist-util-visit';
+import { type CSLItem, getCiteprocEngine } from './citeproc-engine';
 
 // Citation attributes interface
 export interface CitationAttrs {
@@ -32,7 +32,7 @@ const citationBracketRegex = /\[([^\]]*@[\w:.-][^\]]*)\]/g;
 // Regex to parse individual citations within bracket
 // Matches: optional prefix, optional -, @citekey, optional locator/suffix
 // Examples: @smith2023, -@smith2023, @smith2023, p. 42, see @smith2023
-const singleCiteRegex = /(-?)@([\w:.-]+)(?:,\s*([^;@\]]+))?/g;
+const _singleCiteRegex = /(-?)@([\w:.-]+)(?:,\s*([^;@\]]+))?/g;
 
 // Parse a citation bracket into structured data
 interface ParsedCitation {
@@ -49,10 +49,10 @@ function parseCitationBracket(bracketContent: string): ParsedCitation {
   const locators: string[] = [];
   let suppressAuthor = false;
   let prefix = '';
-  let suffix = '';
+  const suffix = '';
 
   // Split by semicolon for multiple citations
-  const parts = bracketContent.split(';').map(p => p.trim());
+  const parts = bracketContent.split(';').map((p) => p.trim());
 
   for (const part of parts) {
     // Check for prefix before @
@@ -91,7 +91,7 @@ function parseCitationBracket(bracketContent: string): ParsedCitation {
 
 // Serialize citation attrs back to Pandoc syntax
 export function serializeCitation(attrs: CitationAttrs): string {
-  const citekeys = attrs.citekeys.split(',').filter(k => k.trim());
+  const citekeys = attrs.citekeys.split(',').filter((k) => k.trim());
   const locators = attrs.locators ? JSON.parse(attrs.locators) : [];
 
   const parts: string[] = [];
@@ -112,7 +112,7 @@ export function serializeCitation(attrs: CitationAttrs): string {
   let result = `[${parts.join('; ')}]`;
   if (attrs.suffix) {
     // Suffix goes inside bracket after last citation
-    result = result.slice(0, -1) + ` ${attrs.suffix}]`;
+    result = `${result.slice(0, -1)} ${attrs.suffix}]`;
   }
 
   return result;
@@ -190,7 +190,7 @@ const remarkCitationPlugin = $remark('citation', () => () => (tree: Root) => {
 export const citationNode = $node('citation', () => ({
   group: 'inline',
   inline: true,
-  atom: true,  // Atomic - not editable, treated as single unit
+  atom: true, // Atomic - not editable, treated as single unit
   selectable: true,
   draggable: false,
 
@@ -219,12 +219,10 @@ export const citationNode = $node('citation', () => ({
 
   toDOM: (node: Node) => {
     const attrs = node.attrs as CitationAttrs;
-    const citekeys = attrs.citekeys.split(',').filter(k => k.trim());
+    const citekeys = attrs.citekeys.split(',').filter((k) => k.trim());
 
     // Basic display (will be enhanced by node view)
-    const displayText = citekeys.length > 0
-      ? `[@${citekeys.join('; @')}]`
-      : '[?]';
+    const displayText = citekeys.length > 0 ? `[@${citekeys.join('; @')}]` : '[?]';
 
     return [
       'span',
@@ -295,11 +293,11 @@ function parseEditedCitation(text: string): {
   const citekeys: string[] = [];
   const locators: string[] = [];
   let prefix = '';
-  let suffix = '';
+  const suffix = '';
   let suppressAuthor = false;
 
   // Split by semicolon for multiple citations
-  const parts = inner.split(';').map(p => p.trim());
+  const parts = inner.split(';').map((p) => p.trim());
 
   for (const part of parts) {
     // Check for prefix before @
@@ -456,7 +454,7 @@ function updateEditPreview(): void {
 
   if (parsed && parsed.citekeys.length > 0) {
     const engine = getCiteprocEngine();
-    const allResolved = parsed.citekeys.every(k => engine.hasItem(k));
+    const allResolved = parsed.citekeys.every((k) => engine.hasItem(k));
 
     if (allResolved) {
       try {
@@ -468,15 +466,13 @@ function updateEditPreview(): void {
         });
         editPopupPreview.textContent = formatted;
         editPopupPreview.style.color = 'var(--text-secondary, #666)';
-      } catch (e) {
+      } catch (_e) {
         editPopupPreview.textContent = `(${parsed.citekeys.join('; ')})`;
         editPopupPreview.style.color = 'var(--text-secondary, #666)';
       }
     } else {
       // Show unresolved keys with ?
-      const display = parsed.citekeys.map(k =>
-        engine.hasItem(k) ? engine.getShortCitation(k) : `${k}?`
-      ).join('; ');
+      const display = parsed.citekeys.map((k) => (engine.hasItem(k) ? engine.getShortCitation(k) : `${k}?`)).join('; ');
       editPopupPreview.textContent = `(${display})`;
       editPopupPreview.style.color = 'var(--warning-color, #c9a227)';
     }
@@ -599,14 +595,19 @@ const citationNodeView = $view(citationNode, (ctx: Ctx) => {
     // Update display content
     const updateDisplay = () => {
       // Compute citekeys fresh from current attrs (not stale closure)
-      const citekeys = attrs.citekeys.split(',').filter(k => k.trim());
+      const citekeys = attrs.citekeys.split(',').filter((k) => k.trim());
 
       const engine = getCiteprocEngine();
       let displayText = '';
       let isResolved = true;
       let tooltipText = '';
 
-      console.log('[CitationNodeView] updateDisplay called for citekeys:', citekeys, 'from attrs.citekeys:', attrs.citekeys);
+      console.log(
+        '[CitationNodeView] updateDisplay called for citekeys:',
+        citekeys,
+        'from attrs.citekeys:',
+        attrs.citekeys
+      );
 
       if (citekeys.length === 0) {
         displayText = '[?]';
@@ -614,7 +615,7 @@ const citationNodeView = $view(citationNode, (ctx: Ctx) => {
         tooltipText = 'No citation key';
       } else {
         // Check resolution status
-        const unresolvedKeys = citekeys.filter(k => !engine.hasItem(k));
+        const unresolvedKeys = citekeys.filter((k) => !engine.hasItem(k));
         isResolved = unresolvedKeys.length === 0;
 
         if (isResolved) {
@@ -628,27 +629,31 @@ const citationNodeView = $view(citationNode, (ctx: Ctx) => {
             });
 
             // Build tooltip with full citation info
-            const items = citekeys.map(k => engine.getItem(k)).filter(Boolean) as CSLItem[];
-            tooltipText = items.map(item => {
-              const author = item.author?.[0];
-              const authorName = author?.family || author?.literal || '';
-              const year = item.issued?.['date-parts']?.[0]?.[0] || 'n.d.';
-              const title = item.title || '';
-              return `${authorName} (${year}). ${title}`;
-            }).join('\n');
-          } catch (e) {
+            const items = citekeys.map((k) => engine.getItem(k)).filter(Boolean) as CSLItem[];
+            tooltipText = items
+              .map((item) => {
+                const author = item.author?.[0];
+                const authorName = author?.family || author?.literal || '';
+                const year = item.issued?.['date-parts']?.[0]?.[0] || 'n.d.';
+                const title = item.title || '';
+                return `${authorName} (${year}). ${title}`;
+              })
+              .join('\n');
+          } catch (_e) {
             // Fallback to short citation
-            displayText = `(${citekeys.map(k => engine.getShortCitation(k)).join('; ')})`;
+            displayText = `(${citekeys.map((k) => engine.getShortCitation(k)).join('; ')})`;
             tooltipText = displayText;
           }
         } else {
           // Show unresolved with ? suffix
-          displayText = `(${citekeys.map(k => {
-            if (engine.hasItem(k)) {
-              return engine.getShortCitation(k);
-            }
-            return `${k}?`;
-          }).join('; ')})`;
+          displayText = `(${citekeys
+            .map((k) => {
+              if (engine.hasItem(k)) {
+                return engine.getShortCitation(k);
+              }
+              return `${k}?`;
+            })
+            .join('; ')})`;
           tooltipText = `Unresolved: ${unresolvedKeys.join(', ')}`;
         }
       }
@@ -703,7 +708,7 @@ const citationNodeView = $view(citationNode, (ctx: Ctx) => {
 export const citationPlugin: MilkdownPlugin[] = [
   remarkCitationPlugin,
   citationNode,
-  citationNodeView,  // Node view included here, same file as node definition
+  citationNodeView, // Node view included here, same file as node definition
 ].flat();
 
 // Export node for use in citation-search.ts (citationNode is already exported via the const definition)
