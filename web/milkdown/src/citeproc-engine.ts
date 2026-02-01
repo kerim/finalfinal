@@ -53,11 +53,13 @@ interface CiteprocSys {
 }
 
 // Citation formatting options
+// Arrays are per-citation (indexed to match citekeys order)
+// Single values apply to the entire cluster
 export interface CitationOptions {
-  suppressAuthor?: boolean;
-  locator?: string;
-  prefix?: string;
-  suffix?: string;
+  suppressAuthors?: boolean[];  // Per-citation suppress flags
+  locators?: string[];          // Per-citation locators (page numbers, etc.)
+  prefix?: string;              // Applies to first citation in cluster
+  suffix?: string;              // Applies to last citation in cluster
 }
 
 class CiteprocEngine {
@@ -153,13 +155,13 @@ class CiteprocEngine {
     }
 
     try {
-      // Build citation cluster
-      const citationItems = validKeys.map((key) => ({
+      // Build citation cluster with per-citation options
+      const citationItems = validKeys.map((key, index) => ({
         id: key,
-        ...(options?.suppressAuthor ? { 'suppress-author': true } : {}),
-        ...(options?.locator ? { locator: options.locator } : {}),
-        ...(options?.prefix ? { prefix: options.prefix } : {}),
-        ...(options?.suffix ? { suffix: options.suffix } : {}),
+        ...(options?.suppressAuthors?.[index] ? { 'suppress-author': true } : {}),
+        ...(options?.locators?.[index] ? { locator: options.locators[index] } : {}),
+        ...(index === 0 && options?.prefix ? { prefix: options.prefix } : {}),
+        ...(index === validKeys.length - 1 && options?.suffix ? { suffix: options.suffix } : {}),
       }));
 
       const citation = {

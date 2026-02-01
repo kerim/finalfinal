@@ -578,8 +578,8 @@ export function updateEditPreview(): void {
     if (allResolved) {
       try {
         const formatted = engine.formatCitation(parsed.citekeys, {
-          suppressAuthor: parsed.suppressAuthor,
-          locator: parsed.locators[0] || undefined,
+          suppressAuthors: parsed.suppressAuthor ? parsed.citekeys.map(() => true) : undefined,
+          locators: parsed.locators.length > 0 ? parsed.locators : undefined,
           prefix: parsed.prefix,
           suffix: parsed.suffix,
         });
@@ -746,8 +746,8 @@ const citationNodeView = $view(citationNode, (ctx: Ctx) => {
           // Get formatted citation from citeproc
           try {
             displayText = engine.formatCitation(citekeys, {
-              suppressAuthor: attrs.suppressAuthor,
-              locator: attrs.locators ? JSON.parse(attrs.locators)[0] : undefined,
+              suppressAuthors: attrs.suppressAuthor ? citekeys.map(() => true) : undefined,
+              locators: attrs.locators ? JSON.parse(attrs.locators) : undefined,
               prefix: attrs.prefix,
               suffix: attrs.suffix,
             });
