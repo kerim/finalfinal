@@ -20,6 +20,17 @@ import { type CSLItem, citationPlugin } from './citation-plugin';
 import { focusModePlugin, setFocusModeEnabled } from './focus-mode-plugin';
 import { highlightMark, highlightPlugin } from './highlight-plugin';
 import { sectionBreakNode, sectionBreakPlugin } from './section-break-plugin';
+import {
+  citationNode,
+  citationPlugin,
+  clearAppendMode,
+  type CSLItem,
+  getEditPopupInput,
+  getPendingAppendBase,
+  isPendingAppendMode,
+  mergeCitations,
+  updateEditPreview,
+} from './citation-plugin';
 
 // Debug: Log plugin array contents at import time
 console.log('[Milkdown] citationPlugin imported, length:', citationPlugin.length);
@@ -28,13 +39,8 @@ console.log(
   citationPlugin.map((p) => (typeof p === 'function' ? p.name || 'anonymous' : p))
 );
 
-import {
-  getCitationLibrarySize,
-  restoreCitationLibrary,
-  searchCitationsCallback,
-  setCitationLibrary,
-  showCitationSearchPopup,
-} from './citation-search';
+// Keep citation-search for cache restoration and library size check
+import { getCitationLibrarySize, restoreCitationLibrary, setCitationLibrary } from './citation-search';
 import { getCiteprocEngine } from './citeproc-engine';
 import { mdToTextOffset, textToMdOffset } from './cursor-mapping';
 import './styles.css';
@@ -128,7 +134,16 @@ declare global {
       setCitationStyle: (styleXML: string) => void;
       getBibliographyCitekeys: () => string[];
       getCitationCount: () => number;
+      // Legacy search callback (kept for backwards compatibility)
       searchCitationsCallback: (items: CSLItem[]) => void;
+      // CAYW picker callbacks
+      citationPickerCallback: (data: CAYWCallbackData, items: CSLItem[]) => void;
+      citationPickerCancelled: () => void;
+      citationPickerError: (message: string) => void;
+      // Edit citation callback (for clicking existing citations)
+      editCitationCallback: (data: EditCitationCallbackData, items: CSLItem[]) => void;
+      // Debug API
+      getCAYWDebugState: () => { pendingCAYWRange: { start: number; end: number } | null; hasEditor: boolean; docSize: number | null };
     };
   }
 }
@@ -366,15 +381,16 @@ function executeSlashCommand(index: number) {
 
       view.dispatch(tr);
     } else if (cmd.label === '/cite') {
-      // Show citation search popup (custom UI, not slash menu)
-      showCitationSearchPopup(cmdStart, view);
-      // Don't dispatch transaction - the popup will handle insertion
+      // Open Zotero's native CAYW picker via Swift bridge
+      // Pass both cmdStart (position of /) and from (cursor at end of /cite)
+      openCAYWPicker(cmdStart, from);
+      // Don't dispatch transaction - the callback will handle insertion
       // Just hide the slash menu and reset state
       if (slashProviderInstance) {
         slashProviderInstance.hide();
       }
       filteredCommands = [];
-      // Re-enable slash menu after popup closes (handled by popup blur/select)
+      // Re-enable slash menu after picker closes (handled by callback)
       requestAnimationFrame(() => {
         suppressSlashMenu = false;
       });
@@ -566,6 +582,273 @@ function configureSlash(ctx: Ctx) {
   document.addEventListener('keydown', handleSlashKeydown, true);
 }
 
+// === CAYW (Cite-As-You-Write) Integration ===
+
+// Store the command range for CAYW callback (start = /cite position, end = cursor after /cite)
+let pendingCAYWRange: { start: number; end: number } | null = null;
+
+/**
+ * Open Zotero's native CAYW citation picker via Swift bridge
+ * The picker is blocking on Zotero's side; we'll get a callback when done
+ * @param cmdStart - Position of '/' in /cite command
+ * @param cmdEnd - Cursor position at end of /cite (where user stopped typing)
+ */
+function openCAYWPicker(cmdStart: number, cmdEnd: number): void {
+  console.log('[CAYW DEBUG] === openCAYWPicker called ===');
+  console.log('[CAYW DEBUG] cmdStart:', cmdStart, 'cmdEnd:', cmdEnd);
+
+  if (editorInstance) {
+    const docContent = editorInstance.action(getMarkdown());
+    console.log('[CAYW DEBUG] Document content (first 100):', docContent.substring(0, 100));
+    console.log('[CAYW DEBUG] Document length:', docContent.length);
+  }
+
+  pendingCAYWRange = { start: cmdStart, end: cmdEnd };
+  console.log('[CAYW DEBUG] Stored pendingCAYWRange:', JSON.stringify(pendingCAYWRange));
+
+  // Call Swift message handler (only pass cmdStart, Swift doesn't need end)
+  if (typeof (window as any).webkit?.messageHandlers?.openCitationPicker?.postMessage === 'function') {
+    console.log('[CAYW DEBUG] Calling Swift message handler...');
+    (window as any).webkit.messageHandlers.openCitationPicker.postMessage(cmdStart);
+    console.log('[CAYW DEBUG] Swift message handler called successfully');
+  } else {
+    // Fallback: no Swift bridge available (dev mode)
+    console.warn('[CAYW DEBUG] Swift bridge not available');
+    pendingCAYWRange = null;
+  }
+}
+
+// Interface for CAYW callback data from Swift
+interface CAYWCallbackData {
+  rawSyntax: string;
+  citekeys: string[];
+  locators: string;
+  prefix: string;
+  suppressAuthor: boolean;
+  cmdStart: number;
+}
+
+// Interface for edit citation callback data from Swift
+interface EditCitationCallbackData {
+  pos: number;           // Position of the citation node to update
+  rawSyntax: string;
+  citekeys: string[];
+  locators: string;
+  prefix: string;
+  suppressAuthor: boolean;
+}
+
+/**
+ * Handle successful CAYW picker callback from Swift
+ * Inserts citation node at the stored position range, or appends to existing citation in edit popup
+ */
+function handleCAYWCallback(data: CAYWCallbackData, items: CSLItem[]): void {
+  console.log('[CAYW DEBUG] === handleCAYWCallback called ===');
+  console.log('[CAYW DEBUG] data:', JSON.stringify(data));
+  console.log('[CAYW DEBUG] items count:', items.length);
+  console.log('[CAYW DEBUG] pendingCAYWRange at callback entry:', JSON.stringify(pendingCAYWRange));
+  console.log('[CAYW DEBUG] editorInstance exists:', !!editorInstance);
+  console.log('[CAYW DEBUG] isPendingAppendMode:', isPendingAppendMode());
+
+  if (!editorInstance) {
+    console.error('[CAYW DEBUG] FAIL: No editor instance');
+    return;
+  }
+
+  // Check for append mode - merging new citations with existing ones in edit popup
+  if (isPendingAppendMode()) {
+    const pendingBase = getPendingAppendBase();
+    console.log('[CAYW DEBUG] Append mode active, base:', pendingBase);
+
+    // Update citeproc engine with new items
+    const engine = getCiteprocEngine();
+    engine.addItems(items);
+    setCitationLibrary(items);
+
+    // Merge the citations
+    const merged = mergeCitations(pendingBase, data.rawSyntax);
+    console.log('[CAYW DEBUG] Merged citation:', merged);
+
+    // Update the edit popup input
+    const editInput = getEditPopupInput();
+    if (editInput) {
+      editInput.value = merged;
+      updateEditPreview();
+      // Keep the popup open and input focused so user can make further edits
+      // or press Enter to commit
+      editInput.focus();
+      console.log('[CAYW DEBUG] Append mode complete - popup updated with merged citation');
+    } else {
+      // Popup was closed, focus the editor
+      const view = editorInstance.ctx.get(editorViewCtx);
+      view.focus();
+      console.log('[CAYW DEBUG] Append mode complete - popup was closed');
+    }
+
+    // Clear append mode state
+    clearAppendMode();
+    return;
+  }
+
+  // Use stored range instead of querying cursor (cursor position unreliable after focus change)
+  if (!pendingCAYWRange) {
+    console.error('[CAYW DEBUG] FAIL: pendingCAYWRange is null/undefined');
+    return;
+  }
+
+  const { start, end } = pendingCAYWRange;
+  console.log('[CAYW DEBUG] Using range: start=', start, 'end=', end);
+
+  // Update citeproc engine with the new items
+  const engine = getCiteprocEngine();
+  engine.addItems(items);
+  console.log('[CAYW DEBUG] Added items to citeproc engine');
+
+  // Update citation library cache
+  setCitationLibrary(items);
+  console.log('[CAYW DEBUG] Updated citation library cache');
+
+  // Insert citation node
+  const view = editorInstance.ctx.get(editorViewCtx);
+  const nodeType = citationNode.type(editorInstance.ctx);
+
+  const citekeyStr = data.citekeys.join(',');
+  console.log('[CAYW DEBUG] Creating node with citekeys:', citekeyStr);
+
+  const node = nodeType.create({
+    citekeys: citekeyStr,
+    locators: data.locators,
+    prefix: data.prefix,
+    suffix: '',
+    suppressAuthor: data.suppressAuthor,
+    rawSyntax: data.rawSyntax,
+  });
+  console.log('[CAYW DEBUG] Node created, nodeSize:', node.nodeSize);
+
+  // Log document state before insert
+  const docSize = view.state.doc.content.size;
+  const docContent = view.state.doc.textContent;
+  console.log('[CAYW DEBUG] Document state before insert:');
+  console.log('[CAYW DEBUG]   docSize:', docSize);
+  console.log('[CAYW DEBUG]   docContent (first 100):', docContent.substring(0, 100));
+  console.log('[CAYW DEBUG]   start:', start, 'end:', end);
+  console.log('[CAYW DEBUG]   text at range:', docContent.substring(start, Math.min(end, docContent.length)));
+
+  // Validate range is within document bounds
+  if (start < 0 || end > docSize || start > end) {
+    console.error('[CAYW DEBUG] FAIL: Invalid range - start:', start, 'end:', end, 'docSize:', docSize);
+    pendingCAYWRange = null;
+    return;
+  }
+
+  try {
+    console.log('[CAYW DEBUG] Attempting replaceRangeWith...');
+    // Delete from start to end (removes /cite text) and insert citation node
+    let tr = view.state.tr.replaceRangeWith(start, end, node);
+    console.log('[CAYW DEBUG] Transaction created successfully');
+
+    // Set cursor after the inserted citation node
+    const insertPos = start + node.nodeSize;
+    console.log('[CAYW DEBUG] Setting selection at:', insertPos);
+    tr = tr.setSelection(Selection.near(tr.doc.resolve(insertPos)));
+
+    console.log('[CAYW DEBUG] Dispatching transaction...');
+    view.dispatch(tr);
+    console.log('[CAYW DEBUG] Transaction dispatched');
+
+    view.focus();
+    console.log('[CAYW DEBUG] SUCCESS: Citation inserted, citekeys:', citekeyStr);
+  } catch (e) {
+    console.error('[CAYW DEBUG] EXCEPTION:', e);
+    console.error('[CAYW DEBUG] Exception stack:', (e as Error).stack);
+  }
+
+  pendingCAYWRange = null;
+  console.log('[CAYW DEBUG] Cleared pendingCAYWRange');
+}
+
+/**
+ * Handle CAYW picker cancelled by user
+ */
+function handleCAYWCancelled(): void {
+  console.log('[CAYW DEBUG] === handleCAYWCancelled called ===');
+  console.log('[CAYW DEBUG] pendingCAYWRange was:', JSON.stringify(pendingCAYWRange));
+  pendingCAYWRange = null;
+
+  // Focus editor
+  if (editorInstance) {
+    const view = editorInstance.ctx.get(editorViewCtx);
+    view.focus();
+  }
+}
+
+/**
+ * Handle CAYW picker error
+ */
+function handleCAYWError(message: string): void {
+  console.error('[CAYW DEBUG] === handleCAYWError called ===');
+  console.error('[CAYW DEBUG] Error message:', message);
+  console.log('[CAYW DEBUG] pendingCAYWRange was:', JSON.stringify(pendingCAYWRange));
+  pendingCAYWRange = null;
+
+  // Show alert to user
+  alert(message);
+
+  // Focus editor
+  if (editorInstance) {
+    const view = editorInstance.ctx.get(editorViewCtx);
+    view.focus();
+  }
+}
+
+/**
+ * Handle edit citation callback from Swift
+ * Updates an existing citation node at the specified position
+ */
+function handleEditCitationCallback(data: EditCitationCallbackData, items: CSLItem[]): void {
+  console.log('[EditCitation] === handleEditCitationCallback called ===');
+  console.log('[EditCitation] data:', JSON.stringify(data));
+  console.log('[EditCitation] items count:', items.length);
+
+  if (!editorInstance) {
+    console.error('[EditCitation] FAIL: No editor instance');
+    return;
+  }
+
+  // Add items to citeproc engine (use addItems with array, not addItem)
+  const engine = getCiteprocEngine();
+  engine.addItems(items);
+  console.log('[EditCitation] Added', items.length, 'items to citeproc engine');
+
+  const view = editorInstance.ctx.get(editorViewCtx);
+  const pos = data.pos;
+
+  // Verify node at position is a citation
+  const node = view.state.doc.nodeAt(pos);
+  if (!node || node.type.name !== 'citation') {
+    console.error('[EditCitation] FAIL: No citation node at pos', pos, 'found:', node?.type.name);
+    return;
+  }
+
+  console.log('[EditCitation] Found citation node at pos', pos);
+
+  // Update the citation node with new attributes
+  const citekeyStr = data.citekeys.join(',');
+  const tr = view.state.tr.setNodeMarkup(pos, undefined, {
+    citekeys: citekeyStr,
+    locators: data.locators,
+    prefix: data.prefix,
+    suffix: '',
+    suppressAuthor: data.suppressAuthor,
+    rawSyntax: data.rawSyntax,
+  });
+
+  view.dispatch(tr);
+  view.focus();
+
+  console.log('[EditCitation] SUCCESS: Citation updated with citekeys:', citekeyStr);
+}
+
 async function initEditor() {
   const root = document.getElementById('editor');
   if (!root) {
@@ -618,6 +901,26 @@ async function initEditor() {
       currentContent = editorInstance!.action(getMarkdown());
     }
   };
+
+  // Add keyboard shortcut: Cmd+Shift+K opens citation picker
+  document.addEventListener(
+    'keydown',
+    (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'k') {
+        e.preventDefault();
+        e.stopPropagation();
+
+        if (!editorInstance) return;
+
+        const currentView = editorInstance.ctx.get(editorViewCtx);
+        const { from } = currentView.state.selection;
+
+        // Open CAYW picker - no /cite text to replace, so start and end are the same
+        openCAYWPicker(from, from);
+      }
+    },
+    true
+  );
 }
 
 window.FinalFinal = {
@@ -1237,6 +1540,9 @@ window.FinalFinal = {
     setCitationLibrary(items);
     // Update citeproc engine
     getCiteprocEngine().setBibliography(items);
+    // Notify citation nodes that library has been updated
+    // This allows them to re-render with formatted display
+    document.dispatchEvent(new CustomEvent('citation-library-updated'));
     // Trigger re-render of any existing citations
     if (editorInstance) {
       try {
@@ -1290,8 +1596,37 @@ window.FinalFinal = {
   },
 
   searchCitationsCallback(items: CSLItem[]) {
-    // Forward callback from Swift to citation-search module
-    searchCitationsCallback(items);
+    // Legacy callback - update citeproc with items
+    const engine = getCiteprocEngine();
+    engine.addItems(items);
+    setCitationLibrary(items);
+  },
+
+  // CAYW picker callbacks
+  citationPickerCallback(data: CAYWCallbackData, items: CSLItem[]) {
+    handleCAYWCallback(data, items);
+  },
+
+  citationPickerCancelled() {
+    handleCAYWCancelled();
+  },
+
+  citationPickerError(message: string) {
+    handleCAYWError(message);
+  },
+
+  // Edit citation callback (for clicking existing citations)
+  editCitationCallback(data: EditCitationCallbackData, items: CSLItem[]) {
+    handleEditCitationCallback(data, items);
+  },
+
+  // Debug API for Swift to query CAYW state
+  getCAYWDebugState() {
+    return {
+      pendingCAYWRange,
+      hasEditor: !!editorInstance,
+      docSize: editorInstance ? editorInstance.ctx.get(editorViewCtx).state.doc.content.size : null,
+    };
   },
 };
 

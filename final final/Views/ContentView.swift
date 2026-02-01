@@ -76,6 +76,22 @@ struct ContentView: View {
                     }
                 }
             )
+            .onReceive(NotificationCenter.default.publisher(for: .bibliographySectionChanged)) { _ in
+                // Bibliography section was updated in the database - rebuild editor content
+                // Skip if zoomed into a section (bibliography update only affects full document view)
+                guard editorState.zoomedSectionId == nil else {
+                    print("[ContentView] Bibliography changed but zoomed - skipping content rebuild")
+                    return
+                }
+                guard editorState.contentState == .idle else {
+                    print("[ContentView] Bibliography changed but contentState not idle - skipping")
+                    return
+                }
+                print("[ContentView] Bibliography section changed - rebuilding content from sections")
+                editorState.contentState = .bibliographyUpdate
+                rebuildDocumentContent()
+                editorState.contentState = .idle
+            }
             .integrityAlert(
                 report: $integrityReport,
                 onRepair: { report in

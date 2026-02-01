@@ -7,6 +7,7 @@
 //
 
 import Foundation
+import AppKit
 
 /// Zotero connection errors
 enum ZoteroError: LocalizedError {
@@ -14,6 +15,7 @@ enum ZoteroError: LocalizedError {
     case noResponse
     case invalidResponse(String)
     case networkError(Error)
+    case userCancelled
 
     var errorDescription: String? {
         switch self {
@@ -25,8 +27,125 @@ enum ZoteroError: LocalizedError {
             return "Invalid response: \(message)"
         case .networkError(let error):
             return "Network error: \(error.localizedDescription)"
+        case .userCancelled:
+            return "User cancelled citation selection"
         }
     }
+}
+
+// MARK: - Pandoc Citation Parsing
+
+/// A single citation entry within a Pandoc citation bracket
+struct CitationEntry {
+    let citekey: String
+    let prefix: String?
+    let locator: String?
+    let suffix: String?
+    let suppressAuthor: Bool
+}
+
+/// Parsed Pandoc citation bracket containing one or more entries
+struct ParsedCitation {
+    let rawSyntax: String
+    let entries: [CitationEntry]
+
+    /// All citekeys in this citation
+    var citekeys: [String] { entries.map { $0.citekey } }
+
+    /// JSON-encoded locators array (for web API compatibility)
+    var locatorsJSON: String {
+        let locators = entries.map { $0.locator ?? "" }
+        guard let data = try? JSONSerialization.data(withJSONObject: locators),
+              let json = String(data: data, encoding: .utf8) else {
+            return "[]"
+        }
+        return json
+    }
+}
+
+/// Parse a Pandoc-format citation string from CAYW
+/// Handles: [@key], [@key, p. 45], [see @a; @b], [-@key]
+func parsePandocCitation(_ pandoc: String) -> ParsedCitation? {
+    let trimmed = pandoc.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return nil }
+
+    // Must start and end with brackets
+    guard trimmed.hasPrefix("[") && trimmed.hasSuffix("]") else { return nil }
+
+    let inner = String(trimmed.dropFirst().dropLast())
+    guard inner.contains("@") else { return nil }
+
+    var entries: [CitationEntry] = []
+
+    // Split by semicolon for multiple citations
+    let parts = inner.components(separatedBy: ";").map { $0.trimmingCharacters(in: .whitespaces) }
+
+    for part in parts {
+        // Find the @ symbol
+        guard let atIndex = part.firstIndex(of: "@") else { continue }
+
+        // Check for prefix before @
+        let beforeAt = String(part[..<atIndex]).trimmingCharacters(in: .whitespaces)
+        let prefix: String?
+        let suppressAuthor: Bool
+
+        if beforeAt == "-" {
+            prefix = nil
+            suppressAuthor = true
+        } else if beforeAt.isEmpty {
+            prefix = nil
+            suppressAuthor = false
+        } else if beforeAt.hasSuffix("-") {
+            // "see -@key" pattern
+            prefix = String(beforeAt.dropLast()).trimmingCharacters(in: .whitespaces)
+            suppressAuthor = true
+        } else {
+            prefix = beforeAt.isEmpty ? nil : beforeAt
+            suppressAuthor = false
+        }
+
+        // Parse citekey and locator after @
+        let afterAt = String(part[part.index(after: atIndex)...])
+
+        // Match citekey (alphanumeric, :, ., -)
+        var citekey = ""
+        var remainder = afterAt
+
+        for char in afterAt {
+            if char.isLetter || char.isNumber || char == ":" || char == "." || char == "-" || char == "_" {
+                citekey.append(char)
+            } else {
+                break
+            }
+        }
+
+        guard !citekey.isEmpty else { continue }
+
+        remainder = String(afterAt.dropFirst(citekey.count))
+
+        // Check for locator after comma
+        var locator: String?
+        let suffix: String? = nil
+
+        if remainder.hasPrefix(",") {
+            let locatorPart = String(remainder.dropFirst()).trimmingCharacters(in: .whitespaces)
+            if !locatorPart.isEmpty {
+                locator = locatorPart
+            }
+        }
+
+        entries.append(CitationEntry(
+            citekey: citekey,
+            prefix: prefix,
+            locator: locator,
+            suffix: suffix,
+            suppressAuthor: suppressAuthor
+        ))
+    }
+
+    guard !entries.isEmpty else { return nil }
+
+    return ParsedCitation(rawSyntax: trimmed, entries: entries)
 }
 
 /// JSON-RPC response wrapper for BBT item.search
@@ -228,10 +347,11 @@ final class ZoteroService {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
         // item.export returns CSL-JSON for specified citekeys
+        // Note: BBT requires the full translator name "Better CSL JSON" (not "csljson")
         let body: [String: Any] = [
             "jsonrpc": "2.0",
             "method": "item.export",
-            "params": [citekeys, "csljson"]
+            "params": [citekeys, "Better CSL JSON"]
         ]
 
         do {
@@ -248,15 +368,46 @@ final class ZoteroService {
                 throw ZoteroError.noResponse
             }
 
-            // item.export returns a JSON-RPC wrapper with CSL-JSON string in result
-            guard let jsonObj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let resultString = jsonObj["result"] as? String,
-                  let resultData = resultString.data(using: .utf8) else {
-                throw ZoteroError.invalidResponse("Invalid item.export response")
+            #if DEBUG
+            if let rawString = String(data: data, encoding: .utf8) {
+                print("[ZoteroService] item.export raw response: \(rawString.prefix(500))")
+            }
+            #endif
+
+            // item.export returns a JSON-RPC wrapper with CSL-JSON in result
+            guard let jsonObj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                throw ZoteroError.invalidResponse("Invalid JSON-RPC response")
             }
 
-            // Decode CSL-JSON array
-            let items = try JSONDecoder().decode([CSLItem].self, from: resultData)
+            let items: [CSLItem]
+
+            // Try result as string first (CSL-JSON encoded as string)
+            if let resultString = jsonObj["result"] as? String {
+                // Handle empty string (no items found)
+                if resultString.isEmpty {
+                    return []
+                }
+                guard let resultData = resultString.data(using: .utf8) else {
+                    throw ZoteroError.invalidResponse("Failed to decode result string")
+                }
+                items = try JSONDecoder().decode([CSLItem].self, from: resultData)
+            }
+            // Try result as array directly (CSL items as array)
+            else if let resultArray = jsonObj["result"] as? [[String: Any]] {
+                if resultArray.isEmpty {
+                    return []
+                }
+                let resultData = try JSONSerialization.data(withJSONObject: resultArray)
+                items = try JSONDecoder().decode([CSLItem].self, from: resultData)
+            }
+            // Check for JSON-RPC error
+            else if let error = jsonObj["error"] as? [String: Any],
+                    let message = error["message"] as? String {
+                throw ZoteroError.invalidResponse("BBT error: \(message)")
+            }
+            else {
+                throw ZoteroError.invalidResponse("Unexpected result format in item.export")
+            }
 
             // Cache results
             for item in items {
@@ -326,5 +477,149 @@ final class ZoteroService {
     /// Clear cached data
     func clearCache() {
         itemsByKey = [:]
+    }
+
+    // MARK: - CAYW (Cite-As-You-Write) Picker
+
+    /// Edit an existing citation by selecting items in Zotero
+    /// Opens zotero://select to pre-select items, then gets current selection via CAYW
+    /// - Parameter citekeys: The citekeys currently in the citation
+    /// - Returns: Parsed citation and CSL items for the updated selection
+    func editCitation(citekeys: [String]) async throws -> (ParsedCitation, [CSLItem]) {
+        guard isConnected else {
+            throw ZoteroError.notRunning
+        }
+
+        print("[ZoteroService] Editing citation with citekeys: \(citekeys)")
+
+        // Build zotero://select URL to select items in Zotero's library pane
+        // Format: zotero://select/items/@citekey1,@citekey2
+        let keyList = citekeys.map { "@\($0)" }.joined(separator: ",")
+        let selectURLString = "zotero://select/items/\(keyList)"
+
+        guard let selectURL = URL(string: selectURLString) else {
+            throw ZoteroError.invalidResponse("Invalid Zotero select URL")
+        }
+
+        print("[ZoteroService] Opening \(selectURLString)")
+
+        // Open Zotero with items selected
+        NSWorkspace.shared.open(selectURL)
+
+        // Show dialog asking user to confirm when done editing in Zotero
+        // This gives the user time to modify their selection (Cmd+click to add/remove)
+        let shouldContinue = await MainActor.run { () -> Bool in
+            let alert = NSAlert()
+            alert.messageText = "Edit Citation"
+            alert.informativeText = "Modify your selection in Zotero (Cmd+click to add/remove items), then click Done."
+            alert.addButton(withTitle: "Done")
+            alert.addButton(withTitle: "Cancel")
+            let response = alert.runModal()
+            return response == .alertFirstButtonReturn
+        }
+
+        guard shouldContinue else {
+            throw ZoteroError.userCancelled
+        }
+
+        // Now call CAYW with ?selected=1 to get the current selection
+        // This returns whatever is currently selected in Zotero (user may have modified)
+        guard let url = URL(string: "\(baseURL)/better-bibtex/cayw?format=pandoc&brackets=true&selected=1") else {
+            throw ZoteroError.invalidResponse("Invalid CAYW URL")
+        }
+
+        print("[ZoteroService] Fetching current selection via CAYW...")
+
+        do {
+            let (data, response) = try await URLSession.shared.data(from: url)
+
+            guard let httpResponse = response as? HTTPURLResponse,
+                  httpResponse.statusCode == 200 else {
+                throw ZoteroError.noResponse
+            }
+
+            let responseText = String(data: data, encoding: .utf8) ?? ""
+            let trimmed = responseText.trimmingCharacters(in: .whitespacesAndNewlines)
+
+            print("[ZoteroService] CAYW selected response: '\(trimmed)'")
+
+            // Empty response means no selection
+            if trimmed.isEmpty {
+                throw ZoteroError.userCancelled
+            }
+
+            // Parse the Pandoc citation syntax
+            guard let parsed = parsePandocCitation(trimmed) else {
+                throw ZoteroError.invalidResponse("Failed to parse CAYW response: \(trimmed)")
+            }
+
+            print("[ZoteroService] Parsed citekeys from selection: \(parsed.citekeys)")
+
+            // Fetch CSL items for the citekeys
+            let items = try await fetchItemsForCitekeys(parsed.citekeys)
+
+            print("[ZoteroService] Fetched \(items.count) CSL items")
+
+            return (parsed, items)
+        } catch let error as ZoteroError {
+            throw error
+        } catch {
+            throw ZoteroError.networkError(error)
+        }
+    }
+
+    /// Open Zotero's native CAYW citation picker
+    /// Returns parsed citation data and CSL items for the selected references
+    /// - Throws: ZoteroError.notRunning if Zotero is not available
+    /// - Throws: ZoteroError.userCancelled if user closes picker without selecting
+    func openCAYWPicker() async throws -> (ParsedCitation, [CSLItem]) {
+        // Build CAYW URL with pandoc format and brackets
+        guard let url = URL(string: "\(baseURL)/better-bibtex/cayw?format=pandoc&brackets=true") else {
+            throw ZoteroError.invalidResponse("Invalid CAYW URL")
+        }
+
+        print("[ZoteroService] Opening CAYW picker...")
+
+        do {
+            // This call blocks until user selects references and closes Zotero's picker
+            let (data, response) = try await URLSession.shared.data(from: url)
+
+            guard let httpResponse = response as? HTTPURLResponse,
+                  httpResponse.statusCode == 200 else {
+                throw ZoteroError.noResponse
+            }
+
+            let responseText = String(data: data, encoding: .utf8) ?? ""
+            let trimmed = responseText.trimmingCharacters(in: .whitespacesAndNewlines)
+
+            print("[ZoteroService] CAYW response: '\(trimmed)'")
+
+            // Empty response means user cancelled
+            if trimmed.isEmpty {
+                throw ZoteroError.userCancelled
+            }
+
+            // Parse the Pandoc citation syntax
+            guard let parsed = parsePandocCitation(trimmed) else {
+                throw ZoteroError.invalidResponse("Failed to parse CAYW response: \(trimmed)")
+            }
+
+            print("[ZoteroService] Parsed citekeys: \(parsed.citekeys)")
+
+            // Fetch CSL items for the citekeys
+            let items = try await fetchItemsForCitekeys(parsed.citekeys)
+
+            print("[ZoteroService] Fetched \(items.count) CSL items")
+
+            isConnected = true
+            connectionError = nil
+
+            return (parsed, items)
+        } catch let error as ZoteroError {
+            throw error
+        } catch {
+            isConnected = false
+            throw ZoteroError.networkError(error)
+        }
     }
 }

@@ -338,6 +338,41 @@ let editingNodePos: number | null = null;
 let editingView: EditorView | null = null;
 let editPopupBlurTimeout: ReturnType<typeof setTimeout> | null = null;
 
+// Append mode state for adding citations to existing ones
+let pendingAppendMode = false;
+let pendingAppendBase = '';
+
+// Export append mode state for main.ts to access
+export function isPendingAppendMode(): boolean {
+  return pendingAppendMode;
+}
+
+export function getPendingAppendBase(): string {
+  return pendingAppendBase;
+}
+
+export function clearAppendMode(): void {
+  pendingAppendMode = false;
+  pendingAppendBase = '';
+}
+
+export function getEditPopupInput(): HTMLInputElement | null {
+  return editPopupInput;
+}
+
+// Merge existing citation with new citation(s)
+// existing: "[@key1; @key2, p. 42]"
+// newCitation: "[@key3; @key4]"
+// result: "[@key1; @key2, p. 42; @key3; @key4]"
+export function mergeCitations(existing: string, newCitation: string): string {
+  // Strip outer brackets from both
+  const existingInner = existing.replace(/^\[|\]$/g, '');
+  const newInner = newCitation.replace(/^\[|\]$/g, '');
+
+  // Combine with semicolon separator
+  return `[${existingInner}; ${newInner}]`;
+}
+
 // Import EditorView type for popup functions
 import type { EditorView } from '@milkdown/kit/prose/view';
 
@@ -400,8 +435,57 @@ function createEditPopup(): HTMLElement {
     text-align: center;
   `;
 
+  // Create "Add Citation" button
+  const addButton = document.createElement('button');
+  addButton.textContent = '+ Add Citation';
+  addButton.className = 'ff-citation-add-button';
+  addButton.style.cssText = `
+    width: 100%;
+    margin-top: 6px;
+    padding: 6px 8px;
+    border: 1px solid var(--border-color, #ccc);
+    border-radius: 4px;
+    background: var(--bg-secondary, #f5f5f5);
+    color: var(--text-primary, #333);
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 500;
+  `;
+  addButton.addEventListener('mouseenter', () => {
+    addButton.style.background = 'var(--bg-tertiary, #e0e0e0)';
+  });
+  addButton.addEventListener('mouseleave', () => {
+    addButton.style.background = 'var(--bg-secondary, #f5f5f5)';
+  });
+  addButton.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    // Cancel any pending blur commit - critical to prevent the popup from being
+    // closed while the Zotero picker is open
+    if (editPopupBlurTimeout) {
+      clearTimeout(editPopupBlurTimeout);
+      editPopupBlurTimeout = null;
+    }
+
+    // Store current input for merging later
+    pendingAppendMode = true;
+    pendingAppendBase = editPopupInput?.value || '';
+    console.log('[CitationEditPopup] Add button clicked, pendingAppendBase:', pendingAppendBase);
+    // Call native picker via Swift bridge
+    // Pass -1 to indicate append mode (not a fresh insertion)
+    if (typeof (window as any).webkit?.messageHandlers?.openCitationPicker?.postMessage === 'function') {
+      (window as any).webkit.messageHandlers.openCitationPicker.postMessage(-1);
+    } else {
+      console.warn('[CitationEditPopup] Swift bridge not available');
+      pendingAppendMode = false;
+      pendingAppendBase = '';
+    }
+  });
+
   // Assemble popup
   popup.appendChild(input);
+  popup.appendChild(addButton);
   popup.appendChild(preview);
   popup.appendChild(hint);
 
@@ -445,8 +529,8 @@ function createEditPopup(): HTMLElement {
   return popup;
 }
 
-// Update preview based on current input
-function updateEditPreview(): void {
+// Update preview based on current input (exported for append mode callback)
+export function updateEditPreview(): void {
   if (!editPopupInput || !editPopupPreview) return;
 
   const text = editPopupInput.value;
@@ -667,15 +751,21 @@ const citationNodeView = $view(citationNode, (ctx: Ctx) => {
       dom.dataset.rawsyntax = attrs.rawSyntax;
     };
 
-    // Click handler - open popup
+    // Click handler - open in-app edit popup for citation editing
     dom.addEventListener('click', (e) => {
       e.preventDefault();
       e.stopPropagation();
       const pos = typeof getPos === 'function' ? getPos() : null;
       if (pos !== null && pos !== undefined) {
-        showCitationEditPopup(pos, view, node.attrs as CitationAttrs);
+        const nodeAttrs = node.attrs as CitationAttrs;
+        // Always use in-app popup for editing citation attributes
+        showCitationEditPopup(pos, view, nodeAttrs);
       }
     });
+
+    // Listen for citation library updates to re-render formatted display
+    const onLibraryUpdate = () => updateDisplay();
+    document.addEventListener('citation-library-updated', onLibraryUpdate);
 
     // Initial render
     updateDisplay();
@@ -694,7 +784,8 @@ const citationNodeView = $view(citationNode, (ctx: Ctx) => {
         return true;
       },
       destroy: () => {
-        // Nothing to clean up - popup is singleton
+        // Clean up event listener
+        document.removeEventListener('citation-library-updated', onLibraryUpdate);
       },
       // Let ProseMirror handle events normally (no edit mode)
       stopEvent: () => false,
