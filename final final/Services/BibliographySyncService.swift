@@ -49,8 +49,9 @@ final class BibliographySyncService {
 
     /// Pre-compiled regex for citekey extraction
     /// Matches both [@citekey and ; @citekey for combined citations like [@key1; @key2]
+    /// Stops at comma to handle page locators like [@citekey, p. 123]
     private static let citationPattern = try! NSRegularExpression(
-        pattern: #"(?:\[|; )@([^\];\s]+)"#,
+        pattern: #"(?:\[|; )@([^\],;\s]+)"#,
         options: []
     )
 
@@ -92,8 +93,10 @@ final class BibliographySyncService {
         }
 
         // Check if citekeys have changed
+        // Allow transition-to-empty so bibliography can be removed when all citations are deleted
         let currentSet = Set(currentCitekeys)
-        guard currentSet != lastKnownCitekeys else {
+        let isTransitioningToEmpty = currentSet.isEmpty && !lastKnownCitekeys.isEmpty
+        guard currentSet != lastKnownCitekeys || isTransitioningToEmpty else {
             print("[BibliographySyncService] SKIP: citekeys unchanged (last=\(lastKnownCitekeys))")
             return
         }
@@ -169,10 +172,10 @@ final class BibliographySyncService {
         lastKnownCitekeys = Set(citekeys)
         print("[BibliographySyncService] Updated lastKnownCitekeys to \(lastKnownCitekeys)")
 
-        // Skip if no citations
+        // Remove bibliography if no citations
         guard !citekeys.isEmpty else {
-            print("[BibliographySyncService] SKIP: no citekeys")
-            // Could optionally remove bibliography section here
+            print("[BibliographySyncService] No citekeys - removing bibliography if exists")
+            await removeBibliographySection(projectId: projectId)
             return
         }
 
@@ -378,6 +381,30 @@ final class BibliographySyncService {
                 newSection.recalculateWordCount()
                 try newSection.insert(db)
             }
+        }
+    }
+
+    /// Remove bibliography section when all citations are deleted
+    private func removeBibliographySection(projectId: String) async {
+        guard let database else {
+            print("[BibliographySyncService] ERROR: database is nil, cannot remove bibliography")
+            return
+        }
+
+        do {
+            try database.write { db in
+                try Section
+                    .filter(Section.Columns.projectId == projectId)
+                    .filter(Section.Columns.isBibliography == true)
+                    .deleteAll(db)
+            }
+            print("[BibliographySyncService] Bibliography section removed")
+            // Reset hash so next creation triggers notification
+            lastGeneratedHash = 0
+            // Reset citekeys so future removals don't get skipped by the guard
+            lastKnownCitekeys = []
+        } catch {
+            print("[BibliographySyncService] Error removing bibliography: \(error)")
         }
     }
 }

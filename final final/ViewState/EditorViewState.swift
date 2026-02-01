@@ -36,6 +36,7 @@ enum EditorContentState {
     case zoomTransition
     case hierarchyEnforcement
     case bibliographyUpdate
+    case editorTransition  // During Milkdown ↔ CodeMirror switch
 }
 
 @MainActor
@@ -162,11 +163,20 @@ class EditorViewState {
                     // Check for bibliography section changes
                     if let bibSection = viewModels.first(where: { $0.title == "Bibliography" }) {
                         let currentHash = bibSection.markdownContent.hashValue
-                        if let previousHash = self.previousBibliographyHash, previousHash != currentHash {
-                            print("[OBSERVE] Bibliography section changed, posting notification")
+                        // Post notification on FIRST creation (previousHash nil) or when hash changes
+                        if self.previousBibliographyHash == nil ||
+                           (self.previousBibliographyHash != nil && self.previousBibliographyHash != currentHash) {
+                            print("[OBSERVE] Bibliography section changed (first creation or update), posting notification")
                             NotificationCenter.default.post(name: .bibliographySectionChanged, object: nil)
                         }
                         self.previousBibliographyHash = currentHash
+                    } else {
+                        // Bibliography was removed - post notification to rebuild content and reset hash
+                        if self.previousBibliographyHash != nil {
+                            print("[OBSERVE] Bibliography section removed, posting notification and resetting hash")
+                            NotificationCenter.default.post(name: .bibliographySectionChanged, object: nil)
+                            self.previousBibliographyHash = nil
+                        }
                     }
                 }
             } catch {
