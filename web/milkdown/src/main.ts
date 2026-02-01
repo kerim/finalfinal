@@ -16,7 +16,6 @@ import {
   setHideCompletedTasks,
 } from './annotation-display-plugin';
 import { type AnnotationType, annotationNode, annotationPlugin } from './annotation-plugin';
-import { type CSLItem, citationPlugin } from './citation-plugin';
 import { focusModePlugin, setFocusModeEnabled } from './focus-mode-plugin';
 import { highlightMark, highlightPlugin } from './highlight-plugin';
 import { sectionBreakNode, sectionBreakPlugin } from './section-break-plugin';

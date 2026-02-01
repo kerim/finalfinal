@@ -41,6 +41,7 @@ struct MilkdownEditor: NSViewRepresentable {
             let controller = preloaded.configuration.userContentController
             controller.add(context.coordinator, name: "errorHandler")
             controller.add(context.coordinator, name: "searchCitations")
+            controller.add(context.coordinator, name: "openCitationPicker")
 
             preloaded.navigationDelegate = context.coordinator
             context.coordinator.webView = preloaded
@@ -488,6 +489,7 @@ struct MilkdownEditor: NSViewRepresentable {
             isEditorReady = true
             batchInitialize()
             startPolling()
+            pushCachedCitationLibrary()
         }
 
         /// Batch initialization - sends all setup data in a single JS call
