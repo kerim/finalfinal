@@ -40,6 +40,9 @@ body {
 .cm-editor .cm-scroller {
   padding: 20px;
   font-family: var(--font-mono);
+  max-width: var(--column-max-width);
+  min-width: var(--column-min-width);
+  margin: 0 auto;
 }
 
 .cm-editor .cm-content {
@@ -57,7 +60,7 @@ body {
 
 /* Markdown syntax highlighting */
 .cm-header {
-  color: var(--editor-text, #1a1a1a);
+  color: var(--editor-heading-text, var(--editor-text, #1a1a1a));
   font-weight: var(--weight-heading, 600);
   line-height: var(--line-height-heading);
 }

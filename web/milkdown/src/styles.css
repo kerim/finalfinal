@@ -29,6 +29,9 @@ body {
   padding: 24px 48px;
   min-height: 100%;
   outline: none;
+  max-width: var(--column-max-width);
+  min-width: var(--column-min-width);
+  margin: 0 auto;
 }
 
 .milkdown {
@@ -58,7 +61,7 @@ body {
 .milkdown h4,
 .milkdown h5,
 .milkdown h6 {
-  color: var(--editor-text);
+  color: var(--editor-heading-text, var(--editor-text));
   margin-top: 1.5em;
   margin-bottom: 0.5em;
   line-height: var(--line-height-heading);

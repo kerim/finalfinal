@@ -28,6 +28,10 @@
   /* Font weights (adjusted in dark themes) */
   --weight-heading: 600;
   --weight-body: 400;
+
+  /* Column width (adjustable via appearance settings) */
+  --column-max-width: 650px;
+  --column-min-width: 400px;
 }
 
 /* Dark theme typography adjustments
