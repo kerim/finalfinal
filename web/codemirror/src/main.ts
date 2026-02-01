@@ -615,6 +615,19 @@ window.FinalFinal = {
 
   setTheme(cssVariables: string) {
     const root = document.documentElement;
+    // Clear all existing CSS custom properties to remove stale overrides
+    // This ensures that when an override is removed (e.g., font reset to default),
+    // the old value doesn't persist on the element's inline style
+    const propsToRemove: string[] = [];
+    for (let i = 0; i < root.style.length; i++) {
+      const prop = root.style[i];
+      if (prop.startsWith('--')) {
+        propsToRemove.push(prop);
+      }
+    }
+    propsToRemove.forEach((prop) => root.style.removeProperty(prop));
+
+    // Set new CSS variables
     const pairs = cssVariables.split(';').filter((s) => s.trim());
     pairs.forEach((pair) => {
       const [key, value] = pair.split(':').map((s) => s.trim());
