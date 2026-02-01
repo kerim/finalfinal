@@ -331,11 +331,50 @@ struct CodeMirrorEditor: NSViewRepresentable {
             #endif
 
             isEditorReady = true
-            setContent(contentBinding.wrappedValue)
-            setTheme(ThemeManager.shared.cssVariables)
-            restoreCursorPositionIfNeeded()
-            focusEditor()
+            batchInitialize()
             startPolling()
+        }
+
+        /// Batch initialization - sends all setup data in a single JS call
+        private func batchInitialize() {
+            guard let webView else { return }
+
+            let content = contentBinding.wrappedValue
+            let theme = ThemeManager.shared.cssVariables
+            let cursor = cursorPositionToRestoreBinding.wrappedValue
+
+            let cursorJS: String
+            if let pos = cursor {
+                cursorJS = "{line:\(pos.line),column:\(pos.column)}"
+            } else {
+                cursorJS = "null"
+            }
+
+            // Use the same escaping as MilkdownEditor
+            let escapedContent = content
+                .replacingOccurrences(of: "\\", with: "\\\\")
+                .replacingOccurrences(of: "`", with: "\\`")
+                .replacingOccurrences(of: "${", with: "\\${")
+
+            let escapedTheme = theme
+                .replacingOccurrences(of: "`", with: "\\`")
+
+            let script = """
+            window.FinalFinal.initialize({
+                content: `\(escapedContent)`,
+                theme: `\(escapedTheme)`,
+                cursorPosition: \(cursorJS)
+            })
+            """
+
+            webView.evaluateJavaScript(script) { [weak self] _, error in
+                if let error {
+                    #if DEBUG
+                    print("[CodeMirrorEditor] Initialize error: \(error.localizedDescription)")
+                    #endif
+                }
+                self?.cursorPositionToRestoreBinding.wrappedValue = nil
+            }
         }
 
         /// Focus the editor so user can start typing immediately

@@ -21,6 +21,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// Reference to main window for close interception
     private var mainWindow: NSWindow?
 
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        // Start preloading editor WebView EARLY - before any windows/views are created
+        // This gives the WebView time to load while database initializes
+        EditorPreloader.shared.startPreloading()
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppDelegate.shared = self
 

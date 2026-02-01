@@ -12,6 +12,17 @@ import WebKit
 // Shared configuration for localStorage persistence across editor toggles
 private let sharedDataStore = WKWebsiteDataStore.default()
 
+// MARK: - String Extension for JS Template Literal Escaping
+
+extension String {
+    /// Escapes string for use in JavaScript template literals
+    var escapedForJSTemplateLiteral: String {
+        self.replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "`", with: "\\`")
+            .replacingOccurrences(of: "${", with: "\\${")
+    }
+}
+
 struct MilkdownEditor: NSViewRepresentable {
     @Binding var content: String
     @Binding var focusModeEnabled: Bool
@@ -24,6 +35,32 @@ struct MilkdownEditor: NSViewRepresentable {
     let onCursorPositionSaved: (CursorPosition) -> Void
 
     func makeNSView(context: Context) -> WKWebView {
+        // Try to use preloaded WebView for faster startup
+        if let preloaded = EditorPreloader.shared.claimMilkdownView() {
+            // Re-register message handlers with this coordinator
+            let controller = preloaded.configuration.userContentController
+            controller.add(context.coordinator, name: "errorHandler")
+            controller.add(context.coordinator, name: "searchCitations")
+
+            preloaded.navigationDelegate = context.coordinator
+            context.coordinator.webView = preloaded
+
+            // Handle the preloaded view (navigation already finished)
+            context.coordinator.handlePreloadedView()
+
+            #if DEBUG
+            preloaded.isInspectable = true
+            print("[MilkdownEditor] Using preloaded WebView")
+            #endif
+
+            return preloaded
+        }
+
+        // Fallback: create new WebView (preload wasn't ready)
+        #if DEBUG
+        print("[MilkdownEditor] Creating new WebView (preload not ready)")
+        #endif
+
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = sharedDataStore  // Persist localStorage across editor toggles
         configuration.setURLSchemeHandler(EditorSchemeHandler(), forURLScheme: "editor")
@@ -419,11 +456,48 @@ struct MilkdownEditor: NSViewRepresentable {
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             isEditorReady = true
-            setContent(contentBinding.wrappedValue)
-            setTheme(ThemeManager.shared.cssVariables)
-            restoreCursorPositionIfNeeded()
-            focusEditor()
+            batchInitialize()
             startPolling()
+        }
+
+        /// Called when using a preloaded WebView (navigation already finished)
+        func handlePreloadedView() {
+            isEditorReady = true
+            batchInitialize()
+            startPolling()
+        }
+
+        /// Batch initialization - sends all setup data in a single JS call
+        private func batchInitialize() {
+            guard let webView else { return }
+
+            let content = contentBinding.wrappedValue
+            let theme = ThemeManager.shared.cssVariables
+            let cursor = cursorPositionToRestoreBinding.wrappedValue
+
+            let cursorJS: String
+            if let pos = cursor {
+                cursorJS = "{line:\(pos.line),column:\(pos.column)}"
+            } else {
+                cursorJS = "null"
+            }
+
+            let script = """
+            window.FinalFinal.initialize({
+                content: `\(content.escapedForJSTemplateLiteral)`,
+                theme: `\(theme.escapedForJSTemplateLiteral)`,
+                cursorPosition: \(cursorJS)
+            })
+            """
+
+            webView.evaluateJavaScript(script) { [weak self] _, error in
+                if let error {
+                    #if DEBUG
+                    print("[MilkdownEditor] Initialize error: \(error.localizedDescription)")
+                    #endif
+                }
+                self?.cursorPositionToRestoreBinding.wrappedValue = nil
+            }
         }
 
         /// Focus the editor so user can start typing immediately

@@ -64,6 +64,7 @@
 		8FC2C94655683E0A57EE671F /* TinyTeX in Resources */ = {isa = PBXBuildFile; fileRef = 76CC075151A2E6342FFE523E /* TinyTeX */; };
 		90566734810E75E47CEF710E /* MarkdownUtils.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C20C6E92294CD47FFE7539F /* MarkdownUtils.swift */; };
 		91DF49BFF5C5AD124AE4A15E /* Export in Resources */ = {isa = PBXBuildFile; fileRef = 8C997BC2679C3F7349B8B7E8 /* Export */; };
+		92F44EAF2040D7CE3568BA8C /* EditorPreloader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1EC960E239AB6BAACD5BC0A3 /* EditorPreloader.swift */; };
 		95DA16BD31941C5CD424F43D /* ProjectRepairService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 437CEEF39F4832F82656EC15 /* ProjectRepairService.swift */; };
 		9E8D8F33D47F7001D135296C /* ZoteroService.swift in Sources */ = {isa = PBXBuildFile; fileRef = E16909CB53D2BCFD8CC1B0BF /* ZoteroService.swift */; };
 		A7F047CACD5338BFF13C8336 /* OutlineNode.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF113F2ADAA8371F7C810BF0 /* OutlineNode.swift */; };
@@ -111,6 +112,7 @@
 		109DDCE3DD312B1666618AD5 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		13133CB5518EA086A3120EDE /* Database+CRUD.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Database+CRUD.swift"; sourceTree = "<group>"; };
 		1C9A6AA1550623CEDFA4ACB8 /* RadixScales.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RadixScales.swift; sourceTree = "<group>"; };
+		1EC960E239AB6BAACD5BC0A3 /* EditorPreloader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorPreloader.swift; sourceTree = "<group>"; };
 		2070D9DD040736953F1CAA08 /* ZoteroChecker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZoteroChecker.swift; sourceTree = "<group>"; };
 		27856E54C5B28F839E83F154 /* ThemeManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThemeManager.swift; sourceTree = "<group>"; };
 		2AAD6FB6258FBF011A89ECFC /* ColorScheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ColorScheme.swift; sourceTree = "<group>"; };
@@ -356,6 +358,7 @@
 				2B7205FC48760A149A8B0BF8 /* AutoBackupService.swift */,
 				ED9246FEA41F18BA08135B2F /* BibliographySyncService.swift */,
 				44DE11B8C0AD43E4C7DA35BF /* DocumentManager.swift */,
+				1EC960E239AB6BAACD5BC0A3 /* EditorPreloader.swift */,
 				6C65021F994002F139C1184C /* ExportService.swift */,
 				5A1E8A83A78A7909AA1289DB /* OutlineParser.swift */,
 				CF38A145CE15C32F45EBB00D /* PandocLocator.swift */,
@@ -566,6 +569,7 @@
 				340253991038A90C28898154 /* DocumentPreviewView.swift in Sources */,
 				5AF10728B84222571BDBB8A1 /* DraggableCardView.swift in Sources */,
 				7ECDA8650F5A11B84724DF8F /* EditorCommands.swift in Sources */,
+				92F44EAF2040D7CE3568BA8C /* EditorPreloader.swift in Sources */,
 				5DC993888BDFB3602E1FA2AA /* EditorSchemeHandler.swift in Sources */,
 				27788FB6CF7677E47103E1D6 /* EditorViewState.swift in Sources */,
 				8DF608DC28695AC4BA728238 /* ExportCommands.swift in Sources */,

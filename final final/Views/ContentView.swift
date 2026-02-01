@@ -39,6 +39,9 @@ struct ContentView: View {
     /// Getting Started close alert state
     @State private var showGettingStartedCloseAlert = false
 
+    /// Editor preload ready state - blocks editor display until WebView is ready
+    @State private var isEditorPreloadReady = false
+
     /// Callback when project is closed (to return to picker)
     var onProjectClosed: (() -> Void)?
 
@@ -903,40 +906,51 @@ struct ContentView: View {
 
     @ViewBuilder
     private var editorView: some View {
-        switch editorState.editorMode {
-        case .wysiwyg:
-            MilkdownEditor(
-                content: $editorState.content,
-                focusModeEnabled: $editorState.focusModeEnabled,
-                cursorPositionToRestore: $cursorPositionToRestore,
-                scrollToOffset: $editorState.scrollToOffset,
-                isResettingContent: $editorState.isResettingContent,
-                onContentChange: { _ in
-                    // Content change handling - could trigger outline parsing here
-                },
-                onStatsChange: { words, characters in
-                    editorState.updateStats(words: words, characters: characters)
-                },
-                onCursorPositionSaved: { position in
-                    cursorPositionToRestore = position
+        // Wait for preload to complete before showing editor
+        if !isEditorPreloadReady {
+            // Minimal loading state - just a blank area with theme background
+            Color.clear
+                .task {
+                    // Wait for preload with 2 second timeout
+                    _ = await EditorPreloader.shared.waitUntilReady(timeout: 2.0)
+                    isEditorPreloadReady = true
                 }
-            )
-        case .source:
-            CodeMirrorEditor(
-                content: $editorState.content,
-                cursorPositionToRestore: $cursorPositionToRestore,
-                scrollToOffset: $editorState.scrollToOffset,
-                isResettingContent: $editorState.isResettingContent,
-                onContentChange: { _ in
-                    // Content change handling - could trigger outline parsing here
-                },
-                onStatsChange: { words, characters in
-                    editorState.updateStats(words: words, characters: characters)
-                },
-                onCursorPositionSaved: { position in
-                    cursorPositionToRestore = position
-                }
-            )
+        } else {
+            switch editorState.editorMode {
+            case .wysiwyg:
+                MilkdownEditor(
+                    content: $editorState.content,
+                    focusModeEnabled: $editorState.focusModeEnabled,
+                    cursorPositionToRestore: $cursorPositionToRestore,
+                    scrollToOffset: $editorState.scrollToOffset,
+                    isResettingContent: $editorState.isResettingContent,
+                    onContentChange: { _ in
+                        // Content change handling - could trigger outline parsing here
+                    },
+                    onStatsChange: { words, characters in
+                        editorState.updateStats(words: words, characters: characters)
+                    },
+                    onCursorPositionSaved: { position in
+                        cursorPositionToRestore = position
+                    }
+                )
+            case .source:
+                CodeMirrorEditor(
+                    content: $editorState.content,
+                    cursorPositionToRestore: $cursorPositionToRestore,
+                    scrollToOffset: $editorState.scrollToOffset,
+                    isResettingContent: $editorState.isResettingContent,
+                    onContentChange: { _ in
+                        // Content change handling - could trigger outline parsing here
+                    },
+                    onStatsChange: { words, characters in
+                        editorState.updateStats(words: words, characters: characters)
+                    },
+                    onCursorPositionSaved: { position in
+                        cursorPositionToRestore = position
+                    }
+                )
+            }
         }
     }
 
@@ -1011,9 +1025,12 @@ struct ContentView: View {
             // Record initial content hash for Getting Started edit detection
             // This captures post-normalization content after sync
             if documentManager.isGettingStartedProject {
-                // Wait for editor to fully load and normalize content
-                // Editor polling interval is 500ms, so wait 1000ms to be safe
-                try? await Task.sleep(for: .milliseconds(1000))
+                // Wait for content to appear (max ~600ms instead of fixed 1000ms)
+                var attempts = 0
+                while attempts < 4 && editorState.content.isEmpty {
+                    try? await Task.sleep(for: .milliseconds(150))
+                    attempts += 1
+                }
                 documentManager.recordGettingStartedLoadedContent(editorState.content)
             }
         } catch {
@@ -1051,6 +1068,9 @@ struct ContentView: View {
 
         // Set flag to prevent polling from overwriting empty content during reset
         editorState.isResettingContent = true
+
+        // Reset editor preload state so we wait for preload on new project
+        isEditorPreloadReady = false
 
         // Reset state
         editorState.content = ""

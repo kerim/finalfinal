@@ -33,6 +33,12 @@ declare global {
       insertAtCursor: (text: string) => void;
       insertBreak: () => void;
       focus: () => void;
+      // Batch initialization for faster startup
+      initialize: (options: {
+        content: string;
+        theme: string;
+        cursorPosition: { line: number; column: number } | null;
+      }) => void;
       // Annotation API
       setAnnotationDisplayModes: (modes: Record<string, string>) => void;
       getAnnotations: () => ParsedAnnotation[];
@@ -491,6 +497,29 @@ window.FinalFinal = {
   focus() {
     if (!editorView) return;
     editorView.focus();
+  },
+
+  // === Batch initialization for faster startup ===
+
+  initialize(options: {
+    content: string;
+    theme: string;
+    cursorPosition: { line: number; column: number } | null;
+  }) {
+    // Apply theme first
+    this.setTheme(options.theme);
+
+    // Set content
+    this.setContent(options.content);
+
+    // Restore cursor position if provided
+    if (options.cursorPosition) {
+      this.setCursorPosition(options.cursorPosition);
+      this.scrollCursorToCenter();
+    }
+
+    // Focus the editor
+    this.focus();
   },
 
   // Annotation API methods
