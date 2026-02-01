@@ -155,6 +155,9 @@ struct FileOperations {
         savePanel.begin { response in
             guard response == .OK, let url = savePanel.url else { return }
 
+            // Explicitly close the panel before async work
+            savePanel.orderOut(nil)
+
             Task { @MainActor in
                 do {
                     let title = url.deletingPathExtension().lastPathComponent
@@ -162,10 +165,7 @@ struct FileOperations {
                     #if DEBUG
                     print("[FileOperations] Project created, hasOpenProject: \(DocumentManager.shared.hasOpenProject)")
                     #endif
-                    // Defer notification to allow panel to fully dismiss
-                    DispatchQueue.main.async {
-                        NotificationCenter.default.post(name: .projectDidCreate, object: nil)
-                    }
+                    NotificationCenter.default.post(name: .projectDidCreate, object: nil)
                 } catch {
                     print("[FileOperations] Failed to create project: \(error)")
                     showErrorAlert("Could Not Create Project", error: error)
@@ -185,27 +185,25 @@ struct FileOperations {
         openPanel.begin { response in
             guard response == .OK, let url = openPanel.url else { return }
 
+            // Explicitly close the panel before async work
+            openPanel.orderOut(nil)
+
             Task { @MainActor in
                 do {
                     try DocumentManager.shared.openProject(at: url)
                     #if DEBUG
                     print("[FileOperations] Project opened, hasOpenProject: \(DocumentManager.shared.hasOpenProject)")
                     #endif
-                    // Defer notification to allow panel to fully dismiss
-                    DispatchQueue.main.async {
-                        NotificationCenter.default.post(name: .projectDidOpen, object: nil)
-                    }
+                    NotificationCenter.default.post(name: .projectDidOpen, object: nil)
                 } catch let error as IntegrityError {
                     // Post notification for ContentView to show integrity alert
                     if let report = error.integrityReport {
                         print("[FileOperations] Integrity error, posting notification for: \(url.path)")
-                        DispatchQueue.main.async {
-                            NotificationCenter.default.post(
-                                name: .projectIntegrityError,
-                                object: nil,
-                                userInfo: ["report": report, "url": url]
-                            )
-                        }
+                        NotificationCenter.default.post(
+                            name: .projectIntegrityError,
+                            object: nil,
+                            userInfo: ["report": report, "url": url]
+                        )
                     } else {
                         print("[FileOperations] IntegrityError with nil report: \(error)")
                         showErrorAlert("Could Not Open Project", error: error)
@@ -298,6 +296,9 @@ struct FileOperations {
         savePanel.begin { response in
             guard response == .OK, let url = savePanel.url else { return }
 
+            // Explicitly close the panel before async work
+            savePanel.orderOut(nil)
+
             Task { @MainActor in
                 do {
                     let title = url.deletingPathExtension().lastPathComponent
@@ -329,6 +330,9 @@ struct FileOperations {
         openPanel.begin { response in
             guard response == .OK, let url = openPanel.url else { return }
 
+            // Explicitly close the panel before async work
+            openPanel.orderOut(nil)
+
             Task { @MainActor in
                 do {
                     // Read the markdown content
@@ -345,19 +349,19 @@ struct FileOperations {
                     savePanel.begin { saveResponse in
                         guard saveResponse == .OK, let saveURL = savePanel.url else { return }
 
+                        // Explicitly close the panel before async work
+                        savePanel.orderOut(nil)
+
                         Task { @MainActor in
                             do {
                                 let title = saveURL.deletingPathExtension().lastPathComponent
                                 try DocumentManager.shared.newProject(at: saveURL, title: title)
                                 try DocumentManager.shared.saveContent(content)
-                                // Defer notification to allow panel to fully dismiss
-                                DispatchQueue.main.async {
-                                    NotificationCenter.default.post(
-                                        name: .projectDidCreate,
-                                        object: nil,
-                                        userInfo: ["content": content]
-                                    )
-                                }
+                                NotificationCenter.default.post(
+                                    name: .projectDidCreate,
+                                    object: nil,
+                                    userInfo: ["content": content]
+                                )
                             } catch {
                                 print("[FileOperations] Failed to import: \(error)")
                                 showErrorAlert("Could Not Import File", error: error)

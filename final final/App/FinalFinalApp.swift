@@ -76,17 +76,11 @@ struct FinalFinalApp: App {
                 openGettingStarted()
             }
             // Listen for command notifications (from menu)
+            // Note: .newProject and .openProject are handled by AppDelegate only
+            // to avoid duplicate panel creation that prevents dismissal
             .onReceive(NotificationCenter.default.publisher(for: .closeProject)) { _ in
                 print("[FinalFinalApp] Received .closeProject command")
                 FileOperations.handleCloseProject()
-            }
-            .onReceive(NotificationCenter.default.publisher(for: .newProject)) { _ in
-                print("[FinalFinalApp] Received .newProject command")
-                FileOperations.handleNewProject()
-            }
-            .onReceive(NotificationCenter.default.publisher(for: .openProject)) { _ in
-                print("[FinalFinalApp] Received .openProject command")
-                FileOperations.handleOpenProject()
             }
             .onChange(of: appViewState) { oldState, newState in
                 print("[FinalFinalApp] State changed: \(oldState) -> \(newState)")

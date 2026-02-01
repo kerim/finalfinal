@@ -113,6 +113,9 @@ struct ProjectPickerView: View {
         savePanel.begin { response in
             guard response == .OK, let url = savePanel.url else { return }
 
+            // Explicitly close the panel before async work
+            savePanel.orderOut(nil)
+
             Task { @MainActor in
                 do {
                     let title = url.deletingPathExtension().lastPathComponent
@@ -136,6 +139,9 @@ struct ProjectPickerView: View {
 
         openPanel.begin { response in
             guard response == .OK, let url = openPanel.url else { return }
+
+            // Explicitly close the panel before async work
+            openPanel.orderOut(nil)
 
             Task { @MainActor in
                 do {
