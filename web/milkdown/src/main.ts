@@ -16,7 +16,7 @@ import { sectionBreakPlugin, sectionBreakNode } from './section-break-plugin';
 import { annotationPlugin, annotationNode, createAnnotationMarkdown, AnnotationType } from './annotation-plugin';
 import { annotationDisplayPlugin, setAnnotationDisplayModes as setDisplayModes, getAnnotationDisplayModes, setHideCompletedTasks } from './annotation-display-plugin';
 import { highlightPlugin, highlightMark } from './highlight-plugin';
-import { citationPlugin, CSLItem } from './citation-plugin';
+import { citationPlugin, CSLItem, isPendingAppendMode, getPendingAppendBase, clearAppendMode, getEditPopupInput, mergeCitations, updateEditPreview } from './citation-plugin';
 
 // Debug: Log plugin array contents at import time
 console.log('[Milkdown] citationPlugin imported, length:', citationPlugin.length);
@@ -625,7 +625,7 @@ interface EditCitationCallbackData {
 
 /**
  * Handle successful CAYW picker callback from Swift
- * Inserts citation node at the stored position range
+ * Inserts citation node at the stored position range, or appends to existing citation in edit popup
  */
 function handleCAYWCallback(data: CAYWCallbackData, items: CSLItem[]): void {
   console.log('[CAYW DEBUG] === handleCAYWCallback called ===');
@@ -633,9 +633,45 @@ function handleCAYWCallback(data: CAYWCallbackData, items: CSLItem[]): void {
   console.log('[CAYW DEBUG] items count:', items.length);
   console.log('[CAYW DEBUG] pendingCAYWRange at callback entry:', JSON.stringify(pendingCAYWRange));
   console.log('[CAYW DEBUG] editorInstance exists:', !!editorInstance);
+  console.log('[CAYW DEBUG] isPendingAppendMode:', isPendingAppendMode());
 
   if (!editorInstance) {
     console.error('[CAYW DEBUG] FAIL: No editor instance');
+    return;
+  }
+
+  // Check for append mode - merging new citations with existing ones in edit popup
+  if (isPendingAppendMode()) {
+    const pendingBase = getPendingAppendBase();
+    console.log('[CAYW DEBUG] Append mode active, base:', pendingBase);
+
+    // Update citeproc engine with new items
+    const engine = getCiteprocEngine();
+    engine.addItems(items);
+    setCitationLibrary(items);
+
+    // Merge the citations
+    const merged = mergeCitations(pendingBase, data.rawSyntax);
+    console.log('[CAYW DEBUG] Merged citation:', merged);
+
+    // Update the edit popup input
+    const editInput = getEditPopupInput();
+    if (editInput) {
+      editInput.value = merged;
+      updateEditPreview();
+      // Keep the popup open and input focused so user can make further edits
+      // or press Enter to commit
+      editInput.focus();
+      console.log('[CAYW DEBUG] Append mode complete - popup updated with merged citation');
+    } else {
+      // Popup was closed, focus the editor
+      const view = editorInstance.ctx.get(editorViewCtx);
+      view.focus();
+      console.log('[CAYW DEBUG] Append mode complete - popup was closed');
+    }
+
+    // Clear append mode state
+    clearAppendMode();
     return;
   }
 
