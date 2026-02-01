@@ -21,6 +21,8 @@ extension Notification.Name {
     static let toggleHighlight = Notification.Name("toggleHighlight")
     /// Posted when citation library should be pushed to editor
     static let citationLibraryChanged = Notification.Name("citationLibraryChanged")
+    /// Posted when bibliography section content changes in the database
+    static let bibliographySectionChanged = Notification.Name("bibliographySectionChanged")
 }
 
 enum EditorMode: String, CaseIterable {
@@ -33,6 +35,7 @@ enum EditorContentState {
     case idle
     case zoomTransition
     case hierarchyEnforcement
+    case bibliographyUpdate
 }
 
 @MainActor
@@ -100,6 +103,10 @@ class EditorViewState {
     /// Whether citation library has been pushed to the editor
     var isCitationLibraryPushed: Bool = false
 
+    // MARK: - Bibliography Change Detection
+    /// Hash of the last bibliography section content, used to detect changes
+    private var previousBibliographyHash: Int?
+
     // MARK: - Database Observation
     private var observationTask: Task<Void, Never>?
     private var annotationObservationTask: Task<Void, Never>?
@@ -148,6 +155,16 @@ class EditorViewState {
 
                     // Notify observers (e.g., for hierarchy enforcement)
                     self.onSectionsUpdated?()
+
+                    // Check for bibliography section changes
+                    if let bibSection = viewModels.first(where: { $0.title == "Bibliography" }) {
+                        let currentHash = bibSection.markdownContent.hashValue
+                        if let previousHash = self.previousBibliographyHash, previousHash != currentHash {
+                            print("[OBSERVE] Bibliography section changed, posting notification")
+                            NotificationCenter.default.post(name: .bibliographySectionChanged, object: nil)
+                        }
+                        self.previousBibliographyHash = currentHash
+                    }
                 }
             } catch {
                 print("[OBSERVE] ERROR: \(error)")

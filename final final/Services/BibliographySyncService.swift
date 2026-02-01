@@ -48,8 +48,9 @@ final class BibliographySyncService {
     // MARK: - Static Helpers
 
     /// Pre-compiled regex for citekey extraction
+    /// Matches both [@citekey and ; @citekey for combined citations like [@key1; @key2]
     private static let citationPattern = try! NSRegularExpression(
-        pattern: #"\[@([^\];\s]+)"#,
+        pattern: #"(?:\[|; )@([^\];\s]+)"#,
         options: []
     )
 
