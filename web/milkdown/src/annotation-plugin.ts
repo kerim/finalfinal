@@ -35,7 +35,10 @@ const taskCheckboxRegex = /^\s*\[([ xX])\]\s*(.*)$/s;
 
 // Remark plugin to convert HTML comments to annotation nodes
 const remarkAnnotationPlugin = $remark('annotation', () => () => (tree: Root) => {
-  visit(tree, 'html', (node: any) => {
+  // Track nodes that need to be wrapped in paragraphs (can't mutate during visit)
+  const nodesToWrap: Array<{ parent: any; index: number }> = [];
+
+  visit(tree, 'html', (node: any, index: number | undefined, parent: any) => {
     const value = node.value?.trim();
     if (!value) return;
 
@@ -86,7 +89,24 @@ const remarkAnnotationPlugin = $remark('annotation', () => () => (tree: Root) =>
     // Store text as children for the parser
     node.children = [{ type: 'text', value: text.trim() }];
     delete node.value;
+
+    // If annotation is a direct child of root (block-level), mark it for wrapping
+    // Inline nodes can't be direct children of doc in ProseMirror
+    if (parent && parent.type === 'root' && typeof index === 'number') {
+      nodesToWrap.push({ parent, index });
+    }
   });
+
+  // Wrap standalone annotations in paragraphs (process in reverse to preserve indices)
+  for (let i = nodesToWrap.length - 1; i >= 0; i--) {
+    const { parent, index } = nodesToWrap[i];
+    const annotationNode = parent.children[index];
+    // Wrap the annotation in a paragraph
+    parent.children[index] = {
+      type: 'paragraph',
+      children: [annotationNode],
+    };
+  }
 });
 
 // Define the annotation node with editable content

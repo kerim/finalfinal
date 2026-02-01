@@ -20,6 +20,9 @@ extension String {
         self.replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "`", with: "\\`")
             .replacingOccurrences(of: "${", with: "\\${")
+            .replacingOccurrences(of: "\r\n", with: "\n")  // Normalize Windows line endings
+            .replacingOccurrences(of: "\r", with: "\n")    // Normalize old Mac line endings
+            .replacingOccurrences(of: "\0", with: "")      // Remove null bytes
     }
 }
 
@@ -482,9 +485,16 @@ struct MilkdownEditor: NSViewRepresentable {
 
                 if let content = contentResult as? String {
                     print("[EDITOR-TOGGLE] MilkdownEditor content sync: got \(content.count) chars")
-                    // Update binding immediately to ensure content is preserved
-                    self.lastPushedContent = content
-                    self.contentBinding.wrappedValue = content
+                    // DEFENSIVE: Don't overwrite non-empty content with empty content
+                    // This can happen when Milkdown fails to initialize (JS exception)
+                    let existingContent = self.contentBinding.wrappedValue
+                    if content.isEmpty && !existingContent.isEmpty {
+                        print("[EDITOR-TOGGLE] MilkdownEditor content sync: SKIPPING empty - binding has \(existingContent.count) chars")
+                    } else {
+                        // Update binding immediately to ensure content is preserved
+                        self.lastPushedContent = content
+                        self.contentBinding.wrappedValue = content
+                    }
                 } else {
                     print("[EDITOR-TOGGLE] MilkdownEditor content sync: failed - \(String(describing: contentError))")
                 }
@@ -562,25 +572,89 @@ struct MilkdownEditor: NSViewRepresentable {
             let theme = ThemeManager.shared.cssVariables
             let cursor = cursorPositionToRestoreBinding.wrappedValue
 
-            let cursorJS: String
+            #if DEBUG
+            print("[MilkdownEditor] batchInitialize: content length=\(content.count)")
+            #endif
+
+            // First check if window.FinalFinal exists
+            webView.evaluateJavaScript("typeof window.FinalFinal") { [weak self] result, error in
+                guard let self else { return }
+
+                #if DEBUG
+                if let error {
+                    print("[MilkdownEditor] FinalFinal check failed: \(error.localizedDescription)")
+                } else {
+                    print("[MilkdownEditor] FinalFinal type: \(result ?? "nil")")
+                }
+                #endif
+
+                // If FinalFinal doesn't exist yet, schedule retry
+                if result as? String != "object" {
+                    #if DEBUG
+                    print("[MilkdownEditor] FinalFinal not ready, scheduling retry in 100ms")
+                    #endif
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        self.batchInitialize()
+                    }
+                    return
+                }
+
+                self.performBatchInitialize(content: content, theme: theme, cursor: cursor)
+            }
+        }
+
+        /// Actually perform the batch initialization after verifying FinalFinal exists
+        private func performBatchInitialize(content: String, theme: String, cursor: CursorPosition?) {
+            guard let webView else { return }
+
+            // Build options dictionary for JSON encoding
+            // Using JSON instead of template literals handles ALL special characters safely
+            var options: [String: Any] = [
+                "content": content,
+                "theme": theme
+            ]
             if let pos = cursor {
-                cursorJS = "{line:\(pos.line),column:\(pos.column)}"
+                options["cursorPosition"] = ["line": pos.line, "column": pos.column]
             } else {
-                cursorJS = "null"
+                options["cursorPosition"] = NSNull()
             }
 
-            let script = """
-            window.FinalFinal.initialize({
-                content: `\(content.escapedForJSTemplateLiteral)`,
-                theme: `\(theme.escapedForJSTemplateLiteral)`,
-                cursorPosition: \(cursorJS)
-            })
-            """
+            guard let jsonData = try? JSONSerialization.data(withJSONObject: options),
+                  let jsonString = String(data: jsonData, encoding: .utf8) else {
+                #if DEBUG
+                print("[MilkdownEditor] Failed to encode options as JSON")
+                #endif
+                return
+            }
+
+            #if DEBUG
+            print("[MilkdownEditor] Initialize with content length: \(content.count) chars")
+            let preview = String(content.prefix(200))
+            print("[MilkdownEditor] Content preview: \(preview)...")
+            #endif
+
+            // Pass JSON directly - JSON is valid JavaScript object literal syntax
+            let script = "window.FinalFinal.initialize(\(jsonString))"
 
             webView.evaluateJavaScript(script) { [weak self] _, error in
                 if let error {
                     #if DEBUG
                     print("[MilkdownEditor] Initialize error: \(error.localizedDescription)")
+                    // Check if it's a parsing error by trying to set empty content
+                    webView.evaluateJavaScript("window.FinalFinal.setContent('')") { _, err2 in
+                        if let err2 {
+                            print("[MilkdownEditor] Even empty setContent failed: \(err2.localizedDescription)")
+                        } else {
+                            print("[MilkdownEditor] Empty setContent worked - content may have parse issue")
+                        }
+                    }
+                    #endif
+                    // DEFENSIVE: If initialization failed, mark editor as NOT ready
+                    // so polling won't try to read from broken editor
+                    self?.isEditorReady = false
+                } else {
+                    #if DEBUG
+                    print("[MilkdownEditor] Initialize successful")
                     #endif
                 }
                 self?.cursorPositionToRestoreBinding.wrappedValue = nil
@@ -945,10 +1019,18 @@ struct MilkdownEditor: NSViewRepresentable {
             guard isEditorReady, let webView else { return }
             lastPushedContent = markdown
             lastPushTime = Date()  // Record push time to prevent poll feedback
-            let escaped = markdown.replacingOccurrences(of: "\\", with: "\\\\")
-                .replacingOccurrences(of: "`", with: "\\`")
-                .replacingOccurrences(of: "$", with: "\\$")
-            webView.evaluateJavaScript("window.FinalFinal.setContent(`\(escaped)`)") { _, _ in }
+
+            // Use JSONEncoder to properly encode string with all special characters escaped
+            // JSONEncoder handles strings directly (unlike JSONSerialization which needs Array/Dict)
+            guard let jsonData = try? JSONEncoder().encode(markdown),
+                  let jsonString = String(data: jsonData, encoding: .utf8) else {
+                #if DEBUG
+                print("[MilkdownEditor] setContent: Failed to encode markdown as JSON")
+                #endif
+                return
+            }
+
+            webView.evaluateJavaScript("window.FinalFinal.setContent(\(jsonString))") { _, _ in }
         }
 
         func setFocusMode(_ enabled: Bool) {
@@ -1024,6 +1106,13 @@ struct MilkdownEditor: NSViewRepresentable {
 
                 // Double-check reset flag in callback (may have changed)
                 guard !self.isResettingContentBinding.wrappedValue else { return }
+
+                // DEFENSIVE: Don't overwrite non-empty content with empty content
+                // This can happen when Milkdown fails to initialize (JS exception)
+                let existingContent = self.contentBinding.wrappedValue
+                if content.isEmpty && !existingContent.isEmpty {
+                    return  // Don't erase good content with empty from broken editor
+                }
 
                 // Grace period guard: don't overwrite recent pushes (race condition fix)
                 let timeSincePush = Date().timeIntervalSince(self.lastPushTime)

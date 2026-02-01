@@ -35,7 +35,22 @@ final class EditorPreloader: NSObject, WKNavigationDelegate {
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = WKWebsiteDataStore.default()
         configuration.setURLSchemeHandler(EditorSchemeHandler(), forURLScheme: "editor")
-        // Note: Don't register message handlers here - they'll be added when claimed
+
+        // Add JS error handler script so we can see errors from preloaded views
+        let errorScript = WKUserScript(
+            source: """
+                window.onerror = function(msg, url, line, col, error) {
+                    console.error('[Milkdown JS ERROR]', msg, 'at', url, line, col, error);
+                    return false;
+                };
+                window.addEventListener('unhandledrejection', function(e) {
+                    console.error('[Milkdown JS REJECTION]', e.reason);
+                });
+            """,
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: true
+        )
+        configuration.userContentController.addUserScript(errorScript)
 
         // Create WebView with minimal size (off-screen)
         let webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 1, height: 1), configuration: configuration)
