@@ -514,3 +514,8 @@ export function getCitationLibrarySize(): number {
 export function getCachedItems(): CSLItem[] {
   return cachedItems;
 }
+
+// Get the current citation library (alias for getCachedItems)
+export function getCitationLibrary(): CSLItem[] {
+  return cachedItems;
+}

@@ -16,20 +16,21 @@ import {
   setHideCompletedTasks,
 } from './annotation-display-plugin';
 import { type AnnotationType, annotationNode, annotationPlugin } from './annotation-plugin';
-import { focusModePlugin, setFocusModeEnabled } from './focus-mode-plugin';
-import { highlightMark, highlightPlugin } from './highlight-plugin';
-import { sectionBreakNode, sectionBreakPlugin } from './section-break-plugin';
 import {
+  type CSLItem,
   citationNode,
   citationPlugin,
   clearAppendMode,
-  type CSLItem,
+  clearPendingResolution,
   getEditPopupInput,
   getPendingAppendBase,
   isPendingAppendMode,
   mergeCitations,
   updateEditPreview,
 } from './citation-plugin';
+import { focusModePlugin, setFocusModeEnabled } from './focus-mode-plugin';
+import { highlightMark, highlightPlugin } from './highlight-plugin';
+import { sectionBreakNode, sectionBreakPlugin } from './section-break-plugin';
 
 // Debug: Log plugin array contents at import time
 console.log('[Milkdown] citationPlugin imported, length:', citationPlugin.length);
@@ -39,7 +40,12 @@ console.log(
 );
 
 // Keep citation-search for cache restoration and library size check
-import { getCitationLibrarySize, restoreCitationLibrary, setCitationLibrary } from './citation-search';
+import {
+  getCitationLibrary,
+  getCitationLibrarySize,
+  restoreCitationLibrary,
+  setCitationLibrary,
+} from './citation-search';
 import { getCiteprocEngine } from './citeproc-engine';
 import { mdToTextOffset, textToMdOffset } from './cursor-mapping';
 import './styles.css';
@@ -133,6 +139,10 @@ declare global {
       setCitationStyle: (styleXML: string) => void;
       getBibliographyCitekeys: () => string[];
       getCitationCount: () => number;
+      getAllCitekeys: () => string[];
+      // Lazy resolution API
+      requestCitationResolution: (keys: string[]) => void;
+      addCitationItems: (items: CSLItem[]) => void;
       // Legacy search callback (kept for backwards compatibility)
       searchCitationsCallback: (items: CSLItem[]) => void;
       // CAYW picker callbacks
@@ -142,9 +152,53 @@ declare global {
       // Edit citation callback (for clicking existing citations)
       editCitationCallback: (data: EditCitationCallbackData, items: CSLItem[]) => void;
       // Debug API
-      getCAYWDebugState: () => { pendingCAYWRange: { start: number; end: number } | null; hasEditor: boolean; docSize: number | null };
+      getCAYWDebugState: () => {
+        pendingCAYWRange: { start: number; end: number } | null;
+        hasEditor: boolean;
+        docSize: number | null;
+      };
     };
   }
+}
+
+// === Lazy Citation Resolution ===
+// Debounced batch resolution of unresolved citekeys
+
+const pendingCitekeys = new Set<string>();
+let resolutionTimer: ReturnType<typeof setTimeout> | null = null;
+
+/**
+ * Request lazy resolution of citekeys from Swift/Zotero
+ * Batches multiple requests within a 500ms window
+ */
+function requestCitationResolutionInternal(keys: string[]): void {
+  for (const k of keys) {
+    pendingCitekeys.add(k);
+  }
+
+  // Debounce: wait 500ms before sending to batch multiple requests
+  if (resolutionTimer) {
+    clearTimeout(resolutionTimer);
+  }
+
+  resolutionTimer = setTimeout(() => {
+    const keysToResolve = Array.from(pendingCitekeys);
+    pendingCitekeys.clear();
+    resolutionTimer = null;
+
+    if (keysToResolve.length === 0) return;
+
+    console.log('[CitationResolution] Requesting resolution for:', keysToResolve);
+
+    // Call Swift message handler
+    if (typeof (window as any).webkit?.messageHandlers?.resolveCitekeys?.postMessage === 'function') {
+      (window as any).webkit.messageHandlers.resolveCitekeys.postMessage(keysToResolve);
+    } else {
+      console.warn('[CitationResolution] Swift bridge not available');
+      // Clear pending state since resolution won't happen
+      clearPendingResolution(keysToResolve);
+    }
+  }, 500);
 }
 
 let editorInstance: Editor | null = null;
@@ -629,7 +683,7 @@ interface CAYWCallbackData {
 
 // Interface for edit citation callback data from Swift
 interface EditCitationCallbackData {
-  pos: number;           // Position of the citation node to update
+  pos: number; // Position of the citation node to update
   rawSyntax: string;
   citekeys: string[];
   locators: string;
@@ -1592,6 +1646,46 @@ window.FinalFinal = {
 
   getCitationCount(): number {
     return getCitationLibrarySize();
+  },
+
+  getAllCitekeys(): string[] {
+    if (!editorInstance) return [];
+
+    const citekeys = new Set<string>();
+
+    try {
+      const view = editorInstance.ctx.get(editorViewCtx);
+      view.state.doc.descendants((node) => {
+        if (node.type.name === 'citation' && node.attrs.citekeys) {
+          const keys = (node.attrs.citekeys as string).split(',').filter((k) => k.trim());
+          for (const k of keys) {
+            citekeys.add(k.trim());
+          }
+        }
+        return true;
+      });
+    } catch {
+      // Traversal failed
+    }
+
+    return Array.from(citekeys);
+  },
+
+  // Lazy resolution API
+  requestCitationResolution(keys: string[]) {
+    requestCitationResolutionInternal(keys);
+  },
+
+  addCitationItems(items: CSLItem[]) {
+    // Add items to citeproc engine without replacing existing
+    getCiteprocEngine().addItems(items);
+    // Update the citation library cache
+    setCitationLibrary([...getCitationLibrary(), ...items]);
+    // Clear pending resolution state for these keys
+    const resolvedKeys = items.map((item) => (item as any)['citation-key'] || item.citationKey || item.id);
+    clearPendingResolution(resolvedKeys);
+    // Trigger re-render of all citations
+    document.dispatchEvent(new CustomEvent('citation-library-updated'));
   },
 
   searchCitationsCallback(items: CSLItem[]) {

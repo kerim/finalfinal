@@ -97,6 +97,7 @@ struct FinalFinalApp: App {
             ViewCommands()
             ThemeCommands()
             EditorCommands()
+            CitationCommands()
             ExportCommands()
             HelpCommands(onGettingStarted: {
                 // Post notification to handle in view hierarchy

@@ -42,6 +42,7 @@ struct MilkdownEditor: NSViewRepresentable {
             controller.add(context.coordinator, name: "errorHandler")
             controller.add(context.coordinator, name: "searchCitations")
             controller.add(context.coordinator, name: "openCitationPicker")
+            controller.add(context.coordinator, name: "resolveCitekeys")
 
             preloaded.navigationDelegate = context.coordinator
             context.coordinator.webView = preloaded
@@ -99,6 +100,7 @@ struct MilkdownEditor: NSViewRepresentable {
         configuration.userContentController.add(context.coordinator, name: "errorHandler")
         configuration.userContentController.add(context.coordinator, name: "searchCitations")
         configuration.userContentController.add(context.coordinator, name: "openCitationPicker")
+        configuration.userContentController.add(context.coordinator, name: "resolveCitekeys")
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = context.coordinator
@@ -184,6 +186,7 @@ struct MilkdownEditor: NSViewRepresentable {
         private var insertAnnotationObserver: NSObjectProtocol?
         private var toggleHighlightObserver: NSObjectProtocol?
         private var citationLibraryObserver: NSObjectProtocol?
+        private var refreshAllCitationsObserver: NSObjectProtocol?
 
         /// Pending cursor position that is being restored (set before JS call, cleared after)
         private var pendingCursorRestore: CursorPosition?
@@ -270,6 +273,17 @@ struct MilkdownEditor: NSViewRepresentable {
                     self?.setCitationLibrary(json)
                 }
             }
+
+            // Subscribe to refresh all citations notification (Cmd+Shift+R)
+            refreshAllCitationsObserver = NotificationCenter.default.addObserver(
+                forName: .refreshAllCitations,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor in
+                    await self?.refreshAllCitations()
+                }
+            }
         }
 
         deinit {
@@ -290,6 +304,9 @@ struct MilkdownEditor: NSViewRepresentable {
                 NotificationCenter.default.removeObserver(observer)
             }
             if let observer = citationLibraryObserver {
+                NotificationCenter.default.removeObserver(observer)
+            }
+            if let observer = refreshAllCitationsObserver {
                 NotificationCenter.default.removeObserver(observer)
             }
         }
@@ -321,6 +338,10 @@ struct MilkdownEditor: NSViewRepresentable {
             if let observer = citationLibraryObserver {
                 NotificationCenter.default.removeObserver(observer)
                 citationLibraryObserver = nil
+            }
+            if let observer = refreshAllCitationsObserver {
+                NotificationCenter.default.removeObserver(observer)
+                refreshAllCitationsObserver = nil
             }
             webView = nil
         }
@@ -573,6 +594,13 @@ struct MilkdownEditor: NSViewRepresentable {
                     await self.handleOpenCitationPicker(cmdStart: cmdStart)
                 }
             }
+
+            // Handle lazy citation resolution request from web editor
+            if message.name == "resolveCitekeys", let citekeys = message.body as? [String] {
+                Task { @MainActor in
+                    await self.handleResolveCitekeys(citekeys)
+                }
+            }
         }
 
         /// Handle citation search request from web editor
@@ -772,6 +800,98 @@ struct MilkdownEditor: NSViewRepresentable {
         @MainActor
         private func sendCitationPickerCancelled(webView: WKWebView) {
             webView.evaluateJavaScript("window.FinalFinal.citationPickerCancelled()") { _, _ in }
+        }
+
+        /// Handle lazy citation resolution request from web editor
+        /// Fetches CSL-JSON for unresolved citekeys and pushes back to editor
+        @MainActor
+        private func handleResolveCitekeys(_ citekeys: [String]) async {
+            guard let webView, isEditorReady else {
+                print("[MilkdownEditor] handleResolveCitekeys: webView or editor not ready")
+                return
+            }
+
+            guard !citekeys.isEmpty else { return }
+
+            print("[MilkdownEditor] Resolving \(citekeys.count) citekeys: \(citekeys)")
+
+            do {
+                // Fetch CSL items from Zotero via BBT
+                let items = try await ZoteroService.shared.fetchItemsForCitekeys(citekeys)
+
+                guard !items.isEmpty else {
+                    print("[MilkdownEditor] No items found for citekeys")
+                    return
+                }
+
+                print("[MilkdownEditor] Resolved \(items.count) items")
+
+                // Encode as JSON
+                let encoder = JSONEncoder()
+                encoder.outputFormatting = [.sortedKeys]
+                let data = try encoder.encode(items)
+                guard let json = String(data: data, encoding: .utf8) else {
+                    print("[MilkdownEditor] Failed to encode items as JSON")
+                    return
+                }
+
+                // Push items to editor
+                addCitationItems(json)
+            } catch ZoteroError.notRunning {
+                print("[MilkdownEditor] Zotero not running - cannot resolve citekeys")
+                // Don't show error to user for lazy resolution - just log it
+            } catch {
+                print("[MilkdownEditor] Failed to resolve citekeys: \(error.localizedDescription)")
+            }
+        }
+
+        /// Push citation items to editor without replacing existing library
+        @MainActor
+        func addCitationItems(_ itemsJSON: String) {
+            guard isEditorReady, let webView else { return }
+            let escaped = itemsJSON.escapedForJSTemplateLiteral
+            webView.evaluateJavaScript("window.FinalFinal.addCitationItems(JSON.parse(`\(escaped)`))") { _, _ in }
+        }
+
+        /// Refresh all citations in the document
+        /// Gets all citekeys from the editor, fetches their CSL data, and pushes it back
+        @MainActor
+        func refreshAllCitations() async {
+            guard isEditorReady, let webView else {
+                print("[MilkdownEditor] refreshAllCitations: editor not ready")
+                return
+            }
+
+            print("[MilkdownEditor] Refreshing all citations...")
+
+            // Get all citekeys from the document
+            webView.evaluateJavaScript("JSON.stringify(window.FinalFinal.getAllCitekeys())") { [weak self] result, error in
+                guard let self else { return }
+
+                if let error {
+                    print("[MilkdownEditor] Failed to get citekeys: \(error.localizedDescription)")
+                    return
+                }
+
+                guard let jsonString = result as? String,
+                      let data = jsonString.data(using: .utf8),
+                      let citekeys = try? JSONDecoder().decode([String].self, from: data) else {
+                    print("[MilkdownEditor] Failed to decode citekeys")
+                    return
+                }
+
+                guard !citekeys.isEmpty else {
+                    print("[MilkdownEditor] No citations in document")
+                    return
+                }
+
+                print("[MilkdownEditor] Found \(citekeys.count) citekeys to refresh: \(citekeys)")
+
+                // Fetch all citekeys from Zotero
+                Task { @MainActor in
+                    await self.handleResolveCitekeys(citekeys)
+                }
+            }
         }
 
         func shouldPushContent(_ newContent: String) -> Bool {

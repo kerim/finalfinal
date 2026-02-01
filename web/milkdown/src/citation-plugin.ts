@@ -25,6 +25,41 @@ export interface CitationAttrs {
   rawSyntax: string;
 }
 
+// === Lazy Resolution State ===
+// Track citekeys that are pending resolution to avoid duplicate requests
+const pendingResolutionKeys = new Set<string>();
+
+/**
+ * Request lazy resolution of unresolved citekeys from Swift/Zotero
+ * Called from CitationNodeView when citekeys can't be formatted
+ */
+export function requestCitationResolution(keys: string[]): void {
+  // Filter out keys already pending or already resolved
+  const engine = getCiteprocEngine();
+  const keysToRequest = keys.filter((k) => !engine.hasItem(k) && !pendingResolutionKeys.has(k));
+
+  if (keysToRequest.length === 0) return;
+
+  // Mark as pending
+  for (const k of keysToRequest) {
+    pendingResolutionKeys.add(k);
+  }
+
+  // Call the main.ts debounced resolution function
+  if (typeof (window as any).FinalFinal?.requestCitationResolution === 'function') {
+    (window as any).FinalFinal.requestCitationResolution(keysToRequest);
+  }
+}
+
+/**
+ * Clear pending resolution state for keys (called after resolution completes)
+ */
+export function clearPendingResolution(keys: string[]): void {
+  for (const k of keys) {
+    pendingResolutionKeys.delete(k);
+  }
+}
+
 // Regex to match full bracketed citation: [...]
 // Must contain at least one @citekey
 const citationBracketRegex = /\[([^\]]*@[\w:.-][^\]]*)\]/g;
@@ -701,6 +736,11 @@ const citationNodeView = $view(citationNode, (ctx: Ctx) => {
         // Check resolution status
         const unresolvedKeys = citekeys.filter((k) => !engine.hasItem(k));
         isResolved = unresolvedKeys.length === 0;
+
+        // Lazy resolution: request unresolved keys from Swift/Zotero
+        if (unresolvedKeys.length > 0) {
+          requestCitationResolution(unresolvedKeys);
+        }
 
         if (isResolved) {
           // Get formatted citation from citeproc

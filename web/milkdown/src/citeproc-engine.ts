@@ -112,7 +112,7 @@ class CiteprocEngine {
   // Add items to the bibliography without replacing existing ones
   addItems(items: CSLItem[]): void {
     console.log('[CiteprocEngine] addItems called with', items.length, 'items');
-    items.forEach(item => {
+    items.forEach((item) => {
       // Use citationKey if available, otherwise id
       const key = (item as any)['citation-key'] || item.citationKey || item.id;
       this.items.set(key, { ...item, id: key });
