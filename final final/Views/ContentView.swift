@@ -19,6 +19,9 @@ struct CursorPosition: Equatable {
 struct ContentView: View {
     @Environment(ThemeManager.self) private var themeManager
     @Environment(VersionHistoryCoordinator.self) private var versionHistoryCoordinator
+
+    /// Observe appearance settings to trigger editor CSS updates when settings change
+    @State private var appearanceManager = AppearanceSettingsManager.shared
     @Environment(\.openWindow) private var openWindow
     @State private var editorState = EditorViewState()
     @State private var cursorPositionToRestore: CursorPosition?
@@ -47,6 +50,19 @@ struct ContentView: View {
 
     /// Use the shared DocumentManager for project lifecycle
     private var documentManager: DocumentManager { DocumentManager.shared }
+
+    /// Theme CSS with appearance overrides - reading cssOverrides creates the SwiftUI dependency
+    /// so that when any appearance setting changes, editors get updated
+    private var currentThemeCSS: String {
+        // Read cssOverrides to create dependency on ALL settings (not just hasOverrides)
+        // This ensures any setting change triggers an editor update
+        let overrides = appearanceManager.cssOverrides
+        let themeCSS = themeManager.currentTheme.cssVariables
+        if overrides.isEmpty {
+            return themeCSS
+        }
+        return themeCSS + "\n" + overrides
+    }
 
     var body: some View {
         mainContentView
@@ -940,6 +956,7 @@ struct ContentView: View {
                     cursorPositionToRestore: $cursorPositionToRestore,
                     scrollToOffset: $editorState.scrollToOffset,
                     isResettingContent: $editorState.isResettingContent,
+                    themeCSS: currentThemeCSS,
                     onContentChange: { _ in
                         // Content change handling - could trigger outline parsing here
                     },
@@ -956,6 +973,7 @@ struct ContentView: View {
                     cursorPositionToRestore: $cursorPositionToRestore,
                     scrollToOffset: $editorState.scrollToOffset,
                     isResettingContent: $editorState.isResettingContent,
+                    themeCSS: currentThemeCSS,
                     onContentChange: { _ in
                         // Content change handling - could trigger outline parsing here
                     },

@@ -52,9 +52,27 @@ final class ThemeManager {
         }
     }
 
+    /// Set theme and clear appearance overrides (themes may have very different fonts/layouts)
+    func setThemeAndClearOverrides(byId id: String) {
+        if let theme = AppColorScheme.all.first(where: { $0.id == id }) {
+            AppearanceSettingsManager.shared.resetToDefaults()
+            // Small delay ensures SwiftUI observes the reset before theme change
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(50))
+                setTheme(theme)
+            }
+        }
+    }
+
     /// Returns CSS variables string for web editor injection
+    /// Includes appearance overrides appended after theme CSS (later declarations win)
     var cssVariables: String {
-        currentTheme.cssVariables
+        let themeCSS = currentTheme.cssVariables
+        let overrides = AppearanceSettingsManager.shared.cssOverrides
+        if overrides.isEmpty {
+            return themeCSS
+        }
+        return themeCSS + "\n" + overrides
     }
 
     // MARK: - Appearance

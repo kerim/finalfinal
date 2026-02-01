@@ -40,8 +40,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             print("[AppDelegate] Database initialized successfully")
             #endif
 
-            // Load theme now that database is ready
+            // Load theme and appearance settings now that database is ready
             ThemeManager.shared.loadThemeIfNeeded()
+            AppearanceSettingsManager.shared.loadIfNeeded()
         } catch {
             #if DEBUG
             print("[AppDelegate] Failed to initialize database: \(error)")

@@ -30,6 +30,9 @@ struct MilkdownEditor: NSViewRepresentable {
     @Binding var scrollToOffset: Int?
     @Binding var isResettingContent: Bool
 
+    /// CSS variables for theming - when this changes, updateNSView is called
+    var themeCSS: String = ThemeManager.shared.cssVariables
+
     let onContentChange: (String) -> Void
     let onStatsChange: (Int, Int) -> Void
     let onCursorPositionSaved: (CursorPosition) -> Void
@@ -127,10 +130,9 @@ struct MilkdownEditor: NSViewRepresentable {
             context.coordinator.setContent(content)
         }
 
-        let cssVars = ThemeManager.shared.cssVariables
-        if context.coordinator.lastThemeCss != cssVars {
-            context.coordinator.lastThemeCss = cssVars
-            context.coordinator.setTheme(cssVars)
+        if context.coordinator.lastThemeCss != themeCSS {
+            context.coordinator.lastThemeCss = themeCSS
+            context.coordinator.setTheme(themeCSS)
         }
 
         // Handle scroll-to-offset requests from sidebar

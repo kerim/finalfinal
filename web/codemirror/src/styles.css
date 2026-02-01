@@ -14,6 +14,7 @@ body {
   background: var(--editor-bg, #ffffff);
   color: var(--editor-text, #1a1a1a);
   font-family: var(--font-sans);
+  line-height: var(--line-height-body, 1.75);
 }
 
 #editor {
@@ -23,8 +24,8 @@ body {
 
 .cm-editor {
   height: 100%;
-  font-size: 18px;
-  line-height: 1.75;
+  font-size: var(--font-size-body, 18px);
+  line-height: var(--line-height-body, 1.75);
   background: var(--editor-bg, #ffffff);
 }
 
@@ -40,6 +41,9 @@ body {
 .cm-editor .cm-scroller {
   padding: 20px;
   font-family: var(--font-mono);
+  max-width: var(--column-max-width);
+  min-width: var(--column-min-width);
+  margin: 0 auto;
 }
 
 .cm-editor .cm-content {
@@ -57,7 +61,7 @@ body {
 
 /* Markdown syntax highlighting */
 .cm-header {
-  color: var(--editor-text, #1a1a1a);
+  color: var(--editor-heading-text, var(--editor-text, #1a1a1a));
   font-weight: var(--weight-heading, 600);
   line-height: var(--line-height-heading);
 }
