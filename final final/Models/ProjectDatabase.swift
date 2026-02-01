@@ -232,7 +232,7 @@ final class ProjectDatabase: Sendable {
             .tracking { db in
                 try Section
                     .filter(Section.Columns.projectId == projectId)
-                    .order(Section.Columns.sortOrder)
+                    .order(Section.Columns.isBibliography.asc, Section.Columns.sortOrder.asc)
                     .fetchAll(db)
             }
             .removeDuplicates()  // Prevent unnecessary re-renders
