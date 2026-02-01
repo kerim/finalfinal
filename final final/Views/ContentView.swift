@@ -83,8 +83,9 @@ struct ContentView: View {
                     print("[ContentView] Bibliography changed but zoomed - skipping content rebuild")
                     return
                 }
+                // Skip during any content transition (including editor switch)
                 guard editorState.contentState == .idle else {
-                    print("[ContentView] Bibliography changed but contentState not idle - skipping")
+                    print("[ContentView] Bibliography changed but contentState=\(editorState.contentState) - skipping")
                     return
                 }
                 print("[ContentView] Bibliography section changed - rebuilding content from sections")
@@ -578,22 +579,43 @@ struct ContentView: View {
 
     /// Rebuild document content based on zoom state (extracted for reuse)
     private func rebuildDocumentContent() {
+        print("[REBUILD-DEBUG] rebuildDocumentContent called")
+        print("[REBUILD-DEBUG]   contentState: \(editorState.contentState)")
+        print("[REBUILD-DEBUG]   sections count: \(editorState.sections.count)")
+        print("[REBUILD-DEBUG]   current content length: \(editorState.content.count)")
+
+        // Guard against rebuilding during editor transition - this would overwrite content
+        // that hasn't been synced to sections yet
+        guard editorState.contentState != .editorTransition else {
+            print("[REBUILD-DEBUG] SKIPPING - during editor transition")
+            return
+        }
+
         let sectionsToRebuild: [SectionViewModel]
         if let zoomedIds = editorState.zoomedSectionIds {
             sectionsToRebuild = editorState.sections
                 .filter { zoomedIds.contains($0.id) }
                 .sorted { $0.sortOrder < $1.sortOrder }
+            print("[REBUILD-DEBUG]   zoomed mode: \(sectionsToRebuild.count) sections")
         } else {
             sectionsToRebuild = editorState.sections
+            print("[REBUILD-DEBUG]   full document: \(sectionsToRebuild.count) sections")
         }
 
-        editorState.content = sectionsToRebuild
+        for (idx, section) in sectionsToRebuild.enumerated() {
+            print("[REBUILD-DEBUG]   [\(idx)] '\(section.title)' len:\(section.markdownContent.count)")
+        }
+
+        let newContent = sectionsToRebuild
             .map { section in
                 var content = section.markdownContent
                 if !content.hasSuffix("\n") { content += "\n" }
                 return content
             }
             .joined()
+
+        print("[REBUILD-DEBUG]   new content length: \(newContent.count)")
+        editorState.content = newContent
     }
 
     /// Recalculate parentId for all sections based on document order and header levels
@@ -1296,13 +1318,24 @@ extension View {
                 editorState.toggleFocusMode()
             }
             .onReceive(NotificationCenter.default.publisher(for: .toggleEditorMode)) { _ in
+                // Mark transition state BEFORE requesting toggle
+                print("[EDITOR-TOGGLE] Starting editor transition")
+                editorState.contentState = .editorTransition
                 editorState.requestEditorModeToggle()
             }
             .onReceive(NotificationCenter.default.publisher(for: .didSaveCursorPosition)) { notification in
+                print("[EDITOR-TOGGLE] didSaveCursorPosition received, content length: \(editorState.content.count)")
                 if let position = notification.userInfo?["position"] as? CursorPosition {
                     cursorRestore.wrappedValue = position
                 }
                 editorState.toggleEditorMode()
+                // Clear transition state AFTER toggle completes
+                // Use async to ensure SwiftUI has processed the mode change
+                Task { @MainActor in
+                    try? await Task.sleep(for: .milliseconds(100))
+                    print("[EDITOR-TOGGLE] Clearing editorTransition state")
+                    editorState.contentState = .idle
+                }
             }
             .onReceive(NotificationCenter.default.publisher(for: .toggleOutlineSidebar)) { _ in
                 editorState.toggleOutlineSidebar()

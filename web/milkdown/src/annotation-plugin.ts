@@ -39,8 +39,25 @@ const remarkAnnotationPlugin = $remark('annotation', () => () => (tree: Root) =>
     const value = node.value?.trim();
     if (!value) return;
 
-    const match = value.match(annotationRegex);
-    if (!match) return;
+    // Normalize Unicode whitespace and invisible characters
+    const normalizedValue = value
+      .replace(/\u00A0/g, ' ') // Non-breaking space → regular space
+      .replace(/[\u200B-\u200D\uFEFF]/g, '') // Zero-width spaces
+      .replace(/\u2003/g, ' ') // Em space
+      .replace(/\u2002/g, ' ') // En space
+      .replace(/\r\n/g, '\n') // Windows line endings
+      .replace(/\r/g, '\n') // Old Mac line endings
+      .trim();
+
+    const match = normalizedValue.match(annotationRegex);
+    if (!match) {
+      // Diagnostic: log unmatched annotation-like comments
+      if (value.includes('::') && value.startsWith('<!--')) {
+        console.log('[AnnotationPlugin] Unmatched annotation-like comment:', JSON.stringify(value));
+        console.log('[AnnotationPlugin] Normalized version:', JSON.stringify(normalizedValue));
+      }
+      return;
+    }
 
     const [, typeStr, content] = match;
 
