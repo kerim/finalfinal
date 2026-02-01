@@ -182,18 +182,6 @@ class SectionSyncService {
 
     // MARK: - Private Methods
 
-    /// Strip auto-bibliography blocks from markdown content
-    /// These blocks are managed by BibliographySyncService, not user content
-    /// Stripping them prevents duplicate bibliography sections when pasting content
-    /// that already contains `<!-- ::auto-bibliography:: -->` markers
-    private func stripAutoBibliography(from markdown: String) -> String {
-        // Pattern: <!-- ::auto-bibliography:: --> ... <!-- ::end-auto-bibliography:: -->
-        // Flexible whitespace to handle variations in pasted content
-        // with optional trailing newline
-        let pattern = #"<!--\s*::\s*auto-bibliography\s*::\s*-->[\s\S]*?<!--\s*::\s*end-auto-bibliography\s*::\s*-->\n?"#
-        return markdown.replacingOccurrences(of: pattern, with: "", options: .regularExpression)
-    }
-
     /// Core sync method using position-based reconciliation
     private func syncContent(_ markdown: String, zoomedIds: Set<String>? = nil) async {
         guard let db = projectDatabase, let pid = projectId else {
@@ -201,39 +189,20 @@ class SectionSyncService {
             return
         }
 
-        print("[SYNC-DEBUG] syncContent called, markdown length: \(markdown.count)")
-        print("[SYNC-DEBUG] isContentZoomed: \(isContentZoomed), zoomedIds: \(zoomedIds?.count ?? 0)")
-
         // When zoomed, update zoomed sections in-place
         if let zoomedIds = zoomedIds, isContentZoomed {
             await syncZoomedSections(from: markdown, zoomedIds: zoomedIds)
             return
         }
 
-        // Strip auto-bibliography blocks before parsing
-        // BibliographySyncService manages bibliography sections separately
-        // This prevents duplicates when pasting content with existing markers
-        let cleanedMarkdown = stripAutoBibliography(from: markdown)
-
-        // 1. Parse headers from cleaned markdown
-        let headers = parseHeaders(from: cleanedMarkdown)
-        print("[SYNC-DEBUG] Parsed \(headers.count) headers from markdown")
-        for (idx, header) in headers.enumerated() {
-            print("[SYNC-DEBUG]   [\(idx)] '\(header.title)' H\(header.level) offset:\(header.startOffset)")
-        }
-        guard !headers.isEmpty else {
-            print("[SYNC-DEBUG] No headers found - returning early")
-            return
-        }
+        // 1. Parse headers from markdown
+        let headers = parseHeaders(from: markdown)
+        guard !headers.isEmpty else { return }
 
         // 2. Get current DB sections
         let dbSections: [Section]
         do {
             dbSections = try db.fetchSections(projectId: pid)
-            print("[SYNC-DEBUG] Fetched \(dbSections.count) sections from DB")
-            for section in dbSections.sorted(by: { $0.sortOrder < $1.sortOrder }) {
-                print("[SYNC-DEBUG]   DB[\(section.sortOrder)] '\(section.title)' H\(section.headerLevel)")
-            }
         } catch {
             print("[SectionSyncService] Error fetching sections: \(error.localizedDescription)")
             return
@@ -241,17 +210,6 @@ class SectionSyncService {
 
         // 3. Reconcile to find minimal changes
         let changes = reconciler.reconcile(headers: headers, dbSections: dbSections, projectId: pid)
-        print("[SYNC-DEBUG] Reconciler produced \(changes.count) changes")
-        for change in changes {
-            switch change {
-            case .insert(let section):
-                print("[SYNC-DEBUG]   INSERT '\(section.title)' at \(section.sortOrder)")
-            case .update(let id, let updates):
-                print("[SYNC-DEBUG]   UPDATE \(id) with \(updates)")
-            case .delete(let id):
-                print("[SYNC-DEBUG]   DELETE \(id)")
-            }
-        }
 
         // 4. Apply changes to database (if any)
         if !changes.isEmpty {
@@ -263,20 +221,19 @@ class SectionSyncService {
         }
 
         // 5. Save full content to database ONLY when not zoomed
-        // Use cleaned markdown to avoid storing duplicate bibliography markers
         if !isContentZoomed {
             do {
-                try db.saveContent(markdown: cleanedMarkdown, for: pid)
+                try db.saveContent(markdown: markdown, for: pid)
             } catch {
                 print("[SectionSyncService] Error saving content: \(error.localizedDescription)")
             }
         }
 
         // Track synced content to prevent feedback loops
-        lastSyncedContent = cleanedMarkdown
+        lastSyncedContent = markdown
 
         // Check if user made edits to Getting Started
-        DocumentManager.shared.checkGettingStartedEdited(currentMarkdown: cleanedMarkdown)
+        DocumentManager.shared.checkGettingStartedEdited(currentMarkdown: markdown)
 
         // Note: UI updates happen automatically via ValueObservation in EditorViewState
         // Hierarchy enforcement is handled via onChange in ContentView

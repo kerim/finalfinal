@@ -1420,6 +1420,10 @@ extension View {
                 sectionSyncService.contentChanged(newValue, zoomedIds: editorState.zoomedSectionIds)
                 annotationSyncService.contentChanged(newValue)
 
+                // Skip bibliography sync when zoomed - we don't have full document context
+                // Bibliography will be synced when user zooms out and full content is rebuilt
+                guard editorState.zoomedSectionId == nil else { return }
+
                 // Check for citation changes and update bibliography if needed
                 // Always call even when citekeys is empty - this triggers bibliography removal
                 if let projectId = documentManager.projectId {

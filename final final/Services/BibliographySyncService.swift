@@ -347,40 +347,34 @@ final class BibliographySyncService {
         projectId: String,
         database: ProjectDatabase
     ) async throws {
-        // ATOMIC: Check and create/update in single write transaction
-        // This prevents race conditions where multiple calls see "no bibliography"
-        // and both try to create one (causing duplicates on app relaunch)
+        // Use delete-then-insert to prevent duplicates
+        // This ensures only ONE bibliography section ever exists, even if previous
+        // bugs created duplicates
         try database.write { db in
-            // Check for existing bibliography INSIDE the write transaction
-            if var existingBib = try Section
+            // Delete ALL existing bibliography sections (handles duplicates)
+            try Section
                 .filter(Section.Columns.projectId == projectId)
                 .filter(Section.Columns.isBibliography == true)
-                .fetchOne(db) {
-                // Update existing section
-                existingBib.markdownContent = content
-                existingBib.title = "Bibliography"
-                existingBib.updatedAt = Date()
-                existingBib.recalculateWordCount()
-                try existingBib.update(db)
-            } else {
-                // Create new bibliography section
-                let maxSortOrder = try Section
-                    .filter(Section.Columns.projectId == projectId)
-                    .order(Section.Columns.sortOrder.desc)
-                    .fetchOne(db)?.sortOrder ?? 0
+                .deleteAll(db)
 
-                var newSection = Section(
-                    projectId: projectId,
-                    sortOrder: maxSortOrder + 1,
-                    headerLevel: 1,
-                    isBibliography: true,
-                    title: "Bibliography",
-                    markdownContent: content,
-                    status: .final_
-                )
-                newSection.recalculateWordCount()
-                try newSection.insert(db)
-            }
+            // Get max sort order for new section placement
+            let maxSortOrder = try Section
+                .filter(Section.Columns.projectId == projectId)
+                .order(Section.Columns.sortOrder.desc)
+                .fetchOne(db)?.sortOrder ?? 0
+
+            // Create fresh bibliography section
+            var newSection = Section(
+                projectId: projectId,
+                sortOrder: maxSortOrder + 1,
+                headerLevel: 1,
+                isBibliography: true,
+                title: "Bibliography",
+                markdownContent: content,
+                status: .final_
+            )
+            newSection.recalculateWordCount()
+            try newSection.insert(db)
         }
     }
 

@@ -942,6 +942,13 @@ async function initEditor() {
 
     // Restore citation library from localStorage (survives editor toggle)
     restoreCitationLibrary();
+
+    // RACE CONDITION FIX: If content was set before editor was ready, load it now
+    // This handles the case where Swift calls initialize() before initEditor() completes
+    if (currentContent && currentContent.trim()) {
+      console.log('[Milkdown] Loading pending content after init:', currentContent.length, 'chars');
+      window.FinalFinal.setContent(currentContent);
+    }
   } catch (e) {
     console.error('[Milkdown] Init failed:', e);
     throw e;
@@ -1026,10 +1033,25 @@ window.FinalFinal = {
         const view = ctx.get(editorViewCtx);
 
         const parser = ctx.get(parserCtx);
-        const doc = parser(markdown);
-        if (!doc) {
+        let doc;
+        try {
+          doc = parser(markdown);
+        } catch (e) {
+          console.error('[Milkdown] Parser error:', e instanceof Error ? e.message : e);
+          console.error('[Milkdown] Stack:', e instanceof Error ? e.stack : 'N/A');
           return;
         }
+        if (!doc) {
+          console.error('[Milkdown] Parser returned null/undefined doc');
+          return;
+        }
+
+        // Diagnostic: Log parsed document structure
+        console.log('[Milkdown] Parsed doc node count:', doc.content.childCount);
+        console.log('[Milkdown] Parsed doc size:', doc.content.size);
+        doc.content.forEach((node, offset, index) => {
+          console.log(`[Milkdown] Node[${index}]: type=${node.type.name}, textContent="${node.textContent.slice(0, 50)}..."`);
+        });
 
         const { from } = view.state.selection;
         const docSize = view.state.doc.content.size;
