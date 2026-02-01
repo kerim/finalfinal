@@ -48,7 +48,7 @@ struct PreferencesView: View {
                 }
                 .tag(PreferencesTab.appearance)
         }
-        .frame(width: 500, height: 550)
+        .frame(width: 700, height: 550)
         .padding()
     }
 }
@@ -81,19 +81,32 @@ struct AppearancePreferencesPane: View {
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                themeSection
-                typographySection
-                colorsSection
-                layoutSection
-                presetsSection
-                resetSection
+        HStack(alignment: .top, spacing: 0) {
+            // Left column: Presets
+            VStack(alignment: .leading, spacing: 16) {
+                presetsColumn
             }
+            .frame(width: 200)
             .padding()
+
+            Divider()
+
+            // Right column: Settings
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    themeSection
+                    typographySection
+                    colorsSection
+                    layoutSection
+                }
+                .padding()
+            }
         }
         .onAppear {
             loadCurrentSettings()
+        }
+        .sheet(isPresented: $showingSavePresetSheet) {
+            savePresetSheet
         }
     }
 
@@ -291,54 +304,70 @@ struct AppearancePreferencesPane: View {
         }
     }
 
-    // MARK: - Presets Section
+    // MARK: - Presets Column
 
     @ViewBuilder
-    private var presetsSection: some View {
-        GroupBox("Presets") {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack {
-                    Picker("Saved Preset", selection: $selectedPresetId) {
-                        Text("Select a preset...").tag(nil as UUID?)
-                        if !appearanceManager.savedPresets.isEmpty {
-                            Divider()
-                            ForEach(appearanceManager.savedPresets) { preset in
-                                Text(preset.name).tag(preset.id as UUID?)
-                            }
-                        }
-                    }
-                    .pickerStyle(.menu)
-                    .frame(maxWidth: .infinity)
-                    .onChange(of: selectedPresetId) { _, newValue in
-                        if let presetId = newValue,
-                           let preset = appearanceManager.savedPresets.first(where: { $0.id == presetId }) {
-                            restorePreset(preset)
-                        }
-                    }
+    private var presetsColumn: some View {
+        Text("Saved Presets")
+            .font(.headline)
 
-                    if let presetId = selectedPresetId,
-                       let preset = appearanceManager.savedPresets.first(where: { $0.id == presetId }) {
-                        Button(role: .destructive) {
+        if appearanceManager.savedPresets.isEmpty {
+            Text("No saved presets")
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .center)
+                .padding(.vertical, 40)
+        } else {
+            List(selection: $selectedPresetId) {
+                ForEach(appearanceManager.savedPresets) { preset in
+                    HStack {
+                        Text(preset.name)
+                        Spacer()
+                        Button {
                             appearanceManager.deletePreset(preset)
-                            selectedPresetId = nil
+                            if selectedPresetId == preset.id {
+                                selectedPresetId = nil
+                            }
                         } label: {
                             Image(systemName: "trash")
+                                .foregroundStyle(.secondary)
                         }
                         .buttonStyle(.borderless)
-                        .help("Delete preset")
                     }
+                    .tag(preset.id as UUID?)
                 }
-
-                Button("Save Current as Preset...") {
-                    showingSavePresetSheet = true
-                }
-                .disabled(!appearanceManager.settings.hasOverrides)
             }
-            .padding(8)
+            .listStyle(.inset)
+            .frame(height: 200)
+            .onChange(of: selectedPresetId) { _, newValue in
+                if let presetId = newValue,
+                   let preset = appearanceManager.savedPresets.first(where: { $0.id == presetId }) {
+                    restorePreset(preset)
+                }
+            }
         }
-        .sheet(isPresented: $showingSavePresetSheet) {
-            savePresetSheet
+
+        Spacer()
+
+        if let presetId = selectedPresetId,
+           let preset = appearanceManager.savedPresets.first(where: { $0.id == presetId }) {
+            Button("Update \"\(preset.name)\"") {
+                appearanceManager.updatePreset(preset, themeId: themeManager.currentTheme.id)
+            }
+            .disabled(!appearanceManager.settings.hasOverrides)
         }
+
+        Button("Save as New Preset...") {
+            showingSavePresetSheet = true
+        }
+        .disabled(!appearanceManager.settings.hasOverrides)
+
+        Divider()
+
+        Button("Reset All to Theme Defaults") {
+            appearanceManager.resetToDefaults()
+            loadCurrentSettings()
+        }
+        .disabled(!appearanceManager.settings.hasOverrides)
     }
 
     @ViewBuilder
@@ -366,20 +395,6 @@ struct AppearancePreferencesPane: View {
             }
         }
         .padding(24)
-    }
-
-    // MARK: - Reset Section
-
-    @ViewBuilder
-    private var resetSection: some View {
-        HStack {
-            Spacer()
-            Button("Reset All to Theme Defaults") {
-                appearanceManager.resetToDefaults()
-                loadCurrentSettings()
-            }
-            .disabled(!appearanceManager.settings.hasOverrides)
-        }
     }
 
     // MARK: - Helper Views
@@ -416,7 +431,7 @@ struct AppearancePreferencesPane: View {
 
     // MARK: - Actions
 
-    private func loadCurrentSettings() {
+    private func loadCurrentSettings(preserveSelection: Bool = false) {
         let settings = appearanceManager.settings
 
         fontSize = settings.fontSize ?? AppearanceSettingsManager.defaultFontSize
@@ -432,7 +447,9 @@ struct AppearancePreferencesPane: View {
 
         selectedColumnWidth = settings.columnWidth ?? .normal
 
-        selectedPresetId = nil
+        if !preserveSelection {
+            selectedPresetId = nil
+        }
     }
 
     private func updateFontSize(_ value: CGFloat) {
@@ -480,7 +497,7 @@ struct AppearancePreferencesPane: View {
     private func restorePreset(_ preset: AppearancePreset) {
         let themeId = appearanceManager.restorePreset(preset)
         themeManager.setTheme(byId: themeId)
-        loadCurrentSettings()
+        loadCurrentSettings(preserveSelection: true)
     }
 
     private func saveCurrentPreset() {

@@ -176,6 +176,14 @@ struct AppearancePreset: Codable, Sendable, Identifiable, Equatable {
         self.settings = settings
         self.createdAt = Date()
     }
+
+    init(id: UUID, name: String, themeId: String, settings: AppearanceSettings) {
+        self.id = id
+        self.name = name
+        self.themeId = themeId
+        self.settings = settings
+        self.createdAt = Date()
+    }
 }
 
 // MARK: - Appearance Settings Manager
@@ -389,6 +397,17 @@ final class AppearanceSettingsManager {
         print("[AppearanceSettings] Restored preset: \(preset.name)")
         #endif
         return preset.themeId
+    }
+
+    /// Update an existing preset with current settings
+    func updatePreset(_ preset: AppearancePreset, themeId: String) {
+        guard let index = savedPresets.firstIndex(where: { $0.id == preset.id }) else { return }
+        let updated = AppearancePreset(id: preset.id, name: preset.name, themeId: themeId, settings: settings)
+        savedPresets[index] = updated
+        savePresets()
+        #if DEBUG
+        print("[AppearanceSettings] Updated preset: \(preset.name)")
+        #endif
     }
 
     /// Delete a preset
