@@ -7,16 +7,15 @@
 // When entire heading content is selected, backspace deletes the whole block
 
 import type { Ctx, MilkdownPlugin } from '@milkdown/kit/ctx';
-import { $view, $prose } from '@milkdown/kit/utils';
 import { headingSchema } from '@milkdown/kit/preset/commonmark';
-import { isSourceModeEnabled } from './source-mode-plugin';
-import { Selection } from '@milkdown/kit/prose/state';
 import { keymap } from '@milkdown/kit/prose/keymap';
+import { $prose, $view } from '@milkdown/kit/utils';
+import { isSourceModeEnabled } from './source-mode-plugin';
 
 // NodeView for headings - only active in source mode
 // In WYSIWYG mode, returns null to use default rendering
 const headingNodeView = $view(headingSchema.node, (_ctx: Ctx) => {
-  return (node, view, getPos) => {
+  return (node) => {
     // Track source mode at creation time
     const createdInSourceMode = isSourceModeEnabled();
 
@@ -24,7 +23,7 @@ const headingNodeView = $view(headingSchema.node, (_ctx: Ctx) => {
     // This is more efficient than creating a custom NodeView that mimics default behavior
     if (!createdInSourceMode) {
       // Return a simple passthrough that forces recreation on mode change
-      const dom = document.createElement('h' + node.attrs.level);
+      const dom = document.createElement(`h${node.attrs.level}`);
       const contentDOM = document.createElement('span');
       dom.appendChild(contentDOM);
 
@@ -46,26 +45,16 @@ const headingNodeView = $view(headingSchema.node, (_ctx: Ctx) => {
       };
     }
 
-    // Source mode - custom editable # prefix
+    // Source mode - prefix is now in the text content
     const level = node.attrs.level as number;
-    const prefix = '#'.repeat(level) + ' ';
 
-    // Create container div styled as heading
     const dom = document.createElement('div');
     dom.className = `heading-source-mode heading-level-${level}`;
     dom.setAttribute('data-level', String(level));
 
-    // Single span for # prefix (styled but part of editable flow)
-    const prefixSpan = document.createElement('span');
-    prefixSpan.className = 'heading-prefix';
-    prefixSpan.textContent = prefix;
-    prefixSpan.contentEditable = 'false';
-
-    // Content span for actual heading text
+    // Single contentDOM for all text (including ## prefix)
     const contentDOM = document.createElement('span');
     contentDOM.className = 'heading-content';
-
-    dom.appendChild(prefixSpan);
     dom.appendChild(contentDOM);
 
     return {
@@ -73,24 +62,10 @@ const headingNodeView = $view(headingSchema.node, (_ctx: Ctx) => {
       contentDOM,
       update: (updatedNode) => {
         if (updatedNode.type.name !== 'heading') return false;
-
-        // Force recreation if mode changed
-        if (isSourceModeEnabled() !== createdInSourceMode) {
-          return false;
-        }
-
-        // Update prefix if level changed
-        const newLevel = updatedNode.attrs.level as number;
-        if (newLevel !== level) {
-          // Level changed - recreate to update prefix
-          return false;
-        }
-
+        if (isSourceModeEnabled() !== createdInSourceMode) return false;
+        if (updatedNode.attrs.level !== node.attrs.level) return false;
         return true;
       },
-      // Handle special key events for heading behavior
-      // When cursor is at start of heading content and user presses backspace,
-      // we could demote the heading level or convert to paragraph
     };
   };
 });

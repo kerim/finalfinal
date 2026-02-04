@@ -416,15 +416,9 @@ body.source-mode .heading-source-mode {
   line-height: inherit;
 }
 
-body.source-mode .heading-source-mode .heading-prefix {
-  color: var(--syntax-heading, #0ea5e9);
-  font-weight: bold;
-  user-select: all; /* Allow selecting the prefix */
-  cursor: text;
-}
-
 body.source-mode .heading-source-mode .heading-content {
-  /* Content inherits styles from parent */
+  /* Content includes ## prefix in text content now */
+  /* Prefix styling is handled by the text itself */
 }
 
 /* Fallback ::before rules for headings not using NodeView (e.g., during transitions) */

@@ -1027,14 +1027,24 @@ window.FinalFinal = {
   },
 
   getContent() {
-    const content = editorInstance ? editorInstance.action(getMarkdown()) : currentContent;
-    const trimmed = content.trim();
+    if (!editorInstance) return currentContent;
+
+    let markdown = getMarkdown()(editorInstance.ctx);
+
+    // Fix double ## prefixes in source mode: "## ## Heading" → "## Heading"
+    if (isSourceModeEnabled()) {
+      markdown = markdown.replace(/^(#{1,6}) \1 /gm, '$1 ');
+    }
+
+    const trimmed = markdown.trim();
 
     // Empty/minimal document may serialize to just a section break marker - treat as empty
     if (trimmed === '' || trimmed === '<!-- ::break:: -->') {
       return '';
     }
-    return content;
+
+    currentContent = markdown;
+    return markdown;
   },
 
   setFocusMode(enabled: boolean) {
@@ -1841,12 +1851,44 @@ window.FinalFinal = {
   setEditorMode(mode: 'wysiwyg' | 'source') {
     const wasSourceMode = isSourceModeEnabled();
     const enableSource = mode === 'source';
+
+    // Step 1: If switching FROM source mode, strip prefixes BEFORE re-parse
+    // (so the markdown serializes cleanly without double ##)
+    if (wasSourceMode && !enableSource && editorInstance) {
+      try {
+        const view = editorInstance.ctx.get(editorViewCtx);
+        let tr = view.state.tr;
+
+        const headings: Array<{ pos: number; level: number }> = [];
+        view.state.doc.descendants((node, pos) => {
+          if (node.type.name === 'heading') {
+            headings.push({ pos, level: node.attrs.level as number });
+          }
+          return true;
+        });
+
+        headings.reverse();
+
+        for (const { pos, level } of headings) {
+          const prefix = `${'#'.repeat(level)} `;
+          const node = view.state.doc.nodeAt(pos);
+          if (!node) continue;
+          if (node.textContent.startsWith(prefix)) {
+            tr = tr.delete(pos + 1, pos + 1 + prefix.length);
+          }
+        }
+
+        tr = tr.setMeta('addToHistory', false);
+        view.dispatch(tr);
+      } catch (e) {
+        console.error('[Milkdown] Heading prefix strip failed:', e);
+      }
+    }
+
+    // Step 2: Change mode state
     setSourceModeEnabled(enableSource);
 
-    // Force NodeView recreation when mode changes by re-parsing content
-    // This is needed because ProseMirror only calls NodeView.update() on doc changes,
-    // and heading-nodeview-plugin needs to recreate NodeViews for source mode rendering
-    // IMPORTANT: Use setMeta('addToHistory', false) to prevent undo pollution
+    // Step 3: Force NodeView recreation via re-parse
     if (wasSourceMode !== enableSource && editorInstance) {
       try {
         const view = editorInstance.ctx.get(editorViewCtx);
@@ -1859,9 +1901,8 @@ window.FinalFinal = {
           const docSize = view.state.doc.content.size;
           let tr = view.state.tr
             .replace(0, docSize, new Slice(doc.content, 0, 0))
-            .setMeta('addToHistory', false); // Don't pollute undo stack
+            .setMeta('addToHistory', false);
 
-          // Preserve cursor position
           const safeFrom = Math.min(from, Math.max(0, doc.content.size - 1));
           try {
             tr = tr.setSelection(Selection.near(tr.doc.resolve(safeFrom)));
@@ -1876,7 +1917,36 @@ window.FinalFinal = {
       }
     }
 
-    // Trigger redecoration and focus
+    // Step 4: If switching TO source mode, insert prefixes AFTER re-parse
+    // (so they appear in the fresh NodeViews)
+    if (!wasSourceMode && enableSource && editorInstance) {
+      try {
+        const view = editorInstance.ctx.get(editorViewCtx);
+        let tr = view.state.tr;
+
+        const headings: Array<{ pos: number; level: number }> = [];
+        view.state.doc.descendants((node, pos) => {
+          if (node.type.name === 'heading') {
+            headings.push({ pos, level: node.attrs.level as number });
+          }
+          return true;
+        });
+
+        headings.reverse();
+
+        for (const { pos, level } of headings) {
+          const prefix = `${'#'.repeat(level)} `;
+          tr = tr.insertText(prefix, pos + 1);
+        }
+
+        tr = tr.setMeta('addToHistory', false);
+        view.dispatch(tr);
+      } catch (e) {
+        console.error('[Milkdown] Heading prefix insert failed:', e);
+      }
+    }
+
+    // Step 5: Focus
     if (editorInstance) {
       try {
         const view = editorInstance.ctx.get(editorViewCtx);
