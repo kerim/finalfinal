@@ -2,9 +2,9 @@
 // Uses ProseMirror decorations to show markdown syntax characters
 // When enabled, the editor appears as a source/code view while maintaining the same document structure
 
+import type { Node } from '@milkdown/kit/prose/model';
 import { Plugin, PluginKey } from '@milkdown/kit/prose/state';
 import { Decoration, DecorationSet } from '@milkdown/kit/prose/view';
-import { Node } from '@milkdown/kit/prose/model';
 import { $prose } from '@milkdown/kit/utils';
 
 export const sourceModePluginKey = new PluginKey('source-mode');
@@ -85,32 +85,24 @@ function createSourceModeDecorations(doc: Node): Decoration[] {
   const decorations: Decoration[] = [];
 
   doc.descendants((node, pos) => {
-    // Add heading # markers
-    if (node.type.name === 'heading') {
-      const level = node.attrs.level as number;
-      const prefix = getHeadingPrefix(level);
-
-      // Add widget decoration before heading content
-      decorations.push(
-        Decoration.widget(pos + 1, () => {
-          const span = document.createElement('span');
-          span.className = 'source-mode-syntax source-mode-heading-marker';
-          span.textContent = prefix;
-          return span;
-        }, { side: -1 })
-      );
-    }
+    // Heading # markers are now handled via CSS ::before pseudo-elements
+    // This allows normal text selection without widget interference
+    // See styles.css: body.source-mode h1::before, etc.
 
     // Add blockquote > markers
     if (node.type.name === 'blockquote') {
       // Add > at start of blockquote
       decorations.push(
-        Decoration.widget(pos + 1, () => {
-          const span = document.createElement('span');
-          span.className = 'source-mode-syntax source-mode-blockquote-marker';
-          span.textContent = '> ';
-          return span;
-        }, { side: -1 })
+        Decoration.widget(
+          pos + 1,
+          () => {
+            const span = document.createElement('span');
+            span.className = 'source-mode-syntax source-mode-blockquote-marker';
+            span.textContent = '> ';
+            return span;
+          },
+          { side: -1 }
+        )
       );
     }
 
@@ -120,12 +112,16 @@ function createSourceModeDecorations(doc: Node): Decoration[] {
       node.forEach((child, offset) => {
         if (child.type.name === 'list_item') {
           decorations.push(
-            Decoration.widget(pos + 1 + offset + 1, () => {
-              const span = document.createElement('span');
-              span.className = 'source-mode-syntax source-mode-list-marker';
-              span.textContent = '- ';
-              return span;
-            }, { side: -1 })
+            Decoration.widget(
+              pos + 1 + offset + 1,
+              () => {
+                const span = document.createElement('span');
+                span.className = 'source-mode-syntax source-mode-list-marker';
+                span.textContent = '- ';
+                return span;
+              },
+              { side: -1 }
+            )
           );
         }
       });
@@ -137,12 +133,16 @@ function createSourceModeDecorations(doc: Node): Decoration[] {
       node.forEach((child, offset) => {
         if (child.type.name === 'list_item') {
           decorations.push(
-            Decoration.widget(pos + 1 + offset + 1, () => {
-              const span = document.createElement('span');
-              span.className = 'source-mode-syntax source-mode-list-marker';
-              span.textContent = `${number}. `;
-              return span;
-            }, { side: -1 })
+            Decoration.widget(
+              pos + 1 + offset + 1,
+              () => {
+                const span = document.createElement('span');
+                span.className = 'source-mode-syntax source-mode-list-marker';
+                span.textContent = `${number}. `;
+                return span;
+              },
+              { side: -1 }
+            )
           );
           number++;
         }
@@ -155,22 +155,30 @@ function createSourceModeDecorations(doc: Node): Decoration[] {
 
       // Opening fence
       decorations.push(
-        Decoration.widget(pos, () => {
-          const div = document.createElement('div');
-          div.className = 'source-mode-syntax source-mode-code-fence';
-          div.textContent = '```' + language;
-          return div;
-        }, { side: -1 })
+        Decoration.widget(
+          pos,
+          () => {
+            const div = document.createElement('div');
+            div.className = 'source-mode-syntax source-mode-code-fence';
+            div.textContent = '```' + language;
+            return div;
+          },
+          { side: -1 }
+        )
       );
 
       // Closing fence
       decorations.push(
-        Decoration.widget(pos + node.nodeSize, () => {
-          const div = document.createElement('div');
-          div.className = 'source-mode-syntax source-mode-code-fence';
-          div.textContent = '```';
-          return div;
-        }, { side: 1 })
+        Decoration.widget(
+          pos + node.nodeSize,
+          () => {
+            const div = document.createElement('div');
+            div.className = 'source-mode-syntax source-mode-code-fence';
+            div.textContent = '```';
+            return div;
+          },
+          { side: 1 }
+        )
       );
     }
 
@@ -202,13 +210,13 @@ function createSourceModeDecorations(doc: Node): Decoration[] {
 
   // Priority order (lower = further from text): link < strikethrough < strong < emphasis < code
   const markPriority: Record<string, number> = {
-    'link': 0,
-    'strikethrough': 1,
-    'strong': 2,
-    'emphasis': 3,
-    'em': 3,
-    'code_inline': 4,
-    'inlineCode': 4,
+    link: 0,
+    strikethrough: 1,
+    strong: 2,
+    emphasis: 3,
+    em: 3,
+    code_inline: 4,
+    inlineCode: 4,
   };
 
   doc.descendants((node, pos) => {
@@ -223,14 +231,14 @@ function createSourceModeDecorations(doc: Node): Decoration[] {
           isStart: true,
           markType: mark.type.name,
           priority,
-          href: mark.type.name === 'link' ? (mark.attrs.href as string || '') : undefined,
+          href: mark.type.name === 'link' ? (mark.attrs.href as string) || '' : undefined,
         });
         markBoundaries.push({
           pos: to,
           isStart: false,
           markType: mark.type.name,
           priority,
-          href: mark.type.name === 'link' ? (mark.attrs.href as string || '') : undefined,
+          href: mark.type.name === 'link' ? (mark.attrs.href as string) || '' : undefined,
         });
       }
     }
@@ -250,20 +258,24 @@ function createSourceModeDecorations(doc: Node): Decoration[] {
     // Sort: starts before ends, and by priority (lower priority = further from text)
     // At start: lower priority first (outer marks first)
     // At end: higher priority first (inner marks first)
-    const starts = boundaries.filter(b => b.isStart).sort((a, b) => a.priority - b.priority);
-    const ends = boundaries.filter(b => !b.isStart).sort((a, b) => b.priority - a.priority);
+    const starts = boundaries.filter((b) => b.isStart).sort((a, b) => a.priority - b.priority);
+    const ends = boundaries.filter((b) => !b.isStart).sort((a, b) => b.priority - a.priority);
 
     // Add start markers (outer to inner)
     for (const boundary of starts) {
       const syntax = getMarkSyntax(boundary.markType, true, boundary.href);
       if (syntax) {
         decorations.push(
-          Decoration.widget(pos, () => {
-            const span = document.createElement('span');
-            span.className = `source-mode-syntax source-mode-${getMarkClass(boundary.markType)}-marker`;
-            span.textContent = syntax;
-            return span;
-          }, { side: -1 })
+          Decoration.widget(
+            pos,
+            () => {
+              const span = document.createElement('span');
+              span.className = `source-mode-syntax source-mode-${getMarkClass(boundary.markType)}-marker`;
+              span.textContent = syntax;
+              return span;
+            },
+            { side: -1 }
+          )
         );
       }
     }
@@ -273,12 +285,16 @@ function createSourceModeDecorations(doc: Node): Decoration[] {
       const syntax = getMarkSyntax(boundary.markType, false, boundary.href);
       if (syntax) {
         decorations.push(
-          Decoration.widget(pos, () => {
-            const span = document.createElement('span');
-            span.className = `source-mode-syntax source-mode-${getMarkClass(boundary.markType)}-marker`;
-            span.textContent = syntax;
-            return span;
-          }, { side: 1 })
+          Decoration.widget(
+            pos,
+            () => {
+              const span = document.createElement('span');
+              span.className = `source-mode-syntax source-mode-${getMarkClass(boundary.markType)}-marker`;
+              span.textContent = syntax;
+              return span;
+            },
+            { side: 1 }
+          )
         );
       }
     }

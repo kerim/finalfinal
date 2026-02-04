@@ -33,12 +33,19 @@ struct MilkdownEditor: NSViewRepresentable {
     @Binding var scrollToOffset: Int?
     @Binding var isResettingContent: Bool
 
+    /// Content state for suppressing polling during transitions (zoom, hierarchy enforcement)
+    var contentState: EditorContentState = .idle
+
     /// CSS variables for theming - when this changes, updateNSView is called
     var themeCSS: String = ThemeManager.shared.cssVariables
 
     let onContentChange: (String) -> Void
     let onStatsChange: (Int, Int) -> Void
     let onCursorPositionSaved: (CursorPosition) -> Void
+
+    /// Callback invoked when editor confirms content was set
+    /// Used for acknowledgement-based sync during zoom transitions
+    var onContentAcknowledged: (() -> Void)?
 
     func makeNSView(context: Context) -> WKWebView {
         // Try to use preloaded WebView for faster startup
@@ -124,6 +131,10 @@ struct MilkdownEditor: NSViewRepresentable {
     }
 
     func updateNSView(_ webView: WKWebView, context: Context) {
+        // Update content state and callbacks for coordinator
+        context.coordinator.contentState = contentState
+        context.coordinator.onContentAcknowledged = onContentAcknowledged
+
         if context.coordinator.lastFocusModeState != focusModeEnabled {
             context.coordinator.lastFocusModeState = focusModeEnabled
             context.coordinator.setFocusMode(focusModeEnabled)
@@ -153,9 +164,11 @@ struct MilkdownEditor: NSViewRepresentable {
             cursorPositionToRestore: $cursorPositionToRestore,
             scrollToOffset: $scrollToOffset,
             isResettingContent: $isResettingContent,
+            contentState: contentState,
             onContentChange: onContentChange,
             onStatsChange: onStatsChange,
-            onCursorPositionSaved: onCursorPositionSaved
+            onCursorPositionSaved: onCursorPositionSaved,
+            onContentAcknowledged: onContentAcknowledged
         )
     }
 
@@ -185,6 +198,13 @@ struct MilkdownEditor: NSViewRepresentable {
         var lastThemeCss: String = ""
         private var isEditorReady = false
         private var isCleanedUp = false
+
+        /// Current content state - used to suppress polling during transitions
+        var contentState: EditorContentState = .idle
+
+        /// Callback invoked after content is confirmed set in WebView
+        /// Used for acknowledgement-based synchronization during zoom transitions
+        var onContentAcknowledged: (() -> Void)?
         private var toggleObserver: NSObjectProtocol?
         private var insertBreakObserver: NSObjectProtocol?
         private var annotationDisplayModesObserver: NSObjectProtocol?
@@ -205,17 +225,21 @@ struct MilkdownEditor: NSViewRepresentable {
             cursorPositionToRestore: Binding<CursorPosition?>,
             scrollToOffset: Binding<Int?>,
             isResettingContent: Binding<Bool>,
+            contentState: EditorContentState,
             onContentChange: @escaping (String) -> Void,
             onStatsChange: @escaping (Int, Int) -> Void,
-            onCursorPositionSaved: @escaping (CursorPosition) -> Void
+            onCursorPositionSaved: @escaping (CursorPosition) -> Void,
+            onContentAcknowledged: (() -> Void)?
         ) {
             self.contentBinding = content
             self.cursorPositionToRestoreBinding = cursorPositionToRestore
             self.scrollToOffsetBinding = scrollToOffset
             self.isResettingContentBinding = isResettingContent
+            self.contentState = contentState
             self.onContentChange = onContentChange
             self.onStatsChange = onStatsChange
             self.onCursorPositionSaved = onCursorPositionSaved
+            self.onContentAcknowledged = onContentAcknowledged
             super.init()
 
             // Subscribe to toggle notification - save cursor before editor switches
@@ -982,6 +1006,14 @@ struct MilkdownEditor: NSViewRepresentable {
 
         func setContent(_ markdown: String) {
             guard isEditorReady, let webView else { return }
+
+            #if DEBUG
+            // PASTE DEBUG: Log setContent calls with content preview and call stack
+            let preview = String(markdown.prefix(100)).replacingOccurrences(of: "\n", with: "\\n")
+            print("[MilkdownEditor] setContent called with \(markdown.count) chars: \(preview)...")
+            print("[MilkdownEditor] setContent stack: \(Thread.callStackSymbols.prefix(8).joined(separator: "\n"))")
+            #endif
+
             lastPushedContent = markdown
             lastPushTime = Date()  // Record push time to prevent poll feedback
 
@@ -995,7 +1027,26 @@ struct MilkdownEditor: NSViewRepresentable {
                 return
             }
 
-            webView.evaluateJavaScript("window.FinalFinal.setContent(\(jsonString))") { _, _ in }
+            // Set content and then read it back to confirm (acknowledgement pattern)
+            // This ensures WebView has processed the content before we continue
+            webView.evaluateJavaScript("""
+                window.FinalFinal.setContent(\(jsonString));
+                window.FinalFinal.getContent();
+            """) { [weak self] result, error in
+                #if DEBUG
+                if let result = result as? String {
+                    let ackPreview = String(result.prefix(100)).replacingOccurrences(of: "\n", with: "\\n")
+                    print("[MilkdownEditor] setContent acknowledged: \(result.count) chars: \(ackPreview)...")
+                }
+                #endif
+
+                // Content is now confirmed set in WebView
+                // Call acknowledgement callback if registered
+                if let callback = self?.onContentAcknowledged {
+                    self?.onContentAcknowledged = nil  // One-shot callback
+                    callback()
+                }
+            }
         }
 
         func setFocusMode(_ enabled: Bool) {
@@ -1065,6 +1116,10 @@ struct MilkdownEditor: NSViewRepresentable {
             // Skip polling during content reset (project switch)
             guard !isResettingContentBinding.wrappedValue else { return }
 
+            // Skip polling during content transitions (zoom, hierarchy enforcement)
+            // This prevents stale content from being read during transitions
+            guard contentState == .idle else { return }
+
             webView.evaluateJavaScript("window.FinalFinal.getContent()") { [weak self] result, _ in
                 guard let self, !self.isCleanedUp,
                       let content = result as? String else { return }
@@ -1072,20 +1127,41 @@ struct MilkdownEditor: NSViewRepresentable {
                 // Double-check reset flag in callback (may have changed)
                 guard !self.isResettingContentBinding.wrappedValue else { return }
 
+                // Double-check contentState in callback (may have changed)
+                guard self.contentState == .idle else { return }
+
                 // DEFENSIVE: Don't overwrite non-empty content with empty content
                 // This can happen when Milkdown fails to initialize (JS exception)
                 let existingContent = self.contentBinding.wrappedValue
                 if content.isEmpty && !existingContent.isEmpty {
+                    #if DEBUG
+                    print("[MilkdownEditor] pollContent: BLOCKED empty content overwriting non-empty")
+                    #endif
                     return  // Don't erase good content with empty from broken editor
                 }
 
                 // Grace period guard: don't overwrite recent pushes (race condition fix)
+                // Extended from 300ms to 600ms to better match polling interval + processing time
                 let timeSincePush = Date().timeIntervalSince(self.lastPushTime)
-                if timeSincePush < 0.3 && content != self.lastPushedContent {
+                if timeSincePush < 0.6 && content != self.lastPushedContent {
+                    #if DEBUG
+                    let pollPreview = String(content.prefix(50)).replacingOccurrences(of: "\n", with: "\\n")
+                    let pushPreview = String(self.lastPushedContent.prefix(50)).replacingOccurrences(of: "\n", with: "\\n")
+                    print("[MilkdownEditor] pollContent: BLOCKED during grace period (\(String(format: "%.2f", timeSincePush))s)")
+                    print("[MilkdownEditor]   polled: \(pollPreview)...")
+                    print("[MilkdownEditor]   pushed: \(pushPreview)...")
+                    #endif
                     return  // JS hasn't processed our push yet
                 }
 
                 guard content != self.lastPushedContent else { return }
+
+                #if DEBUG
+                // PASTE DEBUG: Log when poll updates the binding
+                let pollPreview = String(content.prefix(100)).replacingOccurrences(of: "\n", with: "\\n")
+                print("[MilkdownEditor] pollContent: Updating binding with \(content.count) chars: \(pollPreview)...")
+                print("[MilkdownEditor] pollContent: timeSincePush=\(String(format: "%.2f", timeSincePush))s")
+                #endif
 
                 self.lastReceivedFromEditor = Date()
                 self.lastPushedContent = content

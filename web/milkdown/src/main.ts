@@ -17,6 +17,17 @@ import {
 } from './annotation-display-plugin';
 import { type AnnotationType, annotationNode, annotationPlugin } from './annotation-plugin';
 import { autoBibliographyPlugin } from './auto-bibliography-plugin';
+import { blockIdPlugin, confirmBlockIds, getAllBlockIds, getBlockIdAtPos, resetBlockIdState } from './block-id-plugin';
+import {
+  type BlockChanges,
+  type BlockInsert,
+  type BlockUpdate,
+  blockSyncPlugin,
+  destroyBlockSyncState,
+  getBlockChanges,
+  hasPendingChanges,
+  resetBlockSyncState,
+} from './block-sync-plugin';
 import {
   type CSLItem,
   citationNode,
@@ -39,11 +50,10 @@ import {
 import { getCiteprocEngine } from './citeproc-engine';
 import { mdToTextOffset, textToMdOffset } from './cursor-mapping';
 import { focusModePlugin, setFocusModeEnabled } from './focus-mode-plugin';
+import { headingNodeViewPlugin } from './heading-nodeview-plugin';
 import { highlightMark, highlightPlugin } from './highlight-plugin';
 import { sectionBreakNode, sectionBreakPlugin } from './section-break-plugin';
-import { blockIdPlugin, confirmBlockIds, getBlockIdAtPos, getAllBlockIds, resetBlockIdState } from './block-id-plugin';
-import { blockSyncPlugin, getBlockChanges, hasPendingChanges, resetBlockSyncState, destroyBlockSyncState, type BlockChanges, type BlockUpdate, type BlockInsert } from './block-sync-plugin';
-import { sourceModePlugin, setSourceModeEnabled, isSourceModeEnabled } from './source-mode-plugin';
+import { isSourceModeEnabled, setSourceModeEnabled, sourceModePlugin } from './source-mode-plugin';
 import './styles.css';
 
 /**
@@ -886,6 +896,7 @@ async function initEditor() {
       .use(focusModePlugin)
       .use(sourceModePlugin) // Dual-appearance source mode
       .use(annotationDisplayPlugin) // Controls annotation visibility
+      .use(headingNodeViewPlugin) // Custom heading rendering for source mode # selection
       // citationNodeView is now included in citationPlugin (same file = correct atom identity)
       .use(slash)
       .create();
@@ -1828,10 +1839,44 @@ window.FinalFinal = {
   // === Dual-appearance mode API (Phase C) ===
 
   setEditorMode(mode: 'wysiwyg' | 'source') {
+    const wasSourceMode = isSourceModeEnabled();
     const enableSource = mode === 'source';
     setSourceModeEnabled(enableSource);
 
-    // Trigger redecoration by dispatching an empty transaction
+    // Force NodeView recreation when mode changes by re-parsing content
+    // This is needed because ProseMirror only calls NodeView.update() on doc changes,
+    // and heading-nodeview-plugin needs to recreate NodeViews for source mode rendering
+    // IMPORTANT: Use setMeta('addToHistory', false) to prevent undo pollution
+    if (wasSourceMode !== enableSource && editorInstance) {
+      try {
+        const view = editorInstance.ctx.get(editorViewCtx);
+        const parser = editorInstance.ctx.get(parserCtx);
+        const currentMarkdown = this.getContent();
+        const doc = parser(currentMarkdown);
+
+        if (doc) {
+          const { from } = view.state.selection;
+          const docSize = view.state.doc.content.size;
+          let tr = view.state.tr
+            .replace(0, docSize, new Slice(doc.content, 0, 0))
+            .setMeta('addToHistory', false); // Don't pollute undo stack
+
+          // Preserve cursor position
+          const safeFrom = Math.min(from, Math.max(0, doc.content.size - 1));
+          try {
+            tr = tr.setSelection(Selection.near(tr.doc.resolve(safeFrom)));
+          } catch {
+            tr = tr.setSelection(Selection.atStart(tr.doc));
+          }
+
+          view.dispatch(tr);
+        }
+      } catch {
+        // Parse failed, ignore
+      }
+    }
+
+    // Trigger redecoration and focus
     if (editorInstance) {
       try {
         const view = editorInstance.ctx.get(editorViewCtx);

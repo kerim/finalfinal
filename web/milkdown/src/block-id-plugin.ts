@@ -2,9 +2,9 @@
 // Assigns unique block IDs to block-level nodes (paragraphs, headings, lists, etc.)
 // These IDs survive edits elsewhere in the document.
 
+import type { Node } from '@milkdown/kit/prose/model';
 import { Plugin, PluginKey, Transaction } from '@milkdown/kit/prose/state';
 import { Decoration, DecorationSet } from '@milkdown/kit/prose/view';
-import { Node } from '@milkdown/kit/prose/model';
 import { $prose } from '@milkdown/kit/utils';
 
 export const blockIdPluginKey = new PluginKey<BlockIdPluginState>('block-id');
@@ -51,7 +51,7 @@ interface BlockIdPluginState {
 // Track block ID assignments for external access
 // Note: These are cleared when the editor is destroyed via resetBlockIdState()
 let currentBlockIds: Map<number, string> = new Map();
-let pendingConfirmations: Map<string, string> = new Map();
+const pendingConfirmations: Map<string, string> = new Map();
 
 /**
  * Reset module-level state (call when destroying editor instance)

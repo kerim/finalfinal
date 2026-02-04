@@ -9,6 +9,7 @@ import type { Node } from '@milkdown/kit/prose/model';
 import { $node, $remark, $view } from '@milkdown/kit/utils';
 import type { Root } from 'mdast';
 import { visit } from 'unist-util-visit';
+import { isSourceModeEnabled } from './source-mode-plugin';
 
 // Annotation type definitions
 export type AnnotationType = 'task' | 'comment' | 'reference';
@@ -211,6 +212,10 @@ const annotationNodeView = $view(annotationNode, (_ctx: Ctx) => {
   return (node, view, getPos) => {
     const { type, isCompleted } = node.attrs as AnnotationAttrs;
 
+    // Track source mode at NodeView creation time
+    // When mode changes, update() returns false to force NodeView recreation
+    const createdInSourceMode = isSourceModeEnabled();
+
     // Create the wrapper span
     const dom = document.createElement('span');
     dom.className = ['ff-annotation', `ff-annotation-${type}`, isCompleted ? 'ff-annotation-completed' : '']
@@ -273,11 +278,49 @@ const annotationNodeView = $view(annotationNode, (_ctx: Ctx) => {
     // MutationObserver disabled - tooltip updated via update() instead
     const textObserver = { disconnect: () => {} }; // Stub for destroy()
 
+    // Helper to update display based on source mode
+    const updateSourceModeDisplay = (attrs: AnnotationAttrs, text: string) => {
+      if (isSourceModeEnabled()) {
+        // Source mode: show raw markdown syntax
+        const checkbox = attrs.type === 'task' ? (attrs.isCompleted ? '[x] ' : '[ ] ') : '';
+        dom.textContent = `<!-- ::${attrs.type}:: ${checkbox}${text} -->`;
+        dom.classList.add('source-mode-annotation');
+        // Remove structured children in source mode
+        while (dom.firstChild) {
+          dom.removeChild(dom.firstChild);
+        }
+        dom.textContent = `<!-- ::${attrs.type}:: ${checkbox}${text} -->`;
+        return true; // No contentDOM in source mode
+      } else {
+        // WYSIWYG mode: structured display
+        dom.classList.remove('source-mode-annotation');
+        // Ensure marker and contentDOM are present
+        if (!dom.contains(markerSpan)) {
+          dom.appendChild(markerSpan);
+        }
+        if (!dom.contains(contentDOM)) {
+          dom.appendChild(contentDOM);
+        }
+        return false; // Has contentDOM
+      }
+    };
+
+    // Initial render
+    const sourceMode = updateSourceModeDisplay({ type, isCompleted }, initialText);
+
     return {
       dom,
-      contentDOM,
+      // In source mode, there's no editable content area
+      contentDOM: sourceMode ? undefined : contentDOM,
       update: (updatedNode) => {
         if (updatedNode.type.name !== 'annotation') {
+          return false;
+        }
+
+        // Force recreation if source mode changed
+        // contentDOM is fixed at creation time, so we must recreate to switch between
+        // source mode (no contentDOM) and WYSIWYG mode (has contentDOM)
+        if (isSourceModeEnabled() !== createdInSourceMode) {
           return false;
         }
 
@@ -293,12 +336,29 @@ const annotationNodeView = $view(annotationNode, (_ctx: Ctx) => {
           .filter(Boolean)
           .join(' ');
 
-        // Update marker
-        let newMarker = annotationMarkers[newAttrs.type];
-        if (newAttrs.type === 'task' && newAttrs.isCompleted) {
-          newMarker = completedTaskMarker;
+        // Check source mode for display update
+        const text = updatedNode.textContent || '';
+        if (isSourceModeEnabled()) {
+          // Source mode: show raw markdown
+          const checkbox = newAttrs.type === 'task' ? (newAttrs.isCompleted ? '[x] ' : '[ ] ') : '';
+          dom.textContent = `<!-- ::${newAttrs.type}:: ${checkbox}${text} -->`;
+          dom.classList.add('source-mode-annotation');
+        } else {
+          // WYSIWYG mode: structured display
+          dom.classList.remove('source-mode-annotation');
+          // Rebuild structure if needed
+          if (!dom.contains(markerSpan)) {
+            dom.textContent = ''; // Clear raw text
+            dom.appendChild(markerSpan);
+            dom.appendChild(contentDOM);
+          }
+          // Update marker
+          let newMarker = annotationMarkers[newAttrs.type];
+          if (newAttrs.type === 'task' && newAttrs.isCompleted) {
+            newMarker = completedTaskMarker;
+          }
+          markerSpan.textContent = newMarker;
         }
-        markerSpan.textContent = newMarker;
 
         return true;
       },

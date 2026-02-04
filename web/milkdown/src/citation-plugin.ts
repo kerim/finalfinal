@@ -8,6 +8,7 @@ import { $node, $remark, $view } from '@milkdown/kit/utils';
 import type { Root } from 'mdast';
 import { visit } from 'unist-util-visit';
 import { type CSLItem, getCiteprocEngine } from './citeproc-engine';
+import { isSourceModeEnabled } from './source-mode-plugin';
 
 // Citation attributes interface
 export interface CitationAttrs {
@@ -697,6 +698,10 @@ const citationNodeView = $view(citationNode, (_ctx: Ctx) => {
     const attrs = node.attrs as CitationAttrs;
     // NOTE: citekeys is computed fresh inside updateDisplay() to avoid stale closure
 
+    // Track source mode at NodeView creation time
+    // When mode changes, update() returns false to force NodeView recreation
+    const createdInSourceMode = isSourceModeEnabled();
+
     // Create DOM structure
     const dom = document.createElement('span');
     dom.className = 'ff-citation';
@@ -706,6 +711,19 @@ const citationNodeView = $view(citationNode, (_ctx: Ctx) => {
       // Compute citekeys fresh from current attrs (not stale closure)
       const citekeys = attrs.citekeys.split(',').filter((k) => k.trim());
 
+      // Source mode: show raw markdown syntax
+      if (isSourceModeEnabled()) {
+        // Display as [@citekey1; @citekey2]
+        const rawSyntax = attrs.rawSyntax || `[@${citekeys.join('; @')}]`;
+        dom.textContent = rawSyntax;
+        dom.title = rawSyntax;
+        dom.className = 'ff-citation source-mode-citation';
+        dom.dataset.citekeys = attrs.citekeys;
+        dom.dataset.rawsyntax = attrs.rawSyntax;
+        return;
+      }
+
+      // WYSIWYG mode: formatted citation display
       const engine = getCiteprocEngine();
       let displayText = '';
       let isResolved = true;
@@ -773,8 +791,11 @@ const citationNodeView = $view(citationNode, (_ctx: Ctx) => {
       dom.dataset.rawsyntax = attrs.rawSyntax;
     };
 
-    // Click handler - open in-app edit popup for citation editing
+    // Click handler - open in-app edit popup for citation editing (only in WYSIWYG mode)
     dom.addEventListener('click', (e) => {
+      // Don't open edit popup in source mode
+      if (isSourceModeEnabled()) return;
+
       e.preventDefault();
       e.stopPropagation();
       const pos = typeof getPos === 'function' ? getPos() : null;
@@ -796,6 +817,12 @@ const citationNodeView = $view(citationNode, (_ctx: Ctx) => {
       dom,
       update: (updatedNode) => {
         if (updatedNode.type.name !== 'citation') return false;
+
+        // Force recreation if source mode changed
+        // Display format differs significantly between modes
+        if (isSourceModeEnabled() !== createdInSourceMode) {
+          return false;
+        }
 
         // Update attrs from node
         const newAttrs = updatedNode.attrs as CitationAttrs;

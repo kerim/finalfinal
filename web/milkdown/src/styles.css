@@ -394,9 +394,8 @@ body.source-mode {
 }
 
 body.source-mode .ProseMirror {
-  font-family: var(--font-mono, 'SF Mono', Menlo, Monaco, 'Courier New', monospace);
-  font-size: 14px;
-  line-height: 1.5;
+  /* Font inherits from body (user's --font-sans selection) */
+  /* Inherit --font-size and --line-height from user preferences (set by Swift via setTheme) */
 }
 
 /* Source mode syntax markers - muted appearance */
@@ -404,10 +403,63 @@ body.source-mode .ProseMirror {
   color: var(--editor-muted, #666);
   opacity: 0.7;
   user-select: none;
-  font-family: var(--font-mono, 'SF Mono', Menlo, Monaco, monospace);
+  font-family: var(--font-mono);
 }
 
-/* Heading markers: # ## ### */
+/* Source mode heading NodeView - renders # prefix as styled span */
+/* The heading-nodeview-plugin handles rendering in source mode */
+body.source-mode .heading-source-mode {
+  display: block;
+  font-size: inherit;
+  font-weight: inherit;
+  margin: 0.5em 0;
+  line-height: inherit;
+}
+
+body.source-mode .heading-source-mode .heading-prefix {
+  color: var(--syntax-heading, #0ea5e9);
+  font-weight: bold;
+  user-select: all; /* Allow selecting the prefix */
+  cursor: text;
+}
+
+body.source-mode .heading-source-mode .heading-content {
+  /* Content inherits styles from parent */
+}
+
+/* Fallback ::before rules for headings not using NodeView (e.g., during transitions) */
+body.source-mode h1:not(.heading-source-mode)::before {
+  content: "# ";
+  color: var(--syntax-heading, #0ea5e9);
+  font-weight: bold;
+}
+body.source-mode h2:not(.heading-source-mode)::before {
+  content: "## ";
+  color: var(--syntax-heading, #0ea5e9);
+  font-weight: bold;
+}
+body.source-mode h3:not(.heading-source-mode)::before {
+  content: "### ";
+  color: var(--syntax-heading, #0ea5e9);
+  font-weight: bold;
+}
+body.source-mode h4:not(.heading-source-mode)::before {
+  content: "#### ";
+  color: var(--syntax-heading, #0ea5e9);
+  font-weight: bold;
+}
+body.source-mode h5:not(.heading-source-mode)::before {
+  content: "##### ";
+  color: var(--syntax-heading, #0ea5e9);
+  font-weight: bold;
+}
+body.source-mode h6:not(.heading-source-mode)::before {
+  content: "###### ";
+  color: var(--syntax-heading, #0ea5e9);
+  font-weight: bold;
+}
+
+/* Legacy class for widget decorations (if any remain) */
 .source-mode-heading-marker {
   color: var(--syntax-heading, #0ea5e9);
   font-weight: bold;
@@ -502,4 +554,22 @@ body.source-mode .ProseMirror {
 body.source-mode .section-break {
   color: var(--syntax-comment, #6b7280);
   font-family: var(--font-mono);
+}
+
+/* Source mode: annotations show as raw HTML comment syntax */
+body.source-mode .ff-annotation,
+.source-mode-annotation {
+  font-family: var(--font-mono);
+  color: var(--syntax-comment, #6b7280);
+  background: transparent;
+  padding: 0;
+}
+
+/* Source mode: citations show as raw pandoc syntax */
+body.source-mode .ff-citation,
+.source-mode-citation {
+  font-family: var(--font-mono);
+  color: var(--syntax-link, #3b82f6);
+  background: transparent;
+  padding: 0;
 }

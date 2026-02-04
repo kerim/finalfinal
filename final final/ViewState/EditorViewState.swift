@@ -68,6 +68,41 @@ class EditorViewState {
     // MARK: - Content
     var content: String = ""
 
+    // MARK: - Content Acknowledgement
+    /// Continuation for waiting on content acknowledgement from WebView
+    /// Used during zoom transitions to prevent race conditions
+    private var contentAckContinuation: CheckedContinuation<Void, Never>?
+
+    /// Wait for content acknowledgement from the editor with timeout fallback
+    /// Call this AFTER setting content to wait for WebView to confirm it was set
+    /// Timeout of 1 second ensures contentState returns to .idle even if callback fails
+    func waitForContentAcknowledgement() async {
+        // Race between acknowledgement and timeout
+        // Use a simple timeout approach with Task.sleep and cancellation
+        let timeoutTask = Task {
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            // If we reach here without being cancelled, the acknowledgement timed out
+            // Resume the continuation to prevent deadlock
+            contentAckContinuation?.resume()
+            contentAckContinuation = nil
+        }
+
+        // Wait for acknowledgement (or timeout to resume it)
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            contentAckContinuation = continuation
+        }
+
+        // Cancel timeout if acknowledgement came first
+        timeoutTask.cancel()
+    }
+
+    /// Called by the editor when content has been confirmed set
+    /// Resumes the waiting continuation to allow zoom transition to complete
+    func acknowledgeContent() {
+        contentAckContinuation?.resume()
+        contentAckContinuation = nil
+    }
+
     // MARK: - Scroll Request
     var scrollToOffset: Int?
 
@@ -412,11 +447,13 @@ class EditorViewState {
         zoomedSectionId = sectionId
         content = zoomedContent
 
-        // Use MainActor.run to ensure state is set AFTER SwiftUI processes the content change
-        // This runs in the next runloop iteration after content assignment
-        await MainActor.run {
-            contentState = .idle
-        }
+        // Wait for editor to confirm content was set
+        // This prevents race conditions where polling reads stale content
+        // The acknowledgement comes from MilkdownEditor.setContent() callback
+        await waitForContentAcknowledgement()
+
+        // Now safe to mark transition as complete
+        contentState = .idle
     }
 
     /// Zoom out from current section, merging any edits back into the full document
@@ -493,10 +530,12 @@ class EditorViewState {
         zoomedSectionIds = nil
         zoomedSectionId = nil
 
-        // Use MainActor.run to ensure state is set AFTER SwiftUI processes the content change
-        await MainActor.run {
-            contentState = .idle
-        }
+        // Wait for editor to confirm content was set
+        // This prevents race conditions where polling reads stale content
+        await waitForContentAcknowledgement()
+
+        // Now safe to mark transition as complete
+        contentState = .idle
     }
 
     /// Simple zoom out without async - for use in synchronous contexts like breadcrumb click

@@ -935,6 +935,7 @@ struct ContentView: View {
                 cursorPositionToRestore: $cursorPositionToRestore,
                 scrollToOffset: $editorState.scrollToOffset,
                 isResettingContent: $editorState.isResettingContent,
+                contentState: editorState.contentState,
                 themeCSS: currentThemeCSS,
                 onContentChange: { _ in
                     // Content change handling - could trigger outline parsing here
@@ -944,6 +945,11 @@ struct ContentView: View {
                 },
                 onCursorPositionSaved: { position in
                     cursorPositionToRestore = position
+                },
+                onContentAcknowledged: {
+                    // Called when WebView confirms content was set
+                    // Used for acknowledgement-based synchronization during zoom
+                    editorState.acknowledgeContent()
                 }
             )
         }

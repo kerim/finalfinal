@@ -23,7 +23,7 @@ const remarkPlugin = $remark('section-break', () => () => (tree: Root) => {
 // Define the section_break node
 const sectionBreakNode = $node('section_break', () => ({
   group: 'block',
-  atom: true,
+  atom: false, // Changed from true to allow single-press deletion
   selectable: true,
   draggable: false,
 

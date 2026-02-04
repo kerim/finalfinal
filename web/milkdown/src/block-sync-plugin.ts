@@ -2,10 +2,10 @@
 // Tracks inserts, updates, and deletes via ProseMirror transactions
 // Exports pending changes for Swift polling via getBlockChanges()
 
+import type { Node } from '@milkdown/kit/prose/model';
 import { Plugin, PluginKey, Transaction } from '@milkdown/kit/prose/state';
-import { Node } from '@milkdown/kit/prose/model';
 import { $prose } from '@milkdown/kit/utils';
-import { getBlockIdAtPos, getAllBlockIds } from './block-id-plugin';
+import { getAllBlockIds, getBlockIdAtPos } from './block-id-plugin';
 
 export const blockSyncPluginKey = new PluginKey<BlockSyncPluginState>('block-sync');
 
@@ -97,9 +97,7 @@ export function getBlockChanges(): BlockChanges {
 export function hasPendingChanges(): boolean {
   if (!currentState) return false;
   return (
-    currentState.pendingUpdates.size > 0 ||
-    currentState.pendingInserts.size > 0 ||
-    currentState.pendingDeletes.size > 0
+    currentState.pendingUpdates.size > 0 || currentState.pendingInserts.size > 0 || currentState.pendingDeletes.size > 0
   );
 }
 
@@ -145,10 +143,7 @@ function detectChanges(
       state.pendingDeletes.add(id);
       // Remove from updates if pending
       state.pendingUpdates.delete(id);
-    } else if (
-      oldBlock.textContent !== newBlock.textContent ||
-      oldBlock.headingLevel !== newBlock.headingLevel
-    ) {
+    } else if (oldBlock.textContent !== newBlock.textContent || oldBlock.headingLevel !== newBlock.headingLevel) {
       // Block was updated
       state.pendingUpdates.set(id, {
         id,
@@ -164,8 +159,7 @@ function detectChanges(
       // New block with temporary ID
       // Find the block before this one for ordering
       let afterBlockId: string | undefined;
-      const sortedBlocks = Array.from(newSnapshot.entries())
-        .sort((a, b) => a[1].pos - b[1].pos);
+      const sortedBlocks = Array.from(newSnapshot.entries()).sort((a, b) => a[1].pos - b[1].pos);
 
       for (let i = 0; i < sortedBlocks.length; i++) {
         if (sortedBlocks[i][0] === id && i > 0) {
