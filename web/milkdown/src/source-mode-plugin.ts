@@ -30,8 +30,8 @@ export function isSourceModeEnabled(): boolean {
 /**
  * Get the markdown syntax prefix for a heading level
  */
-function getHeadingPrefix(level: number): string {
-  return '#'.repeat(level) + ' ';
+function _getHeadingPrefix(level: number): string {
+  return `${'#'.repeat(level)} `;
 }
 
 /**
@@ -160,7 +160,7 @@ function createSourceModeDecorations(doc: Node): Decoration[] {
           () => {
             const div = document.createElement('div');
             div.className = 'source-mode-syntax source-mode-code-fence';
-            div.textContent = '```' + language;
+            div.textContent = `\`\`\`${language}`;
             return div;
           },
           { side: -1 }

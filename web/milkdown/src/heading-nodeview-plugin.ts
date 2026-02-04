@@ -26,7 +26,7 @@ const headingNodeView = $view(headingSchema.node, (_ctx: Ctx) => {
       const level = node.attrs.level as number;
       const dom = document.createElement(`h${level}`);
       // Add data-placeholder for empty heading visibility (shows "## " when empty)
-      const placeholder = '#'.repeat(level) + ' ';
+      const placeholder = `${'#'.repeat(level)} `;
       dom.setAttribute('data-placeholder', placeholder);
 
       // Add heading-empty class if node has no content (for CSS placeholder)

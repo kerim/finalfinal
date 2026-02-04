@@ -201,7 +201,11 @@ class SectionViewModel: Identifiable {
         self.isPseudoSection = section.isPseudoSection
         self.isBibliography = section.isBibliography
         self.title = section.title
-        self.markdownContent = section.markdownContent
+        // Strip legacy bibliography marker from content (migration for old format)
+        // The marker is now injected only for CodeMirror source mode, not stored
+        self.markdownContent = section.isBibliography
+            ? section.markdownContent.replacingOccurrences(of: "<!-- ::auto-bibliography:: -->", with: "")
+            : section.markdownContent
         self.status = section.status
         self.tags = section.tags
         self.wordGoal = section.wordGoal

@@ -3,7 +3,7 @@
  *
  * Hides invisible markers in the editor while preserving them in the document:
  * - `<!-- @sid:UUID -->` - Section anchors for ID tracking
- * - `<!-- ::auto-bibliography:: -->` and `<!-- ::end-auto-bibliography:: -->` - Bibliography region markers
+ * - `<!-- ::auto-bibliography:: -->` - Bibliography marker (on same line as header)
  *
  * Features:
  * - Decoration.replace() makes markers invisible
@@ -17,7 +17,7 @@ import { Decoration, type DecorationSet, EditorView, ViewPlugin, type ViewUpdate
 // Regex to match section anchor comments: <!-- @sid:UUID -->
 // UUID format: 8-4-4-4-12 hex characters (standard UUID v4)
 // Anchors are on the same line as headers (no trailing newline)
-const ANCHOR_REGEX = /<!-- @sid:[0-9a-fA-F-]+ -->/g;
+const _ANCHOR_REGEX = /<!-- @sid:[0-9a-fA-F-]+ -->/g;
 
 // For extracting anchor info (no newline - just the comment)
 const ANCHOR_PATTERN = /<!-- @sid:([0-9a-fA-F-]+) -->/;
@@ -26,12 +26,13 @@ const ANCHOR_PATTERN = /<!-- @sid:([0-9a-fA-F-]+) -->/;
 // Anchors are on the same line as headers: <!-- @sid:UUID --># Header
 const ANCHOR_DECORATION_REGEX = /<!-- @sid:[0-9a-fA-F-]+ -->/g;
 
-// Bibliography markers - these wrap the auto-managed bibliography region
+// Bibliography marker - on same line as header, no end marker needed
+// Pattern: <!-- ::auto-bibliography:: --># Bibliography
 const BIBLIOGRAPHY_START_REGEX = /<!-- ::auto-bibliography:: -->/g;
-const BIBLIOGRAPHY_END_REGEX = /<!-- ::end-auto-bibliography:: -->/g;
 
 // Combined regex for stripping all hidden markers from clipboard
-const ALL_HIDDEN_MARKERS_REGEX = /<!-- @sid:[0-9a-fA-F-]+ -->|<!-- ::auto-bibliography:: -->|<!-- ::end-auto-bibliography:: -->/g;
+// No end marker - only start marker and section anchors
+const ALL_HIDDEN_MARKERS_REGEX = /<!-- @sid:[0-9a-fA-F-]+ -->|<!-- ::auto-bibliography:: -->/g;
 
 /**
  * Find all hidden marker ranges in the document for decoration purposes
@@ -51,18 +52,9 @@ function findHiddenMarkers(state: EditorState): { from: number; to: number }[] {
     });
   }
 
-  // Find bibliography start markers
+  // Find bibliography start markers (on same line as header, no end marker)
   BIBLIOGRAPHY_START_REGEX.lastIndex = 0;
   while ((match = BIBLIOGRAPHY_START_REGEX.exec(text)) !== null) {
-    markers.push({
-      from: match.index,
-      to: match.index + match[0].length,
-    });
-  }
-
-  // Find bibliography end markers
-  BIBLIOGRAPHY_END_REGEX.lastIndex = 0;
-  while ((match = BIBLIOGRAPHY_END_REGEX.exec(text)) !== null) {
     markers.push({
       from: match.index,
       to: match.index + match[0].length,
@@ -137,7 +129,7 @@ export function stripAnchors(text: string): string {
 export function extractAnchors(text: string): { id: string; headerOffset: number }[] {
   const results: { id: string; headerOffset: number }[] = [];
   let strippedOffset = 0;
-  let originalOffset = 0;
+  let _originalOffset = 0;
 
   const lines = text.split('\n');
   for (let i = 0; i < lines.length; i++) {
@@ -152,12 +144,12 @@ export function extractAnchors(text: string): { id: string; headerOffset: number
         headerOffset: strippedOffset,
       });
       // Don't add this line to strippedOffset since it will be removed
-      originalOffset += line.length + 1;
+      _originalOffset += line.length + 1;
       continue;
     }
 
     strippedOffset += line.length + 1;
-    originalOffset += line.length + 1;
+    _originalOffset += line.length + 1;
   }
 
   return results;

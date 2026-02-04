@@ -3,7 +3,7 @@
 // These IDs survive edits elsewhere in the document.
 
 import type { Node } from '@milkdown/kit/prose/model';
-import { Plugin, PluginKey, Transaction } from '@milkdown/kit/prose/state';
+import { Plugin, PluginKey } from '@milkdown/kit/prose/state';
 import { Decoration, DecorationSet } from '@milkdown/kit/prose/view';
 import { $prose } from '@milkdown/kit/utils';
 
@@ -108,8 +108,8 @@ function assignBlockIds(doc: Node, existingIds: Map<number, string>): Map<number
   const claimedIds = new Set<string>();
 
   // Build a map of existing blocks by content hash for matching
-  const existingByContent = new Map<string, { pos: number; id: string }[]>();
-  for (const [pos, id] of existingIds) {
+  const _existingByContent = new Map<string, { pos: number; id: string }[]>();
+  for (const [_pos, _id] of existingIds) {
     // We need the old document's node content, but we don't have it
     // So we'll use position-based matching with content verification
   }
@@ -133,8 +133,8 @@ function assignBlockIds(doc: Node, existingIds: Map<number, string>): Map<number
         // Position doesn't have an ID - try to find by proximity
         // This handles position shifts from edits elsewhere in the document
         let found = false;
-        const nodeContent = node.textContent;
-        const nodeType = node.type.name;
+        const _nodeContent = node.textContent;
+        const _nodeType = node.type.name;
 
         // Look for unclaimed IDs at nearby positions with same block type
         // Use a sliding window approach - closer positions are preferred

@@ -16,12 +16,9 @@ import {
   setHideCompletedTasks,
 } from './annotation-display-plugin';
 import { type AnnotationType, annotationNode, annotationPlugin } from './annotation-plugin';
-import { autoBibliographyPlugin } from './auto-bibliography-plugin';
 import { blockIdPlugin, confirmBlockIds, getAllBlockIds, getBlockIdAtPos, resetBlockIdState } from './block-id-plugin';
 import {
   type BlockChanges,
-  type BlockInsert,
-  type BlockUpdate,
   blockSyncPlugin,
   destroyBlockSyncState,
   getBlockChanges,
@@ -887,7 +884,6 @@ async function initEditor() {
       .use(blockSyncPlugin) // Track block changes for Swift sync
       .use(sectionBreakPlugin) // Intercept <!-- ::break:: --> before commonmark filters it
       .use(annotationPlugin) // Intercept annotation comments before filtering
-      .use(autoBibliographyPlugin) // Intercept auto-bibliography markers before filtering
       .use(citationPlugin) // Parse [@citekey] citations before commonmark
       .use(commonmark)
       .use(gfm)

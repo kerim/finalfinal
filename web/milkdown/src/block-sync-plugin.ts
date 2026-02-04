@@ -3,9 +3,9 @@
 // Exports pending changes for Swift polling via getBlockChanges()
 
 import type { Node } from '@milkdown/kit/prose/model';
-import { Plugin, PluginKey, Transaction } from '@milkdown/kit/prose/state';
+import { Plugin, PluginKey } from '@milkdown/kit/prose/state';
 import { $prose } from '@milkdown/kit/utils';
-import { getAllBlockIds, getBlockIdAtPos } from './block-id-plugin';
+import { getAllBlockIds } from './block-id-plugin';
 
 export const blockSyncPluginKey = new PluginKey<BlockSyncPluginState>('block-sync');
 

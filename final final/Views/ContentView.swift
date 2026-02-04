@@ -472,11 +472,16 @@ struct ContentView: View {
                 adjustedOffset += section.markdownContent.count
             }
 
-            let injected = sectionSyncService.injectSectionAnchors(
+            let withAnchors = sectionSyncService.injectSectionAnchors(
                 markdown: editorState.content,
                 sections: adjustedSections
             )
-            editorState.sourceContent = injected
+            // Also inject bibliography marker for source mode
+            let withBibMarker = sectionSyncService.injectBibliographyMarker(
+                markdown: withAnchors,
+                sections: editorState.sections
+            )
+            editorState.sourceContent = withBibMarker
         }
 
         // Persist reordered sections to database
@@ -597,8 +602,9 @@ struct ContentView: View {
             .joined()
 
         // Append bibliography at the end (ensures it's always last, never absorbed)
+        // Strip any legacy marker from bibliography content (migration for old format)
         if let bib = bibliographySection {
-            var bibContent = bib.markdownContent
+            var bibContent = sectionSyncService.stripBibliographyMarker(from: bib.markdownContent)
             if !bibContent.hasSuffix("\n") { bibContent += "\n" }
             newContent += bibContent
         }
@@ -742,8 +748,10 @@ struct ContentView: View {
             .joined()
 
         // Append bibliography at the end
+        // Strip any legacy marker from bibliography content (migration for old format)
         if let bib = bibliographySection {
             var bibContent = bib.markdownContent
+                .replacingOccurrences(of: "<!-- ::auto-bibliography:: -->", with: "")
             if !bibContent.hasSuffix("\n") { bibContent += "\n" }
             newContent += bibContent
         }
@@ -1059,7 +1067,9 @@ struct ContentView: View {
             let savedContent = try documentManager.loadContent()
 
             if let savedContent = savedContent, !savedContent.isEmpty {
-                editorState.content = savedContent
+                // Strip bibliography marker from stored content (migration for old format)
+                // The marker is now injected only for CodeMirror source mode, not stored
+                editorState.content = sectionSyncService.stripBibliographyMarker(from: savedContent)
             } else {
                 // Empty project - set empty content
                 editorState.content = ""
@@ -1354,21 +1364,27 @@ extension View {
                         currentOffset += section.markdownContent.count
                     }
 
-                    let injected = sectionSyncService.injectSectionAnchors(
+                    let withAnchors = sectionSyncService.injectSectionAnchors(
                         markdown: editorState.content,
                         sections: adjustedSections
                     )
-                    editorState.sourceContent = injected
+                    // Also inject bibliography marker for source mode
+                    let withBibMarker = sectionSyncService.injectBibliographyMarker(
+                        markdown: withAnchors,
+                        sections: sectionsToInject
+                    )
+                    editorState.sourceContent = withBibMarker
                     editorState.toggleEditorMode()
                     editorState.contentState = .idle
                 } else {
-                    // Switching FROM source mode TO WYSIWYG - extract anchors
+                    // Switching FROM source mode TO WYSIWYG - extract anchors and strip bibliography marker
                     editorState.contentState = .editorTransition
                     let (cleaned, anchors) = sectionSyncService.extractSectionAnchors(
                         markdown: editorState.sourceContent
                     )
                     editorState.sourceAnchors = anchors
-                    editorState.content = cleaned
+                    // Also strip bibliography marker since Milkdown shouldn't see it
+                    editorState.content = sectionSyncService.stripBibliographyMarker(from: cleaned)
                     editorState.toggleEditorMode()
 
                     // CRITICAL: Delay returning to .idle to give Milkdown time to initialize

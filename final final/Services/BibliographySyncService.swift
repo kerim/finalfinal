@@ -242,11 +242,12 @@ final class BibliographySyncService {
             entries.append(entry)
         }
 
-        // Build markdown with markers (so OutlineParser skips this section)
-        var markdown = "<!-- ::auto-bibliography:: -->\n"
-        markdown += "# Bibliography\n\n"
+        // Build markdown WITHOUT marker (marker is injected only for CodeMirror source mode)
+        // This follows the section anchor pattern: store clean content, inject markers for source view
+        let headerName = ExportSettingsManager.shared.bibliographyHeaderName
+        var markdown = "# \(headerName)\n\n"
         markdown += entries.joined(separator: "\n\n")
-        markdown += "\n<!-- ::end-auto-bibliography:: -->\n"
+        markdown += "\n\n"
 
         return markdown
     }
@@ -364,12 +365,13 @@ final class BibliographySyncService {
                 .fetchOne(db)?.sortOrder ?? 0
 
             // Create fresh bibliography section
+            let headerName = ExportSettingsManager.shared.bibliographyHeaderName
             var newSection = Section(
                 projectId: projectId,
                 sortOrder: maxSortOrder + 1,
                 headerLevel: 1,
                 isBibliography: true,
-                title: "Bibliography",
+                title: headerName,
                 markdownContent: content,
                 status: .final_
             )
