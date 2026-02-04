@@ -100,6 +100,12 @@ cp "$PROJECT_DIR/README.md" "$ICLOUD_SHARE/README.md"
 echo -e "${GREEN}  README copied${NC}"
 echo ""
 
+# Step 4.5: Ad-hoc sign for distribution (allows right-click → Open on other Macs)
+echo -e "${YELLOW}Step 4.5: Ad-hoc signing for distribution...${NC}"
+codesign --force --deep --sign - "/Applications/$APP_NAME.app"
+echo -e "${GREEN}  Ad-hoc signed${NC}"
+echo ""
+
 # Step 5: Create zip in iCloud share folder
 echo -e "${YELLOW}Step 5: Creating zip for distribution...${NC}"
 
@@ -110,7 +116,8 @@ if [ -f "$ICLOUD_SHARE/$APP_NAME.zip" ]; then
     rm -f "$ICLOUD_SHARE/$APP_NAME.zip"
 fi
 
-zip -r "$ICLOUD_SHARE/$APP_NAME.zip" "$APP_NAME.app"
+# Use ditto instead of zip - properly handles macOS app bundles
+ditto -c -k --sequesterRsrc --keepParent "$APP_NAME.app" "$ICLOUD_SHARE/$APP_NAME.zip"
 echo -e "${GREEN}  Zip created${NC}"
 echo ""
 
