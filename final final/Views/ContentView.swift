@@ -541,6 +541,7 @@ struct ContentView: View {
     }
 
     /// Rebuild document content based on zoom state (extracted for reuse)
+    /// Bibliography sections are handled specially to prevent duplication
     private func rebuildDocumentContent() {
         // Guard against rebuilding during editor transition - this would overwrite content
         // that hasn't been synced to sections yet
@@ -549,21 +550,36 @@ struct ContentView: View {
         }
 
         let sectionsToRebuild: [SectionViewModel]
+        let bibliographySection: SectionViewModel?
+
         if let zoomedIds = editorState.zoomedSectionIds {
+            // When zoomed, exclude bibliography entirely (it's not in zoomedIds anyway)
             sectionsToRebuild = editorState.sections
-                .filter { zoomedIds.contains($0.id) }
+                .filter { zoomedIds.contains($0.id) && !$0.isBibliography }
                 .sorted { $0.sortOrder < $1.sortOrder }
+            bibliographySection = nil  // Don't show bibliography when zoomed
         } else {
+            // Not zoomed: include all except bibliography, then append bibliography at end
             sectionsToRebuild = editorState.sections
+                .filter { !$0.isBibliography }
+                .sorted { $0.sortOrder < $1.sortOrder }
+            bibliographySection = editorState.sections.first { $0.isBibliography }
         }
 
-        let newContent = sectionsToRebuild
+        var newContent = sectionsToRebuild
             .map { section in
                 var content = section.markdownContent
                 if !content.hasSuffix("\n") { content += "\n" }
                 return content
             }
             .joined()
+
+        // Append bibliography at the end (ensures it's always last, never absorbed)
+        if let bib = bibliographySection {
+            var bibContent = bib.markdownContent
+            if !bibContent.hasSuffix("\n") { bibContent += "\n" }
+            newContent += bibContent
+        }
 
         editorState.content = newContent
     }
@@ -676,23 +692,41 @@ struct ContentView: View {
     }
 
     /// Static version for use in closures - rebuilds document content from sections
+    /// Bibliography sections are handled specially to prevent duplication
     private static func rebuildDocumentContentStatic(editorState: EditorViewState) {
         let sectionsToRebuild: [SectionViewModel]
+        let bibliographySection: SectionViewModel?
+
         if let zoomedIds = editorState.zoomedSectionIds {
+            // When zoomed, exclude bibliography entirely
             sectionsToRebuild = editorState.sections
-                .filter { zoomedIds.contains($0.id) }
+                .filter { zoomedIds.contains($0.id) && !$0.isBibliography }
                 .sorted { $0.sortOrder < $1.sortOrder }
+            bibliographySection = nil
         } else {
+            // Not zoomed: include all except bibliography, then append bibliography at end
             sectionsToRebuild = editorState.sections
+                .filter { !$0.isBibliography }
+                .sorted { $0.sortOrder < $1.sortOrder }
+            bibliographySection = editorState.sections.first { $0.isBibliography }
         }
 
-        editorState.content = sectionsToRebuild
+        var newContent = sectionsToRebuild
             .map { section in
                 var content = section.markdownContent
                 if !content.hasSuffix("\n") { content += "\n" }
                 return content
             }
             .joined()
+
+        // Append bibliography at the end
+        if let bib = bibliographySection {
+            var bibContent = bib.markdownContent
+            if !bibContent.hasSuffix("\n") { bibContent += "\n" }
+            newContent += bibContent
+        }
+
+        editorState.content = newContent
     }
 
     /// Async hierarchy enforcement with completion-based state clearing
@@ -893,43 +927,25 @@ struct ContentView: View {
                     isEditorPreloadReady = true
                 }
         } else {
-            switch editorState.editorMode {
-            case .wysiwyg:
-                MilkdownEditor(
-                    content: $editorState.content,
-                    focusModeEnabled: $editorState.focusModeEnabled,
-                    cursorPositionToRestore: $cursorPositionToRestore,
-                    scrollToOffset: $editorState.scrollToOffset,
-                    isResettingContent: $editorState.isResettingContent,
-                    themeCSS: currentThemeCSS,
-                    onContentChange: { _ in
-                        // Content change handling - could trigger outline parsing here
-                    },
-                    onStatsChange: { words, characters in
-                        editorState.updateStats(words: words, characters: characters)
-                    },
-                    onCursorPositionSaved: { position in
-                        cursorPositionToRestore = position
-                    }
-                )
-            case .source:
-                CodeMirrorEditor(
-                    content: $editorState.content,
-                    cursorPositionToRestore: $cursorPositionToRestore,
-                    scrollToOffset: $editorState.scrollToOffset,
-                    isResettingContent: $editorState.isResettingContent,
-                    themeCSS: currentThemeCSS,
-                    onContentChange: { _ in
-                        // Content change handling - could trigger outline parsing here
-                    },
-                    onStatsChange: { words, characters in
-                        editorState.updateStats(words: words, characters: characters)
-                    },
-                    onCursorPositionSaved: { position in
-                        cursorPositionToRestore = position
-                    }
-                )
-            }
+            // Phase C: Single MilkdownEditor with dual-appearance mode
+            // Mode toggle (Cmd+/) calls setEditorMode() instead of swapping editors
+            MilkdownEditor(
+                content: $editorState.content,
+                focusModeEnabled: $editorState.focusModeEnabled,
+                cursorPositionToRestore: $cursorPositionToRestore,
+                scrollToOffset: $editorState.scrollToOffset,
+                isResettingContent: $editorState.isResettingContent,
+                themeCSS: currentThemeCSS,
+                onContentChange: { _ in
+                    // Content change handling - could trigger outline parsing here
+                },
+                onStatsChange: { words, characters in
+                    editorState.updateStats(words: words, characters: characters)
+                },
+                onCursorPositionSaved: { position in
+                    cursorPositionToRestore = position
+                }
+            )
         }
     }
 
@@ -1259,20 +1275,21 @@ extension View {
                 editorState.toggleFocusMode()
             }
             .onReceive(NotificationCenter.default.publisher(for: .toggleEditorMode)) { _ in
-                // Mark transition state BEFORE requesting toggle
-                editorState.contentState = .editorTransition
-                editorState.requestEditorModeToggle()
+                // Phase C: Toggle editor appearance mode via notification to MilkdownEditor
+                // No view swap needed - just toggle internal state and notify editor
+                editorState.toggleEditorMode()
+                let mode = editorState.editorMode == .source ? "source" : "wysiwyg"
+                NotificationCenter.default.post(
+                    name: .editorAppearanceModeChanged,
+                    object: nil,
+                    userInfo: ["mode": mode]
+                )
             }
             .onReceive(NotificationCenter.default.publisher(for: .didSaveCursorPosition)) { notification in
+                // Phase C: This handler is now only used for cursor position restoration
+                // The editor mode toggle no longer requires view swap
                 if let position = notification.userInfo?["position"] as? CursorPosition {
                     cursorRestore.wrappedValue = position
-                }
-                editorState.toggleEditorMode()
-                // Clear transition state AFTER toggle completes
-                // Use async to ensure SwiftUI has processed the mode change
-                Task { @MainActor in
-                    try? await Task.sleep(for: .milliseconds(100))
-                    editorState.contentState = .idle
                 }
             }
             .onReceive(NotificationCenter.default.publisher(for: .toggleOutlineSidebar)) { _ in

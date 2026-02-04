@@ -41,6 +41,9 @@ import { mdToTextOffset, textToMdOffset } from './cursor-mapping';
 import { focusModePlugin, setFocusModeEnabled } from './focus-mode-plugin';
 import { highlightMark, highlightPlugin } from './highlight-plugin';
 import { sectionBreakNode, sectionBreakPlugin } from './section-break-plugin';
+import { blockIdPlugin, confirmBlockIds, getBlockIdAtPos, getAllBlockIds, resetBlockIdState } from './block-id-plugin';
+import { blockSyncPlugin, getBlockChanges, hasPendingChanges, resetBlockSyncState, destroyBlockSyncState, type BlockChanges, type BlockUpdate, type BlockInsert } from './block-sync-plugin';
+import { sourceModePlugin, setSourceModeEnabled, isSourceModeEnabled } from './source-mode-plugin';
 import './styles.css';
 
 /**
@@ -150,8 +153,30 @@ declare global {
         hasEditor: boolean;
         docSize: number | null;
       };
+      // Block-based API (Phase B)
+      getBlockChanges: () => BlockChanges;
+      applyBlocks: (blocks: Block[]) => void;
+      confirmBlockIds: (mapping: Record<string, string>) => void;
+      scrollToBlock: (blockId: string) => void;
+      getBlockAtCursor: () => { blockId: string; offset: number } | null;
+      hasBlockChanges: () => boolean;
+      // Dual-appearance mode API (Phase C)
+      setEditorMode: (mode: 'wysiwyg' | 'source') => void;
+      getEditorMode: () => 'wysiwyg' | 'source';
+      // Cleanup API (for state reset before project switch)
+      resetEditorState: () => void;
     };
   }
+}
+
+// Block type for applyBlocks API
+interface Block {
+  id: string;
+  blockType: string;
+  textContent: string;
+  markdownFragment: string;
+  headingLevel?: number;
+  sortOrder: number;
 }
 
 // === Lazy Citation Resolution ===
@@ -848,6 +873,8 @@ async function initEditor() {
       // 4. highlightPlugin MUST be after commonmark to survive parse-serialize cycle
       //    (fixes ==text== not persisting when switching to CodeMirror)
       // 5. citationPlugin MUST be before commonmark to parse [@citekey] syntax
+      .use(blockIdPlugin) // Assign stable IDs to block-level nodes
+      .use(blockSyncPlugin) // Track block changes for Swift sync
       .use(sectionBreakPlugin) // Intercept <!-- ::break:: --> before commonmark filters it
       .use(annotationPlugin) // Intercept annotation comments before filtering
       .use(autoBibliographyPlugin) // Intercept auto-bibliography markers before filtering
@@ -857,6 +884,7 @@ async function initEditor() {
       .use(highlightPlugin) // ==highlight== syntax - AFTER commonmark for serialization
       .use(history)
       .use(focusModePlugin)
+      .use(sourceModePlugin) // Dual-appearance source mode
       .use(annotationDisplayPlugin) // Controls annotation visibility
       // citationNodeView is now included in citationPlugin (same file = correct atom identity)
       .use(slash)
@@ -1675,6 +1703,158 @@ window.FinalFinal = {
       hasEditor: !!editorInstance,
       docSize: editorInstance ? editorInstance.ctx.get(editorViewCtx).state.doc.content.size : null,
     };
+  },
+
+  // === Block-based API (Phase B) ===
+
+  getBlockChanges(): BlockChanges {
+    return getBlockChanges();
+  },
+
+  applyBlocks(blocks: Block[]) {
+    if (!editorInstance) return;
+
+    try {
+      const view = editorInstance.ctx.get(editorViewCtx);
+      const parser = editorInstance.ctx.get(parserCtx);
+
+      // Sort blocks by sortOrder
+      const sortedBlocks = [...blocks].sort((a, b) => a.sortOrder - b.sortOrder);
+
+      // Assemble markdown from blocks
+      const markdown = sortedBlocks.map((b) => b.markdownFragment).join('\n\n');
+
+      // Parse and replace document content
+      isSettingContent = true;
+      try {
+        const doc = parser(markdown);
+        if (!doc) return;
+
+        const { from } = view.state.selection;
+        const docSize = view.state.doc.content.size;
+        let tr = view.state.tr.replace(0, docSize, new Slice(doc.content, 0, 0));
+
+        // Try to preserve cursor position
+        const safeFrom = Math.min(from, Math.max(0, doc.content.size - 1));
+        try {
+          tr = tr.setSelection(Selection.near(tr.doc.resolve(safeFrom)));
+        } catch {
+          tr = tr.setSelection(Selection.atStart(tr.doc));
+        }
+
+        view.dispatch(tr);
+        currentContent = markdown;
+
+        // Reset sync state since we're replacing everything
+        resetBlockSyncState();
+      } finally {
+        isSettingContent = false;
+      }
+    } catch (e) {
+      console.error('[Milkdown] applyBlocks failed:', e);
+    }
+  },
+
+  confirmBlockIds(mapping: Record<string, string>) {
+    confirmBlockIds(mapping);
+    // Trigger a transaction to update decorations
+    if (editorInstance) {
+      try {
+        const view = editorInstance.ctx.get(editorViewCtx);
+        view.dispatch(view.state.tr);
+      } catch {
+        // Dispatch failed, ignore
+      }
+    }
+  },
+
+  scrollToBlock(blockId: string) {
+    if (!editorInstance) return;
+
+    try {
+      const view = editorInstance.ctx.get(editorViewCtx);
+      const blockIds = getAllBlockIds();
+
+      // Find position for this block ID
+      let targetPos: number | null = null;
+      for (const [pos, id] of blockIds) {
+        if (id === blockId) {
+          targetPos = pos;
+          break;
+        }
+      }
+
+      if (targetPos === null) return;
+
+      // Scroll to the block
+      const selection = Selection.near(view.state.doc.resolve(targetPos + 1));
+      view.dispatch(view.state.tr.setSelection(selection).scrollIntoView());
+      view.focus();
+    } catch (e) {
+      console.error('[Milkdown] scrollToBlock failed:', e);
+    }
+  },
+
+  getBlockAtCursor(): { blockId: string; offset: number } | null {
+    if (!editorInstance) return null;
+
+    try {
+      const view = editorInstance.ctx.get(editorViewCtx);
+      const { head } = view.state.selection;
+      const $head = view.state.doc.resolve(head);
+
+      // Find the nearest block containing the cursor
+      for (let depth = $head.depth; depth > 0; depth--) {
+        const pos = $head.before(depth);
+        const blockId = getBlockIdAtPos(pos);
+        if (blockId) {
+          // Calculate offset within the block
+          const offset = head - pos - 1; // -1 for node start boundary
+          return { blockId, offset: Math.max(0, offset) };
+        }
+      }
+
+      return null;
+    } catch (e) {
+      console.error('[Milkdown] getBlockAtCursor failed:', e);
+      return null;
+    }
+  },
+
+  hasBlockChanges(): boolean {
+    return hasPendingChanges();
+  },
+
+  // === Dual-appearance mode API (Phase C) ===
+
+  setEditorMode(mode: 'wysiwyg' | 'source') {
+    const enableSource = mode === 'source';
+    setSourceModeEnabled(enableSource);
+
+    // Trigger redecoration by dispatching an empty transaction
+    if (editorInstance) {
+      try {
+        const view = editorInstance.ctx.get(editorViewCtx);
+        view.dispatch(view.state.tr);
+        view.focus();
+      } catch {
+        // Dispatch failed, ignore
+      }
+    }
+  },
+
+  getEditorMode(): 'wysiwyg' | 'source' {
+    return isSourceModeEnabled() ? 'source' : 'wysiwyg';
+  },
+
+  resetEditorState() {
+    // Reset block-related state (for project switching or cleanup)
+    resetBlockIdState();
+    destroyBlockSyncState();
+    currentContent = '';
+    isSettingContent = false;
+    pendingSlashUndo = false;
+    pendingSlashRedo = false;
   },
 };
 

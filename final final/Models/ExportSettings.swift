@@ -69,6 +69,10 @@ struct ExportSettings: Codable, Sendable {
     /// Default export format
     var defaultFormat: ExportFormat = .word
 
+    /// Include annotations in exported documents
+    /// When false, annotation comments (<!-- ::type:: text -->) are stripped before export
+    var includeAnnotations: Bool = false
+
     // MARK: - Defaults
 
     static let `default` = ExportSettings()
@@ -196,5 +200,10 @@ final class ExportSettingsManager {
     var defaultFormat: ExportFormat {
         get { settings.defaultFormat }
         set { update { $0.defaultFormat = newValue } }
+    }
+
+    var includeAnnotations: Bool {
+        get { settings.includeAnnotations }
+        set { update { $0.includeAnnotations = newValue } }
     }
 }

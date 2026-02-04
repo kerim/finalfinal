@@ -212,6 +212,61 @@ final class ProjectDatabase: Sendable {
             try db.create(index: "snapshotSection_snapshotId", on: "snapshotSection", columns: ["snapshotId"])
         }
 
+        // Block-based architecture: blocks table + annotation_v2 + schemaVersion
+        migrator.registerMigration("v8_blocks") { db in
+            // Create block table for block-based content model
+            try db.create(table: "block") { t in
+                t.primaryKey("id", .text)
+                t.column("projectId", .text).notNull()
+                    .references("project", onDelete: .cascade)
+                t.column("parentId", .text)
+                    .references("block", onDelete: .cascade)
+                t.column("sortOrder", .double).notNull()  // Fractional for easy insertion
+                t.column("blockType", .text).notNull()
+                t.column("textContent", .text).notNull().defaults(to: "")
+                t.column("markdownFragment", .text).notNull().defaults(to: "")
+                t.column("headingLevel", .integer)
+                t.column("status", .text)  // NULL allowed, matching Block.status optional
+                t.column("tags", .text).defaults(to: "[]")
+                t.column("wordGoal", .integer)
+                t.column("wordCount", .integer).notNull().defaults(to: 0)
+                t.column("isBibliography", .boolean).notNull().defaults(to: false)
+                t.column("isPseudoSection", .boolean).notNull().defaults(to: false)
+                t.column("createdAt", .datetime).notNull().defaults(sql: "CURRENT_TIMESTAMP")
+                t.column("updatedAt", .datetime).notNull().defaults(sql: "CURRENT_TIMESTAMP")
+            }
+
+            try db.create(index: "block_projectId", on: "block", columns: ["projectId"])
+            try db.create(index: "block_sortOrder", on: "block", columns: ["projectId", "sortOrder"])
+            try db.create(index: "block_blockType", on: "block", columns: ["projectId", "blockType"])
+
+            // Create annotation_v2 table with block-based references
+            try db.create(table: "annotation_v2") { t in
+                t.primaryKey("id", .text)
+                t.column("contentId", .text).notNull()
+                    .references("content", onDelete: .cascade)
+                t.column("blockId", .text).notNull()
+                    .references("block", onDelete: .cascade)
+                t.column("type", .text).notNull()
+                    .check(sql: "type IN ('task', 'comment', 'reference')")
+                t.column("text", .text).notNull()
+                t.column("isCompleted", .boolean).notNull().defaults(to: false)
+                t.column("inlineStartOffset", .integer)  // Offset within block
+                t.column("inlineEndOffset", .integer)
+                t.column("createdAt", .datetime).notNull().defaults(sql: "CURRENT_TIMESTAMP")
+                t.column("updatedAt", .datetime).notNull().defaults(sql: "CURRENT_TIMESTAMP")
+            }
+
+            try db.create(index: "annotation_v2_contentId", on: "annotation_v2", columns: ["contentId"])
+            try db.create(index: "annotation_v2_blockId", on: "annotation_v2", columns: ["blockId"])
+
+            // Add schemaVersion to project table
+            // 1 = section-based (legacy), 2 = block-based (new)
+            try db.alter(table: "project") { t in
+                t.add(column: "schemaVersion", .integer).notNull().defaults(to: 1)
+            }
+        }
+
         try migrator.migrate(dbWriter)
     }
 

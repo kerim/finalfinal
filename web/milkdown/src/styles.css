@@ -385,3 +385,121 @@ mark.ff-highlight {
 .auto-bib-end {
   display: none;
 }
+
+/* === Source Mode Styles === */
+
+/* Global source mode body class */
+body.source-mode {
+  /* Use monospace font throughout in source mode */
+}
+
+body.source-mode .ProseMirror {
+  font-family: var(--font-mono, 'SF Mono', Menlo, Monaco, 'Courier New', monospace);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+/* Source mode syntax markers - muted appearance */
+.source-mode-syntax {
+  color: var(--editor-muted, #666);
+  opacity: 0.7;
+  user-select: none;
+  font-family: var(--font-mono, 'SF Mono', Menlo, Monaco, monospace);
+}
+
+/* Heading markers: # ## ### */
+.source-mode-heading-marker {
+  color: var(--syntax-heading, #0ea5e9);
+  font-weight: bold;
+}
+
+/* Blockquote marker: > */
+.source-mode-blockquote-marker {
+  color: var(--syntax-blockquote, #10b981);
+}
+
+/* List markers: - or 1. */
+.source-mode-list-marker {
+  color: var(--syntax-list, #8b5cf6);
+}
+
+/* Code fence: ``` */
+.source-mode-code-fence {
+  color: var(--syntax-code, #f59e0b);
+  display: block;
+  margin: 0.25em 0;
+}
+
+/* Bold markers: ** */
+.source-mode-bold-marker {
+  color: var(--syntax-bold, #f43f5e);
+}
+
+/* Italic markers: * */
+.source-mode-italic-marker {
+  color: var(--syntax-italic, #f43f5e);
+}
+
+/* Inline code markers: ` */
+.source-mode-code-marker {
+  color: var(--syntax-inline-code, #f59e0b);
+}
+
+/* Strikethrough markers: ~~ */
+.source-mode-strike-marker {
+  color: var(--syntax-strike, #6b7280);
+}
+
+/* Link markers: []() */
+.source-mode-link-marker {
+  color: var(--syntax-link, #3b82f6);
+}
+
+/* Horizontal rule in source mode */
+.source-mode-hr::before {
+  content: attr(data-syntax);
+  color: var(--syntax-hr, #6b7280);
+}
+
+/* Remove WYSIWYG styling in source mode */
+body.source-mode h1,
+body.source-mode h2,
+body.source-mode h3,
+body.source-mode h4,
+body.source-mode h5,
+body.source-mode h6 {
+  font-size: inherit;
+  font-weight: inherit;
+  margin: 0.5em 0;
+  line-height: inherit;
+}
+
+body.source-mode blockquote {
+  border-left: none;
+  padding-left: 0;
+  margin: 0.5em 0;
+  opacity: 1;
+}
+
+body.source-mode code {
+  background: none;
+  padding: 0;
+  border-radius: 0;
+}
+
+body.source-mode pre {
+  background: rgba(128, 128, 128, 0.05);
+  padding: 0.5em;
+  margin: 0.5em 0;
+}
+
+/* Source mode line numbers (optional, for future enhancement) */
+body.source-mode .ProseMirror {
+  counter-reset: line;
+}
+
+/* Make section breaks visible as text in source mode */
+body.source-mode .section-break {
+  color: var(--syntax-comment, #6b7280);
+  font-family: var(--font-mono);
+}

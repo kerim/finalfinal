@@ -313,6 +313,9 @@ class SectionSyncService {
         var boundaries: [SectionBoundary] = []
         var lastActualHeaderLevel: Int = 1  // Default to H1 for pseudo-sections at document start
 
+        // Track where bibliography section starts (to end preceding section there)
+        var bibliographyStartOffset: Int?
+
         // First pass: find all headers and pseudo-sections
         let lines = markdown.split(separator: "\n", omittingEmptySubsequences: false)
         for line in lines {
@@ -326,8 +329,10 @@ class SectionSyncService {
 
             // Track auto-bibliography section (managed by BibliographySyncService)
             // Headers inside this section should not create separate sidebar sections
+            // Also record the start offset so the preceding section ends here
             if trimmed == "<!-- ::auto-bibliography:: -->" {
                 inAutoBibliography = true
+                bibliographyStartOffset = currentOffset
             }
             if trimmed == "<!-- ::end-auto-bibliography:: -->" {
                 inAutoBibliography = false
@@ -367,11 +372,21 @@ class SectionSyncService {
         let contentLength = markdown.count
 
         for (index, boundary) in boundaries.enumerated() {
-            let endOffset: Int
+            var endOffset: Int
             if index < boundaries.count - 1 {
                 endOffset = boundaries[index + 1].startOffset
             } else {
                 endOffset = contentLength
+            }
+
+            // If this is the last section before bibliography, end it at the bibliography marker
+            // This prevents bibliography content from being absorbed into the preceding section
+            if let bibStart = bibliographyStartOffset {
+                // Check if this section would absorb the bibliography
+                if boundary.startOffset < bibStart && endOffset > bibStart {
+                    endOffset = bibStart
+                    print("[SectionSyncService] Truncating section '\(boundary.title)' at bibliography marker")
+                }
             }
 
             // Extract markdown content for this section

@@ -23,6 +23,8 @@ extension Notification.Name {
     static let citationLibraryChanged = Notification.Name("citationLibraryChanged")
     /// Posted when bibliography section content changes in the database
     static let bibliographySectionChanged = Notification.Name("bibliographySectionChanged")
+    /// Posted when editor appearance mode changes (WYSIWYG ↔ source) - Phase C dual-appearance
+    static let editorAppearanceModeChanged = Notification.Name("editorAppearanceModeChanged")
 }
 
 enum EditorMode: String, CaseIterable {
@@ -438,10 +440,18 @@ class EditorViewState {
         let originalSections = parseMarkdownToSectionOffsets(fullDoc)
 
         // Build merged content: for zoomed sections use current content, for others use original
+        // Bibliography is excluded here and appended at the end to prevent duplication
         var mergedContent = ""
         var currentIdx = 0
 
         for original in originalSections {
+            // Skip bibliography sections in the main loop - we append it at the end
+            if let matchingSection = sections.first(where: { $0.id == original.id }),
+               matchingSection.isBibliography {
+                currentIdx += 1
+                continue
+            }
+
             if zoomedIds.contains(original.id) {
                 // Find the current edited version of this section
                 if let editedSection = sections.first(where: { $0.id == original.id }) {
@@ -458,13 +468,23 @@ class EditorViewState {
             currentIdx += 1
         }
 
-        // Handle any new sections created while zoomed (not in original)
+        // Handle any new sections created while zoomed (not in original, excluding bibliography)
         for section in sections where !originalSections.contains(where: { $0.id == section.id }) {
+            // Skip bibliography - we'll append it at the end
+            guard !section.isBibliography else { continue }
             if zoomedIds.contains(section.id) {
                 var md = section.markdownContent
                 if !md.hasSuffix("\n") { md += "\n" }
                 mergedContent += md
             }
+        }
+
+        // Append bibliography section at end (if exists)
+        // This handles the case where bibliography was updated while zoomed
+        if let bibSection = sections.first(where: { $0.isBibliography }) {
+            var bibContent = bibSection.markdownContent
+            if !bibContent.hasSuffix("\n") { bibContent += "\n" }
+            mergedContent += bibContent
         }
 
         // Restore full document

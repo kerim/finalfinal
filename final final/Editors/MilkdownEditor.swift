@@ -192,6 +192,7 @@ struct MilkdownEditor: NSViewRepresentable {
         private var toggleHighlightObserver: NSObjectProtocol?
         private var citationLibraryObserver: NSObjectProtocol?
         private var refreshAllCitationsObserver: NSObjectProtocol?
+        private var editorModeObserver: NSObjectProtocol?
 
         /// Pending cursor position that is being restored (set before JS call, cleared after)
         private var pendingCursorRestore: CursorPosition?
@@ -289,6 +290,17 @@ struct MilkdownEditor: NSViewRepresentable {
                     await self?.refreshAllCitations()
                 }
             }
+
+            // Subscribe to editor appearance mode changes (Phase C dual-appearance)
+            editorModeObserver = NotificationCenter.default.addObserver(
+                forName: .editorAppearanceModeChanged,
+                object: nil,
+                queue: .main
+            ) { [weak self] notification in
+                if let mode = notification.userInfo?["mode"] as? String {
+                    self?.setEditorAppearanceMode(mode)
+                }
+            }
         }
 
         deinit {
@@ -312,6 +324,9 @@ struct MilkdownEditor: NSViewRepresentable {
                 NotificationCenter.default.removeObserver(observer)
             }
             if let observer = refreshAllCitationsObserver {
+                NotificationCenter.default.removeObserver(observer)
+            }
+            if let observer = editorModeObserver {
                 NotificationCenter.default.removeObserver(observer)
             }
         }
@@ -348,12 +363,24 @@ struct MilkdownEditor: NSViewRepresentable {
                 NotificationCenter.default.removeObserver(observer)
                 refreshAllCitationsObserver = nil
             }
+            if let observer = editorModeObserver {
+                NotificationCenter.default.removeObserver(observer)
+                editorModeObserver = nil
+            }
             webView = nil
         }
 
         func insertSectionBreak() {
             guard isEditorReady, let webView else { return }
             webView.evaluateJavaScript("window.FinalFinal.insertBreak()") { _, _ in }
+        }
+
+        /// Set editor appearance mode (WYSIWYG or source) - Phase C dual-appearance
+        /// This toggles between rich text and markdown syntax view without swapping WebViews
+        func setEditorAppearanceMode(_ mode: String) {
+            guard isEditorReady, let webView else { return }
+            let jsMode = mode.lowercased() == "source" ? "source" : "wysiwyg"
+            webView.evaluateJavaScript("window.FinalFinal.setEditorMode('\(jsMode)')") { _, _ in }
         }
 
         /// Set annotation display modes in the editor
