@@ -68,6 +68,13 @@ class EditorViewState {
     // MARK: - Content
     var content: String = ""
 
+    /// Content with section anchors injected (for source mode)
+    /// This is separate from `content` to avoid anchor pollution in WYSIWYG mode
+    var sourceContent: String = ""
+
+    /// Anchor mappings extracted from source content (for section ID restoration)
+    var sourceAnchors: [SectionAnchorMapping] = []
+
     // MARK: - Content Acknowledgement
     /// Continuation for waiting on content acknowledgement from WebView
     /// Used during zoom transitions to prevent race conditions

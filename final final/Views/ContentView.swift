@@ -66,7 +66,7 @@ struct ContentView: View {
 
     var body: some View {
         mainContentView
-            .withEditorNotifications(editorState: editorState, cursorRestore: $cursorPositionToRestore)
+            .withEditorNotifications(editorState: editorState, cursorRestore: $cursorPositionToRestore, sectionSyncService: sectionSyncService)
             .withFileNotifications(
                 editorState: editorState,
                 syncService: sectionSyncService,
@@ -927,31 +927,56 @@ struct ContentView: View {
                     isEditorPreloadReady = true
                 }
         } else {
-            // Phase C: Single MilkdownEditor with dual-appearance mode
-            // Mode toggle (Cmd+/) calls setEditorMode() instead of swapping editors
-            MilkdownEditor(
-                content: $editorState.content,
-                focusModeEnabled: $editorState.focusModeEnabled,
-                cursorPositionToRestore: $cursorPositionToRestore,
-                scrollToOffset: $editorState.scrollToOffset,
-                isResettingContent: $editorState.isResettingContent,
-                contentState: editorState.contentState,
-                themeCSS: currentThemeCSS,
-                onContentChange: { _ in
-                    // Content change handling - could trigger outline parsing here
-                },
-                onStatsChange: { words, characters in
-                    editorState.updateStats(words: words, characters: characters)
-                },
-                onCursorPositionSaved: { position in
-                    cursorPositionToRestore = position
-                },
-                onContentAcknowledged: {
-                    // Called when WebView confirms content was set
-                    // Used for acknowledgement-based synchronization during zoom
-                    editorState.acknowledgeContent()
-                }
-            )
+            // Toggle between MilkdownEditor (WYSIWYG) and CodeMirrorEditor (source)
+            // Anchors are injected when switching to source, extracted when switching back
+            if editorState.editorMode == .wysiwyg {
+                MilkdownEditor(
+                    content: $editorState.content,
+                    focusModeEnabled: $editorState.focusModeEnabled,
+                    cursorPositionToRestore: $cursorPositionToRestore,
+                    scrollToOffset: $editorState.scrollToOffset,
+                    isResettingContent: $editorState.isResettingContent,
+                    contentState: editorState.contentState,
+                    themeCSS: currentThemeCSS,
+                    onContentChange: { _ in
+                        // Content change handling - could trigger outline parsing here
+                    },
+                    onStatsChange: { words, characters in
+                        editorState.updateStats(words: words, characters: characters)
+                    },
+                    onCursorPositionSaved: { position in
+                        cursorPositionToRestore = position
+                    },
+                    onContentAcknowledged: {
+                        // Called when WebView confirms content was set
+                        // Used for acknowledgement-based synchronization during zoom
+                        editorState.acknowledgeContent()
+                    }
+                )
+            } else {
+                CodeMirrorEditor(
+                    content: $editorState.sourceContent,
+                    cursorPositionToRestore: $cursorPositionToRestore,
+                    scrollToOffset: $editorState.scrollToOffset,
+                    isResettingContent: $editorState.isResettingContent,
+                    themeCSS: currentThemeCSS,
+                    onContentChange: { newContent in
+                        // Update sourceContent with raw content (including anchors)
+                        // This keeps anchors in sync for mode switch
+                        editorState.sourceContent = newContent
+
+                        // Strip anchors and update content for sync/sidebar
+                        let cleanContent = sectionSyncService.stripSectionAnchors(from: newContent)
+                        editorState.content = cleanContent
+                    },
+                    onStatsChange: { words, characters in
+                        editorState.updateStats(words: words, characters: characters)
+                    },
+                    onCursorPositionSaved: { position in
+                        cursorPositionToRestore = position
+                    }
+                )
+            }
         }
     }
 
@@ -1275,25 +1300,66 @@ struct ContentView: View {
 
 extension View {
     /// Adds editor-related notification handlers
-    func withEditorNotifications(editorState: EditorViewState, cursorRestore: Binding<CursorPosition?>) -> some View {
+    func withEditorNotifications(
+        editorState: EditorViewState,
+        cursorRestore: Binding<CursorPosition?>,
+        sectionSyncService: SectionSyncService
+    ) -> some View {
         self
             .onReceive(NotificationCenter.default.publisher(for: .toggleFocusMode)) { _ in
                 editorState.toggleFocusMode()
             }
             .onReceive(NotificationCenter.default.publisher(for: .toggleEditorMode)) { _ in
-                // Phase C: Toggle editor appearance mode via notification to MilkdownEditor
-                // No view swap needed - just toggle internal state and notify editor
-                editorState.toggleEditorMode()
-                let mode = editorState.editorMode == .source ? "source" : "wysiwyg"
-                NotificationCenter.default.post(
-                    name: .editorAppearanceModeChanged,
-                    object: nil,
-                    userInfo: ["mode": mode]
-                )
+                // Toggle between WYSIWYG and Source mode with anchor injection/extraction
+                if editorState.editorMode == .wysiwyg {
+                    // Switching TO source mode - inject anchors
+                    editorState.contentState = .editorTransition
+
+                    // When zoomed, only inject anchors for zoomed sections
+                    let sectionsToInject: [SectionViewModel]
+                    if let zoomedIds = editorState.zoomedSectionIds {
+                        sectionsToInject = editorState.sections.filter { zoomedIds.contains($0.id) }
+                    } else {
+                        sectionsToInject = editorState.sections
+                    }
+
+                    // Recalculate offsets relative to current content (not full document)
+                    var adjustedSections: [SectionViewModel] = []
+                    var currentOffset = 0
+                    for section in sectionsToInject.sorted(by: { $0.sortOrder < $1.sortOrder }) {
+                        adjustedSections.append(section.withUpdates(startOffset: currentOffset))
+                        currentOffset += section.markdownContent.count
+                    }
+
+                    let injected = sectionSyncService.injectSectionAnchors(
+                        markdown: editorState.content,
+                        sections: adjustedSections
+                    )
+                    editorState.sourceContent = injected
+                    editorState.toggleEditorMode()
+                    editorState.contentState = .idle
+                } else {
+                    // Switching FROM source mode TO WYSIWYG - extract anchors
+                    editorState.contentState = .editorTransition
+                    let (cleaned, anchors) = sectionSyncService.extractSectionAnchors(
+                        markdown: editorState.sourceContent
+                    )
+                    editorState.sourceAnchors = anchors
+                    editorState.content = cleaned
+                    editorState.toggleEditorMode()
+
+                    // CRITICAL: Delay returning to .idle to give Milkdown time to initialize
+                    // Milkdown's first few polls can return corrupted content (missing # from headers)
+                    // Keep .editorTransition active to suppress polling during this initialization window
+                    // The 1.5s delay covers: WebView load + FinalFinal init + first stable poll cycle
+                    Task {
+                        try? await Task.sleep(for: .milliseconds(1500))
+                        editorState.contentState = .idle
+                    }
+                }
             }
             .onReceive(NotificationCenter.default.publisher(for: .didSaveCursorPosition)) { notification in
-                // Phase C: This handler is now only used for cursor position restoration
-                // The editor mode toggle no longer requires view swap
+                // Handle cursor position restoration during mode switch
                 if let position = notification.userInfo?["position"] as? CursorPosition {
                     cursorRestore.wrappedValue = position
                 }

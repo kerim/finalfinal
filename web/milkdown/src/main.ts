@@ -921,10 +921,44 @@ async function initEditor() {
   const originalDispatch = view.dispatch.bind(view);
   view.dispatch = (tr) => {
     originalDispatch(tr);
+
     if (tr.docChanged && !isSettingContent) {
       currentContent = editorInstance!.action(getMarkdown());
     }
   };
+
+  // Handle auto-correct: intercept replacement text input to prevent heading corruption
+  // macOS auto-correct uses DOM manipulation that can confuse ProseMirror's node structure,
+  // causing headings to lose their content. By handling it manually through ProseMirror's
+  // transaction system, we preserve the document structure.
+  view.dom.addEventListener('beforeinput', (e: InputEvent) => {
+    if (e.inputType === 'insertReplacementText') {
+      e.preventDefault();
+
+      // Get the replacement text from the event
+      const replacement = e.dataTransfer?.getData('text/plain') || e.data || '';
+      if (!replacement) return;
+
+      // Get the range being replaced from getTargetRanges()
+      const ranges = e.getTargetRanges();
+      if (ranges.length === 0) {
+        // Fallback: use current selection
+        const { from, to } = view.state.selection;
+        const tr = view.state.tr.replaceWith(from, to, view.state.schema.text(replacement));
+        view.dispatch(tr);
+        return;
+      }
+
+      // Convert DOM range to ProseMirror positions
+      const range = ranges[0];
+      const startPos = view.posAtDOM(range.startContainer, range.startOffset);
+      const endPos = view.posAtDOM(range.endContainer, range.endOffset);
+
+      // Perform the replacement through ProseMirror
+      const tr = view.state.tr.replaceWith(startPos, endPos, view.state.schema.text(replacement));
+      view.dispatch(tr);
+    }
+  });
 
   // Add keyboard shortcut: Cmd+Shift+K opens citation picker
   document.addEventListener(
@@ -1029,10 +1063,11 @@ window.FinalFinal = {
   getContent() {
     if (!editorInstance) return currentContent;
 
+    const sourceEnabled = isSourceModeEnabled();
     let markdown = getMarkdown()(editorInstance.ctx);
 
     // Fix double ## prefixes in source mode: "## ## Heading" → "## Heading"
-    if (isSourceModeEnabled()) {
+    if (sourceEnabled) {
       markdown = markdown.replace(/^(#{1,6}) \1 /gm, '$1 ');
     }
 
@@ -1899,9 +1934,7 @@ window.FinalFinal = {
         if (doc) {
           const { from } = view.state.selection;
           const docSize = view.state.doc.content.size;
-          let tr = view.state.tr
-            .replace(0, docSize, new Slice(doc.content, 0, 0))
-            .setMeta('addToHistory', false);
+          let tr = view.state.tr.replace(0, docSize, new Slice(doc.content, 0, 0)).setMeta('addToHistory', false);
 
           const safeFrom = Math.min(from, Math.max(0, doc.content.size - 1));
           try {

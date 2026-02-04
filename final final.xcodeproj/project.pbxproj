@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		0127F846C37CAFAFA0455C60 /* CodeMirrorEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 73EA833CAD13B84DA71C0544 /* CodeMirrorEditor.swift */; };
 		04195D3F2962ED2D9A21C2F5 /* SectionSyncService.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA5B65E36E0BB3661A7CE09A /* SectionSyncService.swift */; };
 		0482D5E5C956125D76159EA2 /* SectionTypography.swift in Sources */ = {isa = PBXBuildFile; fileRef = 049B00CFA6C19B14553937F3 /* SectionTypography.swift */; };
 		0784ABBC885E7F022DDC0D6B /* ExportViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 646D666F8FB90F4CDCFF356E /* ExportViewModel.swift */; };
@@ -153,6 +154,7 @@
 		728F6240519F3BDA2753E515 /* Database+Annotations.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Database+Annotations.swift"; sourceTree = "<group>"; };
 		7311920CB617B184B124B6F4 /* Annotation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Annotation.swift; sourceTree = "<group>"; };
 		734874328EB5518EAC0C2517 /* ProjectPackage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectPackage.swift; sourceTree = "<group>"; };
+		73EA833CAD13B84DA71C0544 /* CodeMirrorEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodeMirrorEditor.swift; sourceTree = "<group>"; };
 		748760007DC30115235FC8D6 /* GoalPopover.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoalPopover.swift; sourceTree = "<group>"; };
 		75B3D65D281D81B769D7DF96 /* OutlineSidebar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutlineSidebar.swift; sourceTree = "<group>"; };
 		76CC075151A2E6342FFE523E /* TinyTeX */ = {isa = PBXFileReference; lastKnownFileType = folder; name = TinyTeX; path = "final final/Resources/TinyTeX"; sourceTree = SOURCE_ROOT; };
@@ -243,6 +245,7 @@
 		1A41C166B938E47086169E96 /* Editors */ = {
 			isa = PBXGroup;
 			children = (
+				73EA833CAD13B84DA71C0544 /* CodeMirrorEditor.swift */,
 				CE6D9836DD14A789629A10CB /* EditorSchemeHandler.swift */,
 				7EEDC491836013F46E97FAE8 /* MilkdownEditor.swift */,
 			);
@@ -576,6 +579,7 @@
 				8A96868113B77FF320A4AFB9 /* CSLItem.swift in Sources */,
 				66B2E33AC24571E9D119C046 /* ChevronButton.swift in Sources */,
 				84D6884875EFB8B07BD1C64C /* CitationCommands.swift in Sources */,
+				0127F846C37CAFAFA0455C60 /* CodeMirrorEditor.swift in Sources */,
 				790667B521454C125B0FE74B /* ColorScheme.swift in Sources */,
 				7ACE3361E6A474E6D99062E1 /* ContentView.swift in Sources */,
 				5B5AFBF103A6E02BD4EB4898 /* Database+Annotations.swift in Sources */,

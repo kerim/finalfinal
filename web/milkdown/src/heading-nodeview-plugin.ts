@@ -23,7 +23,17 @@ const headingNodeView = $view(headingSchema.node, (_ctx: Ctx) => {
     // This is more efficient than creating a custom NodeView that mimics default behavior
     if (!createdInSourceMode) {
       // Return a simple passthrough that forces recreation on mode change
-      const dom = document.createElement(`h${node.attrs.level}`);
+      const level = node.attrs.level as number;
+      const dom = document.createElement(`h${level}`);
+      // Add data-placeholder for empty heading visibility (shows "## " when empty)
+      const placeholder = '#'.repeat(level) + ' ';
+      dom.setAttribute('data-placeholder', placeholder);
+
+      // Add heading-empty class if node has no content (for CSS placeholder)
+      if (node.content.size === 0) {
+        dom.classList.add('heading-empty');
+      }
+
       const contentDOM = document.createElement('span');
       dom.appendChild(contentDOM);
 
@@ -40,6 +50,14 @@ const headingNodeView = $view(headingSchema.node, (_ctx: Ctx) => {
           if (updatedNode.attrs.level !== node.attrs.level) {
             return false; // Recreate with new tag
           }
+
+          // Toggle heading-empty class based on content
+          if (updatedNode.content.size === 0) {
+            dom.classList.add('heading-empty');
+          } else {
+            dom.classList.remove('heading-empty');
+          }
+
           return true;
         },
       };

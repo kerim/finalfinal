@@ -85,7 +85,7 @@ function createSourceModeDecorations(doc: Node): Decoration[] {
   const decorations: Decoration[] = [];
 
   doc.descendants((node, pos) => {
-    // Heading # markers are now handled via CSS ::before pseudo-elements
+    // Heading # markers are handled via CSS ::before pseudo-elements
     // This allows normal text selection without widget interference
     // See styles.css: body.source-mode h1::before, etc.
 

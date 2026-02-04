@@ -77,6 +77,20 @@ body {
   text-wrap: balance;
 }
 
+/* Empty heading placeholder - shows ## when heading has no content (WYSIWYG mode only) */
+/* Uses heading-empty class toggled by heading-nodeview-plugin.ts based on node content */
+.ProseMirror h1.heading-empty::before,
+.ProseMirror h2.heading-empty::before,
+.ProseMirror h3.heading-empty::before,
+.ProseMirror h4.heading-empty::before,
+.ProseMirror h5.heading-empty::before,
+.ProseMirror h6.heading-empty::before {
+  content: attr(data-placeholder);
+  color: var(--editor-muted, #999);
+  font-style: italic;
+  pointer-events: none;
+}
+
 .milkdown h1,
 .ProseMirror h1 {
   font-size: var(--font-size-h1);
@@ -408,17 +422,11 @@ body.source-mode .ProseMirror {
 
 /* Source mode heading NodeView - renders # prefix as styled span */
 /* The heading-nodeview-plugin handles rendering in source mode */
-body.source-mode .heading-source-mode {
-  display: block;
-  font-size: inherit;
-  font-weight: inherit;
-  margin: 0.5em 0;
-  line-height: inherit;
-}
+/* Note: .heading-source-mode classes are styled via body.source-mode h1-h6 rules above */
 
 body.source-mode .heading-source-mode .heading-content {
   /* Content includes ## prefix in text content now */
-  /* Prefix styling is handled by the text itself */
+  /* Prefix styling is handled by .heading-prefix-syntax class */
 }
 
 /* Fallback ::before rules for headings not using NodeView (e.g., during transitions) */
@@ -507,18 +515,65 @@ body.source-mode h6:not(.heading-source-mode)::before {
   color: var(--syntax-hr, #6b7280);
 }
 
-/* Remove WYSIWYG styling in source mode */
+/* === Source Mode Heading Styles === */
+/* Headings retain visual hierarchy while showing ## prefix */
+
 body.source-mode h1,
-body.source-mode h2,
-body.source-mode h3,
-body.source-mode h4,
-body.source-mode h5,
-body.source-mode h6 {
-  font-size: inherit;
-  font-weight: inherit;
-  margin: 0.5em 0;
-  line-height: inherit;
+body.source-mode .heading-source-mode.heading-level-1 {
+  font-size: var(--font-size-h1);
+  font-weight: var(--weight-heading, 600);
+  color: var(--editor-heading-text, var(--editor-text));
+  line-height: var(--line-height-heading);
+  margin: 1em 0 0.5em 0;
 }
+
+body.source-mode h2,
+body.source-mode .heading-source-mode.heading-level-2 {
+  font-size: var(--font-size-h2);
+  font-weight: var(--weight-heading, 600);
+  color: var(--editor-heading-text, var(--editor-text));
+  line-height: var(--line-height-heading);
+  margin: 1em 0 0.5em 0;
+}
+
+body.source-mode h3,
+body.source-mode .heading-source-mode.heading-level-3 {
+  font-size: var(--font-size-h3);
+  font-weight: var(--weight-heading, 600);
+  color: var(--editor-heading-text, var(--editor-text));
+  line-height: var(--line-height-heading);
+  margin: 0.75em 0 0.5em 0;
+}
+
+body.source-mode h4,
+body.source-mode .heading-source-mode.heading-level-4 {
+  font-size: var(--font-size-h4);
+  font-weight: var(--weight-heading, 600);
+  color: var(--editor-heading-text, var(--editor-text));
+  line-height: var(--line-height-heading);
+  margin: 0.75em 0 0.5em 0;
+}
+
+body.source-mode h5,
+body.source-mode .heading-source-mode.heading-level-5 {
+  font-size: var(--font-size-h5);
+  font-weight: var(--weight-heading, 600);
+  color: var(--editor-heading-text, var(--editor-text));
+  line-height: var(--line-height-heading);
+  margin: 0.5em 0;
+}
+
+body.source-mode h6,
+body.source-mode .heading-source-mode.heading-level-6 {
+  font-size: var(--font-size-h6);
+  font-weight: var(--weight-heading, 600);
+  color: var(--editor-heading-text, var(--editor-text));
+  line-height: var(--line-height-heading);
+  margin: 0.5em 0;
+}
+
+/* Note: Heading # markers are displayed via CSS ::before pseudo-elements
+   They are not editable text - heading levels are changed via toolbar/keyboard shortcuts */
 
 body.source-mode blockquote {
   border-left: none;

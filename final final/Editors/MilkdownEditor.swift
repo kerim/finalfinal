@@ -1156,6 +1156,31 @@ struct MilkdownEditor: NSViewRepresentable {
 
                 guard content != self.lastPushedContent else { return }
 
+                // DEFENSIVE: Reject clearly corrupted content from Milkdown serialization bugs
+                // If we pushed a header and got back `<br />`, Milkdown's getMarkdown() is broken
+                let pushedFirstLine = self.lastPushedContent.components(separatedBy: "\n").first ?? ""
+                let polledFirstLine = content.components(separatedBy: "\n").first ?? ""
+
+                if pushedFirstLine.hasPrefix("#") && polledFirstLine.hasPrefix("<br") {
+                    print("[MilkdownEditor] REJECTED: Milkdown returned corrupted content")
+                    print("[MilkdownEditor]   pushed first line: '\(pushedFirstLine)'")
+                    print("[MilkdownEditor]   polled first line: '\(polledFirstLine)'")
+                    return  // Don't accept corrupted content
+                }
+
+                // DIAGNOSTIC: Detect unexpected content length changes (e.g., missing heading markers)
+                // This helps diagnose the section deletion cascade bug
+                let lengthDiff = content.count - self.lastPushedContent.count
+                if abs(lengthDiff) > 0 && abs(lengthDiff) <= 10 {
+                    // Small length change (1-10 chars) might indicate missing # markers
+                    if pushedFirstLine != polledFirstLine {
+                        print("[MilkdownEditor] DIAGNOSTIC: First line changed unexpectedly")
+                        print("[MilkdownEditor]   pushed first line: '\(pushedFirstLine)'")
+                        print("[MilkdownEditor]   polled first line: '\(polledFirstLine)'")
+                        print("[MilkdownEditor]   length diff: \(lengthDiff) chars")
+                    }
+                }
+
                 #if DEBUG
                 // PASTE DEBUG: Log when poll updates the binding
                 let pollPreview = String(content.prefix(100)).replacingOccurrences(of: "\n", with: "\\n")
