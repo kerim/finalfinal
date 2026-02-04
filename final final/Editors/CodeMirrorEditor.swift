@@ -18,6 +18,9 @@ struct CodeMirrorEditor: NSViewRepresentable {
     @Binding var scrollToOffset: Int?
     @Binding var isResettingContent: Bool
 
+    /// Content state for suppressing polling during transitions (zoom, hierarchy enforcement, drag)
+    var contentState: EditorContentState = .idle
+
     /// CSS variables for theming - when this changes, updateNSView is called
     var themeCSS: String = ThemeManager.shared.cssVariables
 
@@ -79,6 +82,9 @@ struct CodeMirrorEditor: NSViewRepresentable {
     }
 
     func updateNSView(_ webView: WKWebView, context: Context) {
+        // Update content state for coordinator (suppresses polling during transitions)
+        context.coordinator.contentState = contentState
+
         if context.coordinator.shouldPushContent(content) {
             context.coordinator.setContent(content)
         }
@@ -132,6 +138,10 @@ struct CodeMirrorEditor: NSViewRepresentable {
         private var lastPushTime: Date = .distantPast
 
         var lastThemeCss: String = ""
+
+        /// Current content state - used to suppress polling during transitions
+        var contentState: EditorContentState = .idle
+
         private var isEditorReady = false
         private var isCleanedUp = false
         private var toggleObserver: NSObjectProtocol?
@@ -629,6 +639,10 @@ struct CodeMirrorEditor: NSViewRepresentable {
             // Skip polling during content reset (project switch)
             guard !isResettingContentBinding.wrappedValue else { return }
 
+            // Skip polling during content transitions (zoom, hierarchy enforcement, drag)
+            // This prevents stale content from overwriting newly rebuilt content
+            guard contentState == .idle else { return }
+
             // Get raw content (including hidden anchors) for the binding
             // This preserves anchors so they travel with content during mode switches
             webView.evaluateJavaScript("window.FinalFinal.getContentRaw()") { [weak self] result, _ in
@@ -637,6 +651,9 @@ struct CodeMirrorEditor: NSViewRepresentable {
 
                 // Double-check reset flag in callback (may have changed)
                 guard !self.isResettingContentBinding.wrappedValue else { return }
+
+                // Double-check contentState in callback (may have changed during async)
+                guard self.contentState == .idle else { return }
 
                 // Grace period guard: don't overwrite recent pushes (race condition fix)
                 let timeSincePush = Date().timeIntervalSince(self.lastPushTime)

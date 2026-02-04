@@ -39,6 +39,7 @@ enum EditorContentState {
     case hierarchyEnforcement
     case bibliographyUpdate
     case editorTransition  // During Milkdown ↔ CodeMirror switch
+    case dragReorder       // During sidebar drag-drop reorder
 }
 
 @MainActor

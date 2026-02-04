@@ -511,13 +511,16 @@ class SectionSyncService {
     // MARK: - Section Anchor Support
 
     /// Regex pattern for section anchor comments
+    /// Anchors are on the same line as headers (no newline in pattern)
     private static let anchorPattern = try! NSRegularExpression(
-        pattern: #"<!-- @sid:([0-9a-fA-F-]+) -->\n?"#,
+        pattern: #"<!-- @sid:([0-9a-fA-F-]+) -->"#,
         options: []
     )
 
     /// Inject section anchors before each header in markdown
     /// Used when switching from WYSIWYG to source mode
+    /// Anchors are placed on the SAME LINE as headers (no newline after anchor)
+    /// to prevent blank lines when CodeMirror hides the anchor comment
     /// - Parameters:
     ///   - markdown: The markdown content
     ///   - sections: Current sections with their IDs
@@ -537,8 +540,8 @@ class SectionSyncService {
             let offset = min(section.startOffset, result.count)
             let insertionIndex = result.index(result.startIndex, offsetBy: offset)
 
-            // Inject anchor before the header
-            let anchor = "<!-- @sid:\(section.id) -->\n"
+            // Inject anchor on SAME LINE as header (no newline)
+            let anchor = "<!-- @sid:\(section.id) -->"
             result.insert(contentsOf: anchor, at: insertionIndex)
         }
 
@@ -547,26 +550,22 @@ class SectionSyncService {
 
     /// Extract section anchors and their IDs from markdown
     /// Used when switching from source mode back to WYSIWYG
-    /// Also normalizes malformed anchors (e.g., `<!-- @sid:UUID -->#` missing newline)
+    /// Anchors are expected to be on the same line as headers: `<!-- @sid:UUID --># Header`
     /// - Parameter markdown: The markdown content with anchors
     /// - Returns: Tuple of (clean markdown, anchor mappings)
     func extractSectionAnchors(markdown: String) -> (markdown: String, anchors: [SectionAnchorMapping]) {
-        // Phase 1: Normalize malformed anchors (missing newline before header)
-        // Pattern: `<!-- @sid:UUID -->#` should become `<!-- @sid:UUID -->\n#`
-        let normalizedMarkdown = Self.normalizeMalformedAnchors(markdown)
-
         var anchors: [SectionAnchorMapping] = []
-        let nsRange = NSRange(normalizedMarkdown.startIndex..., in: normalizedMarkdown)
+        let nsRange = NSRange(markdown.startIndex..., in: markdown)
 
         // Find all anchors and their positions
-        let matches = Self.anchorPattern.matches(in: normalizedMarkdown, options: [], range: nsRange)
+        let matches = Self.anchorPattern.matches(in: markdown, options: [], range: nsRange)
 
         var offsetAdjustment = 0
 
         for match in matches {
-            guard let idRange = Range(match.range(at: 1), in: normalizedMarkdown) else { continue }
+            guard let idRange = Range(match.range(at: 1), in: markdown) else { continue }
 
-            let anchorId = String(normalizedMarkdown[idRange])
+            let anchorId = String(markdown[idRange])
             let originalOffset = match.range.location
 
             // Calculate the offset in the cleaned markdown (after previous anchors removed)
@@ -584,35 +583,13 @@ class SectionSyncService {
 
         // Remove all anchors from the markdown
         let cleanedMarkdown = Self.anchorPattern.stringByReplacingMatches(
-            in: normalizedMarkdown,
+            in: markdown,
             options: [],
             range: nsRange,
             withTemplate: ""
         )
 
         return (cleanedMarkdown, anchors)
-    }
-
-    /// Pattern for malformed anchors: anchor comment followed directly by # (no newline)
-    private static let malformedAnchorPattern = try! NSRegularExpression(
-        pattern: #"(<!-- @sid:[0-9a-fA-F-]+ -->)(#)"#,
-        options: []
-    )
-
-    /// Normalize malformed anchors by inserting missing newlines
-    /// Fixes: `<!-- @sid:UUID -->#` → `<!-- @sid:UUID -->\n#`
-    private static func normalizeMalformedAnchors(_ markdown: String) -> String {
-        let nsRange = NSRange(markdown.startIndex..., in: markdown)
-        let normalized = malformedAnchorPattern.stringByReplacingMatches(
-            in: markdown,
-            options: [],
-            range: nsRange,
-            withTemplate: "$1\n$2"
-        )
-        if normalized != markdown {
-            print("[SectionSyncService] Normalized malformed anchors (inserted missing newlines)")
-        }
-        return normalized
     }
 
     /// Strip all section anchors from markdown

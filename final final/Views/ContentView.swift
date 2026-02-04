@@ -435,6 +435,10 @@ struct ContentView: View {
 
     /// Finalize section reorder - recalculate offsets, parent relationships, persist
     private func finalizeSectionReorder(sections: [SectionViewModel]) {
+        // Set content state to suppress polling during rebuild
+        editorState.contentState = .dragReorder
+        defer { editorState.contentState = .idle }
+
         var mutableSections = sections
 
         // Recalculate sort orders and offsets
@@ -456,6 +460,24 @@ struct ContentView: View {
 
         // Rebuild document content (zoom-aware)
         rebuildDocumentContent()
+
+        // If in source mode, also update sourceContent with anchors
+        // This ensures CodeMirrorEditor (which binds to sourceContent) sees the reordered content
+        if editorState.editorMode == .source {
+            // Recalculate offsets relative to current content for anchor injection
+            var adjustedSections: [SectionViewModel] = []
+            var adjustedOffset = 0
+            for section in editorState.sections.sorted(by: { $0.sortOrder < $1.sortOrder }) {
+                adjustedSections.append(section.withUpdates(startOffset: adjustedOffset))
+                adjustedOffset += section.markdownContent.count
+            }
+
+            let injected = sectionSyncService.injectSectionAnchors(
+                markdown: editorState.content,
+                sections: adjustedSections
+            )
+            editorState.sourceContent = injected
+        }
 
         // Persist reordered sections to database
         Task {
@@ -959,6 +981,7 @@ struct ContentView: View {
                     cursorPositionToRestore: $cursorPositionToRestore,
                     scrollToOffset: $editorState.scrollToOffset,
                     isResettingContent: $editorState.isResettingContent,
+                    contentState: editorState.contentState,
                     themeCSS: currentThemeCSS,
                     onContentChange: { newContent in
                         // Update sourceContent with raw content (including anchors)

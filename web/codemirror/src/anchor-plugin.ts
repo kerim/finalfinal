@@ -1,14 +1,14 @@
 /**
- * Section Anchor Plugin for CodeMirror 6
+ * Section Anchor & Bibliography Plugin for CodeMirror 6
  *
- * Hides `<!-- @sid:UUID -->` comments in the editor while preserving them in the document.
- * These anchors travel with content during cut/paste/reorder operations, providing
- * 100% accurate section ID tracking.
+ * Hides invisible markers in the editor while preserving them in the document:
+ * - `<!-- @sid:UUID -->` - Section anchors for ID tracking
+ * - `<!-- ::auto-bibliography:: -->` and `<!-- ::end-auto-bibliography:: -->` - Bibliography region markers
  *
  * Features:
- * - Decoration.replace() makes anchors invisible
+ * - Decoration.replace() makes markers invisible
  * - atomicRanges makes cursor skip over hidden regions
- * - Clipboard handlers strip anchors from copied text
+ * - Clipboard handlers strip markers from copied text
  */
 
 import { type EditorState, type Extension, RangeSetBuilder } from '@codemirror/state';
@@ -16,59 +16,82 @@ import { Decoration, type DecorationSet, EditorView, ViewPlugin, type ViewUpdate
 
 // Regex to match section anchor comments: <!-- @sid:UUID -->
 // UUID format: 8-4-4-4-12 hex characters (standard UUID v4)
-// Includes optional trailing newline for stripping operations
-const ANCHOR_REGEX = /<!-- @sid:[0-9a-fA-F-]+ -->\n?/g;
+// Anchors are on the same line as headers (no trailing newline)
+const ANCHOR_REGEX = /<!-- @sid:[0-9a-fA-F-]+ -->/g;
 
 // For extracting anchor info (no newline - just the comment)
 const ANCHOR_PATTERN = /<!-- @sid:([0-9a-fA-F-]+) -->/;
 
-// For decorations and atomic ranges - must NOT include newline
-// (CodeMirror restriction: Decoration.replace() cannot span line breaks)
-// Users CAN delete the newline after anchors - normalization happens on mode switch
+// For decorations and atomic ranges
+// Anchors are on the same line as headers: <!-- @sid:UUID --># Header
 const ANCHOR_DECORATION_REGEX = /<!-- @sid:[0-9a-fA-F-]+ -->/g;
 
-/**
- * Find all anchor ranges in the document for decoration purposes
- * Uses ANCHOR_DECORATION_REGEX which excludes newlines (CodeMirror restriction:
- * Decoration.replace() cannot span line breaks when specified via plugins)
- */
-function findAnchorsForDecoration(state: EditorState): { from: number; to: number; id: string }[] {
-  const text = state.doc.toString();
-  const anchors: { from: number; to: number; id: string }[] = [];
+// Bibliography markers - these wrap the auto-managed bibliography region
+const BIBLIOGRAPHY_START_REGEX = /<!-- ::auto-bibliography:: -->/g;
+const BIBLIOGRAPHY_END_REGEX = /<!-- ::end-auto-bibliography:: -->/g;
 
+// Combined regex for stripping all hidden markers from clipboard
+const ALL_HIDDEN_MARKERS_REGEX = /<!-- @sid:[0-9a-fA-F-]+ -->|<!-- ::auto-bibliography:: -->|<!-- ::end-auto-bibliography:: -->/g;
+
+/**
+ * Find all hidden marker ranges in the document for decoration purposes
+ * Includes section anchors and bibliography markers
+ */
+function findHiddenMarkers(state: EditorState): { from: number; to: number }[] {
+  const text = state.doc.toString();
+  const markers: { from: number; to: number }[] = [];
+
+  // Find section anchors
   let match: RegExpExecArray | null;
   ANCHOR_DECORATION_REGEX.lastIndex = 0;
   while ((match = ANCHOR_DECORATION_REGEX.exec(text)) !== null) {
-    const idMatch = match[0].match(ANCHOR_PATTERN);
-    if (idMatch) {
-      anchors.push({
-        from: match.index,
-        to: match.index + match[0].length,
-        id: idMatch[1],
-      });
-    }
+    markers.push({
+      from: match.index,
+      to: match.index + match[0].length,
+    });
   }
 
-  return anchors;
+  // Find bibliography start markers
+  BIBLIOGRAPHY_START_REGEX.lastIndex = 0;
+  while ((match = BIBLIOGRAPHY_START_REGEX.exec(text)) !== null) {
+    markers.push({
+      from: match.index,
+      to: match.index + match[0].length,
+    });
+  }
+
+  // Find bibliography end markers
+  BIBLIOGRAPHY_END_REGEX.lastIndex = 0;
+  while ((match = BIBLIOGRAPHY_END_REGEX.exec(text)) !== null) {
+    markers.push({
+      from: match.index,
+      to: match.index + match[0].length,
+    });
+  }
+
+  // Sort by position (required for RangeSetBuilder)
+  markers.sort((a, b) => a.from - b.from);
+
+  return markers;
 }
 
 /**
- * Build decorations to hide anchor comments (visual only, excludes newlines)
+ * Build decorations to hide all hidden markers visually
  */
 function buildDecorations(state: EditorState): DecorationSet {
   const builder = new RangeSetBuilder<Decoration>();
-  const anchors = findAnchorsForDecoration(state);
+  const markers = findHiddenMarkers(state);
 
-  for (const anchor of anchors) {
-    // Use Decoration.replace with empty widget to completely hide the anchor
-    builder.add(anchor.from, anchor.to, Decoration.replace({}));
+  for (const marker of markers) {
+    // Use Decoration.replace with empty widget to completely hide the marker
+    builder.add(marker.from, marker.to, Decoration.replace({}));
   }
 
   return builder.finish();
 }
 
 /**
- * ViewPlugin that maintains decorations to hide anchors (visual only)
+ * ViewPlugin that maintains decorations to hide all markers visually
  */
 const anchorDecorationPlugin = ViewPlugin.fromClass(
   class {
@@ -90,8 +113,9 @@ const anchorDecorationPlugin = ViewPlugin.fromClass(
 );
 
 /**
- * Extension that makes cursor skip over anchor regions (anchor comment only)
- * Users CAN delete the newline after anchors - normalization happens on mode switch
+ * Extension that makes cursor skip over hidden marker regions
+ * Section anchors are on the same line as headers, so hiding them doesn't create blank lines
+ * Bibliography markers are on their own lines (may leave empty lines when hidden)
  */
 const atomicAnchorRanges = EditorView.atomicRanges.of((view: EditorView) => {
   const plugin = view.plugin(anchorDecorationPlugin);
@@ -99,11 +123,11 @@ const atomicAnchorRanges = EditorView.atomicRanges.of((view: EditorView) => {
 });
 
 /**
- * Strip anchor comments from text
+ * Strip all hidden markers from text (anchors and bibliography markers)
  * Used for clipboard operations to ensure clean export
  */
 export function stripAnchors(text: string): string {
-  return text.replace(ANCHOR_REGEX, '');
+  return text.replace(ALL_HIDDEN_MARKERS_REGEX, '');
 }
 
 /**
@@ -142,6 +166,8 @@ export function extractAnchors(text: string): { id: string; headerOffset: number
 /**
  * Inject anchor comments before headers
  * Takes markdown and a map of header positions to section IDs
+ * Anchors are placed on the SAME LINE as the header (no newline after anchor)
+ * to prevent blank lines when the anchor decoration hides the comment
  */
 export function injectAnchors(markdown: string, anchors: { sectionId: string; headerOffset: number }[]): string {
   if (anchors.length === 0) return markdown;
@@ -152,7 +178,8 @@ export function injectAnchors(markdown: string, anchors: { sectionId: string; he
 
   let result = markdown;
   for (const anchor of sorted) {
-    const anchorText = `<!-- @sid:${anchor.sectionId} -->\n`;
+    // No newline after anchor - anchor stays on same line as header
+    const anchorText = `<!-- @sid:${anchor.sectionId} -->`;
     const offset = Math.min(anchor.headerOffset, result.length);
     result = result.slice(0, offset) + anchorText + result.slice(offset);
   }

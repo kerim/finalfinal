@@ -498,6 +498,60 @@ private static func enforceHierarchyAsync(editorState: EditorViewState, ...) asy
 
 ---
 
+### Dual Content Properties: Update Both When Mode-Specific
+
+**Problem:** Drag-drop section reorder in the sidebar updated the document correctly in WYSIWYG mode, but the editor didn't update when in Source mode (CodeMirror).
+
+**Root Cause:** The app has two separate content properties for different editor modes:
+- `editorState.content` - used by WYSIWYG mode (MilkdownEditor binding)
+- `editorState.sourceContent` - used by Source mode (CodeMirrorEditor binding), contains anchor markup
+
+The `rebuildDocumentContent()` function only updated `editorState.content`:
+
+```swift
+// rebuildDocumentContent() - ONLY updates content
+editorState.content = newContent  // MilkdownEditor sees this
+
+// But CodeMirrorEditor binds to sourceContent:
+CodeMirrorEditor(content: $editorState.sourceContent, ...)  // Never updated!
+```
+
+When in source mode, the binding to `sourceContent` never changed, so `updateNSView()` was never triggered, and the editor continued showing the old content.
+
+**Solution:** After rebuilding `content`, also update `sourceContent` when in source mode:
+
+```swift
+private func finalizeSectionReorder(sections: [SectionViewModel]) {
+    editorState.contentState = .dragReorder
+    defer { editorState.contentState = .idle }
+
+    // ... recalculate offsets, rebuild content ...
+    rebuildDocumentContent()
+
+    // If in source mode, also update sourceContent with anchors
+    if editorState.editorMode == .source {
+        var adjustedSections: [SectionViewModel] = []
+        var adjustedOffset = 0
+        for section in editorState.sections.sorted(by: { $0.sortOrder < $1.sortOrder }) {
+            adjustedSections.append(section.withUpdates(startOffset: adjustedOffset))
+            adjustedOffset += section.markdownContent.count
+        }
+
+        let injected = sectionSyncService.injectSectionAnchors(
+            markdown: editorState.content,
+            sections: adjustedSections
+        )
+        editorState.sourceContent = injected
+    }
+}
+```
+
+**Why `contentState` is also needed:** Even with `sourceContent` updated, editor polling could race with the update. Setting `contentState = .dragReorder` during the operation suppresses polling, ensuring the editor receives the complete reordered content.
+
+**General principle:** When a view model has multiple properties that serve the same purpose for different contexts (e.g., mode-specific content), ensure all relevant properties are updated when the shared state changes. Track which property each consumer binds to.
+
+---
+
 ## GRDB Configuration
 
 ### Never Use eraseDatabaseOnSchemaChange in Production
