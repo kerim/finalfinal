@@ -131,7 +131,7 @@ interface SearchState {
 declare global {
   interface Window {
     FinalFinal: {
-      setContent: (markdown: string) => void;
+      setContent: (markdown: string, options?: { scrollToStart?: boolean }) => void;
       getContent: () => string;
       setFocusMode: (enabled: boolean) => void;
       getStats: () => { words: number; characters: number };
@@ -1146,7 +1146,7 @@ async function initEditor() {
 }
 
 window.FinalFinal = {
-  setContent(markdown: string) {
+  setContent(markdown: string, options?: { scrollToStart?: boolean }) {
     if (!editorInstance) {
       currentContent = markdown;
       return;
@@ -1210,13 +1210,53 @@ window.FinalFinal = {
         const docSize = view.state.doc.content.size;
         let tr = view.state.tr.replace(0, docSize, new Slice(doc.content, 0, 0));
 
-        const safeFrom = Math.min(from, Math.max(0, doc.content.size - 1));
-        try {
-          tr = tr.setSelection(Selection.near(tr.doc.resolve(safeFrom)));
-        } catch {
+        // For zoom transitions, set selection to start; otherwise try to preserve position
+        if (options?.scrollToStart) {
           tr = tr.setSelection(Selection.atStart(tr.doc));
+        } else {
+          const safeFrom = Math.min(from, Math.max(0, doc.content.size - 1));
+          try {
+            tr = tr.setSelection(Selection.near(tr.doc.resolve(safeFrom)));
+          } catch {
+            tr = tr.setSelection(Selection.atStart(tr.doc));
+          }
         }
         view.dispatch(tr);
+
+        // Reset scroll position for zoom transitions
+        // Swift handles hiding/showing the WKWebView at compositor level
+        if (options?.scrollToStart) {
+          // Reset scroll immediately
+          view.dom.scrollTop = 0;
+          window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+
+          // Force layout calculation
+          void view.dom.offsetHeight;
+          void document.body.offsetHeight;
+
+          // Wait for actual paint to complete using double RAF
+          // First RAF: queued after current frame
+          // Second RAF: queued after the paint of the first frame
+          // This ensures the browser has actually rendered the content
+          requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+              // CRITICAL: Force compositor refresh with micro-scroll
+              // WKWebView's compositor caches the previous content.
+              // A scroll triggers compositor refresh, showing the new content.
+              window.scrollTo({ top: 1, left: 0, behavior: 'instant' });
+              window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+              view.dom.scrollTop = 0;
+
+              // Signal Swift that paint is complete
+              if (typeof (window as any).webkit?.messageHandlers?.paintComplete?.postMessage === 'function') {
+                (window as any).webkit.messageHandlers.paintComplete.postMessage({
+                  scrollHeight: view.dom.scrollHeight,
+                  timestamp: Date.now(),
+                });
+              }
+            });
+          });
+        }
       });
       currentContent = markdown;
     } finally {

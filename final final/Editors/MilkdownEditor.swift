@@ -36,6 +36,10 @@ struct MilkdownEditor: NSViewRepresentable {
     /// Content state for suppressing polling during transitions (zoom, hierarchy enforcement)
     var contentState: EditorContentState = .idle
 
+    /// Direct zoom flag passed through SwiftUI view hierarchy to bypass coordinator state race condition.
+    /// When true, setContent() will hide the WebView and use scrollToStart option.
+    var isZoomingContent: Bool = false
+
     /// CSS variables for theming - when this changes, updateNSView is called
     var themeCSS: String = ThemeManager.shared.cssVariables
 
@@ -59,6 +63,7 @@ struct MilkdownEditor: NSViewRepresentable {
             controller.add(context.coordinator, name: "searchCitations")
             controller.add(context.coordinator, name: "openCitationPicker")
             controller.add(context.coordinator, name: "resolveCitekeys")
+            controller.add(context.coordinator, name: "paintComplete")
 
             preloaded.navigationDelegate = context.coordinator
             context.coordinator.webView = preloaded
@@ -117,6 +122,7 @@ struct MilkdownEditor: NSViewRepresentable {
         configuration.userContentController.add(context.coordinator, name: "searchCitations")
         configuration.userContentController.add(context.coordinator, name: "openCitationPicker")
         configuration.userContentController.add(context.coordinator, name: "resolveCitekeys")
+        configuration.userContentController.add(context.coordinator, name: "paintComplete")
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = context.coordinator
@@ -134,7 +140,9 @@ struct MilkdownEditor: NSViewRepresentable {
     }
 
     func updateNSView(_ webView: WKWebView, context: Context) {
-        // Update content state and callbacks for coordinator
+        // Update content state, zoom flag, and callbacks for coordinator
+        // IMPORTANT: isZoomingContent must be set BEFORE content check to avoid race condition
+        context.coordinator.isZoomingContent = isZoomingContent
         context.coordinator.contentState = contentState
         context.coordinator.onContentAcknowledged = onContentAcknowledged
 
@@ -205,6 +213,11 @@ struct MilkdownEditor: NSViewRepresentable {
 
         /// Current content state - used to suppress polling during transitions
         var contentState: EditorContentState = .idle
+
+        /// Direct zoom flag passed from view through updateNSView.
+        /// Used to control alphaValue hiding and scrollToStart option in setContent().
+        /// This bypasses the race condition where contentState may be stale.
+        var isZoomingContent: Bool = false
 
         /// Callback invoked after content is confirmed set in WebView
         /// Used for acknowledgement-based synchronization during zoom transitions
@@ -775,6 +788,14 @@ struct MilkdownEditor: NSViewRepresentable {
                     await self.handleResolveCitekeys(citekeys)
                 }
             }
+
+            // Handle paint complete signal for zoom transitions
+            // This is called after the double RAF pattern ensures paint is complete
+            if message.name == "paintComplete" {
+                Task { @MainActor in
+                    self.handlePaintComplete()
+                }
+            }
         }
 
         /// Handle citation search request from web editor
@@ -974,6 +995,24 @@ struct MilkdownEditor: NSViewRepresentable {
             webView.evaluateJavaScript("window.FinalFinal.addCitationItems(JSON.parse(`\(escaped)`))") { _, _ in }
         }
 
+        /// Handle paint complete signal from web editor (for zoom transitions)
+        /// Called after double RAF pattern ensures browser has painted all content
+        @MainActor
+        private func handlePaintComplete() {
+            print("[MilkdownEditor] ZOOM: paintComplete received at \(Date())")
+
+            // Show WebView now that paint is complete
+            webView?.alphaValue = 1
+            print("[MilkdownEditor] ZOOM: WebView shown (alphaValue = 1)")
+
+            // Call acknowledgement callback if registered (for zoom sync)
+            if let callback = onContentAcknowledged {
+                onContentAcknowledged = nil  // One-shot callback
+                callback()
+                print("[MilkdownEditor] ZOOM: Acknowledgement callback fired")
+            }
+        }
+
         /// Refresh all citations in the document
         /// Gets all citekeys from the editor, fetches their CSL data, and pushes it back
         @MainActor
@@ -1044,10 +1083,25 @@ struct MilkdownEditor: NSViewRepresentable {
                 return
             }
 
+            // Use the direct isZoomingContent flag instead of contentState check.
+            // isZoomingContent is set in the same updateNSView cycle as the content change,
+            // so it's guaranteed to be fresh (unlike contentState which may be stale due to
+            // SwiftUI's reactive notification timing).
+            let isZoom = isZoomingContent
+            let optionsArg = isZoom ? ", {scrollToStart: true}" : ""
+
+            // Hide WKWebView at compositor level during zoom transitions
+            // This prevents visible scroll animation by hiding at the CALayer level
+            // before any content changes, ensuring no intermediate frames are visible
+            if isZoom {
+                print("[MilkdownEditor] ZOOM: Hiding WebView at \(Date())")
+                webView.alphaValue = 0
+            }
+
             // Set content and then read it back to confirm (acknowledgement pattern)
             // This ensures WebView has processed the content before we continue
             webView.evaluateJavaScript("""
-                window.FinalFinal.setContent(\(jsonString));
+                window.FinalFinal.setContent(\(jsonString)\(optionsArg));
                 window.FinalFinal.getContent();
             """) { [weak self] result, error in
                 #if DEBUG
@@ -1057,12 +1111,17 @@ struct MilkdownEditor: NSViewRepresentable {
                 }
                 #endif
 
-                // Content is now confirmed set in WebView
-                // Call acknowledgement callback if registered
-                if let callback = self?.onContentAcknowledged {
-                    self?.onContentAcknowledged = nil  // One-shot callback
-                    callback()
+                // For zoom transitions, DON'T show WebView here - wait for paintComplete message
+                // The JS double-RAF pattern will signal when paint is complete
+                if !isZoom {
+                    // For non-zoom content changes, call acknowledgement immediately
+                    if let callback = self?.onContentAcknowledged {
+                        self?.onContentAcknowledged = nil  // One-shot callback
+                        callback()
+                    }
                 }
+                // For zoom transitions, the paintComplete handler will show the WebView
+                // and call the acknowledgement callback
             }
         }
 

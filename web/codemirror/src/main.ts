@@ -60,7 +60,7 @@ interface SearchState {
 declare global {
   interface Window {
     FinalFinal: {
-      setContent: (markdown: string) => void;
+      setContent: (markdown: string, options?: { scrollToStart?: boolean }) => void;
       getContent: () => string;
       getContentClean: () => string; // Content with anchors stripped
       getContentRaw: () => string; // Content including hidden anchors
@@ -711,15 +711,31 @@ function countWords(text: string): number {
 
 // Register window.FinalFinal API
 window.FinalFinal = {
-  setContent(markdown: string) {
+  setContent(markdown: string, options?: { scrollToStart?: boolean }) {
     if (!editorView) {
       return;
     }
+
     const prevLen = editorView.state.doc.length;
     editorView.dispatch({
       changes: { from: 0, to: prevLen, insert: markdown },
     });
     window.__CODEMIRROR_DEBUG__!.lastContentLength = markdown.length;
+
+    // Reset scroll position for zoom transitions
+    // Swift handles hiding/showing the WKWebView at compositor level
+    if (options?.scrollToStart) {
+      editorView.dispatch({
+        selection: { anchor: 0 },
+        effects: EditorView.scrollIntoView(0, { y: 'start' }),
+      });
+      // Force CodeMirror to recalculate viewport
+      editorView.requestMeasure();
+
+      // Force aggressive reflow for long content
+      void editorView.dom.offsetHeight;
+      void document.body.offsetHeight;
+    }
   },
 
   getContent(): string {

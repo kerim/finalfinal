@@ -1039,6 +1039,7 @@ struct ContentView: View {
                     scrollToOffset: $editorState.scrollToOffset,
                     isResettingContent: $editorState.isResettingContent,
                     contentState: editorState.contentState,
+                    isZoomingContent: editorState.isZoomingContent,
                     themeCSS: currentThemeCSS,
                     onContentChange: { _ in
                         // Content change handling - could trigger outline parsing here
@@ -1065,6 +1066,7 @@ struct ContentView: View {
                     scrollToOffset: $editorState.scrollToOffset,
                     isResettingContent: $editorState.isResettingContent,
                     contentState: editorState.contentState,
+                    isZoomingContent: editorState.isZoomingContent,
                     themeCSS: currentThemeCSS,
                     onContentChange: { newContent in
                         // Update sourceContent with raw content (including anchors)

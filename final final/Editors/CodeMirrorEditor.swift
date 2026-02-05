@@ -21,6 +21,10 @@ struct CodeMirrorEditor: NSViewRepresentable {
     /// Content state for suppressing polling during transitions (zoom, hierarchy enforcement, drag)
     var contentState: EditorContentState = .idle
 
+    /// Direct zoom flag passed through SwiftUI view hierarchy to bypass coordinator state race condition.
+    /// When true, setContent() will hide the WebView and use scrollToStart option.
+    var isZoomingContent: Bool = false
+
     /// CSS variables for theming - when this changes, updateNSView is called
     var themeCSS: String = ThemeManager.shared.cssVariables
 
@@ -85,7 +89,9 @@ struct CodeMirrorEditor: NSViewRepresentable {
     }
 
     func updateNSView(_ webView: WKWebView, context: Context) {
-        // Update content state for coordinator (suppresses polling during transitions)
+        // Update content state and zoom flag for coordinator (suppresses polling during transitions)
+        // IMPORTANT: isZoomingContent must be set BEFORE content check to avoid race condition
+        context.coordinator.isZoomingContent = isZoomingContent
         context.coordinator.contentState = contentState
 
         if context.coordinator.shouldPushContent(content) {
@@ -145,6 +151,11 @@ struct CodeMirrorEditor: NSViewRepresentable {
 
         /// Current content state - used to suppress polling during transitions
         var contentState: EditorContentState = .idle
+
+        /// Direct zoom flag passed from view through updateNSView.
+        /// Used to control alphaValue hiding and scrollToStart option in setContent().
+        /// This bypasses the race condition where contentState may be stale.
+        var isZoomingContent: Bool = false
 
         private var isEditorReady = false
         private var isCleanedUp = false
@@ -585,7 +596,28 @@ struct CodeMirrorEditor: NSViewRepresentable {
             let escaped = markdown.replacingOccurrences(of: "\\", with: "\\\\")
                 .replacingOccurrences(of: "`", with: "\\`")
                 .replacingOccurrences(of: "$", with: "\\$")
-            webView.evaluateJavaScript("window.FinalFinal.setContent(`\(escaped)`)") { _, _ in }
+
+            // Use the direct isZoomingContent flag instead of contentState check.
+            // isZoomingContent is set in the same updateNSView cycle as the content change,
+            // so it's guaranteed to be fresh (unlike contentState which may be stale due to
+            // SwiftUI's reactive notification timing).
+            let isZoom = isZoomingContent
+            let optionsArg = isZoom ? ", {scrollToStart: true}" : ""
+
+            // Hide WKWebView at compositor level during zoom transitions
+            // This prevents visible scroll animation by hiding at the CALayer level
+            // before any content changes, ensuring no intermediate frames are visible
+            if isZoom {
+                webView.alphaValue = 0
+            }
+
+            webView.evaluateJavaScript("window.FinalFinal.setContent(`\(escaped)`\(optionsArg))") { [weak self] _, _ in
+                // Show WebView after content is set and scroll reset
+                // No delay needed - JS has forced layout via offsetHeight reads
+                if isZoom {
+                    self?.webView?.alphaValue = 1
+                }
+            }
         }
 
         func setTheme(_ cssVariables: String) {
