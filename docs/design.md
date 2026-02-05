@@ -432,9 +432,16 @@ The `outline_nodes` table is a cache rebuilt whenever content changes. It enable
 - NO drag-and-drop add bar in MVP (design TBD for later)
 
 **Focus Mode:**
-- Paragraph dimming (dims non-current paragraph)
-- Use ProseMirror Decoration system (not DOM manipulation)
-- Works in WYSIWYG mode only
+- Comprehensive distraction-free writing experience
+- Paragraph dimming (dims non-current paragraph) via ProseMirror Decorations
+- Works in WYSIWYG mode only (CodeMirror ignores focus mode)
+
+**Focus Mode Behavior:**
+- **Enter** (Cmd+Shift+F): Captures pre-focus state → enters full screen → hides sidebars with animation → collapses all annotations → enables paragraph highlighting → shows toast notification (auto-dismiss 3s)
+- **During**: User can manually toggle sidebars/annotations; changes are temporary
+- **Exit** (Esc or Cmd+Shift+F): Exits full screen only if focus mode entered it → restores sidebar visibility from snapshot → restores annotation display modes → disables paragraph highlighting
+- **Persistence**: Focus mode state persists via UserDefaults; restored on next launch after 500ms window stabilization
+- **Implementation**: `FullScreenManager` controls NSWindow full screen; `FocusModeSnapshot` captures pre-state; NSEvent monitor handles Esc key when WKWebView has focus
 
 **Theming:**
 - Multiple color schemes (light/dark variants)
@@ -577,9 +584,18 @@ final final/
 - [ ] Pseudo-sections show with special marker
 
 **Focus mode:**
-- [ ] Cmd+Shift+F toggles focus mode
-- [ ] Non-current paragraphs dimmed in WYSIWYG mode
-- [ ] Focus mode hidden when in source mode
+- [x] Cmd+Shift+F enters focus mode
+- [x] Esc or Cmd+Shift+F exits focus mode
+- [x] Full screen activates on enter (if not already)
+- [x] Full screen exits only if focus mode entered it
+- [x] Both sidebars hidden with animation on enter
+- [x] Sidebars restored to pre-focus state on exit
+- [x] Annotations collapsed on enter, restored on exit
+- [x] Toolbar and status bar hidden in focus mode
+- [x] Toast notification appears on enter (auto-dismiss 3s)
+- [x] Non-current paragraphs dimmed in WYSIWYG mode
+- [x] Focus mode persists across app restarts
+- [x] Manual sidebar toggles work during focus mode (temporary)
 
 **Theming:**
 - [ ] Can switch between color schemes

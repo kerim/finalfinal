@@ -15,6 +15,29 @@ struct CursorPosition: Equatable {
     static let start = CursorPosition(line: 1, column: 0)
 }
 
+/// Toast notification shown when entering focus mode, auto-dismisses after 3 seconds
+struct FocusModeToast: View {
+    @Binding var isShowing: Bool
+
+    var body: some View {
+        if isShowing {
+            Text("Press Esc or Cmd+Shift+F to exit focus mode")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+                .transition(.opacity.combined(with: .move(edge: .top)))
+                .task {
+                    try? await Task.sleep(nanoseconds: 3_000_000_000)
+                    withAnimation {
+                        isShowing = false
+                    }
+                }
+        }
+    }
+}
+
 // swiftlint:disable:next type_body_length
 struct ContentView: View {
     @Environment(ThemeManager.self) private var themeManager
@@ -172,6 +195,10 @@ struct ContentView: View {
                 editorState: editorState,
                 sidebarVisibility: $sidebarVisibility
             )
+            .overlay(alignment: .top) {
+                FocusModeToast(isShowing: $editorState.showFocusModeToast)
+                    .padding(.top, 60)
+            }
     }
 
     @ViewBuilder
@@ -183,9 +210,20 @@ struct ContentView: View {
         }
         .navigationTitle(documentManager.projectTitle ?? "Untitled")
         .toolbar { annotationPanelToolbar }
+        // Hide window toolbar in focus mode for distraction-free writing
+        .toolbar(editorState.focusModeEnabled ? .hidden : .visible, for: .windowToolbar)
         .task {
             AppDelegate.shared?.editorState = editorState
             await initializeProject()
+
+            // Restore focus mode from previous session if needed
+            // Wait 500ms for window to stabilize before entering full screen
+            if editorState.focusModeEnabled && editorState.preFocusModeState == nil {
+                try? await Task.sleep(nanoseconds: 500_000_000)
+                // Re-enter focus mode to capture fresh pre-state and apply full screen
+                editorState.focusModeEnabled = false  // Reset first
+                await editorState.enterFocusMode()
+            }
         }
     }
 
@@ -889,7 +927,10 @@ struct ContentView: View {
             // Main editor area
             VStack(spacing: 0) {
                 editorView
-                StatusBar(editorState: editorState)
+                // Hide status bar in focus mode for distraction-free writing
+                if !editorState.focusModeEnabled {
+                    StatusBar(editorState: editorState)
+                }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(themeManager.currentTheme.editorBackground)

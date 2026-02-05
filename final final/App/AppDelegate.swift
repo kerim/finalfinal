@@ -21,6 +21,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// Reference to main window for close interception
     private var mainWindow: NSWindow?
 
+    /// NSEvent monitor for Esc key to exit focus mode (works even when WKWebView has focus)
+    private var escapeKeyMonitor: Any?
+
     func applicationWillFinishLaunching(_ notification: Notification) {
         // Start preloading editor WebView EARLY - before any windows/views are created
         // This gives the WebView time to load while database initializes
@@ -99,12 +102,48 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 #endif
             }
         }
+
+        // Set up Esc key monitor for exiting focus mode
+        // This is necessary because WKWebView captures keyboard events and
+        // SwiftUI's .onKeyPress(.escape) is unreliable when WebView has focus
+        setupEscapeKeyMonitor()
+    }
+
+    /// Set up NSEvent local monitor for Esc key to exit focus mode
+    private func setupEscapeKeyMonitor() {
+        escapeKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            // keyCode 53 = Esc key
+            guard event.keyCode == 53,
+                  let editorState = self?.editorState,
+                  editorState.focusModeEnabled else {
+                return event  // Pass through if not Esc or not in focus mode
+            }
+
+            // Exit focus mode
+            Task { @MainActor in
+                await editorState.exitFocusMode()
+            }
+
+            // Consume the event to prevent other handlers
+            return nil
+        }
+    }
+
+    /// Remove Esc key monitor on termination
+    private func removeEscapeKeyMonitor() {
+        if let monitor = escapeKeyMonitor {
+            NSEvent.removeMonitor(monitor)
+            escapeKeyMonitor = nil
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
         #if DEBUG
         print("[AppDelegate] Application terminating")
         #endif
+
+        // Remove Esc key monitor
+        removeEscapeKeyMonitor()
 
         // If zoomed, merge content back before quitting
         // This is fire-and-forget since we're terminating anyway
