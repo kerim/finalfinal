@@ -56,7 +56,7 @@ final class EditorSchemeHandler: NSObject, WKURLSchemeHandler {
 
         var pathComponents = url.pathComponents.filter { $0 != "/" }
 
-        // Include host as first path component (editor type: milkdown, codemirror)
+        // Include host as first path component (editor type: milkdown)
         if let host = url.host, !host.isEmpty {
             pathComponents.insert(host, at: 0)
         }

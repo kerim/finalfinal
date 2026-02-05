@@ -77,7 +77,15 @@ extension ProjectDatabase {
     }
 
     private func rebuildOutlineCache(markdown: String, projectId: String) throws {
-        let nodes = OutlineParser.parse(markdown: markdown, projectId: projectId)
+        // Get existing bibliography title for detection (when marker is not present)
+        let existingBibTitle = try read { db in
+            try Section
+                .filter(Section.Columns.projectId == projectId)
+                .filter(Section.Columns.isBibliography == true)
+                .fetchOne(db)?
+                .title
+        }
+        let nodes = OutlineParser.parse(markdown: markdown, projectId: projectId, existingBibTitle: existingBibTitle)
         try replaceOutlineNodes(nodes, for: projectId)
         print("[ProjectDatabase] Rebuilt outline cache: \(nodes.count) nodes")
     }

@@ -16,7 +16,15 @@ import {
   setHideCompletedTasks,
 } from './annotation-display-plugin';
 import { type AnnotationType, annotationNode, annotationPlugin } from './annotation-plugin';
-import { autoBibliographyPlugin } from './auto-bibliography-plugin';
+import { blockIdPlugin, confirmBlockIds, getAllBlockIds, getBlockIdAtPos, resetBlockIdState } from './block-id-plugin';
+import {
+  type BlockChanges,
+  blockSyncPlugin,
+  destroyBlockSyncState,
+  getBlockChanges,
+  hasPendingChanges,
+  resetBlockSyncState,
+} from './block-sync-plugin';
 import {
   type CSLItem,
   citationNode,
@@ -39,8 +47,10 @@ import {
 import { getCiteprocEngine } from './citeproc-engine';
 import { mdToTextOffset, textToMdOffset } from './cursor-mapping';
 import { focusModePlugin, setFocusModeEnabled } from './focus-mode-plugin';
+import { headingNodeViewPlugin } from './heading-nodeview-plugin';
 import { highlightMark, highlightPlugin } from './highlight-plugin';
 import { sectionBreakNode, sectionBreakPlugin } from './section-break-plugin';
+import { isSourceModeEnabled, setSourceModeEnabled, sourceModePlugin } from './source-mode-plugin';
 import './styles.css';
 
 /**
@@ -150,8 +160,30 @@ declare global {
         hasEditor: boolean;
         docSize: number | null;
       };
+      // Block-based API (Phase B)
+      getBlockChanges: () => BlockChanges;
+      applyBlocks: (blocks: Block[]) => void;
+      confirmBlockIds: (mapping: Record<string, string>) => void;
+      scrollToBlock: (blockId: string) => void;
+      getBlockAtCursor: () => { blockId: string; offset: number } | null;
+      hasBlockChanges: () => boolean;
+      // Dual-appearance mode API (Phase C)
+      setEditorMode: (mode: 'wysiwyg' | 'source') => void;
+      getEditorMode: () => 'wysiwyg' | 'source';
+      // Cleanup API (for state reset before project switch)
+      resetEditorState: () => void;
     };
   }
+}
+
+// Block type for applyBlocks API
+interface Block {
+  id: string;
+  blockType: string;
+  textContent: string;
+  markdownFragment: string;
+  headingLevel?: number;
+  sortOrder: number;
 }
 
 // === Lazy Citation Resolution ===
@@ -848,16 +880,19 @@ async function initEditor() {
       // 4. highlightPlugin MUST be after commonmark to survive parse-serialize cycle
       //    (fixes ==text== not persisting when switching to CodeMirror)
       // 5. citationPlugin MUST be before commonmark to parse [@citekey] syntax
+      .use(blockIdPlugin) // Assign stable IDs to block-level nodes
+      .use(blockSyncPlugin) // Track block changes for Swift sync
       .use(sectionBreakPlugin) // Intercept <!-- ::break:: --> before commonmark filters it
       .use(annotationPlugin) // Intercept annotation comments before filtering
-      .use(autoBibliographyPlugin) // Intercept auto-bibliography markers before filtering
       .use(citationPlugin) // Parse [@citekey] citations before commonmark
       .use(commonmark)
       .use(gfm)
       .use(highlightPlugin) // ==highlight== syntax - AFTER commonmark for serialization
       .use(history)
       .use(focusModePlugin)
+      .use(sourceModePlugin) // Dual-appearance source mode
       .use(annotationDisplayPlugin) // Controls annotation visibility
+      .use(headingNodeViewPlugin) // Custom heading rendering for source mode # selection
       // citationNodeView is now included in citationPlugin (same file = correct atom identity)
       .use(slash)
       .create();
@@ -882,10 +917,44 @@ async function initEditor() {
   const originalDispatch = view.dispatch.bind(view);
   view.dispatch = (tr) => {
     originalDispatch(tr);
+
     if (tr.docChanged && !isSettingContent) {
       currentContent = editorInstance!.action(getMarkdown());
     }
   };
+
+  // Handle auto-correct: intercept replacement text input to prevent heading corruption
+  // macOS auto-correct uses DOM manipulation that can confuse ProseMirror's node structure,
+  // causing headings to lose their content. By handling it manually through ProseMirror's
+  // transaction system, we preserve the document structure.
+  view.dom.addEventListener('beforeinput', (e: InputEvent) => {
+    if (e.inputType === 'insertReplacementText') {
+      e.preventDefault();
+
+      // Get the replacement text from the event
+      const replacement = e.dataTransfer?.getData('text/plain') || e.data || '';
+      if (!replacement) return;
+
+      // Get the range being replaced from getTargetRanges()
+      const ranges = e.getTargetRanges();
+      if (ranges.length === 0) {
+        // Fallback: use current selection
+        const { from, to } = view.state.selection;
+        const tr = view.state.tr.replaceWith(from, to, view.state.schema.text(replacement));
+        view.dispatch(tr);
+        return;
+      }
+
+      // Convert DOM range to ProseMirror positions
+      const range = ranges[0];
+      const startPos = view.posAtDOM(range.startContainer, range.startOffset);
+      const endPos = view.posAtDOM(range.endContainer, range.endOffset);
+
+      // Perform the replacement through ProseMirror
+      const tr = view.state.tr.replaceWith(startPos, endPos, view.state.schema.text(replacement));
+      view.dispatch(tr);
+    }
+  });
 
   // Add keyboard shortcut: Cmd+Shift+K opens citation picker
   document.addEventListener(
@@ -988,14 +1057,25 @@ window.FinalFinal = {
   },
 
   getContent() {
-    const content = editorInstance ? editorInstance.action(getMarkdown()) : currentContent;
-    const trimmed = content.trim();
+    if (!editorInstance) return currentContent;
+
+    const sourceEnabled = isSourceModeEnabled();
+    let markdown = getMarkdown()(editorInstance.ctx);
+
+    // Fix double ## prefixes in source mode: "## ## Heading" → "## Heading"
+    if (sourceEnabled) {
+      markdown = markdown.replace(/^(#{1,6}) \1 /gm, '$1 ');
+    }
+
+    const trimmed = markdown.trim();
 
     // Empty/minimal document may serialize to just a section break marker - treat as empty
     if (trimmed === '' || trimmed === '<!-- ::break:: -->') {
       return '';
     }
-    return content;
+
+    currentContent = markdown;
+    return markdown;
   },
 
   setFocusMode(enabled: boolean) {
@@ -1675,6 +1755,250 @@ window.FinalFinal = {
       hasEditor: !!editorInstance,
       docSize: editorInstance ? editorInstance.ctx.get(editorViewCtx).state.doc.content.size : null,
     };
+  },
+
+  // === Block-based API (Phase B) ===
+
+  getBlockChanges(): BlockChanges {
+    return getBlockChanges();
+  },
+
+  applyBlocks(blocks: Block[]) {
+    if (!editorInstance) return;
+
+    try {
+      const view = editorInstance.ctx.get(editorViewCtx);
+      const parser = editorInstance.ctx.get(parserCtx);
+
+      // Sort blocks by sortOrder
+      const sortedBlocks = [...blocks].sort((a, b) => a.sortOrder - b.sortOrder);
+
+      // Assemble markdown from blocks
+      const markdown = sortedBlocks.map((b) => b.markdownFragment).join('\n\n');
+
+      // Parse and replace document content
+      isSettingContent = true;
+      try {
+        const doc = parser(markdown);
+        if (!doc) return;
+
+        const { from } = view.state.selection;
+        const docSize = view.state.doc.content.size;
+        let tr = view.state.tr.replace(0, docSize, new Slice(doc.content, 0, 0));
+
+        // Try to preserve cursor position
+        const safeFrom = Math.min(from, Math.max(0, doc.content.size - 1));
+        try {
+          tr = tr.setSelection(Selection.near(tr.doc.resolve(safeFrom)));
+        } catch {
+          tr = tr.setSelection(Selection.atStart(tr.doc));
+        }
+
+        view.dispatch(tr);
+        currentContent = markdown;
+
+        // Reset sync state since we're replacing everything
+        resetBlockSyncState();
+      } finally {
+        isSettingContent = false;
+      }
+    } catch (e) {
+      console.error('[Milkdown] applyBlocks failed:', e);
+    }
+  },
+
+  confirmBlockIds(mapping: Record<string, string>) {
+    confirmBlockIds(mapping);
+    // Trigger a transaction to update decorations
+    if (editorInstance) {
+      try {
+        const view = editorInstance.ctx.get(editorViewCtx);
+        view.dispatch(view.state.tr);
+      } catch {
+        // Dispatch failed, ignore
+      }
+    }
+  },
+
+  scrollToBlock(blockId: string) {
+    if (!editorInstance) return;
+
+    try {
+      const view = editorInstance.ctx.get(editorViewCtx);
+      const blockIds = getAllBlockIds();
+
+      // Find position for this block ID
+      let targetPos: number | null = null;
+      for (const [pos, id] of blockIds) {
+        if (id === blockId) {
+          targetPos = pos;
+          break;
+        }
+      }
+
+      if (targetPos === null) return;
+
+      // Scroll to the block
+      const selection = Selection.near(view.state.doc.resolve(targetPos + 1));
+      view.dispatch(view.state.tr.setSelection(selection).scrollIntoView());
+      view.focus();
+    } catch (e) {
+      console.error('[Milkdown] scrollToBlock failed:', e);
+    }
+  },
+
+  getBlockAtCursor(): { blockId: string; offset: number } | null {
+    if (!editorInstance) return null;
+
+    try {
+      const view = editorInstance.ctx.get(editorViewCtx);
+      const { head } = view.state.selection;
+      const $head = view.state.doc.resolve(head);
+
+      // Find the nearest block containing the cursor
+      for (let depth = $head.depth; depth > 0; depth--) {
+        const pos = $head.before(depth);
+        const blockId = getBlockIdAtPos(pos);
+        if (blockId) {
+          // Calculate offset within the block
+          const offset = head - pos - 1; // -1 for node start boundary
+          return { blockId, offset: Math.max(0, offset) };
+        }
+      }
+
+      return null;
+    } catch (e) {
+      console.error('[Milkdown] getBlockAtCursor failed:', e);
+      return null;
+    }
+  },
+
+  hasBlockChanges(): boolean {
+    return hasPendingChanges();
+  },
+
+  // === Dual-appearance mode API (Phase C) ===
+
+  setEditorMode(mode: 'wysiwyg' | 'source') {
+    const wasSourceMode = isSourceModeEnabled();
+    const enableSource = mode === 'source';
+
+    // Step 1: If switching FROM source mode, strip prefixes BEFORE re-parse
+    // (so the markdown serializes cleanly without double ##)
+    if (wasSourceMode && !enableSource && editorInstance) {
+      try {
+        const view = editorInstance.ctx.get(editorViewCtx);
+        let tr = view.state.tr;
+
+        const headings: Array<{ pos: number; level: number }> = [];
+        view.state.doc.descendants((node, pos) => {
+          if (node.type.name === 'heading') {
+            headings.push({ pos, level: node.attrs.level as number });
+          }
+          return true;
+        });
+
+        headings.reverse();
+
+        for (const { pos, level } of headings) {
+          const prefix = `${'#'.repeat(level)} `;
+          const node = view.state.doc.nodeAt(pos);
+          if (!node) continue;
+          if (node.textContent.startsWith(prefix)) {
+            tr = tr.delete(pos + 1, pos + 1 + prefix.length);
+          }
+        }
+
+        tr = tr.setMeta('addToHistory', false);
+        view.dispatch(tr);
+      } catch (e) {
+        console.error('[Milkdown] Heading prefix strip failed:', e);
+      }
+    }
+
+    // Step 2: Change mode state
+    setSourceModeEnabled(enableSource);
+
+    // Step 3: Force NodeView recreation via re-parse
+    if (wasSourceMode !== enableSource && editorInstance) {
+      try {
+        const view = editorInstance.ctx.get(editorViewCtx);
+        const parser = editorInstance.ctx.get(parserCtx);
+        const currentMarkdown = this.getContent();
+        const doc = parser(currentMarkdown);
+
+        if (doc) {
+          const { from } = view.state.selection;
+          const docSize = view.state.doc.content.size;
+          let tr = view.state.tr.replace(0, docSize, new Slice(doc.content, 0, 0)).setMeta('addToHistory', false);
+
+          const safeFrom = Math.min(from, Math.max(0, doc.content.size - 1));
+          try {
+            tr = tr.setSelection(Selection.near(tr.doc.resolve(safeFrom)));
+          } catch {
+            tr = tr.setSelection(Selection.atStart(tr.doc));
+          }
+
+          view.dispatch(tr);
+        }
+      } catch {
+        // Parse failed, ignore
+      }
+    }
+
+    // Step 4: If switching TO source mode, insert prefixes AFTER re-parse
+    // (so they appear in the fresh NodeViews)
+    if (!wasSourceMode && enableSource && editorInstance) {
+      try {
+        const view = editorInstance.ctx.get(editorViewCtx);
+        let tr = view.state.tr;
+
+        const headings: Array<{ pos: number; level: number }> = [];
+        view.state.doc.descendants((node, pos) => {
+          if (node.type.name === 'heading') {
+            headings.push({ pos, level: node.attrs.level as number });
+          }
+          return true;
+        });
+
+        headings.reverse();
+
+        for (const { pos, level } of headings) {
+          const prefix = `${'#'.repeat(level)} `;
+          tr = tr.insertText(prefix, pos + 1);
+        }
+
+        tr = tr.setMeta('addToHistory', false);
+        view.dispatch(tr);
+      } catch (e) {
+        console.error('[Milkdown] Heading prefix insert failed:', e);
+      }
+    }
+
+    // Step 5: Focus
+    if (editorInstance) {
+      try {
+        const view = editorInstance.ctx.get(editorViewCtx);
+        view.dispatch(view.state.tr);
+        view.focus();
+      } catch {
+        // Dispatch failed, ignore
+      }
+    }
+  },
+
+  getEditorMode(): 'wysiwyg' | 'source' {
+    return isSourceModeEnabled() ? 'source' : 'wysiwyg';
+  },
+
+  resetEditorState() {
+    // Reset block-related state (for project switching or cleanup)
+    resetBlockIdState();
+    destroyBlockSyncState();
+    currentContent = '';
+    isSettingContent = false;
+    pendingSlashUndo = false;
+    pendingSlashRedo = false;
   },
 };
 

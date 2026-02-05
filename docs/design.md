@@ -33,6 +33,248 @@ The database stores all content. No file watching, no manifest reconciliation, n
 
 ---
 
+## Current Architecture (Phase 1 Implementation)
+
+### Component Overview
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                           ContentView                                     │
+│  ┌─────────────────┐  ┌───────────────────────────────────────────────┐ │
+│  │  OutlineSidebar │  │              Editor (WKWebView)               │ │
+│  │                 │  │  ┌────────────────────────────────────────┐  │ │
+│  │  SectionCardView│  │  │  MilkdownEditor (WYSIWYG)              │  │ │
+│  │  SectionCardView│  │  │         OR                             │  │ │
+│  │  SectionCardView│  │  │  CodeMirrorEditor (Source)             │  │ │
+│  │       ...       │  │  └────────────────────────────────────────┘  │ │
+│  └────────┬────────┘  └──────────────────┬────────────────────────────┘ │
+│           │                              │                               │
+└───────────┼──────────────────────────────┼───────────────────────────────┘
+            │                              │
+            ▼                              ▼
+   ┌────────────────┐           ┌──────────────────────┐
+   │ EditorViewState│◄──────────│  SectionSyncService  │
+   │  (@Observable) │           │    (debounced)       │
+   └────────┬───────┘           └──────────┬───────────┘
+            │                              │
+            │      ┌───────────────────────┘
+            ▼      ▼
+   ┌────────────────────────┐
+   │    ProjectDatabase     │
+   │      (GRDB + SQLite)   │
+   │                        │
+   │  - sections table      │
+   │  - content table       │
+   │  - ValueObservation    │
+   └────────────────────────┘
+```
+
+### Data Flow
+
+1. **Editor → Swift**: 500ms polling reads `window.FinalFinal.getContent()` from WebView
+2. **Swift → SectionSyncService**: Content changes trigger debounced sync (500ms)
+3. **SectionSyncService → Database**: Parses headers, reconciles sections, saves
+4. **Database → EditorViewState**: GRDB ValueObservation pushes section updates
+5. **EditorViewState → Sidebar**: SwiftUI `@Observable` triggers UI update
+6. **Swift → Editor**: `window.FinalFinal.setContent(markdown)` pushes content
+
+### Editor Modes
+
+The app supports two editor modes that share the same content:
+
+| Mode | Editor | Purpose |
+|------|--------|---------|
+| **WYSIWYG** | MilkdownEditor | Rich editing, hides markdown syntax |
+| **Source** | CodeMirrorEditor | Raw markdown with syntax highlighting |
+
+**Mode Toggle (Cmd+/)**:
+- **WYSIWYG → Source**: Section anchors (`<!-- @sid:UUID -->`) are injected before each header to preserve section identity during editing
+- **Source → WYSIWYG**: Anchors are extracted and stripped; a 1.5s delay allows Milkdown to initialize before content polling resumes
+
+### Section Architecture
+
+Sections are the fundamental unit of document structure:
+
+```swift
+struct Section {
+    id: String           // UUID
+    projectId: String    // Parent project
+    sortOrder: Int       // Position in document (0-based)
+    headerLevel: Int     // 1-6 for H1-H6, inherited for pseudo-sections
+    title: String        // Header text (without # prefix)
+    markdownContent: String  // Full section content including header
+    wordCount: Int       // Cached word count
+    startOffset: Int     // Character offset in full document
+    parentId: String?    // Computed from header levels (not stored)
+
+    // Metadata (user-editable)
+    status: SectionStatus  // draft, review, final, cut
+    tags: [String]
+    wordGoal: Int?
+}
+```
+
+**Parent Relationships**: Computed at runtime from header levels. An H3's parent is the nearest preceding section with level < 3.
+
+**Pseudo-sections**: Content breaks (`<!-- ::break:: -->`) create sections without headers. They inherit the header level of the preceding actual header.
+
+### SectionSyncService
+
+Responsible for bidirectional sync between editor content and database sections.
+
+**Key Methods**:
+- `contentChanged(_ markdown:)` - Debounced entry point (500ms)
+- `syncContent(_ markdown:)` - Parses headers, reconciles with database
+- `parseHeaders(from markdown:)` - Extracts section boundaries
+- `injectSectionAnchors(markdown:sections:)` - Adds `<!-- @sid:UUID -->` for source mode
+- `extractSectionAnchors(markdown:)` - Removes anchors, returns mappings
+
+**Reconciliation**: Uses `SectionReconciler` to compute minimal database changes (insert, update, delete) by comparing parsed headers against existing sections.
+
+### Content State Machine
+
+`EditorContentState` prevents race conditions during complex transitions:
+
+```swift
+enum EditorContentState {
+    case idle                 // Normal operation
+    case zoomTransition       // Zooming in/out of a section
+    case hierarchyEnforcement // Fixing header level violations
+    case bibliographyUpdate   // Auto-bibliography being regenerated
+    case editorTransition     // Switching between Milkdown ↔ CodeMirror
+}
+```
+
+**Guards**: SectionSyncService and ValueObservation skip updates when `contentState != .idle`, preventing feedback loops.
+
+### Zoom Functionality
+
+Double-clicking a sidebar section "zooms" into it:
+
+1. **Zoom In**:
+   - Stores full document in `fullDocumentBeforeZoom`
+   - Records `zoomedSectionIds` (section + all descendants)
+   - Sets `content` to just the zoomed sections' markdown
+   - Waits for editor acknowledgement before returning to `.idle`
+
+2. **Zoom Out**:
+   - Merges edited zoomed content back into the full document
+   - Non-zoomed sections retain their original content
+   - Clears zoom state
+
+**Sync While Zoomed**: `syncZoomedSections()` updates only the zoomed sections in-place, preventing full document replacement.
+
+### Hierarchy Constraints
+
+Headers must follow a valid hierarchy (can't jump from H1 to H4):
+
+- First section must be H1
+- Each section's level ≤ predecessor's level + 1
+- Violations are auto-corrected by demoting headers
+
+`enforceHierarchyConstraints()` runs after section updates from database observation.
+
+### Database Reactivity (ValueObservation)
+
+GRDB's `ValueObservation` provides reactive updates:
+
+```swift
+func startObserving(database: ProjectDatabase, projectId: String) {
+    observationTask = Task {
+        for try await dbSections in database.observeSections(for: projectId) {
+            guard !isObservationSuppressed else { continue }
+            guard contentState == .idle else { continue }
+
+            sections = dbSections.map { SectionViewModel(from: $0) }
+            recalculateParentRelationships()
+            onSectionsUpdated?()  // Triggers hierarchy enforcement
+        }
+    }
+}
+```
+
+**Suppression**: `isObservationSuppressed` is set during drag-drop operations to prevent database updates from overwriting in-progress reordering.
+
+### Section Drag-Drop Reordering
+
+The sidebar supports drag-drop reordering with hierarchy preservation:
+
+1. **Single Section**: Section moves; orphaned children are promoted to parent's level
+2. **Subtree Drag**: Section + all descendants move together; levels shift by delta
+
+**Process**:
+1. Cancel pending syncs
+2. Suppress observation
+3. Reorder sections array
+4. Recalculate offsets and parent relationships
+5. Enforce hierarchy constraints
+6. Rebuild document content
+7. Persist to database
+8. Resume observation
+
+### WebView Communication
+
+Both editors use the same bridge pattern:
+
+```javascript
+// window.FinalFinal API (exposed by editor JavaScript)
+setContent(markdown)     // Load content into editor
+getContent()             // Get current markdown
+setFocusMode(enabled)    // Toggle paragraph dimming (WYSIWYG only)
+getStats()               // Returns {words, characters}
+scrollToOffset(n)        // Scroll to character offset
+setTheme(css)            // Apply theme CSS variables
+```
+
+**Polling**: Swift polls `getContent()` every 500ms. Content changes only trigger sync if the polled content differs from the binding.
+
+**Feedback Prevention**: `lastSyncedContent` in SectionSyncService tracks what was just synced, preventing editor → sync → observation → editor loops.
+
+### Source Mode Specifics
+
+**Heading NodeView Plugin** (`heading-nodeview-plugin.ts`):
+- WYSIWYG mode: Renders `<h2><span>content</span></h2>` with `heading-empty` class when empty
+- Source mode: Renders headers with editable `## ` prefix in the text content
+
+**Source Mode Plugin** (`source-mode-plugin.ts`):
+- Adds `body.source-mode` class for CSS targeting
+- Provides visual differentiation of markdown syntax
+
+**Anchor Injection**: When switching to source mode, anchors are injected based on section startOffsets. When switching back, anchors are extracted and stripped.
+
+### Bibliography Section Architecture
+
+The bibliography section is auto-generated by `BibliographySyncService` when citations exist in the document. It follows the **section anchor pattern** for visibility control:
+
+**Data Storage**: Bibliography `markdownContent` is stored **without** the marker:
+```markdown
+# Bibliography
+
+Author, A. (2024). Title. *Journal*.
+```
+
+**Data Flow**:
+1. **Milkdown (WYSIWYG)**: `editorState.content` contains clean content - bibliography renders as normal `# Bibliography` heading
+2. **CodeMirror (Source)**: `editorState.sourceContent` includes injected marker (`<!-- ::auto-bibliography:: -->`) before the bibliography header
+3. **CodeMirror hides the marker** using the same decoration system that hides section anchors
+
+**Marker Injection** (`SectionSyncService.injectBibliographyMarker`):
+- Called when switching to source mode, after `injectSectionAnchors()`
+- Finds bibliography section by `isBibliography` flag
+- Inserts `<!-- ::auto-bibliography:: -->` before the bibliography header
+
+**Bibliography Detection** (in parsers):
+- **With marker**: Legacy support - parsers detect `<!-- ::auto-bibliography:: -->` prefix
+- **Without marker**: Parsers receive `existingBibTitle` parameter to identify bibliography by title match against existing sections
+- Bibliography sections are excluded from normal section parsing (managed separately by `BibliographySyncService`)
+
+**Migration**: Old content with embedded markers is cleaned when:
+- Loading content from database (`stripBibliographyMarker`)
+- Initializing `SectionViewModel` from database sections
+- Rebuilding document content from sections
+
+---
+
 ## Project Model
 
 ### Package Structure

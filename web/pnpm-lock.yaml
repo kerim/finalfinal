@@ -227,8 +227,8 @@ packages:
   '@codemirror/legacy-modes@6.5.2':
     resolution: {integrity: sha512-/jJbwSTazlQEDOQw2FJ8LEEKVS72pU0lx6oM54kGpL8t/NJ2Jda3CZ4pcltiKTdqYSRk3ug1B3pil1gsjA6+8Q==}
 
-  '@codemirror/lint@6.9.2':
-    resolution: {integrity: sha512-sv3DylBiIyi+xKwRCJAAsBZZZWo82shJ/RTMymLabAdtbkV5cSKwWDeCgtUq3v8flTaXS2y1kKkICuRYtUswyQ==}
+  '@codemirror/lint@6.9.3':
+    resolution: {integrity: sha512-y3YkYhdnhjDBAe0VIA0c4wVoFOvnp8CnAvfLqi0TqotIv92wIlAAP7HELOpLBsKwjAX6W92rSflA6an/2zBvXw==}
 
   '@codemirror/search@6.6.0':
     resolution: {integrity: sha512-koFuNXcDvyyotWcgOnZGmY7LZqEOXZaaxD/j6n18TCLx2/9HieZJ5H6hs1g8FiRxBD0DNfs0nXn17g872RmYdw==}
@@ -437,8 +437,8 @@ packages:
   '@lezer/xml@1.0.6':
     resolution: {integrity: sha512-CdDwirL0OEaStFue/66ZmFSeppuL6Dwjlk8qk153mSQwiSH/Dlri4GNymrNWnUmPl2Um7QfV1FO9KFUyX3Twww==}
 
-  '@lezer/yaml@1.0.3':
-    resolution: {integrity: sha512-GuBLekbw9jDBDhGur82nuwkxKQ+a3W5H0GfaAthDXcAu+XdpS43VlnxA9E9hllkpSP5ellRDKjLLj7Lu9Wr6xA==}
+  '@lezer/yaml@1.0.4':
+    resolution: {integrity: sha512-2lrrHqxalACEbxIbsjhqGpSW8kWpUKuY6RHgnSAFZa6qK62wvnPxA8hGOwOoDbwHcOFs5M4o27mjGu+P7TvBmw==}
 
   '@marijn/find-cluster-break@1.0.2':
     resolution: {integrity: sha512-l0h88YhZFyKdXIFNfSWpyjStDjGHwZ/U7iobcK1cQQD8sejsONdQtTVU+1wVN1PBw40PiiHB1vA5S7VTfQiP9g==}
@@ -1186,7 +1186,7 @@ snapshots:
     dependencies:
       '@codemirror/autocomplete': 6.20.0
       '@codemirror/language': 6.12.1
-      '@codemirror/lint': 6.9.2
+      '@codemirror/lint': 6.9.3
       '@codemirror/state': 6.5.4
       '@codemirror/view': 6.39.11
       '@lezer/common': 1.5.0
@@ -1305,7 +1305,7 @@ snapshots:
       '@lezer/common': 1.5.0
       '@lezer/highlight': 1.2.3
       '@lezer/lr': 1.4.7
-      '@lezer/yaml': 1.0.3
+      '@lezer/yaml': 1.0.4
 
   '@codemirror/language-data@6.5.2':
     dependencies:
@@ -1346,7 +1346,7 @@ snapshots:
     dependencies:
       '@codemirror/language': 6.12.1
 
-  '@codemirror/lint@6.9.2':
+  '@codemirror/lint@6.9.3':
     dependencies:
       '@codemirror/state': 6.5.4
       '@codemirror/view': 6.39.11
@@ -1538,7 +1538,7 @@ snapshots:
       '@lezer/highlight': 1.2.3
       '@lezer/lr': 1.4.7
 
-  '@lezer/yaml@1.0.3':
+  '@lezer/yaml@1.0.4':
     dependencies:
       '@lezer/common': 1.5.0
       '@lezer/highlight': 1.2.3
@@ -1948,7 +1948,7 @@ snapshots:
       '@codemirror/autocomplete': 6.20.0
       '@codemirror/commands': 6.10.1
       '@codemirror/language': 6.12.1
-      '@codemirror/lint': 6.9.2
+      '@codemirror/lint': 6.9.3
       '@codemirror/search': 6.6.0
       '@codemirror/state': 6.5.4
       '@codemirror/view': 6.39.11

@@ -103,13 +103,19 @@ actor ExportService {
             throw ExportError.noContent
         }
 
+        // Strip annotations if not including them
+        var processedContent = content
+        if !settings.includeAnnotations {
+            processedContent = stripAnnotations(from: content)
+        }
+
         // Check Pandoc availability
         guard let pandocPath = await pandocLocator.getPath() else {
             throw ExportError.pandocNotFound
         }
 
         // Only check Zotero if content appears to have citations
-        let hasCitations = hasPandocCitations(in: content)
+        let hasCitations = hasPandocCitations(in: processedContent)
         // Zotero status only matters for citation processing
         // When no citations, .running means "no issue" (status is irrelevant)
         let zoteroStatus: ZoteroStatus = hasCitations
@@ -139,7 +145,7 @@ actor ExportService {
         let inputURL = tempDir.appendingPathComponent(UUID().uuidString + ".md")
 
         do {
-            try content.write(to: inputURL, atomically: true, encoding: .utf8)
+            try processedContent.write(to: inputURL, atomically: true, encoding: .utf8)
         } catch {
             throw ExportError.tempFileCreationFailed
         }
@@ -358,5 +364,18 @@ extension ExportService {
             of: #"\[[^\]]*@[\w:.-]+[^\]]*\]"#,
             options: .regularExpression
         ) != nil
+    }
+
+    /// Strip annotation HTML comments from markdown content
+    /// Matches patterns like <!-- ::task:: text --> or <!-- ::comment:: notes -->
+    private func stripAnnotations(from content: String) -> String {
+        // Match annotation comments: <!-- ::type:: text -->
+        // Annotations can span multiple lines and contain various content
+        // Use .dotMatchesLineSeparators so .*? can span newlines
+        content.replacingOccurrences(
+            of: #"<!--\s*::\w+::\s*[\s\S]*?-->"#,
+            with: "",
+            options: .regularExpression
+        )
     }
 }

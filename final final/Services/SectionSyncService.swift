@@ -195,11 +195,7 @@ class SectionSyncService {
             return
         }
 
-        // 1. Parse headers from markdown
-        let headers = parseHeaders(from: markdown)
-        guard !headers.isEmpty else { return }
-
-        // 2. Get current DB sections
+        // 1. Get current DB sections first (need to identify bibliography by title)
         let dbSections: [Section]
         do {
             dbSections = try db.fetchSections(projectId: pid)
@@ -207,6 +203,11 @@ class SectionSyncService {
             print("[SectionSyncService] Error fetching sections: \(error.localizedDescription)")
             return
         }
+
+        // 2. Parse headers from markdown (pass existing bibliography title for detection)
+        let existingBibTitle = dbSections.first(where: { $0.isBibliography })?.title
+        let headers = parseHeaders(from: markdown, existingBibTitle: existingBibTitle)
+        guard !headers.isEmpty else { return }
 
         // 3. Reconcile to find minimal changes
         let changes = reconciler.reconcile(headers: headers, dbSections: dbSections, projectId: pid)
@@ -244,10 +245,7 @@ class SectionSyncService {
     private func syncZoomedSections(from markdown: String, zoomedIds: Set<String>) async {
         guard let db = projectDatabase, let pid = projectId else { return }
 
-        // Parse zoomed markdown to extract section content
-        let headers = parseHeaders(from: markdown)
-
-        // Fetch existing sections from database
+        // Fetch existing sections from database first (need bibliography title for detection)
         let existingSections: [Section]
         do {
             existingSections = try db.fetchSections(projectId: pid)
@@ -255,6 +253,10 @@ class SectionSyncService {
             print("[SectionSyncService] Error fetching sections: \(error)")
             return
         }
+
+        // Parse zoomed markdown to extract section content (pass bibliography title for detection)
+        let existingBibTitle = existingSections.first(where: { $0.isBibliography })?.title
+        let headers = parseHeaders(from: markdown, existingBibTitle: existingBibTitle)
 
         // Build lookup of zoomed sections by sortOrder within zoomed subset
         let zoomedExisting = existingSections
@@ -269,6 +271,18 @@ class SectionSyncService {
             let existing = zoomedExisting[index]
             var updates = SectionUpdates()
             var hasChanges = false
+
+            // Check if title changed (e.g., user edited "# A" to "# A Renamed")
+            if header.title != existing.title {
+                updates.title = header.title
+                hasChanges = true
+            }
+
+            // Check if header level changed (e.g., "##" → "#")
+            if header.level != existing.headerLevel {
+                updates.headerLevel = header.level
+                hasChanges = true
+            }
 
             if header.markdownContent != existing.markdownContent {
                 updates.markdownContent = header.markdownContent
@@ -295,7 +309,10 @@ class SectionSyncService {
     }
 
     /// Parse markdown content into ParsedHeader structs for reconciliation
-    private func parseHeaders(from markdown: String) -> [ParsedHeader] {
+    /// - Parameters:
+    ///   - markdown: The markdown content to parse
+    ///   - existingBibTitle: Title of the existing bibliography section (if any) to detect bibliography by title match
+    private func parseHeaders(from markdown: String, existingBibTitle: String? = nil) -> [ParsedHeader] {
 
         var headers: [ParsedHeader] = []
         var currentOffset = 0
@@ -313,6 +330,12 @@ class SectionSyncService {
         var boundaries: [SectionBoundary] = []
         var lastActualHeaderLevel: Int = 1  // Default to H1 for pseudo-sections at document start
 
+        // Track where bibliography section starts (to end preceding section there)
+        var bibliographyStartOffset: Int?
+
+        // Bibliography detection: use existing title if provided, otherwise fall back to configured name
+        let bibHeaderName = existingBibTitle ?? ExportSettingsManager.shared.bibliographyHeaderName
+
         // First pass: find all headers and pseudo-sections
         let lines = markdown.split(separator: "\n", omittingEmptySubsequences: false)
         for line in lines {
@@ -324,13 +347,13 @@ class SectionSyncService {
                 inCodeBlock = !inCodeBlock
             }
 
-            // Track auto-bibliography section (managed by BibliographySyncService)
-            // Headers inside this section should not create separate sidebar sections
-            if trimmed == "<!-- ::auto-bibliography:: -->" {
+            // Legacy marker support: still detect marker if present in old content
+            // This ensures backward compatibility during transition
+            if trimmed.hasPrefix("<!-- ::auto-bibliography:: -->") {
                 inAutoBibliography = true
-            }
-            if trimmed == "<!-- ::end-auto-bibliography:: -->" {
-                inAutoBibliography = false
+                bibliographyStartOffset = currentOffset
+                currentOffset += lineStr.count + 1  // +1 for newline
+                continue  // Skip - header on same line, don't parse as separate section
             }
 
             // Skip headers inside code blocks or auto-bibliography sections
@@ -348,13 +371,21 @@ class SectionSyncService {
                 }
                 // Check for header
                 else if let header = parseHeaderLine(trimmed) {
-                    lastActualHeaderLevel = header.level  // Track for subsequent pseudo-sections
-                    boundaries.append(SectionBoundary(
-                        startOffset: currentOffset,
-                        level: header.level,
-                        title: header.title,
-                        isPseudoSection: false
-                    ))
+                    // Detect bibliography by title match (when no marker is present)
+                    // This allows detection even after marker is removed from stored content
+                    if header.title == bibHeaderName && existingBibTitle != nil {
+                        inAutoBibliography = true
+                        bibliographyStartOffset = currentOffset
+                        // Don't add to boundaries - bibliography is managed separately
+                    } else {
+                        lastActualHeaderLevel = header.level  // Track for subsequent pseudo-sections
+                        boundaries.append(SectionBoundary(
+                            startOffset: currentOffset,
+                            level: header.level,
+                            title: header.title,
+                            isPseudoSection: false
+                        ))
+                    }
                 }
             }
 
@@ -367,11 +398,21 @@ class SectionSyncService {
         let contentLength = markdown.count
 
         for (index, boundary) in boundaries.enumerated() {
-            let endOffset: Int
+            var endOffset: Int
             if index < boundaries.count - 1 {
                 endOffset = boundaries[index + 1].startOffset
             } else {
                 endOffset = contentLength
+            }
+
+            // If this is the last section before bibliography, end it at the bibliography marker
+            // This prevents bibliography content from being absorbed into the preceding section
+            if let bibStart = bibliographyStartOffset {
+                // Check if this section would absorb the bibliography
+                if boundary.startOffset < bibStart && endOffset > bibStart {
+                    endOffset = bibStart
+                    print("[SectionSyncService] Truncating section '\(boundary.title)' at bibliography start")
+                }
             }
 
             // Extract markdown content for this section
@@ -492,4 +533,151 @@ class SectionSyncService {
         // No space found - just truncate
         return prefix + "…"
     }
+
+    // MARK: - Section Anchor Support
+
+    /// Regex pattern for section anchor comments
+    /// Anchors are on the same line as headers (no newline in pattern)
+    private static let anchorPattern = try! NSRegularExpression(
+        pattern: #"<!-- @sid:([0-9a-fA-F-]+) -->"#,
+        options: []
+    )
+
+    /// Inject section anchors before each header in markdown
+    /// Used when switching from WYSIWYG to source mode
+    /// Anchors are placed on the SAME LINE as headers (no newline after anchor)
+    /// to prevent blank lines when CodeMirror hides the anchor comment
+    /// - Parameters:
+    ///   - markdown: The markdown content
+    ///   - sections: Current sections with their IDs
+    /// - Returns: Markdown with anchors injected before headers
+    func injectSectionAnchors(markdown: String, sections: [SectionViewModel]) -> String {
+        guard !sections.isEmpty else { return markdown }
+
+        // Build a map of header text to section ID
+        // We match by finding headers in the markdown and associating them with sections
+        var result = markdown
+
+        // Sort sections by startOffset in reverse order (inject from end to avoid offset drift)
+        let sortedSections = sections.sorted { $0.startOffset > $1.startOffset }
+
+        for section in sortedSections {
+            // Find the header line at the section's start offset
+            let offset = min(section.startOffset, result.count)
+            let insertionIndex = result.index(result.startIndex, offsetBy: offset)
+
+            // Inject anchor on SAME LINE as header (no newline)
+            let anchor = "<!-- @sid:\(section.id) -->"
+            result.insert(contentsOf: anchor, at: insertionIndex)
+        }
+
+        return result
+    }
+
+    /// Extract section anchors and their IDs from markdown
+    /// Used when switching from source mode back to WYSIWYG
+    /// Anchors are expected to be on the same line as headers: `<!-- @sid:UUID --># Header`
+    /// - Parameter markdown: The markdown content with anchors
+    /// - Returns: Tuple of (clean markdown, anchor mappings)
+    func extractSectionAnchors(markdown: String) -> (markdown: String, anchors: [SectionAnchorMapping]) {
+        var anchors: [SectionAnchorMapping] = []
+        let nsRange = NSRange(markdown.startIndex..., in: markdown)
+
+        // Find all anchors and their positions
+        let matches = Self.anchorPattern.matches(in: markdown, options: [], range: nsRange)
+
+        var offsetAdjustment = 0
+
+        for match in matches {
+            guard let idRange = Range(match.range(at: 1), in: markdown) else { continue }
+
+            let anchorId = String(markdown[idRange])
+            let originalOffset = match.range.location
+
+            // Calculate the offset in the cleaned markdown (after previous anchors removed)
+            let cleanedOffset = originalOffset - offsetAdjustment
+
+            anchors.append(SectionAnchorMapping(
+                sectionId: anchorId,
+                headerOffset: cleanedOffset
+            ))
+
+            // Track how much we've removed for offset adjustment
+            // match.range.length gives us the length of the full match
+            offsetAdjustment += match.range.length
+        }
+
+        // Remove all anchors from the markdown
+        let cleanedMarkdown = Self.anchorPattern.stringByReplacingMatches(
+            in: markdown,
+            options: [],
+            range: nsRange,
+            withTemplate: ""
+        )
+
+        return (cleanedMarkdown, anchors)
+    }
+
+    /// Strip all section anchors from markdown
+    /// Used for clean export and display
+    func stripSectionAnchors(from markdown: String) -> String {
+        Self.anchorPattern.stringByReplacingMatches(
+            in: markdown,
+            options: [],
+            range: NSRange(markdown.startIndex..., in: markdown),
+            withTemplate: ""
+        )
+    }
+
+    // MARK: - Bibliography Marker Support
+
+    /// Inject bibliography marker before the bibliography section header
+    /// Used when building sourceContent for CodeMirror (follows section anchor pattern)
+    /// - Parameters:
+    ///   - markdown: The markdown content (with section anchors already injected)
+    ///   - sections: Current sections to identify bibliography
+    /// - Returns: Markdown with bibliography marker injected before the bibliography header
+    func injectBibliographyMarker(markdown: String, sections: [SectionViewModel]) -> String {
+        // Find the bibliography section
+        guard let bibSection = sections.first(where: { $0.isBibliography }) else {
+            return markdown
+        }
+
+        // Find the bibliography header in the markdown
+        // The header might be prefixed with a section anchor: <!-- @sid:UUID --># Bibliography
+        let bibHeaderName = ExportSettingsManager.shared.bibliographyHeaderName
+
+        // Try to find the header with or without anchor prefix
+        // Pattern: optional anchor + "# HeaderName"
+        let anchorPrefixPattern = #"(<!-- @sid:[0-9a-fA-F-]+ -->)?"#
+        let headerPattern = anchorPrefixPattern + #"# \#(bibHeaderName)"#
+
+        guard let regex = try? NSRegularExpression(pattern: headerPattern, options: []) else {
+            return markdown
+        }
+
+        let nsRange = NSRange(markdown.startIndex..., in: markdown)
+        guard let match = regex.firstMatch(in: markdown, options: [], range: nsRange),
+              let range = Range(match.range, in: markdown) else {
+            return markdown
+        }
+
+        // Insert the marker at the start of the matched range (before any anchor)
+        var result = markdown
+        let marker = "<!-- ::auto-bibliography:: -->"
+        result.insert(contentsOf: marker, at: range.lowerBound)
+        return result
+    }
+
+    /// Strip bibliography marker from markdown
+    /// Used when cleaning content for Milkdown or export
+    func stripBibliographyMarker(from markdown: String) -> String {
+        markdown.replacingOccurrences(of: "<!-- ::auto-bibliography:: -->", with: "")
+    }
+}
+
+/// Represents a mapping between a section ID and its header offset in markdown
+struct SectionAnchorMapping: Equatable {
+    let sectionId: String
+    let headerOffset: Int
 }

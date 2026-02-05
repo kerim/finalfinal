@@ -77,6 +77,20 @@ body {
   text-wrap: balance;
 }
 
+/* Empty heading placeholder - shows ## when heading has no content (WYSIWYG mode only) */
+/* Uses heading-empty class toggled by heading-nodeview-plugin.ts based on node content */
+.ProseMirror h1.heading-empty::before,
+.ProseMirror h2.heading-empty::before,
+.ProseMirror h3.heading-empty::before,
+.ProseMirror h4.heading-empty::before,
+.ProseMirror h5.heading-empty::before,
+.ProseMirror h6.heading-empty::before {
+  content: attr(data-placeholder);
+  color: var(--editor-muted, #999);
+  font-style: italic;
+  pointer-events: none;
+}
+
 .milkdown h1,
 .ProseMirror h1 {
   font-size: var(--font-size-h1);
@@ -384,4 +398,227 @@ mark.ff-highlight {
 .auto-bib-start,
 .auto-bib-end {
   display: none;
+}
+
+/* === Source Mode Styles === */
+
+/* Global source mode body class */
+body.source-mode {
+  /* Use monospace font throughout in source mode */
+}
+
+body.source-mode .ProseMirror {
+  /* Font inherits from body (user's --font-sans selection) */
+  /* Inherit --font-size and --line-height from user preferences (set by Swift via setTheme) */
+}
+
+/* Source mode syntax markers - muted appearance */
+.source-mode-syntax {
+  color: var(--editor-muted, #666);
+  opacity: 0.7;
+  user-select: none;
+  font-family: var(--font-mono);
+}
+
+/* Source mode heading NodeView - renders # prefix as styled span */
+/* The heading-nodeview-plugin handles rendering in source mode */
+/* Note: .heading-source-mode classes are styled via body.source-mode h1-h6 rules above */
+
+body.source-mode .heading-source-mode .heading-content {
+  /* Content includes ## prefix in text content now */
+  /* Prefix styling is handled by .heading-prefix-syntax class */
+}
+
+/* Fallback ::before rules for headings not using NodeView (e.g., during transitions) */
+body.source-mode h1:not(.heading-source-mode)::before {
+  content: "# ";
+  color: var(--syntax-heading, #0ea5e9);
+  font-weight: bold;
+}
+body.source-mode h2:not(.heading-source-mode)::before {
+  content: "## ";
+  color: var(--syntax-heading, #0ea5e9);
+  font-weight: bold;
+}
+body.source-mode h3:not(.heading-source-mode)::before {
+  content: "### ";
+  color: var(--syntax-heading, #0ea5e9);
+  font-weight: bold;
+}
+body.source-mode h4:not(.heading-source-mode)::before {
+  content: "#### ";
+  color: var(--syntax-heading, #0ea5e9);
+  font-weight: bold;
+}
+body.source-mode h5:not(.heading-source-mode)::before {
+  content: "##### ";
+  color: var(--syntax-heading, #0ea5e9);
+  font-weight: bold;
+}
+body.source-mode h6:not(.heading-source-mode)::before {
+  content: "###### ";
+  color: var(--syntax-heading, #0ea5e9);
+  font-weight: bold;
+}
+
+/* Legacy class for widget decorations (if any remain) */
+.source-mode-heading-marker {
+  color: var(--syntax-heading, #0ea5e9);
+  font-weight: bold;
+}
+
+/* Blockquote marker: > */
+.source-mode-blockquote-marker {
+  color: var(--syntax-blockquote, #10b981);
+}
+
+/* List markers: - or 1. */
+.source-mode-list-marker {
+  color: var(--syntax-list, #8b5cf6);
+}
+
+/* Code fence: ``` */
+.source-mode-code-fence {
+  color: var(--syntax-code, #f59e0b);
+  display: block;
+  margin: 0.25em 0;
+}
+
+/* Bold markers: ** */
+.source-mode-bold-marker {
+  color: var(--syntax-bold, #f43f5e);
+}
+
+/* Italic markers: * */
+.source-mode-italic-marker {
+  color: var(--syntax-italic, #f43f5e);
+}
+
+/* Inline code markers: ` */
+.source-mode-code-marker {
+  color: var(--syntax-inline-code, #f59e0b);
+}
+
+/* Strikethrough markers: ~~ */
+.source-mode-strike-marker {
+  color: var(--syntax-strike, #6b7280);
+}
+
+/* Link markers: []() */
+.source-mode-link-marker {
+  color: var(--syntax-link, #3b82f6);
+}
+
+/* Horizontal rule in source mode */
+.source-mode-hr::before {
+  content: attr(data-syntax);
+  color: var(--syntax-hr, #6b7280);
+}
+
+/* === Source Mode Heading Styles === */
+/* Headings retain visual hierarchy while showing ## prefix */
+
+body.source-mode h1,
+body.source-mode .heading-source-mode.heading-level-1 {
+  font-size: var(--font-size-h1);
+  font-weight: var(--weight-heading, 600);
+  color: var(--editor-heading-text, var(--editor-text));
+  line-height: var(--line-height-heading);
+  margin: 1em 0 0.5em 0;
+}
+
+body.source-mode h2,
+body.source-mode .heading-source-mode.heading-level-2 {
+  font-size: var(--font-size-h2);
+  font-weight: var(--weight-heading, 600);
+  color: var(--editor-heading-text, var(--editor-text));
+  line-height: var(--line-height-heading);
+  margin: 1em 0 0.5em 0;
+}
+
+body.source-mode h3,
+body.source-mode .heading-source-mode.heading-level-3 {
+  font-size: var(--font-size-h3);
+  font-weight: var(--weight-heading, 600);
+  color: var(--editor-heading-text, var(--editor-text));
+  line-height: var(--line-height-heading);
+  margin: 0.75em 0 0.5em 0;
+}
+
+body.source-mode h4,
+body.source-mode .heading-source-mode.heading-level-4 {
+  font-size: var(--font-size-h4);
+  font-weight: var(--weight-heading, 600);
+  color: var(--editor-heading-text, var(--editor-text));
+  line-height: var(--line-height-heading);
+  margin: 0.75em 0 0.5em 0;
+}
+
+body.source-mode h5,
+body.source-mode .heading-source-mode.heading-level-5 {
+  font-size: var(--font-size-h5);
+  font-weight: var(--weight-heading, 600);
+  color: var(--editor-heading-text, var(--editor-text));
+  line-height: var(--line-height-heading);
+  margin: 0.5em 0;
+}
+
+body.source-mode h6,
+body.source-mode .heading-source-mode.heading-level-6 {
+  font-size: var(--font-size-h6);
+  font-weight: var(--weight-heading, 600);
+  color: var(--editor-heading-text, var(--editor-text));
+  line-height: var(--line-height-heading);
+  margin: 0.5em 0;
+}
+
+/* Note: Heading # markers are displayed via CSS ::before pseudo-elements
+   They are not editable text - heading levels are changed via toolbar/keyboard shortcuts */
+
+body.source-mode blockquote {
+  border-left: none;
+  padding-left: 0;
+  margin: 0.5em 0;
+  opacity: 1;
+}
+
+body.source-mode code {
+  background: none;
+  padding: 0;
+  border-radius: 0;
+}
+
+body.source-mode pre {
+  background: rgba(128, 128, 128, 0.05);
+  padding: 0.5em;
+  margin: 0.5em 0;
+}
+
+/* Source mode line numbers (optional, for future enhancement) */
+body.source-mode .ProseMirror {
+  counter-reset: line;
+}
+
+/* Make section breaks visible as text in source mode */
+body.source-mode .section-break {
+  color: var(--syntax-comment, #6b7280);
+  font-family: var(--font-mono);
+}
+
+/* Source mode: annotations show as raw HTML comment syntax */
+body.source-mode .ff-annotation,
+.source-mode-annotation {
+  font-family: var(--font-mono);
+  color: var(--syntax-comment, #6b7280);
+  background: transparent;
+  padding: 0;
+}
+
+/* Source mode: citations show as raw pandoc syntax */
+body.source-mode .ff-citation,
+.source-mode-citation {
+  font-family: var(--font-mono);
+  color: var(--syntax-link, #3b82f6);
+  background: transparent;
+  padding: 0;
 }

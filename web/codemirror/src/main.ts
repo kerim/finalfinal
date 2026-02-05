@@ -6,6 +6,7 @@ import { languages } from '@codemirror/language-data';
 import { EditorState } from '@codemirror/state';
 import { EditorView, highlightActiveLine, highlightActiveLineGutter, keymap, lineNumbers } from '@codemirror/view';
 import './styles.css';
+import { anchorPlugin, stripAnchors } from './anchor-plugin';
 
 // Annotation types matching Milkdown
 type AnnotationType = 'task' | 'comment' | 'reference';
@@ -22,6 +23,8 @@ declare global {
     FinalFinal: {
       setContent: (markdown: string) => void;
       getContent: () => string;
+      getContentClean: () => string; // Content with anchors stripped
+      getContentRaw: () => string; // Content including hidden anchors
       setFocusMode: (enabled: boolean) => void;
       getStats: () => { words: number; characters: number };
       scrollToOffset: (offset: number) => void;
@@ -490,6 +493,8 @@ function initEditor() {
           updateCitationAddButton(update.view);
         }
       }),
+      // Section anchor plugin - hides <!-- @sid:UUID --> comments and handles clipboard
+      anchorPlugin(),
     ],
   });
 
@@ -542,6 +547,19 @@ window.FinalFinal = {
   },
 
   getContent(): string {
+    // Returns content with anchors stripped (default for backwards compatibility)
+    if (!editorView) return '';
+    return stripAnchors(editorView.state.doc.toString());
+  },
+
+  getContentClean(): string {
+    // Explicitly returns content with anchors stripped
+    if (!editorView) return '';
+    return stripAnchors(editorView.state.doc.toString());
+  },
+
+  getContentRaw(): string {
+    // Returns content including hidden anchors (for internal use during mode switch)
     if (!editorView) return '';
     return editorView.state.doc.toString();
   },
@@ -551,7 +569,9 @@ window.FinalFinal = {
   },
 
   getStats() {
-    const content = editorView?.state.doc.toString() || '';
+    // Use stripped content for accurate word/char counts (exclude hidden anchors)
+    const rawContent = editorView?.state.doc.toString() || '';
+    const content = stripAnchors(rawContent);
     const words = countWords(content);
     const characters = content.length;
     window.__CODEMIRROR_DEBUG__!.lastStatsUpdate = new Date().toISOString();

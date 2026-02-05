@@ -10,8 +10,12 @@ struct OutlineParser {
     // MARK: - Public API
 
     /// Parses markdown content into an array of OutlineNodes
-    static func parse(markdown: String, projectId: String) -> [OutlineNode] {
-        let headers = extractHeaders(from: markdown)
+    /// - Parameters:
+    ///   - markdown: The markdown content to parse
+    ///   - projectId: The project ID for the nodes
+    ///   - existingBibTitle: Title of existing bibliography section (if any) for detection when marker is not present
+    static func parse(markdown: String, projectId: String, existingBibTitle: String? = nil) -> [OutlineNode] {
+        let headers = extractHeaders(from: markdown, existingBibTitle: existingBibTitle)
         guard !headers.isEmpty else { return [] }
 
         var headersWithEnds = calculateEndOffsets(headers, contentLength: markdown.count)
@@ -102,11 +106,20 @@ struct OutlineParser {
 
     // MARK: - Private Methods
 
-    private static func extractHeaders(from markdown: String) -> [ParsedHeader] {
+    /// Extract headers from markdown, excluding bibliography section
+    /// - Parameters:
+    ///   - markdown: The markdown content
+    ///   - existingBibTitle: Title of existing bibliography section for title-based detection
+    private static func extractHeaders(from markdown: String, existingBibTitle: String? = nil) -> [ParsedHeader] {
         var headers: [ParsedHeader] = []
         var currentOffset = 0
         var inCodeBlock = false
         var inAutoBibliography = false  // Track auto-generated bibliography section
+
+        // Bibliography detection: use existing title if provided
+        // Don't fall back to ExportSettingsManager here as this is a nonisolated context
+        // The caller should always provide the bibliography title for correct detection
+        let bibHeaderName = existingBibTitle
 
         for line in markdown.split(separator: "\n", omittingEmptySubsequences: false) {
             let lineStr = String(line)
@@ -117,18 +130,23 @@ struct OutlineParser {
                 inCodeBlock = !inCodeBlock
             }
 
-            // Track auto-bibliography section (managed by BibliographySyncService)
-            if trimmed == "<!-- ::auto-bibliography:: -->" {
+            // Legacy marker support: still detect marker if present in old content
+            if trimmed.hasPrefix("<!-- ::auto-bibliography:: -->") {
                 inAutoBibliography = true
-            }
-            if trimmed == "<!-- ::end-auto-bibliography:: -->" {
-                inAutoBibliography = false
+                currentOffset += lineStr.count + 1  // +1 for newline
+                continue  // Skip - header on same line, don't parse as separate section
             }
 
             // Parse header if not in code block AND not in auto-bibliography
             if !inCodeBlock && !inAutoBibliography,
                let header = parseHeaderLine(trimmed, at: currentOffset) {
-                headers.append(header)
+                // Detect bibliography by title match (when no marker is present)
+                if let bibTitle = bibHeaderName, header.title == bibTitle {
+                    inAutoBibliography = true
+                    // Don't add to headers - bibliography is managed separately
+                } else {
+                    headers.append(header)
+                }
             }
 
             // Advance offset (+1 for newline, use character count for String indexing compatibility)

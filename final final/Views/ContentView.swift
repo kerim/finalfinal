@@ -66,7 +66,7 @@ struct ContentView: View {
 
     var body: some View {
         mainContentView
-            .withEditorNotifications(editorState: editorState, cursorRestore: $cursorPositionToRestore)
+            .withEditorNotifications(editorState: editorState, cursorRestore: $cursorPositionToRestore, sectionSyncService: sectionSyncService)
             .withFileNotifications(
                 editorState: editorState,
                 syncService: sectionSyncService,
@@ -435,6 +435,10 @@ struct ContentView: View {
 
     /// Finalize section reorder - recalculate offsets, parent relationships, persist
     private func finalizeSectionReorder(sections: [SectionViewModel]) {
+        // Set content state to suppress polling during rebuild
+        editorState.contentState = .dragReorder
+        defer { editorState.contentState = .idle }
+
         var mutableSections = sections
 
         // Recalculate sort orders and offsets
@@ -456,6 +460,29 @@ struct ContentView: View {
 
         // Rebuild document content (zoom-aware)
         rebuildDocumentContent()
+
+        // If in source mode, also update sourceContent with anchors
+        // This ensures CodeMirrorEditor (which binds to sourceContent) sees the reordered content
+        if editorState.editorMode == .source {
+            // Recalculate offsets relative to current content for anchor injection
+            var adjustedSections: [SectionViewModel] = []
+            var adjustedOffset = 0
+            for section in editorState.sections.sorted(by: { $0.sortOrder < $1.sortOrder }) {
+                adjustedSections.append(section.withUpdates(startOffset: adjustedOffset))
+                adjustedOffset += section.markdownContent.count
+            }
+
+            let withAnchors = sectionSyncService.injectSectionAnchors(
+                markdown: editorState.content,
+                sections: adjustedSections
+            )
+            // Also inject bibliography marker for source mode
+            let withBibMarker = sectionSyncService.injectBibliographyMarker(
+                markdown: withAnchors,
+                sections: editorState.sections
+            )
+            editorState.sourceContent = withBibMarker
+        }
 
         // Persist reordered sections to database
         Task {
@@ -541,6 +568,7 @@ struct ContentView: View {
     }
 
     /// Rebuild document content based on zoom state (extracted for reuse)
+    /// Bibliography sections are handled specially to prevent duplication
     private func rebuildDocumentContent() {
         // Guard against rebuilding during editor transition - this would overwrite content
         // that hasn't been synced to sections yet
@@ -549,21 +577,37 @@ struct ContentView: View {
         }
 
         let sectionsToRebuild: [SectionViewModel]
+        let bibliographySection: SectionViewModel?
+
         if let zoomedIds = editorState.zoomedSectionIds {
+            // When zoomed, exclude bibliography entirely (it's not in zoomedIds anyway)
             sectionsToRebuild = editorState.sections
-                .filter { zoomedIds.contains($0.id) }
+                .filter { zoomedIds.contains($0.id) && !$0.isBibliography }
                 .sorted { $0.sortOrder < $1.sortOrder }
+            bibliographySection = nil  // Don't show bibliography when zoomed
         } else {
+            // Not zoomed: include all except bibliography, then append bibliography at end
             sectionsToRebuild = editorState.sections
+                .filter { !$0.isBibliography }
+                .sorted { $0.sortOrder < $1.sortOrder }
+            bibliographySection = editorState.sections.first { $0.isBibliography }
         }
 
-        let newContent = sectionsToRebuild
+        var newContent = sectionsToRebuild
             .map { section in
                 var content = section.markdownContent
                 if !content.hasSuffix("\n") { content += "\n" }
                 return content
             }
             .joined()
+
+        // Append bibliography at the end (ensures it's always last, never absorbed)
+        // Strip any legacy marker from bibliography content (migration for old format)
+        if let bib = bibliographySection {
+            var bibContent = sectionSyncService.stripBibliographyMarker(from: bib.markdownContent)
+            if !bibContent.hasSuffix("\n") { bibContent += "\n" }
+            newContent += bibContent
+        }
 
         editorState.content = newContent
     }
@@ -676,23 +720,43 @@ struct ContentView: View {
     }
 
     /// Static version for use in closures - rebuilds document content from sections
+    /// Bibliography sections are handled specially to prevent duplication
     private static func rebuildDocumentContentStatic(editorState: EditorViewState) {
         let sectionsToRebuild: [SectionViewModel]
+        let bibliographySection: SectionViewModel?
+
         if let zoomedIds = editorState.zoomedSectionIds {
+            // When zoomed, exclude bibliography entirely
             sectionsToRebuild = editorState.sections
-                .filter { zoomedIds.contains($0.id) }
+                .filter { zoomedIds.contains($0.id) && !$0.isBibliography }
                 .sorted { $0.sortOrder < $1.sortOrder }
+            bibliographySection = nil
         } else {
+            // Not zoomed: include all except bibliography, then append bibliography at end
             sectionsToRebuild = editorState.sections
+                .filter { !$0.isBibliography }
+                .sorted { $0.sortOrder < $1.sortOrder }
+            bibliographySection = editorState.sections.first { $0.isBibliography }
         }
 
-        editorState.content = sectionsToRebuild
+        var newContent = sectionsToRebuild
             .map { section in
                 var content = section.markdownContent
                 if !content.hasSuffix("\n") { content += "\n" }
                 return content
             }
             .joined()
+
+        // Append bibliography at the end
+        // Strip any legacy marker from bibliography content (migration for old format)
+        if let bib = bibliographySection {
+            var bibContent = bib.markdownContent
+                .replacingOccurrences(of: "<!-- ::auto-bibliography:: -->", with: "")
+            if !bibContent.hasSuffix("\n") { bibContent += "\n" }
+            newContent += bibContent
+        }
+
+        editorState.content = newContent
     }
 
     /// Async hierarchy enforcement with completion-based state clearing
@@ -893,14 +957,16 @@ struct ContentView: View {
                     isEditorPreloadReady = true
                 }
         } else {
-            switch editorState.editorMode {
-            case .wysiwyg:
+            // Toggle between MilkdownEditor (WYSIWYG) and CodeMirrorEditor (source)
+            // Anchors are injected when switching to source, extracted when switching back
+            if editorState.editorMode == .wysiwyg {
                 MilkdownEditor(
                     content: $editorState.content,
                     focusModeEnabled: $editorState.focusModeEnabled,
                     cursorPositionToRestore: $cursorPositionToRestore,
                     scrollToOffset: $editorState.scrollToOffset,
                     isResettingContent: $editorState.isResettingContent,
+                    contentState: editorState.contentState,
                     themeCSS: currentThemeCSS,
                     onContentChange: { _ in
                         // Content change handling - could trigger outline parsing here
@@ -910,17 +976,29 @@ struct ContentView: View {
                     },
                     onCursorPositionSaved: { position in
                         cursorPositionToRestore = position
+                    },
+                    onContentAcknowledged: {
+                        // Called when WebView confirms content was set
+                        // Used for acknowledgement-based synchronization during zoom
+                        editorState.acknowledgeContent()
                     }
                 )
-            case .source:
+            } else {
                 CodeMirrorEditor(
-                    content: $editorState.content,
+                    content: $editorState.sourceContent,
                     cursorPositionToRestore: $cursorPositionToRestore,
                     scrollToOffset: $editorState.scrollToOffset,
                     isResettingContent: $editorState.isResettingContent,
+                    contentState: editorState.contentState,
                     themeCSS: currentThemeCSS,
-                    onContentChange: { _ in
-                        // Content change handling - could trigger outline parsing here
+                    onContentChange: { newContent in
+                        // Update sourceContent with raw content (including anchors)
+                        // This keeps anchors in sync for mode switch
+                        editorState.sourceContent = newContent
+
+                        // Strip anchors and update content for sync/sidebar
+                        let cleanContent = sectionSyncService.stripSectionAnchors(from: newContent)
+                        editorState.content = cleanContent
                     },
                     onStatsChange: { words, characters in
                         editorState.updateStats(words: words, characters: characters)
@@ -960,6 +1038,9 @@ struct ContentView: View {
         bibliographySyncService.configure(database: db, projectId: pid)
         autoBackupService.configure(database: db, projectId: pid)
 
+        // Inject sectionSyncService reference for zoom sourceContent updates
+        editorState.sectionSyncService = sectionSyncService
+
         // Wire up hierarchy enforcement after sections are updated from database
         // This ensures slash commands that create new headings trigger rebalancing
         editorState.onSectionsUpdated = { [weak editorState, weak sectionSyncService] in
@@ -989,7 +1070,9 @@ struct ContentView: View {
             let savedContent = try documentManager.loadContent()
 
             if let savedContent = savedContent, !savedContent.isEmpty {
-                editorState.content = savedContent
+                // Strip bibliography marker from stored content (migration for old format)
+                // The marker is now injected only for CodeMirror source mode, not stored
+                editorState.content = sectionSyncService.stripBibliographyMarker(from: savedContent)
             } else {
                 // Empty project - set empty content
                 editorState.content = ""
@@ -1253,26 +1336,74 @@ struct ContentView: View {
 
 extension View {
     /// Adds editor-related notification handlers
-    func withEditorNotifications(editorState: EditorViewState, cursorRestore: Binding<CursorPosition?>) -> some View {
+    func withEditorNotifications(
+        editorState: EditorViewState,
+        cursorRestore: Binding<CursorPosition?>,
+        sectionSyncService: SectionSyncService
+    ) -> some View {
         self
             .onReceive(NotificationCenter.default.publisher(for: .toggleFocusMode)) { _ in
                 editorState.toggleFocusMode()
             }
             .onReceive(NotificationCenter.default.publisher(for: .toggleEditorMode)) { _ in
-                // Mark transition state BEFORE requesting toggle
-                editorState.contentState = .editorTransition
-                editorState.requestEditorModeToggle()
+                // Toggle between WYSIWYG and Source mode with anchor injection/extraction
+                if editorState.editorMode == .wysiwyg {
+                    // Switching TO source mode - inject anchors
+                    editorState.contentState = .editorTransition
+
+                    // When zoomed, only inject anchors for zoomed sections
+                    let sectionsToInject: [SectionViewModel]
+                    if let zoomedIds = editorState.zoomedSectionIds {
+                        sectionsToInject = editorState.sections.filter { zoomedIds.contains($0.id) }
+                    } else {
+                        sectionsToInject = editorState.sections
+                    }
+
+                    // Recalculate offsets relative to current content (not full document)
+                    var adjustedSections: [SectionViewModel] = []
+                    var currentOffset = 0
+                    for section in sectionsToInject.sorted(by: { $0.sortOrder < $1.sortOrder }) {
+                        adjustedSections.append(section.withUpdates(startOffset: currentOffset))
+                        currentOffset += section.markdownContent.count
+                    }
+
+                    let withAnchors = sectionSyncService.injectSectionAnchors(
+                        markdown: editorState.content,
+                        sections: adjustedSections
+                    )
+                    // Also inject bibliography marker for source mode
+                    let withBibMarker = sectionSyncService.injectBibliographyMarker(
+                        markdown: withAnchors,
+                        sections: sectionsToInject
+                    )
+                    editorState.sourceContent = withBibMarker
+                    editorState.toggleEditorMode()
+                    editorState.contentState = .idle
+                } else {
+                    // Switching FROM source mode TO WYSIWYG - extract anchors and strip bibliography marker
+                    editorState.contentState = .editorTransition
+                    let (cleaned, anchors) = sectionSyncService.extractSectionAnchors(
+                        markdown: editorState.sourceContent
+                    )
+                    editorState.sourceAnchors = anchors
+                    // Also strip bibliography marker since Milkdown shouldn't see it
+                    editorState.content = sectionSyncService.stripBibliographyMarker(from: cleaned)
+                    editorState.toggleEditorMode()
+
+                    // CRITICAL: Delay returning to .idle to give Milkdown time to initialize
+                    // Milkdown's first few polls can return corrupted content (missing # from headers)
+                    // Keep .editorTransition active to suppress polling during this initialization window
+                    // The 1.5s delay covers: WebView load + FinalFinal init + first stable poll cycle
+                    Task {
+                        try? await Task.sleep(for: .milliseconds(1500))
+                        editorState.contentState = .idle
+                    }
+                }
             }
             .onReceive(NotificationCenter.default.publisher(for: .didSaveCursorPosition)) { notification in
+                // Handle cursor position restoration during mode switch
                 if let position = notification.userInfo?["position"] as? CursorPosition {
                     cursorRestore.wrappedValue = position
-                }
-                editorState.toggleEditorMode()
-                // Clear transition state AFTER toggle completes
-                // Use async to ensure SwiftUI has processed the mode change
-                Task { @MainActor in
-                    try? await Task.sleep(for: .milliseconds(100))
-                    editorState.contentState = .idle
                 }
             }
             .onReceive(NotificationCenter.default.publisher(for: .toggleOutlineSidebar)) { _ in

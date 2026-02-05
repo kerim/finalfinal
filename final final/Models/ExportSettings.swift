@@ -69,6 +69,14 @@ struct ExportSettings: Codable, Sendable {
     /// Default export format
     var defaultFormat: ExportFormat = .word
 
+    /// Include annotations in exported documents
+    /// When false, annotation comments (<!-- ::type:: text -->) are stripped before export
+    var includeAnnotations: Bool = false
+
+    /// Header name for auto-generated bibliography section
+    /// Common options: Bibliography, References, Works Cited
+    var bibliographyHeaderName: String = "Bibliography"
+
     // MARK: - Defaults
 
     static let `default` = ExportSettings()
@@ -196,5 +204,15 @@ final class ExportSettingsManager {
     var defaultFormat: ExportFormat {
         get { settings.defaultFormat }
         set { update { $0.defaultFormat = newValue } }
+    }
+
+    var includeAnnotations: Bool {
+        get { settings.includeAnnotations }
+        set { update { $0.includeAnnotations = newValue } }
+    }
+
+    var bibliographyHeaderName: String {
+        get { settings.bibliographyHeaderName }
+        set { update { $0.bibliographyHeaderName = newValue } }
     }
 }
