@@ -150,6 +150,13 @@ final class BibliographySyncService {
     private func performBibliographyUpdate(citekeys: [String], projectId: String) async {
         print("[BibliographySyncService] performBibliographyUpdate START with \(citekeys.count) citekeys")
 
+        // Deduplicate citekeys early - a citation may appear multiple times in document
+        // Uses filter-based deduplication to preserve first-occurrence order (aids debugging)
+        var seen = Set<String>()
+        let uniqueCitekeys = citekeys.filter { seen.insert($0).inserted }
+
+        print("[BibliographySyncService] Deduplicated to \(uniqueCitekeys.count) unique citekeys")
+
         guard let database else {
             print("[BibliographySyncService] ERROR: database is nil")
             return
@@ -169,18 +176,18 @@ final class BibliographySyncService {
         }
 
         // Update last known citekeys
-        lastKnownCitekeys = Set(citekeys)
+        lastKnownCitekeys = Set(uniqueCitekeys)
         print("[BibliographySyncService] Updated lastKnownCitekeys to \(lastKnownCitekeys)")
 
         // Remove bibliography if no citations
-        guard !citekeys.isEmpty else {
+        guard !uniqueCitekeys.isEmpty else {
             print("[BibliographySyncService] No citekeys - removing bibliography if exists")
             await removeBibliographySection(projectId: projectId)
             return
         }
 
         // Check for missing items and fetch them from Zotero
-        let missingKeys = citekeys.filter { !zoteroService.hasItem(citekey: $0) }
+        let missingKeys = uniqueCitekeys.filter { !zoteroService.hasItem(citekey: $0) }
         print("[BibliographySyncService] Missing keys to fetch: \(missingKeys)")
         if !missingKeys.isEmpty {
             do {
@@ -193,7 +200,7 @@ final class BibliographySyncService {
         }
 
         // Generate bibliography markdown (items now in cache)
-        let bibliographyContent = generateBibliographyMarkdown(citekeys: citekeys)
+        let bibliographyContent = generateBibliographyMarkdown(citekeys: uniqueCitekeys)
         print("[BibliographySyncService] Generated bibliography content (\(bibliographyContent.count) chars)")
 
         // Check if content actually changed
