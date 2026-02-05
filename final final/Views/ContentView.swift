@@ -68,6 +68,9 @@ struct ContentView: View {
     /// Editor preload ready state - blocks editor display until WebView is ready
     @State private var isEditorPreloadReady = false
 
+    /// Find bar state
+    @State private var findBarState = FindBarState()
+
     /// Callback when project is closed (to return to picker)
     var onProjectClosed: (() -> Void)?
 
@@ -89,7 +92,8 @@ struct ContentView: View {
 
     var body: some View {
         mainContentView
-            .withEditorNotifications(editorState: editorState, cursorRestore: $cursorPositionToRestore, sectionSyncService: sectionSyncService)
+            .withEditorNotifications(editorState: editorState, cursorRestore: $cursorPositionToRestore, sectionSyncService: sectionSyncService, findBarState: findBarState)
+            .withFindNotifications(findBarState: findBarState)
             .withFileNotifications(
                 editorState: editorState,
                 syncService: sectionSyncService,
@@ -250,11 +254,13 @@ struct ContentView: View {
                     reorderSection(request)
                 },
                 onZoomToSection: { sectionId, mode in
+                    findBarState.clearSearch()
                     Task {
                         await editorState.zoomToSection(sectionId, mode: mode)
                     }
                 },
                 onZoomOut: {
+                    findBarState.clearSearch()
                     editorState.zoomOutSync()
                 },
                 onDragStarted: {
@@ -921,6 +927,11 @@ struct ContentView: View {
         HSplitView {
             // Main editor area
             VStack(spacing: 0) {
+                // Find bar (shown above editor)
+                if findBarState.isVisible {
+                    FindBarView(state: findBarState)
+                }
+
                 editorView
                 // Hide status bar in focus mode for distraction-free writing
                 if !editorState.focusModeEnabled {
@@ -1042,6 +1053,9 @@ struct ContentView: View {
                         // Called when WebView confirms content was set
                         // Used for acknowledgement-based synchronization during zoom
                         editorState.acknowledgeContent()
+                    },
+                    onWebViewReady: { webView in
+                        findBarState.activeWebView = webView
                     }
                 )
             } else {
@@ -1066,6 +1080,9 @@ struct ContentView: View {
                     },
                     onCursorPositionSaved: { position in
                         cursorPositionToRestore = position
+                    },
+                    onWebViewReady: { webView in
+                        findBarState.activeWebView = webView
                     }
                 )
             }
@@ -1416,13 +1433,17 @@ extension View {
     func withEditorNotifications(
         editorState: EditorViewState,
         cursorRestore: Binding<CursorPosition?>,
-        sectionSyncService: SectionSyncService
+        sectionSyncService: SectionSyncService,
+        findBarState: FindBarState
     ) -> some View {
         self
             .onReceive(NotificationCenter.default.publisher(for: .toggleFocusMode)) { _ in
                 editorState.toggleFocusMode()
             }
             .onReceive(NotificationCenter.default.publisher(for: .toggleEditorMode)) { _ in
+                // Clear find bar state when switching editors
+                findBarState.clearSearch()
+
                 // Toggle between WYSIWYG and Source mode with anchor injection/extraction
                 if editorState.editorMode == .wysiwyg {
                     // Switching TO source mode - inject anchors
@@ -1488,6 +1509,37 @@ extension View {
             }
             .onReceive(NotificationCenter.default.publisher(for: .toggleAnnotationSidebar)) { _ in
                 editorState.toggleAnnotationPanel()
+            }
+    }
+
+    /// Adds find-related notification handlers
+    func withFindNotifications(
+        findBarState: FindBarState
+    ) -> some View {
+        self
+            .onReceive(NotificationCenter.default.publisher(for: .showFindBar)) { notification in
+                let showReplace = notification.userInfo?["showReplace"] as? Bool ?? false
+                findBarState.show(withReplace: showReplace)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .findNext)) { _ in
+                if findBarState.isVisible {
+                    findBarState.findNext()
+                } else {
+                    findBarState.show()
+                }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .findPrevious)) { _ in
+                if findBarState.isVisible {
+                    findBarState.findPrevious()
+                } else {
+                    findBarState.show()
+                }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .useSelectionForFind)) { _ in
+                findBarState.useSelectionForFind()
+                if !findBarState.isVisible {
+                    findBarState.show()
+                }
             }
     }
 

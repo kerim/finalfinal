@@ -32,6 +32,9 @@ importers:
       '@codemirror/language-data':
         specifier: ^6.4.0
         version: 6.5.2
+      '@codemirror/search':
+        specifier: ^6.5.0
+        version: 6.6.0
       '@codemirror/state':
         specifier: ^6.4.0
         version: 6.5.4

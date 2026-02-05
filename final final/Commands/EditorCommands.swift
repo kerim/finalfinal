@@ -7,6 +7,36 @@ import SwiftUI
 
 struct EditorCommands: Commands {
     var body: some Commands {
+        // Find commands - replace default Find menu
+        CommandGroup(replacing: .textEditing) {
+            Button("Find...") {
+                NotificationCenter.default.post(name: .showFindBar, object: nil)
+            }
+            .keyboardShortcut("f", modifiers: .command)
+
+            Button("Find and Replace...") {
+                NotificationCenter.default.post(name: .showFindBar, object: nil, userInfo: ["showReplace": true])
+            }
+            .keyboardShortcut("h", modifiers: .command)
+
+            Button("Find Next") {
+                NotificationCenter.default.post(name: .findNext, object: nil)
+            }
+            .keyboardShortcut("g", modifiers: .command)
+
+            Button("Find Previous") {
+                NotificationCenter.default.post(name: .findPrevious, object: nil)
+            }
+            .keyboardShortcut("g", modifiers: [.command, .shift])
+
+            Button("Use Selection for Find") {
+                NotificationCenter.default.post(name: .useSelectionForFind, object: nil)
+            }
+            .keyboardShortcut("e", modifiers: .command)
+
+            Divider()
+        }
+
         CommandGroup(after: .textEditing) {
             Divider()
             Button("Toggle Focus Mode") {
@@ -69,4 +99,10 @@ extension Notification.Name {
     static let toggleFocusMode = Notification.Name("toggleFocusMode")
     static let toggleEditorMode = Notification.Name("toggleEditorMode")
     static let insertSectionBreak = Notification.Name("insertSectionBreak")
+
+    // Find commands
+    static let showFindBar = Notification.Name("showFindBar")
+    static let findNext = Notification.Name("findNext")
+    static let findPrevious = Notification.Name("findPrevious")
+    static let useSelectionForFind = Notification.Name("useSelectionForFind")
 }

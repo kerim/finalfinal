@@ -47,6 +47,9 @@ struct MilkdownEditor: NSViewRepresentable {
     /// Used for acknowledgement-based sync during zoom transitions
     var onContentAcknowledged: (() -> Void)?
 
+    /// Callback to provide the WebView reference (for find operations)
+    var onWebViewReady: ((WKWebView) -> Void)?
+
     func makeNSView(context: Context) -> WKWebView {
         // Try to use preloaded WebView for faster startup
         if let preloaded = EditorPreloader.shared.claimMilkdownView() {
@@ -168,7 +171,8 @@ struct MilkdownEditor: NSViewRepresentable {
             onContentChange: onContentChange,
             onStatsChange: onStatsChange,
             onCursorPositionSaved: onCursorPositionSaved,
-            onContentAcknowledged: onContentAcknowledged
+            onContentAcknowledged: onContentAcknowledged,
+            onWebViewReady: onWebViewReady
         )
     }
 
@@ -229,7 +233,8 @@ struct MilkdownEditor: NSViewRepresentable {
             onContentChange: @escaping (String) -> Void,
             onStatsChange: @escaping (Int, Int) -> Void,
             onCursorPositionSaved: @escaping (CursorPosition) -> Void,
-            onContentAcknowledged: (() -> Void)?
+            onContentAcknowledged: (() -> Void)?,
+            onWebViewReady: ((WKWebView) -> Void)?
         ) {
             self.contentBinding = content
             self.cursorPositionToRestoreBinding = cursorPositionToRestore
@@ -240,6 +245,7 @@ struct MilkdownEditor: NSViewRepresentable {
             self.onStatsChange = onStatsChange
             self.onCursorPositionSaved = onCursorPositionSaved
             self.onContentAcknowledged = onContentAcknowledged
+            self.onWebViewReady = onWebViewReady
             super.init()
 
             // Subscribe to toggle notification - save cursor before editor switches
@@ -584,7 +590,13 @@ struct MilkdownEditor: NSViewRepresentable {
             // Push cached citation library to editor (ensures citations format correctly
             // when switching from CodeMirror where CSL items were fetched)
             pushCachedCitationLibrary()
+
+            // Notify parent that WebView is ready (for find operations)
+            onWebViewReady?(webView)
         }
+
+        /// Callback to provide WebView reference
+        var onWebViewReady: ((WKWebView) -> Void)?
 
         /// Push cached CSL items from ZoteroService to the editor's citeproc engine
         private func pushCachedCitationLibrary() {
@@ -604,6 +616,11 @@ struct MilkdownEditor: NSViewRepresentable {
             batchInitialize()
             startPolling()
             pushCachedCitationLibrary()
+
+            // Notify parent that WebView is ready (for find operations)
+            if let webView = webView {
+                onWebViewReady?(webView)
+            }
         }
 
         /// Batch initialization - sends all setup data in a single JS call
