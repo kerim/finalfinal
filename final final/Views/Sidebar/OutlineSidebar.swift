@@ -136,11 +136,15 @@ struct OutlineSidebar: View {
     @Binding var sections: [SectionViewModel]
     @Binding var statusFilter: SectionStatus?
     @Binding var zoomedSectionId: String?
+    /// Zoomed section IDs from EditorViewState (includes root + descendants via document order)
+    /// This is read-only because the sidebar never modifies the zoom state directly
+    let zoomedSectionIds: Set<String>?
     let onScrollToSection: (String) -> Void
     let onSectionUpdated: (SectionViewModel) -> Void
     let onSectionReorder: ((SectionReorderRequest) -> Void)?
     /// Called when user requests zoom into a section (double-click)
-    var onZoomToSection: ((String) -> Void)?
+    /// Parameters: sectionId, zoomMode
+    var onZoomToSection: ((String, ZoomMode) -> Void)?
     /// Called when user requests zoom out (double-click on already zoomed section)
     var onZoomOut: (() -> Void)?
     /// Called when drag operation starts - use to suppress sync
@@ -203,9 +207,10 @@ struct OutlineSidebar: View {
             result = result.filter { $0.status == filter }
         }
 
-        // Apply zoom filter (show only subtree)
-        if let zoomId = zoomedSectionId {
-            result = filterToSubtree(sections: result, rootId: zoomId)
+        // Apply zoom filter using zoomedSectionIds from EditorViewState
+        // This uses the same document-order-based descendant calculation as the editor
+        if let zoomedIds = zoomedSectionIds {
+            result = result.filter { zoomedIds.contains($0.id) }
         }
 
         // Pin bibliography sections at the bottom
@@ -249,30 +254,6 @@ struct OutlineSidebar: View {
         for section in sections {
             section.aggregateWordCount = aggregate(for: section.id, memo: &memo)
         }
-    }
-
-    private func filterToSubtree(sections: [SectionViewModel], rootId: String) -> [SectionViewModel] {
-        var result: [SectionViewModel] = []
-        var idsToInclude = Set<String>([rootId])
-
-        // Build set of all descendants
-        var changed = true
-        while changed {
-            changed = false
-            for section in sections where section.parentId != nil && idsToInclude.contains(section.parentId!) {
-                if !idsToInclude.contains(section.id) {
-                    idsToInclude.insert(section.id)
-                    changed = true
-                }
-            }
-        }
-
-        // Filter to only include matching sections
-        for section in sections where idsToInclude.contains(section.id) {
-            result.append(section)
-        }
-
-        return result
     }
 
     // MARK: - Subtree Drag Helpers
@@ -370,13 +351,15 @@ struct OutlineSidebar: View {
                             onSingleClick: {
                                 onScrollToSection(section.id)
                             },
-                            onDoubleClick: {
+                            onDoubleClick: { receivedMode in
                                 if zoomedSectionId == section.id {
                                     // Zoom out if already zoomed to this section
                                     onZoomOut?()
                                 } else {
-                                    // Zoom into this section
-                                    onZoomToSection?(section.id)
+                                    // Pseudo-sections always use shallow zoom (show only the pseudo-section itself)
+                                    // Regular sections use the received mode (full or shallow based on Option key)
+                                    let mode = section.isPseudoSection ? .shallow : receivedMode
+                                    onZoomToSection?(section.id, mode)
                                 }
                             }
                         )
@@ -714,7 +697,7 @@ struct SubtreeDragPreview: View {
             SectionCardView(
                 section: section,
                 onSingleClick: {},
-                onDoubleClick: {}
+                onDoubleClick: { _ in }
             )
             .frame(width: 280)
             .background(themeManager.currentTheme.sidebarBackground)
@@ -1067,15 +1050,16 @@ struct ZoomBreadcrumb: View {
         sections: $sections,
         statusFilter: $filter,
         zoomedSectionId: $zoom,
+        zoomedSectionIds: nil,
         onScrollToSection: { id in print("Scroll to: \(id)") },
         onSectionUpdated: { section in print("Updated: \(section.title)") },
         onSectionReorder: { request in
             // swiftlint:disable:next line_length
             print("Reorder: \(request.sectionId) after \(request.targetSectionId ?? "nil"), level \(request.newLevel), parent: \(request.newParentId ?? "nil")")
         },
-        onZoomToSection: { id in
+        onZoomToSection: { id, mode in
             zoom = id
-            print("Zoom to: \(id)")
+            print("Zoom to: \(id) with mode: \(mode)")
         },
         onZoomOut: {
             zoom = nil

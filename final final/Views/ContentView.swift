@@ -245,6 +245,7 @@ struct ContentView: View {
                 sections: $editorState.sections,
                 statusFilter: $editorState.statusFilter,
                 zoomedSectionId: $editorState.zoomedSectionId,
+                zoomedSectionIds: editorState.zoomedSectionIds,
                 onScrollToSection: { sectionId in
                     scrollToSection(sectionId)
                 },
@@ -254,9 +255,9 @@ struct ContentView: View {
                 onSectionReorder: { request in
                     reorderSection(request)
                 },
-                onZoomToSection: { sectionId in
+                onZoomToSection: { sectionId, mode in
                     Task {
-                        await editorState.zoomToSection(sectionId)
+                        await editorState.zoomToSection(sectionId, mode: mode)
                     }
                 },
                 onZoomOut: {

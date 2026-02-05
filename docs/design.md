@@ -164,6 +164,18 @@ Double-clicking a sidebar section "zooms" into it:
 
 **Sync While Zoomed**: `syncZoomedSections()` updates only the zoomed sections in-place, preventing full document replacement.
 
+**Zoom Modes**:
+- **Full zoom** (double-click): Shows section + all descendants (by `parentId`) + following pseudo-sections (by document order)
+- **Shallow zoom** (Option+double-click): Shows section + only direct pseudo-sections (no children)
+
+**Pseudo-Section Handling**: Pseudo-sections have `parentId = nil` (they inherit H1 level), so `parentId`-based traversal misses them. The `getDescendantIds()` method uses **document order** to find pseudo-sections:
+
+1. Start from the zoomed section's position in sorted sections
+2. Scan forward, collecting pseudo-sections until hitting a regular section at same or shallower level
+3. Then run the `parentId`-based loop to collect all transitive children (including children of pseudo-sections)
+
+**Sidebar Zoom Filter**: The sidebar uses `zoomedSectionIds` from EditorViewState directly (passed as a read-only property), rather than recalculating descendants. This ensures editor and sidebar show exactly the same sections.
+
 ### Hierarchy Constraints
 
 Headers must follow a valid hierarchy (can't jump from H1 to H4):

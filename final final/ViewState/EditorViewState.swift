@@ -47,6 +47,14 @@ enum EditorMode: String, CaseIterable {
     case source = "Source"
 }
 
+/// Zoom mode for section navigation
+/// - full: Shows section + all descendants (default behavior)
+/// - shallow: Shows section + only direct pseudo-section children
+enum ZoomMode {
+    case full
+    case shallow
+}
+
 /// Content state machine - replaces multiple boolean flags for zoom/enforcement transitions
 enum EditorContentState {
     case idle
@@ -539,7 +547,10 @@ class EditorViewState {
 
     /// Zoom into a section, filtering the editor to show only that section and its descendants
     /// This is async because it needs to coordinate content transitions safely
-    func zoomToSection(_ sectionId: String) async {
+    /// - Parameters:
+    ///   - sectionId: The ID of the section to zoom into
+    ///   - mode: Zoom mode (.full for all descendants, .shallow for direct pseudo-children only)
+    func zoomToSection(_ sectionId: String, mode: ZoomMode = .full) async {
         // Guard against re-entry during transitions
         guard contentState == .idle else { return }
 
@@ -559,8 +570,10 @@ class EditorViewState {
         // NOTE: Do NOT use defer { contentState = .idle } here!
         // defer executes BEFORE SwiftUI's onChange fires, causing race conditions
 
-        // Calculate zoomed section IDs (section + all descendants)
-        let descendantIds = getDescendantIds(of: sectionId)
+        // Calculate zoomed section IDs based on mode
+        let descendantIds = mode == .shallow
+            ? getShallowDescendantIds(of: sectionId)
+            : getDescendantIds(of: sectionId)
         zoomedSectionIds = descendantIds
 
         // ZOOM DEBUG LOGGING
@@ -729,12 +742,43 @@ class EditorViewState {
     // MARK: - Private Helpers
 
     /// Get all descendant section IDs for a given section
+    /// Uses document order to find pseudo-sections that belong to the zoomed section
     private func getDescendantIds(of sectionId: String) -> Set<String> {
         var ids = Set<String>([sectionId])
+
+        // Ensure sections are sorted by document order
+        let sortedSections = sections.sorted { $0.sortOrder < $1.sortOrder }
+
+        // Find the zoomed section's index and level
+        guard let rootIndex = sortedSections.firstIndex(where: { $0.id == sectionId }),
+              let rootSection = sortedSections.first(where: { $0.id == sectionId }) else {
+            return ids
+        }
+        let rootLevel = rootSection.headerLevel
+
+        // First: Add pseudo-sections that follow in document order
+        // Continue until we hit a regular (non-pseudo) section at same or shallower level
+        for i in (rootIndex + 1)..<sortedSections.count {
+            let section = sortedSections[i]
+
+            // Stop at a regular (non-pseudo) section at same or shallower level
+            if !section.isPseudoSection && section.headerLevel <= rootLevel {
+                break
+            }
+
+            // Include pseudo-sections (they visually belong to the preceding section)
+            if section.isPseudoSection {
+                print("[DESC] Adding pseudo-section '\(section.title)' by document order")
+                ids.insert(section.id)
+            }
+        }
+
+        // Second: Add all transitive children by parentId
+        // This loop handles both regular children AND children of pseudo-sections
         var changed = true
         while changed {
             changed = false
-            for section in sections where section.parentId != nil && ids.contains(section.parentId!) {
+            for section in sortedSections where section.parentId != nil && ids.contains(section.parentId!) {
                 if !ids.contains(section.id) {
                     print("[DESC] Adding '\(section.title)' (parent=\(section.parentId?.prefix(8) ?? "nil")) as descendant")
                     ids.insert(section.id)
@@ -742,6 +786,43 @@ class EditorViewState {
                 }
             }
         }
+
+        return ids
+    }
+
+    /// Get section ID plus only its direct pseudo-section children
+    /// Used for shallow zoom (Option+double-click)
+    /// Uses document order to find pseudo-sections that belong to the zoomed section
+    private func getShallowDescendantIds(of sectionId: String) -> Set<String> {
+        var ids = Set<String>([sectionId])
+
+        // Ensure sections are sorted by document order
+        let sortedSections = sections.sorted { $0.sortOrder < $1.sortOrder }
+
+        // Find the section's index and level
+        guard let rootIndex = sortedSections.firstIndex(where: { $0.id == sectionId }),
+              let rootSection = sortedSections.first(where: { $0.id == sectionId }) else {
+            return ids
+        }
+        let rootLevel = rootSection.headerLevel
+
+        // Add only pseudo-sections that immediately follow in document order
+        // Stop at any regular section at same or shallower level
+        for i in (rootIndex + 1)..<sortedSections.count {
+            let section = sortedSections[i]
+
+            // Stop at a regular (non-pseudo) section at same or shallower level
+            if !section.isPseudoSection && section.headerLevel <= rootLevel {
+                break
+            }
+
+            // Include pseudo-sections only (shallow = no children, just pseudo-sections)
+            if section.isPseudoSection {
+                print("[SHALLOW] Adding pseudo-section '\(section.title)' as direct child")
+                ids.insert(section.id)
+            }
+        }
+
         return ids
     }
 

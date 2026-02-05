@@ -10,7 +10,7 @@ import SwiftUI
 struct SectionCardView: View {
     @Bindable var section: SectionViewModel
     let onSingleClick: () -> Void
-    let onDoubleClick: () -> Void
+    let onDoubleClick: (ZoomMode) -> Void
     var isGhost: Bool = false  // When true, render at 30% opacity (drag source in subtree drag)
 
     @Environment(ThemeManager.self) private var themeManager
@@ -50,7 +50,9 @@ struct SectionCardView: View {
         .background(backgroundColor)
         .contentShape(Rectangle())
         .onTapGesture(count: 2) {
-            onDoubleClick()
+            // SwiftUI tap gesture doesn't provide modifier flags, so use .full as default
+            // Option+double-click is handled by DraggableCardView's mouseUp handler
+            onDoubleClick(.full)
         }
         .onTapGesture(count: 1) {
             onSingleClick()
@@ -372,7 +374,7 @@ struct GoalEditorPopover: View {
         SectionCardView(
             section: sampleSection,
             onSingleClick: { print("Single click") },
-            onDoubleClick: { print("Double click") }
+            onDoubleClick: { mode in print("Double click with mode: \(mode)") }
         )
 
         Divider()
@@ -388,7 +390,7 @@ struct GoalEditorPopover: View {
                 wordCount: 1050
             )),
             onSingleClick: {},
-            onDoubleClick: {}
+            onDoubleClick: { _ in }
         )
     }
     .frame(width: 300)
