@@ -1088,8 +1088,10 @@ window.FinalFinal = {
 
   getStats() {
     const content = this.getContent();
-    const words = content.split(/\s+/).filter((w) => w.length > 0).length;
-    return { words, characters: content.length };
+    // Strip annotations before counting (<!-- ::type:: content -->)
+    const strippedContent = content.replace(/<!--\s*::\w+::\s*[\s\S]*?-->/g, '');
+    const words = strippedContent.split(/\s+/).filter((w) => w.length > 0).length;
+    return { words, characters: strippedContent.length };
   },
 
   scrollToOffset(offset: number) {

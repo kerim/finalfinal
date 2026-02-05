@@ -634,7 +634,9 @@ function insertLink() {
 }
 
 function countWords(text: string): number {
-  return text.split(/\s+/).filter((w) => w.length > 0).length;
+  // Strip annotations before counting (<!-- ::type:: content -->)
+  const strippedText = text.replace(/<!--\s*::\w+::\s*[\s\S]*?-->/g, '');
+  return strippedText.split(/\s+/).filter((w) => w.length > 0).length;
 }
 
 // Register window.FinalFinal API
@@ -673,11 +675,13 @@ window.FinalFinal = {
   },
 
   getStats() {
-    // Use stripped content for accurate word/char counts (exclude hidden anchors)
+    // Use stripped content for accurate word/char counts (exclude hidden anchors and annotations)
     const rawContent = editorView?.state.doc.toString() || '';
     const content = stripAnchors(rawContent);
-    const words = countWords(content);
-    const characters = content.length;
+    // Strip annotations before counting (<!-- ::type:: content -->)
+    const strippedContent = content.replace(/<!--\s*::\w+::\s*[\s\S]*?-->/g, '');
+    const words = countWords(strippedContent);
+    const characters = strippedContent.length;
     window.__CODEMIRROR_DEBUG__!.lastStatsUpdate = new Date().toISOString();
     return { words, characters };
   },

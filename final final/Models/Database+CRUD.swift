@@ -25,6 +25,26 @@ extension ProjectDatabase {
         }
     }
 
+    /// Update document goal settings without touching other fields
+    func updateDocumentGoal(
+        goal: Int?,
+        goalType: GoalType,
+        excludeBibliography: Bool
+    ) throws {
+        try write { db in
+            try db.execute(
+                sql: """
+                    UPDATE project
+                    SET documentGoal = ?,
+                        documentGoalType = ?,
+                        excludeBibliography = ?,
+                        updatedAt = ?
+                    """,
+                arguments: [goal, goalType.rawValue, excludeBibliography, Date()]
+            )
+        }
+    }
+
     // MARK: Content
 
     func fetchContent(for projectId: String) throws -> Content? {

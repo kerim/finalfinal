@@ -163,6 +163,19 @@ class EditorViewState {
     var sections: [SectionViewModel] = []
     var statusFilter: SectionStatus?
 
+    // MARK: - Document Goal Settings
+    var documentGoal: Int?
+    var documentGoalType: GoalType = .approx
+    var excludeBibliography: Bool = false
+
+    /// Filtered word count respecting excludeBibliography setting
+    /// Used by both OutlineFilterBar and StatusBar for consistency
+    var filteredTotalWordCount: Int {
+        sections
+            .filter { !excludeBibliography || !$0.isBibliography }
+            .reduce(0) { $0 + $1.wordCount }
+    }
+
     // MARK: - Annotation State (Phase 2)
     var annotations: [AnnotationViewModel] = []
 

@@ -190,7 +190,10 @@ class SectionSyncService {
         }
 
         // When zoomed, update zoomed sections in-place
-        if let zoomedIds = zoomedIds, isContentZoomed {
+        // Trust zoomedIds directly - it's passed synchronously from editorState.zoomedSectionIds
+        // which is the source of truth (not the reactive isContentZoomed property)
+        if let zoomedIds = zoomedIds, !zoomedIds.isEmpty {
+            print("[SectionSyncService] syncContent: zoomed mode with \(zoomedIds.count) sections")
             await syncZoomedSections(from: markdown, zoomedIds: zoomedIds)
             return
         }

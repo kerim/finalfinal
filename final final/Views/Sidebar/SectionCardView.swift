@@ -11,12 +11,12 @@ struct SectionCardView: View {
     @Bindable var section: SectionViewModel
     let onSingleClick: () -> Void
     let onDoubleClick: (ZoomMode) -> Void
+    let onSectionUpdated: ((SectionViewModel) -> Void)?  // Called when word goal changes
     var isGhost: Bool = false  // When true, render at 30% opacity (drag source in subtree drag)
 
     @Environment(ThemeManager.self) private var themeManager
     @State private var isHovering = false
-    @State private var showAggregateWordCount = false
-    @State private var showGoalPopover = false
+    @State private var showingGoalEditor = false
 
     var body: some View {
 
@@ -126,51 +126,103 @@ struct SectionCardView: View {
     }
 
     private var wordCountView: some View {
-        Text(wordCountDisplayText)
+        Text(section.wordCountDisplay)
             .font(.system(size: TypeScale.smallUI, weight: .medium, design: .monospaced))
             .foregroundColor(wordCountColor)
-            .contentShape(Rectangle())
-            .onTapGesture(count: 2) {
-                showGoalPopover = true
+            .onTapGesture {
+                showingGoalEditor = true
             }
-            .onTapGesture(count: 1) {
-                showAggregateWordCount.toggle()
-            }
-            .popover(isPresented: $showGoalPopover) {
-                GoalEditorPopover(
-                    wordCount: section.wordCount,
-                    goal: Binding(
-                        get: { section.wordGoal },
-                        set: { section.wordGoal = $0 }
-                    )
+            .popover(isPresented: $showingGoalEditor, arrowEdge: .bottom) {
+                WordCountGoalPopover(
+                    wordGoal: $section.wordGoal,
+                    goalType: $section.goalType,
+                    currentWordCount: section.wordCount,
+                    isPresented: $showingGoalEditor,
+                    onSave: { onSectionUpdated?(section) }
                 )
             }
     }
 
-    private var wordCountDisplayText: String {
-        if showAggregateWordCount {
-            // Aggregate display: Σ + aggregate count
-            if let goal = section.wordGoal {
-                return "Σ \(section.aggregateWordCount)/\(goal)"
-            }
-            return "Σ \(section.aggregateWordCount)"
-        } else {
-            // Individual display
-            return section.wordCountDisplay
-        }
-    }
-
     private var wordCountColor: Color {
-        guard let progress = section.goalProgress else {
+        switch section.goalStatus {
+        case .met:
+            return themeManager.currentTheme.statusColors.final_  // Green
+        case .notMet:
+            return .red
+        case .noGoal:
             return themeManager.currentTheme.sidebarText.opacity(0.6)
         }
+    }
+}
 
-        if progress >= 1.0 {
-            return themeManager.currentTheme.statusColors.final_
-        } else if progress >= 0.75 {
-            return themeManager.currentTheme.statusColors.review
+/// Popover for setting word count goals
+struct WordCountGoalPopover: View {
+    @Binding var wordGoal: Int?
+    @Binding var goalType: GoalType
+    let currentWordCount: Int
+    @Binding var isPresented: Bool
+    var onSave: (() -> Void)?  // Called when goal is saved or cleared
+
+    @State private var goalInput: String
+    @Environment(ThemeManager.self) private var themeManager
+
+    init(wordGoal: Binding<Int?>, goalType: Binding<GoalType>,
+         currentWordCount: Int, isPresented: Binding<Bool>,
+         onSave: (() -> Void)? = nil) {
+        self._wordGoal = wordGoal
+        self._goalType = goalType
+        self.currentWordCount = currentWordCount
+        self._isPresented = isPresented
+        self.onSave = onSave
+        self._goalInput = State(initialValue: wordGoal.wrappedValue.map { String($0) } ?? "")
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Word Goal")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(themeManager.currentTheme.sidebarTextSecondary)
+
+            TextField("Goal (e.g., 500)", text: $goalInput)
+                .textFieldStyle(.roundedBorder)
+                .frame(width: 150)
+
+            Picker("Type", selection: $goalType) {
+                ForEach(GoalType.allCases, id: \.self) { type in
+                    Text("\(type.displaySymbol) \(type.displayName)")
+                        .tag(type)
+                }
+            }
+            .pickerStyle(.segmented)
+
+            Text("Current: \(currentWordCount) words")
+                .font(.system(size: 11))
+                .foregroundColor(themeManager.currentTheme.sidebarTextSecondary)
+
+            HStack {
+                Button("Clear") {
+                    wordGoal = nil
+                    goalInput = ""
+                    onSave?()
+                    isPresented = false
+                }
+                .disabled(wordGoal == nil)
+
+                Spacer()
+
+                Button("Done") {
+                    if let value = Int(goalInput), value > 0 {
+                        wordGoal = value
+                    }
+                    onSave?()
+                    isPresented = false
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+            }
         }
-        return themeManager.currentTheme.sidebarText.opacity(0.6)
+        .padding(12)
+        .frame(width: 280)
     }
 }
 
@@ -189,10 +241,9 @@ class SectionViewModel: Identifiable {
     var status: SectionStatus
     var tags: [String]
     var wordGoal: Int?
+    var goalType: GoalType
     var wordCount: Int
     var startOffset: Int
-    /// Aggregate word count (this section + all descendants). Set by OutlineSidebar.
-    var aggregateWordCount: Int = 0
 
     init(from section: Section) {
         self.id = section.id
@@ -211,9 +262,9 @@ class SectionViewModel: Identifiable {
         self.status = section.status
         self.tags = section.tags
         self.wordGoal = section.wordGoal
+        self.goalType = section.goalType
         self.wordCount = section.wordCount
         self.startOffset = section.startOffset
-        self.aggregateWordCount = section.wordCount  // Default to own count
     }
 
     var goalProgress: Double? {
@@ -221,9 +272,15 @@ class SectionViewModel: Identifiable {
         return Double(wordCount) / Double(goal)
     }
 
+    /// Goal status based on current word count, goal, and goal type
+    var goalStatus: GoalStatus {
+        GoalStatus.calculate(wordCount: wordCount, goal: wordGoal, goalType: goalType)
+    }
+
+    /// Display string for word count with goal type symbol when goal is set
     var wordCountDisplay: String {
-        if let goal = wordGoal {
-            return "\(wordCount)/\(goal)"
+        if wordGoal != nil {
+            return "\(goalType.displaySymbol)\(wordCount)"
         }
         return "\(wordCount)"
     }
@@ -242,6 +299,7 @@ class SectionViewModel: Identifiable {
             status: status,
             tags: tags,
             wordGoal: wordGoal,
+            goalType: goalType,
             wordCount: wordCount,
             startOffset: startOffset,
             createdAt: createdAt,
@@ -274,12 +332,11 @@ class SectionViewModel: Identifiable {
             status: self.status,
             tags: self.tags,
             wordGoal: self.wordGoal,
+            goalType: self.goalType,
             wordCount: self.wordCount,
             startOffset: startOffset ?? self.startOffset
         )
-        let copy = SectionViewModel(from: section)
-        copy.aggregateWordCount = self.aggregateWordCount
-        return copy
+        return SectionViewModel(from: section)
     }
 }
 
@@ -293,70 +350,6 @@ struct BibliographyIcon: View {
     }
 }
 
-/// Popover for editing word count goal
-struct GoalEditorPopover: View {
-    let wordCount: Int
-    @Binding var goal: Int?
-
-    @Environment(\.dismiss) private var dismiss
-    @Environment(ThemeManager.self) private var themeManager
-    @State private var goalText: String = ""
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Word Count Goal")
-                .font(.headline)
-                .foregroundColor(themeManager.currentTheme.sidebarText)
-
-            HStack {
-                Text("Current:")
-                    .foregroundColor(themeManager.currentTheme.sidebarText.opacity(0.7))
-                Text("\(wordCount)")
-                    .fontWeight(.medium)
-                    .foregroundColor(themeManager.currentTheme.sidebarText)
-            }
-            .font(.system(size: 12))
-
-            TextField("Goal (e.g., 500)", text: $goalText)
-                .textFieldStyle(.roundedBorder)
-                .frame(width: 120)
-                .onSubmit {
-                    saveGoal()
-                }
-
-            HStack(spacing: 8) {
-                Button("Clear") {
-                    goal = nil
-                    dismiss()
-                }
-                .buttonStyle(.borderless)
-                .foregroundColor(themeManager.currentTheme.sidebarTextSecondary)
-
-                Spacer()
-
-                Button("Save") {
-                    saveGoal()
-                }
-                .buttonStyle(.borderedProminent)
-            }
-        }
-        .padding()
-        .frame(width: 200)
-        .onAppear {
-            if let existingGoal = goal {
-                goalText = "\(existingGoal)"
-            }
-        }
-    }
-
-    private func saveGoal() {
-        if let value = Int(goalText), value > 0 {
-            goal = value
-        }
-        dismiss()
-    }
-}
-
 #Preview {
     let sampleSection = SectionViewModel(from: Section(
         projectId: "test",
@@ -367,6 +360,7 @@ struct GoalEditorPopover: View {
         status: .writing,
         tags: ["research", "draft"],
         wordGoal: 500,
+        goalType: .approx,
         wordCount: 350
     ))
 
@@ -374,7 +368,8 @@ struct GoalEditorPopover: View {
         SectionCardView(
             section: sampleSection,
             onSingleClick: { print("Single click") },
-            onDoubleClick: { mode in print("Double click with mode: \(mode)") }
+            onDoubleClick: { mode in print("Double click with mode: \(mode)") },
+            onSectionUpdated: nil
         )
 
         Divider()
@@ -387,10 +382,12 @@ struct GoalEditorPopover: View {
                 title: "Chapter One: The Beginning of Something New",
                 status: .final_,
                 wordGoal: 1000,
+                goalType: .min,
                 wordCount: 1050
             )),
             onSingleClick: {},
-            onDoubleClick: { _ in }
+            onDoubleClick: { _ in },
+            onSectionUpdated: nil
         )
     }
     .frame(width: 300)

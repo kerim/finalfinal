@@ -246,6 +246,9 @@ struct ContentView: View {
                 statusFilter: $editorState.statusFilter,
                 zoomedSectionId: $editorState.zoomedSectionId,
                 zoomedSectionIds: editorState.zoomedSectionIds,
+                documentGoal: $editorState.documentGoal,
+                documentGoalType: $editorState.documentGoalType,
+                excludeBibliography: $editorState.excludeBibliography,
                 onScrollToSection: { sectionId in
                     scrollToSection(sectionId)
                 },
@@ -309,12 +312,12 @@ struct ContentView: View {
         Task {
             do {
                 try documentManager.saveSectionStatus(id: section.id, status: section.status)
-                if let goal = section.wordGoal {
-                    try documentManager.saveSectionWordGoal(id: section.id, goal: goal)
-                }
-                if !section.tags.isEmpty {
-                    try documentManager.saveSectionTags(id: section.id, tags: section.tags)
-                }
+                // ALWAYS save word goal (even when nil - to clear it)
+                try documentManager.saveSectionWordGoal(id: section.id, goal: section.wordGoal)
+                // ALWAYS save goal type
+                try documentManager.saveSectionGoalType(id: section.id, goalType: section.goalType)
+                // ALWAYS save tags (even when empty)
+                try documentManager.saveSectionTags(id: section.id, tags: section.tags)
             } catch {
                 print("[ContentView] Error saving section: \(error.localizedDescription)")
             }
@@ -1132,6 +1135,13 @@ struct ContentView: View {
         editorState.startObserving(database: db, projectId: pid)
         editorState.startObservingAnnotations(database: db, contentId: cid)
 
+        // Load document goal settings
+        if let goalSettings = try? documentManager.loadDocumentGoalSettings() {
+            editorState.documentGoal = goalSettings.goal
+            editorState.documentGoalType = goalSettings.goalType
+            editorState.excludeBibliography = goalSettings.excludeBibliography
+        }
+
         // Load content
         do {
             let savedContent = try documentManager.loadContent()
@@ -1209,6 +1219,9 @@ struct ContentView: View {
         editorState.fullDocumentBeforeZoom = nil
         editorState.zoomedSectionIds = nil
         editorState.isCitationLibraryPushed = false
+        editorState.documentGoal = nil
+        editorState.documentGoalType = .approx
+        editorState.excludeBibliography = false
 
         // Configure for new project
         await configureForCurrentProject()
@@ -1612,6 +1625,30 @@ extension View {
                     ]
                 )
             }
+            // Document goal settings persistence
+            .onChange(of: editorState.documentGoal) { _, _ in
+                saveDocumentGoalSettings(editorState: editorState, documentManager: documentManager)
+            }
+            .onChange(of: editorState.documentGoalType) { _, _ in
+                saveDocumentGoalSettings(editorState: editorState, documentManager: documentManager)
+            }
+            .onChange(of: editorState.excludeBibliography) { _, _ in
+                saveDocumentGoalSettings(editorState: editorState, documentManager: documentManager)
+            }
+    }
+
+    /// Helper to save document goal settings when any of them change
+    @MainActor
+    private func saveDocumentGoalSettings(editorState: EditorViewState, documentManager: DocumentManager) {
+        do {
+            try documentManager.saveDocumentGoalSettings(
+                goal: editorState.documentGoal,
+                goalType: editorState.documentGoalType,
+                excludeBibliography: editorState.excludeBibliography
+            )
+        } catch {
+            print("[ContentView] Error saving document goal settings: \(error.localizedDescription)")
+        }
     }
 
     /// Adds sidebar visibility sync observers

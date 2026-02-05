@@ -139,6 +139,10 @@ struct OutlineSidebar: View {
     /// Zoomed section IDs from EditorViewState (includes root + descendants via document order)
     /// This is read-only because the sidebar never modifies the zoom state directly
     let zoomedSectionIds: Set<String>?
+    /// Document-level goal settings
+    @Binding var documentGoal: Int?
+    @Binding var documentGoalType: GoalType
+    @Binding var excludeBibliography: Bool
     let onScrollToSection: (String) -> Void
     let onSectionUpdated: (SectionViewModel) -> Void
     let onSectionReorder: ((SectionReorderRequest) -> Void)?
@@ -165,14 +169,22 @@ struct OutlineSidebar: View {
     @State private var subtreeDragHintTask: Task<Void, Never>?  // Replaces Timer for proper lifecycle
     private let hasSeenSubtreeDragHintKey = "hasSeenSubtreeDragHint"
 
-    /// Total word count of currently visible sections
+    /// Total word count of currently visible sections (respects excludeBibliography)
     private var filteredWordCount: Int {
-        filteredSections.reduce(0) { $0 + $1.wordCount }
+        filteredSections
+            .filter { !excludeBibliography || !$0.isBibliography }
+            .reduce(0) { $0 + $1.wordCount }
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            OutlineFilterBar(selectedFilter: $statusFilter, filteredWordCount: filteredWordCount)
+            OutlineFilterBar(
+                selectedFilter: $statusFilter,
+                filteredWordCount: filteredWordCount,
+                documentGoal: $documentGoal,
+                documentGoalType: $documentGoalType,
+                excludeBibliography: $excludeBibliography
+            )
 
             Divider()
                 .foregroundColor(themeManager.currentTheme.dividerColor)
@@ -185,18 +197,6 @@ struct OutlineSidebar: View {
         }
         .frame(minWidth: 250, idealWidth: 300, maxWidth: 400)
         .background(themeManager.currentTheme.sidebarBackground)
-        .onChange(of: sections.count) { _, _ in
-            // Recalculate aggregate word counts when sections are added/removed
-            calculateAggregateWordCounts()
-        }
-        .onChange(of: sections.map { $0.wordCount }) { _, _ in
-            // Recalculate aggregate word counts when section word counts change
-            calculateAggregateWordCounts()
-        }
-        .onAppear {
-            // Calculate initial aggregate word counts
-            calculateAggregateWordCounts()
-        }
     }
 
     private var filteredSections: [SectionViewModel] {
@@ -223,37 +223,6 @@ struct OutlineSidebar: View {
         }
 
         return result
-    }
-
-    /// Calculate aggregate word counts for all sections (section + descendants)
-    private func calculateAggregateWordCounts() {
-        // Recursive function to get aggregate for a section
-        func aggregate(for sectionId: String, memo: inout [String: Int]) -> Int {
-            if let cached = memo[sectionId] {
-                return cached
-            }
-
-            guard let section = sections.first(where: { $0.id == sectionId }) else {
-                return 0
-            }
-
-            // Get children of this section
-            let children = sections.filter { $0.parentId == sectionId }
-
-            // Sum: own word count + all children's aggregates
-            let total = section.wordCount + children.reduce(0) { sum, child in
-                sum + aggregate(for: child.id, memo: &memo)
-            }
-
-            memo[sectionId] = total
-            return total
-        }
-
-        // Calculate for all sections
-        var memo: [String: Int] = [:]
-        for section in sections {
-            section.aggregateWordCount = aggregate(for: section.id, memo: &memo)
-        }
     }
 
     // MARK: - Subtree Drag Helpers
@@ -361,7 +330,8 @@ struct OutlineSidebar: View {
                                     let mode = section.isPseudoSection ? .shallow : receivedMode
                                     onZoomToSection?(section.id, mode)
                                 }
-                            }
+                            },
+                            onSectionUpdated: onSectionUpdated
                         )
                         .id(section.id)
                         // Elevate z-index when showing indicator to prevent adjacent cards from rendering on top
@@ -697,7 +667,8 @@ struct SubtreeDragPreview: View {
             SectionCardView(
                 section: section,
                 onSingleClick: {},
-                onDoubleClick: { _ in }
+                onDoubleClick: { _ in },
+                onSectionUpdated: nil
             )
             .frame(width: 280)
             .background(themeManager.currentTheme.sidebarBackground)
@@ -1032,6 +1003,7 @@ struct ZoomBreadcrumb: View {
             status: .next,
             tags: ["draft"],
             wordGoal: 500,
+            goalType: .approx,
             wordCount: 320
         )),
         SectionViewModel(from: Section(
@@ -1045,12 +1017,18 @@ struct ZoomBreadcrumb: View {
     ]
     @Previewable @State var filter: SectionStatus?
     @Previewable @State var zoom: String?
+    @Previewable @State var docGoal: Int? = 1000
+    @Previewable @State var docGoalType: GoalType = .approx
+    @Previewable @State var excludeBib: Bool = false
 
     OutlineSidebar(
         sections: $sections,
         statusFilter: $filter,
         zoomedSectionId: $zoom,
         zoomedSectionIds: nil,
+        documentGoal: $docGoal,
+        documentGoalType: $docGoalType,
+        excludeBibliography: $excludeBib,
         onScrollToSection: { id in print("Scroll to: \(id)") },
         onSectionUpdated: { section in print("Updated: \(section.title)") },
         onSectionReorder: { request in
