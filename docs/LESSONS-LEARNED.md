@@ -660,6 +660,143 @@ arguments.append(contentsOf: ["--pdf-engine-opt", "-output-driver=\(wrapperURL.p
 
 ## Zoom Feature
 
+### Async Coordination Patterns
+
+#### CheckedContinuation Double-Resume Prevention
+
+**Problem:** Fatal error when both timeout and acknowledgement callback fire for the same continuation.
+
+**Root Cause:** `waitForContentAcknowledgement()` uses a continuation with timeout. If the timeout fires and then `acknowledgeContent()` is called (or vice versa), the continuation is resumed twice, causing a crash.
+
+**Solution:** Add an `isAcknowledged` flag to prevent double-resume:
+
+```swift
+private var isAcknowledged = false
+
+func waitForContentAcknowledgement() async {
+    isAcknowledged = false
+    // ... in timeout handler:
+    guard !isAcknowledged else { return }
+    isAcknowledged = true
+    contentAckContinuation?.resume()
+}
+
+func acknowledgeContent() {
+    guard !isAcknowledged else { return }
+    isAcknowledged = true
+    contentAckContinuation?.resume()
+}
+```
+
+**General principle:** When using `CheckedContinuation` with timeout races, guard against double-resume with a flag.
+
+---
+
+#### Set Transitional State Before Awaits
+
+**Problem:** Race condition where `contentState` was set after `await zoomOut()`, allowing other operations to start during the transition.
+
+**Root Cause:** The `contentState = .zoomTransition` assignment came after the first `await`, leaving a window where `contentState == .idle` while async work was in progress.
+
+**Solution:** Set transitional state BEFORE any awaits:
+
+```swift
+func zoomToSection(_ sectionId: String) async {
+    guard contentState == .idle else { return }
+
+    // SET CONTENTSTATE FIRST - before any awaits
+    contentState = .zoomTransition
+
+    if zoomedSectionId != nil && zoomedSectionId != sectionId {
+        await zoomOut()  // zoomOut detects we're already in transition
+    }
+    // ...
+}
+```
+
+**General principle:** In async state machines, set transitional states BEFORE any `await` points to prevent race conditions.
+
+---
+
+#### Caller-Managed State for Nested Async Calls
+
+**Problem:** `zoomOut()` reset `contentState = .idle`, but when called from `zoomToSection()`, the caller still needed the transition state.
+
+**Root Cause:** `zoomOut()` assumes it owns the state lifecycle, but it can be called both standalone (owns state) and nested (caller owns state).
+
+**Solution:** Detect if caller is managing state:
+
+```swift
+func zoomOut() async {
+    let callerManagedState = (contentState == .zoomTransition)
+    if !callerManagedState {
+        contentState = .zoomTransition
+    }
+    // ... do work ...
+
+    // Only reset if we set it ourselves
+    if !callerManagedState {
+        contentState = .idle
+    }
+}
+```
+
+**General principle:** When async functions can be called standalone or nested, check if the caller is managing shared state before setting/clearing it.
+
+---
+
+### State Protection
+
+#### Protect Backup State During Consecutive Operations
+
+**Problem:** When zooming from section A to section B (without fully unzooming), the backup was overwritten with partial content.
+
+**Root Cause:** Each `zoomToSection()` call stored the current content as backup. When already zoomed, the "current content" was the zoomed section's content, not the full document.
+
+**Solution:** Only store backup if none exists:
+
+```swift
+if fullDocumentBeforeZoom == nil {
+    fullDocumentBeforeZoom = content
+}
+```
+
+**General principle:** When storing "before" state for undo/restore operations, guard against overwriting during chained operations.
+
+---
+
+### Field Sync Completeness
+
+#### Sync All Editable Fields, Not Just Content
+
+**Problem:** When user edited a header title while zoomed, the database wasn't updated with the new title.
+
+**Root Cause:** The sync function only checked if content changed, not if title or level changed:
+
+```swift
+// Before: only content comparison
+if section.markdownContent != newContent {
+    // update
+}
+```
+
+**Solution:** Check for title and level changes, not just content:
+
+```swift
+if header.title != existing.title {
+    updates.title = header.title
+    hasChanges = true
+}
+if header.level != existing.headerLevel {
+    updates.headerLevel = header.level
+    hasChanges = true
+}
+```
+
+**General principle:** When syncing structured data, ensure ALL editable fields are checked for changes.
+
+---
+
 ### Use Database as Source of Truth, Not Backup Parsing
 
 **Problem:** When zooming into a section in Milkdown, editing the title, then zooming out, the title reverted to the original. CodeMirror worked correctly.
