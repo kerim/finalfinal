@@ -33,6 +33,10 @@ Also, a lot of things you would expect from a word processor aren't there yet: t
 
 # What's New
 
+## Version 02.29
+
+- Fixed bug with editor window loading on section zoom
+
 ## Version 02.25
 
 - Basic Find & Replace has been added
@@ -73,7 +77,6 @@ Also, a lot of things you would expect from a word processor aren't there yet: t
 - Deleting all the text in a document can have strange effects
 - PDF export doesn't format in-text citations
 - Source view is highlighting the current paragraph (it shouldn't)
-- Weirdness with scrolling and document loading, especially in source view
 - Automatic document restructuring (when header level is changed) can have unexpected consequences
 
 # Set-up
