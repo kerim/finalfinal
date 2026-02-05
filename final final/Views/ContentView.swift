@@ -109,6 +109,18 @@ struct ContentView: View {
                 rebuildDocumentContent()
                 editorState.contentState = .idle
             }
+            .onReceive(NotificationCenter.default.publisher(for: .didZoomOut)) { _ in
+                // Zoom-out completed - trigger bibliography sync with full document content
+                // Citations added during zoom need to be processed now
+                print("[ContentView] Zoom-out completed - triggering bibliography sync catch-up")
+                guard let projectId = documentManager.projectId else { return }
+                let citekeys = BibliographySyncService.extractCitekeys(from: editorState.content)
+                print("[ContentView] Full document has \(citekeys.count) citations: \(citekeys)")
+                bibliographySyncService.checkAndUpdateBibliography(
+                    currentCitekeys: citekeys,
+                    projectId: projectId
+                )
+            }
             .integrityAlert(
                 report: $integrityReport,
                 onRepair: { report in
@@ -459,30 +471,9 @@ struct ContentView: View {
         enforceHierarchyConstraints()
 
         // Rebuild document content (zoom-aware)
+        // NOTE: rebuildDocumentContent() now calls updateSourceContentIfNeeded() internally,
+        // which handles sourceContent update for CodeMirror mode
         rebuildDocumentContent()
-
-        // If in source mode, also update sourceContent with anchors
-        // This ensures CodeMirrorEditor (which binds to sourceContent) sees the reordered content
-        if editorState.editorMode == .source {
-            // Recalculate offsets relative to current content for anchor injection
-            var adjustedSections: [SectionViewModel] = []
-            var adjustedOffset = 0
-            for section in editorState.sections.sorted(by: { $0.sortOrder < $1.sortOrder }) {
-                adjustedSections.append(section.withUpdates(startOffset: adjustedOffset))
-                adjustedOffset += section.markdownContent.count
-            }
-
-            let withAnchors = sectionSyncService.injectSectionAnchors(
-                markdown: editorState.content,
-                sections: adjustedSections
-            )
-            // Also inject bibliography marker for source mode
-            let withBibMarker = sectionSyncService.injectBibliographyMarker(
-                markdown: withAnchors,
-                sections: editorState.sections
-            )
-            editorState.sourceContent = withBibMarker
-        }
 
         // Persist reordered sections to database
         Task {
@@ -610,6 +601,40 @@ struct ContentView: View {
         }
 
         editorState.content = newContent
+
+        // Update sourceContent for CodeMirror (when in source mode)
+        updateSourceContentIfNeeded()
+    }
+
+    /// Updates sourceContent from current content when in source mode
+    /// Recalculates section offsets and injects anchors/bibliography markers
+    private func updateSourceContentIfNeeded() {
+        guard editorState.editorMode == .source else { return }
+
+        // Get non-bibliography sections in sort order
+        let sectionsForAnchors = editorState.sections
+            .filter { !$0.isBibliography }
+            .sorted { $0.sortOrder < $1.sortOrder }
+
+        // Recalculate offsets for anchor injection
+        var adjustedSections: [SectionViewModel] = []
+        var adjustedOffset = 0
+        for section in sectionsForAnchors {
+            adjustedSections.append(section.withUpdates(startOffset: adjustedOffset))
+            adjustedOffset += section.markdownContent.count
+            if !section.markdownContent.hasSuffix("\n") {
+                adjustedOffset += 1
+            }
+        }
+
+        let withAnchors = sectionSyncService.injectSectionAnchors(
+            markdown: editorState.content,
+            sections: adjustedSections
+        )
+        editorState.sourceContent = sectionSyncService.injectBibliographyMarker(
+            markdown: withAnchors,
+            sections: editorState.sections
+        )
     }
 
     /// Recalculate parentId for all sections based on document order and header levels

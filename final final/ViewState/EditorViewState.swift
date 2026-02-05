@@ -25,6 +25,9 @@ extension Notification.Name {
     static let bibliographySectionChanged = Notification.Name("bibliographySectionChanged")
     /// Posted when editor appearance mode changes (WYSIWYG ↔ source) - Phase C dual-appearance
     static let editorAppearanceModeChanged = Notification.Name("editorAppearanceModeChanged")
+    /// Posted when zoom-out completes and contentState is back to idle
+    /// Used to trigger bibliography sync after zoom-out (citations added during zoom)
+    static let didZoomOut = Notification.Name("didZoomOut")
 }
 
 enum EditorMode: String, CaseIterable {
@@ -606,6 +609,9 @@ class EditorViewState {
         // Only reset contentState if we set it ourselves (not if called from zoomToSection)
         if !callerManagedState {
             contentState = .idle
+            // Post notification for bibliography sync catch-up
+            // Citations added during zoom need to be processed now that we have full document
+            NotificationCenter.default.post(name: .didZoomOut, object: nil)
         }
     }
 
