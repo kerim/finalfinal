@@ -21,6 +21,15 @@ Also, a lot of things you would expect from a word processor aren't there yet: t
 
 # What's New
 
+## Version 02.15
+* Complete redesign of backed architecture to better support block-based outlining features
+
+* Cleaned up source-mode so it matches look and theme of WYSIWYG editor
+
+* Improved bibliography generation to make it more robust in various edge cases
+
+  
+
 ## Version 0.2.9
 
 * Preference pane now lets you override default themes and save your own styles!
