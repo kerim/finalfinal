@@ -655,3 +655,70 @@ arguments.append(contentsOf: ["--pdf-engine-opt", "-output-driver=\(wrapperURL.p
 **Reference:** [XeTeX Reference Guide](https://mirrors.mit.edu/CTAN/info/xetexref/xetex-reference.pdf) - the `-output-driver=CMD` option "use CMD as the XDV-to-PDF driver instead of xdvipdfmx"
 
 **General principle:** When bundling TeX in macOS apps, avoid spaces in the app name. If unavoidable, use `-output-driver` to redirect xdvipdfmx calls through a wrapper script at a space-free path.
+
+---
+
+## Zoom Feature
+
+### Use Database as Source of Truth, Not Backup Parsing
+
+**Problem:** When zooming into a section in Milkdown, editing the title, then zooming out, the title reverted to the original. CodeMirror worked correctly.
+
+**Root Cause:** The `zoomOut()` function stored a backup of the full document before zoom, then when zooming out, it parsed the backup to find sections by **title AND level**. When a title changed while zoomed, no match was found:
+
+```swift
+// In zoomOut() - FRAGILE
+let originalSections = parseMarkdownToSectionOffsets(fullDocumentBeforeZoom)
+for original in originalSections {
+    if zoomedIds.contains(original.id) {
+        // Match by ID works if we can find the ID...
+        // But parseMarkdownToSectionOffsets matches by title+level!
+        if let edited = sections.first(where: { $0.id == original.id }) {
+            mergedContent += edited.markdownContent
+        }
+    } else {
+        mergedContent += original.content  // Uses backup content
+    }
+}
+```
+
+The `parseMarkdownToSectionOffsets()` function assigns IDs by matching title+level against the current sections array. When the title changed:
+- Parser sees "one point two gb" (new title)
+- Sections array has "one point two gb" (new title from sync)
+- Backup has "one point two OH" (old title)
+- Parser tries to match backup's "one point two OH" → no match → assigns "unknown-N" ID
+- zoomedIds check fails → uses backup content (old title)
+
+**Why CodeMirror worked:** CodeMirror uses section anchors (`<!-- section:UUID -->`) embedded in the content. These anchors preserve the actual section ID regardless of title changes.
+
+**Solution:** Eliminate backup parsing entirely. The `sections` array (synced via ValueObservation) already contains all needed content:
+- Zoomed sections: have edited content (synced via `syncZoomedSections`)
+- Non-zoomed sections: have original content (unchanged in database)
+
+```swift
+// In zoomOut() - ROBUST
+let sortedSections = sections
+    .filter { !$0.isBibliography }
+    .sorted { $0.sortOrder < $1.sortOrder }
+
+var mergedContent = sortedSections
+    .map { section in
+        var md = section.markdownContent
+        if !md.hasSuffix("\n") { md += "\n" }
+        return md
+    }
+    .joined()
+
+// Append bibliography at end
+if let bibSection = sections.first(where: { $0.isBibliography }) {
+    mergedContent += bibSection.markdownContent
+}
+```
+
+**Why this works:**
+1. **Database is truth** - `syncZoomedSections` persists edits during zoom
+2. **`sections` array is current** - ValueObservation keeps it in sync
+3. **No title matching** - We use section IDs and sortOrder directly
+4. **Handles all cases** - Title changes, content changes, reordering all work
+
+**General principle:** When restoring state after an editing operation, prefer using the live database-backed model rather than parsing a text backup. Text parsing is fragile when identifiers (like titles) can change during the operation.

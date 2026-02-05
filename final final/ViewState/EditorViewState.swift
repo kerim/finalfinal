@@ -553,9 +553,9 @@ class EditorViewState {
 
         var mergedContent = sortedSections
             .map { section in
-                var md = section.markdownContent
-                if !md.hasSuffix("\n") { md += "\n" }
-                return md
+                var sectionMd = section.markdownContent
+                if !sectionMd.hasSuffix("\n") { sectionMd += "\n" }
+                return sectionMd
             }
             .joined()
 
