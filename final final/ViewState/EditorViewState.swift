@@ -92,6 +92,11 @@ class EditorViewState {
     /// Tracks content transitions to prevent race conditions
     var contentState: EditorContentState = .idle
 
+    /// Direct zoom flag passed through SwiftUI view hierarchy to bypass coordinator state race condition.
+    /// Set to true IMMEDIATELY BEFORE content change, cleared AFTER acknowledgement.
+    /// This flag is passed directly to editor views and read in the same updateNSView cycle as content.
+    var isZoomingContent: Bool = false
+
     /// When true, editor polling should skip updating the content binding.
     /// Used during project switch to prevent old editor content from bleeding into new projects.
     var isResettingContent = false
@@ -610,6 +615,9 @@ class EditorViewState {
 
         // Set zoomed state
         zoomedSectionId = sectionId
+        // Set zoom flag IMMEDIATELY BEFORE content change (same updateNSView cycle)
+        // This bypasses the race condition where contentState may be stale in coordinator
+        isZoomingContent = true
         content = zoomedContent
 
         // Update sourceContent for CodeMirror
@@ -636,6 +644,8 @@ class EditorViewState {
         // The acknowledgement comes from MilkdownEditor.setContent() callback
         await waitForContentAcknowledgement()
 
+        // Clear zoom flag AFTER acknowledgement (content is now rendered at top)
+        isZoomingContent = false
         // Now safe to mark transition as complete
         contentState = .idle
     }
@@ -682,6 +692,10 @@ class EditorViewState {
             mergedContent += bibContent
         }
 
+        // Set zoom flag IMMEDIATELY BEFORE content change (same updateNSView cycle)
+        // This bypasses the race condition where contentState may be stale in coordinator
+        isZoomingContent = true
+
         // Restore full document
         content = mergedContent
 
@@ -717,6 +731,9 @@ class EditorViewState {
         // Wait for editor to confirm content was set
         // This prevents race conditions where polling reads stale content
         await waitForContentAcknowledgement()
+
+        // Clear zoom flag AFTER acknowledgement (content is now rendered at top)
+        isZoomingContent = false
 
         // Only reset contentState if we set it ourselves (not if called from zoomToSection)
         if !callerManagedState {

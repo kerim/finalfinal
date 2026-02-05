@@ -1107,3 +1107,46 @@ struct OutlineSidebar: View {
 Then remove the now-unused `filterToSubtree()` method entirely.
 
 **General principle:** When multiple components need to filter/display the same subset of data, compute the filter criteria once in the source-of-truth (EditorViewState) and share it, rather than having each component recalculate independently. Independent recalculation leads to subtle mismatches.
+
+---
+
+### WKWebView Compositor Caching on Content Change
+
+**Problem:** When zooming into a long section (2000+ words), the WebView showed the **wrong content** (previous section or full document). Scrolling in any direction "fixed" the display.
+
+**Root Cause:** WKWebView's compositor layer caches the rendered content. When the DOM is updated via `setContent()`, the DOM and scroll position are correct (verified via JavaScript logging), but the compositor layer still shows cached content from the previous state. The browser's rendering pipeline hasn't flushed the compositor cache.
+
+This is NOT a DOM issue (the DOM is correct) or a scroll position issue (scrollY is 0). It's a compositor-level caching issue specific to WKWebView.
+
+**Evidence:** User-triggered scroll (any direction, any amount) immediately fixes the display. This indicates the compositor cache is invalidated on scroll events.
+
+**Solution:** Trigger a programmatic micro-scroll after content update to force compositor refresh:
+
+```typescript
+// In setContent() zoom transition handler, after double RAF
+requestAnimationFrame(() => {
+  requestAnimationFrame(() => {
+    // CRITICAL: Force compositor refresh with micro-scroll
+    // WKWebView's compositor caches the previous content.
+    // A scroll triggers compositor refresh, showing the new content.
+    window.scrollTo({ top: 1, left: 0, behavior: 'instant' });
+    window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+    view.dom.scrollTop = 0;
+
+    // Signal Swift that paint is complete
+    webkit.messageHandlers.paintComplete.postMessage({ ... });
+  });
+});
+```
+
+**Why double RAF isn't enough:** The double `requestAnimationFrame` pattern waits for the browser to render the new content, but this only ensures the DOM is painted—it doesn't guarantee the compositor layer is updated. WKWebView's compositor operates independently and may still serve cached tiles.
+
+**Why micro-scroll works:** Scrolling invalidates the compositor cache because the browser must re-composite the visible viewport. By scrolling 1px down then immediately back to 0, we force cache invalidation without visible UI change.
+
+**What didn't work:**
+- `alphaValue = 0/1` hiding/showing the WebView (hides the view but doesn't touch compositor)
+- `display: none` / `display: block` (same issue)
+- Forcing layout with `void element.offsetHeight` (triggers layout, not compositor refresh)
+- Longer delays (the compositor cache persists indefinitely until invalidated)
+
+**General principle:** When WKWebView shows stale content despite correct DOM state, trigger a micro-scroll to force compositor cache invalidation.
