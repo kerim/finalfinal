@@ -21,7 +21,7 @@ struct DraggableCardView: NSViewRepresentable {
     let onDragStarted: (Set<String>) -> Void
     let onDragEnded: () -> Void
     let onSingleClick: () -> Void
-    let onDoubleClick: () -> Void
+    let onDoubleClick: (ZoomMode) -> Void
 
     @Environment(ThemeManager.self) private var themeManager
 
@@ -40,7 +40,7 @@ struct DraggableCardView: NSViewRepresentable {
         let cardView = SectionCardView(
             section: section,
             onSingleClick: {},  // Handled by DraggableNSView
-            onDoubleClick: {},  // Handled by DraggableNSView
+            onDoubleClick: { _ in },  // Handled by DraggableNSView
             isGhost: isGhost
         )
         .environment(themeManager)
@@ -70,7 +70,7 @@ struct DraggableCardView: NSViewRepresentable {
         let cardView = SectionCardView(
             section: section,
             onSingleClick: {},  // Handled by DraggableNSView
-            onDoubleClick: {},  // Handled by DraggableNSView
+            onDoubleClick: { _ in },  // Handled by DraggableNSView
             isGhost: isGhost
         )
         .environment(themeManager)
@@ -195,7 +195,9 @@ class DraggableNSView: NSView, NSDraggingSource {
 
         let clickDuration = Date().timeIntervalSince(mouseDownTime ?? Date())
         if event.clickCount == 2 {
-            coordinator?.parent.onDoubleClick()
+            // Option+double-click triggers shallow zoom
+            let mode: ZoomMode = event.modifierFlags.contains(.option) ? .shallow : .full
+            coordinator?.parent.onDoubleClick(mode)
         } else if clickDuration < 0.3 {
             coordinator?.parent.onSingleClick()
         }
@@ -255,7 +257,7 @@ class DraggableNSView: NSView, NSDraggingSource {
             )
         } else {
             previewView = AnyView(
-                SectionCardView(section: section, onSingleClick: {}, onDoubleClick: {})
+                SectionCardView(section: section, onSingleClick: {}, onDoubleClick: { _ in })
                     .frame(width: 280)
                     .background(themeManager.currentTheme.sidebarBackground)
                     .clipShape(RoundedRectangle(cornerRadius: 8))
