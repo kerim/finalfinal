@@ -859,3 +859,70 @@ if let bibSection = sections.first(where: { $0.isBibliography }) {
 4. **Handles all cases** - Title changes, content changes, reordering all work
 
 **General principle:** When restoring state after an editing operation, prefer using the live database-backed model rather than parsing a text backup. Text parsing is fragile when identifiers (like titles) can change during the operation.
+
+---
+
+### Bibliography Sync During Zoom
+
+**Problem:** Citations added while zoomed into a section didn't trigger bibliography updates until app restart.
+
+**Root Cause:** The bibliography sync service extracts citekeys from `editorState.content`, but during zoom this only contains the zoomed section's content, not the full document. Citations in the zoomed section were invisible to the sync check.
+
+**Solution:** Post a `.didZoomOut` notification when zoom-out completes, triggering bibliography sync with the full document:
+
+```swift
+// In zoomOut()
+if !callerManagedState {
+    contentState = .idle
+    NotificationCenter.default.post(name: .didZoomOut, object: nil)
+}
+
+// In ContentView
+.onReceive(NotificationCenter.default.publisher(for: .didZoomOut)) { _ in
+    let citekeys = BibliographySyncService.extractCitekeys(from: editorState.content)
+    bibliographySyncService.checkAndUpdateBibliography(
+        currentCitekeys: citekeys,
+        projectId: projectId
+    )
+}
+```
+
+**General principle:** When operations occur in a partial-view context (zoom, filter), defer side effects that require the full view until the context is restored.
+
+---
+
+### Dual Editor Mode Content Update
+
+**Problem:** After operations like drag-drop reorder, the CodeMirror editor (source mode) didn't update even though Milkdown (WYSIWYG) showed the correct content.
+
+**Root Cause:** The app maintains two content properties:
+- `editorState.content` - used by MilkdownEditor
+- `editorState.sourceContent` - used by CodeMirrorEditor (includes section anchors)
+
+Functions like `rebuildDocumentContent()` only updated `content`. When in source mode, `sourceContent` remained stale, so CodeMirror didn't re-render.
+
+**Solution:** Create a helper that updates `sourceContent` whenever `content` changes while in source mode:
+
+```swift
+private func updateSourceContentIfNeeded() {
+    guard editorState.editorMode == .source else { return }
+
+    // Recalculate section offsets for anchor injection
+    var adjustedSections: [SectionViewModel] = []
+    var adjustedOffset = 0
+    for section in sectionsForAnchors {
+        adjustedSections.append(section.withUpdates(startOffset: adjustedOffset))
+        adjustedOffset += section.markdownContent.count
+        if !section.markdownContent.hasSuffix("\n") { adjustedOffset += 1 }
+    }
+
+    let withAnchors = sectionSyncService.injectSectionAnchors(
+        markdown: editorState.content, sections: adjustedSections)
+    editorState.sourceContent = sectionSyncService.injectBibliographyMarker(
+        markdown: withAnchors, sections: editorState.sections)
+}
+```
+
+Call this at the end of `rebuildDocumentContent()`.
+
+**General principle:** When a view model has mode-specific content properties, ensure ALL are updated when shared state changes. Track which property each editor binds to.

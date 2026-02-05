@@ -597,7 +597,7 @@ struct ContentView: View {
         if let bib = bibliographySection {
             var bibContent = sectionSyncService.stripBibliographyMarker(from: bib.markdownContent)
             if !bibContent.hasSuffix("\n") { bibContent += "\n" }
-            newContent += bibContent
+            newContent += "\n" + bibContent
         }
 
         editorState.content = newContent
