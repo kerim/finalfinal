@@ -552,7 +552,7 @@ final class DocumentManager {
     private func loadGettingStartedContent() -> String {
         guard let url = Bundle.main.url(forResource: "getting-started", withExtension: "md"),
               let content = try? String(contentsOf: url, encoding: .utf8) else {
-            return "# Welcome to final final\n\nCreate a new project to get started."
+            return "# Welcome to FINAL|FINAL\n\nCreate a new project to get started."
         }
         return content
     }

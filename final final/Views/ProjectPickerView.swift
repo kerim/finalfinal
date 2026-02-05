@@ -30,7 +30,7 @@ struct ProjectPickerView: View {
                 Image(systemName: "doc.text")
                     .font(.system(size: 48))
                     .foregroundColor(themeManager.currentTheme.editorText.opacity(0.5))
-                Text("final final")
+                Text("FINAL|FINAL")
                     .font(.title)
                     .fontWeight(.medium)
                     .foregroundColor(themeManager.currentTheme.editorText)

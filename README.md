@@ -1,17 +1,17 @@
-# Welcome to FINAL FINAL!
+# Welcome to FINAL|FINAL!
 
-I built FINAL FINAL out of years of frustration with existing writing tools for academics. Some tools out there had one or more of these features, but no app had all of them:
+I built FINAL|FINAL out of years of frustration with existing writing tools for academics. Some tools out there had one or more of these features, but no app had all of them:
 
 1. An clear **outline** of the document which allows you to re-organize sections or zoom in on them.
 2. Built-in support for **citations** and **bibliographies** with Zotero, including the ability to export to Word with “live” Zotero markers so you can continue to prepare the final manuscript for publication there.
 3. **Versioning** that has both automatic updates and the ability to save named versions of the document at any time, and which allows you to easily restore all or part of the ducument from any backup.
-4. **WYSIWYG editing** without the surprises that you get when working in Word. In FINAL FINAL you can switch seemlessly between formatted text or **raw markdown** without loosing your place, or giving up any features.
+4. **WYSIWYG editing** without the surprises that you get when working in Word. In FINAL|FINAL you can switch seemlessly between formatted text or **raw markdown** without loosing your place, or giving up any features.
 5. **Tasks** and **annotations** that can appear inline, as pop-ups, or completely hidden from the main document, and which can always be accessed from a dedicated sidebar.
 6. **Status markers**, **word counts**, and **writing goals** to easily track what still needs to be done.
 7. A **focus mode** that let’s you hide all distractions other than the paragraph you are working on.
 8. Easy **theming** so you can customize every aspect of how it looks to suit your personal preferences.
 
-FINAL FINAL was built for academics, but it should be just as useful for longform fiction projects, screenplays, or technical documentation, any project where you need to keep track of your context while you focus on what you write.
+FINAL|FINAL was built for academics, but it should be just as useful for longform fiction projects, screenplays, or technical documentation, any project where you need to keep track of your context while you focus on what you write.
 
 # Installation
 
@@ -27,11 +27,15 @@ The app isn't notarized, so macOS will warn about an unidentified developer.
 
 # Alpha Software
 
-Although most of the core features (listed above) are already implemented, FINAL FINAL is still alpha software and should be used with caution.
+Although most of the core features (listed above) are already implemented, FINAL|FINAL is still alpha software and should be used with caution.
 
-Also, a lot of things you would expect from a word processor aren't there yet: toolbars, keyboard shortcuts, spell checking, find-and-replace, etc. The idea was to focus on the things that make FINAL FINAL unique first, and make sure that the underlying architecture is sound, before adding such nicities. 
+Also, a lot of things you would expect from a word processor aren't there yet: toolbars, keyboard shortcuts, spell checking, find-and-replace, etc. The idea was to focus on the things that make FINAL|FINAL unique first, and make sure that the underlying architecture is sound, before adding such nicities. 
 
 # What's New
+
+## Version 02.19
+
+- word-count improvements, as well as the addition of word count goals and status markers
 
 ## Version 02.17
 
@@ -56,15 +60,15 @@ Also, a lot of things you would expect from a word processor aren't there yet: t
 
 # Set-up
 
-FINAL FINAL works fine out-of-the-box, but there are a couple of features that require external tools, and they require some setup. 
+FINAL|FINAL works fine out-of-the-box, but there are a couple of features that require external tools, and they require some setup. 
 
 ## Zotero
 
-The citation management plugin works with [Zotero](https://www.zotero.org/), a free open-source project used by thousands of people. You need to have this installed ***and running***, for citation functions to work with FINAL FINAL.
+The citation management plugin works with [Zotero](https://www.zotero.org/), a free open-source project used by thousands of people. You need to have this installed ***and running***, for citation functions to work with FINAL|FINAL.
 
 ## Better BibTeX
 
-[Better BibTeX](https://retorque.re/zotero-better-bibtex/) is a Zotero plugin that allows FINAL FINAL to talk with Zotero and also for FINAL FINAL documents to talk with the engine that lets you export to Word or PDF. 
+[Better BibTeX](https://retorque.re/zotero-better-bibtex/) is a Zotero plugin that allows FINAL|FINAL to talk with Zotero and also for FINAL|FINAL documents to talk with the engine that lets you export to Word or PDF. 
 
 Better BibTeX requires some setup to work right:
 
@@ -88,7 +92,7 @@ Alternatively, you can install pandoc using [Homebrew](https://brew.sh/):
  brew install pandoc
 ```
 
-# Using FINAL FINAL
+# Using FINAL|FINAL
 
 1. **Create a project** — Use File → New Project to start writing
 2. **Start typing** — Your work saves automatically to the project
