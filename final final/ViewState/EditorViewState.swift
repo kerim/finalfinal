@@ -81,16 +81,23 @@ class EditorViewState {
     /// Used during zoom transitions to prevent race conditions
     private var contentAckContinuation: CheckedContinuation<Void, Never>?
 
+    /// Flag to prevent double-resume of continuation (fatal error if both timeout and ack fire)
+    private var isAcknowledged = false
+
     /// Wait for content acknowledgement from the editor with timeout fallback
     /// Call this AFTER setting content to wait for WebView to confirm it was set
     /// Timeout of 1 second ensures contentState returns to .idle even if callback fails
     func waitForContentAcknowledgement() async {
+        isAcknowledged = false
+
         // Race between acknowledgement and timeout
         // Use a simple timeout approach with Task.sleep and cancellation
         let timeoutTask = Task {
             try? await Task.sleep(nanoseconds: 1_000_000_000)
             // If we reach here without being cancelled, the acknowledgement timed out
-            // Resume the continuation to prevent deadlock
+            // Resume the continuation to prevent deadlock (only if not already acknowledged)
+            guard !isAcknowledged else { return }
+            isAcknowledged = true
             contentAckContinuation?.resume()
             contentAckContinuation = nil
         }
@@ -107,6 +114,8 @@ class EditorViewState {
     /// Called by the editor when content has been confirmed set
     /// Resumes the waiting continuation to allow zoom transition to complete
     func acknowledgeContent() {
+        guard !isAcknowledged else { return }
+        isAcknowledged = true
         contentAckContinuation?.resume()
         contentAckContinuation = nil
     }
@@ -148,6 +157,11 @@ class EditorViewState {
 
     /// Zotero service reference (injected, not owned)
     weak var zoteroService: ZoteroService?
+
+    // MARK: - Section Sync Service (for zoom sourceContent updates)
+    /// Section sync service reference (injected by ContentView)
+    /// Used to inject section anchors when updating sourceContent during zoom
+    weak var sectionSyncService: SectionSyncService?
 
     /// Whether citation library has been pushed to the editor
     var isCitationLibraryPushed: Bool = false
@@ -265,6 +279,7 @@ class EditorViewState {
             let newParentId = findParentByLevel(at: index)
 
             if section.parentId != newParentId {
+                print("[PARENT] '\(section.title)' H\(section.headerLevel): \(section.parentId?.prefix(8) ?? "nil") -> \(newParentId?.prefix(8) ?? "nil")")
                 sections[index] = section.withUpdates(parentId: newParentId)
             }
         }
@@ -421,14 +436,19 @@ class EditorViewState {
         // Guard against re-entry during transitions
         guard contentState == .idle else { return }
 
+        // SET CONTENTSTATE FIRST - before any awaits to prevent race conditions
+        contentState = .zoomTransition
+
         // If already zoomed to a different section, unzoom first
+        // zoomOut() will detect contentState is already .zoomTransition and not reset it
         if zoomedSectionId != nil && zoomedSectionId != sectionId {
             await zoomOut()
         }
 
-        guard sections.first(where: { $0.id == sectionId }) != nil else { return }
-
-        contentState = .zoomTransition
+        guard sections.first(where: { $0.id == sectionId }) != nil else {
+            contentState = .idle  // Reset on early return
+            return
+        }
         // NOTE: Do NOT use defer { contentState = .idle } here!
         // defer executes BEFORE SwiftUI's onChange fires, causing race conditions
 
@@ -436,11 +456,26 @@ class EditorViewState {
         let descendantIds = getDescendantIds(of: sectionId)
         zoomedSectionIds = descendantIds
 
-        // Store full document BEFORE modifying content
-        fullDocumentBeforeZoom = content
+        // ZOOM DEBUG LOGGING
+        print("[ZOOM] Target section: \(sectionId)")
+        print("[ZOOM] getDescendantIds returned \(descendantIds.count) IDs: \(descendantIds)")
+        print("[ZOOM] All sections parentId state:")
+        for s in sections {
+            print("[ZOOM]   \(s.id.prefix(8))...: parent=\(s.parentId?.prefix(8) ?? "nil"), H\(s.headerLevel), '\(s.title)', bib=\(s.isBibliography)")
+        }
+        if let bibSection = sections.first(where: { $0.isBibliography }) {
+            print("[ZOOM] Bibliography in descendants? \(descendantIds.contains(bibSection.id))")
+        }
 
-        // Extract zoomed content by joining zoomed sections
-        let zoomedSections = sections.filter { descendantIds.contains($0.id) }
+        // Store full document BEFORE modifying content
+        // Only store if we don't have a backup (prevents overwriting with partial content during consecutive zooms)
+        if fullDocumentBeforeZoom == nil {
+            fullDocumentBeforeZoom = content
+        }
+
+        // Extract zoomed content by joining zoomed sections (EXCLUDE bibliography)
+        let zoomedSections = sections.filter { descendantIds.contains($0.id) && !$0.isBibliography }
+        print("[ZOOM] Filtered zoomedSections count (excl bib): \(zoomedSections.count)")
         let zoomedContent = zoomedSections
             .sorted { $0.sortOrder < $1.sortOrder }
             .map { section in
@@ -454,6 +489,25 @@ class EditorViewState {
         // Set zoomed state
         zoomedSectionId = sectionId
         content = zoomedContent
+
+        // Update sourceContent for CodeMirror
+        // If in source mode, inject anchors; otherwise plain content (anchors added on mode switch)
+        if editorMode == .source, let syncService = sectionSyncService {
+            let sortedZoomedSections = zoomedSections.sorted { $0.sortOrder < $1.sortOrder }
+            // Adjust offsets for the zoomed content
+            var adjustedSections: [SectionViewModel] = []
+            var currentOffset = 0
+            for section in sortedZoomedSections {
+                adjustedSections.append(section.withUpdates(startOffset: currentOffset))
+                currentOffset += section.markdownContent.count
+            }
+            sourceContent = syncService.injectSectionAnchors(
+                markdown: zoomedContent,
+                sections: adjustedSections
+            )
+        } else {
+            sourceContent = zoomedContent
+        }
 
         // Wait for editor to confirm content was set
         // This prevents race conditions where polling reads stale content
@@ -473,56 +527,37 @@ class EditorViewState {
             return
         }
 
-        contentState = .zoomTransition
+        // Caller manages state if already in transition (called from zoomToSection)
+        let callerManagedState = (contentState == .zoomTransition)
+        if !callerManagedState {
+            contentState = .zoomTransition
+        }
         // NOTE: Do NOT use defer { contentState = .idle } here!
         // defer executes BEFORE SwiftUI's onChange fires, causing race conditions
 
-        // Rebuild document: use current sections array which has been synced with edits
-        // Non-zoomed sections retain their original content from the backup
-        // Zoomed sections have their current edited content
+        // Rebuild document directly from sections array
+        // The database is the source of truth - sections have current content for everything:
+        // - Zoomed sections: have edited content (synced via syncZoomedSections)
+        // - Non-zoomed sections: have original content (unchanged)
+        // This eliminates fragile title-matching logic that fails when titles change while zoomed.
+        let sortedSections = sections
+            .filter { !$0.isBibliography }
+            .sorted { $0.sortOrder < $1.sortOrder }
 
-        // Parse the full backup to get original non-zoomed section content
-        let originalSections = parseMarkdownToSectionOffsets(fullDoc)
-
-        // Build merged content: for zoomed sections use current content, for others use original
-        // Bibliography is excluded here and appended at the end to prevent duplication
-        var mergedContent = ""
-        var currentIdx = 0
-
-        for original in originalSections {
-            // Skip bibliography sections in the main loop - we append it at the end
-            if let matchingSection = sections.first(where: { $0.id == original.id }),
-               matchingSection.isBibliography {
-                currentIdx += 1
-                continue
-            }
-
-            if zoomedIds.contains(original.id) {
-                // Find the current edited version of this section
-                if let editedSection = sections.first(where: { $0.id == original.id }) {
-                    var md = editedSection.markdownContent
-                    if !md.hasSuffix("\n") { md += "\n" }
-                    mergedContent += md
-                } else {
-                    // Section was deleted while zoomed - skip it
-                }
-            } else {
-                // Use original content for non-zoomed sections
-                mergedContent += original.content
-            }
-            currentIdx += 1
+        // ZOOMOUT DEBUG LOGGING
+        print("[ZOOMOUT] Rebuilding from \(sortedSections.count) sections (excl bibliography)")
+        for section in sortedSections {
+            let inZoomed = zoomedIds.contains(section.id)
+            print("[ZOOMOUT]   \(section.id.prefix(8))...: sortOrder=\(section.sortOrder), inZoomed=\(inZoomed), title='\(section.title)'")
         }
 
-        // Handle any new sections created while zoomed (not in original, excluding bibliography)
-        for section in sections where !originalSections.contains(where: { $0.id == section.id }) {
-            // Skip bibliography - we'll append it at the end
-            guard !section.isBibliography else { continue }
-            if zoomedIds.contains(section.id) {
+        var mergedContent = sortedSections
+            .map { section in
                 var md = section.markdownContent
                 if !md.hasSuffix("\n") { md += "\n" }
-                mergedContent += md
+                return md
             }
-        }
+            .joined()
 
         // Append bibliography section at end (if exists)
         // This handles the case where bibliography was updated while zoomed
@@ -534,6 +569,32 @@ class EditorViewState {
 
         // Restore full document
         content = mergedContent
+
+        // Update sourceContent for CodeMirror
+        // If in source mode, inject anchors for all sections; otherwise plain content
+        if editorMode == .source, let syncService = sectionSyncService {
+            // Rebuild with anchors for all non-bibliography sections
+            let allSectionsList = sections.filter { !$0.isBibliography }.sorted { $0.sortOrder < $1.sortOrder }
+            // Adjust offsets for the full content
+            var adjustedSections: [SectionViewModel] = []
+            var currentOffset = 0
+            for section in allSectionsList {
+                adjustedSections.append(section.withUpdates(startOffset: currentOffset))
+                currentOffset += section.markdownContent.count
+            }
+            let withAnchors = syncService.injectSectionAnchors(
+                markdown: mergedContent,
+                sections: adjustedSections
+            )
+            // Also inject bibliography marker for source mode
+            sourceContent = syncService.injectBibliographyMarker(
+                markdown: withAnchors,
+                sections: sections
+            )
+        } else {
+            sourceContent = mergedContent
+        }
+
         fullDocumentBeforeZoom = nil
         zoomedSectionIds = nil
         zoomedSectionId = nil
@@ -542,8 +603,10 @@ class EditorViewState {
         // This prevents race conditions where polling reads stale content
         await waitForContentAcknowledgement()
 
-        // Now safe to mark transition as complete
-        contentState = .idle
+        // Only reset contentState if we set it ourselves (not if called from zoomToSection)
+        if !callerManagedState {
+            contentState = .idle
+        }
     }
 
     /// Simple zoom out without async - for use in synchronous contexts like breadcrumb click
@@ -563,6 +626,7 @@ class EditorViewState {
             changed = false
             for section in sections where section.parentId != nil && ids.contains(section.parentId!) {
                 if !ids.contains(section.id) {
+                    print("[DESC] Adding '\(section.title)' (parent=\(section.parentId?.prefix(8) ?? "nil")) as descendant")
                     ids.insert(section.id)
                     changed = true
                 }
@@ -579,7 +643,10 @@ class EditorViewState {
 
     /// Parse markdown to extract section boundaries for merge operations
     /// This is a simplified version that matches sections by title/level to their IDs
-    private func parseMarkdownToSectionOffsets(_ markdown: String) -> [ParsedSectionInfo] {
+    /// - Parameters:
+    ///   - markdown: The markdown content to parse
+    ///   - excludeBibliography: When true, excludes bibliography headers from the result (used during zoom out to prevent duplication)
+    private func parseMarkdownToSectionOffsets(_ markdown: String, excludeBibliography: Bool = false) -> [ParsedSectionInfo] {
         var results: [ParsedSectionInfo] = []
         var currentOffset = 0
         var inCodeBlock = false
@@ -591,6 +658,9 @@ class EditorViewState {
         }
 
         var headers: [HeaderInfo] = []
+
+        // Get bibliography header name for exclusion check
+        let bibHeaderName = ExportSettingsManager.shared.bibliographyHeaderName
 
         // First pass: find all headers
         let lines = markdown.split(separator: "\n", omittingEmptySubsequences: false)
@@ -605,6 +675,12 @@ class EditorViewState {
             if !inCodeBlock {
                 if trimmed.hasPrefix("#") {
                     if let header = parseHeader(trimmed) {
+                        // Skip bibliography headers if exclusion is requested
+                        if excludeBibliography && header.title == bibHeaderName {
+                            print("[PARSE] Skipping bibliography header '\(header.title)' (excludeBibliography=true)")
+                            currentOffset += lineStr.count + 1
+                            continue
+                        }
                         headers.append(HeaderInfo(offset: currentOffset, level: header.level, title: header.title))
                     }
                 }
@@ -628,9 +704,11 @@ class EditorViewState {
             }
 
             if let section = matchingSection {
+                print("[PARSE] '\(header.title)' H\(header.level) -> matched \(section.id.prefix(8))...")
                 results.append(ParsedSectionInfo(id: section.id, content: sectionContent))
             } else {
                 // No match found - use a placeholder ID
+                print("[PARSE] '\(header.title)' H\(header.level) -> NO MATCH (unknown-\(index))")
                 results.append(ParsedSectionInfo(id: "unknown-\(index)", content: sectionContent))
             }
         }

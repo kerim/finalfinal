@@ -272,6 +272,18 @@ class SectionSyncService {
             var updates = SectionUpdates()
             var hasChanges = false
 
+            // Check if title changed (e.g., user edited "# A" to "# A Renamed")
+            if header.title != existing.title {
+                updates.title = header.title
+                hasChanges = true
+            }
+
+            // Check if header level changed (e.g., "##" → "#")
+            if header.level != existing.headerLevel {
+                updates.headerLevel = header.level
+                hasChanges = true
+            }
+
             if header.markdownContent != existing.markdownContent {
                 updates.markdownContent = header.markdownContent
                 updates.wordCount = header.wordCount
