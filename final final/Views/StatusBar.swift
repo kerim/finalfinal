@@ -11,7 +11,7 @@ struct StatusBar: View {
 
     var body: some View {
         HStack {
-            Text("\(editorState.wordCount) words")
+            Text(wordCountDisplay)
                 .font(.caption)
             Spacer()
             Text(editorState.currentSectionName.isEmpty ? "No section" : editorState.currentSectionName)
@@ -37,6 +37,16 @@ struct StatusBar: View {
         .padding(.horizontal)
         .padding(.vertical, 4)
         .background(themeManager.currentTheme.sidebarBackground)
+    }
+
+    /// Word count display text: "X/Y words" if goal is set, otherwise "X words"
+    /// Uses filteredTotalWordCount for consistency with sidebar (respects excludeBibliography)
+    private var wordCountDisplay: String {
+        let count = editorState.filteredTotalWordCount
+        if let goal = editorState.documentGoal {
+            return "\(count)/\(goal) words"
+        }
+        return "\(count) words"
     }
 }
 

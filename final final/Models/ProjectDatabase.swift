@@ -267,6 +267,21 @@ final class ProjectDatabase: Sendable {
             }
         }
 
+        // Phase: Word Count Improvements - goal types for sections and documents
+        migrator.registerMigration("v9_goal_types") { db in
+            // Add goalType to section table
+            try db.alter(table: "section") { t in
+                t.add(column: "goalType", .text).notNull().defaults(to: "approx")
+            }
+
+            // Add document-level goal fields to project table
+            try db.alter(table: "project") { t in
+                t.add(column: "documentGoal", .integer)  // nullable
+                t.add(column: "documentGoalType", .text).notNull().defaults(to: "approx")
+                t.add(column: "excludeBibliography", .boolean).notNull().defaults(to: false)
+            }
+        }
+
         try migrator.migrate(dbWriter)
     }
 

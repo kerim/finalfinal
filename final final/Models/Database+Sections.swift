@@ -162,6 +162,16 @@ extension ProjectDatabase {
         }
     }
 
+    /// Update section goal type
+    func updateSectionGoalType(id: String, goalType: GoalType) throws {
+        try write { db in
+            try db.execute(
+                sql: "UPDATE section SET goalType = ?, updatedAt = ? WHERE id = ?",
+                arguments: [goalType.rawValue, Date(), id]
+            )
+        }
+    }
+
     /// Update section tags
     func updateSectionTags(id: String, tags: [String]) throws {
         let tagsData = try JSONEncoder().encode(tags)

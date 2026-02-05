@@ -6,6 +6,57 @@
 import Foundation
 import GRDB
 
+/// Goal type for word count targets
+enum GoalType: String, Codable, CaseIterable, Sendable {
+    case min     // Red below, green at/above (minimum requirement)
+    case max     // Green at/below, red above (maximum limit)
+    case approx  // Red outside ±5%, green within (approximate target)
+
+    var displaySymbol: String {
+        switch self {
+        case .min: return "≥"
+        case .max: return "≤"
+        case .approx: return "~"
+        }
+    }
+
+    var displayName: String {
+        switch self {
+        case .min: return "Minimum"
+        case .max: return "Maximum"
+        case .approx: return "Approx"
+        }
+    }
+}
+
+/// Goal status indicating whether the current word count meets the goal
+enum GoalStatus {
+    case met      // Goal criteria satisfied (green)
+    case notMet   // Goal criteria not satisfied (red)
+    case noGoal   // No goal set (neutral)
+
+    /// Calculate goal status based on word count, goal, and goal type
+    static func calculate(wordCount: Int, goal: Int?, goalType: GoalType) -> GoalStatus {
+        guard let goal = goal, goal > 0 else { return .noGoal }
+
+        switch goalType {
+        case .min:
+            // Met if at or above goal
+            return wordCount >= goal ? .met : .notMet
+        case .max:
+            // Met if at or below goal
+            return wordCount <= goal ? .met : .notMet
+        case .approx:
+            // Met if within ±5% of goal
+            let tolerance = Double(goal) * 0.05
+            let lowerBound = Double(goal) - tolerance
+            let upperBound = Double(goal) + tolerance
+            let count = Double(wordCount)
+            return (count >= lowerBound && count <= upperBound) ? .met : .notMet
+        }
+    }
+}
+
 /// Section status for workflow tracking
 enum SectionStatus: String, Codable, CaseIterable, Sendable {
     case next       // Default status - first in cycle
@@ -69,6 +120,7 @@ struct Section: Codable, Identifiable, Equatable, Sendable, FetchableRecord, Mut
     var status: SectionStatus
     var tags: [String]
     var wordGoal: Int?
+    var goalType: GoalType
     var wordCount: Int
     var startOffset: Int  // Character offset where section begins in document
     var createdAt: Date
@@ -89,6 +141,7 @@ struct Section: Codable, Identifiable, Equatable, Sendable, FetchableRecord, Mut
         status: SectionStatus = .next,
         tags: [String] = [],
         wordGoal: Int? = nil,
+        goalType: GoalType = .approx,
         wordCount: Int = 0,
         startOffset: Int = 0,
         createdAt: Date = Date(),
@@ -106,6 +159,7 @@ struct Section: Codable, Identifiable, Equatable, Sendable, FetchableRecord, Mut
         self.status = status
         self.tags = tags
         self.wordGoal = wordGoal
+        self.goalType = goalType
         self.wordCount = wordCount
         self.startOffset = startOffset
         self.createdAt = createdAt
@@ -127,6 +181,7 @@ struct Section: Codable, Identifiable, Equatable, Sendable, FetchableRecord, Mut
         case status
         case tags
         case wordGoal
+        case goalType
         case wordCount
         case startOffset
         case createdAt
@@ -148,6 +203,7 @@ struct Section: Codable, Identifiable, Equatable, Sendable, FetchableRecord, Mut
         case status
         case tags
         case wordGoal
+        case goalType
         case wordCount
         case startOffset
         case createdAt
@@ -167,6 +223,7 @@ struct Section: Codable, Identifiable, Equatable, Sendable, FetchableRecord, Mut
         markdownContent = try container.decode(String.self, forKey: .markdownContent)
         status = try container.decode(SectionStatus.self, forKey: .status)
         wordGoal = try container.decodeIfPresent(Int.self, forKey: .wordGoal)
+        goalType = try container.decode(GoalType.self, forKey: .goalType)
         wordCount = try container.decode(Int.self, forKey: .wordCount)
         startOffset = try container.decode(Int.self, forKey: .startOffset)
         createdAt = try container.decode(Date.self, forKey: .createdAt)
@@ -195,6 +252,7 @@ struct Section: Codable, Identifiable, Equatable, Sendable, FetchableRecord, Mut
         try container.encode(markdownContent, forKey: .markdownContent)
         try container.encode(status, forKey: .status)
         try container.encodeIfPresent(wordGoal, forKey: .wordGoal)
+        try container.encode(goalType, forKey: .goalType)
         try container.encode(wordCount, forKey: .wordCount)
         try container.encode(startOffset, forKey: .startOffset)
         try container.encode(createdAt, forKey: .createdAt)
@@ -208,7 +266,7 @@ struct Section: Codable, Identifiable, Equatable, Sendable, FetchableRecord, Mut
 
     // MARK: - Computed Properties
 
-    /// Calculate word count from markdown content (excludes markdown syntax)
+    /// Calculate word count from markdown content (excludes markdown syntax and annotations)
     mutating func recalculateWordCount() {
         wordCount = MarkdownUtils.wordCount(for: markdownContent)
     }
@@ -219,11 +277,13 @@ struct Section: Codable, Identifiable, Equatable, Sendable, FetchableRecord, Mut
         return Double(wordCount) / Double(goal)
     }
 
-    /// Display string for word count (e.g., "450" or "450/500")
+    /// Goal status based on current word count, goal, and goal type
+    var goalStatus: GoalStatus {
+        GoalStatus.calculate(wordCount: wordCount, goal: wordGoal, goalType: goalType)
+    }
+
+    /// Display string for word count (number only, no goal)
     var wordCountDisplay: String {
-        if let goal = wordGoal {
-            return "\(wordCount)/\(goal)"
-        }
-        return "\(wordCount)"
+        "\(wordCount)"
     }
 }

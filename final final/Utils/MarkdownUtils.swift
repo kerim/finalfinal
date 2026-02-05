@@ -98,6 +98,26 @@ enum MarkdownUtils {
             result = regex.stringByReplacingMatches(in: result, options: [], range: range, withTemplate: "")
         }
 
+        // Remove annotations: <!-- ::type:: content -->
+        result = stripAnnotations(from: result)
+
+        return result
+    }
+
+    /// Strip annotation HTML comments from content
+    /// Annotations follow the pattern: <!-- ::type:: content -->
+    /// where type is task, comment, reference, or break
+    static func stripAnnotations(from content: String) -> String {
+        var result = content
+
+        // Pattern matches: <!-- ::word:: any content -->
+        // This handles task, comment, reference, break, and auto-bibliography annotations
+        let annotationPattern = "<!--\\s*::\\w+::\\s*[\\s\\S]*?-->"
+        if let regex = try? NSRegularExpression(pattern: annotationPattern, options: []) {
+            let range = NSRange(result.startIndex..., in: result)
+            result = regex.stringByReplacingMatches(in: result, options: [], range: range, withTemplate: "")
+        }
+
         return result
     }
 

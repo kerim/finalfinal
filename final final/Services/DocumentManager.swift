@@ -317,6 +317,34 @@ final class DocumentManager {
         try db.updateSectionTags(id: id, tags: tags)
     }
 
+    func saveSectionGoalType(id: String, goalType: GoalType) throws {
+        guard let db = projectDatabase else {
+            throw DocumentError.noProjectOpen
+        }
+        try db.updateSectionGoalType(id: id, goalType: goalType)
+    }
+
+    // MARK: - Document Goal Operations
+
+    /// Save document goal settings to the project
+    func saveDocumentGoalSettings(
+        goal: Int?,
+        goalType: GoalType,
+        excludeBibliography: Bool
+    ) throws {
+        guard let db = projectDatabase else {
+            throw DocumentError.noProjectOpen
+        }
+        try db.updateDocumentGoal(goal: goal, goalType: goalType, excludeBibliography: excludeBibliography)
+    }
+
+    /// Load document goal settings from the current project
+    func loadDocumentGoalSettings() throws -> (goal: Int?, goalType: GoalType, excludeBibliography: Bool)? {
+        guard let db = projectDatabase else { return nil }
+        guard let project = try db.fetchProject() else { return nil }
+        return (project.documentGoal, project.documentGoalType, project.excludeBibliography)
+    }
+
     // MARK: - Recent Projects
 
     /// Entry for a recent project with bookmark data

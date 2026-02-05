@@ -29,6 +29,10 @@ class SectionSyncService {
     /// When true, content is a zoomed subset - skip full document save to database
     var isContentZoomed: Bool = false
 
+    /// Callback after zoomed sections are synced to database
+    /// Passes the set of zoomed section IDs for targeted refresh
+    var onZoomedSectionsUpdated: ((Set<String>) -> Void)?
+
     /// Content we last synced - prevents feedback loop from ValueObservation
     private var lastSyncedContent: String = ""
 
@@ -184,13 +188,12 @@ class SectionSyncService {
 
     /// Core sync method using position-based reconciliation
     private func syncContent(_ markdown: String, zoomedIds: Set<String>? = nil) async {
-        guard let db = projectDatabase, let pid = projectId else {
-            print("[SectionSyncService] syncContent skipped - database not configured")
-            return
-        }
+        guard let db = projectDatabase, let pid = projectId else { return }
 
         // When zoomed, update zoomed sections in-place
-        if let zoomedIds = zoomedIds, isContentZoomed {
+        // Trust zoomedIds directly - it's passed synchronously from editorState.zoomedSectionIds
+        // which is the source of truth (not the reactive isContentZoomed property)
+        if let zoomedIds = zoomedIds, !zoomedIds.isEmpty {
             await syncZoomedSections(from: markdown, zoomedIds: zoomedIds)
             return
         }
@@ -302,6 +305,8 @@ class SectionSyncService {
         if !changes.isEmpty {
             do {
                 try db.applySectionChanges(changes, for: pid)
+                // Notify for UI refresh - bypasses ValueObservation blocked by contentState
+                onZoomedSectionsUpdated?(zoomedIds)
             } catch {
                 print("[SectionSyncService] Error updating zoomed sections: \(error)")
             }
@@ -411,7 +416,6 @@ class SectionSyncService {
                 // Check if this section would absorb the bibliography
                 if boundary.startOffset < bibStart && endOffset > bibStart {
                     endOffset = bibStart
-                    print("[SectionSyncService] Truncating section '\(boundary.title)' at bibliography start")
                 }
             }
 

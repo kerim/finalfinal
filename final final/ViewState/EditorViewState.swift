@@ -163,6 +163,19 @@ class EditorViewState {
     var sections: [SectionViewModel] = []
     var statusFilter: SectionStatus?
 
+    // MARK: - Document Goal Settings
+    var documentGoal: Int?
+    var documentGoalType: GoalType = .approx
+    var excludeBibliography: Bool = false
+
+    /// Filtered word count respecting excludeBibliography setting
+    /// Used by both OutlineFilterBar and StatusBar for consistency
+    var filteredTotalWordCount: Int {
+        sections
+            .filter { !excludeBibliography || !$0.isBibliography }
+            .reduce(0) { $0 + $1.wordCount }
+    }
+
     // MARK: - Annotation State (Phase 2)
     var annotations: [AnnotationViewModel] = []
 
@@ -227,30 +240,18 @@ class EditorViewState {
                 for try await dbSections in database.observeSections(for: projectId) {
                     guard !Task.isCancelled, let self else { break }
 
-                    print("[OBSERVE] Received \(dbSections.count) sections from database")
-                    print("[OBSERVE] isObservationSuppressed: \(self.isObservationSuppressed)")
-                    print("[OBSERVE] DB section order: \(dbSections.map { "\($0.sortOrder):\($0.title)[H\($0.headerLevel)]" })")
-
                     // Skip updates when observation is suppressed (during drag-drop reorder)
-                    guard !self.isObservationSuppressed else {
-                        print("[OBSERVE] SKIPPED due to suppression flag")
-                        continue
-                    }
+                    guard !self.isObservationSuppressed else { continue }
 
                     // Skip updates during content transitions (zoom, hierarchy enforcement)
-                    guard contentState == .idle else {
-                        print("[OBSERVE] SKIPPED due to contentState: \(contentState)")
-                        continue
-                    }
+                    guard contentState == .idle else { continue }
 
                     // Convert to view models
                     let viewModels = dbSections.map { SectionViewModel(from: $0) }
 
-                    print("[OBSERVE] Updating sections array with \(viewModels.count) view models")
                     // Update sections and recalculate parent relationships
                     self.sections = viewModels
                     self.recalculateParentRelationships()
-                    print("[OBSERVE] Updated. Current order: \(self.sections.map { "\($0.sortOrder):\($0.title)[H\($0.headerLevel)]" })")
 
                     // Notify observers (e.g., for hierarchy enforcement)
                     self.onSectionsUpdated?()
@@ -261,21 +262,19 @@ class EditorViewState {
                         // Post notification on FIRST creation (previousHash nil) or when hash changes
                         if self.previousBibliographyHash == nil ||
                            (self.previousBibliographyHash != nil && self.previousBibliographyHash != currentHash) {
-                            print("[OBSERVE] Bibliography section changed (first creation or update), posting notification")
                             NotificationCenter.default.post(name: .bibliographySectionChanged, object: nil)
                         }
                         self.previousBibliographyHash = currentHash
                     } else {
                         // Bibliography was removed - post notification to rebuild content and reset hash
                         if self.previousBibliographyHash != nil {
-                            print("[OBSERVE] Bibliography section removed, posting notification and resetting hash")
                             NotificationCenter.default.post(name: .bibliographySectionChanged, object: nil)
                             self.previousBibliographyHash = nil
                         }
                     }
                 }
             } catch {
-                print("[OBSERVE] ERROR: \(error)")
+                print("[EditorViewState] Section observation error: \(error)")
             }
         }
     }
@@ -286,6 +285,22 @@ class EditorViewState {
         observationTask = nil
         annotationObservationTask?.cancel()
         annotationObservationTask = nil
+    }
+
+    /// Refresh sections from database, bypassing ValueObservation
+    /// Used after zoomed sync when ValueObservation is blocked by contentState guard
+    func refreshZoomedSections(database: ProjectDatabase, projectId: String, zoomedIds: Set<String>) {
+        do {
+            let dbSections = try database.fetchSections(projectId: projectId)
+            // Only update the zoomed sections to preserve other state
+            for dbSection in dbSections where zoomedIds.contains(dbSection.id) {
+                if let index = sections.firstIndex(where: { $0.id == dbSection.id }) {
+                    sections[index].wordCount = dbSection.wordCount
+                }
+            }
+        } catch {
+            print("[EditorViewState] Error refreshing zoomed sections: \(error)")
+        }
     }
 
     /// Start observing annotations from database for reactive UI updates
@@ -302,7 +317,7 @@ class EditorViewState {
                     self.annotations = viewModels
                 }
             } catch {
-                print("[OBSERVE] Annotation observation error: \(error)")
+                print("[EditorViewState] Annotation observation error: \(error)")
             }
         }
     }
@@ -315,7 +330,6 @@ class EditorViewState {
             let newParentId = findParentByLevel(at: index)
 
             if section.parentId != newParentId {
-                print("[PARENT] '\(section.title)' H\(section.headerLevel): \(section.parentId?.prefix(8) ?? "nil") -> \(newParentId?.prefix(8) ?? "nil")")
                 sections[index] = section.withUpdates(parentId: newParentId)
             }
         }
@@ -576,17 +590,6 @@ class EditorViewState {
             : getDescendantIds(of: sectionId)
         zoomedSectionIds = descendantIds
 
-        // ZOOM DEBUG LOGGING
-        print("[ZOOM] Target section: \(sectionId)")
-        print("[ZOOM] getDescendantIds returned \(descendantIds.count) IDs: \(descendantIds)")
-        print("[ZOOM] All sections parentId state:")
-        for s in sections {
-            print("[ZOOM]   \(s.id.prefix(8))...: parent=\(s.parentId?.prefix(8) ?? "nil"), H\(s.headerLevel), '\(s.title)', bib=\(s.isBibliography)")
-        }
-        if let bibSection = sections.first(where: { $0.isBibliography }) {
-            print("[ZOOM] Bibliography in descendants? \(descendantIds.contains(bibSection.id))")
-        }
-
         // Store full document BEFORE modifying content
         // Only store if we don't have a backup (prevents overwriting with partial content during consecutive zooms)
         if fullDocumentBeforeZoom == nil {
@@ -595,7 +598,6 @@ class EditorViewState {
 
         // Extract zoomed content by joining zoomed sections (EXCLUDE bibliography)
         let zoomedSections = sections.filter { descendantIds.contains($0.id) && !$0.isBibliography }
-        print("[ZOOM] Filtered zoomedSections count (excl bib): \(zoomedSections.count)")
         let zoomedContent = zoomedSections
             .sorted { $0.sortOrder < $1.sortOrder }
             .map { section in
@@ -663,13 +665,6 @@ class EditorViewState {
         let sortedSections = sections
             .filter { !$0.isBibliography }
             .sorted { $0.sortOrder < $1.sortOrder }
-
-        // ZOOMOUT DEBUG LOGGING
-        print("[ZOOMOUT] Rebuilding from \(sortedSections.count) sections (excl bibliography)")
-        for section in sortedSections {
-            let inZoomed = zoomedIds.contains(section.id)
-            print("[ZOOMOUT]   \(section.id.prefix(8))...: sortOrder=\(section.sortOrder), inZoomed=\(inZoomed), title='\(section.title)'")
-        }
 
         var mergedContent = sortedSections
             .map { section in
@@ -768,7 +763,6 @@ class EditorViewState {
 
             // Include pseudo-sections (they visually belong to the preceding section)
             if section.isPseudoSection {
-                print("[DESC] Adding pseudo-section '\(section.title)' by document order")
                 ids.insert(section.id)
             }
         }
@@ -780,7 +774,6 @@ class EditorViewState {
             changed = false
             for section in sortedSections where section.parentId != nil && ids.contains(section.parentId!) {
                 if !ids.contains(section.id) {
-                    print("[DESC] Adding '\(section.title)' (parent=\(section.parentId?.prefix(8) ?? "nil")) as descendant")
                     ids.insert(section.id)
                     changed = true
                 }
@@ -818,7 +811,6 @@ class EditorViewState {
 
             // Include pseudo-sections only (shallow = no children, just pseudo-sections)
             if section.isPseudoSection {
-                print("[SHALLOW] Adding pseudo-section '\(section.title)' as direct child")
                 ids.insert(section.id)
             }
         }
@@ -868,7 +860,6 @@ class EditorViewState {
                     if let header = parseHeader(trimmed) {
                         // Skip bibliography headers if exclusion is requested
                         if excludeBibliography && header.title == bibHeaderName {
-                            print("[PARSE] Skipping bibliography header '\(header.title)' (excludeBibliography=true)")
                             currentOffset += lineStr.count + 1
                             continue
                         }
@@ -895,11 +886,9 @@ class EditorViewState {
             }
 
             if let section = matchingSection {
-                print("[PARSE] '\(header.title)' H\(header.level) -> matched \(section.id.prefix(8))...")
                 results.append(ParsedSectionInfo(id: section.id, content: sectionContent))
             } else {
                 // No match found - use a placeholder ID
-                print("[PARSE] '\(header.title)' H\(header.level) -> NO MATCH (unknown-\(index))")
                 results.append(ParsedSectionInfo(id: "unknown-\(index)", content: sectionContent))
             }
         }

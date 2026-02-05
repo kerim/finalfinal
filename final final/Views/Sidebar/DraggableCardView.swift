@@ -22,6 +22,7 @@ struct DraggableCardView: NSViewRepresentable {
     let onDragEnded: () -> Void
     let onSingleClick: () -> Void
     let onDoubleClick: (ZoomMode) -> Void
+    let onSectionUpdated: ((SectionViewModel) -> Void)?  // Called when word goal changes
 
     @Environment(ThemeManager.self) private var themeManager
 
@@ -41,6 +42,7 @@ struct DraggableCardView: NSViewRepresentable {
             section: section,
             onSingleClick: {},  // Handled by DraggableNSView
             onDoubleClick: { _ in },  // Handled by DraggableNSView
+            onSectionUpdated: onSectionUpdated,
             isGhost: isGhost
         )
         .environment(themeManager)
@@ -71,6 +73,7 @@ struct DraggableCardView: NSViewRepresentable {
             section: section,
             onSingleClick: {},  // Handled by DraggableNSView
             onDoubleClick: { _ in },  // Handled by DraggableNSView
+            onSectionUpdated: onSectionUpdated,
             isGhost: isGhost
         )
         .environment(themeManager)
@@ -89,11 +92,22 @@ struct DraggableCardView: NSViewRepresentable {
 
 // MARK: - Passthrough Hosting View
 
-/// NSHostingView subclass that passes all mouse events through to its superview.
-/// Used to display SwiftUI content while letting the parent NSView handle mouse events.
+/// NSHostingView subclass that passes left-click events through to its superview for drag handling,
+/// while allowing right-clicks to reach SwiftUI for context menus.
 class PassthroughHostingView<Content: View>: NSHostingView<Content> {
     override func hitTest(_ point: NSPoint) -> NSView? {
-        // Pass all events to superview (DraggableNSView handles mouse events)
+        // Allow right-clicks to reach SwiftUI for context menus
+        if let event = NSApp.currentEvent {
+            // Direct right-click
+            if event.type == .rightMouseDown {
+                return super.hitTest(point)
+            }
+            // Control+click (macOS alternative for right-click)
+            if event.type == .leftMouseDown && event.modifierFlags.contains(.control) {
+                return super.hitTest(point)
+            }
+        }
+        // Pass regular left-clicks to superview (DraggableNSView handles drag events)
         return nil
     }
 }
@@ -257,7 +271,7 @@ class DraggableNSView: NSView, NSDraggingSource {
             )
         } else {
             previewView = AnyView(
-                SectionCardView(section: section, onSingleClick: {}, onDoubleClick: { _ in })
+                SectionCardView(section: section, onSingleClick: {}, onDoubleClick: { _ in }, onSectionUpdated: nil)
                     .frame(width: 280)
                     .background(themeManager.currentTheme.sidebarBackground)
                     .clipShape(RoundedRectangle(cornerRadius: 8))

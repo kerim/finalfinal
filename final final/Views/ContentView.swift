@@ -118,16 +118,9 @@ struct ContentView: View {
             .onReceive(NotificationCenter.default.publisher(for: .bibliographySectionChanged)) { _ in
                 // Bibliography section was updated in the database - rebuild editor content
                 // Skip if zoomed into a section (bibliography update only affects full document view)
-                guard editorState.zoomedSectionId == nil else {
-                    print("[ContentView] Bibliography changed but zoomed - skipping content rebuild")
-                    return
-                }
+                guard editorState.zoomedSectionId == nil else { return }
                 // Skip during any content transition (including editor switch)
-                guard editorState.contentState == .idle else {
-                    print("[ContentView] Bibliography changed but contentState=\(editorState.contentState) - skipping")
-                    return
-                }
-                print("[ContentView] Bibliography section changed - rebuilding content from sections")
+                guard editorState.contentState == .idle else { return }
                 editorState.contentState = .bibliographyUpdate
                 rebuildDocumentContent()
                 editorState.contentState = .idle
@@ -135,10 +128,8 @@ struct ContentView: View {
             .onReceive(NotificationCenter.default.publisher(for: .didZoomOut)) { _ in
                 // Zoom-out completed - trigger bibliography sync with full document content
                 // Citations added during zoom need to be processed now
-                print("[ContentView] Zoom-out completed - triggering bibliography sync catch-up")
                 guard let projectId = documentManager.projectId else { return }
                 let citekeys = BibliographySyncService.extractCitekeys(from: editorState.content)
-                print("[ContentView] Full document has \(citekeys.count) citations: \(citekeys)")
                 bibliographySyncService.checkAndUpdateBibliography(
                     currentCitekeys: citekeys,
                     projectId: projectId
@@ -246,6 +237,9 @@ struct ContentView: View {
                 statusFilter: $editorState.statusFilter,
                 zoomedSectionId: $editorState.zoomedSectionId,
                 zoomedSectionIds: editorState.zoomedSectionIds,
+                documentGoal: $editorState.documentGoal,
+                documentGoalType: $editorState.documentGoalType,
+                excludeBibliography: $editorState.excludeBibliography,
                 onScrollToSection: { sectionId in
                     scrollToSection(sectionId)
                 },
@@ -309,12 +303,12 @@ struct ContentView: View {
         Task {
             do {
                 try documentManager.saveSectionStatus(id: section.id, status: section.status)
-                if let goal = section.wordGoal {
-                    try documentManager.saveSectionWordGoal(id: section.id, goal: goal)
-                }
-                if !section.tags.isEmpty {
-                    try documentManager.saveSectionTags(id: section.id, tags: section.tags)
-                }
+                // ALWAYS save word goal (even when nil - to clear it)
+                try documentManager.saveSectionWordGoal(id: section.id, goal: section.wordGoal)
+                // ALWAYS save goal type
+                try documentManager.saveSectionGoalType(id: section.id, goalType: section.goalType)
+                // ALWAYS save tags (even when empty)
+                try documentManager.saveSectionTags(id: section.id, tags: section.tags)
             } catch {
                 print("[ContentView] Error saving section: \(error.localizedDescription)")
             }
@@ -1108,6 +1102,12 @@ struct ContentView: View {
         // Inject sectionSyncService reference for zoom sourceContent updates
         editorState.sectionSyncService = sectionSyncService
 
+        // Refresh zoomed sections from DB after sync (bypasses blocked ValueObservation)
+        sectionSyncService.onZoomedSectionsUpdated = { [weak editorState, weak db] zoomedIds in
+            guard let editorState = editorState, let db = db, let pid = documentManager.projectId else { return }
+            editorState.refreshZoomedSections(database: db, projectId: pid, zoomedIds: zoomedIds)
+        }
+
         // Wire up hierarchy enforcement after sections are updated from database
         // This ensures slash commands that create new headings trigger rebalancing
         editorState.onSectionsUpdated = { [weak editorState, weak sectionSyncService] in
@@ -1131,6 +1131,13 @@ struct ContentView: View {
         // Start reactive observation
         editorState.startObserving(database: db, projectId: pid)
         editorState.startObservingAnnotations(database: db, contentId: cid)
+
+        // Load document goal settings
+        if let goalSettings = try? documentManager.loadDocumentGoalSettings() {
+            editorState.documentGoal = goalSettings.goal
+            editorState.documentGoalType = goalSettings.goalType
+            editorState.excludeBibliography = goalSettings.excludeBibliography
+        }
 
         // Load content
         do {
@@ -1209,6 +1216,9 @@ struct ContentView: View {
         editorState.fullDocumentBeforeZoom = nil
         editorState.zoomedSectionIds = nil
         editorState.isCitationLibraryPushed = false
+        editorState.documentGoal = nil
+        editorState.documentGoalType = .approx
+        editorState.excludeBibliography = false
 
         // Configure for new project
         await configureForCurrentProject()
@@ -1612,6 +1622,30 @@ extension View {
                     ]
                 )
             }
+            // Document goal settings persistence
+            .onChange(of: editorState.documentGoal) { _, _ in
+                saveDocumentGoalSettings(editorState: editorState, documentManager: documentManager)
+            }
+            .onChange(of: editorState.documentGoalType) { _, _ in
+                saveDocumentGoalSettings(editorState: editorState, documentManager: documentManager)
+            }
+            .onChange(of: editorState.excludeBibliography) { _, _ in
+                saveDocumentGoalSettings(editorState: editorState, documentManager: documentManager)
+            }
+    }
+
+    /// Helper to save document goal settings when any of them change
+    @MainActor
+    private func saveDocumentGoalSettings(editorState: EditorViewState, documentManager: DocumentManager) {
+        do {
+            try documentManager.saveDocumentGoalSettings(
+                goal: editorState.documentGoal,
+                goalType: editorState.documentGoalType,
+                excludeBibliography: editorState.excludeBibliography
+            )
+        } catch {
+            print("[ContentView] Error saving document goal settings: \(error.localizedDescription)")
+        }
     }
 
     /// Adds sidebar visibility sync observers
