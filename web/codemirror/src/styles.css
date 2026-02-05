@@ -29,15 +29,6 @@ body {
   background: var(--editor-bg, #ffffff);
 }
 
-.cm-editor .cm-gutters {
-  background: var(--editor-bg, #ffffff);
-  border-right: 1px solid var(--divider-color, #d0d0d0);
-}
-
-.cm-editor .cm-activeLineGutter {
-  background: var(--editor-selection, rgba(0, 122, 255, 0.1));
-}
-
 .cm-editor .cm-scroller {
   padding: 20px;
   font-family: var(--font-mono);
@@ -59,52 +50,60 @@ body {
   background: var(--editor-selection, rgba(0, 122, 255, 0.2));
 }
 
-/* Markdown syntax highlighting */
-.cm-header {
-  color: var(--editor-heading-text, var(--editor-text, #1a1a1a));
+/* Markdown syntax highlighting
+ * Headings are styled via line decorations (headingDecorationPlugin in main.ts)
+ * using CSS variables from shared/typography.css
+ * Only code spans need additional CSS for border-radius and padding
+ */
+.cm-line .tok-monospace {
+  border-radius: 3px;
+  padding: 0 4px;
+}
+
+/* Line-level heading decorations
+ * Applied via headingDecorationPlugin using Decoration.line()
+ * These style the entire line, not individual tokens
+ */
+.cm-heading-1-line {
+  font-size: var(--font-size-h1);
   font-weight: var(--weight-heading, 600);
+  color: var(--editor-heading-text, var(--editor-text, #1a1a1a));
+  letter-spacing: var(--tracking-tight);
   line-height: var(--line-height-heading);
 }
 
-/* Source view headers slightly smaller than WYSIWYG */
-.cm-header-1 {
-  font-size: 1.4em;
+.cm-heading-2-line {
+  font-size: var(--font-size-h2);
+  font-weight: var(--weight-heading, 600);
+  color: var(--editor-heading-text, var(--editor-text, #1a1a1a));
   letter-spacing: var(--tracking-tight);
+  line-height: var(--line-height-heading);
 }
 
-.cm-header-2 {
-  font-size: 1.25em;
-  letter-spacing: var(--tracking-tight);
+.cm-heading-3-line {
+  font-size: var(--font-size-h3);
+  font-weight: var(--weight-heading, 600);
+  color: var(--editor-heading-text, var(--editor-text, #1a1a1a));
+  line-height: var(--line-height-heading);
 }
 
-.cm-header-3 {
-  font-size: 1.1em;
-}
-.cm-header-4 {
-  font-size: 1.05em;
-}
-.cm-header-5 {
-  font-size: 1em;
-}
-.cm-header-6 {
-  font-size: 0.95em;
+.cm-heading-4-line {
+  font-size: var(--font-size-h4);
+  font-weight: var(--weight-heading, 600);
+  color: var(--editor-heading-text, var(--editor-text, #1a1a1a));
+  line-height: var(--line-height-heading);
 }
 
-.cm-strong {
-  font-weight: 700;
+.cm-heading-5-line {
+  font-size: var(--font-size-h5);
+  font-weight: var(--weight-heading, 600);
+  color: var(--editor-heading-text, var(--editor-text, #1a1a1a));
+  line-height: var(--line-height-heading);
 }
-.cm-emphasis {
-  font-style: italic;
-}
-.cm-link {
-  color: var(--accent-color, #007aff);
-}
-.cm-url {
-  color: var(--accent-color, #007aff);
-  opacity: 0.7;
-}
-.cm-code {
-  background: var(--editor-selection, rgba(0, 122, 255, 0.1));
-  border-radius: 3px;
-  padding: 0 4px;
+
+.cm-heading-6-line {
+  font-size: var(--font-size-h6);
+  font-weight: var(--weight-heading, 600);
+  color: var(--editor-heading-text, var(--editor-text, #1a1a1a));
+  line-height: var(--line-height-heading);
 }
