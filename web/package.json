@@ -1,10 +1,11 @@
 {
   "name": "final-final-web",
-  "version": "0.2.18",
+  "version": "0.2.19",
   "private": true,
   "scripts": {
-    "build": "pnpm -r build",
+    "build": "pnpm -r build && pnpm run docs",
     "dev": "pnpm -r dev",
+    "docs": "node ../scripts/generate-getting-started.js",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
     "format": "biome format --write ."

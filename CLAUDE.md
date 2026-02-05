@@ -23,6 +23,8 @@ cd web && pnpm format        # Format files
 
 Web output goes to `final final/Resources/editor/` which Xcode bundles.
 
+**Note:** The `pnpm build` command also generates `getting-started.md` from `README.md` (stripping the Installation section). Edit `README.md` as the single source of truth.
+
 **Note:** This project uses `xcodegen` to generate the Xcode project from `project.yml`. Always run `xcodegen generate` after moving or adding Swift files.
 
 ## Architecture

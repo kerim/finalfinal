@@ -21,14 +21,18 @@ Also, a lot of things you would expect from a word processor aren't there yet: t
 
 # What's New
 
+## Version 02.17
+
+* Improved zoom mode. Option-double-click now zooms in on a single section, regular double-click shows section and sub-sections. Pseudo sections only zoom on themselves.
+* Improved focus mode - full secreen, hide side bars, hide header and footer, collapse annotations, and remember state on restart, or exit.
+
 ## Version 02.15
+
 * Complete redesign of backed architecture to better support block-based outlining features
 
 * Cleaned up source-mode so it matches look and theme of WYSIWYG editor
 
 * Improved bibliography generation to make it more robust in various edge cases
-
-  
 
 ## Version 0.2.9
 
@@ -145,7 +149,9 @@ Type `/` in the editor to access quick commands:
 
 ## Giving Feedback
 
-We'd love to hear from you! (Details to follow.)
+We'd love to hear from you! Report bugs and request features at:
+
+**GitHub Issues:** [github.com/kerim/final-final/issues](https://github.com/kerim/final-final/issues)
 
 ***
 
