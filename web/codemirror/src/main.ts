@@ -3,6 +3,17 @@ import { defaultKeymap, history, redo, undo } from '@codemirror/commands';
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { HighlightStyle, syntaxHighlighting, syntaxTree } from '@codemirror/language';
 import { languages } from '@codemirror/language-data';
+import {
+  findNext,
+  findPrevious,
+  getSearchQuery,
+  highlightSelectionMatches,
+  replaceAll,
+  replaceNext,
+  search,
+  SearchQuery,
+  setSearchQuery,
+} from '@codemirror/search';
 import { EditorState, RangeSetBuilder } from '@codemirror/state';
 import {
   Decoration,
@@ -25,6 +36,25 @@ interface ParsedAnnotation {
   text: string;
   offset: number;
   completed?: boolean; // Match Milkdown API naming
+}
+
+// Find/replace options and result types
+interface FindOptions {
+  caseSensitive?: boolean;
+  wholeWord?: boolean;
+  regexp?: boolean;
+}
+
+interface FindResult {
+  matchCount: number;
+  currentIndex: number;
+}
+
+interface SearchState {
+  query: string;
+  matchCount: number;
+  currentIndex: number;
+  options: FindOptions;
 }
 
 declare global {
@@ -61,6 +91,14 @@ declare global {
       citationPickerCallback: (data: any, items: any[]) => void;
       citationPickerCancelled: () => void;
       citationPickerError: (message: string) => void;
+      // Find/replace API
+      find: (query: string, options?: FindOptions) => FindResult;
+      findNext: () => FindResult | null;
+      findPrevious: () => FindResult | null;
+      replaceCurrent: (replacement: string) => boolean;
+      replaceAll: (replacement: string) => number;
+      clearSearch: () => void;
+      getSearchState: () => SearchState | null;
     };
     __CODEMIRROR_DEBUG__?: {
       editorReady: boolean;
@@ -504,6 +542,35 @@ window.__CODEMIRROR_DEBUG__ = {
   lastStatsUpdate: '',
 };
 
+// Search state for tracking current match index
+let currentSearchQuery = '';
+let currentSearchOptions: FindOptions = {};
+let currentMatchIndex = 0;
+
+// Helper to count matches in document
+function countMatches(view: EditorView, query: SearchQuery): number {
+  let count = 0;
+  const cursor = query.getCursor(view.state.doc);
+  while (!cursor.next().done) {
+    count++;
+  }
+  return count;
+}
+
+// Helper to find current match index based on cursor position
+function findCurrentMatchIndex(view: EditorView, query: SearchQuery): number {
+  const cursor = query.getCursor(view.state.doc);
+  const cursorPos = view.state.selection.main.from;
+  let index = 0;
+  while (!cursor.next().done) {
+    index++;
+    if (cursor.value.from >= cursorPos) {
+      return index;
+    }
+  }
+  return index > 0 ? index : 1;
+}
+
 function initEditor() {
   const container = document.getElementById('editor');
   if (!container) {
@@ -519,6 +586,9 @@ function initEditor() {
       markdown({ base: markdownLanguage, codeLanguages: languages }),
       syntaxHighlighting(customHighlightStyle),
       headingDecorationPlugin,
+      // Search extension - headless mode (no default keybindings, controlled via Swift)
+      search({ top: false }),
+      highlightSelectionMatches(),
       autocompletion({ override: [slashCompletions] }),
       keymap.of([
         // Filter out Mod-/ (toggle comment) from default keymap to allow Swift to handle mode toggle
@@ -1019,6 +1089,156 @@ window.FinalFinal = {
     if (editorView) {
       editorView.focus();
     }
+  },
+
+  // Find/replace API
+  find(query: string, options?: FindOptions): FindResult {
+    if (!editorView) {
+      return { matchCount: 0, currentIndex: 0 };
+    }
+
+    currentSearchQuery = query;
+    currentSearchOptions = options || {};
+
+    if (!query) {
+      // Clear search
+      this.clearSearch();
+      return { matchCount: 0, currentIndex: 0 };
+    }
+
+    // Create search query with options
+    const searchQuery = new SearchQuery({
+      search: query,
+      caseSensitive: options?.caseSensitive ?? false,
+      regexp: options?.regexp ?? false,
+      wholeWord: options?.wholeWord ?? false,
+    });
+
+    // Set the search query in the editor state
+    editorView.dispatch({
+      effects: setSearchQuery.of(searchQuery),
+    });
+
+    // Count matches
+    const matchCount = countMatches(editorView, searchQuery);
+
+    // Find current match index based on cursor position
+    currentMatchIndex = matchCount > 0 ? findCurrentMatchIndex(editorView, searchQuery) : 0;
+
+    return { matchCount, currentIndex: currentMatchIndex };
+  },
+
+  findNext(): FindResult | null {
+    if (!editorView || !currentSearchQuery) {
+      return null;
+    }
+
+    // Execute findNext command
+    findNext(editorView);
+
+    // Get current query and recalculate
+    const searchQuery = getSearchQuery(editorView.state);
+    const matchCount = countMatches(editorView, searchQuery);
+    currentMatchIndex = matchCount > 0 ? findCurrentMatchIndex(editorView, searchQuery) : 0;
+
+    return { matchCount, currentIndex: currentMatchIndex };
+  },
+
+  findPrevious(): FindResult | null {
+    if (!editorView || !currentSearchQuery) {
+      return null;
+    }
+
+    // Execute findPrevious command
+    findPrevious(editorView);
+
+    // Get current query and recalculate
+    const searchQuery = getSearchQuery(editorView.state);
+    const matchCount = countMatches(editorView, searchQuery);
+    currentMatchIndex = matchCount > 0 ? findCurrentMatchIndex(editorView, searchQuery) : 0;
+
+    return { matchCount, currentIndex: currentMatchIndex };
+  },
+
+  replaceCurrent(replacement: string): boolean {
+    if (!editorView || !currentSearchQuery) {
+      return false;
+    }
+
+    // Update the search query with replacement
+    const searchQuery = new SearchQuery({
+      search: currentSearchQuery,
+      caseSensitive: currentSearchOptions.caseSensitive ?? false,
+      regexp: currentSearchOptions.regexp ?? false,
+      wholeWord: currentSearchOptions.wholeWord ?? false,
+      replace: replacement,
+    });
+
+    editorView.dispatch({
+      effects: setSearchQuery.of(searchQuery),
+    });
+
+    // Execute replaceNext command
+    return replaceNext(editorView);
+  },
+
+  replaceAll(replacement: string): number {
+    if (!editorView || !currentSearchQuery) {
+      return 0;
+    }
+
+    // Count matches before replacement
+    const searchQuery = new SearchQuery({
+      search: currentSearchQuery,
+      caseSensitive: currentSearchOptions.caseSensitive ?? false,
+      regexp: currentSearchOptions.regexp ?? false,
+      wholeWord: currentSearchOptions.wholeWord ?? false,
+      replace: replacement,
+    });
+
+    const beforeCount = countMatches(editorView, searchQuery);
+
+    editorView.dispatch({
+      effects: setSearchQuery.of(searchQuery),
+    });
+
+    // Execute replaceAll command
+    replaceAll(editorView);
+
+    // Return the number of replacements made
+    return beforeCount;
+  },
+
+  clearSearch(): void {
+    if (!editorView) {
+      return;
+    }
+
+    currentSearchQuery = '';
+    currentSearchOptions = {};
+    currentMatchIndex = 0;
+
+    // Clear search by setting empty query
+    const emptyQuery = new SearchQuery({ search: '' });
+    editorView.dispatch({
+      effects: setSearchQuery.of(emptyQuery),
+    });
+  },
+
+  getSearchState(): SearchState | null {
+    if (!editorView || !currentSearchQuery) {
+      return null;
+    }
+
+    const searchQuery = getSearchQuery(editorView.state);
+    const matchCount = countMatches(editorView, searchQuery);
+
+    return {
+      query: currentSearchQuery,
+      matchCount,
+      currentIndex: currentMatchIndex,
+      options: currentSearchOptions,
+    };
   },
 };
 

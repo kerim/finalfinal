@@ -28,6 +28,9 @@ struct CodeMirrorEditor: NSViewRepresentable {
     let onStatsChange: (Int, Int) -> Void
     let onCursorPositionSaved: (CursorPosition) -> Void
 
+    /// Callback to provide the WebView reference (for find operations)
+    var onWebViewReady: ((WKWebView) -> Void)?
+
     func makeNSView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = sharedDataStore  // Persist localStorage across editor toggles
@@ -111,7 +114,8 @@ struct CodeMirrorEditor: NSViewRepresentable {
             isResettingContent: $isResettingContent,
             onContentChange: onContentChange,
             onStatsChange: onStatsChange,
-            onCursorPositionSaved: onCursorPositionSaved
+            onCursorPositionSaved: onCursorPositionSaved,
+            onWebViewReady: onWebViewReady
         )
     }
 
@@ -156,6 +160,9 @@ struct CodeMirrorEditor: NSViewRepresentable {
         /// Pending cursor position that is being restored (set before JS call, cleared after)
         private var pendingCursorRestore: CursorPosition?
 
+        /// Callback to provide WebView reference
+        var onWebViewReady: ((WKWebView) -> Void)?
+
         init(
             content: Binding<String>,
             cursorPositionToRestore: Binding<CursorPosition?>,
@@ -163,7 +170,8 @@ struct CodeMirrorEditor: NSViewRepresentable {
             isResettingContent: Binding<Bool>,
             onContentChange: @escaping (String) -> Void,
             onStatsChange: @escaping (Int, Int) -> Void,
-            onCursorPositionSaved: @escaping (CursorPosition) -> Void
+            onCursorPositionSaved: @escaping (CursorPosition) -> Void,
+            onWebViewReady: ((WKWebView) -> Void)?
         ) {
             self.contentBinding = content
             self.cursorPositionToRestoreBinding = cursorPositionToRestore
@@ -172,6 +180,7 @@ struct CodeMirrorEditor: NSViewRepresentable {
             self.onContentChange = onContentChange
             self.onStatsChange = onStatsChange
             self.onCursorPositionSaved = onCursorPositionSaved
+            self.onWebViewReady = onWebViewReady
             super.init()
 
             // Subscribe to toggle notification - save cursor before editor switches
@@ -376,6 +385,9 @@ struct CodeMirrorEditor: NSViewRepresentable {
             isEditorReady = true
             batchInitialize()
             startPolling()
+
+            // Notify parent that WebView is ready (for find operations)
+            onWebViewReady?(webView)
         }
 
         /// Batch initialization - sends all setup data in a single JS call

@@ -230,6 +230,41 @@ Responsible for bidirectional sync between editor content and database sections.
 
 **Reconciliation**: Uses `SectionReconciler` to compute minimal database changes (insert, update, delete) by comparing parsed headers against existing sections.
 
+### Find Bar Architecture
+
+The find bar provides native-style find and replace functionality using JavaScript APIs exposed by both editors.
+
+**State Management** (`FindBarState.swift`):
+- Observable state for visibility, search query, replace text, match counts
+- Holds weak reference to active `WKWebView` for JavaScript calls
+- Uses `focusRequestCount: Int` (not boolean) to trigger focus requests reliably
+
+**Focus Request Pattern**: SwiftUI's `.onChange` requires actual value changes to fire. A boolean toggle (`true` → `false` → `true`) can be coalesced by SwiftUI. An incrementing counter always changes, guaranteeing the `.onChange` fires:
+
+```swift
+// In FindBarState
+var focusRequestCount = 0
+
+func show(withReplace: Bool = false) {
+    isVisible = true
+    focusRequestCount += 1  // Always triggers .onChange
+}
+
+// In FindBarView
+.onChange(of: state.focusRequestCount) { _, _ in
+    isSearchFieldFocused = true
+}
+```
+
+**Zoom Integration**: Search state is cleared when zooming in/out to prevent stale highlights from appearing on different content scopes.
+
+**JavaScript API** (`window.FinalFinal.find*`):
+- `find(query, options)` - Start search, returns `{matchCount, currentIndex}`
+- `findNext()` / `findPrevious()` - Navigate matches
+- `replaceCurrent(text)` / `replaceAll(text)` - Replace operations
+- `clearSearch()` - Remove highlights
+- `getSearchState()` - Get current match info
+
 ### Content State Machine
 
 `EditorContentState` prevents race conditions during complex transitions:

@@ -13,6 +13,7 @@
     "@codemirror/lang-markdown": "^6.2.0",
     "@codemirror/language": "^6.10.0",
     "@codemirror/language-data": "^6.4.0",
+    "@codemirror/search": "^6.5.0",
     "@codemirror/state": "^6.4.0",
     "@codemirror/view": "^6.25.0",
     "@lezer/highlight": "^1.2.3",

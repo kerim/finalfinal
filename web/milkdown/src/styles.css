@@ -622,3 +622,17 @@ body.source-mode .ff-citation,
   background: transparent;
   padding: 0;
 }
+
+/* === Search Highlighting === */
+
+/* Search match highlight */
+.search-match {
+  background-color: rgba(255, 255, 0, 0.4);
+  border-radius: 2px;
+}
+
+/* Current (selected) search match */
+.search-match.search-match-current {
+  background-color: rgba(255, 165, 0, 0.6);
+  box-shadow: 0 0 0 1px rgba(255, 165, 0, 0.8);
+}
