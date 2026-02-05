@@ -41,10 +41,25 @@ Also, a lot of things you would expect from a word processor aren't there yet: t
 ## Version 0.2.9
 
 * Preference pane now lets you override default themes and save your own styles!
-
 * Improved Zotero workflow now uses native citaton picker and lets you add multiple sources to the same in-text citation.
-
 * Improved bibliography sync to better match the text
+
+# Roadmap
+
+## Planned Features
+
+- Toolbar
+- Find/Replace
+- Footnotes
+- Spelling and Grammar Check
+
+## Known bugs
+
+- Deleting all the text in a document can have strange effects
+- PDF export doesn't format in-text citations
+- Source view is highlighting the current paragraph (it shouldn't)
+- Weirdness with scrolling and document loading, especially in source view
+- Automatic document restructuring (when header level is changed) can have unexpected consequences
 
 # Set-up
 
@@ -99,7 +114,7 @@ You can double-click a section to zoom in, or click once to jump to that section
 
 * Set a **status** (Next, Writing, Waiting, Review, Final)
 
-* Add **word goals** with progress tracking (Not yet implemented.)
+* Add **word goals** with progress tracking. Can set minimum, maximum, or approximate (+/- %5) goals. 
 
 ### Source View
 

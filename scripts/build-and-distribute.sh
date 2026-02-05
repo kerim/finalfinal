@@ -17,7 +17,7 @@ PROJECT_DIR="/Users/niyaro/Documents/Code/final final"
 PROJECT_YML="$PROJECT_DIR/project.yml"
 PACKAGE_JSON="$PROJECT_DIR/web/package.json"
 ICLOUD_SHARE="/Users/niyaro/Library/Mobile Documents/com~apple~CloudDocs/To Share/apps"
-APP_NAME="final final"
+APP_NAME="FINAL|FINAL"
 
 echo -e "${GREEN}========================================${NC}"
 echo -e "${GREEN}  Build & Distribute: $APP_NAME${NC}"
