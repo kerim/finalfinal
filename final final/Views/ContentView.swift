@@ -118,16 +118,9 @@ struct ContentView: View {
             .onReceive(NotificationCenter.default.publisher(for: .bibliographySectionChanged)) { _ in
                 // Bibliography section was updated in the database - rebuild editor content
                 // Skip if zoomed into a section (bibliography update only affects full document view)
-                guard editorState.zoomedSectionId == nil else {
-                    print("[ContentView] Bibliography changed but zoomed - skipping content rebuild")
-                    return
-                }
+                guard editorState.zoomedSectionId == nil else { return }
                 // Skip during any content transition (including editor switch)
-                guard editorState.contentState == .idle else {
-                    print("[ContentView] Bibliography changed but contentState=\(editorState.contentState) - skipping")
-                    return
-                }
-                print("[ContentView] Bibliography section changed - rebuilding content from sections")
+                guard editorState.contentState == .idle else { return }
                 editorState.contentState = .bibliographyUpdate
                 rebuildDocumentContent()
                 editorState.contentState = .idle
@@ -135,10 +128,8 @@ struct ContentView: View {
             .onReceive(NotificationCenter.default.publisher(for: .didZoomOut)) { _ in
                 // Zoom-out completed - trigger bibliography sync with full document content
                 // Citations added during zoom need to be processed now
-                print("[ContentView] Zoom-out completed - triggering bibliography sync catch-up")
                 guard let projectId = documentManager.projectId else { return }
                 let citekeys = BibliographySyncService.extractCitekeys(from: editorState.content)
-                print("[ContentView] Full document has \(citekeys.count) citations: \(citekeys)")
                 bibliographySyncService.checkAndUpdateBibliography(
                     currentCitekeys: citekeys,
                     projectId: projectId
@@ -1110,6 +1101,12 @@ struct ContentView: View {
 
         // Inject sectionSyncService reference for zoom sourceContent updates
         editorState.sectionSyncService = sectionSyncService
+
+        // Refresh zoomed sections from DB after sync (bypasses blocked ValueObservation)
+        sectionSyncService.onZoomedSectionsUpdated = { [weak editorState, weak db] zoomedIds in
+            guard let editorState = editorState, let db = db, let pid = documentManager.projectId else { return }
+            editorState.refreshZoomedSections(database: db, projectId: pid, zoomedIds: zoomedIds)
+        }
 
         // Wire up hierarchy enforcement after sections are updated from database
         // This ensures slash commands that create new headings trigger rebalancing

@@ -78,48 +78,27 @@ final class BibliographySyncService {
         currentCitekeys: [String],
         projectId: String
     ) {
-        print("[BibliographySyncService] checkAndUpdateBibliography called with \(currentCitekeys.count) citekeys")
-
         // Skip if auto-update is disabled
-        guard isAutoUpdateEnabled else {
-            print("[BibliographySyncService] SKIP: auto-update disabled")
-            return
-        }
+        guard isAutoUpdateEnabled else { return }
 
         // Skip if currently syncing
-        guard state == .idle else {
-            print("[BibliographySyncService] SKIP: currently syncing (state=\(state))")
-            return
-        }
+        guard state == .idle else { return }
 
         // Check if citekeys have changed
         // Allow transition-to-empty so bibliography can be removed when all citations are deleted
         let currentSet = Set(currentCitekeys)
         let isTransitioningToEmpty = currentSet.isEmpty && !lastKnownCitekeys.isEmpty
-        guard currentSet != lastKnownCitekeys || isTransitioningToEmpty else {
-            print("[BibliographySyncService] SKIP: citekeys unchanged (last=\(lastKnownCitekeys))")
-            return
-        }
-
-        print("[BibliographySyncService] Citekeys changed: \(lastKnownCitekeys) -> \(currentSet)")
-        print("[BibliographySyncService] Starting debounce (2s)...")
+        guard currentSet != lastKnownCitekeys || isTransitioningToEmpty else { return }
 
         // Debounce the update
         debounceTask?.cancel()
         debounceTask = Task { [weak self] in
-            guard !Task.isCancelled else {
-                print("[BibliographySyncService] Debounce task cancelled before sleep")
-                return
-            }
+            guard !Task.isCancelled else { return }
 
             // Wait for debounce interval
             try? await Task.sleep(nanoseconds: UInt64(2_000_000_000))
 
-            guard !Task.isCancelled else {
-                print("[BibliographySyncService] Debounce task cancelled after sleep")
-                return
-            }
-            print("[BibliographySyncService] Debounce complete, calling performBibliographyUpdate")
+            guard !Task.isCancelled else { return }
             await self?.performBibliographyUpdate(citekeys: currentCitekeys, projectId: projectId)
         }
     }
@@ -148,52 +127,32 @@ final class BibliographySyncService {
     // MARK: - Private Methods
 
     private func performBibliographyUpdate(citekeys: [String], projectId: String) async {
-        print("[BibliographySyncService] performBibliographyUpdate START with \(citekeys.count) citekeys")
-
         // Deduplicate citekeys early - a citation may appear multiple times in document
-        // Uses filter-based deduplication to preserve first-occurrence order (aids debugging)
         var seen = Set<String>()
         let uniqueCitekeys = citekeys.filter { seen.insert($0).inserted }
 
-        print("[BibliographySyncService] Deduplicated to \(uniqueCitekeys.count) unique citekeys")
-
-        guard let database else {
-            print("[BibliographySyncService] ERROR: database is nil")
-            return
-        }
+        guard let database else { return }
 
         let zoteroService = ZoteroService.shared
-        guard zoteroService.isConnected else {
-            print("[BibliographySyncService] ERROR: Zotero not connected")
-            return
-        }
+        guard zoteroService.isConnected else { return }
 
-        print("[BibliographySyncService] Setting state to syncing")
         state = .syncing
-        defer {
-            state = .idle
-            print("[BibliographySyncService] State reset to idle")
-        }
+        defer { state = .idle }
 
         // Update last known citekeys
         lastKnownCitekeys = Set(uniqueCitekeys)
-        print("[BibliographySyncService] Updated lastKnownCitekeys to \(lastKnownCitekeys)")
 
         // Remove bibliography if no citations
         guard !uniqueCitekeys.isEmpty else {
-            print("[BibliographySyncService] No citekeys - removing bibliography if exists")
             await removeBibliographySection(projectId: projectId)
             return
         }
 
         // Check for missing items and fetch them from Zotero
         let missingKeys = uniqueCitekeys.filter { !zoteroService.hasItem(citekey: $0) }
-        print("[BibliographySyncService] Missing keys to fetch: \(missingKeys)")
         if !missingKeys.isEmpty {
             do {
-                print("[BibliographySyncService] Fetching \(missingKeys.count) missing items: \(missingKeys)")
-                let fetched = try await zoteroService.fetchItemsForCitekeys(missingKeys)
-                print("[BibliographySyncService] Fetched \(fetched.count) items")
+                _ = try await zoteroService.fetchItemsForCitekeys(missingKeys)
             } catch {
                 print("[BibliographySyncService] Failed to fetch items: \(error)")
             }
@@ -201,16 +160,11 @@ final class BibliographySyncService {
 
         // Generate bibliography markdown (items now in cache)
         let bibliographyContent = generateBibliographyMarkdown(citekeys: uniqueCitekeys)
-        print("[BibliographySyncService] Generated bibliography content (\(bibliographyContent.count) chars)")
 
         // Check if content actually changed
         let contentHash = bibliographyContent.hashValue
-        guard contentHash != lastGeneratedHash else {
-            print("[BibliographySyncService] SKIP: content hash unchanged (\(contentHash))")
-            return
-        }
+        guard contentHash != lastGeneratedHash else { return }
         lastGeneratedHash = contentHash
-        print("[BibliographySyncService] Content hash changed, updating section...")
 
         // Find or create bibliography section
         do {
@@ -219,7 +173,9 @@ final class BibliographySyncService {
                 projectId: projectId,
                 database: database
             )
-            print("[BibliographySyncService] Bibliography section updated successfully")
+            // Post notification directly - don't rely on ValueObservation
+            // ValueObservation may be blocked by contentState guard during editing
+            NotificationCenter.default.post(name: .bibliographySectionChanged, object: nil)
         } catch {
             print("[BibliographySyncService] Failed to update bibliography: \(error)")
         }
@@ -389,10 +345,7 @@ final class BibliographySyncService {
 
     /// Remove bibliography section when all citations are deleted
     private func removeBibliographySection(projectId: String) async {
-        guard let database else {
-            print("[BibliographySyncService] ERROR: database is nil, cannot remove bibliography")
-            return
-        }
+        guard let database else { return }
 
         do {
             try database.write { db in
@@ -401,7 +354,8 @@ final class BibliographySyncService {
                     .filter(Section.Columns.isBibliography == true)
                     .deleteAll(db)
             }
-            print("[BibliographySyncService] Bibliography section removed")
+            // Post notification directly - don't rely on ValueObservation
+            NotificationCenter.default.post(name: .bibliographySectionChanged, object: nil)
             // Reset hash so next creation triggers notification
             lastGeneratedHash = 0
             // Reset citekeys so future removals don't get skipped by the guard
