@@ -21,6 +21,10 @@ Also, a lot of things you would expect from a word processor aren't there yet: t
 
 # What's New
 
+## Version 02.25
+
+- Basic Find & Replace has been added
+
 ## Version 02.19
 
 - word-count improvements, as well as the addition of word count goals and status markers
@@ -48,8 +52,7 @@ Also, a lot of things you would expect from a word processor aren't there yet: t
 
 ## Planned Features
 
-- Toolbar
-- Find/Replace
+- Editing Toolbar
 - Footnotes
 - Spelling and Grammar Check
 
