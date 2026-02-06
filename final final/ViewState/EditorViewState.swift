@@ -90,7 +90,31 @@ class EditorViewState {
 
     // MARK: - Content State Machine
     /// Tracks content transitions to prevent race conditions
-    var contentState: EditorContentState = .idle
+    var contentState: EditorContentState = .idle {
+        didSet {
+            contentStateWatchdog?.cancel()
+            contentStateWatchdog = nil
+
+            if contentState != .idle {
+                contentStateWatchdog = Task { [weak self] in
+                    try? await Task.sleep(for: .seconds(5))
+                    guard !Task.isCancelled, let self else { return }
+                    if self.contentState != .idle {
+                        print("[EditorViewState] WATCHDOG: contentState stuck at \(self.contentState), resetting to .idle")
+                        if self.contentState == .zoomTransition {
+                            self.isZoomingContent = false
+                            self.contentAckContinuation?.resume()
+                            self.contentAckContinuation = nil
+                        }
+                        self.contentState = .idle
+                    }
+                }
+            }
+        }
+    }
+
+    /// Watchdog task that resets contentState if stuck in non-idle state for >5 seconds
+    private var contentStateWatchdog: Task<Void, Never>?
 
     /// Direct zoom flag passed through SwiftUI view hierarchy to bypass coordinator state race condition.
     /// Set to true IMMEDIATELY BEFORE content change, cleared AFTER acknowledgement.
@@ -294,15 +318,43 @@ class EditorViewState {
 
     /// Refresh sections from database, bypassing ValueObservation
     /// Used after zoomed sync when ValueObservation is blocked by contentState guard
+    /// Handles updates to existing sections, insertion of new sections, and removal of deleted sections
     func refreshZoomedSections(database: ProjectDatabase, projectId: String, zoomedIds: Set<String>) {
         do {
             let dbSections = try database.fetchSections(projectId: projectId)
-            // Only update the zoomed sections to preserve other state
+            let existingIds = Set(sections.map { $0.id })
+
             for dbSection in dbSections where zoomedIds.contains(dbSection.id) {
                 if let index = sections.firstIndex(where: { $0.id == dbSection.id }) {
+                    // Update existing section
                     sections[index].wordCount = dbSection.wordCount
+                    sections[index].title = dbSection.title
+                    sections[index].headerLevel = dbSection.headerLevel
+                    sections[index].sortOrder = dbSection.sortOrder
+                } else {
+                    // New section added during zoom -- insert into sections array
+                    let vm = SectionViewModel(from: dbSection)
+                    // Insert at correct position by sortOrder
+                    if let insertIndex = sections.firstIndex(where: { $0.sortOrder > dbSection.sortOrder }) {
+                        sections.insert(vm, at: insertIndex)
+                    } else {
+                        sections.append(vm)
+                    }
                 }
             }
+
+            // Remove sections whose IDs are no longer in the database (deleted during zoom)
+            let dbIds = Set(dbSections.map { $0.id })
+            sections.removeAll { !dbIds.contains($0.id) }
+
+            // Update sortOrders for all sections (shifts may have occurred)
+            for dbSection in dbSections {
+                if let index = sections.firstIndex(where: { $0.id == dbSection.id }) {
+                    sections[index].sortOrder = dbSection.sortOrder
+                }
+            }
+
+            recalculateParentRelationships()
         } catch {
             print("[EditorViewState] Error refreshing zoomed sections: \(error)")
         }

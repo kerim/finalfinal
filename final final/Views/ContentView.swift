@@ -1122,8 +1122,11 @@ struct ContentView: View {
         editorState.sectionSyncService = sectionSyncService
 
         // Refresh zoomed sections from DB after sync (bypasses blocked ValueObservation)
+        // Also updates zoomedSectionIds when sections are added/removed during zoom
         sectionSyncService.onZoomedSectionsUpdated = { [weak editorState, weak db] zoomedIds in
             guard let editorState = editorState, let db = db, let pid = documentManager.projectId else { return }
+            // Update zoomedSectionIds to include new sections / exclude deleted ones
+            editorState.zoomedSectionIds = zoomedIds
             editorState.refreshZoomedSections(database: db, projectId: pid, zoomedIds: zoomedIds)
         }
 

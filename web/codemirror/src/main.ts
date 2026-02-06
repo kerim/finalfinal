@@ -10,8 +10,8 @@ import {
   highlightSelectionMatches,
   replaceAll,
   replaceNext,
-  search,
   SearchQuery,
+  search,
   setSearchQuery,
 } from '@codemirror/search';
 import { EditorState, RangeSetBuilder } from '@codemirror/state';

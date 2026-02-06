@@ -188,6 +188,10 @@ func goalColor(wordCount: Int, goal: Int, type: GoalType) -> Color {
 }
 ```
 
+#### Section Status Persistence
+
+Status changes from `StatusDot` are persisted immediately via a `.onChange(of: section.status)` modifier on `SectionCardView`. When the status value changes, `onSectionUpdated` fires, which calls `ContentView.updateSection()` to write the new status to the database. This ensures status survives zoom in/out and app restarts.
+
 #### Zoom Mode Word Count Update
 
 **Problem**: During zoom mode, ValueObservation is blocked by the `contentState` guard, preventing word count updates from reaching the UI.
@@ -281,6 +285,8 @@ enum EditorContentState {
 
 **Guards**: SectionSyncService and ValueObservation skip updates when `contentState != .idle`, preventing feedback loops.
 
+**Watchdog**: A `didSet` observer on `contentState` starts a 5-second watchdog Task whenever the state enters a non-idle value. If the state hasn't returned to `.idle` within 5 seconds, the watchdog force-resets it and cleans up associated state (e.g., `isZoomingContent`, pending continuations). This prevents permanently blocked ValueObservation if a transition is interrupted.
+
 ### Zoom Functionality
 
 Double-clicking a sidebar section "zooms" into it:
@@ -296,7 +302,7 @@ Double-clicking a sidebar section "zooms" into it:
    - Non-zoomed sections retain their original content
    - Clears zoom state
 
-**Sync While Zoomed**: `syncZoomedSections()` updates only the zoomed sections in-place, preventing full document replacement.
+**Sync While Zoomed**: `syncZoomedSections()` updates only the zoomed sections in-place, preventing full document replacement. It also handles insertions (new headers typed while zoomed create new Section records with shifted sortOrders) and deletions (removed headers delete Section records). The `onZoomedSectionsUpdated` callback passes the updated set of zoomed IDs so `EditorViewState.zoomedSectionIds` stays in sync.
 
 **Zoom Modes**:
 - **Full zoom** (double-click): Shows section + all descendants (by `parentId`) + following pseudo-sections (by document order)

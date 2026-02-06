@@ -49,8 +49,8 @@ import { mdToTextOffset, textToMdOffset } from './cursor-mapping';
 import { focusModePlugin, setFocusModeEnabled } from './focus-mode-plugin';
 import { headingNodeViewPlugin } from './heading-nodeview-plugin';
 import { highlightMark, highlightPlugin } from './highlight-plugin';
-import { sectionBreakNode, sectionBreakPlugin } from './section-break-plugin';
 import { clearSearchMatches, searchPlugin, setSearchMatches } from './search-plugin';
+import { sectionBreakNode, sectionBreakPlugin } from './section-break-plugin';
 import { isSourceModeEnabled, setSourceModeEnabled, sourceModePlugin } from './source-mode-plugin';
 import './styles.css';
 
@@ -321,7 +321,7 @@ function findAllMatches(query: string, options: FindOptions): SearchMatch[] {
       if (node.isText && node.text) {
         textNodeCount++;
         const text = node.text;
-        console.log('[Search] Text node #' + textNodeCount + ' at pos', pos, ':', JSON.stringify(text.substring(0, 80)));
+        console.log(`[Search] Text node #${textNodeCount} at pos`, pos, ':', JSON.stringify(text.substring(0, 80)));
 
         let match: RegExpExecArray | null;
 
@@ -332,7 +332,16 @@ function findAllMatches(query: string, options: FindOptions): SearchMatch[] {
           const from = pos + match.index;
           const to = from + match[0].length;
 
-          console.log('[Search] Match found:', JSON.stringify(match[0]), 'at from:', from, 'to:', to, 'docSize:', doc.content.size);
+          console.log(
+            '[Search] Match found:',
+            JSON.stringify(match[0]),
+            'at from:',
+            from,
+            'to:',
+            to,
+            'docSize:',
+            doc.content.size
+          );
 
           // Validate positions are within document bounds
           if (from >= 0 && to <= doc.content.size) {

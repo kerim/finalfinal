@@ -60,6 +60,10 @@ struct SectionCardView: View {
         .onHover { hovering in
             isHovering = hovering
         }
+        .onChange(of: section.status) { oldValue, newValue in
+            guard oldValue != newValue else { return }
+            onSectionUpdated?(section)
+        }
         .opacity(isGhost ? 0.4 : 1.0)
         .overlay {
             if isGhost {
