@@ -8,6 +8,16 @@
 import Foundation
 import GRDB
 
+// MARK: - Heading Update Info
+
+/// Information about heading changes during reorder/hierarchy enforcement
+/// Passed from ContentView to reorderAllBlocks so heading markdownFragment and level
+/// can be updated atomically alongside sort order changes.
+struct HeadingUpdate: Sendable {
+    let markdownFragment: String?
+    let headingLevel: Int?
+}
+
 // MARK: - Block Change Types
 
 /// Represents a surgical change to apply to the blocks table
@@ -28,6 +38,7 @@ struct BlockUpdates {
     var status: SectionStatus??
     var tags: [String]??
     var wordGoal: Int??
+    var goalType: GoalType?
     var wordCount: Int?
     var isBibliography: Bool?
     var isPseudoSection: Bool?
@@ -42,6 +53,7 @@ struct BlockUpdates {
         status: SectionStatus?? = nil,
         tags: [String]?? = nil,
         wordGoal: Int?? = nil,
+        goalType: GoalType? = nil,
         wordCount: Int? = nil,
         isBibliography: Bool? = nil,
         isPseudoSection: Bool? = nil
@@ -55,6 +67,7 @@ struct BlockUpdates {
         self.status = status
         self.tags = tags
         self.wordGoal = wordGoal
+        self.goalType = goalType
         self.wordCount = wordCount
         self.isBibliography = isBibliography
         self.isPseudoSection = isPseudoSection
@@ -178,6 +191,16 @@ extension ProjectDatabase {
         }
     }
 
+    /// Update block goal type
+    func updateBlockGoalType(id: String, goalType: GoalType) throws {
+        try write { db in
+            try db.execute(
+                sql: "UPDATE block SET goalType = ?, updatedAt = ? WHERE id = ?",
+                arguments: [goalType.rawValue, Date(), id]
+            )
+        }
+    }
+
     /// Update block tags
     func updateBlockTags(id: String, tags: [String]?) throws {
         let tagsString: String?
@@ -254,6 +277,9 @@ extension ProjectDatabase {
                     if let wordGoalUpdate = updates.wordGoal {
                         block.wordGoal = wordGoalUpdate
                     }
+                    if let goalType = updates.goalType {
+                        block.goalType = goalType
+                    }
                     if let wordCount = updates.wordCount {
                         block.wordCount = wordCount
                     }
@@ -282,6 +308,11 @@ extension ProjectDatabase {
         var idMapping: [String: String] = [:]
 
         try write { db in
+            // Query max sort order ONCE for the entire transaction
+            var nextSortOrder = (try Double.fetchOne(db,
+                sql: "SELECT MAX(sortOrder) FROM block WHERE projectId = ?",
+                arguments: [projectId]) ?? 0) + 1.0
+
             // Process deletes first
             for id in changes.deletes {
                 try Block.deleteOne(db, key: id)
@@ -289,26 +320,77 @@ extension ProjectDatabase {
 
             // Process updates
             for update in changes.updates {
-                guard var block = try Block.fetchOne(db, key: update.id) else {
+                if var block = try Block.fetchOne(db, key: update.id) {
+                    // Block found - apply updates
+                    if let textContent = update.textContent {
+                        block.textContent = textContent
+                        block.wordCount = MarkdownUtils.wordCount(for: textContent)
+                    }
+                    if let markdownFragment = update.markdownFragment {
+                        block.markdownFragment = markdownFragment
+                        // Detect block type changes from content (e.g., paragraph → heading from paste)
+                        let trimmed = markdownFragment.trimmingCharacters(in: .whitespacesAndNewlines)
+                        if let match = trimmed.range(of: "^(#{1,6})\\s+", options: .regularExpression) {
+                            let hashes = trimmed[match].filter { $0 == "#" }
+                            block.blockType = .heading
+                            block.headingLevel = hashes.count
+                            // Strip heading prefix from textContent for sidebar display
+                            if let textContent = update.textContent, textContent.hasPrefix("#") {
+                                block.textContent = BlockParser.extractTextContent(from: trimmed, blockType: .heading)
+                                block.wordCount = MarkdownUtils.wordCount(for: block.textContent)
+                            }
+                        } else if block.blockType == .heading {
+                            // Was heading but no longer has heading syntax
+                            block.blockType = .paragraph
+                            block.headingLevel = nil
+                        }
+                    }
+                    if let headingLevel = update.headingLevel {
+                        block.headingLevel = headingLevel
+                    }
+
+                    block.updatedAt = Date()
+                    try block.update(db)
+                } else if update.id.hasPrefix("temp-") {
+                    // Temp ID not found in DB — create new block (handles first-edit-in-new-project)
+                    let trimmed = (update.markdownFragment ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                    let blockType: BlockType
+                    let detectedLevel: Int?
+                    var textContent = update.textContent ?? ""
+
+                    if let match = trimmed.range(of: "^(#{1,6})\\s+", options: .regularExpression) {
+                        blockType = .heading
+                        detectedLevel = trimmed[match].filter({ $0 == "#" }).count
+                        textContent = BlockParser.extractTextContent(from: trimmed, blockType: .heading)
+                    } else {
+                        blockType = update.headingLevel != nil ? .heading : .paragraph
+                        detectedLevel = update.headingLevel
+                    }
+
+                    let permanentId = UUID().uuidString
+
+                    var block = Block(
+                        id: permanentId,
+                        projectId: projectId,
+                        sortOrder: nextSortOrder,
+                        blockType: blockType,
+                        textContent: textContent,
+                        markdownFragment: update.markdownFragment ?? ""
+                    )
+                    if let hl = detectedLevel { block.headingLevel = hl }
+                    block.recalculateWordCount()
+                    try block.insert(db)
+                    idMapping[update.id] = permanentId
+                    nextSortOrder += 1.0
+
+                    #if DEBUG
+                    print("[Database+Blocks] Created block from temp update: \(update.id) → \(permanentId)")
+                    #endif
+                } else {
                     #if DEBUG
                     print("[Database+Blocks] Warning: Block not found for update: \(update.id)")
                     #endif
-                    continue
                 }
-
-                if let textContent = update.textContent {
-                    block.textContent = textContent
-                    block.wordCount = MarkdownUtils.wordCount(for: textContent)
-                }
-                if let markdownFragment = update.markdownFragment {
-                    block.markdownFragment = markdownFragment
-                }
-                if let headingLevel = update.headingLevel {
-                    block.headingLevel = headingLevel
-                }
-
-                block.updatedAt = Date()
-                try block.update(db)
             }
 
             // Process inserts
@@ -330,26 +412,36 @@ extension ProjectDatabase {
                         sortOrder = afterBlock.sortOrder + 1.0
                     }
                 } else {
-                    // Insert at the beginning or get max + 1
-                    let maxSortOrder = try Double.fetchOne(
-                        db,
-                        sql: "SELECT MAX(sortOrder) FROM block WHERE projectId = ?",
-                        arguments: [projectId]
-                    )
-                    sortOrder = (maxSortOrder ?? 0) + 1.0
+                    // No afterBlockId — use the shared running counter
+                    sortOrder = nextSortOrder
+                    nextSortOrder += 1.0
                 }
 
-                let blockType = BlockType(rawValue: insert.blockType) ?? .paragraph
+                // Detect heading from markdown content (belt-and-suspenders with JS detection)
+                let blockType: BlockType
+                let effectiveHeadingLevel: Int?
+                let insertTrimmed = insert.markdownFragment.trimmingCharacters(in: .whitespacesAndNewlines)
+                if let hMatch = insertTrimmed.range(of: "^(#{1,6})\\s+", options: .regularExpression) {
+                    blockType = .heading
+                    effectiveHeadingLevel = insertTrimmed[hMatch].filter({ $0 == "#" }).count
+                } else {
+                    blockType = BlockType(rawValue: insert.blockType) ?? .paragraph
+                    effectiveHeadingLevel = insert.headingLevel
+                }
+
                 let permanentId = UUID().uuidString
+                let insertTextContent = blockType == .heading
+                    ? BlockParser.extractTextContent(from: insertTrimmed, blockType: .heading)
+                    : insert.textContent
 
                 var block = Block(
                     id: permanentId,
                     projectId: projectId,
                     sortOrder: sortOrder,
                     blockType: blockType,
-                    textContent: insert.textContent,
+                    textContent: insertTextContent,
                     markdownFragment: insert.markdownFragment,
-                    headingLevel: insert.headingLevel
+                    headingLevel: effectiveHeadingLevel
                 )
                 block.recalculateWordCount()
                 try block.insert(db)
@@ -373,6 +465,105 @@ extension ProjectDatabase {
             // Insert in order (already sorted by sortOrder)
             for var block in blocks {
                 try block.insert(db)
+            }
+        }
+    }
+
+    // MARK: - Reorder All Blocks (Atomic)
+
+    /// Reorder ALL blocks (headings + body) to match a new section order.
+    /// Body blocks follow their heading in the order they appeared before reorder.
+    /// Executes in a single write transaction for atomicity.
+    ///
+    /// Algorithm:
+    /// 1. Fetch all blocks sorted by current sortOrder
+    /// 2. Group: for each heading/pseudo-section/bibliography, collect body blocks that follow
+    ///    until the next group leader → those are its "body blocks"
+    /// 3. Collect orphan body blocks before the first heading (preamble)
+    /// 4. Re-assign sequential sort orders: preamble first, then for each heading in section
+    ///    order → heading + its body blocks
+    /// 5. Apply heading updates (markdownFragment, headingLevel) if provided
+    func reorderAllBlocks(
+        sections: [SectionViewModel],
+        projectId: String,
+        headingUpdates: [String: HeadingUpdate] = [:]
+    ) throws {
+        try write { db in
+            // 1. Fetch all blocks in current sort order
+            let allBlocks = try Block
+                .filter(Block.Columns.projectId == projectId)
+                .order(Block.Columns.sortOrder)
+                .fetchAll(db)
+
+            // 2. Group blocks: each "group leader" (heading, pseudo-section, bibliography)
+            //    owns subsequent non-leader blocks until the next leader
+            let sectionIds = Set(sections.map { $0.id })
+            var groups: [String: [Block]] = [:]  // leaderId -> body blocks
+            var preamble: [Block] = []           // body blocks before first leader
+            var currentLeaderId: String?
+            var leaderOrder: [String] = []       // preserves original leader order for lookup
+
+            for block in allBlocks {
+                let isLeader = sectionIds.contains(block.id)
+
+                if isLeader {
+                    currentLeaderId = block.id
+                    groups[block.id] = []
+                    leaderOrder.append(block.id)
+                } else if let leaderId = currentLeaderId {
+                    groups[leaderId, default: []].append(block)
+                } else {
+                    // Body block before any heading (preamble)
+                    preamble.append(block)
+                }
+            }
+
+            // 3. Build new order: preamble, then sections in new order with their body blocks
+            var sortCounter: Double = 1.0
+            let now = Date()
+
+            // Preamble blocks first
+            for var block in preamble {
+                if block.sortOrder != sortCounter {
+                    block.sortOrder = sortCounter
+                    block.updatedAt = now
+                    try block.update(db)
+                }
+                sortCounter += 1.0
+            }
+
+            // Sections in the order specified by the sections array
+            for section in sections {
+                // Update the heading/leader block
+                if var headingBlock = try Block.fetchOne(db, key: section.id) {
+                    headingBlock.sortOrder = sortCounter
+                    headingBlock.updatedAt = now
+
+                    // Apply heading updates if provided
+                    if let update = headingUpdates[section.id] {
+                        if let fragment = update.markdownFragment {
+                            headingBlock.markdownFragment = fragment
+                        }
+                        if let level = update.headingLevel {
+                            headingBlock.headingLevel = level
+                        }
+                    }
+
+                    try headingBlock.update(db)
+                    sortCounter += 1.0
+
+                    // Body blocks follow in their original order
+                    if let bodyBlocks = groups[section.id] {
+                        for var bodyBlock in bodyBlocks {
+                            if bodyBlock.sortOrder != sortCounter {
+                                bodyBlock.sortOrder = sortCounter
+                                bodyBlock.updatedAt = now
+                                try bodyBlock.update(db)
+                            }
+                            sortCounter += 1.0
+                        }
+                    }
+                }
             }
         }
     }
@@ -424,7 +615,8 @@ extension ProjectDatabase {
         }
     }
 
-    /// Normalize sort orders (when fractional values get too small)
+    /// Normalize sort orders (when fractional values get too small or duplicates exist)
+    /// Uses tie-breaking: headings sort before non-headings at the same sortOrder
     func normalizeSortOrders(projectId: String) throws {
         try write { db in
             let blocks = try Block
@@ -432,10 +624,20 @@ extension ProjectDatabase {
                 .order(Block.Columns.sortOrder)
                 .fetchAll(db)
 
-            for (index, var block) in blocks.enumerated() {
-                block.sortOrder = Double(index + 1)
-                block.updatedAt = Date()
-                try block.update(db)
+            // Re-sort with tie-breaking: headings before non-headings at same sortOrder
+            let sorted = blocks.sorted { a, b in
+                let aKey = (a.sortOrder, a.blockType == .heading ? 0 : 1)
+                let bKey = (b.sortOrder, b.blockType == .heading ? 0 : 1)
+                return aKey < bKey
+            }
+
+            for (index, var block) in sorted.enumerated() {
+                let newSortOrder = Double(index + 1)
+                if block.sortOrder != newSortOrder {
+                    block.sortOrder = newSortOrder
+                    block.updatedAt = Date()
+                    try block.update(db)
+                }
             }
         }
     }

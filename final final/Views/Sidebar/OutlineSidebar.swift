@@ -10,12 +10,12 @@ import UniformTypeIdentifiers
 /// Transferable wrapper for drag-and-drop
 struct SectionTransfer: Codable, Transferable {
     let id: String
-    let sortOrder: Int
+    let sortOrder: Double
     let headerLevel: Int
     let isSubtreeDrag: Bool      // True when Option-drag includes descendants
     let childIds: [String]       // Ordered descendant IDs for subtree drag
 
-    init(id: String, sortOrder: Int, headerLevel: Int, isSubtreeDrag: Bool = false, childIds: [String] = []) {
+    init(id: String, sortOrder: Double, headerLevel: Int, isSubtreeDrag: Bool = false, childIds: [String] = []) {
         self.id = id
         self.sortOrder = sortOrder
         self.headerLevel = headerLevel

@@ -63,10 +63,109 @@ class BlockSyncService {
         pendingConfirmations.removeAll()
     }
 
+    /// Reentrancy guard for polling
+    private var isPolling = false
+
+    // MARK: - Push Block IDs to Editor
+
+    /// Push block IDs from DB to JS editor (aligns temp IDs with real UUIDs)
+    /// - Parameter range: Optional sort order range to filter blocks (for zoom state).
+    ///   When nil, pushes all block IDs.
+    func pushBlockIds(for range: (start: Double, end: Double?)? = nil) async {
+        guard let database = projectDatabase, let projectId, let webView else { return }
+
+        // Suppress polling during push to prevent race conditions
+        isSyncSuppressed = true
+        defer { isSyncSuppressed = false }
+
+        do {
+            let blocks = try database.fetchBlocks(projectId: projectId)
+            let filtered: [Block]
+            if let range = range {
+                if let end = range.end {
+                    filtered = blocks.filter { $0.sortOrder >= range.start && !$0.isBibliography && $0.sortOrder < end }
+                } else {
+                    filtered = blocks.filter { $0.sortOrder >= range.start && !$0.isBibliography }
+                }
+            } else {
+                filtered = blocks
+            }
+            let orderedIds = filtered.sorted { $0.sortOrder < $1.sortOrder }.map { $0.id }
+
+            #if DEBUG
+            if let range = range {
+                print("[BlockSyncService] pushBlockIds filtered: \(orderedIds.count) blocks (range start=\(range.start), end=\(String(describing: range.end)))")
+            }
+            #endif
+
+            guard let jsonData = try? JSONSerialization.data(withJSONObject: orderedIds),
+                  let jsonString = String(data: jsonData, encoding: .utf8) else { return }
+
+            let escaped = jsonString
+                .replacingOccurrences(of: "\\", with: "\\\\")
+                .replacingOccurrences(of: "`", with: "\\`")
+                .replacingOccurrences(of: "${", with: "\\${")
+
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                webView.evaluateJavaScript("window.FinalFinal.syncBlockIds(JSON.parse(`\(escaped)`))") { _, _ in
+                    continuation.resume()
+                }
+            }
+
+            #if DEBUG
+            print("[BlockSyncService] Pushed \(orderedIds.count) block IDs to editor")
+            #endif
+        } catch {
+            #if DEBUG
+            print("[BlockSyncService] pushBlockIds failed: \(error)")
+            #endif
+        }
+    }
+
+    /// Set content AND block IDs atomically (for initial load, zoom, rebuild)
+    func setContentWithBlockIds(markdown: String, blockIds: [String], scrollToStart: Bool = false) async {
+        guard let webView else { return }
+
+        // Suppress polling during atomic set
+        isSyncSuppressed = true
+        defer { isSyncSuppressed = false }
+
+        // Escape markdown for JS template literal
+        let escapedMarkdown = markdown
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "`", with: "\\`")
+            .replacingOccurrences(of: "${", with: "\\${")
+
+        guard let idsData = try? JSONSerialization.data(withJSONObject: blockIds),
+              let idsJson = String(data: idsData, encoding: .utf8) else { return }
+
+        let escapedIds = idsJson
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "`", with: "\\`")
+            .replacingOccurrences(of: "${", with: "\\${")
+
+        let options = scrollToStart ? ", {scrollToStart: true}" : ""
+        let js = "window.FinalFinal.setContentWithBlockIds(`\(escapedMarkdown)`, JSON.parse(`\(escapedIds)`)\(options))"
+
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            webView.evaluateJavaScript(js) { _, _ in
+                continuation.resume()
+            }
+        }
+
+        #if DEBUG
+        print("[BlockSyncService] Set content with \(blockIds.count) block IDs atomically")
+        #endif
+    }
+
     // MARK: - Polling
 
     /// Poll the editor for block changes and apply them to the database
     private func pollBlockChanges() async {
+        guard !isPolling else { return }
+        isPolling = true
+        defer { isPolling = false }
+
         guard !isSyncSuppressed, isConfigured, let webView, let database = projectDatabase, let projectId else {
             return
         }

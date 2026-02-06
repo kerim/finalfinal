@@ -94,8 +94,23 @@ export function confirmBlockIds(mapping: Record<string, string>): void {
 /**
  * Check if a block type should receive an ID
  */
-function isBlockType(node: Node): boolean {
+export function isBlockType(node: Node): boolean {
   return BLOCK_TYPES.has(node.type.name);
+}
+
+/**
+ * Set block IDs for top-level nodes from an ordered array of IDs.
+ * Matches BlockParser.parse() which creates one block per top-level node.
+ * Uses doc.forEach() (top-level only, NOT doc.descendants()).
+ */
+export function setBlockIdsForTopLevel(orderedIds: string[], doc: Node): void {
+  let index = 0;
+  doc.forEach((node, offset) => {
+    if (isBlockType(node) && index < orderedIds.length) {
+      currentBlockIds.set(offset, orderedIds[index]);
+      index++;
+    }
+  });
 }
 
 /**

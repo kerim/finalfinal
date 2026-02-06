@@ -16,13 +16,21 @@ import {
   setHideCompletedTasks,
 } from './annotation-display-plugin';
 import { type AnnotationType, annotationNode, annotationPlugin } from './annotation-plugin';
-import { blockIdPlugin, confirmBlockIds, getAllBlockIds, getBlockIdAtPos, resetBlockIdState } from './block-id-plugin';
+import {
+  blockIdPlugin,
+  confirmBlockIds,
+  getAllBlockIds,
+  getBlockIdAtPos,
+  resetBlockIdState,
+  setBlockIdsForTopLevel,
+} from './block-id-plugin';
 import {
   type BlockChanges,
   blockSyncPlugin,
   destroyBlockSyncState,
   getBlockChanges,
   hasPendingChanges,
+  resetAndSnapshot,
   resetBlockSyncState,
 } from './block-sync-plugin';
 import {
@@ -184,6 +192,8 @@ declare global {
       getBlockChanges: () => BlockChanges;
       applyBlocks: (blocks: Block[]) => void;
       confirmBlockIds: (mapping: Record<string, string>) => void;
+      syncBlockIds: (orderedIds: string[]) => void;
+      setContentWithBlockIds: (markdown: string, blockIds: string[], options?: { scrollToStart?: boolean }) => void;
       scrollToBlock: (blockId: string) => void;
       getBlockAtCursor: () => { blockId: string; offset: number } | null;
       hasBlockChanges: () => boolean;
@@ -1183,6 +1193,7 @@ window.FinalFinal = {
           const emptyDoc = view.state.schema.nodes.doc.create(null, emptyParagraph);
           const tr = view.state.tr.replaceWith(0, view.state.doc.content.size, emptyDoc.content);
           view.dispatch(tr.setSelection(Selection.atStart(tr.doc)));
+          resetAndSnapshot(view.state.doc);
           currentContent = markdown;
         } finally {
           isSettingContent = false;
@@ -1231,6 +1242,7 @@ window.FinalFinal = {
           }
         }
         view.dispatch(tr);
+        resetAndSnapshot(view.state.doc);
 
         // Reset scroll position for zoom transitions
         // Swift handles hiding/showing the WKWebView at compositor level
@@ -1278,6 +1290,12 @@ window.FinalFinal = {
 
     const sourceEnabled = isSourceModeEnabled();
     let markdown = getMarkdown()(editorInstance.ctx);
+
+    // Unescape heading syntax that ProseMirror's serializer escapes in paragraphs.
+    // This happens when users paste markdown as plain text - Milkdown creates
+    // paragraph nodes and the serializer escapes # to prevent heading interpretation.
+    // Only matches \# followed by 1-5 more # chars and whitespace at line start.
+    markdown = markdown.replace(/^\\(#{1,6}\s)/gm, '$1');
 
     // Fix double ## prefixes in source mode: "## ## Heading" → "## Heading"
     if (sourceEnabled) {
@@ -2036,6 +2054,24 @@ window.FinalFinal = {
       } catch {
         // Dispatch failed, ignore
       }
+    }
+  },
+
+  syncBlockIds(orderedIds: string[]) {
+    if (!editorInstance) return;
+    const view = editorInstance.ctx.get(editorViewCtx);
+    setBlockIdsForTopLevel(orderedIds, view.state.doc);
+    resetAndSnapshot(view.state.doc);
+  },
+
+  setContentWithBlockIds(markdown: string, blockIds: string[], options?: { scrollToStart?: boolean }) {
+    // 1. Set content (parse, dispatch, resetAndSnapshot already called inside)
+    this.setContent(markdown, options);
+    // 2. Immediately assign real block IDs (still synchronous, same JS turn)
+    if (blockIds.length > 0 && editorInstance) {
+      const view = editorInstance.ctx.get(editorViewCtx);
+      setBlockIdsForTopLevel(blockIds, view.state.doc);
+      resetAndSnapshot(view.state.doc);
     }
   },
 

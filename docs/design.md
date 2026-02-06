@@ -47,36 +47,42 @@ The database stores all content. No file watching, no manifest reconciliation, n
 │  │  SectionCardView│  │  │         OR                             │  │ │
 │  │  SectionCardView│  │  │  CodeMirrorEditor (Source)             │  │ │
 │  │       ...       │  │  └────────────────────────────────────────┘  │ │
-│  └────────┬────────┘  └──────────────────┬────────────────────────────┘ │
-│           │                              │                               │
-└───────────┼──────────────────────────────┼───────────────────────────────┘
-            │                              │
-            ▼                              ▼
-   ┌────────────────┐           ┌──────────────────────┐
-   │ EditorViewState│◄──────────│  SectionSyncService  │
-   │  (@Observable) │           │    (debounced)       │
-   └────────┬───────┘           └──────────┬───────────┘
-            │                              │
-            │      ┌───────────────────────┘
-            ▼      ▼
-   ┌────────────────────────┐
-   │    ProjectDatabase     │
-   │      (GRDB + SQLite)   │
-   │                        │
-   │  - sections table      │
-   │  - content table       │
-   │  - ValueObservation    │
-   └────────────────────────┘
+│  └────────┬────────┘  └──────────┬──────────────────┬────────────────┘ │
+│           │                      │                  │                    │
+└───────────┼──────────────────────┼──────────────────┼────────────────────┘
+            │                      │                  │
+            ▼                      ▼                  ▼
+   ┌────────────────┐    ┌──────────────────┐  ┌─────────────────────┐
+   │ EditorViewState│◄───│ BlockSyncService │  │ SectionSyncService  │
+   │  (@Observable) │    │  (300ms poll)    │  │ (legacy/auxiliary)  │
+   └────────┬───────┘    └────────┬─────────┘  └──────────┬──────────┘
+            │                     │                       │
+            │      ┌──────────────┘   ┌───────────────────┘
+            ▼      ▼                  ▼
+   ┌────────────────────────────────────┐
+   │        ProjectDatabase             │
+   │          (GRDB + SQLite)           │
+   │                                    │
+   │  - block table (primary content)   │
+   │  - sections table (dual-write)     │
+   │  - content table                   │
+   │  - ValueObservation                │
+   └────────────────────────────────────┘
 ```
+
+**JS API surface** (block-related): `hasBlockChanges()`, `getBlockChanges()`, `syncBlockIds()`, `confirmBlockIds()`, `setContentWithBlockIds()`
 
 ### Data Flow
 
-1. **Editor → Swift**: 500ms polling reads `window.FinalFinal.getContent()` from WebView
-2. **Swift → SectionSyncService**: Content changes trigger debounced sync (500ms)
-3. **SectionSyncService → Database**: Parses headers, reconciles sections, saves
-4. **Database → EditorViewState**: GRDB ValueObservation pushes section updates
-5. **EditorViewState → Sidebar**: SwiftUI `@Observable` triggers UI update
-6. **Swift → Editor**: `window.FinalFinal.setContent(markdown)` pushes content
+**Primary (block-based)**:
+1. **Editor → BlockSyncService**: 300ms polling calls `hasBlockChanges()` then `getBlockChanges()`
+2. **BlockSyncService → Database**: Applies insert/update/delete directly to block table
+3. **Database → EditorViewState**: GRDB ValueObservation on **outline blocks** (heading + pseudo-section blocks) pushes updates
+4. **EditorViewState → Sidebar**: Converts blocks to `SectionViewModel(from: Block)` with aggregated word counts
+5. **Swift → Editor**: `setContentWithBlockIds()` pushes content + block IDs atomically; `confirmBlockIds()` sends temp→permanent ID mappings
+
+**Auxiliary (legacy content binding)**:
+6. **Editor → Swift**: 500ms polling reads `getContent()` for content binding + annotation sync via SectionSyncService
 
 ### Editor Modes
 
@@ -91,28 +97,41 @@ The app supports two editor modes that share the same content:
 - **WYSIWYG → Source**: Section anchors (`<!-- @sid:UUID -->`) are injected before each header to preserve section identity during editing
 - **Source → WYSIWYG**: Anchors are extracted and stripped; a 1.5s delay allows Milkdown to initialize before content polling resumes
 
-### Section Architecture
+### Block Architecture
 
-Sections are the fundamental unit of document structure:
+Blocks are the fundamental unit of document structure. Each block represents a single top-level ProseMirror node (paragraph, heading, list, etc.) with a stable UUID that annotations can reference.
 
 ```swift
-struct Section {
-    id: String           // UUID
-    projectId: String    // Parent project
-    sortOrder: Int       // Position in document (0-based)
-    headerLevel: Int     // 1-6 for H1-H6, inherited for pseudo-sections
-    title: String        // Header text (without # prefix)
-    markdownContent: String  // Full section content including header
-    wordCount: Int       // Cached word count
-    startOffset: Int     // Character offset in full document
-    parentId: String?    // Computed from header levels (not stored)
+struct Block {
+    id: String              // UUID (stable across edits)
+    projectId: String       // Parent project
+    parentId: String?       // For nested blocks (list items)
+    sortOrder: Double       // Fractional for easy insertion between blocks
+    blockType: BlockType    // 12 types: paragraph, heading, bulletList, orderedList,
+                            //   listItem, blockquote, codeBlock, horizontalRule,
+                            //   sectionBreak, bibliography, table, image
+    textContent: String     // Plain text (for search, word count)
+    markdownFragment: String // Original markdown for this block
+    headingLevel: Int?      // 1-6 for headings, nil for other types
 
-    // Metadata (user-editable)
-    status: SectionStatus  // draft, review, final, cut
-    tags: [String]
+    // Section metadata (heading and section break blocks only)
+    status: SectionStatus?
+    tags: [String]?
     wordGoal: Int?
+    goalType: GoalType
+    wordCount: Int
+
+    // Special flags
+    isBibliography: Bool
+    isPseudoSection: Bool   // Section break markers
 }
 ```
+
+**Sort Order**: Fractional `Double` allows insertion between any two blocks without renumbering. `reorderAllBlocks()` reassigns sequential integers atomically when the sidebar is reordered.
+
+**Block IDs**: The JS editor assigns `temp-XXXX` IDs to new blocks. Swift confirms with real UUIDs via `confirmBlockIds()`. The `syncBlockIds()` method aligns the editor's block order with the database.
+
+**Legacy Dual-Write**: The `Section` model still exists in a separate table. `persistReorderedBlocks_legacySections()` writes to the section table as a fire-and-forget operation for backward compatibility. `SectionViewModel` is derived from heading blocks via `SectionViewModel(from: Block)`.
 
 **Parent Relationships**: Computed at runtime from header levels. An H3's parent is the nearest preceding section with level < 3.
 
@@ -223,14 +242,20 @@ This ensures word counts update in real-time while editing zoomed sections, even
 
 ### SectionSyncService
 
-Responsible for bidirectional sync between editor content and database sections.
+> **Note:** `BlockSyncService` is now the primary sync mechanism for content. SectionSyncService retains auxiliary roles described below.
+
+Responsible for legacy section sync, anchor injection/extraction, and bibliography marker management.
+
+**Remaining Roles**:
+- `injectSectionAnchors(markdown:sections:)` - Adds `<!-- @sid:UUID -->` for source mode
+- `extractSectionAnchors(markdown:)` - Removes anchors, returns mappings
+- `injectBibliographyMarker` - Adds `<!-- ::auto-bibliography:: -->` before bibliography header in source mode
+- Legacy section table sync (dual-write for backward compatibility)
 
 **Key Methods**:
 - `contentChanged(_ markdown:)` - Debounced entry point (500ms)
 - `syncContent(_ markdown:)` - Parses headers, reconciles with database
 - `parseHeaders(from markdown:)` - Extracts section boundaries
-- `injectSectionAnchors(markdown:sections:)` - Adds `<!-- @sid:UUID -->` for source mode
-- `extractSectionAnchors(markdown:)` - Removes anchors, returns mappings
 
 **Reconciliation**: Uses `SectionReconciler` to compute minimal database changes (insert, update, delete) by comparing parsed headers against existing sections.
 
@@ -280,10 +305,13 @@ enum EditorContentState {
     case hierarchyEnforcement // Fixing header level violations
     case bibliographyUpdate   // Auto-bibliography being regenerated
     case editorTransition     // Switching between Milkdown ↔ CodeMirror
+    case dragReorder          // During sidebar drag-drop reorder
 }
 ```
 
-**Guards**: SectionSyncService and ValueObservation skip updates when `contentState != .idle`, preventing feedback loops.
+**Guards**: SectionSyncService, BlockSyncService, and ValueObservation skip updates when `contentState != .idle`, preventing feedback loops.
+
+**Cancellation Pattern**: `EditorViewState.currentPersistTask` stores the current persist task during drag-drop reorder. Rapid successive reorders cancel the previous persist task before starting a new one, preventing stale writes.
 
 **Watchdog**: A `didSet` observer on `contentState` starts a 5-second watchdog Task whenever the state enters a non-idle value. If the state hasn't returned to `.idle` within 5 seconds, the watchdog force-resets it and cleans up associated state (e.g., `isZoomingContent`, pending continuations). This prevents permanently blocked ValueObservation if a transition is interrupted.
 
@@ -291,18 +319,21 @@ enum EditorContentState {
 
 Double-clicking a sidebar section "zooms" into it:
 
-1. **Zoom In**:
-   - Stores full document in `fullDocumentBeforeZoom`
-   - Records `zoomedSectionIds` (section + all descendants)
-   - Sets `content` to just the zoomed sections' markdown
-   - Waits for editor acknowledgement before returning to `.idle`
+1. **Zoom In** (block-based):
+   - Finds the heading block, determines its sort-order range (from heading's sortOrder to next same/higher-level heading's sortOrder)
+   - Filters blocks within that range from the database
+   - Assembles markdown from the filtered blocks
+   - Records `zoomedSectionIds` and `zoomedBlockRange`
+   - Pushes content + block IDs to editor via `setContentWithBlockIds()`
+   - No `fullDocumentBeforeZoom` needed — DB always has the complete document
 
-2. **Zoom Out**:
-   - Merges edited zoomed content back into the full document
-   - Non-zoomed sections retain their original content
-   - Clears zoom state
+2. **Zoom Out** (block-based):
+   - Fetches ALL blocks from DB and assembles full document via `BlockParser.assembleMarkdown()`
+   - No merge needed — BlockSyncService writes changes to DB during zoom
+   - Clears zoom state (`zoomedSectionIds`, `zoomedBlockRange`)
+   - Pushes full content + block IDs to editor
 
-**Sync While Zoomed**: `syncZoomedSections()` updates only the zoomed sections in-place, preventing full document replacement. It also handles insertions (new headers typed while zoomed create new Section records with shifted sortOrders) and deletions (removed headers delete Section records). The `onZoomedSectionsUpdated` callback passes the updated set of zoomed IDs so `EditorViewState.zoomedSectionIds` stays in sync.
+**Sync While Zoomed**: BlockSyncService continues its 300ms polling during zoom. Changes are written directly to the block table. The `zoomedBlockRange` on EditorViewState tells `pushBlockIds()` which blocks to filter for the editor.
 
 **Zoom Modes**:
 - **Full zoom** (double-click): Shows section + all descendants (by `parentId`) + following pseudo-sections (by document order)
@@ -328,22 +359,40 @@ Headers must follow a valid hierarchy (can't jump from H1 to H4):
 
 ### Database Reactivity (ValueObservation)
 
-GRDB's `ValueObservation` provides reactive updates:
+GRDB's `ValueObservation` provides reactive updates. The observation now watches the **block table** (outline blocks only) instead of the sections table:
 
 ```swift
 func startObserving(database: ProjectDatabase, projectId: String) {
+    self.projectDatabase = database
+    self.currentProjectId = projectId
+
     observationTask = Task {
-        for try await dbSections in database.observeSections(for: projectId) {
+        for try await outlineBlocks in database.observeOutlineBlocks(for: projectId) {
             guard !isObservationSuppressed else { continue }
             guard contentState == .idle else { continue }
 
-            sections = dbSections.map { SectionViewModel(from: $0) }
+            var viewModels = outlineBlocks.map { SectionViewModel(from: $0) }
+
+            // Aggregate word counts for each heading block
+            for i in viewModels.indices {
+                if let wc = try? database.wordCountForHeading(blockId: viewModels[i].id) {
+                    viewModels[i].wordCount = wc
+                }
+            }
+
+            sections = viewModels
             recalculateParentRelationships()
-            onSectionsUpdated?()  // Triggers hierarchy enforcement
+            onSectionsUpdated?()
         }
     }
 }
 ```
+
+**Key details**:
+- `observeOutlineBlocks(for:)` filters to heading + pseudo-section blocks only
+- `SectionViewModel(from: Block)` converts block data to sidebar view models
+- `wordCountForHeading(blockId:)` aggregates word counts from body blocks under each heading
+- `projectDatabase` and `currentProjectId` are stored on EditorViewState for use during zoom and reorder operations
 
 **Suppression**: `isObservationSuppressed` is set during drag-drop operations to prevent database updates from overwriting in-progress reordering.
 
@@ -354,15 +403,19 @@ The sidebar supports drag-drop reordering with hierarchy preservation:
 1. **Single Section**: Section moves; orphaned children are promoted to parent's level
 2. **Subtree Drag**: Section + all descendants move together; levels shift by delta
 
-**Process**:
-1. Cancel pending syncs
-2. Suppress observation
-3. Reorder sections array
-4. Recalculate offsets and parent relationships
-5. Enforce hierarchy constraints
-6. Rebuild document content
-7. Persist to database
-8. Resume observation
+**Process** (block-based):
+1. Set `contentState = .dragReorder`
+2. Cancel `currentPersistTask` (from any rapid preceding reorder)
+3. Reorder sections array in memory for immediate visual feedback
+4. Recalculate parent relationships and enforce hierarchy constraints
+5. Rebuild document content via `rebuildDocumentContentStatic()` (static method, no state mutation)
+6. Push content to editor
+7. Persist atomically via `reorderAllBlocks()` — moves body blocks with their headings, applies heading updates (markdownFragment + headingLevel) in a single write transaction
+8. Fire-and-forget `persistReorderedBlocks_legacySections()` for section table dual-write
+9. Push block IDs to editor via `blockSyncService.pushBlockIds()`
+10. Return to `contentState = .idle`
+
+**Cancellation**: `currentPersistTask` on `EditorViewState` stores the async persist task. Rapid successive reorders cancel the previous task before starting a new one, preventing stale sort orders from being written.
 
 ### WebView Communication
 
@@ -370,17 +423,29 @@ Both editors use the same bridge pattern:
 
 ```javascript
 // window.FinalFinal API (exposed by editor JavaScript)
-setContent(markdown)     // Load content into editor
-getContent()             // Get current markdown
+// --- Content ---
+setContent(markdown)                   // Load content into editor
+getContent()                           // Get current markdown
+setContentWithBlockIds(md, ids, opts)  // Atomic content + block ID push
+
+// --- Block sync (300ms polling) ---
+hasBlockChanges()         // Check for pending changes (returns boolean)
+getBlockChanges()         // Get {updates, inserts, deletes} changeset
+syncBlockIds(ids)         // Align editor block order with DB IDs
+confirmBlockIds(mapping)  // Confirm temp→permanent ID mapping
+
+// --- UI ---
 setFocusMode(enabled)    // Toggle paragraph dimming (WYSIWYG only)
 getStats()               // Returns {words, characters}
 scrollToOffset(n)        // Scroll to character offset
 setTheme(css)            // Apply theme CSS variables
 ```
 
-**Polling**: Swift polls `getContent()` every 500ms. Content changes only trigger sync if the polled content differs from the binding.
+**Polling**: Two polling loops run concurrently:
+- **Block polling** (300ms): `BlockSyncService` polls `hasBlockChanges()` → `getBlockChanges()` for structural content sync
+- **Content polling** (500ms): Reads `getContent()` for content binding + annotation sync via `SectionSyncService`
 
-**Feedback Prevention**: `lastSyncedContent` in SectionSyncService tracks what was just synced, preventing editor → sync → observation → editor loops.
+**Feedback Prevention**: `isSettingContent` flag prevents feedback loops when Swift pushes content to editor. `resetAndSnapshot(doc)` must be called after any `setContent()` to prevent false change waves. `isSyncSuppressed` on BlockSyncService gates polling during drag operations and block ID pushes.
 
 ### Source Mode Specifics
 
@@ -461,25 +526,40 @@ CREATE TABLE project (
     updated_at TEXT NOT NULL
 );
 
--- Main content (one row per project)
+-- Block-based content (one row per structural element)
+CREATE TABLE block (
+    id TEXT PRIMARY KEY,
+    projectId TEXT NOT NULL REFERENCES project(id),
+    parentId TEXT,                -- For nested blocks (list items in lists)
+    sortOrder DOUBLE NOT NULL,   -- Fractional for easy insertion
+    blockType TEXT NOT NULL,     -- paragraph, heading, bulletList, orderedList,
+                                 -- listItem, blockquote, codeBlock, horizontalRule,
+                                 -- sectionBreak, bibliography, table, image
+    textContent TEXT NOT NULL,   -- Plain text (search, word count)
+    markdownFragment TEXT NOT NULL, -- Original markdown for this block
+    headingLevel INTEGER,        -- 1-6 for headings, NULL otherwise
+    status TEXT,                 -- draft, review, final, cut (headings only)
+    tags TEXT,                   -- JSON array string
+    wordGoal INTEGER,
+    goalType TEXT DEFAULT 'approx',
+    wordCount INTEGER DEFAULT 0,
+    isBibliography BOOLEAN DEFAULT FALSE,
+    isPseudoSection BOOLEAN DEFAULT FALSE,
+    createdAt TEXT NOT NULL,
+    updatedAt TEXT NOT NULL
+);
+
+-- Full markdown content (one row per project, kept in sync)
 CREATE TABLE content (
     id TEXT PRIMARY KEY,
     project_id TEXT NOT NULL REFERENCES project(id),
-    markdown TEXT NOT NULL,  -- Full markdown content
+    markdown TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
 
--- Outline cache (derived from headers, rebuilt on content change)
-CREATE TABLE outline_nodes (
-    id TEXT PRIMARY KEY,
-    project_id TEXT NOT NULL REFERENCES project(id),
-    header_level INTEGER NOT NULL,  -- 1-6
-    title TEXT NOT NULL,
-    start_offset INTEGER NOT NULL,  -- Character position in content
-    end_offset INTEGER NOT NULL,
-    parent_id TEXT REFERENCES outline_nodes(id),
-    sort_order INTEGER NOT NULL,
-    is_pseudo_section BOOLEAN DEFAULT FALSE  -- For "## Title-part 1" style
+-- Legacy section table (dual-write for backward compatibility)
+CREATE TABLE section (
+    -- ... (same as before, populated by persistReorderedBlocks_legacySections)
 );
 
 -- User preferences per project
@@ -487,35 +567,20 @@ CREATE TABLE settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
-
--- Future tables
--- annotations, citations (Phase 2-3)
--- reference_folders, reference_files (Phase 6)
 ```
 
 ### Content Model
 
-One project = one markdown string. Headers within that string define the outline structure.
+One project = many blocks, ordered by `sortOrder`. Headers within the block sequence define the outline structure. The `content` table stores the assembled markdown string and is kept in sync.
 
 ```markdown
-# Book Title
-
-## Chapter 1
-
-### Section 1.1
-
-Content here...
-
-### Section 1.2
-
-More content...
-
-## Chapter 2
-
-...
+# Book Title          → block(type=heading, level=1, sortOrder=1.0)
+                      → block(type=paragraph, sortOrder=2.0)
+## Chapter 1          → block(type=heading, level=2, sortOrder=3.0)
+Content here...       → block(type=paragraph, sortOrder=4.0)
 ```
 
-The `outline_nodes` table is a cache rebuilt whenever content changes. It enables fast sidebar rendering without parsing markdown on every frame.
+The `block` table is the primary content store. `observeOutlineBlocks()` filters to heading + pseudo-section blocks for fast sidebar rendering. Body block word counts are aggregated per heading via `wordCountForHeading(blockId:)`.
 
 ---
 

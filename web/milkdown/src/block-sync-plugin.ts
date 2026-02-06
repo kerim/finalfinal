@@ -62,11 +62,58 @@ interface BlockSnapshot {
   blockType: string;
   textContent: string;
   headingLevel?: number;
+  node: Node; // Store node reference for markdown serialization
 }
 
 // Current state for external access
 // Note: Cleared when editor is destroyed via resetBlockSyncState()
 let currentState: BlockSyncPluginState | null = null;
+
+/**
+ * Build a markdown fragment from a ProseMirror node
+ * This is a best-effort reconstruction for new blocks
+ */
+function nodeToMarkdownFragment(node: Node): string {
+  const text = node.textContent;
+  switch (node.type.name) {
+    case 'heading': {
+      const level = node.attrs.level || 1;
+      return '#'.repeat(level) + ' ' + text;
+    }
+    case 'paragraph':
+      return text;
+    case 'blockquote':
+      return text
+        .split('\n')
+        .map((line: string) => '> ' + line)
+        .join('\n');
+    case 'code_block': {
+      const lang = node.attrs.language || '';
+      return '```' + lang + '\n' + text + '\n```';
+    }
+    case 'bullet_list': {
+      const items: string[] = [];
+      node.forEach((child) => {
+        items.push('- ' + child.textContent);
+      });
+      return items.join('\n');
+    }
+    case 'ordered_list': {
+      const oItems: string[] = [];
+      node.forEach((child, _offset, index) => {
+        oItems.push(index + 1 + '. ' + child.textContent);
+      });
+      return oItems.join('\n');
+    }
+    case 'horizontal_rule':
+      return '---';
+    case 'table':
+      // Tables are complex; return text content as fallback
+      return text;
+    default:
+      return text;
+  }
+}
 
 /**
  * Get pending block changes and clear them
@@ -108,16 +155,28 @@ function snapshotBlocks(doc: Node): Map<string, BlockSnapshot> {
   const snapshot = new Map<string, BlockSnapshot>();
   const blockIds = getAllBlockIds();
 
-  doc.descendants((node, pos) => {
+  doc.descendants((node, pos, parent) => {
     if (SYNC_BLOCK_TYPES.has(node.type.name)) {
       const blockId = blockIds.get(pos);
       if (blockId) {
+        // Detect heading syntax in top-level paragraphs (paste creates paragraphs, not headings)
+        const isTopLevel = parent?.type.name === 'doc';
+        const headingMatch =
+          node.type.name === 'paragraph' && isTopLevel ? node.textContent.match(/^(#{1,6})\s/) : null;
+        const effectiveType = headingMatch ? 'heading' : node.type.name;
+        const effectiveLevel = headingMatch
+          ? headingMatch[1].length
+          : node.type.name === 'heading'
+            ? node.attrs.level
+            : undefined;
+
         snapshot.set(blockId, {
           id: blockId,
           pos,
-          blockType: node.type.name,
+          blockType: effectiveType,
           textContent: node.textContent,
-          headingLevel: node.type.name === 'heading' ? node.attrs.level : undefined,
+          headingLevel: effectiveLevel,
+          node,
         });
       }
     }
@@ -148,6 +207,7 @@ function detectChanges(
       state.pendingUpdates.set(id, {
         id,
         textContent: newBlock.textContent,
+        markdownFragment: nodeToMarkdownFragment(newBlock.node),
         headingLevel: newBlock.headingLevel,
       });
     }
@@ -172,7 +232,7 @@ function detectChanges(
         tempId: id,
         blockType: newBlock.blockType,
         textContent: newBlock.textContent,
-        markdownFragment: '', // Will be populated by serialization
+        markdownFragment: nodeToMarkdownFragment(newBlock.node),
         headingLevel: newBlock.headingLevel,
         afterBlockId,
       });
@@ -234,6 +294,21 @@ export function resetBlockSyncState(): void {
     currentState.lastSnapshot.clear();
   }
   // Don't null out currentState here - it will be recreated on next editor init
+}
+
+/**
+ * Reset sync state and rebuild snapshot from the current document.
+ * Call after setContent() to prevent false insert/delete waves.
+ * Unlike resetBlockSyncState() which clears lastSnapshot (causing all blocks
+ * to appear as new on next transaction), this properly captures the current
+ * document as the new baseline.
+ */
+export function resetAndSnapshot(doc: Node): void {
+  if (!currentState) return;
+  currentState.pendingUpdates.clear();
+  currentState.pendingInserts.clear();
+  currentState.pendingDeletes.clear();
+  currentState.lastSnapshot = snapshotBlocks(doc);
 }
 
 /**

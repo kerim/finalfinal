@@ -209,7 +209,7 @@ enum BlockParser {
     }
 
     /// Extract plain text content from markdown block
-    private static func extractTextContent(from content: String, blockType: BlockType) -> String {
+    static func extractTextContent(from content: String, blockType: BlockType) -> String {
         var text = content
 
         switch blockType {
@@ -274,9 +274,14 @@ enum BlockParser {
     }
 
     /// Assemble blocks back into markdown
+    /// Uses tuple comparison for tie-breaking: headings sort before non-headings at same sortOrder
     static func assembleMarkdown(from blocks: [Block]) -> String {
-        return blocks
-            .sorted { $0.sortOrder < $1.sortOrder }
+        let sorted = blocks.sorted { a, b in
+            let aKey = (a.sortOrder, a.blockType == .heading ? 0 : 1)
+            let bKey = (b.sortOrder, b.blockType == .heading ? 0 : 1)
+            return aKey < bKey
+        }
+        return sorted
             .map { $0.markdownFragment }
             .joined(separator: "\n\n")
     }
