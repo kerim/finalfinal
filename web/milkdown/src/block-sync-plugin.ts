@@ -106,7 +106,10 @@ function serializeInlineContent(node: Node): string {
         }
       } else if (child.type.name === 'annotation') {
         const { type, isCompleted } = child.attrs;
-        const text = (child.textContent || '').replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim();
+        const text = (child.textContent || '')
+          .replace(/[\r\n]+/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim();
         if (type === 'task') {
           result += `<!-- ::task:: ${isCompleted ? '[x]' : '[ ]'} ${text} -->`;
         } else {
@@ -217,8 +220,7 @@ function snapshotBlocks(doc: Node): Map<string, BlockSnapshot> {
       const blockId = blockIds.get(offset);
       if (blockId) {
         // Detect heading syntax in paragraphs (paste creates paragraphs, not headings)
-        const headingMatch =
-          node.type.name === 'paragraph' ? node.textContent.match(/^(#{1,6})\s/) : null;
+        const headingMatch = node.type.name === 'paragraph' ? node.textContent.match(/^(#{1,6})\s/) : null;
         const effectiveType = headingMatch ? 'heading' : node.type.name;
         const effectiveLevel = headingMatch
           ? headingMatch[1].length

@@ -244,10 +244,6 @@ class EditorViewState {
     /// Whether citation library has been pushed to the editor
     var isCitationLibraryPushed: Bool = false
 
-    // MARK: - Bibliography Change Detection
-    /// Hash of the last bibliography section content, used to detect changes
-    private var previousBibliographyHash: Int?
-
     // MARK: - Database References
     /// Database and project references for block operations (zoom, scroll, etc.)
     var projectDatabase: ProjectDatabase?
@@ -309,21 +305,6 @@ class EditorViewState {
 
                     // Notify observers (e.g., for hierarchy enforcement)
                     self.onSectionsUpdated?()
-
-                    // Check for bibliography section changes
-                    if let bibSection = viewModels.first(where: { $0.title == "Bibliography" }) {
-                        let currentHash = bibSection.markdownContent.hashValue
-                        if self.previousBibliographyHash == nil ||
-                           (self.previousBibliographyHash != nil && self.previousBibliographyHash != currentHash) {
-                            NotificationCenter.default.post(name: .bibliographySectionChanged, object: nil)
-                        }
-                        self.previousBibliographyHash = currentHash
-                    } else {
-                        if self.previousBibliographyHash != nil {
-                            NotificationCenter.default.post(name: .bibliographySectionChanged, object: nil)
-                            self.previousBibliographyHash = nil
-                        }
-                    }
                 }
             } catch {
                 print("[EditorViewState] Block observation error: \(error)")

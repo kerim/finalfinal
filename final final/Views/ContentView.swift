@@ -127,12 +127,14 @@ struct ContentView: View {
                 // Skip during any content transition (including editor switch)
                 guard editorState.contentState == .idle else { return }
                 editorState.contentState = .bibliographyUpdate
+                blockSyncService.isSyncSuppressed = true
                 rebuildDocumentContent()
                 editorState.contentState = .idle
                 // Push block IDs after bibliography rebuild
                 Task {
                     try? await Task.sleep(for: .milliseconds(100))
                     await blockSyncService.pushBlockIds()
+                    // pushBlockIds' defer clears isSyncSuppressed
                 }
             }
             .onReceive(NotificationCenter.default.publisher(for: .didZoomOut)) { _ in

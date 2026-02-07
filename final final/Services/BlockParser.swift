@@ -31,6 +31,8 @@ enum BlockParser {
         // But keep code blocks and other multi-line structures together
         let rawBlocks = splitIntoRawBlocks(markdown)
 
+        var inBibliographySection = false
+
         for rawBlock in rawBlocks {
             let trimmed = rawBlock.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else { continue }
@@ -40,9 +42,18 @@ enum BlockParser {
             let wordCount = MarkdownUtils.wordCount(for: textContent)
 
             // Check for special flags
-            let isBibliography = trimmed.contains("<!-- ::auto-bibliography:: -->") ||
-                                 trimmed.hasPrefix("## References") ||
-                                 trimmed.hasPrefix("## Bibliography")
+            let isBibliographyHeading = trimmed.contains("<!-- ::auto-bibliography:: -->") ||
+                                         trimmed == "# References" ||
+                                         trimmed == "## References" ||
+                                         trimmed == "# Bibliography" ||
+                                         trimmed == "## Bibliography"
+            if isBibliographyHeading {
+                inBibliographySection = true
+            } else if inBibliographySection && blockType == .heading {
+                // Reset if a non-bibliography heading follows (user typed below bibliography in CM)
+                inBibliographySection = false
+            }
+            let isBibliography = inBibliographySection
             let isPseudoSection = trimmed.contains("<!-- ::break:: -->")
 
             // Look up existing metadata for this heading if available

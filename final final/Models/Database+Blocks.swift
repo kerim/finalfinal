@@ -74,6 +74,17 @@ struct BlockUpdates {
     }
 }
 
+// MARK: - Block Heading Metadata
+
+/// Preserved heading metadata during block replacement (avoids large tuple)
+private struct HeadingMetadata {
+    let status: SectionStatus?
+    let tags: [String]?
+    let wordGoal: Int?
+    let goalType: GoalType
+    let isBibliography: Bool
+}
+
 // MARK: - ProjectDatabase Block CRUD
 
 extension ProjectDatabase {
@@ -475,14 +486,15 @@ extension ProjectDatabase {
                 .fetchAll(db)
 
             var idByTitle: [String: String] = [:]
-            var metadataByTitle: [String: (status: SectionStatus?, tags: [String]?, wordGoal: Int?, goalType: GoalType)] = [:]
+            var metadataByTitle: [String: HeadingMetadata] = [:]
             for block in existingBlocks where block.blockType == .heading {
                 if idByTitle[block.textContent] == nil {
                     idByTitle[block.textContent] = block.id
                 }
-                metadataByTitle[block.textContent] = (
+                metadataByTitle[block.textContent] = HeadingMetadata(
                     status: block.status, tags: block.tags,
-                    wordGoal: block.wordGoal, goalType: block.goalType
+                    wordGoal: block.wordGoal, goalType: block.goalType,
+                    isBibliography: block.isBibliography
                 )
             }
 
@@ -498,6 +510,7 @@ extension ProjectDatabase {
                     block.tags = meta.tags
                     block.wordGoal = meta.wordGoal
                     block.goalType = meta.goalType
+                    if meta.isBibliography { block.isBibliography = true }
                 }
                 try block.insert(db)
             }
@@ -524,15 +537,16 @@ extension ProjectDatabase {
             let existingBlocks = try existingQuery.order(Block.Columns.sortOrder).fetchAll(db)
 
             // Build metadata lookup by title for heading blocks
-            var metadataByTitle: [String: (status: SectionStatus?, tags: [String]?, wordGoal: Int?, goalType: GoalType)] = [:]
+            var metadataByTitle: [String: HeadingMetadata] = [:]
             // Build ID lookup by title for heading blocks (preserves zoomedSectionId across re-parses)
             var idByTitle: [String: String] = [:]
             for block in existingBlocks where block.blockType == .heading {
-                metadataByTitle[block.textContent] = (
+                metadataByTitle[block.textContent] = HeadingMetadata(
                     status: block.status,
                     tags: block.tags,
                     wordGoal: block.wordGoal,
-                    goalType: block.goalType
+                    goalType: block.goalType,
+                    isBibliography: block.isBibliography
                 )
                 if idByTitle[block.textContent] == nil {
                     idByTitle[block.textContent] = block.id
@@ -564,6 +578,7 @@ extension ProjectDatabase {
                     block.tags = meta.tags
                     block.wordGoal = meta.wordGoal
                     block.goalType = meta.goalType
+                    if meta.isBibliography { block.isBibliography = true }
                 }
 
                 try block.insert(db)
