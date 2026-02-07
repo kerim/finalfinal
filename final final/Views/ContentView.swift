@@ -136,6 +136,12 @@ struct ContentView: View {
                 }
             }
             .onReceive(NotificationCenter.default.publisher(for: .didZoomOut)) { _ in
+                // Re-sync annotations with full document content after zoom-out.
+                // During zoom, annotation reconciliation deletes annotations outside the zoomed
+                // subset. Milkdown restores them via content normalization triggering onChange,
+                // but CodeMirror returns content verbatim so onChange never fires.
+                annotationSyncService.contentChanged(editorState.content)
+
                 // Zoom-out completed - trigger bibliography sync with full document content
                 // Citations added during zoom need to be processed now
                 guard let projectId = documentManager.projectId else { return }
