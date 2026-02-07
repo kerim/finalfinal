@@ -41,6 +41,12 @@ class BlockSyncService {
         self.webView = webView
     }
 
+    /// Reconfigure database references for project switch (WebView stays the same)
+    func reconfigure(database: ProjectDatabase, projectId: String) {
+        self.projectDatabase = database
+        self.projectId = projectId
+    }
+
     /// Start polling for block changes
     func startPolling() {
         stopPolling()

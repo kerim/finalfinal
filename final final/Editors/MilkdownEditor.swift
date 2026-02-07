@@ -151,6 +151,9 @@ struct MilkdownEditor: NSViewRepresentable {
             context.coordinator.setFocusMode(focusModeEnabled)
         }
 
+        // Skip content/theme pushes during project reset to prevent empty flash
+        guard !isResettingContent else { return }
+
         if context.coordinator.shouldPushContent(content) {
             context.coordinator.setContent(content)
         }

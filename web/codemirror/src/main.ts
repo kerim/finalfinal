@@ -14,7 +14,7 @@ import {
   search,
   setSearchQuery,
 } from '@codemirror/search';
-import { EditorState, RangeSetBuilder } from '@codemirror/state';
+import { EditorState, type Extension, RangeSetBuilder } from '@codemirror/state';
 import {
   Decoration,
   type DecorationSet,
@@ -99,6 +99,8 @@ declare global {
       replaceAll: (replacement: string) => number;
       clearSearch: () => void;
       getSearchState: () => SearchState | null;
+      // Project switch reset
+      resetForProjectSwitch: () => void;
     };
     __CODEMIRROR_DEBUG__?: {
       editorReady: boolean;
@@ -535,6 +537,9 @@ window.__CODEMIRROR_SCRIPT_STARTED__ = Date.now();
 
 let editorView: EditorView | null = null;
 
+// Module-level extensions array for EditorState creation (used by initEditor and resetForProjectSwitch)
+let editorExtensions: Extension[] = [];
+
 // Debug state for Swift introspection
 window.__CODEMIRROR_DEBUG__ = {
   editorReady: false,
@@ -578,98 +583,101 @@ function initEditor() {
     return;
   }
 
+  // Store extensions at module level so resetForProjectSwitch can recreate EditorState
+  editorExtensions = [
+    highlightActiveLine(),
+    history(),
+    markdown({ base: markdownLanguage, codeLanguages: languages }),
+    syntaxHighlighting(customHighlightStyle),
+    headingDecorationPlugin,
+    // Search extension - headless mode (no default keybindings, controlled via Swift)
+    search({ top: false }),
+    highlightSelectionMatches(),
+    autocompletion({ override: [slashCompletions] }),
+    keymap.of([
+      // Filter out Mod-/ (toggle comment) from default keymap to allow Swift to handle mode toggle
+      ...defaultKeymap.filter((k) => k.key !== 'Mod-/'),
+      // Custom undo: after slash command, also removes the "/" trigger
+      {
+        key: 'Mod-z',
+        run: (view) => {
+          if (pendingSlashUndo) {
+            // Undo the slash command insertion
+            undo(view);
+
+            // Delete the "/" that was restored
+            const pos = view.state.selection.main.head;
+            if (pos > 0) {
+              const charBefore = view.state.sliceDoc(pos - 1, pos);
+              if (charBefore === '/') {
+                view.dispatch({
+                  changes: { from: pos - 1, to: pos, insert: '' },
+                });
+              }
+            }
+            pendingSlashUndo = false;
+            return true;
+          }
+          // Normal undo
+          return undo(view);
+        },
+      },
+      // Redo bindings (Mac and Windows)
+      { key: 'Mod-Shift-z', run: (view) => redo(view) },
+      { key: 'Mod-y', run: (view) => redo(view) },
+      // Cmd+B: Bold
+      {
+        key: 'Mod-b',
+        run: () => {
+          wrapSelection('**');
+          return true;
+        },
+      },
+      // Cmd+I: Italic
+      {
+        key: 'Mod-i',
+        run: () => {
+          wrapSelection('*');
+          return true;
+        },
+      },
+      // Cmd+K: Link
+      {
+        key: 'Mod-k',
+        run: () => {
+          insertLink();
+          return true;
+        },
+      },
+    ]),
+    EditorView.lineWrapping,
+    EditorView.theme({
+      '&': { height: '100%' },
+      '.cm-scroller': { overflow: 'auto' },
+    }),
+    // Reset pendingSlashUndo on any editing key
+    EditorView.domEventHandlers({
+      keydown(event, _view) {
+        // Reset flag on any editing key (typing, backspace, delete)
+        if (event.key.length === 1 || event.key === 'Backspace' || event.key === 'Delete') {
+          pendingSlashUndo = false;
+        }
+        return false;
+      },
+    }),
+    // Update citation add button on selection changes
+    EditorView.updateListener.of((update) => {
+      if (update.selectionSet || update.docChanged) {
+        updateCitationAddButton(update.view);
+      }
+    }),
+    // Section anchor plugin - hides <!-- @sid:UUID --> comments and handles clipboard
+    anchorPlugin(),
+  ];
+
   const state = EditorState.create({
     doc: '',
-    extensions: [
-      highlightActiveLine(),
-      history(),
-      markdown({ base: markdownLanguage, codeLanguages: languages }),
-      syntaxHighlighting(customHighlightStyle),
-      headingDecorationPlugin,
-      // Search extension - headless mode (no default keybindings, controlled via Swift)
-      search({ top: false }),
-      highlightSelectionMatches(),
-      autocompletion({ override: [slashCompletions] }),
-      keymap.of([
-        // Filter out Mod-/ (toggle comment) from default keymap to allow Swift to handle mode toggle
-        ...defaultKeymap.filter((k) => k.key !== 'Mod-/'),
-        // Custom undo: after slash command, also removes the "/" trigger
-        {
-          key: 'Mod-z',
-          run: (view) => {
-            if (pendingSlashUndo) {
-              // Undo the slash command insertion
-              undo(view);
-
-              // Delete the "/" that was restored
-              const pos = view.state.selection.main.head;
-              if (pos > 0) {
-                const charBefore = view.state.sliceDoc(pos - 1, pos);
-                if (charBefore === '/') {
-                  view.dispatch({
-                    changes: { from: pos - 1, to: pos, insert: '' },
-                  });
-                }
-              }
-              pendingSlashUndo = false;
-              return true;
-            }
-            // Normal undo
-            return undo(view);
-          },
-        },
-        // Redo bindings (Mac and Windows)
-        { key: 'Mod-Shift-z', run: (view) => redo(view) },
-        { key: 'Mod-y', run: (view) => redo(view) },
-        // Cmd+B: Bold
-        {
-          key: 'Mod-b',
-          run: () => {
-            wrapSelection('**');
-            return true;
-          },
-        },
-        // Cmd+I: Italic
-        {
-          key: 'Mod-i',
-          run: () => {
-            wrapSelection('*');
-            return true;
-          },
-        },
-        // Cmd+K: Link
-        {
-          key: 'Mod-k',
-          run: () => {
-            insertLink();
-            return true;
-          },
-        },
-      ]),
-      EditorView.lineWrapping,
-      EditorView.theme({
-        '&': { height: '100%' },
-        '.cm-scroller': { overflow: 'auto' },
-      }),
-      // Reset pendingSlashUndo on any editing key
-      EditorView.domEventHandlers({
-        keydown(event, _view) {
-          // Reset flag on any editing key (typing, backspace, delete)
-          if (event.key.length === 1 || event.key === 'Backspace' || event.key === 'Delete') {
-            pendingSlashUndo = false;
-          }
-          return false;
-        },
-      }),
-      // Update citation add button on selection changes
-      EditorView.updateListener.of((update) => {
-        if (update.selectionSet || update.docChanged) {
-          updateCitationAddButton(update.view);
-        }
-      }),
-      // Section anchor plugin - hides <!-- @sid:UUID --> comments and handles clipboard
-      anchorPlugin(),
-    ],
+    extensions: editorExtensions,
   });
 
   editorView = new EditorView({
@@ -1255,6 +1263,27 @@ window.FinalFinal = {
       currentIndex: currentMatchIndex,
       options: currentSearchOptions,
     };
+  },
+
+  resetForProjectSwitch() {
+    if (!editorView) return;
+
+    // Clear transient module-level state
+    pendingSlashUndo = false;
+    pendingCAYWRange = null;
+    pendingAppendMode = false;
+    pendingAppendRange = null;
+    currentSearchQuery = '';
+    currentSearchOptions = {};
+    currentMatchIndex = 0;
+    if (citationAddButton) citationAddButton.style.display = 'none';
+
+    // Create fresh EditorState (clears undo history, selection, search state)
+    const newState = EditorState.create({
+      doc: editorView.state.doc, // Keep current content (will be replaced by setContent)
+      extensions: editorExtensions,
+    });
+    editorView.setState(newState);
   },
 };
 

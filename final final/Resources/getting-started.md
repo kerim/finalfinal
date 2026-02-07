@@ -1,6 +1,6 @@
 # Welcome to FINAL|FINAL!
 
-I built FINAL|FINAL out of years of frustration with existing writing tools for academics. Some tools out there had one or more of these features, but no app had all of them:
+I built [FINAL|FINAL](https://finalfinalapp.cc/) out of years of frustration with existing writing tools for academics. Some tools out there had one or more of these features, but no app had all of them:
 
 1. An clear **outline** of the document which allows you to re-organize sections or zoom in on them.
 2. Built-in support for **citations** and **bibliographies** with Zotero, including the ability to export to Word with “live” Zotero markers so you can continue to prepare the final manuscript for publication there.
@@ -15,7 +15,7 @@ FINAL|FINAL was built for academics, but it should be just as useful for longfor
 
 # Alpha Software
 
-Although most of the core features (listed above) are already implemented, FINAL|FINAL is still alpha software and should be used with caution.
+Although most of the core features (listed above) are already implemented, [FINAL|FINAL](https://finalfinalapp.cc/) is still alpha software and should be used with caution.
 
 Also, a lot of things you would expect from a word processor aren't there yet: toolbars, keyboard shortcuts, spell checking, find-and-replace, etc. The idea was to focus on the things that make FINAL|FINAL unique first, and make sure that the underlying architecture is sound, before adding such nicities. 
 
@@ -42,20 +42,6 @@ Also, a lot of things you would expect from a word processor aren't there yet: t
 * Improved zoom mode. Option-double-click now zooms in on a single section, regular double-click shows section and sub-sections. Pseudo sections only zoom on themselves.
 * Improved focus mode - full secreen, hide side bars, hide header and footer, collapse annotations, and remember state on restart, or exit.
 
-## Version 02.15
-
-* Complete redesign of backed architecture to better support block-based outlining features
-
-* Cleaned up source-mode so it matches look and theme of WYSIWYG editor
-
-* Improved bibliography generation to make it more robust in various edge cases
-
-## Version 0.2.9
-
-* Preference pane now lets you override default themes and save your own styles!
-* Improved Zotero workflow now uses native citaton picker and lets you add multiple sources to the same in-text citation.
-* Improved bibliography sync to better match the text
-
 # Roadmap
 
 ## Planned Features
@@ -72,15 +58,15 @@ Also, a lot of things you would expect from a word processor aren't there yet: t
 
 # Set-up
 
-FINAL|FINAL works fine out-of-the-box, but there are a couple of features that require external tools, and they require some setup. 
+[FINAL|FINAL](https://finalfinalapp.cc/) works fine out-of-the-box, but there are a couple of features that require external tools, and they require some setup. 
 
 ## Zotero
 
-The citation management plugin works with [Zotero](https://www.zotero.org/), a free open-source project used by thousands of people. You need to have this installed ***and running***, for citation functions to work with FINAL|FINAL.
+The citation management plugin works with [Zotero](https://www.zotero.org/), a free open-source project used by thousands of people. You need to have this installed ***and running***, for citation functions to work with [FINAL|FINAL](https://finalfinalapp.cc/).
 
 ## Better BibTeX
 
-[Better BibTeX](https://retorque.re/zotero-better-bibtex/) is a Zotero plugin that allows FINAL|FINAL to talk with Zotero and also for FINAL|FINAL documents to talk with the engine that lets you export to Word or PDF. 
+[Better BibTeX](https://retorque.re/zotero-better-bibtex/) is a Zotero plugin that allows [FINAL|FINAL](https://finalfinalapp.cc/) to talk with Zotero and also for [FINAL|FINAL](https://finalfinalapp.cc/) documents to talk with the engine that lets you export to Word or PDF. 
 
 Better BibTeX requires some setup to work right:
 
@@ -180,6 +166,14 @@ Type `/` in the editor to access quick commands:
 We'd love to hear from you! 
 
 Feedback or bug reports can be submitted to the project's [github issues page](https://github.com/kerim/finalfinal/issues). 
+
+## Project Homepage
+
+https://finalfinalapp.cc/
+
+## Credits
+
+[FINAL|FINAL](https://finalfinalapp.cc/) was built by [P. Kerim Friedman](https://kerim.one/) with the help of [Claude Code](https://claude.ai/), and inspiration from a number of open source projects.
 
 ***
 

@@ -7,7 +7,7 @@ import { commonmark } from '@milkdown/kit/preset/commonmark';
 import { gfm } from '@milkdown/kit/preset/gfm';
 import { redo, undo } from '@milkdown/kit/prose/history';
 import { Slice } from '@milkdown/kit/prose/model';
-import { Selection } from '@milkdown/kit/prose/state';
+import { EditorState as PMEditorState, Selection } from '@milkdown/kit/prose/state';
 import { getMarkdown } from '@milkdown/kit/utils';
 import { SlashProvider, slashFactory } from '@milkdown/plugin-slash';
 import {
@@ -205,6 +205,7 @@ declare global {
       getEditorMode: () => 'wysiwyg' | 'source';
       // Cleanup API (for state reset before project switch)
       resetEditorState: () => void;
+      resetForProjectSwitch: () => void;
       // Find/replace API
       find: (query: string, options?: FindOptions) => FindResult;
       findNext: () => FindResult | null;
@@ -2252,16 +2253,43 @@ window.FinalFinal = {
     return isSourceModeEnabled() ? 'source' : 'wysiwyg';
   },
 
-  resetEditorState() {
-    // Reset block-related state (for project switching or cleanup)
+  resetForProjectSwitch() {
+    // Reset block-related state
     resetBlockIdState();
     destroyBlockSyncState();
     currentContent = '';
     isSettingContent = false;
     pendingSlashUndo = false;
     pendingSlashRedo = false;
-    // Also clear search state
+    // Clear search state
     this.clearSearch();
+
+    // Clear CAYW and citation state
+    pendingCAYWRange = null;
+    pendingCitekeys.clear();
+    if (resolutionTimer) {
+      clearTimeout(resolutionTimer);
+      resolutionTimer = null;
+    }
+
+    // Reset ProseMirror state (clears undo history) while preserving document
+    if (editorInstance) {
+      try {
+        const view = editorInstance.ctx.get(editorViewCtx);
+        const newState = PMEditorState.create({
+          doc: view.state.doc,
+          plugins: view.state.plugins,
+        });
+        view.updateState(newState);
+      } catch {
+        // State reset failed, ignore
+      }
+    }
+  },
+
+  // Keep old name as alias for backward compatibility
+  resetEditorState() {
+    this.resetForProjectSwitch();
   },
 
   // === Find/Replace API ===

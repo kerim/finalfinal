@@ -2,8 +2,8 @@
 //  EditorPreloader.swift
 //  final final
 //
-//  Pre-loads the Milkdown WebView during app launch so it's ready
-//  when the editor appears, eliminating the cold start delay.
+//  Pre-loads Milkdown and CodeMirror WebViews during app launch so they're
+//  ready when the editor appears, eliminating cold start delay for both modes.
 //
 
 import WebKit
@@ -21,7 +21,9 @@ final class EditorPreloader: NSObject, WKNavigationDelegate {
     }
 
     private var preloadedMilkdownView: WKWebView?
-    private(set) var state: State = .idle
+    private var preloadedCodeMirrorView: WKWebView?
+    private(set) var milkdownState: State = .idle
+    private(set) var codemirrorState: State = .idle
 
     private override init() {
         super.init()
@@ -29,14 +31,20 @@ final class EditorPreloader: NSObject, WKNavigationDelegate {
 
     /// Call from AppDelegate.applicationDidFinishLaunching
     func startPreloading() {
-        guard case .idle = state else { return }
-        state = .loading
+        startMilkdownPreloading()
+        startCodeMirrorPreloading()
+    }
+
+    // MARK: - Milkdown Preloading
+
+    private func startMilkdownPreloading() {
+        guard case .idle = milkdownState else { return }
+        milkdownState = .loading
 
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = WKWebsiteDataStore.default()
         configuration.setURLSchemeHandler(EditorSchemeHandler(), forURLScheme: "editor")
 
-        // Add JS error handler script so we can see errors from preloaded views
         let errorScript = WKUserScript(
             source: """
                 window.onerror = function(msg, url, line, col, error) {
@@ -52,97 +60,201 @@ final class EditorPreloader: NSObject, WKNavigationDelegate {
         )
         configuration.userContentController.addUserScript(errorScript)
 
-        // Create WebView with minimal size (off-screen)
         let webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 1, height: 1), configuration: configuration)
         webView.navigationDelegate = self
 
         guard let url = URL(string: "editor://milkdown/milkdown.html") else {
-            assertionFailure("[EditorPreloader] Invalid preload URL")
-            state = .idle
+            assertionFailure("[EditorPreloader] Invalid Milkdown preload URL")
+            milkdownState = .idle
             return
         }
 
         #if DEBUG
-        print("[EditorPreloader] Starting preload")
+        print("[EditorPreloader] Starting Milkdown preload")
         #endif
 
         webView.load(URLRequest(url: url))
         preloadedMilkdownView = webView
     }
 
+    // MARK: - CodeMirror Preloading
+
+    private func startCodeMirrorPreloading() {
+        guard case .idle = codemirrorState else { return }
+        codemirrorState = .loading
+
+        let configuration = WKWebViewConfiguration()
+        configuration.websiteDataStore = WKWebsiteDataStore.default()
+        configuration.setURLSchemeHandler(EditorSchemeHandler(), forURLScheme: "editor")
+
+        let errorScript = WKUserScript(
+            source: """
+                window.onerror = function(msg, url, line, col, error) {
+                    console.error('[CodeMirror JS ERROR]', msg, 'at', url, line, col, error);
+                    return false;
+                };
+                window.addEventListener('unhandledrejection', function(e) {
+                    console.error('[CodeMirror JS REJECTION]', e.reason);
+                });
+            """,
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: true
+        )
+        configuration.userContentController.addUserScript(errorScript)
+
+        let webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 1, height: 1), configuration: configuration)
+        webView.navigationDelegate = self
+
+        guard let url = URL(string: "editor://codemirror/codemirror.html") else {
+            assertionFailure("[EditorPreloader] Invalid CodeMirror preload URL")
+            codemirrorState = .idle
+            return
+        }
+
+        #if DEBUG
+        print("[EditorPreloader] Starting CodeMirror preload")
+        #endif
+
+        webView.load(URLRequest(url: url))
+        preloadedCodeMirrorView = webView
+    }
+
     // MARK: - WKNavigationDelegate
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        state = .ready
-        #if DEBUG
-        print("[EditorPreloader] Preload complete")
-        #endif
+        if webView === preloadedMilkdownView {
+            milkdownState = .ready
+            #if DEBUG
+            print("[EditorPreloader] Milkdown preload complete")
+            #endif
+        } else if webView === preloadedCodeMirrorView {
+            codemirrorState = .ready
+            #if DEBUG
+            print("[EditorPreloader] CodeMirror preload complete")
+            #endif
+        }
     }
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
-        state = .failed(error)
-        #if DEBUG
-        print("[EditorPreloader] Preload failed: \(error.localizedDescription)")
-        #endif
+        if webView === preloadedMilkdownView {
+            milkdownState = .failed(error)
+            #if DEBUG
+            print("[EditorPreloader] Milkdown preload failed: \(error.localizedDescription)")
+            #endif
+        } else if webView === preloadedCodeMirrorView {
+            codemirrorState = .failed(error)
+            #if DEBUG
+            print("[EditorPreloader] CodeMirror preload failed: \(error.localizedDescription)")
+            #endif
+        }
     }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-        state = .failed(error)
-        #if DEBUG
-        print("[EditorPreloader] Navigation failed: \(error.localizedDescription)")
-        #endif
+        if webView === preloadedMilkdownView {
+            milkdownState = .failed(error)
+            #if DEBUG
+            print("[EditorPreloader] Milkdown navigation failed: \(error.localizedDescription)")
+            #endif
+        } else if webView === preloadedCodeMirrorView {
+            codemirrorState = .failed(error)
+            #if DEBUG
+            print("[EditorPreloader] CodeMirror navigation failed: \(error.localizedDescription)")
+            #endif
+        }
     }
 
-    /// Wait until preload is ready, with timeout
-    /// Returns true if ready, false if timeout or failed
+    // MARK: - Wait
+
+    /// Wait until both preloads are terminal (ready or failed), with timeout.
+    /// Returns true if both ready, false on timeout or any failure.
     func waitUntilReady(timeout: TimeInterval = 2.0) async -> Bool {
         let startTime = Date()
         let pollInterval: TimeInterval = 0.05  // 50ms polling
 
         while Date().timeIntervalSince(startTime) < timeout {
-            switch state {
-            case .ready:
-                return true
-            case .failed:
+            let milkdownTerminal = isTerminal(milkdownState)
+            let codemirrorTerminal = isTerminal(codemirrorState)
+
+            if milkdownTerminal && codemirrorTerminal {
+                // Both done — return true only if both ready
+                if case .ready = milkdownState, case .ready = codemirrorState {
+                    return true
+                }
                 return false
-            case .claimed:
-                return false  // Already claimed by someone else
-            case .idle, .loading:
-                // Still waiting - sleep and check again
-                try? await Task.sleep(for: .milliseconds(Int(pollInterval * 1000)))
             }
+
+            try? await Task.sleep(for: .milliseconds(Int(pollInterval * 1000)))
         }
 
         return false
     }
 
-    /// Claims the preloaded WebView, transferring ownership to the caller.
-    /// Returns nil if not ready. Can only be called once per preload cycle.
-    /// Automatically starts preloading a new WebView for subsequent use.
+    private func isTerminal(_ state: State) -> Bool {
+        switch state {
+        case .ready, .failed, .claimed:
+            return true
+        case .idle, .loading:
+            return false
+        }
+    }
+
+    // MARK: - Claim
+
+    /// Claims the preloaded Milkdown WebView, transferring ownership to the caller.
+    /// Returns nil if not ready. Automatically starts preloading a replacement.
     func claimMilkdownView() -> WKWebView? {
-        guard case .ready = state, let view = preloadedMilkdownView else {
+        guard case .ready = milkdownState, let view = preloadedMilkdownView else {
             #if DEBUG
-            print("[EditorPreloader] Claim failed: state=\(state)")
+            print("[EditorPreloader] Milkdown claim failed: state=\(milkdownState)")
             #endif
             return nil
         }
         preloadedMilkdownView = nil
         #if DEBUG
-        print("[EditorPreloader] WebView claimed successfully")
+        print("[EditorPreloader] Milkdown WebView claimed successfully")
         #endif
 
-        // Immediately start preloading next WebView for subsequent project opens
-        // Do this BEFORE setting claimed state so restartPreloading works
-        restartPreloading()
-
+        restartMilkdownPreloading()
         return view
     }
 
-    /// Restart preloading for a new WebView (used after claim or for new projects)
-    func restartPreloading() {
-        // Reset state and start fresh
+    /// Claims the preloaded CodeMirror WebView, transferring ownership to the caller.
+    /// Returns nil if not ready. Automatically starts preloading a replacement.
+    func claimCodeMirrorView() -> WKWebView? {
+        guard case .ready = codemirrorState, let view = preloadedCodeMirrorView else {
+            #if DEBUG
+            print("[EditorPreloader] CodeMirror claim failed: state=\(codemirrorState)")
+            #endif
+            return nil
+        }
+        preloadedCodeMirrorView = nil
+        #if DEBUG
+        print("[EditorPreloader] CodeMirror WebView claimed successfully")
+        #endif
+
+        restartCodeMirrorPreloading()
+        return view
+    }
+
+    // MARK: - Restart
+
+    /// Restart Milkdown preloading (used after claim or for new projects)
+    func restartMilkdownPreloading() {
         preloadedMilkdownView = nil
-        state = .idle
-        startPreloading()
+        milkdownState = .idle
+        startMilkdownPreloading()
+    }
+
+    /// Restart CodeMirror preloading (used after claim or for new projects)
+    func restartCodeMirrorPreloading() {
+        preloadedCodeMirrorView = nil
+        codemirrorState = .idle
+        startCodeMirrorPreloading()
+    }
+
+    /// Restart both preloaders (convenience for project switches)
+    func restartPreloading() {
+        restartMilkdownPreloading()
+        restartCodeMirrorPreloading()
     }
 }

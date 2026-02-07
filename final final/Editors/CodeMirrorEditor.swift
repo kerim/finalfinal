@@ -36,6 +36,29 @@ struct CodeMirrorEditor: NSViewRepresentable {
     var onWebViewReady: ((WKWebView) -> Void)?
 
     func makeNSView(context: Context) -> WKWebView {
+        // Try preloaded view first for instant startup
+        if let preloaded = EditorPreloader.shared.claimCodeMirrorView() {
+            let controller = preloaded.configuration.userContentController
+            controller.add(context.coordinator, name: "errorHandler")
+            controller.add(context.coordinator, name: "openCitationPicker")
+
+            preloaded.navigationDelegate = context.coordinator
+            context.coordinator.webView = preloaded
+            context.coordinator.handlePreloadedView()
+
+            #if DEBUG
+            preloaded.isInspectable = true
+            print("[CodeMirrorEditor] Using preloaded WebView")
+            #endif
+
+            return preloaded
+        }
+
+        // Fallback: create fresh WebView (preload wasn't ready)
+        #if DEBUG
+        print("[CodeMirrorEditor] Creating new WebView (preload not ready)")
+        #endif
+
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = sharedDataStore  // Persist localStorage across editor toggles
         configuration.setURLSchemeHandler(EditorSchemeHandler(), forURLScheme: "editor")
@@ -93,6 +116,9 @@ struct CodeMirrorEditor: NSViewRepresentable {
         // IMPORTANT: isZoomingContent must be set BEFORE content check to avoid race condition
         context.coordinator.isZoomingContent = isZoomingContent
         context.coordinator.contentState = contentState
+
+        // Skip content/theme pushes during project reset to prevent empty flash
+        guard !isResettingContent else { return }
 
         if context.coordinator.shouldPushContent(content) {
             context.coordinator.setContent(content)
@@ -401,11 +427,20 @@ struct CodeMirrorEditor: NSViewRepresentable {
             onWebViewReady?(webView)
         }
 
+        /// Called when using a preloaded WebView (navigation already finished)
+        func handlePreloadedView() {
+            isEditorReady = true
+            batchInitialize()
+            startPolling()
+            if let webView { onWebViewReady?(webView) }
+        }
+
         /// Batch initialization - sends all setup data in a single JS call
         private func batchInitialize() {
             guard let webView else { return }
 
             let content = contentBinding.wrappedValue
+
             let theme = ThemeManager.shared.cssVariables
             let cursor = cursorPositionToRestoreBinding.wrappedValue
 
@@ -591,6 +626,7 @@ struct CodeMirrorEditor: NSViewRepresentable {
         // === JavaScript API calls ===
         func setContent(_ markdown: String) {
             guard isEditorReady, let webView else { return }
+
             lastPushedContent = markdown
             lastPushTime = Date()  // Record push time to prevent poll feedback
             let escaped = markdown.replacingOccurrences(of: "\\", with: "\\\\")

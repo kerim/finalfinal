@@ -1312,6 +1312,7 @@ struct ContentView: View {
             if !existingBlocks.isEmpty {
                 // Blocks exist - assemble markdown from blocks
                 editorState.content = BlockParser.assembleMarkdown(from: existingBlocks)
+                updateSourceContentIfNeeded()
             } else {
                 // No blocks yet - load from legacy content table and parse into blocks
                 let savedContent = try documentManager.loadContent()
@@ -1319,6 +1320,7 @@ struct ContentView: View {
                 if let savedContent = savedContent, !savedContent.isEmpty {
                     let cleanContent = sectionSyncService.stripBibliographyMarker(from: savedContent)
                     editorState.content = cleanContent
+                    updateSourceContentIfNeeded()
 
                     // Parse content into blocks for the new system
                     // Preserve existing section metadata if available
@@ -1336,6 +1338,7 @@ struct ContentView: View {
                     try db.replaceBlocks(blocks, for: pid)
                 } else {
                     editorState.content = ""
+                    updateSourceContentIfNeeded()
                 }
             }
 
@@ -1356,6 +1359,7 @@ struct ContentView: View {
         Task {
             await connectToZotero()
         }
+
     }
 
     /// Connect to Zotero (via Better BibTeX) - just verifies availability
@@ -1386,24 +1390,32 @@ struct ContentView: View {
         // Set flag to prevent polling from overwriting empty content during reset
         editorState.isResettingContent = true
 
-        // Reset editor preload state so we wait for preload on new project
-        isEditorPreloadReady = false
+        // REMOVED: isEditorPreloadReady = false — WebView stays alive to avoid blank screen
 
-        // Reset state
-        editorState.content = ""
-        editorState.sections = []
-        editorState.annotations = []
-        editorState.zoomedSectionId = nil
-        editorState.zoomedSectionIds = nil
-        editorState.isCitationLibraryPushed = false
-        editorState.documentGoal = nil
-        editorState.documentGoalType = .approx
-        editorState.excludeBibliography = false
+        // Reset JS-side transient state (undo history, CAYW, search, block IDs)
+        findBarState.activeWebView?.evaluateJavaScript(
+            "window.FinalFinal.resetForProjectSwitch()"
+        ) { _, _ in }
+
+        // Reset all project-specific state (content, sourceContent, zoom, tasks, etc.)
+        editorState.resetForProjectSwitch()
 
         // Configure for new project
         await configureForCurrentProject()
 
+        // Reconfigure BlockSyncService with new DB (weak WebView ref still valid)
+        if editorState.editorMode == .wysiwyg,
+           let db = documentManager.projectDatabase,
+           let pid = documentManager.projectId {
+            blockSyncService.reconfigure(database: db, projectId: pid)
+            Task {
+                await blockSyncService.pushBlockIds()
+                blockSyncService.startPolling()
+            }
+        }
+
         // Clear the reset flag after project is configured
+        // This triggers updateNSView → shouldPushContent sees new content → pushes it
         editorState.isResettingContent = false
     }
 
@@ -1436,14 +1448,8 @@ struct ContentView: View {
         bibliographySyncService.reset()
         autoBackupService.reset()
 
-        // Reset zoom state (these don't trigger database writes)
-        editorState.zoomedSectionId = nil
-        editorState.zoomedSectionIds = nil
-
-        // Clear sections, annotations and content (UI state only, observation is already stopped)
-        editorState.sections = []
-        editorState.annotations = []
-        editorState.content = ""
+        // Reset all project-specific state (content, sourceContent, zoom, tasks, etc.)
+        editorState.resetForProjectSwitch()
 
         // Notify parent to show picker
         onProjectClosed?()
