@@ -21,6 +21,10 @@ Also, a lot of things you would expect from a word processor aren't there yet: t
 
 # What's New
 
+## Version 02.31
+
+- Transition to block-based architecture started in Version 02.15 has been completed. This fixes a number of bugs with the zoom feature and makes it much faster.  (Still need to clean up some UI issues that were caused by the rewrite.) 
+
 ## Version 02.29
 
 - Fixed bug with editor window loading on section zoom
@@ -65,7 +69,6 @@ Also, a lot of things you would expect from a word processor aren't there yet: t
 - Deleting all the text in a document can have strange effects
 - PDF export doesn't format in-text citations
 - Source view is highlighting the current paragraph (it shouldn't)
-- Automatic document restructuring (when header level is changed) can have unexpected consequences
 
 # Set-up
 
@@ -170,13 +173,13 @@ Type `/` in the editor to access quick commands:
 
 * `/cite` — Insert or edit citations (requires Zotero + BBT)
 
-* Use /task, /comment, or /reference to add annotations.
+* Use `/task`, `/comment`, or `/reference` to add annotations.
 
 ## Giving Feedback
 
-We'd love to hear from you! Report bugs and request features at:
+We'd love to hear from you! 
 
-**GitHub Issues:** [github.com/kerim/final-final/issues](https://github.com/kerim/final-final/issues)
+Feedback or bug reports can be submitted to the project's [github issues page](https://github.com/kerim/finalfinal/issues). 
 
 ***
 
