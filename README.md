@@ -182,13 +182,13 @@ Type `/` in the editor to access quick commands:
 
 * `/cite` — Insert or edit citations (requires Zotero + BBT)
 
-* Use /task, /comment, or /reference to add annotations.
+* Use `/task`, `/comment`, or `/reference` to add annotations.
 
 ## Giving Feedback
 
-We'd love to hear from you! Report bugs and request features at:
+We'd love to hear from you! 
 
-**GitHub Issues:** [github.com/kerim/final-final/issues](https://github.com/kerim/final-final/issues)
+Feedback or bug reports can be submitted to the project's [github issues page](https://github.com/kerim/finalfinal/issues). 
 
 ***
 
