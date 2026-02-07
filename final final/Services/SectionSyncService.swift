@@ -245,6 +245,7 @@ class SectionSyncService {
 
     /// Sync zoomed content without replacing the full sections array
     /// Updates zoomed sections in-place and saves only those to database
+    /// Handles insertions (new headers) and deletions (removed headers) while zoomed
     private func syncZoomedSections(from markdown: String, zoomedIds: Set<String>) async {
         guard let db = projectDatabase, let pid = projectId else { return }
 
@@ -266,11 +267,13 @@ class SectionSyncService {
             .filter { zoomedIds.contains($0.id) }
             .sorted { $0.sortOrder < $1.sortOrder }
 
+        let allSorted = existingSections.sorted { $0.sortOrder < $1.sortOrder }
+
         // Match parsed headers to existing zoomed sections by position and update
         var changes: [SectionChange] = []
-        for (index, header) in headers.enumerated() {
-            guard index < zoomedExisting.count else { break }
-
+        let matchCount = min(headers.count, zoomedExisting.count)
+        for index in 0..<matchCount {
+            let header = headers[index]
             let existing = zoomedExisting[index]
             var updates = SectionUpdates()
             var hasChanges = false
@@ -302,11 +305,62 @@ class SectionSyncService {
             }
         }
 
+        // Track updated zoomed IDs (may grow with insertions or shrink with deletions)
+        var updatedZoomedIds = zoomedIds
+
+        // Handle NEW sections (user added headers while zoomed)
+        if headers.count > zoomedExisting.count {
+            let newCount = headers.count - zoomedExisting.count
+
+            // Find the sortOrder boundary: last zoomed section's sortOrder
+            let lastZoomedSortOrder = zoomedExisting.last?.sortOrder ?? 0
+
+            // Find first non-zoomed section after the zoomed set
+            let firstAfterZoomed = allSorted.first { $0.sortOrder > lastZoomedSortOrder && !zoomedIds.contains($0.id) }
+
+            // Shift all sections after the zoomed set to make room
+            if let firstAfter = firstAfterZoomed {
+                let sectionsToShift = allSorted.filter { $0.sortOrder >= firstAfter.sortOrder }
+                for section in sectionsToShift {
+                    changes.append(.update(id: section.id, updates: SectionUpdates(sortOrder: section.sortOrder + newCount)))
+                }
+            }
+
+            // Insert new sections
+            for i in zoomedExisting.count..<headers.count {
+                let header = headers[i]
+                let newSortOrder = lastZoomedSortOrder + (i - zoomedExisting.count) + 1
+                let newSection = Section(
+                    projectId: pid,
+                    sortOrder: newSortOrder,
+                    headerLevel: header.level,
+                    isPseudoSection: header.isPseudoSection,
+                    title: header.title,
+                    markdownContent: header.markdownContent,
+                    wordCount: header.wordCount,
+                    startOffset: header.startOffset
+                )
+                changes.append(.insert(newSection))
+                updatedZoomedIds.insert(newSection.id)
+            }
+        }
+
+        // Handle DELETED sections (user removed headers while zoomed)
+        if headers.count < zoomedExisting.count {
+            // Sections beyond the parsed header count have been removed
+            for i in headers.count..<zoomedExisting.count {
+                let removedSection = zoomedExisting[i]
+                print("[SectionSyncService] Removing section '\(removedSection.title)' (zoomed deletion)")
+                changes.append(.delete(id: removedSection.id))
+                updatedZoomedIds.remove(removedSection.id)
+            }
+        }
+
         if !changes.isEmpty {
             do {
                 try db.applySectionChanges(changes, for: pid)
-                // Notify for UI refresh - bypasses ValueObservation blocked by contentState
-                onZoomedSectionsUpdated?(zoomedIds)
+                // Notify for UI refresh - passes updated IDs (including new sections)
+                onZoomedSectionsUpdated?(updatedZoomedIds)
             } catch {
                 print("[SectionSyncService] Error updating zoomed sections: \(error)")
             }

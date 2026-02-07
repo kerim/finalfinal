@@ -49,6 +49,7 @@ struct ContentView: View {
     @State private var editorState = EditorViewState()
     @State private var cursorPositionToRestore: CursorPosition?
     @State private var sectionSyncService = SectionSyncService()
+    @State private var blockSyncService = BlockSyncService()
     @State private var annotationSyncService = AnnotationSyncService()
     @State private var bibliographySyncService = BibliographySyncService()
     @State private var autoBackupService = AutoBackupService()
@@ -126,10 +127,23 @@ struct ContentView: View {
                 // Skip during any content transition (including editor switch)
                 guard editorState.contentState == .idle else { return }
                 editorState.contentState = .bibliographyUpdate
+                blockSyncService.isSyncSuppressed = true
                 rebuildDocumentContent()
                 editorState.contentState = .idle
+                // Push block IDs after bibliography rebuild
+                Task {
+                    try? await Task.sleep(for: .milliseconds(100))
+                    await blockSyncService.pushBlockIds()
+                    // pushBlockIds' defer clears isSyncSuppressed
+                }
             }
             .onReceive(NotificationCenter.default.publisher(for: .didZoomOut)) { _ in
+                // Re-sync annotations with full document content after zoom-out.
+                // During zoom, annotation reconciliation deletes annotations outside the zoomed
+                // subset. Milkdown restores them via content normalization triggering onChange,
+                // but CodeMirror returns content verbatim so onChange never fires.
+                annotationSyncService.contentChanged(editorState.content)
+
                 // Zoom-out completed - trigger bibliography sync with full document content
                 // Citations added during zoom need to be processed now
                 guard let projectId = documentManager.projectId else { return }
@@ -230,7 +244,11 @@ struct ContentView: View {
                 ZoomBreadcrumb(
                     zoomedSection: zoomedSection,
                     onZoomOut: {
-                        editorState.zoomOutSync()
+                        blockSyncService.isSyncSuppressed = true
+                        Task {
+                            await editorState.zoomOut()
+                            await blockSyncService.pushBlockIds()
+                        }
                     }
                 )
                 Divider()
@@ -255,22 +273,32 @@ struct ContentView: View {
                 },
                 onZoomToSection: { sectionId, mode in
                     findBarState.clearSearch()
+                    blockSyncService.isSyncSuppressed = true
                     Task {
                         await editorState.zoomToSection(sectionId, mode: mode)
+                        await blockSyncService.pushBlockIds(for: editorState.zoomedBlockRange)
+                        // pushBlockIds' defer clears isSyncSuppressed
                     }
                 },
                 onZoomOut: {
                     findBarState.clearSearch()
-                    editorState.zoomOutSync()
+                    blockSyncService.isSyncSuppressed = true
+                    Task {
+                        await editorState.zoomOut()
+                        await blockSyncService.pushBlockIds()
+                        // pushBlockIds' defer clears isSyncSuppressed
+                    }
                 },
                 onDragStarted: {
                     editorState.isObservationSuppressed = true
                     sectionSyncService.isSyncSuppressed = true
                     sectionSyncService.cancelPendingSync()
+                    blockSyncService.isSyncSuppressed = true
                 },
                 onDragEnded: {
                     editorState.isObservationSuppressed = false
                     sectionSyncService.isSyncSuppressed = false
+                    blockSyncService.isSyncSuppressed = false
                 }
             )
         }
@@ -297,26 +325,38 @@ struct ContentView: View {
     }
 
     private func scrollToSection(_ sectionId: String) {
-        // Find section and get its start offset
-        guard let section = editorState.sections.first(where: { $0.id == sectionId }) else { return }
+        // Compute character offset by assembling markdown up to the target block
+        guard let db = documentManager.projectDatabase,
+              let pid = documentManager.projectId else { return }
 
-        // Set the scroll offset - editors will react to this
-        editorState.scrollTo(offset: section.startOffset)
+        do {
+            let allBlocks = try db.fetchBlocks(projectId: pid)
+            let sorted = allBlocks.sorted { $0.sortOrder < $1.sortOrder }
+            var offset = 0
+            for block in sorted {
+                if block.id == sectionId {
+                    break
+                }
+                offset += block.markdownFragment.count
+                offset += 2  // Account for "\n\n" separator in assembleMarkdown
+            }
+            editorState.scrollTo(offset: offset)
+        } catch {
+            print("[ContentView] Error computing scroll offset: \(error)")
+        }
     }
 
     private func updateSection(_ section: SectionViewModel) {
-        // Save section metadata changes to database
+        // Save section metadata changes to block database
+        guard let db = documentManager.projectDatabase else { return }
         Task {
             do {
-                try documentManager.saveSectionStatus(id: section.id, status: section.status)
-                // ALWAYS save word goal (even when nil - to clear it)
-                try documentManager.saveSectionWordGoal(id: section.id, goal: section.wordGoal)
-                // ALWAYS save goal type
-                try documentManager.saveSectionGoalType(id: section.id, goalType: section.goalType)
-                // ALWAYS save tags (even when empty)
-                try documentManager.saveSectionTags(id: section.id, tags: section.tags)
+                try db.updateBlockStatus(id: section.id, status: section.status)
+                try db.updateBlockWordGoal(id: section.id, goal: section.wordGoal)
+                try db.updateBlockGoalType(id: section.id, goalType: section.goalType)
+                try db.updateBlockTags(id: section.id, tags: section.tags)
             } catch {
-                print("[ContentView] Error saving section: \(error.localizedDescription)")
+                print("[ContentView] Error saving section metadata: \(error.localizedDescription)")
             }
         }
     }
@@ -484,11 +524,11 @@ struct ContentView: View {
         finalizeSectionReorder(sections: sections)
     }
 
-    /// Finalize section reorder - recalculate offsets, parent relationships, persist
+    /// Finalize section reorder - recalculate offsets, parent relationships, persist via blocks
     private func finalizeSectionReorder(sections: [SectionViewModel]) {
         // Set content state to suppress polling during rebuild
+        // NOTE: No defer — contentState is managed by the persist Task below
         editorState.contentState = .dragReorder
-        defer { editorState.contentState = .idle }
 
         var mutableSections = sections
 
@@ -496,7 +536,7 @@ struct ContentView: View {
         var currentOffset = 0
         for index in mutableSections.indices {
             mutableSections[index] = mutableSections[index].withUpdates(
-                sortOrder: index,
+                sortOrder: Double(index),
                 startOffset: currentOffset
             )
             currentOffset += mutableSections[index].markdownContent.count
@@ -509,44 +549,74 @@ struct ContentView: View {
         recalculateParentRelationships()
         enforceHierarchyConstraints()
 
-        // Rebuild document content (zoom-aware)
-        // NOTE: rebuildDocumentContent() now calls updateSourceContentIfNeeded() internally,
-        // which handles sourceContent update for CodeMirror mode
+        // Rebuild document content for immediate visual feedback
         rebuildDocumentContent()
 
-        // Persist reordered sections to database
-        Task {
-            await persistReorderedSections()
+        // Cancel any previous persist task (handles rapid successive reorders)
+        editorState.currentPersistTask?.cancel()
+        editorState.currentPersistTask = Task {
+            await persistReorderedBlocks()          // Atomic block reorder (headings + body)
+            guard !Task.isCancelled else { return }
+            try? await Task.sleep(for: .milliseconds(100))
+            guard !Task.isCancelled else { return }
+            await blockSyncService.pushBlockIds()
+            editorState.contentState = .idle
         }
+
+        // Legacy section persist (fire-and-forget, non-critical)
+        Task { await persistReorderedBlocks_legacySections() }
     }
 
-    /// Persist current sections to database after reorder
-    private func persistReorderedSections() async {
+    /// Persist current section order to block database after reorder.
+    /// Uses reorderAllBlocks to move body blocks with their headings atomically.
+    private func persistReorderedBlocks() async {
         guard let db = documentManager.projectDatabase,
               let pid = documentManager.projectId else {
             return
         }
 
-        // Build change set for all sections with updated sortOrder and potentially new levels
-        var changes: [SectionChange] = []
-
-        for (index, viewModel) in editorState.sections.enumerated() {
-            let updates = SectionUpdates(
-                title: viewModel.title,
-                headerLevel: viewModel.headerLevel,
-                sortOrder: index,
-                markdownContent: viewModel.markdownContent,
-                startOffset: viewModel.startOffset,
-                parentId: .some(viewModel.parentId)  // Use .some to explicitly set (even if nil)
+        do {
+            // Build heading updates from current section state
+            var headingUpdates: [String: HeadingUpdate] = [:]
+            for vm in editorState.sections {
+                headingUpdates[vm.id] = HeadingUpdate(
+                    markdownFragment: vm.markdownContent,
+                    headingLevel: vm.headerLevel
+                )
+            }
+            try db.reorderAllBlocks(
+                sections: editorState.sections,
+                projectId: pid,
+                headingUpdates: headingUpdates
             )
-            changes.append(.update(id: viewModel.id, updates: updates))
+        } catch {
+            print("[ContentView] Error persisting reordered blocks: \(error)")
+        }
+    }
+
+    /// Persist legacy section table after reorder (fire-and-forget, non-critical)
+    private func persistReorderedBlocks_legacySections() async {
+        guard let db = documentManager.projectDatabase,
+              let pid = documentManager.projectId else {
+            return
         }
 
         do {
-            try db.applySectionChanges(changes, for: pid)
-            // ValueObservation will automatically update the sidebar
+            var sectionChanges: [SectionChange] = []
+            for (index, viewModel) in editorState.sections.enumerated() {
+                let updates = SectionUpdates(
+                    title: viewModel.title,
+                    headerLevel: viewModel.headerLevel,
+                    sortOrder: index,
+                    markdownContent: viewModel.markdownContent,
+                    startOffset: viewModel.startOffset,
+                    parentId: .some(viewModel.parentId)
+                )
+                sectionChanges.append(.update(id: viewModel.id, updates: updates))
+            }
+            try db.applySectionChanges(sectionChanges, for: pid)
         } catch {
-            print("[ContentView] Error persisting sections: \(error)")
+            print("[ContentView] Error persisting legacy sections: \(error)")
         }
     }
 
@@ -597,52 +667,73 @@ struct ContentView: View {
         }
     }
 
-    /// Rebuild document content based on zoom state (extracted for reuse)
-    /// Bibliography sections are handled specially to prevent duplication
+    /// Rebuild document content from block database
+    /// For zoom state, fetches only the zoomed range; otherwise fetches all blocks
     private func rebuildDocumentContent() {
-        // Guard against rebuilding during editor transition - this would overwrite content
-        // that hasn't been synced to sections yet
+        #if DEBUG
+        print("[rebuildDocumentContent] Called. zoomed=\(editorState.zoomedSectionIds != nil), contentState=\(editorState.contentState)")
+        #endif
+        // Guard against rebuilding during editor transition
         guard editorState.contentState != .editorTransition else {
             return
         }
+        guard let db = documentManager.projectDatabase,
+              let pid = documentManager.projectId else { return }
 
-        let sectionsToRebuild: [SectionViewModel]
-        let bibliographySection: SectionViewModel?
-
-        if let zoomedIds = editorState.zoomedSectionIds {
-            // When zoomed, exclude bibliography entirely (it's not in zoomedIds anyway)
-            sectionsToRebuild = editorState.sections
-                .filter { zoomedIds.contains($0.id) && !$0.isBibliography }
-                .sorted { $0.sortOrder < $1.sortOrder }
-            bibliographySection = nil  // Don't show bibliography when zoomed
-        } else {
-            // Not zoomed: include all except bibliography, then append bibliography at end
-            sectionsToRebuild = editorState.sections
-                .filter { !$0.isBibliography }
-                .sorted { $0.sortOrder < $1.sortOrder }
-            bibliographySection = editorState.sections.first { $0.isBibliography }
-        }
-
-        var newContent = sectionsToRebuild
-            .map { section in
-                var content = section.markdownContent
-                if !content.hasSuffix("\n") { content += "\n" }
-                return content
+        do {
+            let allBlocks: [Block]
+            if let zoomedIds = editorState.zoomedSectionIds {
+                // When zoomed, only include blocks in the zoomed range
+                let blocks = try db.fetchBlocks(projectId: pid)
+                // Filter to blocks that fall within zoomed heading ranges
+                allBlocks = filterBlocksForZoom(blocks, zoomedIds: zoomedIds)
+            } else {
+                allBlocks = try db.fetchBlocks(projectId: pid)
             }
-            .joined()
 
-        // Append bibliography at the end (ensures it's always last, never absorbed)
-        // Strip any legacy marker from bibliography content (migration for old format)
-        if let bib = bibliographySection {
-            var bibContent = sectionSyncService.stripBibliographyMarker(from: bib.markdownContent)
-            if !bibContent.hasSuffix("\n") { bibContent += "\n" }
-            newContent += "\n" + bibContent
+            editorState.content = BlockParser.assembleMarkdown(from: allBlocks)
+
+            // Update sourceContent for CodeMirror (when in source mode)
+            updateSourceContentIfNeeded()
+        } catch {
+            print("[ContentView] Error rebuilding content from blocks: \(error)")
+        }
+    }
+
+    /// Filter blocks to only those within zoomed heading ranges
+    private func filterBlocksForZoom(_ blocks: [Block], zoomedIds: Set<String>) -> [Block] {
+        Self.filterBlocksForZoomStatic(blocks, zoomedIds: zoomedIds)
+    }
+
+    /// Static version of filterBlocksForZoom for use from static methods
+    private static func filterBlocksForZoomStatic(_ blocks: [Block], zoomedIds: Set<String>) -> [Block] {
+        let sortedBlocks = blocks.sorted { $0.sortOrder < $1.sortOrder }
+        var includeBlocks: [Block] = []
+        var inZoomedRange = false
+        var currentZoomedLevel: Int?
+
+        for block in sortedBlocks {
+            if block.isOutlineHeading || block.isPseudoSection {
+                if zoomedIds.contains(block.id) {
+                    inZoomedRange = true
+                    currentZoomedLevel = block.headingLevel
+                    includeBlocks.append(block)
+                    continue
+                } else if inZoomedRange {
+                    if let level = currentZoomedLevel, let blockLevel = block.headingLevel, blockLevel <= level {
+                        inZoomedRange = false
+                        currentZoomedLevel = nil
+                        continue
+                    }
+                }
+            }
+
+            if inZoomedRange && !block.isBibliography {
+                includeBlocks.append(block)
+            }
         }
 
-        editorState.content = newContent
-
-        // Update sourceContent for CodeMirror (when in source mode)
-        updateSourceContentIfNeeded()
+        return includeBlocks
     }
 
     /// Updates sourceContent from current content when in source mode
@@ -783,48 +874,33 @@ struct ContentView: View {
         }
     }
 
-    /// Static version for use in closures - rebuilds document content from sections
-    /// Bibliography sections are handled specially to prevent duplication
+    /// Static version for use in closures - rebuilds document content from DB blocks
+    /// Reads ALL blocks from database (which now has correct sort orders after persist)
+    /// and assembles markdown. Respects zoom state.
     private static func rebuildDocumentContentStatic(editorState: EditorViewState) {
-        let sectionsToRebuild: [SectionViewModel]
-        let bibliographySection: SectionViewModel?
+        #if DEBUG
+        print("[rebuildDocumentContentStatic] Called. zoomed=\(editorState.zoomedSectionIds != nil), sections=\(editorState.sections.count)")
+        #endif
+        guard let db = editorState.projectDatabase,
+              let pid = editorState.currentProjectId else { return }
 
-        if let zoomedIds = editorState.zoomedSectionIds {
-            // When zoomed, exclude bibliography entirely
-            sectionsToRebuild = editorState.sections
-                .filter { zoomedIds.contains($0.id) && !$0.isBibliography }
-                .sorted { $0.sortOrder < $1.sortOrder }
-            bibliographySection = nil
-        } else {
-            // Not zoomed: include all except bibliography, then append bibliography at end
-            sectionsToRebuild = editorState.sections
-                .filter { !$0.isBibliography }
-                .sorted { $0.sortOrder < $1.sortOrder }
-            bibliographySection = editorState.sections.first { $0.isBibliography }
-        }
+        do {
+            let allBlocks = try db.fetchBlocks(projectId: pid)
 
-        var newContent = sectionsToRebuild
-            .map { section in
-                var content = section.markdownContent
-                if !content.hasSuffix("\n") { content += "\n" }
-                return content
+            if let zoomedIds = editorState.zoomedSectionIds {
+                let filtered = filterBlocksForZoomStatic(allBlocks, zoomedIds: zoomedIds)
+                editorState.content = BlockParser.assembleMarkdown(from: filtered)
+            } else {
+                editorState.content = BlockParser.assembleMarkdown(from: allBlocks)
             }
-            .joined()
-
-        // Append bibliography at the end
-        // Strip any legacy marker from bibliography content (migration for old format)
-        if let bib = bibliographySection {
-            var bibContent = bib.markdownContent
-                .replacingOccurrences(of: "<!-- ::auto-bibliography:: -->", with: "")
-            if !bibContent.hasSuffix("\n") { bibContent += "\n" }
-            newContent += bibContent
+        } catch {
+            print("[ContentView] Error rebuilding content from blocks: \(error)")
         }
-
-        editorState.content = newContent
     }
 
     /// Async hierarchy enforcement with completion-based state clearing
-    /// Uses contentState to block ValueObservation during enforcement, preventing race conditions
+    /// Uses contentState to block ValueObservation during enforcement, preventing race conditions.
+    /// Order: enforce constraints → persist to DB (all blocks) → rebuild from DB
     @MainActor
     private static func enforceHierarchyAsync(
         editorState: EditorViewState,
@@ -842,15 +918,16 @@ struct ContentView: View {
             syncService: syncService
         )
 
-        // Rebuild document content from corrected sections
-        rebuildDocumentContentStatic(editorState: editorState)
-
-        // Persist corrected sections to database (wait for completion)
+        // Persist FIRST (writes correct sort orders for all blocks including body)
         await persistEnforcedSections(editorState: editorState)
+
+        // Then rebuild from DB (now has correct data including body blocks)
+        rebuildDocumentContentStatic(editorState: editorState)
     }
 
-    /// Persist enforced sections directly to database
-    /// Called after hierarchy enforcement to ensure corrected levels are saved
+    /// Persist enforced sections directly to database (both block and legacy section tables)
+    /// Called after hierarchy enforcement to ensure corrected levels are saved.
+    /// Uses reorderAllBlocks to move body blocks with their headings atomically.
     @MainActor
     private static func persistEnforcedSections(editorState: EditorViewState) async {
         guard let db = DocumentManager.shared.projectDatabase,
@@ -858,18 +935,54 @@ struct ContentView: View {
             return
         }
 
-        var changes: [SectionChange] = []
-        for (index, viewModel) in editorState.sections.enumerated() {
-            let updates = SectionUpdates(
-                headerLevel: viewModel.headerLevel,
-                sortOrder: index,
-                markdownContent: viewModel.markdownContent
-            )
-            changes.append(.update(id: viewModel.id, updates: updates))
-        }
-
         do {
-            try db.applySectionChanges(changes, for: pid)
+            // Persist to block table (headings + body blocks atomically)
+            var headingUpdates: [String: HeadingUpdate] = [:]
+            for vm in editorState.sections {
+                headingUpdates[vm.id] = HeadingUpdate(
+                    markdownFragment: vm.markdownContent,
+                    headingLevel: vm.headerLevel
+                )
+            }
+            try db.reorderAllBlocks(
+                sections: editorState.sections,
+                projectId: pid,
+                headingUpdates: headingUpdates
+            )
+
+            // Recalculate zoomedBlockRange after sort orders changed
+            if editorState.zoomedBlockRange != nil,
+               let zoomedIds = editorState.zoomedSectionIds {
+                // Find the zoomed heading's new sort order
+                let primaryId = zoomedIds.first ?? ""
+                if let headingBlock = try db.fetchBlock(id: primaryId),
+                   let headingLevel = headingBlock.headingLevel {
+                    let allBlocks = try db.fetchBlocks(projectId: pid)
+                    var endSortOrder: Double?
+                    for block in allBlocks where block.sortOrder > headingBlock.sortOrder {
+                        if block.blockType == .heading, let level = block.headingLevel, level <= headingLevel {
+                            endSortOrder = block.sortOrder
+                            break
+                        }
+                    }
+                    editorState.zoomedBlockRange = (start: headingBlock.sortOrder, end: endSortOrder)
+                } else {
+                    // Heading not found — clear zoom range to prevent stale state
+                    editorState.zoomedBlockRange = nil
+                }
+            }
+
+            // Also persist to legacy section table
+            var sectionChanges: [SectionChange] = []
+            for (index, viewModel) in editorState.sections.enumerated() {
+                let updates = SectionUpdates(
+                    headerLevel: viewModel.headerLevel,
+                    sortOrder: index,
+                    markdownContent: viewModel.markdownContent
+                )
+                sectionChanges.append(.update(id: viewModel.id, updates: updates))
+            }
+            try db.applySectionChanges(sectionChanges, for: pid)
         } catch {
             print("[ContentView] Error persisting enforced sections: \(error)")
         }
@@ -1057,6 +1170,16 @@ struct ContentView: View {
                     },
                     onWebViewReady: { webView in
                         findBarState.activeWebView = webView
+                        // Configure BlockSyncService with the WebView
+                        if let db = documentManager.projectDatabase,
+                           let pid = documentManager.projectId {
+                            blockSyncService.configure(database: db, projectId: pid, webView: webView)
+                            // Push block IDs after content is set, then start polling
+                            Task {
+                                await blockSyncService.pushBlockIds()
+                                blockSyncService.startPolling()
+                            }
+                        }
                     }
                 )
             } else {
@@ -1121,17 +1244,16 @@ struct ContentView: View {
         // Inject sectionSyncService reference for zoom sourceContent updates
         editorState.sectionSyncService = sectionSyncService
 
-        // Refresh zoomed sections from DB after sync (bypasses blocked ValueObservation)
-        sectionSyncService.onZoomedSectionsUpdated = { [weak editorState, weak db] zoomedIds in
-            guard let editorState = editorState, let db = db, let pid = documentManager.projectId else { return }
-            editorState.refreshZoomedSections(database: db, projectId: pid, zoomedIds: zoomedIds)
-        }
-
         // Wire up hierarchy enforcement after sections are updated from database
         // This ensures slash commands that create new headings trigger rebalancing
-        editorState.onSectionsUpdated = { [weak editorState, weak sectionSyncService] in
+        editorState.onSectionsUpdated = { [weak editorState, weak sectionSyncService, weak blockSyncService] in
             guard let editorState = editorState,
                   let sectionSyncService = sectionSyncService else { return }
+
+            #if DEBUG
+            print("[onSectionsUpdated] contentState=\(editorState.contentState), syncSuppressed=\(sectionSyncService.isSyncSuppressed), zoomed=\(editorState.zoomedSectionIds != nil), hasViolations=\(Self.hasHierarchyViolations(in: editorState.sections))")
+            #endif
+
             // Skip during drag operations (which handle hierarchy separately)
             guard !sectionSyncService.isSyncSuppressed else { return }
             guard editorState.contentState == .idle else { return }
@@ -1143,11 +1265,36 @@ struct ContentView: View {
                         editorState: editorState,
                         syncService: sectionSyncService
                     )
+                    // Wait for WebView to process new content before pushing IDs
+                    try? await Task.sleep(for: .milliseconds(100))
+                    if let blockSyncService = blockSyncService {
+                        if let range = editorState.zoomedBlockRange {
+                            try? await blockSyncService.pushBlockIds(for: range)
+                        } else {
+                            try? await blockSyncService.pushBlockIds()
+                        }
+                    }
                 }
             }
         }
 
-        // Start reactive observation
+        // Check and normalize duplicate sort orders BEFORE starting observation
+        do {
+            let existingBlocks = try db.fetchBlocks(projectId: pid)
+            if !existingBlocks.isEmpty {
+                let sortOrders = existingBlocks.map { $0.sortOrder }
+                if Set(sortOrders).count < sortOrders.count {
+                    #if DEBUG
+                    print("[ContentView] Duplicate sortOrders detected (\(sortOrders.count) blocks, \(Set(sortOrders).count) unique). Normalizing...")
+                    #endif
+                    try db.normalizeSortOrders(projectId: pid)
+                }
+            }
+        } catch {
+            print("[ContentView] Error checking/normalizing sort orders: \(error)")
+        }
+
+        // Start reactive observation (now uses blocks internally)
         editorState.startObserving(database: db, projectId: pid)
         editorState.startObservingAnnotations(database: db, contentId: cid)
 
@@ -1158,29 +1305,42 @@ struct ContentView: View {
             editorState.excludeBibliography = goalSettings.excludeBibliography
         }
 
-        // Load content
+        // Load content from blocks (or fall back to legacy content table)
         do {
-            let savedContent = try documentManager.loadContent()
+            let existingBlocks = try db.fetchBlocks(projectId: pid)
 
-            if let savedContent = savedContent, !savedContent.isEmpty {
-                // Strip bibliography marker from stored content (migration for old format)
-                // The marker is now injected only for CodeMirror source mode, not stored
-                editorState.content = sectionSyncService.stripBibliographyMarker(from: savedContent)
+            if !existingBlocks.isEmpty {
+                // Blocks exist - assemble markdown from blocks
+                editorState.content = BlockParser.assembleMarkdown(from: existingBlocks)
             } else {
-                // Empty project - set empty content
-                editorState.content = ""
-            }
+                // No blocks yet - load from legacy content table and parse into blocks
+                let savedContent = try documentManager.loadContent()
 
-            // Check if sections exist
-            let existingSections = await sectionSyncService.loadSections()
-            if existingSections.isEmpty && !editorState.content.isEmpty {
-                await sectionSyncService.syncNow(editorState.content)
+                if let savedContent = savedContent, !savedContent.isEmpty {
+                    let cleanContent = sectionSyncService.stripBibliographyMarker(from: savedContent)
+                    editorState.content = cleanContent
+
+                    // Parse content into blocks for the new system
+                    // Preserve existing section metadata if available
+                    let existingSections = try db.fetchSections(projectId: pid)
+                    var metadata: [String: SectionMetadata] = [:]
+                    for section in existingSections {
+                        metadata[section.title] = SectionMetadata(from: section)
+                    }
+
+                    let blocks = BlockParser.parse(
+                        markdown: cleanContent,
+                        projectId: pid,
+                        existingSectionMetadata: metadata.isEmpty ? nil : metadata
+                    )
+                    try db.replaceBlocks(blocks, for: pid)
+                } else {
+                    editorState.content = ""
+                }
             }
 
             // Record initial content hash for Getting Started edit detection
-            // This captures post-normalization content after sync
             if documentManager.isGettingStartedProject {
-                // Wait for content to appear (max ~600ms instead of fixed 1000ms)
                 var attempts = 0
                 while attempts < 4 && editorState.content.isEmpty {
                     try? await Task.sleep(for: .milliseconds(150))
@@ -1214,8 +1374,10 @@ struct ContentView: View {
 
     /// Handle project opened notification
     private func handleProjectOpened() async {
-        // Stop existing observation
+        // Stop existing observation and services
         editorState.stopObserving()
+        blockSyncService.stopPolling()
+        blockSyncService.cancelPendingSync()
         sectionSyncService.cancelPendingSync()
         annotationSyncService.cancelPendingSync()
         bibliographySyncService.reset()
@@ -1232,7 +1394,6 @@ struct ContentView: View {
         editorState.sections = []
         editorState.annotations = []
         editorState.zoomedSectionId = nil
-        editorState.fullDocumentBeforeZoom = nil
         editorState.zoomedSectionIds = nil
         editorState.isCitationLibraryPushed = false
         editorState.documentGoal = nil
@@ -1266,8 +1427,10 @@ struct ContentView: View {
             }
         }
 
-        // Stop observation FIRST to prevent any further syncs
+        // Stop observation and services FIRST to prevent any further syncs
         editorState.stopObserving()
+        blockSyncService.stopPolling()
+        blockSyncService.cancelPendingSync()
         sectionSyncService.cancelPendingSync()
         annotationSyncService.cancelPendingSync()
         bibliographySyncService.reset()
@@ -1275,7 +1438,6 @@ struct ContentView: View {
 
         // Reset zoom state (these don't trigger database writes)
         editorState.zoomedSectionId = nil
-        editorState.fullDocumentBeforeZoom = nil
         editorState.zoomedSectionIds = nil
 
         // Clear sections, annotations and content (UI state only, observation is already stopped)
@@ -1480,8 +1642,11 @@ extension View {
                     editorState.toggleEditorMode()
                     editorState.contentState = .idle
                 } else {
-                    // Switching FROM source mode TO WYSIWYG - extract anchors and strip bibliography marker
+                    // Switching FROM source mode TO WYSIWYG - set state BEFORE flush
                     editorState.contentState = .editorTransition
+                    editorState.flushCodeMirrorSyncIfNeeded()
+
+                    // Extract anchors and strip bibliography marker
                     let (cleaned, anchors) = sectionSyncService.extractSectionAnchors(
                         markdown: editorState.sourceContent
                     )
@@ -1574,6 +1739,13 @@ extension View {
                     await onOpened()
                     if let content = notification.userInfo?["content"] as? String {
                         editorState.content = content
+                        // Parse initial content into blocks
+                        if let db = DocumentManager.shared.projectDatabase,
+                           let pid = DocumentManager.shared.projectId {
+                            let blocks = BlockParser.parse(markdown: content, projectId: pid)
+                            try? db.replaceBlocks(blocks, for: pid)
+                        }
+                        // Also sync to legacy sections (until fully retired)
                         await syncService.syncNow(content)
                     }
                 }
@@ -1617,8 +1789,51 @@ extension View {
         self
             .onChange(of: editorState.content) { _, newValue in
                 guard editorState.contentState == .idle else { return }
-                sectionSyncService.contentChanged(newValue, zoomedIds: editorState.zoomedSectionIds)
+                // BlockSyncService handles content -> block DB sync via polling
+                // SectionSyncService contentChanged still needed for legacy section sync during transition
                 annotationSyncService.contentChanged(newValue)
+
+                // When in source mode, re-parse blocks (BlockSyncService only works with Milkdown)
+                if editorState.editorMode == .source && !newValue.isEmpty {
+                    if editorState.zoomedSectionId == nil {
+                        // Non-zoomed: full document re-parse via replaceBlocks()
+                        if let db = documentManager.projectDatabase,
+                           let pid = documentManager.projectId {
+                            editorState.blockReparseTask?.cancel()
+                            editorState.blockReparseTask = Task {
+                                try? await Task.sleep(for: .milliseconds(1000))
+                                guard !Task.isCancelled else { return }
+                                guard editorState.contentState == .idle,
+                                      editorState.editorMode == .source,
+                                      editorState.zoomedSectionId == nil else { return }
+                                let existing = try? db.fetchBlocks(projectId: pid)
+                                var metadata: [String: SectionMetadata] = [:]
+                                for block in existing ?? [] where block.blockType == .heading {
+                                    metadata[block.textContent] = SectionMetadata(
+                                        status: block.status,
+                                        tags: block.tags?.isEmpty == false ? block.tags : nil,
+                                        wordGoal: block.wordGoal
+                                    )
+                                }
+                                let blocks = BlockParser.parse(
+                                    markdown: newValue,
+                                    projectId: pid,
+                                    existingSectionMetadata: metadata.isEmpty ? nil : metadata
+                                )
+                                try? db.replaceBlocks(blocks, for: pid)
+                            }
+                        }
+                    } else if editorState.zoomedBlockRange != nil {
+                        // Zoomed: scoped re-parse via flushCodeMirrorSyncIfNeeded()
+                        editorState.blockReparseTask?.cancel()
+                        editorState.blockReparseTask = Task {
+                            try? await Task.sleep(for: .milliseconds(1000))
+                            guard !Task.isCancelled, editorState.contentState == .idle,
+                                  editorState.editorMode == .source else { return }
+                            editorState.flushCodeMirrorSyncIfNeeded()
+                        }
+                    }
+                }
 
                 // Skip bibliography sync when zoomed - we don't have full document context
                 // Bibliography will be synced when user zooms out and full content is rebuilt
@@ -1636,6 +1851,10 @@ extension View {
 
                 // Trigger auto-backup timer on content change
                 autoBackupService.contentDidChange()
+            }
+            .onChange(of: editorState.editorMode) { _, _ in
+                editorState.blockReparseTask?.cancel()
+                editorState.blockReparseTask = nil
             }
             .onChange(of: editorState.zoomedSectionId) { _, newValue in
                 sectionSyncService.isContentZoomed = (newValue != nil)

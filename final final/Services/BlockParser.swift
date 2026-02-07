@@ -31,6 +31,8 @@ enum BlockParser {
         // But keep code blocks and other multi-line structures together
         let rawBlocks = splitIntoRawBlocks(markdown)
 
+        var inBibliographySection = false
+
         for rawBlock in rawBlocks {
             let trimmed = rawBlock.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else { continue }
@@ -40,9 +42,18 @@ enum BlockParser {
             let wordCount = MarkdownUtils.wordCount(for: textContent)
 
             // Check for special flags
-            let isBibliography = trimmed.contains("<!-- ::auto-bibliography:: -->") ||
-                                 trimmed.hasPrefix("## References") ||
-                                 trimmed.hasPrefix("## Bibliography")
+            let isBibliographyHeading = trimmed.contains("<!-- ::auto-bibliography:: -->") ||
+                                         trimmed == "# References" ||
+                                         trimmed == "## References" ||
+                                         trimmed == "# Bibliography" ||
+                                         trimmed == "## Bibliography"
+            if isBibliographyHeading {
+                inBibliographySection = true
+            } else if inBibliographySection && blockType == .heading {
+                // Reset if a non-bibliography heading follows (user typed below bibliography in CM)
+                inBibliographySection = false
+            }
+            let isBibliography = inBibliographySection
             let isPseudoSection = trimmed.contains("<!-- ::break:: -->")
 
             // Look up existing metadata for this heading if available
@@ -209,7 +220,7 @@ enum BlockParser {
     }
 
     /// Extract plain text content from markdown block
-    private static func extractTextContent(from content: String, blockType: BlockType) -> String {
+    static func extractTextContent(from content: String, blockType: BlockType) -> String {
         var text = content
 
         switch blockType {
@@ -274,9 +285,14 @@ enum BlockParser {
     }
 
     /// Assemble blocks back into markdown
+    /// Uses tuple comparison for tie-breaking: headings sort before non-headings at same sortOrder
     static func assembleMarkdown(from blocks: [Block]) -> String {
-        return blocks
-            .sorted { $0.sortOrder < $1.sortOrder }
+        let sorted = blocks.sorted { a, b in
+            let aKey = (a.sortOrder, a.blockType == .heading ? 0 : 1)
+            let bKey = (b.sortOrder, b.blockType == .heading ? 0 : 1)
+            return aKey < bKey
+        }
+        return sorted
             .map { $0.markdownFragment }
             .joined(separator: "\n\n")
     }

@@ -282,6 +282,13 @@ final class ProjectDatabase: Sendable {
             }
         }
 
+        // Block architecture: add goalType to block table
+        migrator.registerMigration("v10_block_goalType") { db in
+            try db.alter(table: "block") { t in
+                t.add(column: "goalType", .text).notNull().defaults(to: "approx")
+            }
+        }
+
         try migrator.migrate(dbWriter)
     }
 

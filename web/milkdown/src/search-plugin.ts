@@ -3,9 +3,9 @@
  * Provides visual highlighting for search matches
  */
 
-import { $prose } from '@milkdown/kit/utils';
-import { Decoration, DecorationSet } from '@milkdown/kit/prose/view';
 import { Plugin, PluginKey } from '@milkdown/kit/prose/state';
+import { Decoration, DecorationSet } from '@milkdown/kit/prose/view';
+import { $prose } from '@milkdown/kit/utils';
 
 // Search state shared with main.ts
 interface SearchMatch {

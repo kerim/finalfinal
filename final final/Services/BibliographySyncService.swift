@@ -144,7 +144,7 @@ final class BibliographySyncService {
 
         // Remove bibliography if no citations
         guard !uniqueCitekeys.isEmpty else {
-            await removeBibliographySection(projectId: projectId)
+            await removeBibliographyBlock(projectId: projectId)
             return
         }
 
@@ -168,7 +168,7 @@ final class BibliographySyncService {
 
         // Find or create bibliography section
         do {
-            try await updateBibliographySection(
+            try await updateBibliographyBlock(
                 content: bibliographyContent,
                 projectId: projectId,
                 database: database
@@ -306,52 +306,51 @@ final class BibliographySyncService {
         return parts.joined(separator: " ")
     }
 
-    private func updateBibliographySection(
+    private func updateBibliographyBlock(
         content: String,
         projectId: String,
         database: ProjectDatabase
     ) async throws {
-        // Use delete-then-insert to prevent duplicates
-        // This ensures only ONE bibliography section ever exists, even if previous
-        // bugs created duplicates
+        // Read @MainActor property BEFORE entering GRDB write closure
+        let headerName = ExportSettingsManager.shared.bibliographyHeaderName
         try database.write { db in
-            // Delete ALL existing bibliography sections (handles duplicates)
-            try Section
-                .filter(Section.Columns.projectId == projectId)
-                .filter(Section.Columns.isBibliography == true)
+            // Delete ALL existing bibliography blocks (handles duplicates)
+            try Block
+                .filter(Block.Columns.projectId == projectId)
+                .filter(Block.Columns.isBibliography == true)
                 .deleteAll(db)
 
-            // Get max sort order for new section placement
-            let maxSortOrder = try Section
-                .filter(Section.Columns.projectId == projectId)
-                .order(Section.Columns.sortOrder.desc)
+            // Get max sort order from blocks
+            let maxSortOrder = try Block
+                .filter(Block.Columns.projectId == projectId)
+                .order(Block.Columns.sortOrder.desc)
                 .fetchOne(db)?.sortOrder ?? 0
 
-            // Create fresh bibliography section
-            let headerName = ExportSettingsManager.shared.bibliographyHeaderName
-            var newSection = Section(
+            // Create bibliography block (single block with full content)
+            var block = Block(
                 projectId: projectId,
                 sortOrder: maxSortOrder + 1,
-                headerLevel: 1,
-                isBibliography: true,
-                title: headerName,
-                markdownContent: content,
-                status: .final_
+                blockType: .heading,
+                textContent: headerName,
+                markdownFragment: content,
+                headingLevel: 1,
+                status: .final_,
+                wordCount: MarkdownUtils.wordCount(for: content),
+                isBibliography: true
             )
-            newSection.recalculateWordCount()
-            try newSection.insert(db)
+            try block.insert(db)
         }
     }
 
-    /// Remove bibliography section when all citations are deleted
-    private func removeBibliographySection(projectId: String) async {
+    /// Remove bibliography blocks when all citations are deleted
+    private func removeBibliographyBlock(projectId: String) async {
         guard let database else { return }
 
         do {
             try database.write { db in
-                try Section
-                    .filter(Section.Columns.projectId == projectId)
-                    .filter(Section.Columns.isBibliography == true)
+                try Block
+                    .filter(Block.Columns.projectId == projectId)
+                    .filter(Block.Columns.isBibliography == true)
                     .deleteAll(db)
             }
             // Post notification directly - don't rely on ValueObservation

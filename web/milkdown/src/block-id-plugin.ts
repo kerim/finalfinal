@@ -9,13 +9,12 @@ import { $prose } from '@milkdown/kit/utils';
 
 export const blockIdPluginKey = new PluginKey<BlockIdPluginState>('block-id');
 
-// Block types that should receive IDs
+// Block types that should receive IDs (top-level only — no list_item)
 const BLOCK_TYPES = new Set([
   'paragraph',
   'heading',
   'bullet_list',
   'ordered_list',
-  'list_item',
   'blockquote',
   'code_block',
   'horizontal_rule',
@@ -92,10 +91,54 @@ export function confirmBlockIds(mapping: Record<string, string>): void {
 }
 
 /**
+ * Immediately apply pending confirmations to currentBlockIds.
+ * Returns a map of temp→permanent IDs that were applied.
+ * Call after confirmBlockIds() to prevent the insert-delete cycle
+ * where temp IDs disappear before the next transaction applies them.
+ */
+export function applyPendingConfirmations(): Map<string, string> {
+  const applied = new Map<string, string>();
+  for (const [pos, id] of currentBlockIds) {
+    const confirmedId = pendingConfirmations.get(id);
+    if (confirmedId) {
+      currentBlockIds.set(pos, confirmedId);
+      applied.set(id, confirmedId);
+    }
+  }
+  for (const [tempId] of applied) {
+    pendingConfirmations.delete(tempId);
+  }
+  return applied;
+}
+
+/**
+ * Clear all current block IDs.
+ * Used by applyBlocks() before setting real IDs from the blocks array.
+ */
+export function clearBlockIds(): void {
+  currentBlockIds.clear();
+}
+
+/**
  * Check if a block type should receive an ID
  */
-function isBlockType(node: Node): boolean {
+export function isBlockType(node: Node): boolean {
   return BLOCK_TYPES.has(node.type.name);
+}
+
+/**
+ * Set block IDs for top-level nodes from an ordered array of IDs.
+ * Matches BlockParser.parse() which creates one block per top-level node.
+ * Uses doc.forEach() (top-level only, NOT doc.descendants()).
+ */
+export function setBlockIdsForTopLevel(orderedIds: string[], doc: Node): void {
+  let index = 0;
+  doc.forEach((node, offset) => {
+    if (isBlockType(node) && index < orderedIds.length) {
+      currentBlockIds.set(offset, orderedIds[index]);
+      index++;
+    }
+  });
 }
 
 /**
@@ -114,27 +157,26 @@ function assignBlockIds(doc: Node, existingIds: Map<number, string>): Map<number
     // So we'll use position-based matching with content verification
   }
 
-  doc.descendants((node, pos) => {
+  // Use doc.forEach() for top-level only traversal, matching BlockParser behavior
+  doc.forEach((node, offset) => {
     if (isBlockType(node)) {
       // Check if this position already has an ID
-      const existingId = existingIds.get(pos);
+      const existingId = existingIds.get(offset);
       if (existingId && !claimedIds.has(existingId)) {
         // Check if this temp ID has been confirmed
         const confirmedId = pendingConfirmations.get(existingId);
         if (confirmedId) {
-          newIds.set(pos, confirmedId);
+          newIds.set(offset, confirmedId);
           claimedIds.add(confirmedId);
           pendingConfirmations.delete(existingId);
         } else {
-          newIds.set(pos, existingId);
+          newIds.set(offset, existingId);
           claimedIds.add(existingId);
         }
       } else {
         // Position doesn't have an ID - try to find by proximity
         // This handles position shifts from edits elsewhere in the document
         let found = false;
-        const _nodeContent = node.textContent;
-        const _nodeType = node.type.name;
 
         // Look for unclaimed IDs at nearby positions with same block type
         // Use a sliding window approach - closer positions are preferred
@@ -143,7 +185,7 @@ function assignBlockIds(doc: Node, existingIds: Map<number, string>): Map<number
         for (const [oldPos, id] of existingIds) {
           if (claimedIds.has(id)) continue;
 
-          const distance = Math.abs(oldPos - pos);
+          const distance = Math.abs(oldPos - offset);
           // Allow larger position shifts for blocks (up to 500 chars)
           // This accommodates edits in earlier parts of the document
           if (distance < 500) {
@@ -159,11 +201,11 @@ function assignBlockIds(doc: Node, existingIds: Map<number, string>): Map<number
           // Check if this temp ID has been confirmed
           const confirmedId = pendingConfirmations.get(best.id);
           if (confirmedId) {
-            newIds.set(pos, confirmedId);
+            newIds.set(offset, confirmedId);
             claimedIds.add(confirmedId);
             pendingConfirmations.delete(best.id);
           } else {
-            newIds.set(pos, best.id);
+            newIds.set(offset, best.id);
             claimedIds.add(best.id);
           }
           found = true;
@@ -172,12 +214,11 @@ function assignBlockIds(doc: Node, existingIds: Map<number, string>): Map<number
         if (!found) {
           // New block - assign temporary ID
           const newId = TEMP_ID_PREFIX + generateBlockId();
-          newIds.set(pos, newId);
+          newIds.set(offset, newId);
           claimedIds.add(newId);
         }
       }
     }
-    return true; // Continue traversal
   });
 
   return newIds;
@@ -200,12 +241,15 @@ export const blockIdPlugin = $prose(() => {
           return value;
         }
 
-        // Re-assign IDs, preserving existing ones where possible
-        const blockIds = assignBlockIds(newState.doc, value.blockIds);
+        // Use currentBlockIds (module-level) instead of stale value.blockIds.
+        // syncBlockIds() updates currentBlockIds directly without dispatching a
+        // transaction, so value.blockIds can hold stale temp IDs that would
+        // overwrite the confirmed UUIDs and trigger mass deletes.
+        const blockIds = assignBlockIds(newState.doc, currentBlockIds);
         currentBlockIds = blockIds;
 
         return {
-          blockIds,
+          blockIds: currentBlockIds,
           pendingConfirmations: new Map(pendingConfirmations),
         };
       },
@@ -220,19 +264,18 @@ export const blockIdPlugin = $prose(() => {
 
         const decorations: Decoration[] = [];
 
-        // Add data-block-id attributes to all block nodes
-        state.doc.descendants((node, pos) => {
+        // Add data-block-id attributes to top-level block nodes only
+        state.doc.forEach((node, offset) => {
           if (isBlockType(node)) {
-            const blockId = pluginState.blockIds.get(pos);
+            const blockId = pluginState.blockIds.get(offset);
             if (blockId) {
               decorations.push(
-                Decoration.node(pos, pos + node.nodeSize, {
+                Decoration.node(offset, offset + node.nodeSize, {
                   'data-block-id': blockId,
                 })
               );
             }
           }
-          return true;
         });
 
         return DecorationSet.create(state.doc, decorations);

@@ -16,14 +16,25 @@ import {
   setHideCompletedTasks,
 } from './annotation-display-plugin';
 import { type AnnotationType, annotationNode, annotationPlugin } from './annotation-plugin';
-import { blockIdPlugin, confirmBlockIds, getAllBlockIds, getBlockIdAtPos, resetBlockIdState } from './block-id-plugin';
+import {
+  applyPendingConfirmations,
+  blockIdPlugin,
+  clearBlockIds,
+  confirmBlockIds,
+  getAllBlockIds,
+  getBlockIdAtPos,
+  resetBlockIdState,
+  setBlockIdsForTopLevel,
+} from './block-id-plugin';
 import {
   type BlockChanges,
   blockSyncPlugin,
   destroyBlockSyncState,
   getBlockChanges,
   hasPendingChanges,
-  resetBlockSyncState,
+  resetAndSnapshot,
+  setSyncPaused,
+  updateSnapshotIds,
 } from './block-sync-plugin';
 import {
   type CSLItem,
@@ -49,8 +60,8 @@ import { mdToTextOffset, textToMdOffset } from './cursor-mapping';
 import { focusModePlugin, setFocusModeEnabled } from './focus-mode-plugin';
 import { headingNodeViewPlugin } from './heading-nodeview-plugin';
 import { highlightMark, highlightPlugin } from './highlight-plugin';
-import { sectionBreakNode, sectionBreakPlugin } from './section-break-plugin';
 import { clearSearchMatches, searchPlugin, setSearchMatches } from './search-plugin';
+import { sectionBreakNode, sectionBreakPlugin } from './section-break-plugin';
 import { isSourceModeEnabled, setSourceModeEnabled, sourceModePlugin } from './source-mode-plugin';
 import './styles.css';
 
@@ -184,6 +195,8 @@ declare global {
       getBlockChanges: () => BlockChanges;
       applyBlocks: (blocks: Block[]) => void;
       confirmBlockIds: (mapping: Record<string, string>) => void;
+      syncBlockIds: (orderedIds: string[]) => void;
+      setContentWithBlockIds: (markdown: string, blockIds: string[], options?: { scrollToStart?: boolean }) => void;
       scrollToBlock: (blockId: string) => void;
       getBlockAtCursor: () => { blockId: string; offset: number } | null;
       hasBlockChanges: () => boolean;
@@ -321,7 +334,7 @@ function findAllMatches(query: string, options: FindOptions): SearchMatch[] {
       if (node.isText && node.text) {
         textNodeCount++;
         const text = node.text;
-        console.log('[Search] Text node #' + textNodeCount + ' at pos', pos, ':', JSON.stringify(text.substring(0, 80)));
+        console.log(`[Search] Text node #${textNodeCount} at pos`, pos, ':', JSON.stringify(text.substring(0, 80)));
 
         let match: RegExpExecArray | null;
 
@@ -332,7 +345,16 @@ function findAllMatches(query: string, options: FindOptions): SearchMatch[] {
           const from = pos + match.index;
           const to = from + match[0].length;
 
-          console.log('[Search] Match found:', JSON.stringify(match[0]), 'at from:', from, 'to:', to, 'docSize:', doc.content.size);
+          console.log(
+            '[Search] Match found:',
+            JSON.stringify(match[0]),
+            'at from:',
+            from,
+            'to:',
+            to,
+            'docSize:',
+            doc.content.size
+          );
 
           // Validate positions are within document bounds
           if (from >= 0 && to <= doc.content.size) {
@@ -1168,15 +1190,18 @@ window.FinalFinal = {
         }
 
         // Replace with empty paragraph
+        setSyncPaused(true);
         isSettingContent = true;
         try {
           const emptyParagraph = view.state.schema.nodes.paragraph.create();
           const emptyDoc = view.state.schema.nodes.doc.create(null, emptyParagraph);
           const tr = view.state.tr.replaceWith(0, view.state.doc.content.size, emptyDoc.content);
           view.dispatch(tr.setSelection(Selection.atStart(tr.doc)));
+          resetAndSnapshot(view.state.doc);
           currentContent = markdown;
         } finally {
           isSettingContent = false;
+          setSyncPaused(false);
         }
       });
       return;
@@ -1187,6 +1212,7 @@ window.FinalFinal = {
       return;
     }
 
+    setSyncPaused(true);
     isSettingContent = true;
     try {
       editorInstance.action((ctx) => {
@@ -1222,6 +1248,7 @@ window.FinalFinal = {
           }
         }
         view.dispatch(tr);
+        resetAndSnapshot(view.state.doc);
 
         // Reset scroll position for zoom transitions
         // Swift handles hiding/showing the WKWebView at compositor level
@@ -1261,6 +1288,7 @@ window.FinalFinal = {
       currentContent = markdown;
     } finally {
       isSettingContent = false;
+      setSyncPaused(false);
     }
   },
 
@@ -1269,6 +1297,12 @@ window.FinalFinal = {
 
     const sourceEnabled = isSourceModeEnabled();
     let markdown = getMarkdown()(editorInstance.ctx);
+
+    // Unescape heading syntax that ProseMirror's serializer escapes in paragraphs.
+    // This happens when users paste markdown as plain text - Milkdown creates
+    // paragraph nodes and the serializer escapes # to prevent heading interpretation.
+    // Only matches \# followed by 1-5 more # chars and whitespace at line start.
+    markdown = markdown.replace(/^\\(#{1,6}\s)/gm, '$1');
 
     // Fix double ## prefixes in source mode: "## ## Heading" → "## Heading"
     if (sourceEnabled) {
@@ -1987,6 +2021,7 @@ window.FinalFinal = {
       const markdown = sortedBlocks.map((b) => b.markdownFragment).join('\n\n');
 
       // Parse and replace document content
+      setSyncPaused(true);
       isSettingContent = true;
       try {
         const doc = parser(markdown);
@@ -2007,10 +2042,14 @@ window.FinalFinal = {
         view.dispatch(tr);
         currentContent = markdown;
 
-        // Reset sync state since we're replacing everything
-        resetBlockSyncState();
+        // Clear stale temp IDs from assignBlockIds, set real IDs, rebuild snapshot
+        clearBlockIds();
+        const blockIds = sortedBlocks.map((b) => b.id);
+        setBlockIdsForTopLevel(blockIds, view.state.doc);
+        resetAndSnapshot(view.state.doc);
       } finally {
         isSettingContent = false;
+        setSyncPaused(false);
       }
     } catch (e) {
       console.error('[Milkdown] applyBlocks failed:', e);
@@ -2019,14 +2058,26 @@ window.FinalFinal = {
 
   confirmBlockIds(mapping: Record<string, string>) {
     confirmBlockIds(mapping);
-    // Trigger a transaction to update decorations
-    if (editorInstance) {
-      try {
-        const view = editorInstance.ctx.get(editorViewCtx);
-        view.dispatch(view.state.tr);
-      } catch {
-        // Dispatch failed, ignore
-      }
+    const applied = applyPendingConfirmations();
+    updateSnapshotIds(applied);
+    // No empty transaction needed — IDs updated synchronously in maps
+  },
+
+  syncBlockIds(orderedIds: string[]) {
+    if (!editorInstance) return;
+    const view = editorInstance.ctx.get(editorViewCtx);
+    setBlockIdsForTopLevel(orderedIds, view.state.doc);
+    resetAndSnapshot(view.state.doc);
+  },
+
+  setContentWithBlockIds(markdown: string, blockIds: string[], options?: { scrollToStart?: boolean }) {
+    // 1. Set content (parse, dispatch, resetAndSnapshot already called inside)
+    this.setContent(markdown, options);
+    // 2. Immediately assign real block IDs (still synchronous, same JS turn)
+    if (blockIds.length > 0 && editorInstance) {
+      const view = editorInstance.ctx.get(editorViewCtx);
+      setBlockIdsForTopLevel(blockIds, view.state.doc);
+      resetAndSnapshot(view.state.doc);
     }
   },
 

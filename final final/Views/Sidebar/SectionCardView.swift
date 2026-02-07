@@ -60,6 +60,10 @@ struct SectionCardView: View {
         .onHover { hovering in
             isHovering = hovering
         }
+        .onChange(of: section.status) { oldValue, newValue in
+            guard oldValue != newValue else { return }
+            onSectionUpdated?(section)
+        }
         .opacity(isGhost ? 0.4 : 1.0)
         .overlay {
             if isGhost {
@@ -232,7 +236,7 @@ class SectionViewModel: Identifiable {
     let id: String
     var projectId: String
     var parentId: String?
-    var sortOrder: Int
+    var sortOrder: Double
     var headerLevel: Int
     var isPseudoSection: Bool  // Stored, not computed
     var isBibliography: Bool   // Auto-generated bibliography section
@@ -249,7 +253,7 @@ class SectionViewModel: Identifiable {
         self.id = section.id
         self.projectId = section.projectId
         self.parentId = section.parentId
-        self.sortOrder = section.sortOrder
+        self.sortOrder = Double(section.sortOrder)
         self.headerLevel = section.headerLevel
         self.isPseudoSection = section.isPseudoSection
         self.isBibliography = section.isBibliography
@@ -265,6 +269,24 @@ class SectionViewModel: Identifiable {
         self.goalType = section.goalType
         self.wordCount = section.wordCount
         self.startOffset = section.startOffset
+    }
+
+    init(from block: Block) {
+        self.id = block.id
+        self.projectId = block.projectId
+        self.parentId = block.parentId
+        self.sortOrder = block.sortOrder
+        self.headerLevel = block.headingLevel ?? 1
+        self.isPseudoSection = block.isPseudoSection
+        self.isBibliography = block.isBibliography
+        self.title = block.outlineTitle
+        self.markdownContent = block.markdownFragment
+        self.status = block.status ?? .writing
+        self.tags = block.tags ?? []
+        self.wordGoal = block.wordGoal
+        self.goalType = block.goalType
+        self.wordCount = 0  // Aggregated externally via wordCountForHeading
+        self.startOffset = 0  // Not used for blocks (scroll by block ID)
     }
 
     var goalProgress: Double? {
@@ -290,7 +312,7 @@ class SectionViewModel: Identifiable {
             id: id,
             projectId: projectId,
             parentId: parentId,
-            sortOrder: sortOrder,
+            sortOrder: Int(sortOrder),
             headerLevel: headerLevel,
             isPseudoSection: isPseudoSection,
             isBibliography: isBibliography,
@@ -312,7 +334,7 @@ class SectionViewModel: Identifiable {
     /// Uses double-optional for parentId to distinguish "set to nil" from "don't change".
     func withUpdates(
         parentId: String?? = nil,
-        sortOrder: Int? = nil,
+        sortOrder: Double? = nil,
         headerLevel: Int? = nil,
         isPseudoSection: Bool? = nil,
         isBibliography: Bool? = nil,
@@ -323,7 +345,7 @@ class SectionViewModel: Identifiable {
             id: self.id,
             projectId: self.projectId,
             parentId: parentId ?? self.parentId,
-            sortOrder: sortOrder ?? self.sortOrder,
+            sortOrder: Int(sortOrder ?? self.sortOrder),
             headerLevel: headerLevel ?? self.headerLevel,
             isPseudoSection: isPseudoSection ?? self.isPseudoSection,
             isBibliography: isBibliography ?? self.isBibliography,
@@ -336,7 +358,12 @@ class SectionViewModel: Identifiable {
             wordCount: self.wordCount,
             startOffset: startOffset ?? self.startOffset
         )
-        return SectionViewModel(from: section)
+        let vm = SectionViewModel(from: section)
+        // Preserve the original Double sortOrder if not explicitly changed
+        vm.sortOrder = sortOrder ?? self.sortOrder
+        // Preserve word count (not stored in Section)
+        vm.wordCount = self.wordCount
+        return vm
     }
 }
 

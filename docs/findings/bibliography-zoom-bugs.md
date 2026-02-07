@@ -150,3 +150,59 @@ Each of these needs explicit handling; relying on general observation patterns i
 - [ ] Normal (non-zoomed) editing still works correctly
 - [ ] Zoom in/out still works correctly
 - [ ] No data loss during any editing scenario
+
+---
+
+## Bug 3: Bibliography Not Generating After Block Architecture Migration
+
+**Date:** 2026-02-07
+**Related Commit:** Fix bibliography generation broken after block architecture migration
+
+### Symptoms
+- Adding citations (`[@citekey]`) with Zotero + BBT running produced no bibliography
+- Bibliography section was written to the Section table, but the rendering pipeline (post block-architecture migration) reads exclusively from the Block table
+
+### Root Causes (6 issues identified)
+
+1. **BibliographySyncService writes to wrong table (CRITICAL):** `updateBibliographySection()` wrote to the Section table, but the sidebar-revamp branch reads from the Block table. The bibliography was saved but never displayed.
+
+2. **BlockParser heading level mismatch (CRITICAL):** BlockParser only detected `## Bibliography` (H2), but `BibliographySyncService.generateBibliographyMarkdown()` generates `# Bibliography` (H1). The heading was never flagged as bibliography.
+
+3. **BlockParser doesn't propagate isBibliography to body blocks (CRITICAL):** Only the bibliography heading block got the `isBibliography` flag. Body blocks (the actual reference entries) were not flagged, so they wouldn't be excluded during zoom or filtered correctly.
+
+4. **ValueObservation double rebuild (MEDIUM):** Both the direct notification from `BibliographySyncService` AND the ValueObservation in `EditorViewState` posted `.bibliographySectionChanged`, causing redundant `rebuildDocumentContent()` calls.
+
+5. **BlockSyncService race during rebuild (HIGH):** BlockSyncService was not suppressed during the bibliography rebuild + pushBlockIds sequence, which could create duplicate blocks in the 100ms gap.
+
+6. **isBibliography flag lost during re-parse (MEDIUM):** `replaceBlocks()` and `replaceBlocksInRange()` did not preserve the `isBibliography` flag in their metadata dictionaries, so it was lost on every CodeMirror re-parse.
+
+### Solution
+
+**5 files changed:**
+
+1. **BibliographySyncService.swift** — Replaced `updateBibliographySection()` / `removeBibliographySection()` with `updateBibliographyBlock()` / `removeBibliographyBlock()`. Now writes directly to the Block table. Reads `@MainActor`-isolated `bibliographyHeaderName` before entering the GRDB write closure.
+
+2. **BlockParser.swift** — Added `inBibliographySection` state variable that propagates `isBibliography` to ALL subsequent blocks after a bibliography heading. Detects both H1 and H2 for "Bibliography" and "References". Uses exact equality (`==`) instead of `hasPrefix` to prevent false positives (e.g., `# Bibliography Review`). Resets the flag if a non-bibliography heading follows.
+
+3. **Database+Blocks.swift** — Added `isBibliography` to the metadata preservation tuple in both `replaceBlocks()` and `replaceBlocksInRange()`. This ensures the flag survives re-parses, covering custom header names that BlockParser can't detect by string matching alone.
+
+4. **ContentView.swift** — Added `blockSyncService.isSyncSuppressed = true` before `rebuildDocumentContent()` in the `.bibliographySectionChanged` handler. `pushBlockIds()`'s `defer` block clears the flag when done.
+
+5. **EditorViewState.swift** — Removed the ValueObservation bibliography detection block (`if let bibSection...`) and the `previousBibliographyHash` property. Bibliography changes are now detected only via the direct notification from BibliographySyncService, eliminating double rebuilds.
+
+### Testing Checklist
+
+- [x] Add `[@citekey]` citation → bibliography generates at end of document
+- [x] Remove all citations → bibliography removed
+- [x] Switch to CodeMirror (Cmd+/) → bibliography preserved
+- [x] Switch back to Milkdown → bibliography preserved
+- [x] Double-click a section to zoom → bibliography excluded from zoomed view
+- [x] Zoom out → bibliography restored at end
+
+### Lessons Learned
+
+1. **When migrating to a new data model, audit ALL write paths.** The block architecture migration changed the read path but left `BibliographySyncService` writing to the old Section table. A grep for Section table writes during migration would have caught this.
+
+2. **Flag propagation matters.** Marking only the heading block as bibliography meant body blocks were invisible to zoom filtering and other bibliography-aware logic. The fix uses a state machine (`inBibliographySection`) that propagates the flag to all subsequent blocks until a non-bibliography heading resets it.
+
+3. **Dual notification paths cause double work.** Having both ValueObservation and direct notifications post the same event is wasteful and can cause subtle timing bugs. Pick one canonical path for each event type.
