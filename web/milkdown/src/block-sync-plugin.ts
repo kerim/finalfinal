@@ -6,16 +6,17 @@ import type { Node } from '@milkdown/kit/prose/model';
 import { Plugin, PluginKey } from '@milkdown/kit/prose/state';
 import { $prose } from '@milkdown/kit/utils';
 import { getAllBlockIds } from './block-id-plugin';
+import type { CitationAttrs } from './citation-plugin';
+import { serializeCitation } from './citation-plugin';
 
 export const blockSyncPluginKey = new PluginKey<BlockSyncPluginState>('block-sync');
 
-// Block types that are synced
+// Block types that are synced (top-level only — no list_item)
 const SYNC_BLOCK_TYPES = new Set([
   'paragraph',
   'heading',
   'bullet_list',
   'ordered_list',
-  'list_item',
   'blockquote',
   'code_block',
   'horizontal_rule',
@@ -61,6 +62,8 @@ interface BlockSnapshot {
   pos: number;
   blockType: string;
   textContent: string;
+  nodeSize: number; // Detect atom node add/remove (citations)
+  markdownFragment: string; // Detect attr-only changes (citation edits)
   headingLevel?: number;
   node: Node; // Store node reference for markdown serialization
 }
@@ -69,12 +72,66 @@ interface BlockSnapshot {
 // Note: Cleared when editor is destroyed via resetBlockSyncState()
 let currentState: BlockSyncPluginState | null = null;
 
+// Pause flag to suppress change detection during programmatic content replacement
+let syncPaused = false;
+
 /**
- * Build a markdown fragment from a ProseMirror node
- * This is a best-effort reconstruction for new blocks
+ * Pause or resume sync change detection.
+ * Use during setContent/applyBlocks to prevent false insert/delete waves.
+ */
+export function setSyncPaused(paused: boolean): void {
+  syncPaused = paused;
+}
+
+/**
+ * Serialize inline content of a node, preserving citation atoms and annotations.
+ * Unlike node.textContent which strips atom nodes, this reconstructs their markdown syntax.
+ */
+function serializeInlineContent(node: Node): string {
+  if (node.isTextblock) {
+    let result = '';
+    node.forEach((child) => {
+      if (child.isText) {
+        result += child.text || '';
+      } else if (child.type.name === 'citation') {
+        const attrs = child.attrs as CitationAttrs;
+        if (attrs.rawSyntax) {
+          result += attrs.rawSyntax;
+        } else {
+          try {
+            result += serializeCitation(attrs);
+          } catch {
+            result += `[@${attrs.citekeys}]`;
+          }
+        }
+      } else if (child.type.name === 'annotation') {
+        const { type, isCompleted } = child.attrs;
+        const text = (child.textContent || '').replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim();
+        if (type === 'task') {
+          result += `<!-- ::task:: ${isCompleted ? '[x]' : '[ ]'} ${text} -->`;
+        } else {
+          result += `<!-- ::${type}:: ${text} -->`;
+        }
+      } else {
+        result += child.textContent;
+      }
+    });
+    return result;
+  }
+  // Container nodes (list_item, blockquote children): recurse
+  const parts: string[] = [];
+  node.forEach((child) => {
+    parts.push(serializeInlineContent(child));
+  });
+  return parts.join('\n');
+}
+
+/**
+ * Build a markdown fragment from a ProseMirror node.
+ * Inline-aware: preserves citations and annotations that node.textContent strips.
  */
 function nodeToMarkdownFragment(node: Node): string {
-  const text = node.textContent;
+  const text = serializeInlineContent(node);
   switch (node.type.name) {
     case 'heading': {
       const level = node.attrs.level || 1;
@@ -89,27 +146,26 @@ function nodeToMarkdownFragment(node: Node): string {
         .join('\n');
     case 'code_block': {
       const lang = node.attrs.language || '';
-      return '```' + lang + '\n' + text + '\n```';
+      return '```' + lang + '\n' + node.textContent + '\n```';
     }
     case 'bullet_list': {
       const items: string[] = [];
       node.forEach((child) => {
-        items.push('- ' + child.textContent);
+        items.push('- ' + serializeInlineContent(child));
       });
       return items.join('\n');
     }
     case 'ordered_list': {
       const oItems: string[] = [];
       node.forEach((child, _offset, index) => {
-        oItems.push(index + 1 + '. ' + child.textContent);
+        oItems.push(index + 1 + '. ' + serializeInlineContent(child));
       });
       return oItems.join('\n');
     }
     case 'horizontal_rule':
       return '---';
     case 'table':
-      // Tables are complex; return text content as fallback
-      return text;
+      return node.textContent;
     default:
       return text;
   }
@@ -155,14 +211,14 @@ function snapshotBlocks(doc: Node): Map<string, BlockSnapshot> {
   const snapshot = new Map<string, BlockSnapshot>();
   const blockIds = getAllBlockIds();
 
-  doc.descendants((node, pos, parent) => {
+  // Use doc.forEach() for top-level only traversal, matching BlockParser behavior
+  doc.forEach((node, offset) => {
     if (SYNC_BLOCK_TYPES.has(node.type.name)) {
-      const blockId = blockIds.get(pos);
+      const blockId = blockIds.get(offset);
       if (blockId) {
-        // Detect heading syntax in top-level paragraphs (paste creates paragraphs, not headings)
-        const isTopLevel = parent?.type.name === 'doc';
+        // Detect heading syntax in paragraphs (paste creates paragraphs, not headings)
         const headingMatch =
-          node.type.name === 'paragraph' && isTopLevel ? node.textContent.match(/^(#{1,6})\s/) : null;
+          node.type.name === 'paragraph' ? node.textContent.match(/^(#{1,6})\s/) : null;
         const effectiveType = headingMatch ? 'heading' : node.type.name;
         const effectiveLevel = headingMatch
           ? headingMatch[1].length
@@ -172,15 +228,16 @@ function snapshotBlocks(doc: Node): Map<string, BlockSnapshot> {
 
         snapshot.set(blockId, {
           id: blockId,
-          pos,
+          pos: offset,
           blockType: effectiveType,
           textContent: node.textContent,
+          nodeSize: node.nodeSize,
+          markdownFragment: nodeToMarkdownFragment(node),
           headingLevel: effectiveLevel,
           node,
         });
       }
     }
-    return true;
   });
 
   return snapshot;
@@ -202,7 +259,12 @@ function detectChanges(
       state.pendingDeletes.add(id);
       // Remove from updates if pending
       state.pendingUpdates.delete(id);
-    } else if (oldBlock.textContent !== newBlock.textContent || oldBlock.headingLevel !== newBlock.headingLevel) {
+    } else if (
+      oldBlock.textContent !== newBlock.textContent ||
+      oldBlock.nodeSize !== newBlock.nodeSize ||
+      oldBlock.markdownFragment !== newBlock.markdownFragment ||
+      oldBlock.headingLevel !== newBlock.headingLevel
+    ) {
       // Block was updated
       state.pendingUpdates.set(id, {
         id,
@@ -259,7 +321,7 @@ export const blockSyncPlugin = $prose(() => {
       },
 
       apply(tr, value, _oldState, newState) {
-        if (!tr.docChanged) {
+        if (!tr.docChanged || syncPaused) {
           return value;
         }
 
@@ -294,6 +356,38 @@ export function resetBlockSyncState(): void {
     currentState.lastSnapshot.clear();
   }
   // Don't null out currentState here - it will be recreated on next editor init
+}
+
+/**
+ * Update snapshot IDs after block ID confirmation (temp→permanent).
+ * Re-keys lastSnapshot and pending changes so detectChanges() won't
+ * see temp IDs as deleted and permanent IDs as new inserts.
+ */
+export function updateSnapshotIds(mapping: Map<string, string>): void {
+  if (!currentState || mapping.size === 0) return;
+  const updated = new Map<string, BlockSnapshot>();
+  for (const [oldId, snapshot] of currentState.lastSnapshot) {
+    const newId = mapping.get(oldId);
+    if (newId) {
+      updated.set(newId, { ...snapshot, id: newId });
+    } else {
+      updated.set(oldId, snapshot);
+    }
+  }
+  currentState.lastSnapshot = updated;
+  // Re-key any pending changes that reference old temp IDs
+  for (const [oldId, newId] of mapping) {
+    if (currentState.pendingUpdates.has(oldId)) {
+      const update = currentState.pendingUpdates.get(oldId)!;
+      currentState.pendingUpdates.delete(oldId);
+      currentState.pendingUpdates.set(newId, { ...update, id: newId });
+    }
+    currentState.pendingInserts.delete(oldId); // Already processed by Swift
+    if (currentState.pendingDeletes.has(oldId)) {
+      currentState.pendingDeletes.delete(oldId);
+      currentState.pendingDeletes.add(newId);
+    }
+  }
 }
 
 /**

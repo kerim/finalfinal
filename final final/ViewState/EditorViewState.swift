@@ -103,6 +103,9 @@ class EditorViewState {
                         print("[EditorViewState] WATCHDOG: contentState stuck at \(self.contentState), resetting to .idle")
                         if self.contentState == .zoomTransition {
                             self.isZoomingContent = false
+                            self.zoomedSectionIds = nil
+                            self.zoomedSectionId = nil
+                            self.zoomedBlockRange = nil
                             self.contentAckContinuation?.resume()
                             self.contentAckContinuation = nil
                         }
@@ -603,8 +606,11 @@ class EditorViewState {
 
         guard let db = projectDatabase, let pid = currentProjectId else { return }
 
-        // SET CONTENTSTATE FIRST - before any awaits to prevent race conditions
+        // SET CONTENTSTATE FIRST - before flush to prevent observation race conditions
         contentState = .zoomTransition
+
+        // Flush any pending CodeMirror edits before zooming
+        flushCodeMirrorSyncIfNeeded()
 
         // If already zoomed to a different section, unzoom first
         if zoomedSectionId != nil && zoomedSectionId != sectionId {
@@ -612,23 +618,29 @@ class EditorViewState {
         }
 
         guard sections.first(where: { $0.id == sectionId }) != nil else {
+            zoomedSectionIds = nil
+            zoomedSectionId = nil
+            zoomedBlockRange = nil
             contentState = .idle
             return
         }
 
-        // Calculate zoomed section IDs based on mode (for sidebar filtering)
-        let descendantIds = mode == .shallow
-            ? getShallowDescendantIds(of: sectionId)
-            : getDescendantIds(of: sectionId)
-        zoomedSectionIds = descendantIds
-
         do {
-            // Find the heading block
+            // Find the heading block BEFORE computing descendant IDs
             guard let headingBlock = try db.fetchBlock(id: sectionId),
                   let headingLevel = headingBlock.headingLevel else {
+                zoomedSectionIds = nil
+                zoomedSectionId = nil
+                zoomedBlockRange = nil
                 contentState = .idle
                 return
             }
+
+            // Calculate zoomed section IDs AFTER confirming block exists
+            let descendantIds = mode == .shallow
+                ? getShallowDescendantIds(of: sectionId)
+                : getDescendantIds(of: sectionId)
+            zoomedSectionIds = descendantIds
 
             // Find next same-or-higher-level heading's sortOrder (range boundary)
             let allBlocks = try db.fetchBlocks(projectId: pid)
@@ -695,6 +707,10 @@ class EditorViewState {
             contentState = .idle
         } catch {
             print("[EditorViewState] Zoom error: \(error)")
+            zoomedSectionIds = nil
+            zoomedSectionId = nil
+            zoomedBlockRange = nil
+            isZoomingContent = false
             contentState = .idle
         }
     }
@@ -712,6 +728,9 @@ class EditorViewState {
         if !callerManagedState {
             contentState = .zoomTransition
         }
+
+        // Flush any pending CodeMirror edits before reading from DB
+        flushCodeMirrorSyncIfNeeded()
 
         do {
             // Fetch ALL blocks from DB - database is always complete
@@ -771,6 +790,87 @@ class EditorViewState {
     func zoomOutSync() {
         Task {
             await zoomOut()
+        }
+    }
+
+    // MARK: - CodeMirror Flush
+
+    /// Immediately persist CodeMirror content to the block database (no debounce).
+    /// Called before zoom-out, zoom-to, and editor switch to ensure CM edits are saved.
+    /// Handles both zoomed (range replace) and non-zoomed (full replace) cases.
+    func flushCodeMirrorSyncIfNeeded() {
+        // Only flush when in source mode with actual content
+        guard editorMode == .source, !content.isEmpty else { return }
+        guard let db = projectDatabase, let pid = currentProjectId else { return }
+
+        // Cancel any pending debounced re-parse
+        blockReparseTask?.cancel()
+        blockReparseTask = nil
+
+        do {
+            // Preserve existing heading metadata
+            let existing = try db.fetchBlocks(projectId: pid)
+            var metadata: [String: SectionMetadata] = [:]
+            for block in existing where block.blockType == .heading {
+                metadata[block.textContent] = SectionMetadata(
+                    status: block.status,
+                    tags: block.tags?.isEmpty == false ? block.tags : nil,
+                    wordGoal: block.wordGoal
+                )
+            }
+
+            let blocks = BlockParser.parse(
+                markdown: content,
+                projectId: pid,
+                existingSectionMetadata: metadata.isEmpty ? nil : metadata
+            )
+
+            if let range = zoomedBlockRange {
+                // Zoomed: only replace blocks within the zoom range
+                try db.replaceBlocksInRange(
+                    blocks,
+                    for: pid,
+                    startSortOrder: range.start,
+                    endSortOrder: range.end
+                )
+
+                // Recalculate zoomedBlockRange after normalization shifted sort orders
+                if let zoomedId = zoomedSectionId {
+                    var headingBlock = try db.fetchBlock(id: zoomedId)
+
+                    // Fallback: heading renamed → ID not preserved → find first heading in parsed blocks
+                    if headingBlock == nil || headingBlock?.blockType != .heading {
+                        if let fallback = blocks.first(where: { $0.blockType == .heading }) {
+                            headingBlock = try db.fetchBlock(id: fallback.id)
+                            zoomedSectionId = fallback.id
+                        } else {
+                            // Heading deleted entirely → clear zoom state
+                            zoomedBlockRange = nil
+                            zoomedSectionId = nil
+                            zoomedSectionIds = nil
+                            return
+                        }
+                    }
+
+                    if let headingBlock = headingBlock,
+                       let headingLevel = headingBlock.headingLevel {
+                        let allBlocks = try db.fetchBlocks(projectId: pid)
+                        var endSortOrder: Double?
+                        for block in allBlocks where block.sortOrder > headingBlock.sortOrder {
+                            if block.blockType == .heading, let level = block.headingLevel, level <= headingLevel {
+                                endSortOrder = block.sortOrder
+                                break
+                            }
+                        }
+                        zoomedBlockRange = (start: headingBlock.sortOrder, end: endSortOrder)
+                    }
+                }
+            } else {
+                // Not zoomed: full document replace (existing behavior)
+                try db.replaceBlocks(blocks, for: pid)
+            }
+        } catch {
+            print("[EditorViewState] flushCodeMirrorSyncIfNeeded error: \(error)")
         }
     }
 

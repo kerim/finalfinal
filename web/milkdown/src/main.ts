@@ -17,7 +17,9 @@ import {
 } from './annotation-display-plugin';
 import { type AnnotationType, annotationNode, annotationPlugin } from './annotation-plugin';
 import {
+  applyPendingConfirmations,
   blockIdPlugin,
+  clearBlockIds,
   confirmBlockIds,
   getAllBlockIds,
   getBlockIdAtPos,
@@ -31,7 +33,8 @@ import {
   getBlockChanges,
   hasPendingChanges,
   resetAndSnapshot,
-  resetBlockSyncState,
+  setSyncPaused,
+  updateSnapshotIds,
 } from './block-sync-plugin';
 import {
   type CSLItem,
@@ -1187,6 +1190,7 @@ window.FinalFinal = {
         }
 
         // Replace with empty paragraph
+        setSyncPaused(true);
         isSettingContent = true;
         try {
           const emptyParagraph = view.state.schema.nodes.paragraph.create();
@@ -1197,6 +1201,7 @@ window.FinalFinal = {
           currentContent = markdown;
         } finally {
           isSettingContent = false;
+          setSyncPaused(false);
         }
       });
       return;
@@ -1207,6 +1212,7 @@ window.FinalFinal = {
       return;
     }
 
+    setSyncPaused(true);
     isSettingContent = true;
     try {
       editorInstance.action((ctx) => {
@@ -1282,6 +1288,7 @@ window.FinalFinal = {
       currentContent = markdown;
     } finally {
       isSettingContent = false;
+      setSyncPaused(false);
     }
   },
 
@@ -2014,6 +2021,7 @@ window.FinalFinal = {
       const markdown = sortedBlocks.map((b) => b.markdownFragment).join('\n\n');
 
       // Parse and replace document content
+      setSyncPaused(true);
       isSettingContent = true;
       try {
         const doc = parser(markdown);
@@ -2034,10 +2042,14 @@ window.FinalFinal = {
         view.dispatch(tr);
         currentContent = markdown;
 
-        // Reset sync state since we're replacing everything
-        resetBlockSyncState();
+        // Clear stale temp IDs from assignBlockIds, set real IDs, rebuild snapshot
+        clearBlockIds();
+        const blockIds = sortedBlocks.map((b) => b.id);
+        setBlockIdsForTopLevel(blockIds, view.state.doc);
+        resetAndSnapshot(view.state.doc);
       } finally {
         isSettingContent = false;
+        setSyncPaused(false);
       }
     } catch (e) {
       console.error('[Milkdown] applyBlocks failed:', e);
@@ -2046,15 +2058,9 @@ window.FinalFinal = {
 
   confirmBlockIds(mapping: Record<string, string>) {
     confirmBlockIds(mapping);
-    // Trigger a transaction to update decorations
-    if (editorInstance) {
-      try {
-        const view = editorInstance.ctx.get(editorViewCtx);
-        view.dispatch(view.state.tr);
-      } catch {
-        // Dispatch failed, ignore
-      }
-    }
+    const applied = applyPendingConfirmations();
+    updateSnapshotIds(applied);
+    // No empty transaction needed — IDs updated synchronously in maps
   },
 
   syncBlockIds(orderedIds: string[]) {

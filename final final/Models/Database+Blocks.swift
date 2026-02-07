@@ -305,9 +305,20 @@ extension ProjectDatabase {
     /// Apply changes from editor (BlockChanges struct)
     /// Returns a mapping of temporary IDs to permanent IDs for newly inserted blocks
     func applyBlockChangesFromEditor(_ changes: BlockChanges, for projectId: String) throws -> [String: String] {
+        var changes = changes  // Mutable copy (BlockChanges is a struct)
         var idMapping: [String: String] = [:]
 
         try write { db in
+            // Safety net: reject mass deletes (>50% of blocks, minimum 6)
+            if !changes.deletes.isEmpty {
+                let totalBlocks = try Block.filter(Block.Columns.projectId == projectId).fetchCount(db)
+                let deleteRatio = Double(changes.deletes.count) / Double(max(totalBlocks, 1))
+                if deleteRatio > 0.5 && changes.deletes.count > 5 {
+                    print("[Database+Blocks] SAFETY NET: Rejecting mass delete (\(changes.deletes.count)/\(totalBlocks) blocks). First IDs: \(changes.deletes.prefix(5))")
+                    changes.deletes = []
+                }
+            }
+
             // Query max sort order ONCE for the entire transaction
             var nextSortOrder = (try Double.fetchOne(db,
                 sql: "SELECT MAX(sortOrder) FROM block WHERE projectId = ?",
@@ -454,17 +465,128 @@ extension ProjectDatabase {
         return idMapping
     }
 
-    /// Replace all blocks for a project (used during initial parse)
+    /// Replace all blocks for a project, preserving heading IDs and metadata by title match.
+    /// Used during initial parse, project open, and non-zoomed CodeMirror re-parse.
     func replaceBlocks(_ blocks: [Block], for projectId: String) throws {
         try write { db in
-            // Delete existing blocks
-            try Block
+            let existingBlocks = try Block
                 .filter(Block.Columns.projectId == projectId)
-                .deleteAll(db)
+                .order(Block.Columns.sortOrder)
+                .fetchAll(db)
 
-            // Insert in order (already sorted by sortOrder)
+            var idByTitle: [String: String] = [:]
+            var metadataByTitle: [String: (status: SectionStatus?, tags: [String]?, wordGoal: Int?, goalType: GoalType)] = [:]
+            for block in existingBlocks where block.blockType == .heading {
+                if idByTitle[block.textContent] == nil {
+                    idByTitle[block.textContent] = block.id
+                }
+                metadataByTitle[block.textContent] = (
+                    status: block.status, tags: block.tags,
+                    wordGoal: block.wordGoal, goalType: block.goalType
+                )
+            }
+
+            try Block.filter(Block.Columns.projectId == projectId).deleteAll(db)
+
             for var block in blocks {
+                if block.blockType == .heading, let preservedId = idByTitle[block.textContent] {
+                    block.id = preservedId
+                    idByTitle.removeValue(forKey: block.textContent)
+                }
+                if block.blockType == .heading, let meta = metadataByTitle[block.textContent] {
+                    block.status = meta.status
+                    block.tags = meta.tags
+                    block.wordGoal = meta.wordGoal
+                    block.goalType = meta.goalType
+                }
                 try block.insert(db)
+            }
+        }
+    }
+
+    /// Replace blocks within a sort order range (used during zoomed CodeMirror re-parse).
+    /// Only deletes/inserts blocks in [startSortOrder, endSortOrder), preserving blocks outside the zoom.
+    /// Restores heading metadata (status, tags, wordGoal, goalType) by title match.
+    func replaceBlocksInRange(
+        _ newBlocks: [Block],
+        for projectId: String,
+        startSortOrder: Double,
+        endSortOrder: Double?
+    ) throws {
+        try write { db in
+            // 1. Fetch existing blocks in range to preserve heading metadata and IDs
+            var existingQuery = Block
+                .filter(Block.Columns.projectId == projectId)
+                .filter(Block.Columns.sortOrder >= startSortOrder)
+            if let end = endSortOrder {
+                existingQuery = existingQuery.filter(Block.Columns.sortOrder < end)
+            }
+            let existingBlocks = try existingQuery.order(Block.Columns.sortOrder).fetchAll(db)
+
+            // Build metadata lookup by title for heading blocks
+            var metadataByTitle: [String: (status: SectionStatus?, tags: [String]?, wordGoal: Int?, goalType: GoalType)] = [:]
+            // Build ID lookup by title for heading blocks (preserves zoomedSectionId across re-parses)
+            var idByTitle: [String: String] = [:]
+            for block in existingBlocks where block.blockType == .heading {
+                metadataByTitle[block.textContent] = (
+                    status: block.status,
+                    tags: block.tags,
+                    wordGoal: block.wordGoal,
+                    goalType: block.goalType
+                )
+                if idByTitle[block.textContent] == nil {
+                    idByTitle[block.textContent] = block.id
+                }
+            }
+
+            // 2. Delete blocks in range
+            var deleteQuery = Block
+                .filter(Block.Columns.projectId == projectId)
+                .filter(Block.Columns.sortOrder >= startSortOrder)
+            if let end = endSortOrder {
+                deleteQuery = deleteQuery.filter(Block.Columns.sortOrder < end)
+            }
+            try deleteQuery.deleteAll(db)
+
+            // 3. Insert new blocks with sort orders starting at startSortOrder
+            for (index, var block) in newBlocks.enumerated() {
+                block.sortOrder = startSortOrder + Double(index)
+
+                // 4. Preserve heading ID by title match (first-match-wins)
+                if block.blockType == .heading, let preservedId = idByTitle[block.textContent] {
+                    block.id = preservedId
+                    idByTitle.removeValue(forKey: block.textContent)
+                }
+
+                // 5. Restore heading metadata by title match
+                if block.blockType == .heading, let meta = metadataByTitle[block.textContent] {
+                    block.status = meta.status
+                    block.tags = meta.tags
+                    block.wordGoal = meta.wordGoal
+                    block.goalType = meta.goalType
+                }
+
+                try block.insert(db)
+            }
+
+            // 6. Normalize sort orders inline (atomic with delete+insert above)
+            let allProjectBlocks = try Block
+                .filter(Block.Columns.projectId == projectId)
+                .order(Block.Columns.sortOrder)
+                .fetchAll(db)
+            let sorted = allProjectBlocks.sorted { a, b in
+                let aKey = (a.sortOrder, a.blockType == .heading ? 0 : 1)
+                let bKey = (b.sortOrder, b.blockType == .heading ? 0 : 1)
+                return aKey < bKey
+            }
+            let now = Date()
+            for (index, var block) in sorted.enumerated() {
+                let newSortOrder = Double(index + 1)
+                if block.sortOrder != newSortOrder {
+                    block.sortOrder = newSortOrder
+                    block.updatedAt = now
+                    try block.update(db)
+                }
             }
         }
     }

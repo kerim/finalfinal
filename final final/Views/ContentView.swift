@@ -942,6 +942,28 @@ struct ContentView: View {
                 headingUpdates: headingUpdates
             )
 
+            // Recalculate zoomedBlockRange after sort orders changed
+            if editorState.zoomedBlockRange != nil,
+               let zoomedIds = editorState.zoomedSectionIds {
+                // Find the zoomed heading's new sort order
+                let primaryId = zoomedIds.first ?? ""
+                if let headingBlock = try db.fetchBlock(id: primaryId),
+                   let headingLevel = headingBlock.headingLevel {
+                    let allBlocks = try db.fetchBlocks(projectId: pid)
+                    var endSortOrder: Double?
+                    for block in allBlocks where block.sortOrder > headingBlock.sortOrder {
+                        if block.blockType == .heading, let level = block.headingLevel, level <= headingLevel {
+                            endSortOrder = block.sortOrder
+                            break
+                        }
+                    }
+                    editorState.zoomedBlockRange = (start: headingBlock.sortOrder, end: endSortOrder)
+                } else {
+                    // Heading not found — clear zoom range to prevent stale state
+                    editorState.zoomedBlockRange = nil
+                }
+            }
+
             // Also persist to legacy section table
             var sectionChanges: [SectionChange] = []
             for (index, viewModel) in editorState.sections.enumerated() {
@@ -1216,7 +1238,7 @@ struct ContentView: View {
 
         // Wire up hierarchy enforcement after sections are updated from database
         // This ensures slash commands that create new headings trigger rebalancing
-        editorState.onSectionsUpdated = { [weak editorState, weak sectionSyncService] in
+        editorState.onSectionsUpdated = { [weak editorState, weak sectionSyncService, weak blockSyncService] in
             guard let editorState = editorState,
                   let sectionSyncService = sectionSyncService else { return }
 
@@ -1235,6 +1257,15 @@ struct ContentView: View {
                         editorState: editorState,
                         syncService: sectionSyncService
                     )
+                    // Wait for WebView to process new content before pushing IDs
+                    try? await Task.sleep(for: .milliseconds(100))
+                    if let blockSyncService = blockSyncService {
+                        if let range = editorState.zoomedBlockRange {
+                            try? await blockSyncService.pushBlockIds(for: range)
+                        } else {
+                            try? await blockSyncService.pushBlockIds()
+                        }
+                    }
                 }
             }
         }
@@ -1603,8 +1634,11 @@ extension View {
                     editorState.toggleEditorMode()
                     editorState.contentState = .idle
                 } else {
-                    // Switching FROM source mode TO WYSIWYG - extract anchors and strip bibliography marker
+                    // Switching FROM source mode TO WYSIWYG - set state BEFORE flush
                     editorState.contentState = .editorTransition
+                    editorState.flushCodeMirrorSyncIfNeeded()
+
+                    // Extract anchors and strip bibliography marker
                     let (cleaned, anchors) = sectionSyncService.extractSectionAnchors(
                         markdown: editorState.sourceContent
                     )
@@ -1752,33 +1786,43 @@ extension View {
                 annotationSyncService.contentChanged(newValue)
 
                 // When in source mode, re-parse blocks (BlockSyncService only works with Milkdown)
-                if editorState.editorMode == .source && !newValue.isEmpty && editorState.zoomedSectionId == nil {
-                    if let db = documentManager.projectDatabase,
-                       let pid = documentManager.projectId {
+                if editorState.editorMode == .source && !newValue.isEmpty {
+                    if editorState.zoomedSectionId == nil {
+                        // Non-zoomed: full document re-parse via replaceBlocks()
+                        if let db = documentManager.projectDatabase,
+                           let pid = documentManager.projectId {
+                            editorState.blockReparseTask?.cancel()
+                            editorState.blockReparseTask = Task {
+                                try? await Task.sleep(for: .milliseconds(1000))
+                                guard !Task.isCancelled else { return }
+                                guard editorState.contentState == .idle,
+                                      editorState.editorMode == .source,
+                                      editorState.zoomedSectionId == nil else { return }
+                                let existing = try? db.fetchBlocks(projectId: pid)
+                                var metadata: [String: SectionMetadata] = [:]
+                                for block in existing ?? [] where block.blockType == .heading {
+                                    metadata[block.textContent] = SectionMetadata(
+                                        status: block.status,
+                                        tags: block.tags?.isEmpty == false ? block.tags : nil,
+                                        wordGoal: block.wordGoal
+                                    )
+                                }
+                                let blocks = BlockParser.parse(
+                                    markdown: newValue,
+                                    projectId: pid,
+                                    existingSectionMetadata: metadata.isEmpty ? nil : metadata
+                                )
+                                try? db.replaceBlocks(blocks, for: pid)
+                            }
+                        }
+                    } else if editorState.zoomedBlockRange != nil {
+                        // Zoomed: scoped re-parse via flushCodeMirrorSyncIfNeeded()
                         editorState.blockReparseTask?.cancel()
                         editorState.blockReparseTask = Task {
                             try? await Task.sleep(for: .milliseconds(1000))
-                            guard !Task.isCancelled else { return }
-                            // Re-check guards after sleep
-                            guard editorState.contentState == .idle,
-                                  editorState.editorMode == .source,
-                                  editorState.zoomedSectionId == nil else { return }
-                            // Preserve existing heading metadata
-                            let existing = try? db.fetchBlocks(projectId: pid)
-                            var metadata: [String: SectionMetadata] = [:]
-                            for block in existing ?? [] where block.blockType == .heading {
-                                metadata[block.textContent] = SectionMetadata(
-                                    status: block.status,
-                                    tags: block.tags?.isEmpty == false ? block.tags : nil,
-                                    wordGoal: block.wordGoal
-                                )
-                            }
-                            let blocks = BlockParser.parse(
-                                markdown: newValue,
-                                projectId: pid,
-                                existingSectionMetadata: metadata.isEmpty ? nil : metadata
-                            )
-                            try? db.replaceBlocks(blocks, for: pid)
+                            guard !Task.isCancelled, editorState.contentState == .idle,
+                                  editorState.editorMode == .source else { return }
+                            editorState.flushCodeMirrorSyncIfNeeded()
                         }
                     }
                 }
