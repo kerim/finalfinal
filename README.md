@@ -33,6 +33,10 @@ Also, a lot of things you would expect from a word processor aren't there yet: t
 
 # What's New
 
+## Version 0.2.33
+
+- Fixed two bugs with source view: caching old project when starting new one, and loading delay on opening existing project. 
+
 ## Version 02.31
 
 - Transition to block-based architecture started in Version 02.15 has been completed. This fixes a number of bugs with the zoom feature and makes it much faster.  (Still need to clean up some UI issues that were caused by the rewrite.) 
@@ -48,11 +52,6 @@ Also, a lot of things you would expect from a word processor aren't there yet: t
 ## Version 02.19
 
 - word-count improvements, as well as the addition of word count goals and status markers
-
-## Version 02.17
-
-* Improved zoom mode. Option-double-click now zooms in on a single section, regular double-click shows section and sub-sections. Pseudo sections only zoom on themselves.
-* Improved focus mode - full secreen, hide side bars, hide header and footer, collapse annotations, and remember state on restart, or exit.
 
 # Roadmap
 
