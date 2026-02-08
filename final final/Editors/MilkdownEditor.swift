@@ -154,13 +154,15 @@ struct MilkdownEditor: NSViewRepresentable {
         // Skip content/theme pushes during project reset to prevent empty flash
         guard !isResettingContent else { return }
 
-        if context.coordinator.shouldPushContent(content) {
-            context.coordinator.setContent(content)
-        }
-
+        // Theme FIRST — CSS variables must be set before content renders
+        // (matches batchInitialize() order: setTheme → setContent)
         if context.coordinator.lastThemeCss != themeCSS {
             context.coordinator.lastThemeCss = themeCSS
             context.coordinator.setTheme(themeCSS)
+        }
+
+        if context.coordinator.shouldPushContent(content) {
+            context.coordinator.setContent(content)
         }
 
         // Handle scroll-to-offset requests from sidebar
@@ -1002,17 +1004,13 @@ struct MilkdownEditor: NSViewRepresentable {
         /// Called after double RAF pattern ensures browser has painted all content
         @MainActor
         private func handlePaintComplete() {
-            print("[MilkdownEditor] ZOOM: paintComplete received at \(Date())")
-
             // Show WebView now that paint is complete
             webView?.alphaValue = 1
-            print("[MilkdownEditor] ZOOM: WebView shown (alphaValue = 1)")
 
             // Call acknowledgement callback if registered (for zoom sync)
             if let callback = onContentAcknowledged {
                 onContentAcknowledged = nil  // One-shot callback
                 callback()
-                print("[MilkdownEditor] ZOOM: Acknowledgement callback fired")
             }
         }
 
@@ -1066,13 +1064,6 @@ struct MilkdownEditor: NSViewRepresentable {
         func setContent(_ markdown: String) {
             guard isEditorReady, let webView else { return }
 
-            #if DEBUG
-            // PASTE DEBUG: Log setContent calls with content preview and call stack
-            let preview = String(markdown.prefix(100)).replacingOccurrences(of: "\n", with: "\\n")
-            print("[MilkdownEditor] setContent called with \(markdown.count) chars: \(preview)...")
-            print("[MilkdownEditor] setContent stack: \(Thread.callStackSymbols.prefix(8).joined(separator: "\n"))")
-            #endif
-
             lastPushedContent = markdown
             lastPushTime = Date()  // Record push time to prevent poll feedback
 
@@ -1090,14 +1081,13 @@ struct MilkdownEditor: NSViewRepresentable {
             // isZoomingContent is set in the same updateNSView cycle as the content change,
             // so it's guaranteed to be fresh (unlike contentState which may be stale due to
             // SwiftUI's reactive notification timing).
-            let isZoom = isZoomingContent
-            let optionsArg = isZoom ? ", {scrollToStart: true}" : ""
+            let shouldScrollToStart = isZoomingContent
+            let optionsArg = shouldScrollToStart ? ", {scrollToStart: true}" : ""
 
             // Hide WKWebView at compositor level during zoom transitions
             // This prevents visible scroll animation by hiding at the CALayer level
             // before any content changes, ensuring no intermediate frames are visible
-            if isZoom {
-                print("[MilkdownEditor] ZOOM: Hiding WebView at \(Date())")
+            if shouldScrollToStart {
                 webView.alphaValue = 0
             }
 
@@ -1107,16 +1097,9 @@ struct MilkdownEditor: NSViewRepresentable {
                 window.FinalFinal.setContent(\(jsonString)\(optionsArg));
                 window.FinalFinal.getContent();
             """) { [weak self] result, error in
-                #if DEBUG
-                if let result = result as? String {
-                    let ackPreview = String(result.prefix(100)).replacingOccurrences(of: "\n", with: "\\n")
-                    print("[MilkdownEditor] setContent acknowledged: \(result.count) chars: \(ackPreview)...")
-                }
-                #endif
-
                 // For zoom transitions, DON'T show WebView here - wait for paintComplete message
                 // The JS double-RAF pattern will signal when paint is complete
-                if !isZoom {
+                if !shouldScrollToStart {
                     // For non-zoom content changes, call acknowledgement immediately
                     if let callback = self?.onContentAcknowledged {
                         self?.onContentAcknowledged = nil  // One-shot callback
@@ -1135,7 +1118,7 @@ struct MilkdownEditor: NSViewRepresentable {
 
         func setTheme(_ cssVariables: String) {
             guard isEditorReady, let webView else { return }
-            let escaped = cssVariables.replacingOccurrences(of: "`", with: "\\`")
+            let escaped = cssVariables.escapedForJSTemplateLiteral
             webView.evaluateJavaScript("window.FinalFinal.setTheme(`\(escaped)`)") { _, _ in }
         }
 

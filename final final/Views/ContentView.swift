@@ -72,6 +72,10 @@ struct ContentView: View {
     /// Find bar state
     @State private var findBarState = FindBarState()
 
+    /// Suppress the first bibliography notification after a project switch
+    /// (it fires from the old project's debounced citekey check and is redundant)
+    @State private var suppressNextBibliographyRebuild = false
+
     /// Callback when project is closed (to return to picker)
     var onProjectClosed: (() -> Void)?
 
@@ -126,6 +130,16 @@ struct ContentView: View {
                 guard editorState.zoomedSectionId == nil else { return }
                 // Skip during any content transition (including editor switch)
                 guard editorState.contentState == .idle else { return }
+                // Skip the first bibliography notification after a project switch
+                // (it fires from the old project's debounced citekey check)
+                guard !suppressNextBibliographyRebuild else {
+                    suppressNextBibliographyRebuild = false
+                    #if DEBUG
+                    print("[ContentView] bibliographySectionChanged suppressed (post-project-switch)")
+                    #endif
+                    return
+                }
+
                 editorState.contentState = .bibliographyUpdate
                 blockSyncService.isSyncSuppressed = true
                 rebuildDocumentContent()
@@ -1414,9 +1428,18 @@ struct ContentView: View {
             }
         }
 
-        // Clear the reset flag after project is configured
-        // This triggers updateNSView → shouldPushContent sees new content → pushes it
+        suppressNextBibliographyRebuild = true
+
+        // Clear the reset flag — triggers updateNSView → setContent (normal path, no alpha hide)
         editorState.isResettingContent = false
+
+        // Scroll to top after content push settles (same approach as mode switch)
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(100))
+            findBarState.activeWebView?.evaluateJavaScript(
+                "window.scrollTo({top: 0, behavior: 'instant'})"
+            ) { _, _ in }
+        }
     }
 
     /// Handle project closed notification

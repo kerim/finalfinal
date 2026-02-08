@@ -637,20 +637,20 @@ struct CodeMirrorEditor: NSViewRepresentable {
             // isZoomingContent is set in the same updateNSView cycle as the content change,
             // so it's guaranteed to be fresh (unlike contentState which may be stale due to
             // SwiftUI's reactive notification timing).
-            let isZoom = isZoomingContent
-            let optionsArg = isZoom ? ", {scrollToStart: true}" : ""
+            let shouldScrollToStart = isZoomingContent
+            let optionsArg = shouldScrollToStart ? ", {scrollToStart: true}" : ""
 
             // Hide WKWebView at compositor level during zoom transitions
             // This prevents visible scroll animation by hiding at the CALayer level
             // before any content changes, ensuring no intermediate frames are visible
-            if isZoom {
+            if shouldScrollToStart {
                 webView.alphaValue = 0
             }
 
             webView.evaluateJavaScript("window.FinalFinal.setContent(`\(escaped)`\(optionsArg))") { [weak self] _, _ in
                 // Show WebView after content is set and scroll reset
                 // No delay needed - JS has forced layout via offsetHeight reads
-                if isZoom {
+                if shouldScrollToStart {
                     self?.webView?.alphaValue = 1
                 }
             }
