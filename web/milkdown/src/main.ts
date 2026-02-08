@@ -7,7 +7,7 @@ import { commonmark } from '@milkdown/kit/preset/commonmark';
 import { gfm } from '@milkdown/kit/preset/gfm';
 import { redo, undo } from '@milkdown/kit/prose/history';
 import { Slice } from '@milkdown/kit/prose/model';
-import { EditorState as PMEditorState, Selection } from '@milkdown/kit/prose/state';
+import { Selection } from '@milkdown/kit/prose/state';
 import { getMarkdown } from '@milkdown/kit/utils';
 import { SlashProvider, slashFactory } from '@milkdown/plugin-slash';
 import {
@@ -2272,19 +2272,28 @@ window.FinalFinal = {
       resolutionTimer = null;
     }
 
-    // Reset ProseMirror state (clears undo history) while preserving document
+    // Clear document via normal transaction (preserves ProseMirror's internal layout caches,
+    // unlike updateState() which destroys them and causes rendering issues on project switch)
     if (editorInstance) {
       try {
         const view = editorInstance.ctx.get(editorViewCtx);
-        const newState = PMEditorState.create({
-          doc: view.state.doc,
-          plugins: view.state.plugins,
-        });
-        view.updateState(newState);
+        const emptyParagraph = view.state.schema.nodes.paragraph.create();
+        const emptyDoc = view.state.schema.nodes.doc.create(null, emptyParagraph);
+        const tr = view.state.tr
+          .replace(0, view.state.doc.content.size, new Slice(emptyDoc.content, 0, 0))
+          .setSelection(Selection.atStart(view.state.tr.doc));
+        tr.setMeta('addToHistory', false);
+        view.dispatch(tr);
+        view.dom.scrollTop = 0;
       } catch {
         // State reset failed, ignore
       }
     }
+
+    // Reset scroll position to top (prevents previous project's scroll persisting)
+    window.scrollTo(0, 0);
+    document.documentElement.scrollTop = 0;
+    document.body.scrollTop = 0;
   },
 
   // Keep old name as alias for backward compatibility
