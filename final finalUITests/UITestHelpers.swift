@@ -71,6 +71,17 @@ extension XCUIElement {
         let expectation = XCTNSPredicateExpectation(predicate: predicate, object: self)
         return XCTWaiter().wait(for: [expectation], timeout: timeout) == .completed
     }
+
+    /// Waits for the element's accessibility value to match a predicate.
+    /// SwiftUI `Text` views with explicit `.accessibilityIdentifier()` put their
+    /// content in `value`, not `label`.
+    /// Example: `element.waitForValue("== 'WYSIWYG'")`
+    /// Example: `element.waitForValue("CONTAINS 'words'")`
+    func waitForValue(_ predicateFormat: String, timeout: TimeInterval = 10) -> Bool {
+        let predicate = NSPredicate(format: "value \(predicateFormat)")
+        let expectation = XCTNSPredicateExpectation(predicate: predicate, object: self)
+        return XCTWaiter().wait(for: [expectation], timeout: timeout) == .completed
+    }
 }
 
 // MARK: - Fixture Helpers

@@ -70,8 +70,8 @@ final class EditorSmokeTests: XCTestCase {
 
         let wordCount = app.staticTexts["status-bar-word-count"]
         XCTAssertTrue(wordCount.waitForExistence(timeout: 10), "Word count should appear in status bar")
-        // Word count should contain "words"
-        XCTAssertTrue(wordCount.label.contains("words"), "Status bar should display word count")
+        // SwiftUI Text with accessibilityIdentifier puts content in .value, not .label
+        XCTAssertTrue(wordCount.waitForValue("CONTAINS 'words'", timeout: 10), "Status bar should display word count")
     }
 
     func testEditorModeToggle() {
@@ -79,31 +79,19 @@ final class EditorSmokeTests: XCTestCase {
         let editorMode = app.staticTexts["status-bar-editor-mode"]
         XCTAssertTrue(editorMode.waitForExistence(timeout: 10), "Editor mode should appear in status bar")
 
-        // Default mode should be WYSIWYG
-        XCTAssertEqual(editorMode.label, "WYSIWYG", "Default editor mode should be WYSIWYG")
+        // SwiftUI Text with accessibilityIdentifier puts content in .value, not .label
+        XCTAssertTrue(editorMode.waitForValue("== 'WYSIWYG'", timeout: 10), "Default editor mode should be WYSIWYG")
 
         // Toggle to Source mode with Cmd+/
         app.typeKey("/", modifierFlags: .command)
 
         // Wait for mode to change
-        let sourcePredicate = NSPredicate(format: "label == %@", "Source")
-        let sourceExpectation = XCTNSPredicateExpectation(predicate: sourcePredicate, object: editorMode)
-        XCTAssertEqual(
-            XCTWaiter().wait(for: [sourceExpectation], timeout: 10),
-            .completed,
-            "Editor mode should switch to Source"
-        )
+        XCTAssertTrue(editorMode.waitForValue("== 'Source'", timeout: 10), "Editor mode should switch to Source")
 
         // Toggle back to WYSIWYG
         app.typeKey("/", modifierFlags: .command)
 
-        let wysiwygPredicate = NSPredicate(format: "label == %@", "WYSIWYG")
-        let wysiwygExpectation = XCTNSPredicateExpectation(predicate: wysiwygPredicate, object: editorMode)
-        XCTAssertEqual(
-            XCTWaiter().wait(for: [wysiwygExpectation], timeout: 10),
-            .completed,
-            "Editor mode should switch back to WYSIWYG"
-        )
+        XCTAssertTrue(editorMode.waitForValue("== 'WYSIWYG'", timeout: 10), "Editor mode should switch back to WYSIWYG")
     }
 
     func testSidebarToggles() {
