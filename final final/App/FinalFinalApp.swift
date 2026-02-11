@@ -125,11 +125,30 @@ struct FinalFinalApp: App {
                 .foregroundColor(.secondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityIdentifier("loading-view")
     }
 
     /// Determine the initial app state on launch
     @MainActor
     private func determineInitialState() async {
+        // Test mode: skip normal flow, open fixture directly
+        if TestMode.isUITesting {
+            TestMode.clearTestState()
+            if let fixturePath = TestMode.testFixturePath {
+                let url = URL(fileURLWithPath: fixturePath)
+                do {
+                    try documentManager.openProject(at: url)
+                    appViewState = .editor
+                } catch {
+                    print("[TestMode] Failed to open fixture: \(error)")
+                    appViewState = .picker
+                }
+            } else {
+                appViewState = .picker
+            }
+            return
+        }
+
         // Check if Getting Started should be shown (first launch or version update)
         if documentManager.shouldShowGettingStarted {
             documentManager.markGettingStartedSeen()

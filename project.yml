@@ -6,6 +6,21 @@ options:
   xcodeVersion: "15.0"
   generateEmptyDirectories: true
 
+schemes:
+  final final:
+    build:
+      targets:
+        final final: all
+        final finalTests: [test]
+        final finalUITests: [test]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - final finalTests
+        - final finalUITests
+
 packages:
   GRDB:
     url: https://github.com/groue/GRDB.swift
@@ -37,6 +52,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.kerim.final-final
         PRODUCT_NAME: FINAL|FINAL
+        PRODUCT_MODULE_NAME: final_final
         MARKETING_VERSION: "1"
         CURRENT_PROJECT_VERSION: "0.2.34"
         INFOPLIST_GENERATION_MODE: GeneratedFile
@@ -95,3 +111,22 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.kerim.final-final-tests
         SWIFT_VERSION: "5.9"
         GENERATE_INFOPLIST_FILE: YES
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/FINAL|FINAL.app/Contents/MacOS/FINAL|FINAL"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+
+  final finalUITests:
+    type: bundle.ui-testing
+    platform: macOS
+    sources:
+      - path: final finalUITests
+      - path: final finalTests/Fixtures
+        type: folder
+        buildPhase: resources
+    dependencies:
+      - target: final final
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.kerim.final-final-uitests
+        SWIFT_VERSION: "5.9"
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: final final
