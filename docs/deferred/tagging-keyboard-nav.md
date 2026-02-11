@@ -1,4 +1,4 @@
-# Deferred: Phase 1.6c - Tagging & Keyboard Navigation
+# Deferred: Tagging & Keyboard Navigation
 
 **Deferred from:** Phase 1.6d planning (2026-01-27)
 **Reason:** Focus on zoom sync and header enforcement first
