@@ -318,6 +318,8 @@ struct ContentView: View {
         }
         .frame(minWidth: 250)
         .background(themeManager.currentTheme.sidebarBackground)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("outline-sidebar")
     }
 
     /// Toolbar content for annotation panel toggle
@@ -1067,6 +1069,8 @@ struct ContentView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(themeManager.currentTheme.editorBackground)
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("editor-area")
 
             // Annotation panel (conditionally shown)
             if editorState.isAnnotationPanelVisible {

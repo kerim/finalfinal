@@ -1,3 +1,4 @@
+/// <reference types="../global" />
 import { autocompletion, type CompletionContext, type CompletionResult } from '@codemirror/autocomplete';
 import { defaultKeymap, history, redo, undo } from '@codemirror/commands';
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
@@ -1284,6 +1285,20 @@ window.FinalFinal = {
       extensions: editorExtensions,
     });
     editorView.setState(newState);
+  },
+
+  // Test snapshot hook — read-only, calls existing API methods, no behavior change
+  __testSnapshot() {
+    const content = window.FinalFinal.getContent();
+    const cursorPosition = window.FinalFinal.getCursorPosition();
+    const stats = window.FinalFinal.getStats();
+    return {
+      content,
+      cursorPosition,
+      stats,
+      editorReady: window.__CODEMIRROR_DEBUG__?.editorReady ?? false,
+      focusModeEnabled: false, // CodeMirror has no focus mode
+    };
   },
 };
 

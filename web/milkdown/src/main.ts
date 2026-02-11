@@ -1,3 +1,4 @@
+/// <reference types="../global" />
 // Milkdown WYSIWYG Editor for final final
 // Uses window.FinalFinal API for Swift ↔ JS communication
 
@@ -57,7 +58,7 @@ import {
 } from './citation-search';
 import { getCiteprocEngine } from './citeproc-engine';
 import { mdToTextOffset, textToMdOffset } from './cursor-mapping';
-import { focusModePlugin, setFocusModeEnabled } from './focus-mode-plugin';
+import { focusModePlugin, isFocusModeEnabled, setFocusModeEnabled } from './focus-mode-plugin';
 import { headingNodeViewPlugin } from './heading-nodeview-plugin';
 import { highlightMark, highlightPlugin } from './highlight-plugin';
 import { clearSearchMatches, searchPlugin, setSearchMatches } from './search-plugin';
@@ -2463,6 +2464,20 @@ window.FinalFinal = {
       matchCount: searchMatches.length,
       currentIndex: currentMatchIndex + 1,
       options: currentSearchOptions,
+    };
+  },
+
+  // Test snapshot hook — read-only, calls existing API methods, no behavior change
+  __testSnapshot() {
+    const content = window.FinalFinal.getContent();
+    const cursorPosition = window.FinalFinal.getCursorPosition();
+    const stats = window.FinalFinal.getStats();
+    return {
+      content,
+      cursorPosition,
+      stats,
+      editorReady: editorInstance !== null,
+      focusModeEnabled: isFocusModeEnabled(),
     };
   },
 };

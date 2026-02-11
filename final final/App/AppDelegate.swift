@@ -25,6 +25,24 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var escapeKeyMonitor: Any?
 
     func applicationWillFinishLaunching(_ notification: Notification) {
+        // In test mode, clean saved application state from the CORRECT path.
+        // The test runner can't do this because its NSHomeDirectory() is containerized
+        // and points to the wrong location. The app's NSHomeDirectory() is the real user home.
+        if TestMode.isUITesting {
+            let savedStatePath = NSHomeDirectory()
+                + "/Library/Saved Application State/com.kerim.final-final.savedState"
+            let exists = FileManager.default.fileExists(atPath: savedStatePath)
+            #if DEBUG
+            print("[AppDelegate] Test mode: saved state at \(savedStatePath) exists=\(exists)")
+            #endif
+            if exists {
+                try? FileManager.default.removeItem(atPath: savedStatePath)
+                #if DEBUG
+                print("[AppDelegate] Test mode: removed saved application state")
+                #endif
+            }
+        }
+
         // Start preloading editor WebView EARLY - before any windows/views are created
         // This gives the WebView time to load while database initializes
         EditorPreloader.shared.startPreloading()
@@ -36,6 +54,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // Disable window tabbing - removes "Show Tab Bar" and "Show All Tabs" from View menu
         // This app doesn't use a tabbed interface
         NSWindow.allowsAutomaticWindowTabbing = false
+
+        // Explicitly set activation policy to .regular so the app gets a dock icon
+        // and creates windows. XCUITest's launch mechanism may not set this automatically.
+        NSApp.setActivationPolicy(.regular)
 
         do {
             database = try AppDatabase.makeDefault()
@@ -100,6 +122,40 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 #if DEBUG
                 print("[AppDelegate] Set window delegate for Cmd-W interception")
                 #endif
+            }
+        }
+
+        // Workaround for XCUITest window-creation bug (FB15577018):
+        // XCUIApplication.launch() bypasses LaunchServices, so SwiftUI's WindowGroup
+        // never receives the kAEOpenApplication event that triggers initial window creation.
+        // Re-activate via LaunchServices to send the proper Apple Events.
+        if TestMode.isUITesting {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                if NSApp.windows.isEmpty {
+                    #if DEBUG
+                    print("[AppDelegate] Test mode: 0 windows after 0.5s, re-activating via LaunchServices")
+                    #endif
+                    let config = NSWorkspace.OpenConfiguration()
+                    config.activates = true
+                    NSWorkspace.shared.openApplication(
+                        at: Bundle.main.bundleURL,
+                        configuration: config
+                    ) { _, error in
+                        if let error = error {
+                            #if DEBUG
+                            print("[AppDelegate] LaunchServices re-activation failed: \(error)")
+                            #endif
+                        }
+                    }
+
+                    // Capture window delegate after recovery
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+                        if let window = NSApp.windows.first, self?.mainWindow == nil {
+                            self?.mainWindow = window
+                            window.delegate = self
+                        }
+                    }
+                }
             }
         }
 

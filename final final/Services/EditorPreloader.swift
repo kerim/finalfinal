@@ -31,6 +31,7 @@ final class EditorPreloader: NSObject, WKNavigationDelegate {
 
     /// Call from AppDelegate.applicationDidFinishLaunching
     func startPreloading() {
+        guard !TestMode.isUITesting else { return }
         startMilkdownPreloading()
         startCodeMirrorPreloading()
     }

@@ -64,12 +64,14 @@ struct ProjectPickerView: View {
                     handleNewProject()
                 }
                 .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("new-project-button")
 
                 Button("Open Project...") {
                     handleOpenProject()
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(.gray)
+                .accessibilityIdentifier("open-project-button")
             }
             .padding(.top, 8)
 
@@ -88,6 +90,8 @@ struct ProjectPickerView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(themeManager.currentTheme.editorBackground)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("project-picker")
     }
 
     private func openRecentProject(_ entry: DocumentManager.RecentProjectEntry) {
