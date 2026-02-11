@@ -20,26 +20,36 @@ extension XCUIApplication {
     /// Launches the app in UI testing mode without a fixture (shows picker)
     func launchForTesting() {
         Self.cleanSavedApplicationState()
-        launchArguments = ["--uitesting"]
+        launchEnvironment["FF_UI_TESTING"] = "1"
         launch()
-        activate()
     }
 
     /// Launches the app in UI testing mode with a fixture (shows editor)
     func launchForTesting(fixturePath: String) {
         Self.cleanSavedApplicationState()
-        launchArguments = ["--uitesting", "--test-fixture-path", fixturePath]
+        launchEnvironment["FF_UI_TESTING"] = "1"
+        launchEnvironment["FF_TEST_FIXTURE_PATH"] = fixturePath
         launch()
-        activate()
     }
 
     /// Remove saved window state so each test run starts fresh.
     /// This replaces `-ApplePersistenceIgnoreState YES` which prevents
     /// SwiftUI's WindowGroup from creating any window at all.
+    ///
+    /// Note: NSHomeDirectory() in the test runner may differ from the app's home.
+    /// We clean both the test runner's home AND the real user home to be safe.
     private static func cleanSavedApplicationState() {
-        let savedStatePath = NSHomeDirectory()
-            + "/Library/Saved Application State/com.kerim.final-final.savedState"
-        try? FileManager.default.removeItem(atPath: savedStatePath)
+        let bundleState = "Library/Saved Application State/com.kerim.final-final.savedState"
+        let testRunnerPath = NSHomeDirectory() + "/" + bundleState
+
+        // Also try the real user home (in case test runner home differs)
+        let realUserHome = FileManager.default.homeDirectoryForCurrentUser.path
+        let realUserPath = realUserHome + "/" + bundleState
+
+        try? FileManager.default.removeItem(atPath: testRunnerPath)
+        if realUserPath != testRunnerPath {
+            try? FileManager.default.removeItem(atPath: realUserPath)
+        }
     }
 }
 

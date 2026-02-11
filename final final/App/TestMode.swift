@@ -7,13 +7,11 @@ import Foundation
 
 enum TestMode {
     static var isUITesting: Bool {
-        ProcessInfo.processInfo.arguments.contains("--uitesting")
+        ProcessInfo.processInfo.environment["FF_UI_TESTING"] == "1"
     }
 
     static var testFixturePath: String? {
-        guard let index = ProcessInfo.processInfo.arguments.firstIndex(of: "--test-fixture-path"),
-              index + 1 < ProcessInfo.processInfo.arguments.count else { return nil }
-        return ProcessInfo.processInfo.arguments[index + 1]
+        ProcessInfo.processInfo.environment["FF_TEST_FIXTURE_PATH"]
     }
 
     /// Clears UserDefaults keys that could interfere with test isolation

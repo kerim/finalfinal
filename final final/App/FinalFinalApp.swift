@@ -60,30 +60,27 @@ struct FinalFinalApp: App {
             }
             // Listen for project lifecycle notifications to sync state
             .onReceive(NotificationCenter.default.publisher(for: .projectDidOpen)) { _ in
-                print("[FinalFinalApp] Received .projectDidOpen notification")
                 handleProjectOpened()
             }
             .onReceive(NotificationCenter.default.publisher(for: .projectDidCreate)) { _ in
-                print("[FinalFinalApp] Received .projectDidCreate notification")
                 handleProjectOpened()
             }
             .onReceive(NotificationCenter.default.publisher(for: .projectDidClose)) { _ in
-                print("[FinalFinalApp] Received .projectDidClose notification")
                 handleProjectClosed()
             }
             .onReceive(NotificationCenter.default.publisher(for: .openGettingStarted)) { _ in
-                print("[FinalFinalApp] Received .openGettingStarted notification")
                 openGettingStarted()
             }
             // Listen for command notifications (from menu)
             // Note: .newProject and .openProject are handled by AppDelegate only
             // to avoid duplicate panel creation that prevents dismissal
             .onReceive(NotificationCenter.default.publisher(for: .closeProject)) { _ in
-                print("[FinalFinalApp] Received .closeProject command")
                 FileOperations.handleCloseProject()
             }
             .onChange(of: appViewState) { oldState, newState in
+                #if DEBUG
                 print("[FinalFinalApp] State changed: \(oldState) -> \(newState)")
+                #endif
             }
         }
         .commands {
@@ -98,8 +95,6 @@ struct FinalFinalApp: App {
                 NotificationCenter.default.post(name: .openGettingStarted, object: nil)
             })
         }
-        .handlesExternalEvents(matching: ["open"])
-
         // Preferences window
         Settings {
             PreferencesView()
@@ -140,7 +135,9 @@ struct FinalFinalApp: App {
                     try documentManager.openProject(at: url)
                     appViewState = .editor
                 } catch {
+                    #if DEBUG
                     print("[TestMode] Failed to open fixture: \(error)")
+                    #endif
                     appViewState = .picker
                 }
             } else {
@@ -163,7 +160,9 @@ struct FinalFinalApp: App {
                 return
             }
         } catch {
+            #if DEBUG
             print("[FinalFinalApp] Failed to restore last project: \(error)")
+            #endif
         }
 
         // Show project picker
@@ -180,21 +179,26 @@ struct FinalFinalApp: App {
         } else {
             appViewState = .editor
         }
+        #if DEBUG
         print("[FinalFinalApp] Project opened, state: \(appViewState)")
+        #endif
     }
 
     /// Handle project closed notification - show picker
     @MainActor
     private func handleProjectClosed() {
+        #if DEBUG
         print("[FinalFinalApp] handleProjectClosed() called, hasOpenProject: \(documentManager.hasOpenProject)")
+        #endif
         // Only update state if no project is open
         // (avoids race conditions when switching projects)
         guard !documentManager.hasOpenProject else {
+            #if DEBUG
             print("[FinalFinalApp] handleProjectClosed() - skipping because hasOpenProject=true")
+            #endif
             return
         }
         appViewState = .picker
-        print("[FinalFinalApp] Project closed, showing picker")
     }
 
     /// Open the Getting Started project
@@ -208,9 +212,10 @@ struct FinalFinalApp: App {
         do {
             try documentManager.openGettingStarted()
             appViewState = .gettingStarted
-            print("[FinalFinalApp] Opened Getting Started")
         } catch {
+            #if DEBUG
             print("[FinalFinalApp] Failed to open Getting Started: \(error)")
+            #endif
             // Fall back to picker on error
             appViewState = .picker
         }

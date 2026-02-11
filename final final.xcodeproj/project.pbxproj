@@ -81,6 +81,7 @@
 		9E8D8F33D47F7001D135296C /* ZoteroService.swift in Sources */ = {isa = PBXBuildFile; fileRef = E16909CB53D2BCFD8CC1B0BF /* ZoteroService.swift */; };
 		9E99C57C2D8101B560301BAE /* BlockParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0EE6A723C923D316B9CE89C /* BlockParser.swift */; };
 		9F8A84E5700503E3140BB6AC /* Database+Blocks.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3B8BDB22DF0AC3535250A72E /* Database+Blocks.swift */; };
+		A260B9AEA58D00DA58E332AD /* content.sqlite in Resources */ = {isa = PBXBuildFile; fileRef = 342DA0CDD64AC4355DCB9DA7 /* content.sqlite */; };
 		A7F047CACD5338BFF13C8336 /* OutlineNode.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF113F2ADAA8371F7C810BF0 /* OutlineNode.swift */; };
 		ABB3B86E925FF4196F579E31 /* FindBarState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 574D4E2E57B58CBB3CCCA8B1 /* FindBarState.swift */; };
 		AC04D7D64FA25ADC4D649125 /* ProjectIntegrityChecker.swift in Sources */ = {isa = PBXBuildFile; fileRef = A12F8033BDC1E3ED37C83195 /* ProjectIntegrityChecker.swift */; };
@@ -142,6 +143,7 @@
 		2AAD6FB6258FBF011A89ECFC /* ColorScheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ColorScheme.swift; sourceTree = "<group>"; };
 		2B7205FC48760A149A8B0BF8 /* AutoBackupService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutoBackupService.swift; sourceTree = "<group>"; };
 		31C89F3A4269349290CD8F03 /* EditorViewState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorViewState.swift; sourceTree = "<group>"; };
+		342DA0CDD64AC4355DCB9DA7 /* content.sqlite */ = {isa = PBXFileReference; lastKnownFileType = file; path = content.sqlite; sourceTree = "<group>"; };
 		349348AA5F221A0782421BDB /* TestMode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TestMode.swift; sourceTree = "<group>"; };
 		355B348D7655EE1EA841872D /* SmokeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SmokeTests.swift; sourceTree = "<group>"; };
 		36487B030EB59318DB746D86 /* ThemeCommands.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThemeCommands.swift; sourceTree = "<group>"; };
@@ -321,6 +323,15 @@
 			path = Helpers;
 			sourceTree = "<group>";
 		};
+		3968114F8AC7B20B7B833FD5 /* test-fixture.ff */ = {
+			isa = PBXGroup;
+			children = (
+				342DA0CDD64AC4355DCB9DA7 /* content.sqlite */,
+				D6C3564D151F4C9F7DBAD60A /* references */,
+			);
+			path = "test-fixture.ff";
+			sourceTree = "<group>";
+		};
 		3F528C948E209CDF817C3EC8 /* ViewState */ = {
 			isa = PBXGroup;
 			children = (
@@ -344,6 +355,7 @@
 		713A66A0133FFEE258039893 /* Fixtures */ = {
 			isa = PBXGroup;
 			children = (
+				3968114F8AC7B20B7B833FD5 /* test-fixture.ff */,
 			);
 			path = Fixtures;
 			sourceTree = "<group>";
@@ -523,6 +535,13 @@
 			path = Sidebar;
 			sourceTree = "<group>";
 		};
+		D6C3564D151F4C9F7DBAD60A /* references */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			path = references;
+			sourceTree = "<group>";
+		};
 		EA04EC30CD2DDAE4DA3776FB /* App */ = {
 			isa = PBXGroup;
 			children = (
@@ -550,6 +569,7 @@
 			buildConfigurationList = A113F1C650E247ABF9699C3F /* Build configuration list for PBXNativeTarget "final finalTests" */;
 			buildPhases = (
 				2D0D2A66A7555B777B919AF8 /* Sources */,
+				99EF20CE85F2E79E35430EC3 /* Resources */,
 			);
 			buildRules = (
 			);
@@ -650,6 +670,14 @@
 				8FC2C94655683E0A57EE671F /* TinyTeX in Resources */,
 				B17C6E9C011435B07C9EFF38 /* editor in Resources */,
 				40232071CF86A652D542B783 /* getting-started.md in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		99EF20CE85F2E79E35430EC3 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A260B9AEA58D00DA58E332AD /* content.sqlite in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

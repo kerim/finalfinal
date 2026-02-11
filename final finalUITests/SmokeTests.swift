@@ -28,13 +28,6 @@ final class LaunchSmokeTests: XCTestCase {
         let pickerExists = picker.waitForExistence(timeout: 10)
         let editorExists = editor.exists
 
-        // Diagnostic: dump hierarchy if neither element found
-        if !pickerExists && !editorExists {
-            print("[DIAG] Windows count: \(app.windows.count)")
-            print("[DIAG] App state: \(app.state.rawValue)")
-            print("[DIAG] App debugDescription:\n\(app.debugDescription)")
-        }
-
         XCTAssertTrue(pickerExists || editorExists, "App should show picker or editor after launch")
     }
 
