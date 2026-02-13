@@ -565,13 +565,34 @@ struct ContentView: View {
         recalculateParentRelationships()
         enforceHierarchyConstraints()
 
-        // Rebuild document content for immediate visual feedback
+        // Persist blocks to database BEFORE rebuilding content
+        // (rebuildDocumentContent reads from DB, so DB must be current)
+        if let db = documentManager.projectDatabase,
+           let pid = documentManager.projectId {
+            do {
+                var headingUpdates: [String: HeadingUpdate] = [:]
+                for vm in editorState.sections {
+                    headingUpdates[vm.id] = HeadingUpdate(
+                        markdownFragment: vm.markdownContent,
+                        headingLevel: vm.headerLevel
+                    )
+                }
+                try db.reorderAllBlocks(
+                    sections: editorState.sections,
+                    projectId: pid,
+                    headingUpdates: headingUpdates
+                )
+            } catch {
+                print("[ContentView] Error persisting reordered blocks: \(error)")
+            }
+        }
+
+        // Rebuild document content (now reads correct order from DB)
         rebuildDocumentContent()
 
-        // Cancel any previous persist task (handles rapid successive reorders)
+        // Async: push block IDs + legacy section persist
         editorState.currentPersistTask?.cancel()
         editorState.currentPersistTask = Task {
-            await persistReorderedBlocks()          // Atomic block reorder (headings + body)
             guard !Task.isCancelled else { return }
             try? await Task.sleep(for: .milliseconds(100))
             guard !Task.isCancelled else { return }

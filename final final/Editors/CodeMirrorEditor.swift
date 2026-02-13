@@ -41,6 +41,7 @@ struct CodeMirrorEditor: NSViewRepresentable {
             let controller = preloaded.configuration.userContentController
             controller.add(context.coordinator, name: "errorHandler")
             controller.add(context.coordinator, name: "openCitationPicker")
+            controller.add(context.coordinator, name: "paintComplete")
 
             preloaded.navigationDelegate = context.coordinator
             context.coordinator.webView = preloaded
@@ -95,6 +96,7 @@ struct CodeMirrorEditor: NSViewRepresentable {
         configuration.userContentController.addUserScript(errorScript)
         configuration.userContentController.add(context.coordinator, name: "errorHandler")
         configuration.userContentController.add(context.coordinator, name: "openCitationPicker")
+        configuration.userContentController.add(context.coordinator, name: "paintComplete")
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = context.coordinator
@@ -519,6 +521,13 @@ struct CodeMirrorEditor: NSViewRepresentable {
                     await self.handleOpenCitationPicker(cmdStart: cmdStart)
                 }
             }
+
+            // Handle paint complete signal for zoom transitions
+            if message.name == "paintComplete" {
+                Task { @MainActor in
+                    self.handlePaintComplete()
+                }
+            }
         }
 
         /// Handle CAYW citation picker request from web editor
@@ -616,6 +625,13 @@ struct CodeMirrorEditor: NSViewRepresentable {
             webView.evaluateJavaScript("window.FinalFinal.citationPickerCancelled()") { _, _ in }
         }
 
+        /// Handle paint complete signal for zoom transitions
+        /// Called after the JS double-RAF + micro-scroll pattern ensures paint is complete
+        private func handlePaintComplete() {
+            // Show WebView now that paint is complete
+            webView?.alphaValue = 1
+        }
+
         // === Content push guard - prevent feedback loops ===
         func shouldPushContent(_ newContent: String) -> Bool {
             let timeSinceLastReceive = Date().timeIntervalSince(lastReceivedFromEditor)
@@ -647,12 +663,10 @@ struct CodeMirrorEditor: NSViewRepresentable {
                 webView.alphaValue = 0
             }
 
-            webView.evaluateJavaScript("window.FinalFinal.setContent(`\(escaped)`\(optionsArg))") { [weak self] _, _ in
-                // Show WebView after content is set and scroll reset
-                // No delay needed - JS has forced layout via offsetHeight reads
-                if shouldScrollToStart {
-                    self?.webView?.alphaValue = 1
-                }
+            webView.evaluateJavaScript("window.FinalFinal.setContent(`\(escaped)`\(optionsArg))") { _, _ in
+                // For zoom transitions, DON'T show WebView here — wait for paintComplete message
+                // The JS double-RAF + micro-scroll pattern will signal when paint is complete
+                // For non-zoom content changes, WebView is already visible (no hiding was done)
             }
         }
 
