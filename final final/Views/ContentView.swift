@@ -158,6 +158,20 @@ struct ContentView: View {
                 // but CodeMirror returns content verbatim so onChange never fires.
                 annotationSyncService.contentChanged(editorState.content)
 
+                // Catch hierarchy violations accumulated during zoom (Fix 1 skips enforcement
+                // while zoomed). If onSectionsUpdated fires first, its enforcement pass finds
+                // no violations and exits immediately.
+                if editorState.contentState == .idle,
+                   ContentView.hasHierarchyViolations(in: editorState.sections) {
+                    Task { @MainActor in
+                        await ContentView.enforceHierarchyAsync(
+                            editorState: editorState,
+                            syncService: sectionSyncService
+                        )
+                        updateSourceContentIfNeeded()
+                    }
+                }
+
                 // Zoom-out completed - trigger bibliography sync with full document content
                 // Citations added during zoom need to be processed now
                 guard let projectId = documentManager.projectId else { return }

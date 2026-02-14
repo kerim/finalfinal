@@ -306,7 +306,10 @@ extension EditorViewState {
                     endSortOrder: range.end
                 )
 
-                // Recalculate zoomedBlockRange after normalization shifted sort orders
+                // Recalculate zoomedBlockRange after normalization shifted sort orders.
+                // Uses count-based end boundary (not level-based) to prevent higher-level
+                // headings (e.g., h1 inside h2 zoom) from shrinking the range and causing
+                // content duplication.
                 if let zoomedId = zoomedSectionId {
                     var headingBlock = try db.fetchBlock(id: zoomedId)
 
@@ -324,17 +327,13 @@ extension EditorViewState {
                         }
                     }
 
-                    if let headingBlock = headingBlock,
-                       let headingLevel = headingBlock.headingLevel {
+                    if let headingBlock = headingBlock {
+                        let newStart = headingBlock.sortOrder
+                        // End = first block after all inserted blocks (count-based, not level-based)
+                        let newEnd = newStart + Double(blocks.count)
                         let allBlocks = try db.fetchBlocks(projectId: pid)
-                        var endSortOrder: Double?
-                        for block in allBlocks where block.sortOrder > headingBlock.sortOrder {
-                            if block.blockType == .heading, let level = block.headingLevel, level <= headingLevel {
-                                endSortOrder = block.sortOrder
-                                break
-                            }
-                        }
-                        zoomedBlockRange = (start: headingBlock.sortOrder, end: endSortOrder)
+                        let blockAtEnd = allBlocks.first { $0.sortOrder >= newEnd }
+                        zoomedBlockRange = (start: newStart, end: blockAtEnd?.sortOrder)
                     }
                 }
             } else {

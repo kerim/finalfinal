@@ -129,10 +129,34 @@ extension ContentView {
             let allBlocks = try db.fetchBlocks(projectId: pid)
 
             if let zoomedIds = editorState.zoomedSectionIds {
-                let filtered = filterBlocksForZoomStatic(allBlocks, zoomedIds: zoomedIds)
+                let filtered = filterBlocksForZoomStatic(allBlocks, zoomedIds: zoomedIds, zoomedBlockRange: editorState.zoomedBlockRange)
                 editorState.content = BlockParser.assembleMarkdown(from: filtered)
             } else {
                 editorState.content = BlockParser.assembleMarkdown(from: allBlocks)
+            }
+
+            // Also update sourceContent when in source mode to prevent desync.
+            // Without this, CodeMirror still shows old text and re-sends it,
+            // creating duplicate blocks.
+            if editorState.editorMode == .source,
+               let syncService = editorState.sectionSyncService {
+                let sectionsForAnchors = editorState.sections
+                    .filter { !$0.isBibliography }
+                    .sorted { $0.sortOrder < $1.sortOrder }
+                var adjusted: [SectionViewModel] = []
+                var offset = 0
+                for section in sectionsForAnchors {
+                    adjusted.append(section.withUpdates(startOffset: offset))
+                    offset += section.markdownContent.count
+                    // Match updateSourceContentIfNeeded() newline handling
+                    if !section.markdownContent.hasSuffix("\n") {
+                        offset += 1
+                    }
+                }
+                let withAnchors = syncService.injectSectionAnchors(
+                    markdown: editorState.content, sections: adjusted)
+                editorState.sourceContent = syncService.injectBibliographyMarker(
+                    markdown: withAnchors, sections: editorState.sections)
             }
         } catch {
             print("[ContentView] Error rebuilding content from blocks: \(error)")

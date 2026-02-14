@@ -48,6 +48,7 @@ Bug investigation reports with root cause analysis and solutions.
 - [project-switch-source-mode.md](findings/project-switch-source-mode.md) -- CodeMirror stale content and blank screen on project switch
 - [sidebar-cm-zoom.md](findings/sidebar-cm-zoom.md) -- Sidebar disappears when zooming in CodeMirror mode
 - [cursor-mapping-postmortem.md](findings/cursor-mapping-postmortem.md) -- Precise table cursor mapping (abandoned) + escaped asterisks (deferred)
+- [zoom-cm-section-creation-corruption.md](findings/zoom-cm-section-creation-corruption.md) -- Zoom + CodeMirror heading creation causes content duplication (feedback loop, range shrinkage, sourceContent desync)
 
 ## Deferred
 

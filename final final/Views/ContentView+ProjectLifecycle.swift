@@ -52,6 +52,12 @@ extension ContentView {
             guard !sectionSyncService.isSyncSuppressed else { return }
             guard editorState.contentState == .idle else { return }
 
+            // Skip hierarchy enforcement while zoomed to prevent feedback loop:
+            // User adds headings → DB observation fires → enforcement modifies levels →
+            // rebuilds content → content change triggers block reparse → loop.
+            // After zoom-out, zoomedSectionIds is nil so enforcement resumes naturally.
+            guard editorState.zoomedSectionIds == nil else { return }
+
             // Check and enforce hierarchy constraints if violations exist
             if Self.hasHierarchyViolations(in: editorState.sections) {
                 Task { @MainActor in
@@ -59,15 +65,6 @@ extension ContentView {
                         editorState: editorState,
                         syncService: sectionSyncService
                     )
-                    // Wait for WebView to process new content before pushing IDs
-                    try? await Task.sleep(for: .milliseconds(100))
-                    if let blockSyncService = blockSyncService {
-                        if let range = editorState.zoomedBlockRange {
-                            try? await blockSyncService.pushBlockIds(for: range)
-                        } else {
-                            try? await blockSyncService.pushBlockIds()
-                        }
-                    }
                 }
             }
         }

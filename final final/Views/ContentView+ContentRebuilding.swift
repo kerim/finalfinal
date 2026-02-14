@@ -27,7 +27,7 @@ extension ContentView {
                 // When zoomed, only include blocks in the zoomed range
                 let blocks = try db.fetchBlocks(projectId: pid)
                 // Filter to blocks that fall within zoomed heading ranges
-                allBlocks = filterBlocksForZoom(blocks, zoomedIds: zoomedIds)
+                allBlocks = filterBlocksForZoom(blocks, zoomedIds: zoomedIds, zoomedBlockRange: editorState.zoomedBlockRange)
             } else {
                 allBlocks = try db.fetchBlocks(projectId: pid)
             }
@@ -42,12 +42,33 @@ extension ContentView {
     }
 
     /// Filter blocks to only those within zoomed heading ranges
-    func filterBlocksForZoom(_ blocks: [Block], zoomedIds: Set<String>) -> [Block] {
-        Self.filterBlocksForZoomStatic(blocks, zoomedIds: zoomedIds)
+    func filterBlocksForZoom(
+        _ blocks: [Block],
+        zoomedIds: Set<String>,
+        zoomedBlockRange: (start: Double, end: Double?)? = nil
+    ) -> [Block] {
+        Self.filterBlocksForZoomStatic(blocks, zoomedIds: zoomedIds, zoomedBlockRange: zoomedBlockRange)
     }
 
-    /// Static version of filterBlocksForZoom for use from static methods
-    static func filterBlocksForZoomStatic(_ blocks: [Block], zoomedIds: Set<String>) -> [Block] {
+    /// Static version of filterBlocksForZoom for use from static methods.
+    /// Prefers range-based filtering when available (handles new sections created during zoom).
+    /// Falls back to ID-based filtering when range is not available.
+    static func filterBlocksForZoomStatic(
+        _ blocks: [Block],
+        zoomedIds: Set<String>,
+        zoomedBlockRange: (start: Double, end: Double?)? = nil
+    ) -> [Block] {
+        // Prefer range-based filtering when available (handles new sections during zoom)
+        if let range = zoomedBlockRange {
+            return blocks.sorted { $0.sortOrder < $1.sortOrder }.filter { block in
+                guard !block.isBibliography else { return false }
+                guard block.sortOrder >= range.start else { return false }
+                if let end = range.end { guard block.sortOrder < end else { return false } }
+                return true
+            }
+        }
+
+        // Fall back to ID-based filtering
         let sortedBlocks = blocks.sorted { $0.sortOrder < $1.sortOrder }
         var includeBlocks: [Block] = []
         var inZoomedRange = false
