@@ -295,21 +295,9 @@ extension ProjectDatabase {
     /// Apply changes from editor (BlockChanges struct)
     /// Returns a mapping of temporary IDs to permanent IDs for newly inserted blocks
     func applyBlockChangesFromEditor(_ changes: BlockChanges, for projectId: String) throws -> [String: String] {
-        var changes = changes  // Mutable copy (BlockChanges is a struct)
         var idMapping: [String: String] = [:]
 
         try write { db in
-            // Safety net: reject mass deletes (>50% of blocks, minimum 6)
-            if !changes.deletes.isEmpty {
-                let totalBlocks = try Block.filter(Block.Columns.projectId == projectId).fetchCount(db)
-                let deleteRatio = Double(changes.deletes.count) / Double(max(totalBlocks, 1))
-                if deleteRatio > 0.5 && changes.deletes.count > 5 {
-                    print("[Database+Blocks] SAFETY NET: Rejecting mass delete " +
-                        "(\(changes.deletes.count)/\(totalBlocks) blocks). First IDs: \(changes.deletes.prefix(5))")
-                    changes.deletes = []
-                }
-            }
-
             // Query max sort order ONCE for the entire transaction
             var nextSortOrder = (try Double.fetchOne(db,
                 sql: "SELECT MAX(sortOrder) FROM block WHERE projectId = ?",

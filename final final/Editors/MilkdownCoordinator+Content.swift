@@ -179,16 +179,8 @@ extension MilkdownEditor.Coordinator {
             }
 
             if let content = contentResult as? String {
-                // DEFENSIVE: Don't overwrite non-empty content with empty content
-                // This can happen when Milkdown fails to initialize (JS exception)
-                let existingContent = self.contentBinding.wrappedValue
-                if content.isEmpty && !existingContent.isEmpty {
-                    // Skip - don't overwrite good content with empty
-                } else {
-                    // Update binding immediately to ensure content is preserved
-                    self.lastPushedContent = content
-                    self.contentBinding.wrappedValue = content
-                }
+                self.lastPushedContent = content
+                self.contentBinding.wrappedValue = content
             }
 
             // Now save cursor position

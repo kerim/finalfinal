@@ -480,14 +480,10 @@ extension MilkdownEditor.Coordinator {
             // Double-check contentState in callback (may have changed)
             guard self.contentState == .idle else { return }
 
-            // DEFENSIVE: Don't overwrite non-empty content with empty content
-            // This can happen when Milkdown fails to initialize (JS exception)
-            let existingContent = self.contentBinding.wrappedValue
-            if content.isEmpty && !existingContent.isEmpty {
+            if content.isEmpty && !self.contentBinding.wrappedValue.isEmpty {
                 #if DEBUG
-                print("[MilkdownEditor] pollContent: BLOCKED empty content overwriting non-empty")
+                print("[MilkdownEditor] pollContent: Accepting empty content (user deleted all)")
                 #endif
-                return  // Don't erase good content with empty from broken editor
             }
 
             // Grace period guard: don't overwrite recent pushes (race condition fix)
