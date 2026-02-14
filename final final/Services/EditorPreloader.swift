@@ -29,6 +29,10 @@ final class EditorPreloader: NSObject, WKNavigationDelegate {
         super.init()
     }
 
+    private var preloadFrameSize: CGSize {
+        NSScreen.screens.first?.frame.size ?? CGSize(width: 1200, height: 800)
+    }
+
     /// Call from AppDelegate.applicationDidFinishLaunching
     func startPreloading() {
         guard !TestMode.isUITesting else { return }
@@ -61,7 +65,7 @@ final class EditorPreloader: NSObject, WKNavigationDelegate {
         )
         configuration.userContentController.addUserScript(errorScript)
 
-        let webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 1, height: 1), configuration: configuration)
+        let webView = WKWebView(frame: CGRect(origin: .zero, size: preloadFrameSize), configuration: configuration)
         webView.navigationDelegate = self
 
         guard let url = URL(string: "editor://milkdown/milkdown.html") else {
@@ -103,7 +107,7 @@ final class EditorPreloader: NSObject, WKNavigationDelegate {
         )
         configuration.userContentController.addUserScript(errorScript)
 
-        let webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 1, height: 1), configuration: configuration)
+        let webView = WKWebView(frame: CGRect(origin: .zero, size: preloadFrameSize), configuration: configuration)
         webView.navigationDelegate = self
 
         guard let url = URL(string: "editor://codemirror/codemirror.html") else {

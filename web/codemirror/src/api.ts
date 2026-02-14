@@ -100,6 +100,14 @@ export function setContent(markdown: string, options?: { scrollToStart?: boolean
   });
   window.__CODEMIRROR_DEBUG__!.lastContentLength = markdown.length;
 
+  // Force CodeMirror to re-measure line heights after content change.
+  // Heading decorations change font-size on heading lines, but only for
+  // visibleRanges. Without this, off-viewport heading heights are
+  // underestimated, causing blank gaps in the virtual viewport.
+  requestAnimationFrame(() => {
+    view.requestMeasure();
+  });
+
   // Reset scroll position for zoom transitions
   // Swift handles hiding/showing the WKWebView at compositor level
   if (options?.scrollToStart) {

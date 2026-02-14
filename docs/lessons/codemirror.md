@@ -127,3 +127,38 @@ keymap.of([
 **Key insight:** Don't include `...historyKeymap` when you need to override undo/redo behavior. Define your own `Mod-z`, `Mod-Shift-z`, and `Mod-y` bindings explicitly.
 
 **General principle:** To intercept keyboard shortcuts in CodeMirror, replace the keymap binding, not the DOM handler. Keymap handlers run first.
+
+---
+
+## Virtual Viewport Gaps from Heading Height Mismatch
+
+**Problem:** CodeMirror's virtual renderer showed blank gaps where content should be. Content appeared after scrolling slightly further. Most visible in documents with many headings (H1-H3) scattered across 50+ paragraphs.
+
+**Root Cause (two factors):**
+
+1. **Decoration-only font sizing:** The heading decoration plugin applies `Decoration.line()` CSS classes that change font-size (body=18px vs H1=31px, H2=26px), but only for `view.visibleRanges`. Lines outside the viewport have no heading decorations, so CodeMirror estimates their height using body text metrics. When headings scroll into view and actually render, they're taller than estimated, leaving blank gaps.
+
+2. **1px preload frame:** `EditorPreloader.swift` created WebViews at 1x1 pixels. With `EditorView.lineWrapping` enabled, every word wraps into its own line at 1px width, producing completely wrong initial height estimates that persisted even after the WebView was resized.
+
+**Fix (two changes):**
+
+Web-side — force height recalculation after content changes:
+```typescript
+// In setContent(), after dispatching the content change:
+requestAnimationFrame(() => {
+  view.requestMeasure();
+});
+```
+- `requestMeasure()` is lightweight (no-op if heights unchanged)
+- Only fires on `setContent()` calls (content load, zoom, project switch) — NOT during typing
+
+Swift-side — use screen-sized frame for preloaded WebViews:
+```swift
+private var preloadFrameSize: CGSize {
+    NSScreen.screens.first?.frame.size ?? CGSize(width: 1200, height: 800)
+}
+// Then: WKWebView(frame: CGRect(origin: .zero, size: preloadFrameSize), ...)
+```
+Uses `NSScreen.screens.first` instead of `NSScreen.main` because `.main` requires a key window (which may not exist during `applicationDidFinishLaunching`).
+
+**General principle:** When CSS decorations change line height and are only applied to visible ranges, CodeMirror's virtual viewport will underestimate off-screen line heights. Call `view.requestMeasure()` after content changes to force re-measurement. Also ensure preloaded WebViews have a realistic frame size so initial line-wrapping calculations are meaningful.
