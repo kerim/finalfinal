@@ -261,6 +261,27 @@ function detectChanges(
       state.pendingDeletes.add(id);
       // Remove from updates if pending
       state.pendingUpdates.delete(id);
+
+      // DIAGNOSTIC: Log when a permanent ID disappears
+      const isPermId = !id.startsWith('temp-');
+      if (isPermId) {
+        // Check if a temp ID appeared with similar content
+        const oldContent = oldBlock.textContent.slice(0, 80);
+        const tempReplacements = Array.from(newSnapshot.entries())
+          .filter(([newId]) => newId.startsWith('temp-') && !oldSnapshot.has(newId))
+          .map(([newId, snap]) => ({
+            tempId: newId,
+            textContent: snap.textContent.slice(0, 80),
+            pos: snap.pos,
+          }));
+        console.warn(
+          `[block-sync] PERMANENT ID LOST: ${id}\n` +
+          `  old pos=${oldBlock.pos}, type=${oldBlock.blockType}, ` +
+          `text=${JSON.stringify(oldContent)}\n` +
+          `  new temp IDs this cycle: ${JSON.stringify(tempReplacements)}\n` +
+          `  old snapshot size=${oldSnapshot.size}, new snapshot size=${newSnapshot.size}`
+        );
+      }
     } else if (
       oldBlock.textContent !== newBlock.textContent ||
       oldBlock.nodeSize !== newBlock.nodeSize ||

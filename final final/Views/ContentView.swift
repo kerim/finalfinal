@@ -144,15 +144,30 @@ struct ContentView: View {
                     return
                 }
 
+                // Atomic content+IDs push to prevent temp ID race condition.
+                // Without this, setContent() triggers assignBlockIds() which creates temp IDs,
+                // and the 100ms-delayed pushBlockIds() arrives too late — block-sync reports
+                // changes with temp IDs, Swift creates new blocks at maxSortOrder+1.
                 editorState.contentState = .bibliographyUpdate
                 blockSyncService.isSyncSuppressed = true
-                rebuildDocumentContent()
-                editorState.contentState = .idle
-                // Push block IDs after bibliography rebuild
+                editorState.isResettingContent = true  // prevent updateNSView → setContent()
+
+                guard let result = fetchBlocksWithIds() else {
+                    editorState.isResettingContent = false
+                    editorState.contentState = .idle
+                    blockSyncService.isSyncSuppressed = false
+                    return
+                }
+
+                editorState.content = result.markdown  // sidebar sync (won't trigger WKWebView push)
+                updateSourceContentIfNeeded()
+
                 Task {
-                    try? await Task.sleep(for: .milliseconds(100))
-                    await blockSyncService.pushBlockIds()
-                    // pushBlockIds' defer clears isSyncSuppressed
+                    await blockSyncService.setContentWithBlockIds(
+                        markdown: result.markdown, blockIds: result.blockIds)
+                    editorState.isResettingContent = false
+                    editorState.contentState = .idle
+                    // setContentWithBlockIds' defer clears isSyncSuppressed
                 }
             }
             .onReceive(NotificationCenter.default.publisher(for: .didZoomOut)) { _ in

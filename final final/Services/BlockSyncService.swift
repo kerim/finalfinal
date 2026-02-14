@@ -121,6 +121,19 @@ class BlockSyncService {
 
             #if DEBUG
             print("[BlockSyncService] Pushed \(orderedIds.count) block IDs to editor")
+
+            // DIAGNOSTIC: Compare pushed ID count with editor's block ID map size
+            let editorBlockCount = await withCheckedContinuation { (cont: CheckedContinuation<Int, Never>) in
+                webView.evaluateJavaScript(
+                    "window.FinalFinal.getAllBlockIds ? window.FinalFinal.getAllBlockIds().size : -1"
+                ) { result, _ in
+                    cont.resume(returning: result as? Int ?? -1)
+                }
+            }
+            if editorBlockCount != orderedIds.count {
+                print("[BlockSyncService] ⚠️ BLOCK COUNT MISMATCH: pushed \(orderedIds.count) IDs " +
+                    "but editor has \(editorBlockCount) top-level DOM elements")
+            }
             #endif
         } catch {
             #if DEBUG

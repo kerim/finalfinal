@@ -197,28 +197,39 @@ extension ContentView {
         // Configure for new project
         await configureForCurrentProject()
 
+        suppressNextBibliographyRebuild = true
+
         // Reconfigure BlockSyncService with new DB (weak WebView ref still valid)
         if editorState.editorMode == .wysiwyg,
            let db = documentManager.projectDatabase,
            let pid = documentManager.projectId {
             blockSyncService.reconfigure(database: db, projectId: pid)
             Task {
-                await blockSyncService.pushBlockIds()
+                if let result = fetchBlocksWithIds() {
+                    // Sync editorState.content to prevent polling from overwriting the atomic push
+                    editorState.content = result.markdown
+                    updateSourceContentIfNeeded()
+                    await blockSyncService.setContentWithBlockIds(
+                        markdown: result.markdown, blockIds: result.blockIds)
+                }
+                editorState.isResettingContent = false
                 blockSyncService.startPolling()
+                // Scroll to top after content push settles
+                try? await Task.sleep(for: .milliseconds(100))
+                findBarState.activeWebView?.evaluateJavaScript(
+                    "window.scrollTo({top: 0, behavior: 'instant'})"
+                ) { _, _ in }
             }
-        }
-
-        suppressNextBibliographyRebuild = true
-
-        // Clear the reset flag — triggers updateNSView → setContent (normal path, no alpha hide)
-        editorState.isResettingContent = false
-
-        // Scroll to top after content push settles (same approach as mode switch)
-        Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(100))
-            findBarState.activeWebView?.evaluateJavaScript(
-                "window.scrollTo({top: 0, behavior: 'instant'})"
-            ) { _, _ in }
+            // Watchdog: ensure isResettingContent is cleared even if JS call hangs
+            Task {
+                try? await Task.sleep(for: .seconds(3))
+                if editorState.isResettingContent {
+                    print("[handleProjectOpened] WATCHDOG: isResettingContent stuck, forcing clear")
+                    editorState.isResettingContent = false
+                }
+            }
+        } else {
+            editorState.isResettingContent = false
         }
     }
 

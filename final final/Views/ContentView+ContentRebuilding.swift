@@ -8,6 +8,31 @@
 import SwiftUI
 
 extension ContentView {
+    /// Fetch blocks from DB and return assembled markdown + ordered block IDs
+    /// Used for atomic content+ID pushes (bibliography rebuild, etc.)
+    func fetchBlocksWithIds() -> (markdown: String, blockIds: [String])? {
+        guard let db = documentManager.projectDatabase,
+              let pid = documentManager.projectId else { return nil }
+
+        do {
+            let allBlocks: [Block]
+            if let zoomedIds = editorState.zoomedSectionIds {
+                let blocks = try db.fetchBlocks(projectId: pid)
+                allBlocks = filterBlocksForZoom(blocks, zoomedIds: zoomedIds, zoomedBlockRange: editorState.zoomedBlockRange)
+            } else {
+                allBlocks = try db.fetchBlocks(projectId: pid)
+            }
+
+            let sorted = allBlocks.sorted { $0.sortOrder < $1.sortOrder }
+            let markdown = BlockParser.assembleMarkdown(from: sorted)
+            let ids = sorted.map { $0.id }
+            return (markdown, ids)
+        } catch {
+            print("[ContentView] Error fetching blocks with IDs: \(error)")
+            return nil
+        }
+    }
+
     /// Rebuild document content from block database
     /// For zoom state, fetches only the zoomed range; otherwise fetches all blocks
     func rebuildDocumentContent() {
@@ -270,9 +295,12 @@ extension ContentView {
                         if let db = documentManager.projectDatabase,
                            let pid = documentManager.projectId {
                             blockSyncService.configure(database: db, projectId: pid, webView: webView)
-                            // Push block IDs after content is set, then start polling
+                            // Atomic push: content + block IDs in one JS call (no temp ID warnings)
                             Task {
-                                await blockSyncService.pushBlockIds()
+                                if let result = fetchBlocksWithIds() {
+                                    await blockSyncService.setContentWithBlockIds(
+                                        markdown: result.markdown, blockIds: result.blockIds)
+                                }
                                 blockSyncService.startPolling()
                             }
                         }
