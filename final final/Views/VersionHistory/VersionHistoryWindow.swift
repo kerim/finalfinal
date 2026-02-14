@@ -9,30 +9,30 @@ import SwiftUI
 
 /// Standalone window for version history
 struct VersionHistoryWindow: View {
-    @Environment(\.dismiss) private var dismiss
-    @Environment(ThemeManager.self) private var themeManager
-    @Environment(VersionHistoryCoordinator.self) private var coordinator
+    @Environment(\.dismiss) var dismiss
+    @Environment(ThemeManager.self) var themeManager
+    @Environment(VersionHistoryCoordinator.self) var coordinator
 
-    @State private var snapshots: [Snapshot] = []
-    @State private var selectedSnapshotId: String?
-    @State private var selectedSnapshotSections: [SnapshotSection] = []
-    @State private var showNamedOnly = false
-    @State private var isLoading = true
-    @State private var errorMessage: String?
+    @State var snapshots: [Snapshot] = []
+    @State var selectedSnapshotId: String?
+    @State var selectedSnapshotSections: [SnapshotSection] = []
+    @State var showNamedOnly = false
+    @State var isLoading = true
+    @State var errorMessage: String?
 
     /// For section restore confirmation
-    @State private var pendingRestoreSection: SnapshotSection?
-    @State private var pendingRestoreMode: SectionRestoreMode?
-    @State private var showRestoreConfirmation = false
-    @State private var showSectionPicker = false
-    @State private var targetSectionId: String?
+    @State var pendingRestoreSection: SnapshotSection?
+    @State var pendingRestoreMode: SectionRestoreMode?
+    @State var showRestoreConfirmation = false
+    @State var showSectionPicker = false
+    @State var targetSectionId: String?
 
     /// For full project restore confirmation
-    @State private var showFullRestoreConfirmation = false
-    @State private var createSafetyBackup = true
+    @State var showFullRestoreConfirmation = false
+    @State var createSafetyBackup = true
 
     /// Track if the project was closed while window is open
-    @State private var projectClosed = false
+    @State var projectClosed = false
 
     private var filteredSnapshots: [Snapshot] {
         if showNamedOnly {
@@ -297,202 +297,4 @@ struct VersionHistoryWindow: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    // MARK: - Section Restore
-
-    private func handleSectionTap(_ section: SnapshotSectionViewModel) {
-        // Could show section details or highlight
-    }
-
-    private func handleRestoreRequest(section: SnapshotSectionViewModel, mode: SectionRestoreMode) {
-        guard !projectClosed else { return }
-
-        // Convert back to SnapshotSection for restore
-        guard let snapshotSection = selectedSnapshotSections.first(where: { $0.id == section.id }) else {
-            return
-        }
-
-        pendingRestoreSection = snapshotSection
-        pendingRestoreMode = mode
-
-        if mode == .replace {
-            // Check if original section still exists
-            if let originalId = snapshotSection.originalSectionId,
-               coordinator.currentSections.contains(where: { $0.id == originalId }) {
-                // Can restore directly
-                showRestoreConfirmation = true
-            } else {
-                // Need to pick target section
-                showSectionPicker = true
-            }
-        } else {
-            // Insert as duplicate - confirm placement
-            showRestoreConfirmation = true
-        }
-    }
-
-    @ViewBuilder
-    private var restoreConfirmationButtons: some View {
-        Button("Restore", role: .destructive) {
-            Task {
-                await performSectionRestore()
-            }
-        }
-        Button("Cancel", role: .cancel) {
-            pendingRestoreSection = nil
-            pendingRestoreMode = nil
-        }
-    }
-
-    @ViewBuilder
-    private var fullRestoreConfirmationButtons: some View {
-        Button("Restore Entire Project", role: .destructive) {
-            Task {
-                await performFullRestore()
-            }
-        }
-        Toggle("Create safety backup first", isOn: $createSafetyBackup)
-        Button("Cancel", role: .cancel) {}
-    }
-
-    // MARK: - Section Picker
-
-    private var sectionPickerSheet: some View {
-        VStack(spacing: 0) {
-            Text("Select Target Section")
-                .font(.headline)
-                .padding()
-
-            Divider()
-
-            List(coordinator.currentSections, id: \.id, selection: $targetSectionId) { section in
-                HStack {
-                    Text(String(repeating: "  ", count: section.headerLevel - 1))
-                    Text(section.title)
-                }
-            }
-
-            Divider()
-
-            HStack {
-                Button("Cancel") {
-                    showSectionPicker = false
-                    targetSectionId = nil
-                }
-                Spacer()
-                Button("Replace Selected") {
-                    showSectionPicker = false
-                    if targetSectionId != nil {
-                        showRestoreConfirmation = true
-                    }
-                }
-                .disabled(targetSectionId == nil)
-            }
-            .padding()
-        }
-        .frame(width: 400, height: 500)
-    }
-
-    // MARK: - Data Loading
-
-    private func loadSnapshots() async {
-        guard let database = coordinator.database,
-              let projectId = coordinator.projectId else {
-            isLoading = false
-            return
-        }
-
-        isLoading = true
-        errorMessage = nil
-
-        do {
-            snapshots = try database.fetchSnapshots(projectId: projectId)
-            if let firstSnapshot = snapshots.first {
-                selectedSnapshotId = firstSnapshot.id
-                await loadSnapshotSections(snapshotId: firstSnapshot.id)
-            }
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-
-        isLoading = false
-    }
-
-    private func loadSnapshotSections(snapshotId: String) async {
-        guard let database = coordinator.database else { return }
-
-        do {
-            selectedSnapshotSections = try database.fetchSnapshotSections(snapshotId: snapshotId)
-        } catch {
-            print("[VersionHistoryWindow] Error loading snapshot sections: \(error)")
-            selectedSnapshotSections = []
-        }
-    }
-
-    // MARK: - Restore Actions
-
-    private func performSectionRestore() async {
-        guard let database = coordinator.database,
-              let projectId = coordinator.projectId,
-              let section = pendingRestoreSection,
-              let mode = pendingRestoreMode,
-              !projectClosed else { return }
-
-        let service = SnapshotService(database: database, projectId: projectId)
-
-        do {
-            switch mode {
-            case .replace:
-                let targetId = targetSectionId ?? section.originalSectionId ?? ""
-                try service.restoreSectionReplace(
-                    snapshotSectionId: section.id,
-                    targetSectionId: targetId,
-                    createSafetyBackup: true
-                )
-            case .duplicate:
-                // Insert after the last section
-                let insertAfter = coordinator.currentSections.last?.id
-                try service.restoreSectionAsDuplicate(
-                    snapshotSectionId: section.id,
-                    insertAfterSectionId: insertAfter,
-                    createSafetyBackup: true
-                )
-            }
-
-            // Notify main window to refresh
-            NotificationCenter.default.post(name: .projectDidOpen, object: nil)
-
-            // Close window after successful restore
-            dismiss()
-        } catch {
-            errorMessage = "Restore failed: \(error.localizedDescription)"
-        }
-
-        pendingRestoreSection = nil
-        pendingRestoreMode = nil
-        targetSectionId = nil
-    }
-
-    private func performFullRestore() async {
-        guard let database = coordinator.database,
-              let projectId = coordinator.projectId,
-              let snapshotId = selectedSnapshotId,
-              !projectClosed else { return }
-
-        let service = SnapshotService(database: database, projectId: projectId)
-
-        do {
-            try service.restoreEntireProject(
-                from: snapshotId,
-                createSafetyBackup: createSafetyBackup
-            )
-
-            // Notify main window to refresh
-            NotificationCenter.default.post(name: .projectDidOpen, object: nil)
-
-            // Close window after successful restore
-            dismiss()
-        } catch {
-            errorMessage = "Restore failed: \(error.localizedDescription)"
-        }
-    }
 }

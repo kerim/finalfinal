@@ -270,10 +270,8 @@ final class SnapshotService {
         }
 
         // Collect IDs to delete
-        for snapshot in autoSnapshots {
-            if !snapshotsToKeep.contains(snapshot.id) {
-                snapshotsToDelete.append(snapshot.id)
-            }
+        for snapshot in autoSnapshots where !snapshotsToKeep.contains(snapshot.id) {
+            snapshotsToDelete.append(snapshot.id)
         }
 
         // Delete old snapshots

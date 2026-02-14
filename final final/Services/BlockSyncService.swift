@@ -100,7 +100,8 @@ class BlockSyncService {
 
             #if DEBUG
             if let range = range {
-                print("[BlockSyncService] pushBlockIds filtered: \(orderedIds.count) blocks (range start=\(range.start), end=\(String(describing: range.end)))")
+                print("[BlockSyncService] pushBlockIds filtered: \(orderedIds.count) blocks " +
+                    "(range start=\(range.start), end=\(String(describing: range.end)))")
             }
             #endif
 
@@ -189,7 +190,8 @@ class BlockSyncService {
         }
 
         #if DEBUG
-        print("[BlockSyncService] Processing changes: \(changes.updates.count) updates, \(changes.inserts.count) inserts, \(changes.deletes.count) deletes")
+        print("[BlockSyncService] Processing changes: \(changes.updates.count) updates, " +
+            "\(changes.inserts.count) inserts, \(changes.deletes.count) deletes")
         #endif
 
         // Apply changes to database
@@ -211,7 +213,7 @@ class BlockSyncService {
     /// Check if the editor has pending block changes
     private func checkForChanges(webView: WKWebView) async -> Bool {
         await withCheckedContinuation { continuation in
-            webView.evaluateJavaScript("window.FinalFinal.hasBlockChanges()") { result, error in
+            webView.evaluateJavaScript("window.FinalFinal.hasBlockChanges()") { result, _ in
                 if let hasChanges = result as? Bool {
                     continuation.resume(returning: hasChanges)
                 } else {

@@ -45,7 +45,10 @@ extension ContentView {
                   let sectionSyncService = sectionSyncService else { return }
 
             #if DEBUG
-            print("[onSectionsUpdated] contentState=\(editorState.contentState), syncSuppressed=\(sectionSyncService.isSyncSuppressed), zoomed=\(editorState.zoomedSectionIds != nil), hasViolations=\(Self.hasHierarchyViolations(in: editorState.sections))")
+            print("[onSectionsUpdated] contentState=\(editorState.contentState), " +
+                "syncSuppressed=\(sectionSyncService.isSyncSuppressed), " +
+                "zoomed=\(editorState.zoomedSectionIds != nil), " +
+                "hasViolations=\(Self.hasHierarchyViolations(in: editorState.sections))")
             #endif
 
             // Skip during drag operations (which handle hierarchy separately)

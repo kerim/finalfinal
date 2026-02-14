@@ -47,11 +47,11 @@ enum ColumnWidthPreset: String, Codable, Sendable, CaseIterable, Identifiable {
 
 /// Line height preset options
 enum LineHeightPreset: String, Codable, Sendable, CaseIterable, Identifiable {
-    case single = "single"
-    case tight = "tight"
-    case normal = "normal"
-    case relaxed = "relaxed"
-    case loose = "loose"
+    case single
+    case tight
+    case normal
+    case relaxed
+    case loose
 
     var id: String { rawValue }
 

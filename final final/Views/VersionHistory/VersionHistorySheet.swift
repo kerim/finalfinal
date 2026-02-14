@@ -9,7 +9,7 @@ import SwiftUI
 
 /// Main modal sheet for version history with three-column layout
 struct VersionHistorySheet: View {
-    @Environment(\.dismiss) private var dismiss
+    @Environment(\.dismiss) var dismiss
     @Environment(ThemeManager.self) private var themeManager
 
     let database: ProjectDatabase
@@ -20,23 +20,23 @@ struct VersionHistorySheet: View {
     /// Callback when restore completes (caller should refresh UI)
     let onRestoreComplete: () -> Void
 
-    @State private var snapshots: [Snapshot] = []
-    @State private var selectedSnapshotId: String?
-    @State private var selectedSnapshotSections: [SnapshotSection] = []
+    @State var snapshots: [Snapshot] = []
+    @State var selectedSnapshotId: String?
+    @State var selectedSnapshotSections: [SnapshotSection] = []
     @State private var showNamedOnly = false
-    @State private var isLoading = true
-    @State private var errorMessage: String?
+    @State var isLoading = true
+    @State var errorMessage: String?
 
     /// For section restore confirmation
-    @State private var pendingRestoreSection: SnapshotSection?
-    @State private var pendingRestoreMode: SectionRestoreMode?
-    @State private var showRestoreConfirmation = false
-    @State private var showSectionPicker = false
-    @State private var targetSectionId: String?
+    @State var pendingRestoreSection: SnapshotSection?
+    @State var pendingRestoreMode: SectionRestoreMode?
+    @State var showRestoreConfirmation = false
+    @State var showSectionPicker = false
+    @State var targetSectionId: String?
 
     /// For full project restore confirmation
-    @State private var showFullRestoreConfirmation = false
-    @State private var createSafetyBackup = true
+    @State var showFullRestoreConfirmation = false
+    @State var createSafetyBackup = true
 
     private var filteredSnapshots: [Snapshot] {
         if showNamedOnly {
@@ -149,7 +149,7 @@ struct VersionHistorySheet: View {
             .frame(minWidth: 250)
 
             // Right: Selected backup
-            if let _ = selectedSnapshot {
+            if selectedSnapshot != nil {
                 DocumentPreviewView(
                     title: "Selected Backup",
                     sections: selectedSnapshotSections.map { SnapshotSectionViewModel(from: $0) },
@@ -220,187 +220,6 @@ struct VersionHistorySheet: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    // MARK: - Section Restore
-
-    private func handleSectionTap(_ section: SnapshotSectionViewModel) {
-        // Could show section details or highlight
-    }
-
-    private func handleRestoreRequest(section: SnapshotSectionViewModel, mode: SectionRestoreMode) {
-        // Convert back to SnapshotSection for restore
-        guard let snapshotSection = selectedSnapshotSections.first(where: { $0.id == section.id }) else {
-            return
-        }
-
-        pendingRestoreSection = snapshotSection
-        pendingRestoreMode = mode
-
-        if mode == .replace {
-            // Check if original section still exists
-            if let originalId = snapshotSection.originalSectionId,
-               currentSections.contains(where: { $0.id == originalId }) {
-                // Can restore directly
-                showRestoreConfirmation = true
-            } else {
-                // Need to pick target section
-                showSectionPicker = true
-            }
-        } else {
-            // Insert as duplicate - confirm placement
-            showRestoreConfirmation = true
-        }
-    }
-
-    @ViewBuilder
-    private var restoreConfirmationButtons: some View {
-        Button("Restore", role: .destructive) {
-            Task {
-                await performSectionRestore()
-            }
-        }
-        Button("Cancel", role: .cancel) {
-            pendingRestoreSection = nil
-            pendingRestoreMode = nil
-        }
-    }
-
-    @ViewBuilder
-    private var fullRestoreConfirmationButtons: some View {
-        Button("Restore Entire Project", role: .destructive) {
-            Task {
-                await performFullRestore()
-            }
-        }
-        Toggle("Create safety backup first", isOn: $createSafetyBackup)
-        Button("Cancel", role: .cancel) {}
-    }
-
-    // MARK: - Section Picker
-
-    private var sectionPickerSheet: some View {
-        VStack(spacing: 0) {
-            Text("Select Target Section")
-                .font(.headline)
-                .padding()
-
-            Divider()
-
-            List(currentSections, id: \.id, selection: $targetSectionId) { section in
-                HStack {
-                    Text(String(repeating: "  ", count: section.headerLevel - 1))
-                    Text(section.title)
-                }
-            }
-
-            Divider()
-
-            HStack {
-                Button("Cancel") {
-                    showSectionPicker = false
-                    targetSectionId = nil
-                }
-                Spacer()
-                Button("Replace Selected") {
-                    showSectionPicker = false
-                    if targetSectionId != nil {
-                        showRestoreConfirmation = true
-                    }
-                }
-                .disabled(targetSectionId == nil)
-            }
-            .padding()
-        }
-        .frame(width: 400, height: 500)
-    }
-
-    // MARK: - Data Loading
-
-    private func loadSnapshots() async {
-        isLoading = true
-        errorMessage = nil
-
-        do {
-            snapshots = try database.fetchSnapshots(projectId: projectId)
-            if let firstSnapshot = snapshots.first {
-                selectedSnapshotId = firstSnapshot.id
-                await loadSnapshotSections(snapshotId: firstSnapshot.id)
-            }
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-
-        isLoading = false
-    }
-
-    private func loadSnapshotSections(snapshotId: String) async {
-        do {
-            selectedSnapshotSections = try database.fetchSnapshotSections(snapshotId: snapshotId)
-        } catch {
-            print("[VersionHistorySheet] Error loading snapshot sections: \(error)")
-            selectedSnapshotSections = []
-        }
-    }
-
-    // MARK: - Restore Actions
-
-    private func performSectionRestore() async {
-        guard let section = pendingRestoreSection,
-              let mode = pendingRestoreMode else { return }
-
-        let service = SnapshotService(database: database, projectId: projectId)
-
-        do {
-            switch mode {
-            case .replace:
-                let targetId = targetSectionId ?? section.originalSectionId ?? ""
-                try service.restoreSectionReplace(
-                    snapshotSectionId: section.id,
-                    targetSectionId: targetId,
-                    createSafetyBackup: true
-                )
-            case .duplicate:
-                // Insert after the last section
-                let insertAfter = currentSections.last?.id
-                try service.restoreSectionAsDuplicate(
-                    snapshotSectionId: section.id,
-                    insertAfterSectionId: insertAfter,
-                    createSafetyBackup: true
-                )
-            }
-
-            // Refresh snapshots list
-            await loadSnapshots()
-
-            // Notify parent to refresh
-            onRestoreComplete()
-            dismiss()
-        } catch {
-            errorMessage = "Restore failed: \(error.localizedDescription)"
-        }
-
-        pendingRestoreSection = nil
-        pendingRestoreMode = nil
-        targetSectionId = nil
-    }
-
-    private func performFullRestore() async {
-        guard let snapshotId = selectedSnapshotId else { return }
-
-        let service = SnapshotService(database: database, projectId: projectId)
-
-        do {
-            try service.restoreEntireProject(
-                from: snapshotId,
-                createSafetyBackup: createSafetyBackup
-            )
-
-            // Notify parent to refresh
-            onRestoreComplete()
-            dismiss()
-        } catch {
-            errorMessage = "Restore failed: \(error.localizedDescription)"
-        }
-    }
 }
 
 /// Mode for restoring a section

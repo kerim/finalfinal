@@ -137,7 +137,8 @@ extension EditorViewState {
             }
 
             #if DEBUG
-            print("[Zoom] Heading: id=\(headingBlock.id), sort=\(headingBlock.sortOrder), level=\(headingLevel), fragment=\"\(String(headingBlock.markdownFragment.prefix(80)))\"")
+            print("[Zoom] Heading: id=\(headingBlock.id), sort=\(headingBlock.sortOrder), " +
+                "level=\(headingLevel), fragment=\"\(String(headingBlock.markdownFragment.prefix(80)))\"")
             print("[Zoom] endSortOrder=\(String(describing: endSortOrder)), zoomedBlocks=\(zoomedBlocks.count)")
             if let first = zoomedBlocks.first {
                 print("[Zoom] First block: id=\(first.id), sort=\(first.sortOrder), type=\(first.blockType)")

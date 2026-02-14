@@ -21,20 +21,20 @@ final class DocumentManager {
     // MARK: - Current Project State
 
     /// The currently open project database (nil if no project open)
-    private(set) var projectDatabase: ProjectDatabase?
+    var projectDatabase: ProjectDatabase?
 
     /// The current project's package URL
-    private(set) var projectURL: URL?
+    var projectURL: URL?
 
     /// The current project's ID in the database
-    private(set) var projectId: String?
+    var projectId: String?
 
     /// The current project's title
-    private(set) var projectTitle: String?
+    var projectTitle: String?
 
     /// The current content's ID in the database (for annotation binding)
     /// Cached on project open to avoid repeated database fetches
-    private(set) var contentId: String?
+    var contentId: String?
 
     /// Whether there are unsaved changes (tracked by content updates)
     var hasUnsavedChanges: Bool = false
@@ -47,16 +47,16 @@ final class DocumentManager {
     // MARK: - Recent Projects
 
     /// List of recently opened projects (stored as security-scoped bookmarks)
-    private(set) var recentProjects: [RecentProjectEntry] = []
+    var recentProjects: [RecentProjectEntry] = []
 
     /// Maximum number of recent projects to track
-    private let maxRecentProjects = 10
+    let maxRecentProjects = 10
 
     /// UserDefaults key for recent projects bookmarks
-    private let recentProjectsKey = "com.kerim.final-final.recentProjects"
+    let recentProjectsKey = "com.kerim.final-final.recentProjects"
 
     /// UserDefaults key for last opened project bookmark
-    private let lastProjectBookmarkKey = "com.kerim.final-final.lastProjectBookmark"
+    let lastProjectBookmarkKey = "com.kerim.final-final.lastProjectBookmark"
 
     /// UserDefaults key for last seen app version (for Getting Started)
     private let lastSeenVersionKey = "com.kerim.final-final.lastSeenVersion"
@@ -64,22 +64,22 @@ final class DocumentManager {
     // MARK: - Getting Started State
 
     /// Whether the currently open project is the Getting Started guide
-    private(set) var isGettingStartedProject: Bool = false
+    var isGettingStartedProject: Bool = false
 
     /// Whether the user has made edits to Getting Started (vs just viewing)
-    private(set) var gettingStartedUserEdited: Bool = false
+    var gettingStartedUserEdited: Bool = false
 
     /// Content hash after editor loads (post-normalization)
-    private var gettingStartedLoadedHash: Int?
+    var gettingStartedLoadedHash: Int?
 
     /// Directory for the temporary Getting Started project
-    private var gettingStartedDirectory: URL {
+    var gettingStartedDirectory: URL {
         FileManager.default.temporaryDirectory
             .appendingPathComponent("final-final-getting-started")
     }
 
     /// Path to the Getting Started project
-    private var gettingStartedPath: URL {
+    var gettingStartedPath: URL {
         gettingStartedDirectory.appendingPathComponent("getting-started.ff")
     }
 
@@ -343,326 +343,6 @@ final class DocumentManager {
         guard let db = projectDatabase else { return nil }
         guard let project = try db.fetchProject() else { return nil }
         return (project.documentGoal, project.documentGoalType, project.excludeBibliography)
-    }
-
-    // MARK: - Recent Projects
-
-    /// Entry for a recent project with bookmark data
-    struct RecentProjectEntry: Codable, Identifiable {
-        let id: String
-        var title: String
-        var bookmarkData: Data
-        var lastOpenedAt: Date
-
-        init(id: String = UUID().uuidString, title: String, bookmarkData: Data, lastOpenedAt: Date = Date()) {
-            self.id = id
-            self.title = title
-            self.bookmarkData = bookmarkData
-            self.lastOpenedAt = lastOpenedAt
-        }
-    }
-
-    /// Add a project to the recent projects list
-    private func addToRecentProjects(url: URL, title: String) {
-        do {
-            // Create security-scoped bookmark
-            let bookmarkData = try url.bookmarkData(
-                options: [.withSecurityScope],
-                includingResourceValuesForKeys: nil,
-                relativeTo: nil
-            )
-
-            // Check if already in list
-            if let existingIndex = recentProjects.firstIndex(where: { entry in
-                resolveBookmark(entry.bookmarkData)?.path == url.path
-            }) {
-                // Update existing entry
-                var entry = recentProjects[existingIndex]
-                entry.title = title
-                entry.lastOpenedAt = Date()
-                entry.bookmarkData = bookmarkData
-                recentProjects.remove(at: existingIndex)
-                recentProjects.insert(entry, at: 0)
-            } else {
-                // Add new entry
-                let entry = RecentProjectEntry(title: title, bookmarkData: bookmarkData)
-                recentProjects.insert(entry, at: 0)
-
-                // Trim to max size
-                if recentProjects.count > maxRecentProjects {
-                    recentProjects = Array(recentProjects.prefix(maxRecentProjects))
-                }
-            }
-
-            saveRecentProjects()
-        } catch {
-            print("[DocumentManager] Failed to create bookmark for \(url.path): \(error)")
-        }
-    }
-
-    /// Remove a project from the recent projects list
-    func removeFromRecentProjects(_ entry: RecentProjectEntry) {
-        recentProjects.removeAll { $0.id == entry.id }
-        saveRecentProjects()
-    }
-
-    /// Clear all recent projects
-    func clearRecentProjects() {
-        recentProjects.removeAll()
-        saveRecentProjects()
-    }
-
-    /// Resolve a bookmark to a URL (starting security-scoped access)
-    func resolveBookmark(_ bookmarkData: Data) -> URL? {
-        var isStale = false
-        do {
-            let url = try URL(
-                resolvingBookmarkData: bookmarkData,
-                options: [.withSecurityScope],
-                relativeTo: nil,
-                bookmarkDataIsStale: &isStale
-            )
-
-            if isStale {
-                print("[DocumentManager] Bookmark is stale, may need refresh")
-            }
-
-            return url
-        } catch {
-            print("[DocumentManager] Failed to resolve bookmark: \(error)")
-            return nil
-        }
-    }
-
-    /// Open a recent project by entry
-    @discardableResult
-    func openRecentProject(_ entry: RecentProjectEntry) throws -> String {
-        guard let url = resolveBookmark(entry.bookmarkData) else {
-            throw DocumentError.bookmarkResolutionFailed
-        }
-
-        // Start security-scoped access
-        guard url.startAccessingSecurityScopedResource() else {
-            throw DocumentError.securityScopedAccessDenied
-        }
-
-        defer {
-            // Note: We keep access open while project is open
-            // Access is stopped when project is closed
-        }
-
-        return try openProject(at: url)
-    }
-
-    // MARK: - Last Project Persistence
-
-    /// Stored bookmark data for the last opened project
-    private var lastProjectBookmark: Data? {
-        get { UserDefaults.standard.data(forKey: lastProjectBookmarkKey) }
-        set { UserDefaults.standard.set(newValue, forKey: lastProjectBookmarkKey) }
-    }
-
-    /// Save a project URL as the last opened project (for restore on launch)
-    private func saveAsLastProject(url: URL) {
-        do {
-            let bookmarkData = try url.bookmarkData(
-                options: [.withSecurityScope],
-                includingResourceValuesForKeys: nil,
-                relativeTo: nil
-            )
-            lastProjectBookmark = bookmarkData
-        } catch {
-            print("[DocumentManager] Failed to save last project bookmark: \(error)")
-        }
-    }
-
-    /// Attempt to restore the last opened project
-    /// - Returns: true if a project was successfully restored
-    /// - Throws: DocumentError if bookmark resolution or project opening fails
-    func restoreLastProject() throws -> Bool {
-        guard let bookmarkData = lastProjectBookmark else { return false }
-
-        var isStale = false
-        let url = try URL(
-            resolvingBookmarkData: bookmarkData,
-            options: [.withSecurityScope],
-            relativeTo: nil,
-            bookmarkDataIsStale: &isStale
-        )
-
-        guard url.startAccessingSecurityScopedResource() else {
-            throw DocumentError.securityScopedAccessDenied
-        }
-
-        // Must stop access on any error path
-        do {
-            guard FileManager.default.fileExists(atPath: url.path) else {
-                url.stopAccessingSecurityScopedResource()
-                lastProjectBookmark = nil
-                throw DocumentError.bookmarkResolutionFailed
-            }
-
-            try openProject(at: url)
-
-            // Regenerate stale bookmark with fresh data
-            if isStale {
-                saveAsLastProject(url: url)
-            }
-
-            // Note: openProject now owns the security scope
-            return true
-        } catch {
-            url.stopAccessingSecurityScopedResource()
-            throw error
-        }
-    }
-
-    // MARK: - Recent Projects Persistence
-
-    private func loadRecentProjects() {
-        guard let data = UserDefaults.standard.data(forKey: recentProjectsKey) else {
-            recentProjects = []
-            return
-        }
-
-        do {
-            recentProjects = try JSONDecoder().decode([RecentProjectEntry].self, from: data)
-            // Validate bookmarks on load
-            recentProjects = recentProjects.filter { entry in
-                resolveBookmark(entry.bookmarkData) != nil
-            }
-        } catch {
-            print("[DocumentManager] Failed to load recent projects: \(error)")
-            recentProjects = []
-        }
-    }
-
-    private func saveRecentProjects() {
-        do {
-            let data = try JSONEncoder().encode(recentProjects)
-            UserDefaults.standard.set(data, forKey: recentProjectsKey)
-        } catch {
-            print("[DocumentManager] Failed to save recent projects: \(error)")
-        }
-    }
-
-    // MARK: - Getting Started Project
-
-    /// Load Getting Started content from bundled markdown
-    private func loadGettingStartedContent() -> String {
-        guard let url = Bundle.main.url(forResource: "getting-started", withExtension: "md"),
-              let content = try? String(contentsOf: url, encoding: .utf8) else {
-            return "# Welcome to FINAL|FINAL\n\nCreate a new project to get started."
-        }
-        return content
-    }
-
-    /// Open the Getting Started project (creates fresh each time)
-    /// - Returns: The project ID
-    @discardableResult
-    func openGettingStarted() throws -> String {
-        // Close any existing project first
-        closeProject()
-
-        let fm = FileManager.default
-
-        // Always start fresh - delete existing if present
-        if fm.fileExists(atPath: gettingStartedDirectory.path) {
-            try? fm.removeItem(at: gettingStartedDirectory)
-        }
-
-        // Create directory
-        try fm.createDirectory(at: gettingStartedDirectory, withIntermediateDirectories: true)
-
-        // Load bundled content
-        let content = loadGettingStartedContent()
-
-        // Create the package
-        let package = try ProjectPackage.create(at: gettingStartedPath, title: "Getting Started")
-
-        // Create database with initial content
-        let database = try ProjectDatabase.create(package: package, title: "Getting Started", initialContent: content)
-
-        // Fetch the created project ID
-        guard let project = try database.fetchProject() else {
-            throw DocumentError.failedToCreateProject
-        }
-
-        // Set current state
-        self.projectDatabase = database
-        self.projectURL = gettingStartedPath
-        self.projectId = project.id
-        self.projectTitle = "Getting Started"
-        self.contentId = try? database.fetchContent(for: project.id)?.id
-        self.hasUnsavedChanges = false
-        self.isGettingStartedProject = true
-
-        // Do NOT add to recent projects - Getting Started is ephemeral
-
-        print("[DocumentManager] Opened Getting Started project")
-        return project.id
-    }
-
-    /// Check if the Getting Started project has been modified by the user
-    func isGettingStartedModified() -> Bool {
-        return isGettingStartedProject && gettingStartedUserEdited
-    }
-
-    /// Record the content hash after editor normalizes it
-    /// Call this after the editor has loaded and processed the content
-    func recordGettingStartedLoadedContent(_ markdown: String) {
-        guard isGettingStartedProject else { return }
-        gettingStartedLoadedHash = markdown.hashValue
-        gettingStartedUserEdited = false
-        #if DEBUG
-        print("[DocumentManager] Recorded Getting Started loaded hash")
-        #endif
-    }
-
-    /// Check if content differs from what was loaded (true user edit)
-    /// Call this when content changes to detect actual user edits
-    func checkGettingStartedEdited(currentMarkdown: String) {
-        guard isGettingStartedProject, !gettingStartedUserEdited else { return }
-        guard let loadedHash = gettingStartedLoadedHash else { return }
-
-        if currentMarkdown.hashValue != loadedHash {
-            gettingStartedUserEdited = true
-            #if DEBUG
-            print("[DocumentManager] User edited Getting Started content")
-            #endif
-        }
-    }
-
-    /// Get the current content (for pre-populating new project)
-    func getCurrentContent() throws -> String? {
-        guard let db = projectDatabase, let pid = projectId else { return nil }
-        return try db.fetchContent(for: pid)?.markdown
-    }
-
-    // MARK: - Integrity Operations
-
-    /// Check project integrity without opening
-    /// - Parameter url: Path to the .ff package
-    /// - Returns: IntegrityReport with any issues found
-    func checkIntegrity(at url: URL) throws -> IntegrityReport {
-        let checker = ProjectIntegrityChecker(packageURL: url)
-        return try checker.validate()
-    }
-
-    /// Repair a project at the specified URL
-    /// - Parameter report: The integrity report from checkIntegrity
-    /// - Returns: RepairResult with details of what was repaired
-    func repairProject(report: IntegrityReport) throws -> RepairResult {
-        let repairService = ProjectRepairService(packageURL: report.packageURL)
-        return try repairService.repair(report: report)
-    }
-
-    /// Check if a URL points to the demo project
-    func isDemoProject(at url: URL) -> Bool {
-        let projectsFolder = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("final final Projects")
-        let demoPath = projectsFolder.appendingPathComponent("demo.ff")
-        return url.standardizedFileURL == demoPath.standardizedFileURL
     }
 
     // MARK: - Errors

@@ -55,25 +55,25 @@ struct PreferencesView: View {
 
 /// Appearance preferences pane with theme and typography settings
 struct AppearancePreferencesPane: View {
-    @Environment(ThemeManager.self) private var themeManager
-    @State private var appearanceManager = AppearanceSettingsManager.shared
+    @Environment(ThemeManager.self) var themeManager
+    @State var appearanceManager = AppearanceSettingsManager.shared
 
     // Local state for editing
-    @State private var fontSize: CGFloat = AppearanceSettingsManager.defaultFontSize
-    @State private var selectedLineHeight: LineHeightPreset = .normal
-    @State private var selectedFontFamily: String = ""
-    @State private var textColor: Color = .primary
-    @State private var headerColor: Color = .primary
-    @State private var accentColor: Color = .blue
-    @State private var selectedColumnWidth: ColumnWidthPreset = .normal
+    @State var fontSize: CGFloat = AppearanceSettingsManager.defaultFontSize
+    @State var selectedLineHeight: LineHeightPreset = .normal
+    @State var selectedFontFamily: String = ""
+    @State var textColor: Color = .primary
+    @State var headerColor: Color = .primary
+    @State var accentColor: Color = .blue
+    @State var selectedColumnWidth: ColumnWidthPreset = .normal
 
     // Preset management
-    @State private var showingSavePresetSheet = false
-    @State private var newPresetName = ""
-    @State private var selectedPresetId: UUID?
+    @State var showingSavePresetSheet = false
+    @State var newPresetName = ""
+    @State var selectedPresetId: UUID?
 
     // Available fonts
-    private let availableFonts: [String]
+    let availableFonts: [String]
 
     init() {
         let fonts = NSFontManager.shared.availableFontFamilies.sorted()
@@ -151,8 +151,8 @@ struct AppearancePreferencesPane: View {
                     onReset: {
                         appearanceManager.clearFontSize()
                         fontSize = AppearanceSettingsManager.defaultFontSize
-                    }
-                ) {
+                    },
+                    content: {
                     HStack {
                         Text("\(Int(fontSize)) pt")
                             .monospacedDigit()
@@ -163,7 +163,7 @@ struct AppearancePreferencesPane: View {
                                 updateFontSize(newValue)
                             }
                     }
-                }
+                })
 
                 // Line Height
                 settingRow(
@@ -172,8 +172,8 @@ struct AppearancePreferencesPane: View {
                     onReset: {
                         appearanceManager.clearLineHeight()
                         selectedLineHeight = .normal
-                    }
-                ) {
+                    },
+                    content: {
                     Picker("", selection: $selectedLineHeight) {
                         ForEach(LineHeightPreset.allCases) { preset in
                             Text(preset.displayName).tag(preset)
@@ -185,7 +185,7 @@ struct AppearancePreferencesPane: View {
                     .onChange(of: selectedLineHeight) { _, newValue in
                         updateLineHeight(newValue)
                     }
-                }
+                })
 
                 // Font Family
                 settingRow(
@@ -194,8 +194,8 @@ struct AppearancePreferencesPane: View {
                     onReset: {
                         appearanceManager.clearFontFamily()
                         selectedFontFamily = ""
-                    }
-                ) {
+                    },
+                    content: {
                     Picker("", selection: $selectedFontFamily) {
                         Text("System Font").tag("")
                         Divider()
@@ -209,7 +209,7 @@ struct AppearancePreferencesPane: View {
                     .onChange(of: selectedFontFamily) { _, newValue in
                         updateFontFamily(newValue)
                     }
-                }
+                })
             }
             .padding(8)
         }
@@ -228,14 +228,14 @@ struct AppearancePreferencesPane: View {
                     onReset: {
                         appearanceManager.clearTextColor()
                         textColor = themeManager.currentTheme.editorText
-                    }
-                ) {
+                    },
+                    content: {
                     ColorPicker("", selection: $textColor, supportsOpacity: false)
                         .labelsHidden()
                         .onChange(of: textColor) { _, newValue in
                             updateTextColor(newValue)
                         }
-                }
+                })
 
                 // Header Color
                 settingRow(
@@ -244,14 +244,14 @@ struct AppearancePreferencesPane: View {
                     onReset: {
                         appearanceManager.clearHeaderColor()
                         headerColor = appearanceManager.effectiveTextColor(theme: themeManager.currentTheme)
-                    }
-                ) {
+                    },
+                    content: {
                     ColorPicker("", selection: $headerColor, supportsOpacity: false)
                         .labelsHidden()
                         .onChange(of: headerColor) { _, newValue in
                             updateHeaderColor(newValue)
                         }
-                }
+                })
 
                 // Accent Color
                 settingRow(
@@ -260,14 +260,14 @@ struct AppearancePreferencesPane: View {
                     onReset: {
                         appearanceManager.clearAccentColor()
                         accentColor = themeManager.currentTheme.accentColor
-                    }
-                ) {
+                    },
+                    content: {
                     ColorPicker("", selection: $accentColor, supportsOpacity: false)
                         .labelsHidden()
                         .onChange(of: accentColor) { _, newValue in
                             updateAccentColor(newValue)
                         }
-                }
+                })
             }
             .padding(8)
         }
@@ -285,8 +285,8 @@ struct AppearancePreferencesPane: View {
                     onReset: {
                         appearanceManager.clearColumnWidth()
                         selectedColumnWidth = .normal
-                    }
-                ) {
+                    },
+                    content: {
                     Picker("", selection: $selectedColumnWidth) {
                         ForEach(ColumnWidthPreset.allCases) { preset in
                             Text(preset.displayName).tag(preset)
@@ -298,103 +298,10 @@ struct AppearancePreferencesPane: View {
                     .onChange(of: selectedColumnWidth) { _, newValue in
                         updateColumnWidth(newValue)
                     }
-                }
+                })
             }
             .padding(8)
         }
-    }
-
-    // MARK: - Presets Column
-
-    @ViewBuilder
-    private var presetsColumn: some View {
-        Text("Saved Presets")
-            .font(.headline)
-
-        if appearanceManager.savedPresets.isEmpty {
-            Text("No saved presets")
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .center)
-                .padding(.vertical, 40)
-        } else {
-            List(selection: $selectedPresetId) {
-                ForEach(appearanceManager.savedPresets) { preset in
-                    HStack {
-                        Text(preset.name)
-                        Spacer()
-                        Button {
-                            appearanceManager.deletePreset(preset)
-                            if selectedPresetId == preset.id {
-                                selectedPresetId = nil
-                            }
-                        } label: {
-                            Image(systemName: "trash")
-                                .foregroundStyle(.secondary)
-                        }
-                        .buttonStyle(.borderless)
-                    }
-                    .tag(preset.id as UUID?)
-                }
-            }
-            .listStyle(.inset)
-            .frame(height: 200)
-            .onChange(of: selectedPresetId) { _, newValue in
-                if let presetId = newValue,
-                   let preset = appearanceManager.savedPresets.first(where: { $0.id == presetId }) {
-                    restorePreset(preset)
-                }
-            }
-        }
-
-        Spacer()
-
-        if let presetId = selectedPresetId,
-           let preset = appearanceManager.savedPresets.first(where: { $0.id == presetId }) {
-            Button("Update \"\(preset.name)\"") {
-                appearanceManager.updatePreset(preset, themeId: themeManager.currentTheme.id)
-            }
-            .disabled(!appearanceManager.settings.hasOverrides)
-        }
-
-        Button("Save as New Preset...") {
-            showingSavePresetSheet = true
-        }
-        .disabled(!appearanceManager.settings.hasOverrides)
-
-        Divider()
-
-        Button("Reset All to Theme Defaults") {
-            appearanceManager.resetToDefaults()
-            loadCurrentSettings()
-        }
-        .disabled(!appearanceManager.settings.hasOverrides)
-    }
-
-    @ViewBuilder
-    private var savePresetSheet: some View {
-        VStack(spacing: 16) {
-            Text("Save Preset")
-                .font(.headline)
-
-            TextField("Preset name", text: $newPresetName)
-                .textFieldStyle(.roundedBorder)
-                .frame(width: 250)
-
-            HStack(spacing: 12) {
-                Button("Cancel") {
-                    showingSavePresetSheet = false
-                    newPresetName = ""
-                }
-                .keyboardShortcut(.cancelAction)
-
-                Button("Save") {
-                    saveCurrentPreset()
-                }
-                .keyboardShortcut(.defaultAction)
-                .disabled(newPresetName.trimmingCharacters(in: .whitespaces).isEmpty)
-            }
-        }
-        .padding(24)
     }
 
     // MARK: - Helper Views
@@ -429,85 +336,6 @@ struct AppearancePreferencesPane: View {
         }
     }
 
-    // MARK: - Actions
-
-    private func loadCurrentSettings(preserveSelection: Bool = false) {
-        let settings = appearanceManager.settings
-
-        fontSize = settings.fontSize ?? AppearanceSettingsManager.defaultFontSize
-
-        // Map line height value back to preset
-        selectedLineHeight = settings.lineHeight ?? .normal
-
-        selectedFontFamily = settings.fontFamily ?? ""
-
-        textColor = settings.textColor?.color ?? themeManager.currentTheme.editorText
-        headerColor = settings.headerColor?.color ?? textColor
-        accentColor = settings.accentColor?.color ?? themeManager.currentTheme.accentColor
-
-        selectedColumnWidth = settings.columnWidth ?? .normal
-
-        if !preserveSelection {
-            selectedPresetId = nil
-        }
-    }
-
-    private func updateFontSize(_ value: CGFloat) {
-        var updated = appearanceManager.settings
-        updated.fontSize = value
-        appearanceManager.update(updated)
-    }
-
-    private func updateLineHeight(_ preset: LineHeightPreset) {
-        var updated = appearanceManager.settings
-        updated.lineHeight = preset
-        appearanceManager.update(updated)
-    }
-
-    private func updateFontFamily(_ family: String) {
-        var updated = appearanceManager.settings
-        updated.fontFamily = family.isEmpty ? nil : family
-        appearanceManager.update(updated)
-    }
-
-    private func updateTextColor(_ color: Color) {
-        var updated = appearanceManager.settings
-        updated.textColor = CodableColor(color: color)
-        appearanceManager.update(updated)
-    }
-
-    private func updateHeaderColor(_ color: Color) {
-        var updated = appearanceManager.settings
-        updated.headerColor = CodableColor(color: color)
-        appearanceManager.update(updated)
-    }
-
-    private func updateAccentColor(_ color: Color) {
-        var updated = appearanceManager.settings
-        updated.accentColor = CodableColor(color: color)
-        appearanceManager.update(updated)
-    }
-
-    private func updateColumnWidth(_ preset: ColumnWidthPreset) {
-        var updated = appearanceManager.settings
-        updated.columnWidth = preset
-        appearanceManager.update(updated)
-    }
-
-    private func restorePreset(_ preset: AppearancePreset) {
-        let themeId = appearanceManager.restorePreset(preset)
-        themeManager.setTheme(byId: themeId)
-        loadCurrentSettings(preserveSelection: true)
-    }
-
-    private func saveCurrentPreset() {
-        let name = newPresetName.trimmingCharacters(in: .whitespaces)
-        guard !name.isEmpty else { return }
-
-        appearanceManager.savePreset(name: name, themeId: themeManager.currentTheme.id)
-        showingSavePresetSheet = false
-        newPresetName = ""
-    }
 }
 
 #Preview {

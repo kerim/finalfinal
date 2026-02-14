@@ -137,8 +137,7 @@ extension CSLDate: Codable {
             self.dateParts = [[year]]
             self.raw = nil
             self.literal = nil
-        }
-        else {
+        } else {
             // Fallback: empty date
             self.dateParts = nil
             self.raw = nil
@@ -187,10 +186,6 @@ struct AnyCodable: Decodable, @unchecked Sendable {
 /// Only includes common types - others are stored as rawValue
 struct CSLItemType: RawRepresentable, Codable, Sendable, Equatable {
     var rawValue: String
-
-    init(rawValue: String) {
-        self.rawValue = rawValue
-    }
 
     static let article = CSLItemType(rawValue: "article")
     static let articleJournal = CSLItemType(rawValue: "article-journal")

@@ -172,7 +172,7 @@ extension MilkdownEditor.Coordinator {
         }
 
         // CONTENT SYNC: Fetch and save content BEFORE cursor to prevent content loss during toggle
-        webView.evaluateJavaScript("window.FinalFinal.getContent()") { [weak self] contentResult, contentError in
+        webView.evaluateJavaScript("window.FinalFinal.getContent()") { [weak self] contentResult, _ in
             guard let self, !self.isCleanedUp else {
                 self?.saveCursorAndNotify()
                 return
@@ -266,7 +266,7 @@ extension MilkdownEditor.Coordinator {
         webView.evaluateJavaScript("""
             window.FinalFinal.setContent(\(jsonString)\(optionsArg));
             window.FinalFinal.getContent();
-        """) { [weak self] result, error in
+        """) { [weak self] _, _ in
             // For zoom transitions, DON'T show WebView here - wait for paintComplete message
             // The JS double-RAF pattern will signal when paint is complete
             if !shouldScrollToStart {

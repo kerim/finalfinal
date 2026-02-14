@@ -9,12 +9,39 @@ identifier_name:
     - fm      # FileManager
     - id      # Identifiable protocol conformance
     - x       # X coordinate in geometry calculations
+    - y       # Y coordinate / year component
+    - a       # Sort closure parameter
+    - b       # Sort closure parameter
+    - r       # RGB color component
+    - g       # RGB color component
+    - l       # Line iterator in parsers
+    - h1      # Heading level names
+    - h2
+    - h3
+    - h4
+    - h5
+    - h6
+    - hl      # Heading level shorthand
+    - vm      # ViewModel shorthand
+    - dm      # DocumentManager shorthand
+    - wc      # WordCount shorthand
+    - js      # JavaScript string shorthand
     - final_  # Swift convention for reserved keyword "final"
 
 # Increase line length limit - inline JS strings are more readable on single lines
 line_length:
   warning: 150
   error: 200
+
+# Match project refactoring target
+file_length:
+  warning: 800
+  error: 1000
+
+# Allow larger function bodies
+function_body_length:
+  warning: 300
+  error: 600
 
 # Allow larger coordinator classes - WKWebView delegates naturally grow
 type_body_length:

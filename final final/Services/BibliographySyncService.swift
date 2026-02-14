@@ -50,10 +50,16 @@ final class BibliographySyncService {
     /// Pre-compiled regex for citekey extraction
     /// Matches both [@citekey and ; @citekey for combined citations like [@key1; @key2]
     /// Stops at comma to handle page locators like [@citekey, p. 123]
-    private static let citationPattern = try! NSRegularExpression(
-        pattern: #"(?:\[|; )@([^\],;\s]+)"#,
-        options: []
-    )
+    private static let citationPattern: NSRegularExpression = {
+        do {
+            return try NSRegularExpression(
+                pattern: #"(?:\[|; )@([^\],;\s]+)"#,
+                options: []
+            )
+        } catch {
+            fatalError("Invalid regex pattern: \(error)")
+        }
+    }()
 
     /// Extract citekeys from markdown content
     static func extractCitekeys(from markdown: String) -> [String] {

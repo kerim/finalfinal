@@ -57,9 +57,9 @@ enum BlockParser {
             let isPseudoSection = trimmed.contains("<!-- ::break:: -->")
 
             // Look up existing metadata for this heading if available
-            var status: SectionStatus? = nil
-            var tags: [String]? = nil
-            var wordGoal: Int? = nil
+            var status: SectionStatus?
+            var tags: [String]?
+            var wordGoal: Int?
 
             if blockType == .heading, let metadata = existingSectionMetadata {
                 // Try to match by title

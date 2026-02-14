@@ -38,7 +38,6 @@ struct FocusModeToast: View {
     }
 }
 
-// swiftlint:disable:next type_body_length
 struct ContentView: View {
     @Environment(ThemeManager.self) var themeManager
     @Environment(VersionHistoryCoordinator.self) private var versionHistoryCoordinator
@@ -97,7 +96,12 @@ struct ContentView: View {
 
     var body: some View {
         mainContentView
-            .withEditorNotifications(editorState: editorState, cursorRestore: $cursorPositionToRestore, sectionSyncService: sectionSyncService, findBarState: findBarState)
+            .withEditorNotifications(
+                editorState: editorState,
+                cursorRestore: $cursorPositionToRestore,
+                sectionSyncService: sectionSyncService,
+                findBarState: findBarState
+            )
             .withFindNotifications(findBarState: findBarState)
             .withFileNotifications(
                 editorState: editorState,

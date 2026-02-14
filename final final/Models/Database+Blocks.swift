@@ -304,7 +304,8 @@ extension ProjectDatabase {
                 let totalBlocks = try Block.filter(Block.Columns.projectId == projectId).fetchCount(db)
                 let deleteRatio = Double(changes.deletes.count) / Double(max(totalBlocks, 1))
                 if deleteRatio > 0.5 && changes.deletes.count > 5 {
-                    print("[Database+Blocks] SAFETY NET: Rejecting mass delete (\(changes.deletes.count)/\(totalBlocks) blocks). First IDs: \(changes.deletes.prefix(5))")
+                    print("[Database+Blocks] SAFETY NET: Rejecting mass delete " +
+                        "(\(changes.deletes.count)/\(totalBlocks) blocks). First IDs: \(changes.deletes.prefix(5))")
                     changes.deletes = []
                 }
             }

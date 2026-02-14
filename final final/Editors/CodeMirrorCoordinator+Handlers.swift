@@ -295,7 +295,7 @@ extension CodeMirrorEditor.Coordinator {
             let escapedItems = itemsJSON.escapedForJSTemplateLiteral
 
             let script = "window.FinalFinal.citationPickerCallback(JSON.parse(`\(escapedCallback)`), JSON.parse(`\(escapedItems)`))"
-            webView.evaluateJavaScript(script) { result, error in
+            webView.evaluateJavaScript(script) { _, error in
                 if let error {
                     print("[CodeMirrorEditor] citationPickerCallback error: \(error)")
                 } else {
