@@ -176,7 +176,10 @@ struct MilkdownEditor: NSViewRepresentable {
     }
 
     static func dismantleNSView(_ webView: WKWebView, coordinator: Coordinator) {
-        coordinator.saveCursorPositionBeforeCleanup()
+        // Only save cursor if not already saved by Phase 1 toggle flow
+        if coordinator.cursorPositionToRestoreBinding.wrappedValue == nil {
+            coordinator.saveCursorPositionBeforeCleanup()
+        }
         coordinator.cleanup()
     }
 

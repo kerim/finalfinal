@@ -171,6 +171,12 @@ extension CodeMirrorEditor.Coordinator {
             cursorJS = "null"
         }
 
+        // Prevent updateNSView from calling setContent() after initialize().
+        // Without this, shouldPushContent() returns true (lastPushedContent is ""),
+        // and setContent() overwrites the cursor that initialize() just set.
+        lastPushedContent = content
+        lastPushTime = Date()
+
         let escapedContent = content.escapedForJSTemplateLiteral
 
         let escapedTheme = theme
@@ -189,6 +195,8 @@ extension CodeMirrorEditor.Coordinator {
                 #if DEBUG
                 print("[CodeMirrorEditor] Initialize error: \(error.localizedDescription)")
                 #endif
+                // Reset so updateNSView can retry content push
+                self?.lastPushedContent = ""
             }
             self?.cursorPositionToRestoreBinding.wrappedValue = nil
         }

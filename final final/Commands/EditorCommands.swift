@@ -45,7 +45,7 @@ struct EditorCommands: Commands {
             .keyboardShortcut("f", modifiers: [.command, .shift])
 
             Button("Toggle Editor Mode") {
-                NotificationCenter.default.post(name: .toggleEditorMode, object: nil)
+                NotificationCenter.default.post(name: .willToggleEditorMode, object: nil)
             }
             .keyboardShortcut("/", modifiers: .command)
 

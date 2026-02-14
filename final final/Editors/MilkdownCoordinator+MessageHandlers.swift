@@ -92,6 +92,12 @@ extension MilkdownEditor.Coordinator {
     func performBatchInitialize(content: String, theme: String, cursor: CursorPosition?) {
         guard let webView else { return }
 
+        // Prevent updateNSView from calling setContent() after initialize().
+        // Milkdown's async typeof check currently delays initialize() past
+        // updateNSView, but this makes the protection explicit.
+        lastPushedContent = content
+        lastPushTime = Date()
+
         // Build options dictionary for JSON encoding
         // Using JSON instead of template literals handles ALL special characters safely
         var options: [String: Any] = [

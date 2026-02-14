@@ -83,10 +83,14 @@ extension View {
                 }
             }
             .onReceive(NotificationCenter.default.publisher(for: .didSaveCursorPosition)) { notification in
+                // Guard against rapid Cmd+/ -- if already transitioning, ignore
+                guard editorState.contentState == .idle else { return }
                 // Handle cursor position restoration during mode switch
                 if let position = notification.userInfo?["position"] as? CursorPosition {
                     cursorRestore.wrappedValue = position
                 }
+                // Complete the two-phase toggle: cursor is saved, now do the actual switch
+                NotificationCenter.default.post(name: .toggleEditorMode, object: nil)
             }
             .onReceive(NotificationCenter.default.publisher(for: .toggleOutlineSidebar)) { _ in
                 editorState.toggleOutlineSidebar()

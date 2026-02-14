@@ -198,3 +198,45 @@ requestAnimationFrame(() => {
 - Longer delays (the compositor cache persists indefinitely until invalidated)
 
 **General principle:** When WKWebView shows stale content despite correct DOM state, trigger a micro-scroll to force compositor cache invalidation.
+
+---
+
+## Editor Toggle Cursor Sync
+
+### Two-Phase Toggle with `batchInitialize` Race Prevention
+
+**Problem:** Cursor position was lost when switching from Milkdown to CodeMirror (MD→CM). The cursor was correctly saved and passed via the binding, but always reset to position 0.
+
+**Root Cause:** `batchInitialize()` queues JS `initialize({content, cursor})` which sets the cursor correctly. But it didn't update `lastPushedContent`, so the immediately-following `updateNSView` cycle saw `lastPushedContent == ""`, decided `shouldPushContent()` was true, and called `setContent()` — which reset the cursor to 0. Both JS calls execute in order: `initialize()` sets cursor, then `setContent()` wipes it.
+
+**Why CM→MD worked by accident:** Milkdown's `batchInitialize()` does an async `typeof window.FinalFinal` check before calling `initialize()`. This delay pushes `initialize()` past `updateNSView`'s `setContent()`, so `initialize()` (with cursor) runs last and wins.
+
+**Solution:** Set `lastPushedContent = content` and `lastPushTime = Date()` in `batchInitialize()` *before* the JS call. This makes `shouldPushContent()` return false in `updateNSView`, preventing the redundant `setContent()`. Applied to both CodeMirror and Milkdown for consistency.
+
+```swift
+func batchInitialize() {
+    let content = contentBinding.wrappedValue
+    // ...read theme, cursor...
+
+    // CRITICAL: Prevent updateNSView from re-pushing content
+    lastPushedContent = content
+    lastPushTime = Date()
+
+    // Now queue initialize() with cursor
+    webView.evaluateJavaScript("window.FinalFinal.initialize({...})")
+}
+```
+
+**Error recovery:** If `initialize()` fails, reset `lastPushedContent = ""` so `updateNSView` can retry the content push on the next cycle.
+
+### Two-Phase Toggle Flow
+
+The toggle uses a two-phase notification pattern to ensure cursor is saved before the editor switch:
+
+1. **Phase 1 (`willToggleEditorMode`):** Outgoing editor saves cursor position, posts `didSaveCursorPosition`
+2. **Phase 2 (`didSaveCursorPosition`):** Sets `cursorRestore` binding, then posts `toggleEditorMode` to do the actual switch
+3. **`dismantleNSView`:** Skips redundant cursor save if Phase 1 already set the binding
+
+This prevents the race where the old editor is torn down before its cursor position can be read.
+
+**General principle:** When `NSViewRepresentable` lifecycle methods (`makeNSView`, `updateNSView`) interact with async JS calls, ensure shared state guards (like `lastPushedContent`) are set synchronously *before* the async call, not in its callback.
