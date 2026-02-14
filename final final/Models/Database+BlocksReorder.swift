@@ -119,6 +119,22 @@ extension ProjectDatabase {
             }
             try deleteQuery.deleteAll(db)
 
+            // 2.5. Shift blocks after range to prevent sort order collisions
+            // when inserted blocks overflow the original range
+            if let end = endSortOrder {
+                let insertEnd = startSortOrder + Double(newBlocks.count)
+                if insertEnd > end {
+                    let shift = insertEnd - end
+                    try db.execute(
+                        sql: """
+                            UPDATE block SET sortOrder = sortOrder + ?, updatedAt = ?
+                            WHERE projectId = ? AND sortOrder >= ?
+                            """,
+                        arguments: [shift, Date(), projectId, end]
+                    )
+                }
+            }
+
             // 3. Insert new blocks with sort orders starting at startSortOrder
             for (index, var block) in newBlocks.enumerated() {
                 block.sortOrder = startSortOrder + Double(index)

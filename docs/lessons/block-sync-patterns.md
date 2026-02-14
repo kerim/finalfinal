@@ -107,3 +107,32 @@ struct OutlineSidebar: View {
 Then remove the now-unused `filterToSubtree()` method entirely.
 
 **General principle:** When multiple components need to filter/display the same subset of data, compute the filter criteria once in the source-of-truth (EditorViewState) and share it, rather than having each component recalculate independently. Independent recalculation leads to subtle mismatches.
+
+---
+
+## Shift Subsequent Blocks When Inserts Overflow a Sort-Order Range
+
+**Problem:** When replacing blocks in a sort-order range `[start, end)`, the new block count can exceed the original count. Blocks are assigned sequential sort orders starting at `start`, so if `start + newCount > end`, the new blocks collide with existing blocks after the range. This caused duplicate headings when zooming out after creating headings in a zoomed CodeMirror view.
+
+**Root Cause:** `replaceBlocksInRange()` deleted old blocks in the range and inserted new ones with sort orders `start, start+1, ..., start+N-1`. When N > (end - start), sort orders overflowed into the space occupied by subsequent blocks. Two blocks sharing the same sort order produced duplicates.
+
+**Solution:** Before inserting, check whether the new blocks will overflow the range. If so, shift all blocks at or after `end` forward by the overflow amount:
+
+```swift
+// In replaceBlocksInRange(), between delete and insert:
+if let end = endSortOrder {
+    let insertEnd = startSortOrder + Double(newBlocks.count)
+    if insertEnd > end {
+        let shift = insertEnd - end
+        try db.execute(
+            sql: """
+                UPDATE block SET sortOrder = sortOrder + ?, updatedAt = ?
+                WHERE projectId = ? AND sortOrder >= ?
+                """,
+            arguments: [shift, Date(), projectId, end]
+        )
+    }
+}
+```
+
+**General principle:** When inserting N items into a range that originally held M items (N > M), always shift subsequent items to make room. Don't assume the gap between the range boundaries is large enough — ranges are often tight (one sort order per block), and any overflow causes collisions. This applies to any ordered collection where items are addressed by position (sort orders, indices, display orders).

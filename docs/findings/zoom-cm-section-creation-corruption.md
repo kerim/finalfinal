@@ -86,3 +86,42 @@ Added deferred hierarchy enforcement in the `.didZoomOut` handler. Since Fix 1 s
 **Range-based filtering over ID-based during zoom:** Sort-order range filtering automatically includes newly created blocks. ID-based filtering fails for blocks created during zoom because their IDs aren't in the pre-computed `zoomedSectionIds` set.
 
 **Always sync both content properties:** When `content` is updated programmatically, `sourceContent` must also be updated if in source mode. Otherwise CodeMirror continues showing stale text and re-sends it on the next change.
+
+---
+
+## Regression: Sort-Order Collision on Zoom-Out
+
+### Summary
+
+After the five fixes above, a new regression appeared: zooming out after creating headings in a zoomed CodeMirror view produced duplicate headings. The root cause was a sort-order collision in `replaceBlocksInRange()` — a direct consequence of Fix 2's count-based range boundary.
+
+### Root Cause
+
+Fix 2 changed the zoom range end boundary from level-based scanning to `newEnd = newStart + Double(blocks.count)`. This correctly prevented higher-level headings from shrinking the range, but created a new problem: when the user adds headings during zoom, the number of blocks being inserted (N) can exceed the number of blocks originally in the range (M). The inserted blocks' sort orders (`startSortOrder + 0`, `startSortOrder + 1`, ..., `startSortOrder + N-1`) overflow past `endSortOrder`, colliding with blocks that follow the range.
+
+Example: Range `[3.0, 5.0)` holds 2 blocks. User adds headings, producing 4 blocks. Blocks get sort orders 3.0, 4.0, 5.0, 6.0 — but blocks at 5.0 and 6.0 already exist outside the range. The collisions cause duplicate sections on zoom-out.
+
+### Fix: Shift Blocks After Range (Step 2.5)
+
+**File:** `Models/Database+BlocksReorder.swift`
+
+Added step 2.5 in `replaceBlocksInRange()`, between deleting old blocks (step 2) and inserting new blocks (step 3). When the inserted block count overflows the original range, shift all blocks at or after `endSortOrder` forward by the overflow amount:
+
+```swift
+// 2.5. Shift blocks after range to prevent sort order collisions
+if let end = endSortOrder {
+    let insertEnd = startSortOrder + Double(newBlocks.count)
+    if insertEnd > end {
+        let shift = insertEnd - end
+        try db.execute(
+            sql: """
+                UPDATE block SET sortOrder = sortOrder + ?, updatedAt = ?
+                WHERE projectId = ? AND sortOrder >= ?
+                """,
+            arguments: [shift, Date(), projectId, end]
+        )
+    }
+}
+```
+
+This preserves the relative ordering of all blocks outside the range while making room for the larger insert.
