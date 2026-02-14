@@ -50,6 +50,26 @@ eventMonitor = NSEvent.addLocalMonitorForEvents(
 
 SwiftUI's `.onTapGesture` consumes ctrl+click before custom handlers can intercept it, so use `NSEvent.addLocalMonitorForEvents` with event consumption (`return nil`) to prevent click-through.
 
+### Use `.overlay()` Not `.background()` for Event-Intercepting NSViews
+
+An `NSViewRepresentable` placed as `.background()` never receives click events because `NSView.hitTest(_:)` traverses subviews front-to-back. The foreground SwiftUI view is checked first and consumes the event silently. Use `.overlay()` to place the NSView in front.
+
+When the overlay should only intercept *some* events (e.g., right-clicks but not left-clicks), override `hitTest` to pass through selectively:
+
+```swift
+override func hitTest(_ point: NSPoint) -> NSView? {
+    if let event = NSApp.currentEvent {
+        if event.type == .rightMouseDown { return super.hitTest(point) }
+        if event.type == .leftMouseDown && event.modifierFlags.contains(.control) {
+            return super.hitTest(point)
+        }
+    }
+    return nil  // Pass left-clicks through to views behind
+}
+```
+
+See `DraggableCardView.swift` (`PassthroughHostingView`) for a working example.
+
 ---
 
 ## Performance
