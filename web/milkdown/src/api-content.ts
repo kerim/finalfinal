@@ -12,7 +12,6 @@ import {
   getBlockIdAtPos,
   resetBlockIdState,
   setBlockIdsForTopLevel,
-  setSuppressTempIdWarnings,
 } from './block-id-plugin';
 import {
   type BlockChanges,
@@ -27,7 +26,6 @@ import { resetCAYWState } from './cayw';
 import {
   getCurrentContent,
   getEditorInstance,
-  getIsSettingContent,
   setCurrentContent,
   setIsSettingContent,
   setPendingSlashRedo,
@@ -287,14 +285,7 @@ export function applyBlocks(blocks: Block[]): void {
 
 export function setContentWithBlockIds(markdown: string, blockIds: string[], options?: { scrollToStart?: boolean }): void {
   // 1. Set content (parse, dispatch, resetAndSnapshot already called inside)
-  // Suppress temp ID warnings — setContent triggers assignBlockIds which creates
-  // temp IDs that are immediately overwritten by setBlockIdsForTopLevel below.
-  setSuppressTempIdWarnings(true);
-  try {
-    setContent(markdown, options);
-  } finally {
-    setSuppressTempIdWarnings(false);
-  }
+  setContent(markdown, options);
   // 2. Immediately assign real block IDs (still synchronous, same JS turn)
   const editorInstance = getEditorInstance();
   if (blockIds.length > 0 && editorInstance) {

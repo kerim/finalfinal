@@ -138,30 +138,30 @@ function nodeToMarkdownFragment(node: Node): string {
   switch (node.type.name) {
     case 'heading': {
       const level = node.attrs.level || 1;
-      return '#'.repeat(level) + ' ' + text;
+      return `${'#'.repeat(level)} ${text}`;
     }
     case 'paragraph':
       return text;
     case 'blockquote':
       return text
         .split('\n')
-        .map((line: string) => '> ' + line)
+        .map((line: string) => `> ${line}`)
         .join('\n');
     case 'code_block': {
       const lang = node.attrs.language || '';
-      return '```' + lang + '\n' + node.textContent + '\n```';
+      return `\`\`\`${lang}\n${node.textContent}\n\`\`\``;
     }
     case 'bullet_list': {
       const items: string[] = [];
       node.forEach((child) => {
-        items.push('- ' + serializeInlineContent(child));
+        items.push(`- ${serializeInlineContent(child)}`);
       });
       return items.join('\n');
     }
     case 'ordered_list': {
       const oItems: string[] = [];
       node.forEach((child, _offset, index) => {
-        oItems.push(index + 1 + '. ' + serializeInlineContent(child));
+        oItems.push(`${index + 1}. ${serializeInlineContent(child)}`);
       });
       return oItems.join('\n');
     }
@@ -261,27 +261,6 @@ function detectChanges(
       state.pendingDeletes.add(id);
       // Remove from updates if pending
       state.pendingUpdates.delete(id);
-
-      // DIAGNOSTIC: Log when a permanent ID disappears
-      const isPermId = !id.startsWith('temp-');
-      if (isPermId) {
-        // Check if a temp ID appeared with similar content
-        const oldContent = oldBlock.textContent.slice(0, 80);
-        const tempReplacements = Array.from(newSnapshot.entries())
-          .filter(([newId]) => newId.startsWith('temp-') && !oldSnapshot.has(newId))
-          .map(([newId, snap]) => ({
-            tempId: newId,
-            textContent: snap.textContent.slice(0, 80),
-            pos: snap.pos,
-          }));
-        console.warn(
-          `[block-sync] PERMANENT ID LOST: ${id}\n` +
-          `  old pos=${oldBlock.pos}, type=${oldBlock.blockType}, ` +
-          `text=${JSON.stringify(oldContent)}\n` +
-          `  new temp IDs this cycle: ${JSON.stringify(tempReplacements)}\n` +
-          `  old snapshot size=${oldSnapshot.size}, new snapshot size=${newSnapshot.size}`
-        );
-      }
     } else if (
       oldBlock.textContent !== newBlock.textContent ||
       oldBlock.nodeSize !== newBlock.nodeSize ||

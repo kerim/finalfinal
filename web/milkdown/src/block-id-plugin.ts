@@ -7,10 +7,6 @@ import { Plugin, PluginKey } from '@milkdown/kit/prose/state';
 import { Decoration, DecorationSet } from '@milkdown/kit/prose/view';
 import { $prose } from '@milkdown/kit/utils';
 
-// During programmatic setContent(), temp IDs are expected and immediately
-// overwritten by pushBlockIds() — suppress warnings for these transient assignments.
-import { getIsSettingContent } from './editor-state';
-
 export const blockIdPluginKey = new PluginKey<BlockIdPluginState>('block-id');
 
 // Block types that should receive IDs (top-level only — no list_item)
@@ -55,18 +51,6 @@ interface BlockIdPluginState {
 // Note: These are cleared when the editor is destroyed via resetBlockIdState()
 let currentBlockIds: Map<number, string> = new Map();
 const pendingConfirmations: Map<string, string> = new Map();
-
-// When true, suppress TEMP ID console.warn messages (used during atomic setContentWithBlockIds)
-let suppressTempIdWarnings = false;
-
-/**
- * Control whether TEMP ID warnings are logged.
- * Used by setContentWithBlockIds() to silence the harmless temp IDs
- * that are created by setContent() and immediately overwritten.
- */
-export function setSuppressTempIdWarnings(value: boolean): void {
-  suppressTempIdWarnings = value;
-}
 
 /**
  * Reset module-level state (call when destroying editor instance)
@@ -232,24 +216,6 @@ function assignBlockIds(doc: Node, existingIds: Map<number, string>): Map<number
           const newId = TEMP_ID_PREFIX + generateBlockId();
           newIds.set(offset, newId);
           claimedIds.add(newId);
-
-          // DIAGNOSTIC: Why did this block get a temp ID?
-          if (!suppressTempIdWarnings && !getIsSettingContent()) {
-            const allExistingIds = Array.from(existingIds.entries());
-            const unclaimedIds = allExistingIds.filter(([, id]) => !claimedIds.has(id));
-            const nearbyUnclaimed = unclaimedIds
-              .map(([oldPos, id]) => ({ pos: oldPos, id, distance: Math.abs(oldPos - offset) }))
-              .sort((a, b) => a.distance - b.distance)
-              .slice(0, 5);
-            console.warn(
-              `[block-id-plugin] TEMP ID assigned: ${newId}\n` +
-              `  block offset=${offset}, type=${node.type.name}, ` +
-              `textContent=${JSON.stringify(node.textContent.slice(0, 80))}\n` +
-              `  existingIds count=${existingIds.size}, claimedIds count=${claimedIds.size}\n` +
-              `  unclaimed IDs remaining=${unclaimedIds.length}\n` +
-              `  nearest unclaimed (top 5): ${JSON.stringify(nearbyUnclaimed)}`
-            );
-          }
         }
       }
     }
