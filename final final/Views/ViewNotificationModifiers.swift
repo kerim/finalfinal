@@ -215,7 +215,7 @@ extension View {
                 annotationSyncService.contentChanged(newValue)
 
                 // When in source mode, re-parse blocks (BlockSyncService only works with Milkdown)
-                if editorState.editorMode == .source && !newValue.isEmpty {
+                if editorState.editorMode == .source {
                     if editorState.zoomedSectionId == nil {
                         // Non-zoomed: full document re-parse via replaceBlocks()
                         if let db = documentManager.projectDatabase,
@@ -340,6 +340,20 @@ extension View {
         } catch {
             print("[ContentView] Error saving document goal settings: \(error.localizedDescription)")
         }
+    }
+
+    /// Refreshes sidebar sections when contentState returns to idle,
+    /// recovering any ValueObservation updates dropped during non-idle transitions.
+    @MainActor
+    func withContentStateRecovery(
+        editorState: EditorViewState
+    ) -> some View {
+        self
+            .onChange(of: editorState.contentState) { oldValue, newValue in
+                if newValue == .idle && oldValue != .idle {
+                    editorState.refreshSections()
+                }
+            }
     }
 
     /// Adds sidebar visibility sync observers

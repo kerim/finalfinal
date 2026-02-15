@@ -216,6 +216,26 @@ class EditorViewState {
         }
     }
 
+    /// Re-fetch outline blocks from database and update sections.
+    /// Called when ValueObservation may have been dropped during non-idle contentState.
+    func refreshSections() {
+        guard let db = projectDatabase, let pid = currentProjectId else { return }
+        do {
+            let outlineBlocks = try db.fetchOutlineBlocks(projectId: pid)
+            var viewModels = outlineBlocks.map { SectionViewModel(from: $0) }
+            for i in viewModels.indices {
+                if let wc = try? db.wordCountForHeading(blockId: viewModels[i].id) {
+                    viewModels[i].wordCount = wc
+                }
+            }
+            self.sections = viewModels
+            self.recalculateParentRelationships()
+            self.onSectionsUpdated?()
+        } catch {
+            print("[EditorViewState] Section refresh error: \(error)")
+        }
+    }
+
     /// Stop observing sections from database
     func stopObserving() {
         observationTask?.cancel()

@@ -136,6 +136,9 @@ struct ContentView: View {
                 guard editorState.contentState == .idle else { return }
                 // Skip the first bibliography notification after a project switch
                 // (it fires from the old project's debounced citekey check)
+                // Skip rebuild when editor content is empty - no citations exist,
+                // so rebuilding from blocks would restore stale content
+                guard !editorState.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
                 guard !suppressNextBibliographyRebuild else {
                     suppressNextBibliographyRebuild = false
                     #if DEBUG
@@ -247,6 +250,7 @@ struct ContentView: View {
                 autoBackupService: autoBackupService,
                 documentManager: documentManager
             )
+            .withContentStateRecovery(editorState: editorState)
             .withSidebarSync(
                 editorState: editorState,
                 sidebarVisibility: $sidebarVisibility
