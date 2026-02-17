@@ -5,7 +5,7 @@ import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { languages } from '@codemirror/language-data';
 import { highlightSelectionMatches, search } from '@codemirror/search';
 import { EditorState } from '@codemirror/state';
-import { EditorView, highlightActiveLine, keymap } from '@codemirror/view';
+import { EditorView, keymap } from '@codemirror/view';
 import { anchorPlugin } from './anchor-plugin';
 import {
   apiFindNext,
@@ -69,7 +69,6 @@ function initEditor() {
 
   // Store extensions at module level so resetForProjectSwitch can recreate EditorState
   const extensions = [
-    highlightActiveLine(),
     history(),
     markdown({ base: markdownLanguage, codeLanguages: languages }),
     syntaxHighlighting(customHighlightStyle),
