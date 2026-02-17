@@ -26,7 +26,6 @@ final class ProjectDatabase: Sendable {
         try db.dbWriter.write { database in
             var project = Project(title: title)
             try project.insert(database)
-
             var content = Content(projectId: project.id, markdown: initialContent)
             try content.insert(database)
         }

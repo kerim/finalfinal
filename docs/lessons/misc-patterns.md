@@ -69,6 +69,18 @@ Changes to source `index.html` won't sync to output. Either manually sync or set
 
 ---
 
+## Git Info at Build Time
+
+A pre-build script in `project.yml` generates `final final/App/GitInfo.swift` on every build, embedding the current git branch and short commit hash. This is logged at launch in DEBUG builds:
+
+```
+[FINAL|FINAL] Build: open-proj-bug (27d9047)
+```
+
+The script uses `basedOnDependencyAnalysis: false` so it runs even after a branch switch with no source changes. A committed placeholder `GitInfo.swift` is required because xcodegen scans the source tree at project-generation time — without it, the file won't appear in compile sources.
+
+---
+
 ## XeTeX / PDF Export
 
 ### Use -output-driver for Paths with Spaces

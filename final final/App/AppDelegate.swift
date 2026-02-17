@@ -51,6 +51,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppDelegate.shared = self
 
+        #if DEBUG
+        print("[FINAL|FINAL] Build: \(GitInfo.branch) (\(GitInfo.commit))")
+        #endif
+
         // Disable window tabbing - removes "Show Tab Bar" and "Show All Tabs" from View menu
         // This app doesn't use a tabbed interface
         NSWindow.allowsAutomaticWindowTabbing = false
