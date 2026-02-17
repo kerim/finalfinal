@@ -20,7 +20,7 @@ body {
   height: 100%;
   background: var(--editor-bg);
   color: var(--editor-text);
-  font-family: var(--font-sans);
+  font-family: var(--font-body);
   font-size: var(--font-size-body);
   line-height: var(--line-height-body, 1.75);
   font-weight: var(--weight-body, 400);
@@ -408,7 +408,7 @@ body.source-mode {
 }
 
 body.source-mode .ProseMirror {
-  /* Font inherits from body (user's --font-sans selection) */
+  /* Font inherits from body (user's --font-body selection) */
   /* Inherit --font-size and --line-height from user preferences (set by Swift via setTheme) */
 }
 

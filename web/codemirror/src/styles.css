@@ -13,7 +13,7 @@ body {
   overflow: hidden;
   background: var(--editor-bg, #ffffff);
   color: var(--editor-text, #1a1a1a);
-  font-family: var(--font-sans);
+  font-family: var(--font-body);
   line-height: var(--line-height-body, 1.75);
 }
 
@@ -31,7 +31,7 @@ body {
 
 .cm-editor .cm-scroller {
   padding: 20px;
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   max-width: var(--column-max-width);
   min-width: var(--column-min-width);
   margin: 0 auto;
