@@ -87,40 +87,6 @@ extension Font {
     }
 }
 
-// MARK: - CSS Typography Variables
-
-/// CSS custom properties for web editor typography
-/// These are injected alongside theme colors
-enum TypographyCSS {
-    /// Base typography variables (shared across all themes)
-    static let baseVariables = """
-        --font-size-body: 18px;
-        --font-size-h1: 31px;
-        --font-size-h2: 26px;
-        --font-size-h3: 22px;
-        --font-size-h4: 18px;
-        --font-size-h5: 16px;
-        --font-size-h6: 14px;
-        --line-height-heading: 1.2;
-        --line-height-body: 1.75;
-        --tracking-tight: -0.02em;
-        --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-        --font-mono: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Monaco, monospace;
-        """
-
-    /// Light theme typography (standard weights)
-    static let lightVariables = """
-        --weight-heading: 600;
-        --weight-body: 400;
-        """
-
-    /// Dark theme typography (reduced weights for better rendering)
-    static let darkVariables = """
-        --weight-heading: 500;
-        --weight-body: 300;
-        """
-}
-
 #Preview {
     VStack(alignment: .leading, spacing: 12) {
         Group {

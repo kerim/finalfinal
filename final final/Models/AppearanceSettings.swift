@@ -351,7 +351,7 @@ final class AppearanceSettingsManager {
         if let fontFamily = settings.fontFamily {
             // Wrap in quotes if it contains spaces, otherwise use as-is
             let quotedFamily = fontFamily.contains(" ") ? "'\(fontFamily)'" : fontFamily
-            css.append("--font-sans: \(quotedFamily), -apple-system, BlinkMacSystemFont, system-ui, sans-serif;")
+            css.append("--font-body: \(quotedFamily), -apple-system, BlinkMacSystemFont, system-ui, sans-serif;")
         }
 
         if let textColor = settings.textColor {
