@@ -21,6 +21,10 @@ Also, a lot of things you would expect from a word processor aren't there yet: t
 
 # What's New
 
+## Version 0.2.35
+
+- Third attempt at switching to block-based architecture. Hopefully got it right this time! Also refactored and linted code, which should make maintenance easier. Fixed a number of bugs with zooming, scrolling, bibliography creation, switching between editors, etc. Initial version of word-count goals are in place, but I have plans to improve that.
+
 ## Version 0.2.34
 
 - Fixed a very annoying but that caused the editor to loose CSS settings when switching between projects
@@ -36,10 +40,6 @@ Also, a lot of things you would expect from a word processor aren't there yet: t
 ## Version 02.29
 
 - Fixed bug with editor window loading on section zoom
-
-## Version 02.25
-
-- Basic Find & Replace has been added
 
 # Roadmap
 
