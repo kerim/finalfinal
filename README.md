@@ -33,6 +33,10 @@ Also, a lot of things you would expect from a word processor aren't there yet: t
 
 # What's New
 
+## Version 0.2.36
+
+- Fixed bug that would preserve old data when writing over an existing project. Also added build info to the debug logging 
+
 ## Version 0.2.35
 
 - Third attempt at switching to block-based architecture. Hopefully got it right this time! Also refactored and linted code, which should make maintenance easier. Fixed a number of bugs with zooming, scrolling, bibliography creation, switching between editors, etc. Initial version of word-count goals are in place, but I have plans to improve that.
@@ -48,10 +52,6 @@ Also, a lot of things you would expect from a word processor aren't there yet: t
 ## Version 02.31
 
 - Transition to block-based architecture started in Version 02.15 has been completed. This fixes a number of bugs with the zoom feature and makes it much faster.  (Still need to clean up some UI issues that were caused by the rewrite.) 
-
-## Version 02.29
-
-- Fixed bug with editor window loading on section zoom
 
 # Roadmap
 
