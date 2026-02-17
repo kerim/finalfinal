@@ -11,12 +11,21 @@ struct ProjectPackage: Sendable {
     var databaseURL: URL { packageURL.appendingPathComponent("content.sqlite") }
     var referencesURL: URL { packageURL.appendingPathComponent("references") }
 
-    /// Creates a new .ff package at the specified location
+    /// Creates a new .ff package at the specified location.
+    /// If a package already exists at this URL (e.g., NSSavePanel "Replace"),
+    /// the existing package is removed entirely before creating a fresh one.
     static func create(at url: URL, title: String) throws -> ProjectPackage {
         let fm = FileManager.default
         let packageURL = url.pathExtension == "ff" ? url : url.appendingPathExtension("ff")
 
-        // Create package directory
+        // Remove existing package if present (NSSavePanel doesn't delete
+        // directory-based packages when user clicks "Replace")
+        if fm.fileExists(atPath: packageURL.path) {
+            print("[ProjectPackage] Replacing existing package at: \(packageURL.path)")
+            try fm.removeItem(at: packageURL)
+        }
+
+        // Create fresh package directory
         try fm.createDirectory(at: packageURL, withIntermediateDirectories: true)
 
         // Create references subdirectory
