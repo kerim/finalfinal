@@ -33,6 +33,10 @@ Also, a lot of things you would expect from a word processor aren't there yet: t
 
 # What's New
 
+## Version 0.2.37
+
+- Brought the raw Markdown editor CSS in line with the WYSIWYG editor. 
+
 ## Version 0.2.36
 
 - Fixed bug that would preserve old data when writing over an existing project. Also added build info to the debug logging 
