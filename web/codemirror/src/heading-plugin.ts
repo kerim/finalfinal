@@ -62,24 +62,24 @@ export const headingDecorationPlugin = ViewPlugin.fromClass(
         });
       }
 
-      // Second pass: Regex fallback for headings after known comment markers
-      // Matches one or more section anchors or bibliography markers followed by heading syntax.
-      // Uses explicit allowlist to avoid false positives with annotation comments.
+      // Second pass: Regex for FULL DOCUMENT
+      // Scans every line to ensure off-screen headings get decorations.
+      // Without this, headings entering the viewport render first as body text,
+      // then get re-decorated -> height changes -> "Viewport failed to stabilize."
+      const standardHeadingRegex = /^(#{1,6})\s/;
       const anchorHeadingRegex = /^(?:<!--\s*(?:@sid:[0-9a-fA-F-]+|::auto-bibliography::)\s*-->)+(#{1,6})\s/;
 
-      for (const { from, to } of view.visibleRanges) {
-        const startLine = doc.lineAt(from).number;
-        const endLine = doc.lineAt(to).number;
+      for (let lineNum = 1; lineNum <= doc.lines; lineNum++) {
+        if (decoratedLines.has(lineNum)) continue; // Already decorated by syntax tree
 
-        for (let lineNum = startLine; lineNum <= endLine; lineNum++) {
-          if (decoratedLines.has(lineNum)) continue; // Already decorated by syntax tree
-
-          const line = doc.line(lineNum);
-          const match = line.text.match(anchorHeadingRegex);
-          if (match) {
-            decoratedLines.add(lineNum);
-            decorations.push({ pos: line.from, level: match[1].length });
-          }
+        const line = doc.line(lineNum);
+        let match = line.text.match(standardHeadingRegex);
+        if (!match) {
+          match = line.text.match(anchorHeadingRegex);
+        }
+        if (match) {
+          decoratedLines.add(lineNum);
+          decorations.push({ pos: line.from, level: match[1].length });
         }
       }
 

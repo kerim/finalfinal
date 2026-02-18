@@ -283,7 +283,11 @@ export function applyBlocks(blocks: Block[]): void {
   }
 }
 
-export function setContentWithBlockIds(markdown: string, blockIds: string[], options?: { scrollToStart?: boolean }): void {
+export function setContentWithBlockIds(
+  markdown: string,
+  blockIds: string[],
+  options?: { scrollToStart?: boolean }
+): void {
   // 1. Set content (parse, dispatch, resetAndSnapshot already called inside)
   setContent(markdown, options);
   // 2. Immediately assign real block IDs (still synchronous, same JS turn)

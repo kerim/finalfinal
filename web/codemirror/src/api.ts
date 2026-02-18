@@ -95,6 +95,13 @@ export function setContent(markdown: string, options?: { scrollToStart?: boolean
   const view = getEditorView();
   if (!view) return;
 
+  // [DIAG-F2] Track setContent calls
+  if ((window as any).__DIAG_F2__) {
+    (window as any).__DIAG_F2__.setContentCalls++;
+    (window as any).__DIAG_F2__.timestamps.push({ event: 'setContent', t: Date.now() });
+    console.log(`[DIAG-F2] setContent() called at ${Date.now()}`);
+  }
+
   const prevLen = view.state.doc.length;
   view.dispatch({
     changes: { from: 0, to: prevLen, insert: markdown },
@@ -106,6 +113,12 @@ export function setContent(markdown: string, options?: { scrollToStart?: boolean
   // visibleRanges. Without this, off-viewport heading heights are
   // underestimated, causing blank gaps in the virtual viewport.
   requestAnimationFrame(() => {
+    // [DIAG-F2] Track requestMeasure calls
+    if ((window as any).__DIAG_F2__) {
+      (window as any).__DIAG_F2__.requestMeasureCalls++;
+      (window as any).__DIAG_F2__.timestamps.push({ event: 'requestMeasure', t: Date.now() });
+      console.log(`[DIAG-F2] requestMeasure() scheduled at ${Date.now()}`);
+    }
     view.requestMeasure();
   });
 

@@ -176,6 +176,9 @@ extension CodeMirrorEditor.Coordinator {
         // and setContent() overwrites the cursor that initialize() just set.
         lastPushedContent = content
         lastPushTime = Date()
+        #if DEBUG
+        print("[DIAG-F2] batchInitialize: setting lastPushedContent preemptively (len=\(content.count))")
+        #endif
 
         let escapedContent = content.escapedForJSTemplateLiteral
 
@@ -360,6 +363,9 @@ extension CodeMirrorEditor.Coordinator {
     func setContent(_ markdown: String) {
         guard isEditorReady, let webView else { return }
 
+        #if DEBUG
+        print("[DIAG-F2] Swift setContent called (len=\(markdown.count))")
+        #endif
         lastPushedContent = markdown
         lastPushTime = Date()  // Record push time to prevent poll feedback
         // Note: Escapes all $ (not just ${) for CodeMirror content

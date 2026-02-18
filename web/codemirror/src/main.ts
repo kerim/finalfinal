@@ -46,6 +46,8 @@ import { updateCitationAddButton } from './citations';
 import { getPendingSlashUndo, setEditorExtensions, setEditorView, setPendingSlashUndo } from './editor-state';
 import { focusModePlugin, isFocusModeEnabled } from './focus-mode-plugin';
 import { customHighlightStyle, headingDecorationPlugin, syntaxHighlighting } from './heading-plugin';
+import { installLineHeightFix } from './line-height-fix';
+import { runAllDiagnostics, scrollDiagnosticPlugin } from './scroll-diagnostics';
 import { slashCompletions } from './slash-completions';
 import './styles.css';
 // Import types.ts for declare global side-effect
@@ -53,6 +55,9 @@ import './types';
 
 // Mark script start time for debugging
 window.__CODEMIRROR_SCRIPT_STARTED__ = Date.now();
+
+// [DIAG-F2] Initialize setContent/requestMeasure call counters
+(window as any).__DIAG_F2__ = { setContentCalls: 0, requestMeasureCalls: 0, timestamps: [] };
 
 // Debug state for Swift introspection
 window.__CODEMIRROR_DEBUG__ = {
@@ -167,6 +172,8 @@ function initEditor() {
     }),
     // Section anchor plugin - hides <!-- @sid:UUID --> comments and handles clipboard
     anchorPlugin(),
+    // [DIAG] Scroll diagnostic plugin - logs heading height adjustments on viewport change
+    scrollDiagnosticPlugin,
   ];
 
   setEditorExtensions(extensions);
@@ -180,6 +187,10 @@ function initEditor() {
     state,
     parent: container,
   });
+
+  // Fix CM6's defaultLineHeight measurement — must be called after EditorView creation
+  // because it patches the internal docView.measureTextSize() method
+  installLineHeightFix(view);
 
   setEditorView(view);
   window.__CODEMIRROR_DEBUG__!.editorReady = true;
@@ -218,6 +229,9 @@ window.FinalFinal = {
   clearSearch,
   getSearchState: apiGetSearchState,
   resetForProjectSwitch,
+
+  // [DIAG] Scroll bug diagnostics — run all factor diagnostics and print summary
+  __diagScrollBug: runAllDiagnostics,
 
   // Test snapshot hook — read-only, calls existing API methods, no behavior change
   __testSnapshot() {

@@ -17,11 +17,7 @@ import {
 } from './cayw';
 import type { CSLItem } from './citation-plugin';
 import { clearPendingResolution } from './citation-plugin';
-import {
-  getCitationLibrary,
-  getCitationLibrarySize,
-  setCitationLibrary,
-} from './citation-search';
+import { getCitationLibrary, getCitationLibrarySize, setCitationLibrary } from './citation-search';
 import { getCiteprocEngine } from './citeproc-engine';
 import { getEditorInstance } from './editor-state';
 import { highlightMark } from './highlight-plugin';
