@@ -62,10 +62,10 @@ export const headingDecorationPlugin = ViewPlugin.fromClass(
         });
       }
 
-      // Second pass: Regex fallback for headings after section anchors
-      // Pattern: <!-- @sid:UUID --># heading text
-      // The ^ ensures we match at line start; anchors won't have content before them
-      const anchorHeadingRegex = /^<!--\s*@sid:[^>]+-->(#{1,6})\s/;
+      // Second pass: Regex fallback for headings after known comment markers
+      // Matches one or more section anchors or bibliography markers followed by heading syntax.
+      // Uses explicit allowlist to avoid false positives with annotation comments.
+      const anchorHeadingRegex = /^(?:<!--\s*(?:@sid:[0-9a-fA-F-]+|::auto-bibliography::)\s*-->)+(#{1,6})\s/;
 
       for (const { from, to } of view.visibleRanges) {
         const startLine = doc.lineAt(from).number;
