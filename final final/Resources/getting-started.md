@@ -21,6 +21,10 @@ Also, a lot of things you would expect from a word processor aren't there yet: t
 
 # What's New
 
+## Version 0.2.39
+
+- Fixed situations where markdown scrolling could still break.
+
 ## Version 0.2.38
 
 - Greatly improved scrolling performance in Markdown mode, though there are still situations where it can break.
@@ -40,10 +44,6 @@ Also, a lot of things you would expect from a word processor aren't there yet: t
 ## Version 0.2.34
 
 - Fixed a very annoying but that caused the editor to loose CSS settings when switching between projects
-
-## Version 0.2.33
-
-- Fixed two bugs with source view: caching old project when starting new one, and loading delay on opening existing project. 
 
 # Roadmap
 
