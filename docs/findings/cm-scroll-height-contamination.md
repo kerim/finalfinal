@@ -2,8 +2,9 @@
 
 Root cause analysis for massive document height overestimation and "Viewport failed to stabilize" errors in CodeMirror source mode.
 
-**Status:** Fixed (Phase 1 + Phase 1b + Phase 2)
+**Status:** Fixed and cleaned up (Phase 1 + Phase 1b + Phase 2)
 **File:** `web/codemirror/src/line-height-fix.ts`
+**Cleanup:** Diagnostic plugin (`scroll-diagnostics.ts`) and `__diagScrollBug` API removed after fix confirmed
 
 ---
 
@@ -112,10 +113,11 @@ This preserves the original body wrapping formula exactly, only adding correctio
 
 ## Verification
 
-Diagnostic output after fix:
+After fix:
 - `defaultLineHeight`: 31.0px (correct, was 37px)
 - No "Viewport failed to stabilize" warnings during full-document scroll
 - Heading viewport transitions show measured vs estimated deltas (expected behavior)
+- Diagnostic plugin (`scrollDiagnosticPlugin`, `__diagScrollBug` API) removed — no longer needed
 
 ## See Also
 

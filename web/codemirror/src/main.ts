@@ -7,7 +7,6 @@ import { highlightSelectionMatches, search } from '@codemirror/search';
 import { EditorState } from '@codemirror/state';
 import { EditorView, keymap } from '@codemirror/view';
 import { anchorPlugin } from './anchor-plugin';
-import { runAllDiagnostics, scrollDiagnosticPlugin } from './scroll-diagnostics';
 import {
   apiFindNext,
   apiFindPrevious,
@@ -159,7 +158,6 @@ function initEditor() {
     }),
     // Section anchor plugin - hides <!-- @sid:UUID --> comments and handles clipboard
     anchorPlugin(),
-    scrollDiagnosticPlugin,
   ];
 
   setEditorExtensions(extensions);
@@ -214,8 +212,6 @@ window.FinalFinal = {
   clearSearch,
   getSearchState: apiGetSearchState,
   resetForProjectSwitch,
-
-  __diagScrollBug: runAllDiagnostics,
 
   // Test snapshot hook — read-only, calls existing API methods, no behavior change
   __testSnapshot() {
