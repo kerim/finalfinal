@@ -7,12 +7,13 @@ import {
   setHideCompletedTasks as setHideCompletedTasksPlugin,
 } from './annotation-display-plugin';
 import { type AnnotationType, annotationNode } from './annotation-plugin';
+import { scrollToOffset } from './api-modes';
 import {
+  getCAYWDebugState as getCAYWDebugStateImpl,
   handleCAYWCallback,
   handleCAYWCancelled,
   handleCAYWError,
   handleEditCitationCallback,
-  getCAYWDebugState as getCAYWDebugStateImpl,
   requestCitationResolutionInternal,
 } from './cayw';
 import type { CSLItem } from './citation-plugin';
@@ -21,7 +22,6 @@ import { getCitationLibrary, getCitationLibrarySize, setCitationLibrary } from '
 import { getCiteprocEngine } from './citeproc-engine';
 import { getEditorInstance } from './editor-state';
 import { highlightMark } from './highlight-plugin';
-import { scrollToOffset } from './api-modes';
 import type { CAYWCallbackData, EditCitationCallbackData } from './types';
 
 export function setAnnotationDisplayModes(modes: Record<string, string>): void {

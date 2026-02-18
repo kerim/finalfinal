@@ -4,23 +4,23 @@ import { editorViewCtx, parserCtx } from '@milkdown/kit/core';
 import { Slice } from '@milkdown/kit/prose/model';
 import { Selection } from '@milkdown/kit/prose/state';
 import { getMarkdown } from '@milkdown/kit/utils';
-import { mdToTextOffset, textToMdOffset } from './cursor-mapping';
-import { getEditorInstance, getCurrentContent } from './editor-state';
-import { focusModePlugin, isFocusModeEnabled, setFocusModeEnabled } from './focus-mode-plugin';
-import { sectionBreakNode } from './section-break-plugin';
-import { isSourceModeEnabled, setSourceModeEnabled } from './source-mode-plugin';
-import { stripMarkdownSyntax, isTableLine, isTableSeparator, findTableStartLine } from './utils';
 import { getContent, setContent } from './api-content';
-import type { FindOptions, FindResult, SearchState } from './types';
+import { mdToTextOffset, textToMdOffset } from './cursor-mapping';
+import { getCurrentContent, getEditorInstance } from './editor-state';
 import {
+  clearSearch as clearSearchImpl,
   find as findImpl,
   findNext as findNextImpl,
   findPrevious as findPreviousImpl,
-  replaceCurrent as replaceCurrentImpl,
-  replaceAll as replaceAllImpl,
-  clearSearch as clearSearchImpl,
   getSearchState as getSearchStateImpl,
+  replaceAll as replaceAllImpl,
+  replaceCurrent as replaceCurrentImpl,
 } from './find-replace';
+import { focusModePlugin, isFocusModeEnabled, setFocusModeEnabled } from './focus-mode-plugin';
+import { sectionBreakNode } from './section-break-plugin';
+import { isSourceModeEnabled, setSourceModeEnabled } from './source-mode-plugin';
+import type { FindOptions, FindResult, SearchState } from './types';
+import { findTableStartLine, isTableLine, isTableSeparator, stripMarkdownSyntax } from './utils';
 
 export function setFocusMode(enabled: boolean): void {
   setFocusModeEnabled(enabled);

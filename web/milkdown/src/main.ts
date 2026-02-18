@@ -10,61 +10,61 @@ import { getMarkdown } from '@milkdown/kit/utils';
 import { annotationDisplayPlugin } from './annotation-display-plugin';
 import { annotationPlugin } from './annotation-plugin';
 import {
-  setContent,
-  getContent,
-  resetEditorState,
-  resetForProjectSwitch,
-  applyBlocks,
-  setContentWithBlockIds,
-  scrollToBlock,
-  getBlockAtCursor,
-  hasBlockChanges,
-  getBlockChangesApi,
-  confirmBlockIdsApi,
-  syncBlockIds,
-} from './api-content';
-import {
-  setAnnotationDisplayModes,
-  getAnnotations,
-  scrollToAnnotation,
-  insertAnnotation,
-  setHideCompletedTasks,
-  toggleHighlight,
-  setCitationLibraryApi,
-  setCitationStyle,
-  getBibliographyCitekeys,
-  getCitationCount,
-  getAllCitekeys,
-  requestCitationResolution,
   addCitationItems,
-  searchCitationsCallback,
   citationPickerCallback,
   citationPickerCancelled,
   citationPickerError,
   editCitationCallback,
+  getAllCitekeys,
+  getAnnotations,
+  getBibliographyCitekeys,
   getCAYWDebugState,
+  getCitationCount,
+  insertAnnotation,
+  requestCitationResolution,
+  scrollToAnnotation,
+  searchCitationsCallback,
+  setAnnotationDisplayModes,
+  setCitationLibraryApi,
+  setCitationStyle,
+  setHideCompletedTasks,
+  toggleHighlight,
 } from './api-annotations';
 import {
-  setFocusMode,
-  getStats,
-  scrollToOffset,
-  setTheme,
-  getCursorPosition,
-  setCursorPosition,
-  scrollCursorToCenter,
-  insertAtCursor,
-  insertBreak,
-  focus,
-  initialize,
-  setEditorMode,
-  getEditorMode,
+  applyBlocks,
+  confirmBlockIdsApi,
+  getBlockAtCursor,
+  getBlockChangesApi,
+  getContent,
+  hasBlockChanges,
+  resetEditorState,
+  resetForProjectSwitch,
+  scrollToBlock,
+  setContent,
+  setContentWithBlockIds,
+  syncBlockIds,
+} from './api-content';
+import {
+  clearSearchApi,
   findApi,
   findNextApi,
   findPreviousApi,
-  replaceCurrentApi,
-  replaceAllApi,
-  clearSearchApi,
+  focus,
+  getCursorPosition,
+  getEditorMode,
   getSearchStateApi,
+  getStats,
+  initialize,
+  insertAtCursor,
+  insertBreak,
+  replaceAllApi,
+  replaceCurrentApi,
+  scrollCursorToCenter,
+  scrollToOffset,
+  setCursorPosition,
+  setEditorMode,
+  setFocusMode,
+  setTheme,
 } from './api-modes';
 import { blockIdPlugin } from './block-id-plugin';
 import { blockSyncPlugin } from './block-sync-plugin';
@@ -83,7 +83,7 @@ import { headingNodeViewPlugin } from './heading-nodeview-plugin';
 import { highlightPlugin } from './highlight-plugin';
 import { searchPlugin } from './search-plugin';
 import { sectionBreakPlugin } from './section-break-plugin';
-import { slash, configureSlash } from './slash-commands';
+import { configureSlash, slash } from './slash-commands';
 import { sourceModePlugin } from './source-mode-plugin';
 import './styles.css';
 // Import types to ensure declare global is included in the bundle

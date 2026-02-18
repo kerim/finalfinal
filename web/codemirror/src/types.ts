@@ -71,19 +71,6 @@ declare global {
       getSearchState: () => SearchState | null;
       // Project switch reset
       resetForProjectSwitch: () => void;
-      // Scroll bug diagnostics
-      __diagScrollBug: () => void;
-    };
-    __CODEMIRROR_DEBUG__?: {
-      editorReady: boolean;
-      lastContentLength: number;
-      lastStatsUpdate: string;
-    };
-    __CODEMIRROR_SCRIPT_STARTED__?: number;
-    __DIAG_F2__?: {
-      setContentCalls: number;
-      requestMeasureCalls: number;
-      timestamps: Array<{ event: string; t: number }>;
     };
   }
 }

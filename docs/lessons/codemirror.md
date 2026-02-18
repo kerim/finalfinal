@@ -162,3 +162,50 @@ private var preloadFrameSize: CGSize {
 Uses `NSScreen.screens.first` instead of `NSScreen.main` because `.main` requires a key window (which may not exist during `applicationDidFinishLaunching`).
 
 **General principle:** When CSS decorations change line height and are only applied to visible ranges, CodeMirror's virtual viewport will underestimate off-screen line heights. Call `view.requestMeasure()` after content changes to force re-measurement. Also ensure preloaded WebViews have a realistic frame size so initial line-wrapping calculations are meaningful.
+
+---
+
+## measureTextSize() Heading Contamination
+
+**Problem:** Off-screen body line heights were massively overestimated (up to 30x), causing total document height to balloon from ~2,200px to ~71,000px. Scrolling triggered "Viewport failed to stabilize" warnings whenever headings entered the viewport.
+
+**Root Cause:** CM6's internal `measureTextSize()` (docview.ts) finds a short visible line (<=20 chars, ASCII-only) to measure `lineHeight` and `charWidth`. In our document, the only qualifying visible line was an H1 heading (`# Slides`, 9 chars) which had heading-sized CSS applied via decorations. This returned:
+- `lineHeight` = 37px (heading) instead of 31px (body)
+- `charWidth` = ~16px (heading font) instead of ~9px (body font)
+
+The `charWidth` contamination was especially damaging because CM6 computes `lineLength = contentWidth / charWidth` (index.js:6181). With contaminated charWidth:
+- `lineLength = 650 / 16 ≈ 40` (thinks lines wrap at 40 chars)
+- Correct: `lineLength = 650 / 9 ≈ 72` (actual wrapping at ~72 chars)
+
+This caused `heightForGap()` to estimate ~1.6x more wrapped lines for every off-screen body line.
+
+**Fix:** Monkey-patch `docView.measureTextSize` to correct both values using dummy `.cm-line` elements inserted into `contentDOM`:
+
+```typescript
+// In installMeasureTextSizePatch():
+docView.measureTextSize = () => {
+  const result = original();
+
+  // Fix lineHeight (Phase 1)
+  const correctHeight = measureBodyLineHeight(view);
+  if (correctHeight > 0 && Math.abs(result.lineHeight - correctHeight) > 1) {
+    result.lineHeight = correctHeight;
+  }
+
+  // Fix charWidth (Phase 1b)
+  const correctCharWidth = measureBodyCharWidth(view);
+  if (correctCharWidth > 0 && Math.abs(result.charWidth - correctCharWidth) > 1) {
+    result.charWidth = correctCharWidth;
+  }
+
+  return result;
+};
+```
+
+Both measurement helpers use `view.observer.ignore()` to suppress CM6's MutationObserver during DOM manipulation.
+
+**Companion fix (Phase 2):** Even with corrected body metrics, headings are still underestimated because `heightForGap()` uses uniform body line height for all lines. A separate patch on `heightForGap()` computes per-heading deltas by measuring actual heading metrics (height + charWidth per H1-H3) and adding the difference to the bulk estimate.
+
+**General principle:** When decoration-applied CSS changes font metrics on specific line types, CM6's `measureTextSize()` can sample a decorated line and contaminate global metrics. Both `lineHeight` and `charWidth` must be verified/corrected. The contamination is document-dependent (which lines are visible and short enough to be sampled).
+
+**See also:** [cm-scroll-height-contamination.md](../findings/cm-scroll-height-contamination.md) for the full investigation.

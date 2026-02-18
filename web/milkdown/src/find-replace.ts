@@ -1,9 +1,9 @@
 // Search state and find/replace functions
 
-import { Selection } from '@milkdown/kit/prose/state';
 import { editorViewCtx } from '@milkdown/kit/core';
+import { Selection } from '@milkdown/kit/prose/state';
 import { getEditorInstance } from './editor-state';
-import { setSearchMatches, clearSearchMatches } from './search-plugin';
+import { clearSearchMatches, setSearchMatches } from './search-plugin';
 import type { FindOptions, FindResult, SearchMatch, SearchState } from './types';
 
 // === Search state ===

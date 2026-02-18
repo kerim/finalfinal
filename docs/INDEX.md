@@ -52,6 +52,7 @@ Bug investigation reports with root cause analysis and solutions.
 - [delete-all-content-reappears.md](findings/delete-all-content-reappears.md) -- Cmd+A Delete content reappears due to empty-content guard and mass delete safety net
 - [sidebar-stale-after-content-state-transition.md](findings/sidebar-stale-after-content-state-transition.md) -- Sidebar not updating after bibliography/mode-switch changes (ValueObservation dropped during non-idle contentState)
 - [stale-package-on-replace.md](findings/stale-package-on-replace.md) -- NSSavePanel "Replace" leaves old .ff package data intact (directory-based packages not deleted)
+- [cm-scroll-height-contamination.md](findings/cm-scroll-height-contamination.md) -- CodeMirror measureTextSize() returns heading-contaminated lineHeight and charWidth, causing massive off-screen height overestimation
 
 ## Deferred
 

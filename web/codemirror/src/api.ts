@@ -30,6 +30,7 @@ import {
   setPendingSlashUndo,
 } from './editor-state';
 import { setFocusModeEffect, setFocusModeEnabled } from './focus-mode-plugin';
+import { installLineHeightFix, invalidateHeadingMetricsCache } from './line-height-fix';
 import type { AnnotationType, FindOptions, FindResult, ParsedAnnotation, SearchState } from './types';
 
 // --- Search helpers ---
@@ -95,30 +96,16 @@ export function setContent(markdown: string, options?: { scrollToStart?: boolean
   const view = getEditorView();
   if (!view) return;
 
-  // [DIAG-F2] Track setContent calls
-  if ((window as any).__DIAG_F2__) {
-    (window as any).__DIAG_F2__.setContentCalls++;
-    (window as any).__DIAG_F2__.timestamps.push({ event: 'setContent', t: Date.now() });
-    console.log(`[DIAG-F2] setContent() called at ${Date.now()}`);
-  }
-
   const prevLen = view.state.doc.length;
   view.dispatch({
     changes: { from: 0, to: prevLen, insert: markdown },
   });
-  window.__CODEMIRROR_DEBUG__!.lastContentLength = markdown.length;
 
   // Force CodeMirror to re-measure line heights after content change.
   // Heading decorations change font-size on heading lines, but only for
   // visibleRanges. Without this, off-viewport heading heights are
   // underestimated, causing blank gaps in the virtual viewport.
   requestAnimationFrame(() => {
-    // [DIAG-F2] Track requestMeasure calls
-    if ((window as any).__DIAG_F2__) {
-      (window as any).__DIAG_F2__.requestMeasureCalls++;
-      (window as any).__DIAG_F2__.timestamps.push({ event: 'requestMeasure', t: Date.now() });
-      console.log(`[DIAG-F2] requestMeasure() scheduled at ${Date.now()}`);
-    }
     view.requestMeasure();
   });
 
@@ -196,7 +183,6 @@ export function getStats(): { words: number; characters: number } {
   const strippedContent = content.replace(/<!--\s*::\w+::\s*[\s\S]*?-->/g, '');
   const words = countWords(strippedContent);
   const characters = strippedContent.length;
-  window.__CODEMIRROR_DEBUG__!.lastStatsUpdate = new Date().toISOString();
   return { words, characters };
 }
 
@@ -233,6 +219,9 @@ export function setTheme(cssVariables: string): void {
       root.style.setProperty(key, value);
     }
   });
+
+  // Heading CSS variables may have changed — invalidate cached metrics
+  invalidateHeadingMetricsCache();
 }
 
 export function getCursorPosition(): { line: number; column: number } {
@@ -735,4 +724,5 @@ export function resetForProjectSwitch(): void {
     extensions: getEditorExtensions(),
   });
   view.setState(newState);
+  installLineHeightFix(view);
 }
