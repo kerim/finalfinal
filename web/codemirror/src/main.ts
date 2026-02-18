@@ -47,6 +47,7 @@ import { getPendingSlashUndo, setEditorExtensions, setEditorView, setPendingSlas
 import { focusModePlugin, isFocusModeEnabled } from './focus-mode-plugin';
 import { customHighlightStyle, headingDecorationPlugin, syntaxHighlighting } from './heading-plugin';
 import { installLineHeightFix } from './line-height-fix';
+import { scrollStabilizer } from './scroll-stabilizer';
 import { slashCompletions } from './slash-completions';
 import './styles.css';
 // Import types.ts for declare global side-effect
@@ -66,6 +67,7 @@ function initEditor() {
     syntaxHighlighting(customHighlightStyle),
     headingDecorationPlugin,
     focusModePlugin,
+    scrollStabilizer,
     // Search extension - headless mode (no default keybindings, controlled via Swift)
     search({ top: false }),
     highlightSelectionMatches(),

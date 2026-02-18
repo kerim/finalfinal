@@ -209,3 +209,35 @@ Both measurement helpers use `view.observer.ignore()` to suppress CM6's Mutation
 **General principle:** When decoration-applied CSS changes font metrics on specific line types, CM6's `measureTextSize()` can sample a decorated line and contaminate global metrics. Both `lineHeight` and `charWidth` must be verified/corrected. The contamination is document-dependent (which lines are visible and short enough to be sampled).
 
 **See also:** [cm-scroll-height-contamination.md](../findings/cm-scroll-height-contamination.md) for the full investigation.
+
+---
+
+## Post-Scroll Height Drift
+
+**Problem:** After rapid scrolling, blank/white gaps appeared where content should be. Gaps persisted until the user scrolled slowly back through the affected area. Especially visible in documents with 50+ sections and mixed heading levels.
+
+**Root Cause:** CM6's virtual renderer can't complete enough measurement cycles during rapid scrolling. Even with correct height estimation formulas (`line-height-fix.ts`), the height map accumulates drift because estimates are only reconciled with actual DOM measurements when lines render. When scrolling stops abruptly, stale estimates remain in the height map.
+
+**Fix:** A `ViewPlugin` that triggers adaptive `requestMeasure()` cycles after scrolling stops (120ms debounce). Each cycle uses `requestMeasure({ read, write })` to check whether `contentDOM` height changed. If delta > 5px, another round is scheduled via `requestAnimationFrame`. The chain self-terminates when heights stabilize or after 4 rounds.
+
+```typescript
+// scroll-stabilizer.ts — core mechanism
+this.view.requestMeasure({
+  read: (view) => view.contentDOM.getBoundingClientRect().height,
+  write: (height, _view) => {
+    if (Math.abs(height - this.lastKnownHeight) > HEIGHT_EPSILON) {
+      this.lastKnownHeight = height;
+      this.rafId = requestAnimationFrame(() => this.stabilize(round + 1));
+    }
+  },
+});
+```
+
+Key design choices:
+- `requestMeasure()` over `dispatch({})` — lightweight, doesn't trigger full plugin update cycles
+- Cancels in-progress chain if user scrolls again — stale measurements aren't useful
+- `{ passive: true }` scroll listener — no jank
+
+**General principle:** Correcting CM6's height estimation accuracy (via `measureTextSize` patches) is necessary but not sufficient. The viewport also needs time to reconcile estimates with actual measurements. After any operation that changes the scroll position significantly, trigger `requestMeasure()` and verify heights have stabilized.
+
+**See also:** [cm-scroll-stabilizer.md](../findings/cm-scroll-stabilizer.md) for the full investigation.
