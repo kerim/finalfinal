@@ -21,6 +21,10 @@ Also, a lot of things you would expect from a word processor aren't there yet: t
 
 # What's New
 
+## Version 0.2.38
+
+- Greatly improved scrolling performance in Markdown mode, though there are still situations where it can break.
+
 ## Version 0.2.37
 
 - Brought the raw Markdown editor CSS in line with the WYSIWYG editor. 
@@ -40,10 +44,6 @@ Also, a lot of things you would expect from a word processor aren't there yet: t
 ## Version 0.2.33
 
 - Fixed two bugs with source view: caching old project when starting new one, and loading delay on opening existing project. 
-
-## Version 02.31
-
-- Transition to block-based architecture started in Version 02.15 has been completed. This fixes a number of bugs with the zoom feature and makes it much faster.  (Still need to clean up some UI issues that were caused by the rewrite.) 
 
 # Roadmap
 
