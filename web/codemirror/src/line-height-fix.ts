@@ -110,9 +110,12 @@ function measureBodyCharWidth(view: EditorView): number {
     dummy.textContent = 'abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789';
     dummy.style.cssText = 'position: absolute; width: 99999px; visibility: hidden; white-space: nowrap;';
     view.contentDOM.appendChild(dummy);
-    const rect = dummy.getBoundingClientRect();
+    // Measure the TEXT NODE width via Range API (not the div's 99999px CSS width)
+    const range = document.createRange();
+    range.selectNodeContents(dummy);
+    const rect = range.getBoundingClientRect();
     const textLen = dummy.textContent!.length;
-    charWidth = textLen > 0 ? rect.width / textLen : 0;
+    charWidth = textLen > 0 && rect.width > 0 ? rect.width / textLen : 0;
     view.contentDOM.removeChild(dummy);
   });
   return charWidth;
@@ -132,10 +135,13 @@ function measureHeadingMetrics(view: EditorView, level: number): { height: numbe
     dummy.textContent = 'abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789';
     dummy.style.cssText = 'position: absolute; width: 99999px; visibility: hidden; white-space: nowrap;';
     view.contentDOM.appendChild(dummy);
-    const rect = dummy.getBoundingClientRect();
-    height = rect.height;
+    height = dummy.getBoundingClientRect().height; // height is correct from div
+    // Measure text node width via Range API (not the div's 99999px CSS width)
+    const range = document.createRange();
+    range.selectNodeContents(dummy);
+    const textRect = range.getBoundingClientRect();
     const textLen = dummy.textContent!.length;
-    charWidth = textLen > 0 ? rect.width / textLen : 0;
+    charWidth = textLen > 0 && textRect.width > 0 ? textRect.width / textLen : 0;
     view.contentDOM.removeChild(dummy);
   });
   return { height, charWidth };

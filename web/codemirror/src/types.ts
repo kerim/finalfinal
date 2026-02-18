@@ -71,6 +71,7 @@ declare global {
       getSearchState: () => SearchState | null;
       // Project switch reset
       resetForProjectSwitch: () => void;
+      __diagScrollBug: () => void;
     };
   }
 }
