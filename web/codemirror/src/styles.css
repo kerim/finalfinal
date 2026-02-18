@@ -10,7 +10,9 @@ body {
   background: var(--editor-bg, #ffffff);
   color: var(--editor-text, #1a1a1a);
   font-family: var(--font-body);
+  font-size: var(--font-size-body, 18px);
   line-height: var(--line-height-body, 1.75);
+  font-weight: var(--weight-body, 400);
 }
 
 #editor {
@@ -20,14 +22,11 @@ body {
 
 .cm-editor {
   height: 100%;
-  font-size: var(--font-size-body, 18px);
-  line-height: var(--line-height-body, 1.75);
   background: var(--editor-bg, #ffffff);
 }
 
 .cm-editor .cm-scroller {
   padding: 24px 48px;
-  font-family: var(--font-body);
   max-width: var(--column-max-width);
   min-width: var(--column-min-width);
   margin: 0 auto;

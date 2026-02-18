@@ -135,8 +135,17 @@ function initEditor() {
     ]),
     EditorView.lineWrapping,
     EditorView.theme({
-      '&': { height: '100%' },
-      '.cm-scroller': { overflow: 'auto' },
+      '&': {
+        height: '100%',
+        fontSize: 'var(--font-size-body, 18px)',
+        fontWeight: 'var(--weight-body, 400)',
+        lineHeight: 'var(--line-height-body, 1.75)',
+      },
+      '.cm-scroller': {
+        overflow: 'auto',
+        fontFamily: 'var(--font-body)',
+        lineHeight: 'var(--line-height-body, 1.75)',
+      },
     }),
     // Reset pendingSlashUndo on any editing key
     EditorView.domEventHandlers({
