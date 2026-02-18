@@ -1,10 +1,6 @@
 /* Import shared typography */
 @import "../../shared/typography.css";
 
-* {
-  box-sizing: border-box;
-}
-
 html,
 body {
   margin: 0;
@@ -30,7 +26,7 @@ body {
 }
 
 .cm-editor .cm-scroller {
-  padding: 20px;
+  padding: 24px 48px;
   font-family: var(--font-body);
   max-width: var(--column-max-width);
   min-width: var(--column-min-width);
