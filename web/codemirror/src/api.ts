@@ -29,6 +29,7 @@ import {
   setPendingCAYWRange,
   setPendingSlashUndo,
 } from './editor-state';
+import { setFocusModeEffect, setFocusModeEnabled } from './focus-mode-plugin';
 import type { AnnotationType, FindOptions, FindResult, ParsedAnnotation, SearchState } from './types';
 
 // --- Search helpers ---
@@ -165,8 +166,12 @@ export function getContentRaw(): string {
   return view.state.doc.toString();
 }
 
-export function setFocusMode(_enabled: boolean): void {
-  // Focus mode is WYSIWYG-only; ignore in source mode
+export function setFocusMode(enabled: boolean): void {
+  setFocusModeEnabled(enabled);
+  const view = getEditorView();
+  if (view) {
+    view.dispatch({ effects: setFocusModeEffect.of(enabled) });
+  }
 }
 
 export function getStats(): { words: number; characters: number } {

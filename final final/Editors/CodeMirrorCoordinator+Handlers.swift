@@ -388,6 +388,11 @@ extension CodeMirrorEditor.Coordinator {
         }
     }
 
+    func setFocusMode(_ enabled: Bool) {
+        guard isEditorReady, let webView else { return }
+        webView.evaluateJavaScript("window.FinalFinal.setFocusMode(\(enabled))") { _, _ in }
+    }
+
     func setTheme(_ cssVariables: String) {
         guard isEditorReady, let webView else { return }
         let escaped = cssVariables.replacingOccurrences(of: "`", with: "\\`")

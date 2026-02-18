@@ -14,6 +14,7 @@ private let sharedDataStore = WKWebsiteDataStore.default()
 
 struct CodeMirrorEditor: NSViewRepresentable {
     @Binding var content: String
+    @Binding var focusModeEnabled: Bool
     @Binding var cursorPositionToRestore: CursorPosition?
     @Binding var scrollToOffset: Int?
     @Binding var isResettingContent: Bool
@@ -119,6 +120,11 @@ struct CodeMirrorEditor: NSViewRepresentable {
         context.coordinator.isZoomingContent = isZoomingContent
         context.coordinator.contentState = contentState
 
+        if context.coordinator.lastFocusModeState != focusModeEnabled {
+            context.coordinator.lastFocusModeState = focusModeEnabled
+            context.coordinator.setFocusMode(focusModeEnabled)
+        }
+
         // Skip content/theme pushes during project reset to prevent empty flash
         guard !isResettingContent else { return }
 
@@ -179,6 +185,7 @@ struct CodeMirrorEditor: NSViewRepresentable {
         var lastPushTime: Date = .distantPast
 
         var lastThemeCss: String = ""
+        var lastFocusModeState: Bool = false
 
         /// Current content state - used to suppress polling during transitions
         var contentState: EditorContentState = .idle

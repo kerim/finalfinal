@@ -309,6 +309,7 @@ extension ContentView {
             } else {
                 CodeMirrorEditor(
                     content: $editorState.sourceContent,
+                    focusModeEnabled: $editorState.focusModeEnabled,
                     cursorPositionToRestore: $cursorPositionToRestore,
                     scrollToOffset: $editorState.scrollToOffset,
                     isResettingContent: $editorState.isResettingContent,

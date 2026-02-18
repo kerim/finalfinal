@@ -114,6 +114,11 @@ body {
   box-shadow: 0 0 0 1px rgba(255, 165, 0, 0.8);
 }
 
+/* Focus mode dimming — matches Milkdown's ff-dimmed opacity */
+.cm-editor .ff-dimmed {
+  opacity: 0.3;
+}
+
 /* Hide default search panel (we use Swift UI) */
 .cm-search.cm-panel {
   display: none;

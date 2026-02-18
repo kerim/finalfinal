@@ -44,6 +44,7 @@ import {
 } from './api';
 import { updateCitationAddButton } from './citations';
 import { getPendingSlashUndo, setEditorExtensions, setEditorView, setPendingSlashUndo } from './editor-state';
+import { focusModePlugin, isFocusModeEnabled } from './focus-mode-plugin';
 import { customHighlightStyle, headingDecorationPlugin, syntaxHighlighting } from './heading-plugin';
 import { slashCompletions } from './slash-completions';
 import './styles.css';
@@ -73,6 +74,7 @@ function initEditor() {
     markdown({ base: markdownLanguage, codeLanguages: languages }),
     syntaxHighlighting(customHighlightStyle),
     headingDecorationPlugin,
+    focusModePlugin,
     // Search extension - headless mode (no default keybindings, controlled via Swift)
     search({ top: false }),
     highlightSelectionMatches(),
@@ -227,7 +229,7 @@ window.FinalFinal = {
       cursorPosition,
       stats,
       editorReady: window.__CODEMIRROR_DEBUG__?.editorReady ?? false,
-      focusModeEnabled: false, // CodeMirror has no focus mode
+      focusModeEnabled: isFocusModeEnabled(),
     };
   },
 };
