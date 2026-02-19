@@ -54,6 +54,7 @@ struct FinalFinalApp: App {
                 }
             }
             .environment(ThemeManager.shared)
+            .environment(GoalColorSettingsManager.shared)
             .environment(versionHistoryCoordinator)
             .task {
                 await determineInitialState()
@@ -99,6 +100,7 @@ struct FinalFinalApp: App {
         Settings {
             PreferencesView()
                 .environment(ThemeManager.shared)
+                .environment(GoalColorSettingsManager.shared)
         }
 
         Window("Version History", id: "version-history") {

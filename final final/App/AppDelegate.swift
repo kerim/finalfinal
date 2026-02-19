@@ -72,6 +72,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             // Load theme and appearance settings now that database is ready
             ThemeManager.shared.loadThemeIfNeeded()
             AppearanceSettingsManager.shared.loadIfNeeded()
+            GoalColorSettingsManager.shared.loadIfNeeded()
         } catch {
             #if DEBUG
             print("[AppDelegate] Failed to initialize database: \(error)")

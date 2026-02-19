@@ -32,27 +32,30 @@ enum GoalType: String, Codable, CaseIterable, Sendable {
 /// Goal status indicating whether the current word count meets the goal
 enum GoalStatus {
     case met      // Goal criteria satisfied (green)
+    case warning  // Close to goal but not met (orange)
     case notMet   // Goal criteria not satisfied (red)
     case noGoal   // No goal set (neutral)
 
-    /// Calculate goal status based on word count, goal, and goal type
-    static func calculate(wordCount: Int, goal: Int?, goalType: GoalType) -> GoalStatus {
+    /// Calculate goal status based on word count, goal, goal type, and thresholds
+    static func calculate(wordCount: Int, goal: Int?, goalType: GoalType,
+                          thresholds: GoalThresholds = .defaults) -> GoalStatus {
         guard let goal = goal, goal > 0 else { return .noGoal }
+        let ratio = Double(wordCount) / Double(goal) * 100
 
         switch goalType {
         case .min:
-            // Met if at or above goal
-            return wordCount >= goal ? .met : .notMet
+            if ratio >= 100 { return .met }
+            if ratio >= thresholds.minWarningPercent { return .warning }
+            return .notMet
         case .max:
-            // Met if at or below goal
-            return wordCount <= goal ? .met : .notMet
+            if ratio <= 100 { return .met }
+            if ratio <= thresholds.maxWarningPercent { return .warning }
+            return .notMet
         case .approx:
-            // Met if within ±5% of goal
-            let tolerance = Double(goal) * 0.05
-            let lowerBound = Double(goal) - tolerance
-            let upperBound = Double(goal) + tolerance
-            let count = Double(wordCount)
-            return (count >= lowerBound && count <= upperBound) ? .met : .notMet
+            let deviation = abs(ratio - 100)
+            if deviation <= thresholds.approxGreenPercent { return .met }
+            if deviation <= thresholds.approxOrangePercent { return .warning }
+            return .notMet
         }
     }
 }

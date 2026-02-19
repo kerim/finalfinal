@@ -14,6 +14,7 @@ struct OutlineFilterBar: View {
     @Binding var documentGoalType: GoalType
     @Binding var excludeBibliography: Bool
     @Environment(ThemeManager.self) private var themeManager
+    @Environment(GoalColorSettingsManager.self) private var goalManager
     @State private var showingGoalEditor = false
 
     var body: some View {
@@ -93,14 +94,17 @@ struct OutlineFilterBar: View {
         let status = GoalStatus.calculate(
             wordCount: filteredWordCount,
             goal: documentGoal,
-            goalType: documentGoalType
+            goalType: documentGoalType,
+            thresholds: goalManager.settings.thresholds
         )
 
         switch status {
         case .met:
-            return themeManager.currentTheme.statusColors.final_  // Green
+            return goalManager.effectiveMetColor(theme: themeManager.currentTheme)
+        case .warning:
+            return goalManager.effectiveWarningColor(theme: themeManager.currentTheme)
         case .notMet:
-            return .red
+            return goalManager.effectiveNotMetColor(theme: themeManager.currentTheme)
         case .noGoal:
             return themeManager.currentTheme.sidebarText.opacity(0.6)
         }
@@ -197,4 +201,5 @@ struct DocumentGoalPopover: View {
     }
     .frame(width: 300)
     .environment(ThemeManager.shared)
+    .environment(GoalColorSettingsManager.shared)
 }

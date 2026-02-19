@@ -12,6 +12,7 @@ import AppKit
 enum PreferencesTab: String, CaseIterable, Identifiable {
     case export
     case appearance
+    case goals
 
     var id: String { rawValue }
 
@@ -19,6 +20,7 @@ enum PreferencesTab: String, CaseIterable, Identifiable {
         switch self {
         case .export: return "Export"
         case .appearance: return "Appearance"
+        case .goals: return "Goals"
         }
     }
 
@@ -26,6 +28,7 @@ enum PreferencesTab: String, CaseIterable, Identifiable {
         switch self {
         case .export: return "square.and.arrow.up"
         case .appearance: return "paintbrush"
+        case .goals: return "target"
         }
     }
 }
@@ -47,6 +50,12 @@ struct PreferencesView: View {
                     Label(PreferencesTab.appearance.title, systemImage: PreferencesTab.appearance.icon)
                 }
                 .tag(PreferencesTab.appearance)
+
+            GoalPreferencesPane()
+                .tabItem {
+                    Label(PreferencesTab.goals.title, systemImage: PreferencesTab.goals.icon)
+                }
+                .tag(PreferencesTab.goals)
         }
         .frame(width: 700, height: 550)
         .padding()

@@ -15,6 +15,7 @@ struct SectionCardView: View {
     var isGhost: Bool = false  // When true, render at 30% opacity (drag source in subtree drag)
 
     @Environment(ThemeManager.self) private var themeManager
+    @Environment(GoalColorSettingsManager.self) private var goalManager
     @State private var isHovering = false
     @State private var showingGoalEditor = false
 
@@ -151,11 +152,30 @@ struct SectionCardView: View {
     }
 
     private var wordCountColor: Color {
-        switch section.goalStatus {
+        let status: GoalStatus
+        if section.aggregateGoal != nil {
+            status = GoalStatus.calculate(
+                wordCount: section.aggregateWordCount,
+                goal: section.aggregateGoal,
+                goalType: section.aggregateGoalType,
+                thresholds: goalManager.settings.thresholds
+            )
+        } else {
+            status = GoalStatus.calculate(
+                wordCount: section.wordCount,
+                goal: section.wordGoal,
+                goalType: section.goalType,
+                thresholds: goalManager.settings.thresholds
+            )
+        }
+
+        switch status {
         case .met:
-            return themeManager.currentTheme.statusColors.final_  // Green
+            return goalManager.effectiveMetColor(theme: themeManager.currentTheme)
+        case .warning:
+            return goalManager.effectiveWarningColor(theme: themeManager.currentTheme)
         case .notMet:
-            return .red
+            return goalManager.effectiveNotMetColor(theme: themeManager.currentTheme)
         case .noGoal:
             return themeManager.currentTheme.sidebarText.opacity(0.6)
         }
@@ -511,4 +531,5 @@ struct BibliographyIcon: View {
     .frame(width: 300)
     .background(Color(nsColor: .windowBackgroundColor))
     .environment(ThemeManager.shared)
+    .environment(GoalColorSettingsManager.shared)
 }

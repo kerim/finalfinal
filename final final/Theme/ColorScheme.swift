@@ -14,6 +14,9 @@ struct StatusColors: Equatable, Sendable {
     let waiting: Color
     let review: Color
     let final_: Color
+    let goalWarning: Color   // Orange for word count warning state
+    let goalNotMet: Color    // Red for word count not-met state
+    let goalMet: Color       // Green for word count met state
 
     func color(for status: SectionStatus) -> Color {
         switch status {
@@ -31,7 +34,10 @@ struct StatusColors: Equatable, Sendable {
         next: RadixScales.orange.step9,        // #f76b15 - vibrant orange
         waiting: RadixScales.yellow.step11,    // #9e6c00 - readable yellow-brown
         review: RadixScales.violet.step9,      // #6e56cf - purple
-        final_: RadixScales.green.step9        // #30a46c - green
+        final_: RadixScales.green.step9,       // #30a46c - green
+        goalWarning: RadixScales.orange.step9, // #f76b15 - orange warning
+        goalNotMet: RadixScales.red.step9,     // red not-met
+        goalMet: RadixScales.green.step9       // #30a46c - green met
     )
 
     /// Dark theme status colors using Radix scales (brighter for visibility)
@@ -40,7 +46,10 @@ struct StatusColors: Equatable, Sendable {
         next: RadixScales.orangeDark.step10,     // #ff801f - bright orange
         waiting: RadixScales.yellowDark.step11,  // #f5e147 - bright yellow
         review: RadixScales.violetDark.step11,   // #baa7ff - bright violet
-        final_: RadixScales.greenDark.step11     // #3dd68c - bright green
+        final_: RadixScales.greenDark.step11,    // #3dd68c - bright green
+        goalWarning: RadixScales.orangeDark.step10, // #ff801f - bright orange warning
+        goalNotMet: RadixScales.redDark.step10,     // bright red not-met
+        goalMet: RadixScales.greenDark.step11       // #3dd68c - bright green met
     )
 
     /// Nord-themed status colors (using slate-based muted tones)
@@ -49,7 +58,10 @@ struct StatusColors: Equatable, Sendable {
         next: RadixScales.orangeDark.step11,     // #ffa057 - muted orange
         waiting: RadixScales.amberDark.step11,   // #ffca16 - amber
         review: RadixScales.violetDark.step11,   // #baa7ff - soft violet
-        final_: RadixScales.greenDark.step11     // #3dd68c - soft green
+        final_: RadixScales.greenDark.step11,    // #3dd68c - soft green
+        goalWarning: RadixScales.amberDark.step11, // #ffca16 - soft amber warning
+        goalNotMet: RadixScales.redDark.step10,    // red not-met
+        goalMet: RadixScales.greenDark.step11      // #3dd68c - soft green met
     )
 }
 
