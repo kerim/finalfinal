@@ -32,7 +32,9 @@ enum EditorContentState {
 Double-clicking a sidebar section "zooms" into it:
 
 1. **Zoom In** (block-based):
-   - Finds the heading block, determines its sort-order range (from heading's sortOrder to next same/higher-level heading's sortOrder)
+   - Finds the heading block, determines its sort-order range based on zoom mode:
+     - **Full zoom**: from heading's sortOrder to next same-or-higher-level heading's sortOrder (includes all children)
+     - **Shallow zoom**: from heading's sortOrder to the very next heading of any level (section's own content only)
    - Filters blocks within that range from the database
    - Assembles markdown from the filtered blocks
    - Records `zoomedSectionIds` and `zoomedBlockRange`
@@ -47,9 +49,9 @@ Double-clicking a sidebar section "zooms" into it:
 
 **Sync While Zoomed**: BlockSyncService continues its 300ms polling during zoom. Changes are written directly to the block table. The `zoomedBlockRange` on EditorViewState tells `pushBlockIds()` which blocks to filter for the editor.
 
-**Zoom Modes**:
-- **Full zoom** (double-click): Shows section + all descendants (by `parentId`) + following pseudo-sections (by document order)
-- **Shallow zoom** (Option+double-click): Shows section + only direct pseudo-sections (no children)
+**Zoom Modes** (affects both sidebar and editor content):
+- **Full zoom** (double-click): Sidebar shows section + all descendants (by `parentId`) + following pseudo-sections (by document order). Editor shows all content up to the next same-or-higher-level heading.
+- **Shallow zoom** (Option+double-click): Sidebar shows section + only direct pseudo-sections (no children). Editor shows only the section's own body content, stopping at the very next heading of any level.
 
 **Pseudo-Section Handling**: Pseudo-sections have `parentId = nil` (they inherit H1 level), so `parentId`-based traversal misses them. The `getDescendantIds()` method uses **document order** to find pseudo-sections:
 

@@ -217,6 +217,36 @@ if !callerManagedState {
 
 ---
 
+## Mode-Aware Block Range Calculation
+
+### Shallow Zoom Must Narrow Editor Content, Not Just Sidebar
+
+**Problem:** Option+double-click (shallow zoom) correctly filtered the sidebar to show only the root section (no child sections), but both editors still displayed all child headings and content — identical to a regular double-click.
+
+**Root Cause:** The `endSortOrder` calculation in `zoomToSection()` always stopped at the next same-or-higher-level heading, regardless of zoom mode. The `mode` parameter only affected sidebar filtering (via `getShallowDescendantIds()` vs `getDescendantIds()`), never the block range sent to editors.
+
+**Solution:** Make the `endSortOrder` loop mode-aware:
+
+```swift
+for block in sorted where block.sortOrder > headingBlock.sortOrder {
+    if block.blockType == .heading {
+        if mode == .shallow {
+            // Shallow: stop at the very next heading (any level)
+            endSortOrder = block.sortOrder
+            break
+        } else if let level = block.headingLevel, level <= headingLevel {
+            // Full: stop at next same-or-higher-level heading
+            endSortOrder = block.sortOrder
+            break
+        }
+    }
+}
+```
+
+**General principle:** When a mode parameter affects what the user sees, ensure it affects ALL output paths (sidebar, WYSIWYG editor, source editor), not just the first one implemented. Verify by tracing the mode parameter through every code path that computes visible content.
+
+---
+
 ## Dual Editor Mode Content Update
 
 **Problem:** After operations like drag-drop reorder, the CodeMirror editor (source mode) didn't update even though Milkdown (WYSIWYG) showed the correct content.

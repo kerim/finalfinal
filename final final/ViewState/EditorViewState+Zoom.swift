@@ -114,17 +114,12 @@ extension EditorViewState {
                 : getDescendantIds(of: sectionId)
             zoomedSectionIds = descendantIds
 
-            // Find next same-or-higher-level heading's sortOrder (range boundary)
+            // Find the range boundary (next heading that ends this zoom scope)
             let allBlocks = try db.fetchBlocks(projectId: pid)
             let sorted = allBlocks.sorted { $0.sortOrder < $1.sortOrder }
-
-            var endSortOrder: Double?
-            for block in sorted where block.sortOrder > headingBlock.sortOrder {
-                if block.blockType == .heading, let level = block.headingLevel, level <= headingLevel {
-                    endSortOrder = block.sortOrder
-                    break
-                }
-            }
+            let endSortOrder = findEndSortOrder(
+                after: headingBlock, headingLevel: headingLevel, mode: mode, in: sorted
+            )
 
             // Store range for later use
             zoomedBlockRange = (start: headingBlock.sortOrder, end: endSortOrder)
@@ -344,6 +339,26 @@ extension EditorViewState {
         } catch {
             print("[EditorViewState] flushCodeMirrorSyncIfNeeded error: \(error)")
         }
+    }
+
+    // MARK: - Block Range Helpers
+
+    /// Find the sortOrder of the first heading that ends a zoom scope.
+    /// - Full zoom: stops at the next heading with level <= the zoomed heading's level
+    /// - Shallow zoom: stops at the very next heading of any level
+    private func findEndSortOrder(
+        after headingBlock: Block, headingLevel: Int, mode: ZoomMode, in sorted: [Block]
+    ) -> Double? {
+        for block in sorted where block.sortOrder > headingBlock.sortOrder {
+            if block.blockType == .heading {
+                if mode == .shallow {
+                    return block.sortOrder
+                } else if let level = block.headingLevel, level <= headingLevel {
+                    return block.sortOrder
+                }
+            }
+        }
+        return nil
     }
 
     // MARK: - Descendant Helpers
