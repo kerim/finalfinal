@@ -121,6 +121,8 @@ struct Section: Codable, Identifiable, Equatable, Sendable, FetchableRecord, Mut
     var tags: [String]
     var wordGoal: Int?
     var goalType: GoalType
+    var aggregateGoal: Int?
+    var aggregateGoalType: GoalType
     var wordCount: Int
     var startOffset: Int  // Character offset where section begins in document
     var createdAt: Date
@@ -142,6 +144,8 @@ struct Section: Codable, Identifiable, Equatable, Sendable, FetchableRecord, Mut
         tags: [String] = [],
         wordGoal: Int? = nil,
         goalType: GoalType = .approx,
+        aggregateGoal: Int? = nil,
+        aggregateGoalType: GoalType = .approx,
         wordCount: Int = 0,
         startOffset: Int = 0,
         createdAt: Date = Date(),
@@ -160,6 +164,8 @@ struct Section: Codable, Identifiable, Equatable, Sendable, FetchableRecord, Mut
         self.tags = tags
         self.wordGoal = wordGoal
         self.goalType = goalType
+        self.aggregateGoal = aggregateGoal
+        self.aggregateGoalType = aggregateGoalType
         self.wordCount = wordCount
         self.startOffset = startOffset
         self.createdAt = createdAt
@@ -182,6 +188,8 @@ struct Section: Codable, Identifiable, Equatable, Sendable, FetchableRecord, Mut
         case tags
         case wordGoal
         case goalType
+        case aggregateGoal
+        case aggregateGoalType
         case wordCount
         case startOffset
         case createdAt
@@ -204,6 +212,8 @@ struct Section: Codable, Identifiable, Equatable, Sendable, FetchableRecord, Mut
         case tags
         case wordGoal
         case goalType
+        case aggregateGoal
+        case aggregateGoalType
         case wordCount
         case startOffset
         case createdAt
@@ -224,6 +234,8 @@ struct Section: Codable, Identifiable, Equatable, Sendable, FetchableRecord, Mut
         status = try container.decode(SectionStatus.self, forKey: .status)
         wordGoal = try container.decodeIfPresent(Int.self, forKey: .wordGoal)
         goalType = try container.decode(GoalType.self, forKey: .goalType)
+        aggregateGoal = try container.decodeIfPresent(Int.self, forKey: .aggregateGoal)
+        aggregateGoalType = try container.decode(GoalType.self, forKey: .aggregateGoalType)
         wordCount = try container.decode(Int.self, forKey: .wordCount)
         startOffset = try container.decode(Int.self, forKey: .startOffset)
         createdAt = try container.decode(Date.self, forKey: .createdAt)
@@ -253,6 +265,8 @@ struct Section: Codable, Identifiable, Equatable, Sendable, FetchableRecord, Mut
         try container.encode(status, forKey: .status)
         try container.encodeIfPresent(wordGoal, forKey: .wordGoal)
         try container.encode(goalType, forKey: .goalType)
+        try container.encodeIfPresent(aggregateGoal, forKey: .aggregateGoal)
+        try container.encode(aggregateGoalType, forKey: .aggregateGoalType)
         try container.encode(wordCount, forKey: .wordCount)
         try container.encode(startOffset, forKey: .startOffset)
         try container.encode(createdAt, forKey: .createdAt)

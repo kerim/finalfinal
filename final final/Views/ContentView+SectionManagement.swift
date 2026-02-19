@@ -31,14 +31,32 @@ extension ContentView {
     }
 
     func updateSection(_ section: SectionViewModel) {
-        // Save section metadata changes to block database
+        // Save all section metadata in a single atomic transaction to prevent
+        // intermediate ValueObservation fires from resetting fields.
         guard let db = documentManager.projectDatabase else { return }
+        let statusValue = section.status == .final_ ? "final" : section.status.rawValue
+        let tagsString: String? = {
+            let data = try? JSONEncoder().encode(section.tags)
+            return data.flatMap { String(data: $0, encoding: .utf8) }
+        }()
         Task {
             do {
-                try db.updateBlockStatus(id: section.id, status: section.status)
-                try db.updateBlockWordGoal(id: section.id, goal: section.wordGoal)
-                try db.updateBlockGoalType(id: section.id, goalType: section.goalType)
-                try db.updateBlockTags(id: section.id, tags: section.tags)
+                try db.write { dbConn in
+                    try dbConn.execute(
+                        sql: """
+                            UPDATE block SET
+                                status = ?, wordGoal = ?, goalType = ?,
+                                aggregateGoal = ?, aggregateGoalType = ?,
+                                tags = ?, updatedAt = ?
+                            WHERE id = ?
+                            """,
+                        arguments: [
+                            statusValue, section.wordGoal, section.goalType.rawValue,
+                            section.aggregateGoal, section.aggregateGoalType.rawValue,
+                            tagsString, Date(), section.id
+                        ]
+                    )
+                }
             } catch {
                 print("[ContentView] Error saving section metadata: \(error.localizedDescription)")
             }

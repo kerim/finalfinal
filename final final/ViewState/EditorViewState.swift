@@ -195,11 +195,17 @@ class EditorViewState {
                     // Convert blocks to SectionViewModels
                     var viewModels = outlineBlocks.map { SectionViewModel(from: $0) }
 
-                    // Aggregate word counts for each heading block
+                    // Section-only word counts (own content, not children)
                     for i in viewModels.indices {
                         let vm = viewModels[i]
-                        if let wc = try? database.wordCountForHeading(blockId: vm.id) {
+                        if let wc = try? database.sectionOnlyWordCount(blockId: vm.id) {
                             viewModels[i].wordCount = wc
+                        }
+                        // Aggregate word count (only computed when aggregate goal exists)
+                        if viewModels[i].aggregateGoal != nil {
+                            if let awc = try? database.wordCountForHeading(blockId: vm.id) {
+                                viewModels[i].aggregateWordCount = awc
+                            }
                         }
                     }
 
@@ -224,8 +230,14 @@ class EditorViewState {
             let outlineBlocks = try db.fetchOutlineBlocks(projectId: pid)
             var viewModels = outlineBlocks.map { SectionViewModel(from: $0) }
             for i in viewModels.indices {
-                if let wc = try? db.wordCountForHeading(blockId: viewModels[i].id) {
+                if let wc = try? db.sectionOnlyWordCount(blockId: viewModels[i].id) {
                     viewModels[i].wordCount = wc
+                }
+                // Aggregate word count (only computed when aggregate goal exists)
+                if viewModels[i].aggregateGoal != nil {
+                    if let awc = try? db.wordCountForHeading(blockId: viewModels[i].id) {
+                        viewModels[i].aggregateWordCount = awc
+                    }
                 }
             }
             self.sections = viewModels

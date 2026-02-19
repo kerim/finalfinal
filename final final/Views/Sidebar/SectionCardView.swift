@@ -140,7 +140,10 @@ struct SectionCardView: View {
                 WordCountGoalPopover(
                     wordGoal: $section.wordGoal,
                     goalType: $section.goalType,
+                    aggregateGoal: $section.aggregateGoal,
+                    aggregateGoalType: $section.aggregateGoalType,
                     currentWordCount: section.wordCount,
+                    aggregateWordCount: section.aggregateWordCount,
                     isPresented: $showingGoalEditor,
                     onSave: { onSectionUpdated?(section) }
                 )
@@ -159,65 +162,122 @@ struct SectionCardView: View {
     }
 }
 
-/// Popover for setting word count goals
+/// Popover for setting word count goals (section + aggregate)
 struct WordCountGoalPopover: View {
     @Binding var wordGoal: Int?
     @Binding var goalType: GoalType
+    @Binding var aggregateGoal: Int?
+    @Binding var aggregateGoalType: GoalType
     let currentWordCount: Int
+    let aggregateWordCount: Int
     @Binding var isPresented: Bool
-    var onSave: (() -> Void)?  // Called when goal is saved or cleared
+    var onSave: (() -> Void)?
 
-    @State private var goalInput: String
+    // Local state to prevent flickering from @Observable re-renders
+    @State private var sectionGoalInput: String
+    @State private var localGoalType: GoalType
+    @State private var aggGoalInput: String
+    @State private var localAggGoalType: GoalType
     @Environment(ThemeManager.self) private var themeManager
 
     init(wordGoal: Binding<Int?>, goalType: Binding<GoalType>,
-         currentWordCount: Int, isPresented: Binding<Bool>,
-         onSave: (() -> Void)? = nil) {
+         aggregateGoal: Binding<Int?>, aggregateGoalType: Binding<GoalType>,
+         currentWordCount: Int, aggregateWordCount: Int,
+         isPresented: Binding<Bool>, onSave: (() -> Void)? = nil) {
         self._wordGoal = wordGoal
         self._goalType = goalType
+        self._aggregateGoal = aggregateGoal
+        self._aggregateGoalType = aggregateGoalType
         self.currentWordCount = currentWordCount
+        self.aggregateWordCount = aggregateWordCount
         self._isPresented = isPresented
         self.onSave = onSave
-        self._goalInput = State(initialValue: wordGoal.wrappedValue.map { String($0) } ?? "")
+        self._sectionGoalInput = State(initialValue: wordGoal.wrappedValue.map { String($0) } ?? "")
+        self._localGoalType = State(initialValue: goalType.wrappedValue)
+        self._aggGoalInput = State(initialValue: aggregateGoal.wrappedValue.map { String($0) } ?? "")
+        self._localAggGoalType = State(initialValue: aggregateGoalType.wrappedValue)
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Word Goal")
+            Text("Word Goals")
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundColor(themeManager.currentTheme.sidebarTextSecondary)
 
-            TextField("Goal (e.g., 500)", text: $goalInput)
-                .textFieldStyle(.roundedBorder)
-                .frame(width: 150)
+            // Section Goal
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Section Goal")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(themeManager.currentTheme.sidebarTextSecondary)
 
-            Picker("Type", selection: $goalType) {
-                ForEach(GoalType.allCases, id: \.self) { type in
-                    Text("\(type.displaySymbol) \(type.displayName)")
-                        .tag(type)
+                HStack(spacing: 6) {
+                    TextField("Goal", text: $sectionGoalInput)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 80)
+
+                    goalTypePicker(selection: $localGoalType)
                 }
-            }
-            .pickerStyle(.segmented)
 
-            Text("Current: \(currentWordCount) words")
-                .font(.system(size: 11))
-                .foregroundColor(themeManager.currentTheme.sidebarTextSecondary)
+                Text("Current: \(currentWordCount) words")
+                    .font(.system(size: 10))
+                    .foregroundColor(themeManager.currentTheme.sidebarTextSecondary)
+            }
+
+            Divider()
+
+            // Aggregate Goal
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Aggregate Goal")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(themeManager.currentTheme.sidebarTextSecondary)
+
+                HStack(spacing: 6) {
+                    TextField("Goal", text: $aggGoalInput)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 80)
+
+                    goalTypePicker(selection: $localAggGoalType)
+                }
+
+                Text("Subtree: \(aggregateWordCount) words")
+                    .font(.system(size: 10))
+                    .foregroundColor(themeManager.currentTheme.sidebarTextSecondary)
+            }
 
             HStack {
-                Button("Clear") {
+                Button("Clear All") {
                     wordGoal = nil
-                    goalInput = ""
+                    goalType = .approx
+                    aggregateGoal = nil
+                    aggregateGoalType = .approx
+                    sectionGoalInput = ""
+                    aggGoalInput = ""
+                    localGoalType = .approx
+                    localAggGoalType = .approx
                     onSave?()
                     isPresented = false
                 }
-                .disabled(wordGoal == nil)
+                .disabled(wordGoal == nil && aggregateGoal == nil)
 
                 Spacer()
 
                 Button("Done") {
-                    if let value = Int(goalInput), value > 0 {
+                    // Commit section goal
+                    if let value = Int(sectionGoalInput), value > 0 {
                         wordGoal = value
+                    } else {
+                        wordGoal = nil
                     }
+                    goalType = localGoalType
+
+                    // Commit aggregate goal
+                    if let value = Int(aggGoalInput), value > 0 {
+                        aggregateGoal = value
+                    } else {
+                        aggregateGoal = nil
+                    }
+                    aggregateGoalType = localAggGoalType
+
                     onSave?()
                     isPresented = false
                 }
@@ -227,6 +287,16 @@ struct WordCountGoalPopover: View {
         }
         .padding(12)
         .frame(width: 280)
+    }
+
+    private func goalTypePicker(selection: Binding<GoalType>) -> some View {
+        Picker("", selection: selection) {
+            ForEach(GoalType.allCases, id: \.self) { type in
+                Text(type.displaySymbol).tag(type)
+            }
+        }
+        .pickerStyle(.segmented)
+        .frame(width: 100)
     }
 }
 
@@ -246,6 +316,9 @@ class SectionViewModel: Identifiable {
     var tags: [String]
     var wordGoal: Int?
     var goalType: GoalType
+    var aggregateGoal: Int?
+    var aggregateGoalType: GoalType
+    var aggregateWordCount: Int = 0
     var wordCount: Int
     var startOffset: Int
 
@@ -267,6 +340,8 @@ class SectionViewModel: Identifiable {
         self.tags = section.tags
         self.wordGoal = section.wordGoal
         self.goalType = section.goalType
+        self.aggregateGoal = section.aggregateGoal
+        self.aggregateGoalType = section.aggregateGoalType
         self.wordCount = section.wordCount
         self.startOffset = section.startOffset
     }
@@ -285,7 +360,9 @@ class SectionViewModel: Identifiable {
         self.tags = block.tags ?? []
         self.wordGoal = block.wordGoal
         self.goalType = block.goalType
-        self.wordCount = 0  // Aggregated externally via wordCountForHeading
+        self.aggregateGoal = block.aggregateGoal
+        self.aggregateGoalType = block.aggregateGoalType
+        self.wordCount = 0  // Populated externally via sectionOnlyWordCount
         self.startOffset = 0  // Not used for blocks (scroll by block ID)
     }
 
@@ -295,14 +372,22 @@ class SectionViewModel: Identifiable {
     }
 
     /// Goal status based on current word count, goal, and goal type
+    /// Prefers aggregate goal when set
     var goalStatus: GoalStatus {
-        GoalStatus.calculate(wordCount: wordCount, goal: wordGoal, goalType: goalType)
+        if aggregateGoal != nil {
+            return GoalStatus.calculate(wordCount: aggregateWordCount, goal: aggregateGoal, goalType: aggregateGoalType)
+        }
+        return GoalStatus.calculate(wordCount: wordCount, goal: wordGoal, goalType: goalType)
     }
 
     /// Display string for word count with goal type symbol when goal is set
+    /// Shows aggregate (with sigma prefix) when aggregate goal is set
     var wordCountDisplay: String {
-        if wordGoal != nil {
-            return "\(goalType.displaySymbol)\(wordCount)"
+        if let aggGoal = aggregateGoal, aggGoal > 0 {
+            return "\u{03A3} \(aggregateGoalType.displaySymbol)\(aggregateWordCount)/\(aggGoal)"
+        }
+        if let goal = wordGoal, goal > 0 {
+            return "\(goalType.displaySymbol)\(wordCount)/\(goal)"
         }
         return "\(wordCount)"
     }
@@ -322,6 +407,8 @@ class SectionViewModel: Identifiable {
             tags: tags,
             wordGoal: wordGoal,
             goalType: goalType,
+            aggregateGoal: aggregateGoal,
+            aggregateGoalType: aggregateGoalType,
             wordCount: wordCount,
             startOffset: startOffset,
             createdAt: createdAt,
@@ -355,6 +442,8 @@ class SectionViewModel: Identifiable {
             tags: self.tags,
             wordGoal: self.wordGoal,
             goalType: self.goalType,
+            aggregateGoal: self.aggregateGoal,
+            aggregateGoalType: self.aggregateGoalType,
             wordCount: self.wordCount,
             startOffset: startOffset ?? self.startOffset
         )
@@ -363,6 +452,8 @@ class SectionViewModel: Identifiable {
         vm.sortOrder = sortOrder ?? self.sortOrder
         // Preserve word count (not stored in Section)
         vm.wordCount = self.wordCount
+        // Preserve aggregate word count (computed externally, not in Section)
+        vm.aggregateWordCount = self.aggregateWordCount
         return vm
     }
 }

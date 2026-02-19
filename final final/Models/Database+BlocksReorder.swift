@@ -26,6 +26,8 @@ private struct HeadingMetadata {
     let tags: [String]?
     let wordGoal: Int?
     let goalType: GoalType
+    let aggregateGoal: Int?
+    let aggregateGoalType: GoalType
     let isBibliography: Bool
 }
 
@@ -51,6 +53,7 @@ extension ProjectDatabase {
                 metadataByTitle[block.textContent] = HeadingMetadata(
                     status: block.status, tags: block.tags,
                     wordGoal: block.wordGoal, goalType: block.goalType,
+                    aggregateGoal: block.aggregateGoal, aggregateGoalType: block.aggregateGoalType,
                     isBibliography: block.isBibliography
                 )
             }
@@ -67,6 +70,8 @@ extension ProjectDatabase {
                     block.tags = meta.tags
                     block.wordGoal = meta.wordGoal
                     block.goalType = meta.goalType
+                    block.aggregateGoal = meta.aggregateGoal
+                    block.aggregateGoalType = meta.aggregateGoalType
                     if meta.isBibliography { block.isBibliography = true }
                 }
                 try block.insert(db)
@@ -103,6 +108,8 @@ extension ProjectDatabase {
                     tags: block.tags,
                     wordGoal: block.wordGoal,
                     goalType: block.goalType,
+                    aggregateGoal: block.aggregateGoal,
+                    aggregateGoalType: block.aggregateGoalType,
                     isBibliography: block.isBibliography
                 )
                 if idByTitle[block.textContent] == nil {
@@ -151,6 +158,8 @@ extension ProjectDatabase {
                     block.tags = meta.tags
                     block.wordGoal = meta.wordGoal
                     block.goalType = meta.goalType
+                    block.aggregateGoal = meta.aggregateGoal
+                    block.aggregateGoalType = meta.aggregateGoalType
                     if meta.isBibliography { block.isBibliography = true }
                 }
 

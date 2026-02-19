@@ -70,6 +70,8 @@ struct Block: Codable, Identifiable, Equatable, Sendable, FetchableRecord, Mutab
     var tags: [String]?
     var wordGoal: Int?
     var goalType: GoalType
+    var aggregateGoal: Int?
+    var aggregateGoalType: GoalType
     var wordCount: Int
 
     // Special flags
@@ -94,6 +96,8 @@ struct Block: Codable, Identifiable, Equatable, Sendable, FetchableRecord, Mutab
         tags: [String]? = nil,
         wordGoal: Int? = nil,
         goalType: GoalType = .approx,
+        aggregateGoal: Int? = nil,
+        aggregateGoalType: GoalType = .approx,
         wordCount: Int = 0,
         isBibliography: Bool = false,
         isPseudoSection: Bool = false,
@@ -112,6 +116,8 @@ struct Block: Codable, Identifiable, Equatable, Sendable, FetchableRecord, Mutab
         self.tags = tags
         self.wordGoal = wordGoal
         self.goalType = goalType
+        self.aggregateGoal = aggregateGoal
+        self.aggregateGoalType = aggregateGoalType
         self.wordCount = wordCount
         self.isBibliography = isBibliography
         self.isPseudoSection = isPseudoSection
@@ -134,6 +140,8 @@ struct Block: Codable, Identifiable, Equatable, Sendable, FetchableRecord, Mutab
         case tags
         case wordGoal
         case goalType
+        case aggregateGoal
+        case aggregateGoalType
         case wordCount
         case isBibliography
         case isPseudoSection
@@ -156,6 +164,8 @@ struct Block: Codable, Identifiable, Equatable, Sendable, FetchableRecord, Mutab
         case tags
         case wordGoal
         case goalType
+        case aggregateGoal
+        case aggregateGoalType
         case wordCount
         case isBibliography
         case isPseudoSection
@@ -196,6 +206,12 @@ struct Block: Codable, Identifiable, Equatable, Sendable, FetchableRecord, Mutab
         } else {
             goalType = .approx
         }
+        aggregateGoal = try container.decodeIfPresent(Int.self, forKey: .aggregateGoal)
+        if let aggGoalTypeString = try container.decodeIfPresent(String.self, forKey: .aggregateGoalType) {
+            aggregateGoalType = GoalType(rawValue: aggGoalTypeString) ?? .approx
+        } else {
+            aggregateGoalType = .approx
+        }
         wordCount = try container.decode(Int.self, forKey: .wordCount)
         isBibliography = try container.decode(Bool.self, forKey: .isBibliography)
         isPseudoSection = try container.decode(Bool.self, forKey: .isPseudoSection)
@@ -233,6 +249,8 @@ struct Block: Codable, Identifiable, Equatable, Sendable, FetchableRecord, Mutab
 
         try container.encodeIfPresent(wordGoal, forKey: .wordGoal)
         try container.encode(goalType.rawValue, forKey: .goalType)
+        try container.encodeIfPresent(aggregateGoal, forKey: .aggregateGoal)
+        try container.encode(aggregateGoalType.rawValue, forKey: .aggregateGoalType)
         try container.encode(wordCount, forKey: .wordCount)
         try container.encode(isBibliography, forKey: .isBibliography)
         try container.encode(isPseudoSection, forKey: .isPseudoSection)

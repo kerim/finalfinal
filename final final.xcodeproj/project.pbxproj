@@ -16,7 +16,6 @@
 		0ABF543A354D8FA782C316FB /* RadixScales+Custom.swift in Sources */ = {isa = PBXBuildFile; fileRef = F37D8109D489C3EF73C167C0 /* RadixScales+Custom.swift */; };
 		0C67A14B44BDA954C666F7FD /* ZoteroChecker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2070D9DD040736953F1CAA08 /* ZoteroChecker.swift */; };
 		0ED46619B703DCB8610330F3 /* Section.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC27954DE76B2ADD62BBFF00 /* Section.swift */; };
-		0F5F1DF5B5C69DC5B51710E7 /* GoalPopover.swift in Sources */ = {isa = PBXBuildFile; fileRef = 748760007DC30115235FC8D6 /* GoalPopover.swift */; };
 		135D44FB4D2BB6A12ABB783F /* OutlineSidebar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75B3D65D281D81B769D7DF96 /* OutlineSidebar.swift */; };
 		1CB5D59D6B0C2C767547192A /* Database+BlocksWordCount.swift in Sources */ = {isa = PBXBuildFile; fileRef = DDC88DC217831BA18037CB1B /* Database+BlocksWordCount.swift */; };
 		20AFD8B3E9B9181745AD26B8 /* FinalFinalTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E843650744C2F13D1618667 /* FinalFinalTests.swift */; };
@@ -230,7 +229,6 @@
 		7311920CB617B184B124B6F4 /* Annotation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Annotation.swift; sourceTree = "<group>"; };
 		734874328EB5518EAC0C2517 /* ProjectPackage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectPackage.swift; sourceTree = "<group>"; };
 		73EA833CAD13B84DA71C0544 /* CodeMirrorEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodeMirrorEditor.swift; sourceTree = "<group>"; };
-		748760007DC30115235FC8D6 /* GoalPopover.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoalPopover.swift; sourceTree = "<group>"; };
 		75B3D65D281D81B769D7DF96 /* OutlineSidebar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutlineSidebar.swift; sourceTree = "<group>"; };
 		76CC075151A2E6342FFE523E /* TinyTeX */ = {isa = PBXFileReference; lastKnownFileType = folder; name = TinyTeX; path = "final final/Resources/TinyTeX"; sourceTree = SOURCE_ROOT; };
 		788D4C2FB2475A38D3477A97 /* final finalTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "final finalTests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -612,7 +610,6 @@
 			isa = PBXGroup;
 			children = (
 				B94BA0DFF06C7D3B1B7F38F5 /* DraggableCardView.swift */,
-				748760007DC30115235FC8D6 /* GoalPopover.swift */,
 				0CEC9B25AB24040A17CC1589 /* HashBar.swift */,
 				ABFC8351EA2CEE315AFD46C8 /* OutlineFilterBar.swift */,
 				75B3D65D281D81B769D7DF96 /* OutlineSidebar.swift */,
@@ -889,7 +886,6 @@
 				59E041D4F98FE5B1F9A13ED4 /* FindBarView.swift in Sources */,
 				802A2E3DC7C417EF81173AF8 /* FullScreenManager.swift in Sources */,
 				025311FF492B505FC913440D /* GitInfo.swift in Sources */,
-				0F5F1DF5B5C69DC5B51710E7 /* GoalPopover.swift in Sources */,
 				FA5C8D9CA08A0BB702BD0C7B /* HashBar.swift in Sources */,
 				F0A005E8C501B38A29B52152 /* HelpCommands.swift in Sources */,
 				D30B35EAC392DBFD98D4C432 /* IntegrityAlertView.swift in Sources */,

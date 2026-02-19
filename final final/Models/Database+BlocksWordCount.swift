@@ -38,6 +38,32 @@ extension ProjectDatabase {
         }
     }
 
+    /// Get section-only word count (own content only, excluding sub-headings)
+    /// Counts from this heading to the next heading of ANY level
+    func sectionOnlyWordCount(blockId: String) throws -> Int {
+        try read { db in
+            guard let headingBlock = try Block.fetchOne(db, key: blockId),
+                  headingBlock.blockType == .heading else { return 0 }
+
+            // Find the very next heading block (any level)
+            let nextAnyHeading = try Block
+                .filter(Block.Columns.projectId == headingBlock.projectId)
+                .filter(Block.Columns.blockType == BlockType.heading.rawValue)
+                .filter(Block.Columns.sortOrder > headingBlock.sortOrder)
+                .order(Block.Columns.sortOrder)
+                .fetchOne(db)
+
+            // Sum blocks from this heading to the next heading
+            var query = Block
+                .filter(Block.Columns.projectId == headingBlock.projectId)
+                .filter(Block.Columns.sortOrder >= headingBlock.sortOrder)
+            if let next = nextAnyHeading {
+                query = query.filter(Block.Columns.sortOrder < next.sortOrder)
+            }
+            return try Int.fetchOne(db, query.select(sum(Block.Columns.wordCount))) ?? 0
+        }
+    }
+
     /// Get word count for blocks under a heading (until next same/higher level heading)
     func wordCountForHeading(blockId: String) throws -> Int {
         try read { db in

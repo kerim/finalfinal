@@ -29,6 +29,8 @@ struct BlockUpdates {
     var tags: [String]??
     var wordGoal: Int??
     var goalType: GoalType?
+    var aggregateGoal: Int??
+    var aggregateGoalType: GoalType?
     var wordCount: Int?
     var isBibliography: Bool?
     var isPseudoSection: Bool?
@@ -44,6 +46,8 @@ struct BlockUpdates {
         tags: [String]?? = nil,
         wordGoal: Int?? = nil,
         goalType: GoalType? = nil,
+        aggregateGoal: Int?? = nil,
+        aggregateGoalType: GoalType? = nil,
         wordCount: Int? = nil,
         isBibliography: Bool? = nil,
         isPseudoSection: Bool? = nil
@@ -58,6 +62,8 @@ struct BlockUpdates {
         self.tags = tags
         self.wordGoal = wordGoal
         self.goalType = goalType
+        self.aggregateGoal = aggregateGoal
+        self.aggregateGoalType = aggregateGoalType
         self.wordCount = wordCount
         self.isBibliography = isBibliography
         self.isPseudoSection = isPseudoSection
@@ -191,6 +197,26 @@ extension ProjectDatabase {
         }
     }
 
+    /// Update block aggregate goal
+    func updateBlockAggregateGoal(id: String, goal: Int?) throws {
+        try write { db in
+            try db.execute(
+                sql: "UPDATE block SET aggregateGoal = ?, updatedAt = ? WHERE id = ?",
+                arguments: [goal, Date(), id]
+            )
+        }
+    }
+
+    /// Update block aggregate goal type
+    func updateBlockAggregateGoalType(id: String, goalType: GoalType) throws {
+        try write { db in
+            try db.execute(
+                sql: "UPDATE block SET aggregateGoalType = ?, updatedAt = ? WHERE id = ?",
+                arguments: [goalType.rawValue, Date(), id]
+            )
+        }
+    }
+
     /// Update block tags
     func updateBlockTags(id: String, tags: [String]?) throws {
         let tagsString: String?
@@ -269,6 +295,12 @@ extension ProjectDatabase {
                     }
                     if let goalType = updates.goalType {
                         block.goalType = goalType
+                    }
+                    if let aggregateGoalUpdate = updates.aggregateGoal {
+                        block.aggregateGoal = aggregateGoalUpdate
+                    }
+                    if let aggregateGoalType = updates.aggregateGoalType {
+                        block.aggregateGoalType = aggregateGoalType
                     }
                     if let wordCount = updates.wordCount {
                         block.wordCount = wordCount

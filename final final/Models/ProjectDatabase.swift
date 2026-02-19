@@ -288,6 +288,18 @@ final class ProjectDatabase: Sendable {
             }
         }
 
+        // Aggregate goals: section + aggregate goal support for hierarchical documents
+        migrator.registerMigration("v11_aggregate_goals") { db in
+            try db.alter(table: "block") { t in
+                t.add(column: "aggregateGoal", .integer)  // nullable
+                t.add(column: "aggregateGoalType", .text).notNull().defaults(to: "approx")
+            }
+            try db.alter(table: "section") { t in
+                t.add(column: "aggregateGoal", .integer)  // nullable
+                t.add(column: "aggregateGoalType", .text).notNull().defaults(to: "approx")
+            }
+        }
+
         try migrator.migrate(dbWriter)
     }
 
