@@ -182,3 +182,26 @@ setContent(markdown: string) {
 ```
 
 **General principle:** When a function has both an optimization (skip if unchanged) and a fix for edge cases, ensure the edge case handling runs before the optimization can bypass it.
+
+---
+
+## Clipboard Plugin Required for Markdown Paste
+
+**Problem:** Pasting raw markdown into Milkdown treated it as plain text. `## Heading` appeared as literal "##" text, `>` blockquotes were escaped as `\>`, links as `\[text\]\(url\)`, and bold/italic got backslash-escaped.
+
+**Root Cause:** The `clipboard` plugin from `@milkdown/kit` was not enabled. Without it, ProseMirror's default paste handler inserts markdown as literal text into paragraph nodes, and the serializer then escapes the special characters on output.
+
+**Solution:** Enable the clipboard plugin in `main.ts`:
+
+```typescript
+import { clipboard } from '@milkdown/kit/plugin/clipboard';
+
+Editor.make()
+  // ...
+  .use(history)
+  .use(clipboard)  // Parse pasted markdown as rich text
+```
+
+The plugin is bundled with `@milkdown/kit` — no extra install needed. It intercepts `handlePaste`: if the clipboard contains plain text only (no HTML), it parses the text as markdown via the editor's parser and converts it to ProseMirror nodes. It also handles copy by serializing ProseMirror content back to clean markdown.
+
+**Legacy workarounds:** Two workarounds existed for symptoms of this missing plugin — `api-content.ts` unescaping `\#` heading syntax, and `block-sync-plugin.ts` detecting heading syntax inside paragraph nodes. These were kept as safety nets but may be removable now.
