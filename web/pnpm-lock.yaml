@@ -57,9 +57,6 @@ importers:
 
   milkdown:
     dependencies:
-      '@milkdown/components':
-        specifier: ^7.8.0
-        version: 7.18.0(@codemirror/language@6.12.1)(@codemirror/state@6.5.4)(@codemirror/view@6.39.11)(typescript@5.9.3)
       '@milkdown/kit':
         specifier: ^7.8.0
         version: 7.18.0(@codemirror/language@6.12.1)(@codemirror/state@6.5.4)(@codemirror/view@6.39.11)(typescript@5.9.3)

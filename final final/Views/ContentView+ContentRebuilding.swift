@@ -321,9 +321,9 @@ extension ContentView {
                         // This keeps anchors in sync for mode switch
                         editorState.sourceContent = newContent
 
-                        // Strip anchors and update content for sync/sidebar
+                        // Strip anchors and bibliography marker, then update content for sync/sidebar
                         let cleanContent = sectionSyncService.stripSectionAnchors(from: newContent)
-                        editorState.content = cleanContent
+                        editorState.content = SectionSyncService.stripBibliographyMarker(from: cleanContent)
                     },
                     onStatsChange: { words, characters in
                         editorState.updateStats(words: words, characters: characters)

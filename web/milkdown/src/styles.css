@@ -396,7 +396,8 @@ mark.ff-highlight {
 
 /* Auto-bibliography markers - invisible in editor but preserved in DOM */
 .auto-bib-start,
-.auto-bib-end {
+.auto-bib-end,
+.auto-bib-marker {
   display: none;
 }
 

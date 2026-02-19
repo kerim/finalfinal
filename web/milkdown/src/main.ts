@@ -66,6 +66,8 @@ import {
   setFocusMode,
   setTheme,
 } from './api-modes';
+import { autolinkPlugin } from './autolink-plugin';
+import { bibliographyPlugin } from './bibliography-plugin';
 import { blockIdPlugin } from './block-id-plugin';
 import { blockSyncPlugin } from './block-sync-plugin';
 import { openCAYWPicker } from './cayw';
@@ -81,6 +83,8 @@ import {
 import { focusModePlugin, isFocusModeEnabled } from './focus-mode-plugin';
 import { headingNodeViewPlugin } from './heading-nodeview-plugin';
 import { highlightPlugin } from './highlight-plugin';
+import './link-click-handler';
+import { linkTooltipPlugin, openLinkEdit } from './link-tooltip';
 import { searchPlugin } from './search-plugin';
 import { sectionBreakPlugin } from './section-break-plugin';
 import { configureSlash, slash } from './slash-commands';
@@ -113,10 +117,12 @@ async function initEditor() {
       .use(blockIdPlugin) // Assign stable IDs to block-level nodes
       .use(blockSyncPlugin) // Track block changes for Swift sync
       .use(sectionBreakPlugin) // Intercept <!-- ::break:: --> before commonmark filters it
+      .use(bibliographyPlugin) // Intercept <!-- ::auto-bibliography:: --> before commonmark filters it
       .use(annotationPlugin) // Intercept annotation comments before filtering
       .use(citationPlugin) // Parse [@citekey] citations before commonmark
       .use(commonmark)
       .use(gfm)
+      .use(autolinkPlugin) // Auto-link bare URLs on space - AFTER commonmark for link schema
       .use(highlightPlugin) // ==highlight== syntax - AFTER commonmark for serialization
       .use(history)
       .use(focusModePlugin)
@@ -125,6 +131,7 @@ async function initEditor() {
       .use(headingNodeViewPlugin) // Custom heading rendering for source mode # selection
       // citationNodeView is now included in citationPlugin (same file = correct atom identity)
       .use(searchPlugin) // Search highlighting decorations
+      .use(linkTooltipPlugin) // Custom link preview/edit tooltips (no Vue dependency)
       .use(slash)
       .create();
 
@@ -207,6 +214,24 @@ async function initEditor() {
 
         // Open CAYW picker - no /cite text to replace, so start and end are the same
         openCAYWPicker(from, from);
+      }
+    },
+    true
+  );
+
+  // Add keyboard shortcut: Cmd+K opens link creation/editing
+  document.addEventListener(
+    'keydown',
+    (e) => {
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key === 'k') {
+        e.preventDefault();
+        e.stopPropagation();
+
+        const currentEditor = getEditorInstance();
+        if (!currentEditor) return;
+
+        const currentView = currentEditor.ctx.get(editorViewCtx);
+        openLinkEdit(currentView);
       }
     },
     true

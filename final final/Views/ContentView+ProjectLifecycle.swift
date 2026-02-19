@@ -112,7 +112,7 @@ extension ContentView {
                 let savedContent = try documentManager.loadContent()
 
                 if let savedContent = savedContent, !savedContent.isEmpty {
-                    let cleanContent = sectionSyncService.stripBibliographyMarker(from: savedContent)
+                    let cleanContent = SectionSyncService.stripBibliographyMarker(from: savedContent)
                     editorState.content = cleanContent
                     updateSourceContentIfNeeded()
 

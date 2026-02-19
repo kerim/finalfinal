@@ -69,7 +69,7 @@ extension View {
                     )
                     editorState.sourceAnchors = anchors
                     // Also strip bibliography marker since Milkdown shouldn't see it
-                    editorState.content = sectionSyncService.stripBibliographyMarker(from: cleaned)
+                    editorState.content = SectionSyncService.stripBibliographyMarker(from: cleaned)
                     editorState.toggleEditorMode()
 
                     // CRITICAL: Delay returning to .idle to give Milkdown time to initialize

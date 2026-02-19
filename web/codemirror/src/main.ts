@@ -2,6 +2,7 @@
 import { autocompletion } from '@codemirror/autocomplete';
 import { defaultKeymap, history, redo, undo } from '@codemirror/commands';
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
+import { syntaxTree } from '@codemirror/language';
 import { languages } from '@codemirror/language-data';
 import { highlightSelectionMatches, search } from '@codemirror/search';
 import { EditorState } from '@codemirror/state';
@@ -148,6 +149,34 @@ function initEditor() {
         // Reset flag on any editing key (typing, backspace, delete)
         if (event.key.length === 1 || event.key === 'Backspace' || event.key === 'Delete') {
           setPendingSlashUndo(false);
+        }
+        return false;
+      },
+      click(event, view) {
+        // Cmd+click to open URLs in system browser
+        if (!(event.metaKey || event.ctrlKey)) return false;
+        const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
+        if (!pos) return false;
+
+        const tree = syntaxTree(view.state);
+        let node = tree.resolveInner(pos);
+        while (node) {
+          if (node.name === 'URL' || node.name === 'Autolink') {
+            const url = view.state.sliceDoc(node.from, node.to).replace(/^<|>$/g, '');
+            window.webkit?.messageHandlers?.openURL?.postMessage(url);
+            event.preventDefault();
+            return true;
+          }
+          if (node.name === 'Link') {
+            const urlChild = node.getChild('URL');
+            if (urlChild) {
+              const url = view.state.sliceDoc(urlChild.from, urlChild.to);
+              window.webkit?.messageHandlers?.openURL?.postMessage(url);
+              event.preventDefault();
+              return true;
+            }
+          }
+          node = node.parent;
         }
         return false;
       },

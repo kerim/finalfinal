@@ -55,6 +55,7 @@ Bug investigation reports with root cause analysis and solutions.
 - [cm-scroll-height-contamination.md](findings/cm-scroll-height-contamination.md) -- CodeMirror measureTextSize() returns heading-contaminated lineHeight and charWidth, causing massive off-screen height overestimation
 - [cm-scroll-stabilizer.md](findings/cm-scroll-stabilizer.md) -- Persistent blank gaps after rapid scrolling due to height map drift; fixed with adaptive post-scroll requestMeasure() cycles
 - [zoom-word-count-stale.md](findings/zoom-word-count-stale.md) -- Sidebar word counts don't update while zoomed (removeDuplicates suppresses derived-data emissions)
+- [bibliography-marker-stripping.md](findings/bibliography-marker-stripping.md) -- assembleMarkdown defense-in-depth stripped bibliography marker, deleting bibliography on round-trip
 
 ## Deferred
 

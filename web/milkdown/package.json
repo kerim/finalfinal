@@ -1,6 +1,6 @@
 {
   "name": "@final-final/milkdown-editor",
-  "version": "0.1.60",
+  "version": "0.1.61",
   "private": true,
   "type": "module",
   "scripts": {
@@ -9,7 +9,6 @@
   },
   "dependencies": {
     "@milkdown/kit": "^7.8.0",
-    "@milkdown/components": "^7.8.0",
     "@milkdown/plugin-slash": "^7.8.0",
     "citeproc": "^2.4.63",
     "fuse.js": "^7.0.0",

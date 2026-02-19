@@ -150,7 +150,8 @@ extension SectionSyncService {
 
     /// Strip bibliography marker from markdown
     /// Used when cleaning content for Milkdown or export
-    func stripBibliographyMarker(from markdown: String) -> String {
+    /// nonisolated: pure string operation, safe to call from any context (e.g. BlockParser)
+    nonisolated static func stripBibliographyMarker(from markdown: String) -> String {
         markdown.replacingOccurrences(of: "<!-- ::auto-bibliography:: -->", with: "")
     }
 }

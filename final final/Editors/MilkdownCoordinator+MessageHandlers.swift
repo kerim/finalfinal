@@ -215,6 +215,17 @@ extension MilkdownEditor.Coordinator {
                 self.handlePaintComplete()
             }
         }
+
+        // Handle openURL requests from editor (Cmd+click on links)
+        if message.name == "openURL", let urlString = message.body as? String {
+            Task { @MainActor in
+                if let url = URL(string: urlString),
+                   let scheme = url.scheme?.lowercased(),
+                   ["http", "https", "mailto"].contains(scheme) {
+                    NSWorkspace.shared.open(url)
+                }
+            }
+        }
     }
 
     /// Handle citation search request from web editor

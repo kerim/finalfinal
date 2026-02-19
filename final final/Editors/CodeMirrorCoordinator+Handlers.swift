@@ -253,6 +253,17 @@ extension CodeMirrorEditor.Coordinator {
                 self.handlePaintComplete()
             }
         }
+
+        // Handle openURL requests from editor (Cmd+click on links)
+        if message.name == "openURL", let urlString = message.body as? String {
+            Task { @MainActor in
+                if let url = URL(string: urlString),
+                   let scheme = url.scheme?.lowercased(),
+                   ["http", "https", "mailto"].contains(scheme) {
+                    NSWorkspace.shared.open(url)
+                }
+            }
+        }
     }
 
     /// Handle CAYW citation picker request from web editor

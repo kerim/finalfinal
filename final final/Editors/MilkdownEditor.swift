@@ -50,6 +50,7 @@ struct MilkdownEditor: NSViewRepresentable {
             controller.add(context.coordinator, name: "openCitationPicker")
             controller.add(context.coordinator, name: "resolveCitekeys")
             controller.add(context.coordinator, name: "paintComplete")
+            controller.add(context.coordinator, name: "openURL")
 
             preloaded.navigationDelegate = context.coordinator
             context.coordinator.webView = preloaded
@@ -109,6 +110,7 @@ struct MilkdownEditor: NSViewRepresentable {
         configuration.userContentController.add(context.coordinator, name: "openCitationPicker")
         configuration.userContentController.add(context.coordinator, name: "resolveCitekeys")
         configuration.userContentController.add(context.coordinator, name: "paintComplete")
+        configuration.userContentController.add(context.coordinator, name: "openURL")
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = context.coordinator
