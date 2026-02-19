@@ -89,10 +89,16 @@ func startObserving(database: ProjectDatabase, projectId: String) {
 
             var viewModels = outlineBlocks.map { SectionViewModel(from: $0) }
 
-            // Aggregate word counts for each heading block
+            // Section-only word counts (own content, not children)
             for i in viewModels.indices {
-                if let wc = try? database.wordCountForHeading(blockId: viewModels[i].id) {
+                if let wc = try? database.sectionOnlyWordCount(blockId: viewModels[i].id) {
                     viewModels[i].wordCount = wc
+                }
+                // Aggregate word count (only when aggregate goal is set)
+                if viewModels[i].aggregateGoal != nil {
+                    if let awc = try? database.wordCountForHeading(blockId: viewModels[i].id) {
+                        viewModels[i].aggregateWordCount = awc
+                    }
                 }
             }
 
@@ -105,9 +111,10 @@ func startObserving(database: ProjectDatabase, projectId: String) {
 ```
 
 **Key details**:
-- `observeOutlineBlocks(for:)` filters to heading + pseudo-section blocks only
+- `observeOutlineBlocks(for:)` filters to heading + pseudo-section blocks only, without `.removeDuplicates()` — this allows word count updates to propagate even when heading blocks haven't changed (see [word-count.md](../architecture/word-count.md#zoom-mode-word-count-update))
 - `SectionViewModel(from: Block)` converts block data to sidebar view models
-- `wordCountForHeading(blockId:)` aggregates word counts from body blocks under each heading
+- `sectionOnlyWordCount(blockId:)` counts words in the section's own content (to next heading of any level)
+- `wordCountForHeading(blockId:)` aggregates words including descendants (only computed when `aggregateGoal` is set)
 - `projectDatabase` and `currentProjectId` are stored on EditorViewState for use during zoom and reorder operations
 
 **Suppression**: `isObservationSuppressed` is set during drag-drop operations to prevent database updates from overwriting in-progress reordering.

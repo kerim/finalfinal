@@ -109,6 +109,26 @@ private func finalizeSectionReorder(sections: [SectionViewModel]) {
 
 ---
 
+### removeDuplicates() Suppresses Derived-Data Updates
+
+**Problem:** Word counts in the sidebar didn't update while zoomed into a section. They only refreshed on zoom-out.
+
+**Root Cause:** `observeOutlineBlocks` queried heading blocks with `.removeDuplicates()`. When the user typed body text:
+
+1. BlockSyncService polled and updated body blocks in DB
+2. The DB write triggered re-evaluation of the heading-only query
+3. The query returned identical heading rows (body text changed, not headings)
+4. `.removeDuplicates()` suppressed the emission
+5. Word count recalculation never ran
+
+**Why it was less noticeable outside zoom:** Non-zoomed mode has frequent `contentState` transitions (bibliography sync, hierarchy enforcement), each triggering `refreshSections()` on completion. During zoom, these are skipped (hierarchy enforcement is guarded by `zoomedSectionIds == nil`), so `refreshSections()` is rarely called.
+
+**Solution:** Remove `.removeDuplicates()` from `observeOutlineBlocks`. The heading-only query returns <100 rows — well within GRDB's "small dataset" category where plain `.tracking` is recommended. The safety guards (`isObservationSuppressed`, `contentState == .idle`) already limit emission processing.
+
+**General principle:** Don't use `.removeDuplicates()` when the observation's downstream processing derives values from related rows not included in the query. The query result may be identical, but the derived values (aggregates, counts) may differ.
+
+---
+
 ## GRDB Configuration
 
 ### Never Use eraseDatabaseOnSchemaChange in Production

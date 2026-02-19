@@ -13,7 +13,7 @@ How the app is built. Read these before modifying core systems.
 - [data-model.md](architecture/data-model.md) -- GRDB schema, project package structure, content model
 - [editor-communication.md](architecture/editor-communication.md) -- WebView bridge API, source mode, SectionSyncService, find bar, bibliography
 - [state-machine.md](architecture/state-machine.md) -- Content state enum, zoom in/out, hierarchy constraints, ValueObservation, drag-drop reordering
-- [word-count.md](architecture/word-count.md) -- Per-section calculation, document totals, goal colors, zoom-mode updates
+- [word-count.md](architecture/word-count.md) -- Section-only vs aggregate counts, goal types, goal popover, zoom-mode updates
 
 ## Roadmap
 
@@ -54,6 +54,7 @@ Bug investigation reports with root cause analysis and solutions.
 - [stale-package-on-replace.md](findings/stale-package-on-replace.md) -- NSSavePanel "Replace" leaves old .ff package data intact (directory-based packages not deleted)
 - [cm-scroll-height-contamination.md](findings/cm-scroll-height-contamination.md) -- CodeMirror measureTextSize() returns heading-contaminated lineHeight and charWidth, causing massive off-screen height overestimation
 - [cm-scroll-stabilizer.md](findings/cm-scroll-stabilizer.md) -- Persistent blank gaps after rapid scrolling due to height map drift; fixed with adaptive post-scroll requestMeasure() cycles
+- [zoom-word-count-stale.md](findings/zoom-word-count-stale.md) -- Sidebar word counts don't update while zoomed (removeDuplicates suppresses derived-data emissions)
 
 ## Deferred
 

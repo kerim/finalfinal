@@ -52,6 +52,8 @@ CREATE TABLE block (
     tags TEXT,                   -- JSON array string
     wordGoal INTEGER,
     goalType TEXT DEFAULT 'approx',
+    aggregateGoal INTEGER,
+    aggregateGoalType TEXT NOT NULL DEFAULT 'approx',
     wordCount INTEGER DEFAULT 0,
     isBibliography BOOLEAN DEFAULT FALSE,
     isPseudoSection BOOLEAN DEFAULT FALSE,
@@ -68,6 +70,7 @@ CREATE TABLE content (
 );
 
 -- Legacy section table (dual-write for backward compatibility)
+-- Also has aggregateGoal and aggregateGoalType columns (v11 migration)
 CREATE TABLE section (
     -- ... (same as before, populated by persistReorderedBlocks_legacySections)
 );
@@ -90,4 +93,4 @@ One project = many blocks, ordered by `sortOrder`. Headers within the block sequ
 Content here...       -> block(type=paragraph, sortOrder=4.0)
 ```
 
-The `block` table is the primary content store. `observeOutlineBlocks()` filters to heading + pseudo-section blocks for fast sidebar rendering. Body block word counts are aggregated per heading via `wordCountForHeading(blockId:)`.
+The `block` table is the primary content store. `observeOutlineBlocks()` filters to heading + pseudo-section blocks for fast sidebar rendering. Word counts are calculated at two scopes: `sectionOnlyWordCount(blockId:)` counts content from a heading to the next heading of any level (own content only), while `wordCountForHeading(blockId:)` counts to the next same-or-higher-level heading (including descendants). See [word-count.md](word-count.md) for details.
