@@ -20,6 +20,7 @@ web/codemirror/dist/
 
 # Build outputs
 final\ final/Resources/editor/
+final\ final/App/GitInfo.swift
 build/
 temp/
 

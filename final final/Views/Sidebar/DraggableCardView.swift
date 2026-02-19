@@ -46,6 +46,7 @@ struct DraggableCardView: NSViewRepresentable {
             isGhost: isGhost
         )
         .environment(themeManager)
+        .environment(GoalColorSettingsManager.shared)
 
         let hostingView = PassthroughHostingView(rootView: AnyView(cardView))
         hostingView.translatesAutoresizingMaskIntoConstraints = false
@@ -268,6 +269,7 @@ class DraggableNSView: NSView, NSDraggingSource {
             previewView = AnyView(
                 SubtreeDragPreview(section: section, childCount: childCount)
                     .environment(themeManager)
+                    .environment(GoalColorSettingsManager.shared)
             )
         } else {
             previewView = AnyView(
@@ -281,6 +283,7 @@ class DraggableNSView: NSView, NSDraggingSource {
                     )
                     .shadow(color: .black.opacity(0.3), radius: 8, x: 0, y: 4)
                     .environment(themeManager)
+                    .environment(GoalColorSettingsManager.shared)
             )
         }
 
