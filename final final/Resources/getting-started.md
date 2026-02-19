@@ -21,6 +21,10 @@ Also, a lot of things you would expect from a word processor aren't there yet: t
 
 # What's New
 
+## Version 0.2.40
+
+- Fixed option-zoom bug and drag-and-drop bug
+
 ## Version 0.2.39
 
 - Fixed situations where markdown scrolling could still break.
