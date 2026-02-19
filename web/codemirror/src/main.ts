@@ -4,7 +4,7 @@ import { defaultKeymap, history, redo, undo } from '@codemirror/commands';
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { syntaxTree } from '@codemirror/language';
 import { languages } from '@codemirror/language-data';
-import { highlightSelectionMatches, search } from '@codemirror/search';
+import { search } from '@codemirror/search';
 import { EditorState } from '@codemirror/state';
 import { EditorView, keymap } from '@codemirror/view';
 import { anchorPlugin } from './anchor-plugin';
@@ -71,7 +71,6 @@ function initEditor() {
     scrollStabilizer,
     // Search extension - headless mode (no default keybindings, controlled via Swift)
     search({ top: false }),
-    highlightSelectionMatches(),
     autocompletion({ override: [slashCompletions] }),
     keymap.of([
       // Filter out Mod-/ (toggle comment) from default keymap to allow Swift to handle mode toggle
