@@ -521,25 +521,47 @@ export function citationPickerCallback(data: any, _items: any[]): void {
 }
 
 export function citationPickerCancelled(): void {
+  const view = getEditorView();
+  if (view) {
+    const range = getPendingCAYWRange();
+    if (range) {
+      const { start, end } = range;
+      const docLength = view.state.doc.length;
+      if (start >= 0 && end <= docLength && start <= end) {
+        const textAtRange = view.state.doc.sliceString(start, end);
+        if (textAtRange.startsWith('/')) {
+          view.dispatch({ changes: { from: start, to: end } });
+        }
+      }
+    }
+    view.focus();
+  }
   setPendingCAYWRange(null);
   setPendingAppendMode(false);
   setPendingAppendRange(null);
-  const view = getEditorView();
-  if (view) {
-    view.focus();
-  }
 }
 
 export function citationPickerError(message: string): void {
   console.error('[CodeMirror] citationPickerError:', message);
+  const view = getEditorView();
+  if (view) {
+    const range = getPendingCAYWRange();
+    if (range) {
+      const { start, end } = range;
+      const docLength = view.state.doc.length;
+      if (start >= 0 && end <= docLength && start <= end) {
+        const textAtRange = view.state.doc.sliceString(start, end);
+        if (textAtRange.startsWith('/')) {
+          view.dispatch({ changes: { from: start, to: end } });
+        }
+      }
+    }
+    view.focus();
+  }
   setPendingCAYWRange(null);
   setPendingAppendMode(false);
   setPendingAppendRange(null);
-  alert(message);
-  const view = getEditorView();
-  if (view) {
-    view.focus();
-  }
+  // Error display handled by native NSAlert on Swift side.
 }
 
 // --- Find/replace API ---

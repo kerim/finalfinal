@@ -266,6 +266,18 @@ extension CodeMirrorEditor.Coordinator {
         }
     }
 
+    /// Show a native NSAlert for Zotero-related errors
+    /// JS alert() is silently swallowed in WKWebView (no WKUIDelegate), so we must use native alerts.
+    @MainActor
+    private func showZoteroAlert(title: String, message: String) {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = message
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
+    }
+
     /// Handle CAYW citation picker request from web editor
     @MainActor
     func handleOpenCitationPicker(cmdStart: Int) async {
@@ -275,6 +287,17 @@ extension CodeMirrorEditor.Coordinator {
         }
 
         print("[CodeMirrorEditor] Opening CAYW picker, cmdStart: \(cmdStart)")
+
+        // Pre-check: ping Zotero before opening the picker
+        let isRunning = await ZoteroService.shared.ping()
+        if !isRunning {
+            showZoteroAlert(
+                title: "Zotero Not Running",
+                message: "Zotero is not running. Please open Zotero and try again."
+            )
+            sendCitationPickerCancelled(webView: webView)
+            return
+        }
 
         do {
             // Call CAYW picker - this blocks until user selects references
@@ -291,7 +314,7 @@ extension CodeMirrorEditor.Coordinator {
             let itemsData = try encoder.encode(items)
             guard let itemsJSON = String(data: itemsData, encoding: .utf8) else {
                 print("[CodeMirrorEditor] Failed to encode CSL items")
-                sendCitationPickerError(webView: webView, message: "Failed to encode citation data")
+                sendCitationPickerCancelled(webView: webView)
                 return
             }
 
@@ -308,7 +331,7 @@ extension CodeMirrorEditor.Coordinator {
             guard let callbackJSON = try? JSONSerialization.data(withJSONObject: callbackData),
                   let callbackStr = String(data: callbackJSON, encoding: .utf8) else {
                 print("[CodeMirrorEditor] Failed to encode callback data")
-                sendCitationPickerError(webView: webView, message: "Failed to encode callback data")
+                sendCitationPickerCancelled(webView: webView)
                 return
             }
 
@@ -331,11 +354,19 @@ extension CodeMirrorEditor.Coordinator {
         } catch ZoteroError.notRunning {
             NSApp.activate(ignoringOtherApps: true)
             print("[CodeMirrorEditor] Zotero not running")
-            sendCitationPickerError(webView: webView, message: "Zotero is not running. Please open Zotero and try again.")
+            showZoteroAlert(
+                title: "Zotero Connection Lost",
+                message: "Zotero is not running. Please open Zotero and try again."
+            )
+            sendCitationPickerCancelled(webView: webView)
         } catch {
             NSApp.activate(ignoringOtherApps: true)
             print("[CodeMirrorEditor] CAYW error: \(error.localizedDescription)")
-            sendCitationPickerError(webView: webView, message: error.localizedDescription)
+            showZoteroAlert(
+                title: "Citation Error",
+                message: error.localizedDescription
+            )
+            sendCitationPickerCancelled(webView: webView)
         }
     }
 

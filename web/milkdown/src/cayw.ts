@@ -2,6 +2,7 @@
 
 import { editorViewCtx } from '@milkdown/kit/core';
 import { Selection } from '@milkdown/kit/prose/state';
+import type { EditorView } from '@milkdown/kit/prose/view';
 import {
   type CSLItem,
   citationNode,
@@ -59,6 +60,19 @@ export function requestCitationResolutionInternal(keys: string[]): void {
 
 // Store the command range for CAYW callback (start = /cite position, end = cursor after /cite)
 let pendingCAYWRange: { start: number; end: number } | null = null;
+
+/** Delete the pending /cite command text from the editor, if the range is still valid */
+function deleteCAYWCommandText(view: EditorView): void {
+  if (!pendingCAYWRange) return;
+  const { start, end } = pendingCAYWRange;
+  const docSize = view.state.doc.content.size;
+  if (start < 0 || end > docSize || start > end) return;
+  // Content-identity check: verify the range still contains slash command text.
+  // If the user edited while the picker was open, the range may point to different content.
+  const textAtRange = view.state.doc.textBetween(start, end, '');
+  if (!textAtRange.startsWith('/')) return;
+  view.dispatch(view.state.tr.delete(start, end));
+}
 
 /**
  * Open Zotero's native CAYW citation picker via Swift bridge
@@ -176,31 +190,28 @@ export function handleCAYWCallback(data: CAYWCallbackData, items: CSLItem[]): vo
  * Handle CAYW picker cancelled by user
  */
 export function handleCAYWCancelled(): void {
-  pendingCAYWRange = null;
-
-  // Focus editor
   const editorInstance = getEditorInstance();
   if (editorInstance) {
     const view = editorInstance.ctx.get(editorViewCtx);
+    deleteCAYWCommandText(view);
     view.focus();
   }
+  pendingCAYWRange = null;
 }
 
 /**
  * Handle CAYW picker error
  */
-export function handleCAYWError(message: string): void {
-  pendingCAYWRange = null;
-
-  // Show alert to user
-  alert(message);
-
-  // Focus editor
+export function handleCAYWError(_message: string): void {
   const editorInstance = getEditorInstance();
   if (editorInstance) {
     const view = editorInstance.ctx.get(editorViewCtx);
+    deleteCAYWCommandText(view);
     view.focus();
   }
+  pendingCAYWRange = null;
+  // Error display handled by native NSAlert on Swift side.
+  // JS alert() is silently swallowed in WKWebView (no WKUIDelegate).
 }
 
 /**
