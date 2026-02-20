@@ -22,6 +22,7 @@ interface SpellcheckResult {
   type: 'spelling' | 'grammar' | 'style';
   suggestions: string[];
   message?: string | null;
+  shortMessage?: string | null;
   ruleId?: string | null;
   isPicky?: boolean;
 }
@@ -216,11 +217,6 @@ function triggerCheck(): void {
   currentRequestId++;
   const requestId = currentRequestId;
 
-  console.log('[spellcheck-cm] Sending', segments.length, 'segments to Swift');
-  segments.forEach((s, i) =>
-    console.log(`[spellcheck-cm] segment[${i}]:`, JSON.stringify(s.text), `pos ${s.from}-${s.to}`)
-  );
-
   window.webkit?.messageHandlers?.spellcheck?.postMessage({
     action: 'check',
     segments: segments.map((s) => ({ text: s.text, from: s.from, to: s.to })),
@@ -352,6 +348,7 @@ export function spellcheckPlugin() {
               word: result.word,
               type: result.type,
               message: result.message || '',
+              shortMessage: result.shortMessage || '',
               ruleId: result.ruleId || '',
               isPicky: result.isPicky || false,
               suggestions: result.suggestions,

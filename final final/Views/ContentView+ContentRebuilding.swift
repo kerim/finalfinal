@@ -169,9 +169,7 @@ extension ContentView {
                         adjustedSections.append(section.withUpdates(startOffset: off))
                     }
                 }
-            } catch {
-                print("[updateSourceContentIfNeeded] Block fetch error: \(error)")
-            }
+            } catch { }
         }
 
         let withAnchors = sectionSyncService.injectSectionAnchors(

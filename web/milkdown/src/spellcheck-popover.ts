@@ -10,6 +10,7 @@ export interface PopoverOptions {
   word: string;
   type: string;
   message: string;
+  shortMessage: string;
   ruleId: string;
   isPicky: boolean;
   suggestions: string[];
@@ -32,8 +33,8 @@ export function showProofingPopover(options: PopoverOptions): void {
 
   const ruleName = document.createElement('span');
   ruleName.className = 'proofing-popover-rule';
-  const shortMessage = options.message ? options.message.split('.')[0] : options.type;
-  ruleName.textContent = shortMessage;
+  const title = options.shortMessage || (options.message ? options.message.split('.')[0] : options.type);
+  ruleName.textContent = title;
   header.appendChild(ruleName);
 
   if (options.ruleId) {
@@ -50,8 +51,8 @@ export function showProofingPopover(options: PopoverOptions): void {
   }
   popover.appendChild(header);
 
-  // Message
-  if (options.message) {
+  // Message (only show if it differs from the title)
+  if (options.message && options.message !== title) {
     const msg = document.createElement('div');
     msg.className = 'proofing-popover-message';
     msg.textContent = options.message;

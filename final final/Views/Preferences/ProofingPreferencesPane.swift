@@ -9,8 +9,10 @@ import SwiftUI
 
 struct ProofingPreferencesPane: View {
     @State private var settings = ProofingSettings.shared
+    @State private var usernameInput: String = ""
     @State private var apiKeyInput: String = ""
     @State private var connectionStatus: ConnectionTestStatus = .idle
+    @State private var credentialDebounceTask: Task<Void, Never>?
 
     enum ConnectionTestStatus: Equatable {
         case idle
@@ -33,6 +35,7 @@ struct ProofingPreferencesPane: View {
             .padding()
         }
         .onAppear {
+            usernameInput = settings.username
             apiKeyInput = settings.apiKey
         }
     }
@@ -56,12 +59,37 @@ struct ProofingPreferencesPane: View {
 
                 if settings.mode.requiresApiKey {
                     HStack {
+                        Text("Email:")
+                            .frame(width: 55, alignment: .trailing)
+                        TextField("your@email.com", text: $usernameInput)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(maxWidth: 300)
+                            .onChange(of: usernameInput) { _, newValue in
+                                settings.username = newValue
+                                credentialDebounceTask?.cancel()
+                                credentialDebounceTask = Task {
+                                    try? await Task.sleep(for: .milliseconds(1500))
+                                    guard !Task.isCancelled else { return }
+                                    NotificationCenter.default.post(
+                                        name: .proofingSettingsChanged, object: nil)
+                                }
+                            }
+                    }
+                    HStack {
                         Text("API Key:")
+                            .frame(width: 55, alignment: .trailing)
                         SecureField("Enter API key", text: $apiKeyInput)
                             .textFieldStyle(.roundedBorder)
                             .frame(maxWidth: 300)
                             .onChange(of: apiKeyInput) { _, newValue in
                                 settings.apiKey = newValue
+                                credentialDebounceTask?.cancel()
+                                credentialDebounceTask = Task {
+                                    try? await Task.sleep(for: .milliseconds(1500))
+                                    guard !Task.isCancelled else { return }
+                                    NotificationCenter.default.post(
+                                        name: .proofingSettingsChanged, object: nil)
+                                }
                             }
                         Button("Test Connection") {
                             testConnection()
@@ -178,8 +206,13 @@ struct ProofingPreferencesPane: View {
             request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
 
             var body = "text=test&language=auto"
-            if !settings.apiKey.isEmpty {
-                body += "&apiKey=\(settings.apiKey)"
+            if settings.mode == .languageToolPremium {
+                if !settings.username.isEmpty {
+                    body += "&username=\(settings.username)"
+                }
+                if !settings.apiKey.isEmpty {
+                    body += "&apiKey=\(settings.apiKey)"
+                }
             }
             request.httpBody = body.data(using: .utf8)
 

@@ -271,9 +271,7 @@ extension ContentView {
                         mutableSections[index] = mutableSections[index].withUpdates(startOffset: off)
                     }
                 }
-            } catch {
-                print("[finalizeSectionReorder] Block fetch error: \(error)")
-            }
+            } catch { }
         }
 
         // Single atomic update to trigger SwiftUI

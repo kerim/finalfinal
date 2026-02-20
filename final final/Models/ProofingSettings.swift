@@ -8,9 +8,9 @@
 import Foundation
 
 enum ProofingMode: String, Codable, CaseIterable, Identifiable {
-    case builtIn = "builtIn"
-    case languageToolFree = "languageToolFree"
-    case languageToolPremium = "languageToolPremium"
+    case builtIn
+    case languageToolFree
+    case languageToolPremium
 
     var id: String { rawValue }
 
@@ -59,9 +59,12 @@ final class ProofingSettings {
         didSet { UserDefaults.standard.set(disabledRules, forKey: "ltDisabledRules") }
     }
 
+    var username: String {
+        didSet { UserDefaults.standard.set(username, forKey: "ltUsername") }
+    }
+
     var apiKey: String {
-        get { KeychainHelper.load(key: "ltApiKey") ?? "" }
-        set { KeychainHelper.save(key: "ltApiKey", value: newValue) }
+        didSet { UserDefaults.standard.set(apiKey, forKey: "ltApiKey") }
     }
 
     private init() {
@@ -70,6 +73,8 @@ final class ProofingSettings {
         self.pickyMode = UserDefaults.standard.bool(forKey: "ltPickyMode")
         self.language = UserDefaults.standard.string(forKey: "ltLanguage") ?? "auto"
         self.disabledRules = UserDefaults.standard.stringArray(forKey: "ltDisabledRules") ?? []
+        self.username = UserDefaults.standard.string(forKey: "ltUsername") ?? ""
+        self.apiKey = UserDefaults.standard.string(forKey: "ltApiKey") ?? ""
     }
 
     func disableRule(_ ruleId: String) {

@@ -304,13 +304,12 @@ struct CodeMirrorEditor: NSViewRepresentable {
                 }
             }
 
-            // Subscribe to proofing mode change (swap provider + re-check)
+            // Subscribe to proofing mode change (re-check with new mode)
             proofingModeObserver = NotificationCenter.default.addObserver(
                 forName: .proofingModeChanged,
                 object: nil,
                 queue: .main
             ) { [weak self] _ in
-                SpellCheckService.shared.updateProviderForCurrentMode()
                 self?.triggerSpellcheck()
             }
 

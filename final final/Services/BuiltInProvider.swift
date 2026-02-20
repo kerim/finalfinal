@@ -51,7 +51,8 @@ final class BuiltInProvider: ProofingProvider {
                 allResults.append(SpellCheckService.SpellCheckResult(
                     from: jsFrom, to: jsTo, word: word,
                     type: "spelling", suggestions: suggestions,
-                    message: nil, ruleId: nil, isPicky: false))
+                    message: nil, shortMessage: nil,
+                    ruleId: nil, isPicky: false))
             }
         }
         return allResults

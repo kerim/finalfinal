@@ -45,8 +45,13 @@ final class LanguageToolProvider: ProofingProvider {
         if settings.pickyMode {
             params.append("level=picky")
         }
-        if !settings.apiKey.isEmpty {
-            params.append("apiKey=\(urlEncode(settings.apiKey))")
+        if settings.mode == .languageToolPremium {
+            if !settings.username.isEmpty {
+                params.append("username=\(urlEncode(settings.username))")
+            }
+            if !settings.apiKey.isEmpty {
+                params.append("apiKey=\(urlEncode(settings.apiKey))")
+            }
         }
         if !settings.disabledRules.isEmpty {
             params.append("disabledRules=\(urlEncode(settings.disabledRules.joined(separator: ",")))")
@@ -173,11 +178,13 @@ final class LanguageToolProvider: ProofingProvider {
             let rule = match["rule"] as? [String: Any]
             let ruleId = rule?["id"] as? String
             let message = match["message"] as? String
+            let shortMessage = match["shortMessage"] as? String
 
             results.append(SpellCheckService.SpellCheckResult(
                 from: editorFrom, to: editorTo, word: word,
                 type: type, suggestions: Array(suggestions.prefix(5)),
-                message: message, ruleId: ruleId, isPicky: isPicky))
+                message: message, shortMessage: shortMessage,
+                ruleId: ruleId, isPicky: isPicky))
         }
 
         return results
@@ -233,7 +240,7 @@ final class LanguageToolProvider: ProofingProvider {
         var request = URLRequest(url: url, timeoutInterval: 10)
         request.httpMethod = "POST"
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
-        let body = "word=\(urlEncode(word))&apiKey=\(urlEncode(settings.apiKey))"
+        let body = "word=\(urlEncode(word))&username=\(urlEncode(settings.username))&apiKey=\(urlEncode(settings.apiKey))"
         request.httpBody = body.data(using: .utf8)
         _ = try? await URLSession.shared.data(for: request)
     }

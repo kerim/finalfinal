@@ -22,6 +22,7 @@ interface SpellcheckResult {
   type: 'spelling' | 'grammar' | 'style';
   suggestions: string[];
   message?: string | null;
+  shortMessage?: string | null;
   ruleId?: string | null;
   isPicky?: boolean;
 }
@@ -275,6 +276,7 @@ function handleClick(view: EditorView, event: MouseEvent): boolean {
     word: result.word,
     type: result.type,
     message: result.message || '',
+    shortMessage: result.shortMessage || '',
     ruleId: result.ruleId || '',
     isPicky: result.isPicky || false,
     suggestions: result.suggestions,

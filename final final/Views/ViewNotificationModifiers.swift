@@ -21,13 +21,18 @@ extension View {
             .onReceive(NotificationCenter.default.publisher(for: .toggleFocusMode)) { _ in
                 editorState.toggleFocusMode()
             }
-            .onReceive(NotificationCenter.default.publisher(for: .toggleSpellcheck)) { _ in
-                editorState.isSpellcheckEnabled.toggle()
-                // Notify editors to enable/disable spellcheck
+            .onReceive(NotificationCenter.default.publisher(for: .spellcheckTypeToggled)) { _ in
+                // Sync from UserDefaults (written by @AppStorage in Commands)
+                editorState.isSpellingEnabled = UserDefaults.standard.object(forKey: "isSpellingEnabled") == nil
+                    ? true : UserDefaults.standard.bool(forKey: "isSpellingEnabled")
+                editorState.isGrammarEnabled = UserDefaults.standard.object(forKey: "isGrammarEnabled") == nil
+                    ? true : UserDefaults.standard.bool(forKey: "isGrammarEnabled")
+
+                let anyEnabled = editorState.isSpellingEnabled || editorState.isGrammarEnabled
                 NotificationCenter.default.post(
                     name: .spellcheckStateChanged,
                     object: nil,
-                    userInfo: ["enabled": editorState.isSpellcheckEnabled]
+                    userInfo: ["enabled": anyEnabled]
                 )
             }
             .onReceive(NotificationCenter.default.publisher(for: .toggleEditorMode)) { _ in
@@ -78,9 +83,7 @@ extension View {
                                     adjustedSections.append(section.withUpdates(startOffset: off))
                                 }
                             }
-                        } catch {
-                            print("[toggleEditorMode] Block fetch error: \(error)")
-                        }
+                        } catch { }
                     }
 
                     let withAnchors = sectionSyncService.injectSectionAnchors(
@@ -138,15 +141,13 @@ extension View {
             .onAppear {
                 // Push initial spellcheck state to editors on launch
                 // (JS defaults to enabled, but UserDefaults may have it disabled)
-                if !editorState.isSpellcheckEnabled {
-                    // Small delay to let editors initialize
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                        NotificationCenter.default.post(
-                            name: .spellcheckStateChanged,
-                            object: nil,
-                            userInfo: ["enabled": false]
-                        )
-                    }
+                let anyEnabled = editorState.isSpellingEnabled || editorState.isGrammarEnabled
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                    NotificationCenter.default.post(
+                        name: .spellcheckStateChanged,
+                        object: nil,
+                        userInfo: ["enabled": anyEnabled]
+                    )
                 }
             }
     }

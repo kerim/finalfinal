@@ -29,7 +29,6 @@ function dismissMenu() {
 
 function handleOutsideClick(e: MouseEvent) {
   if (activeMenu && !activeMenu.contains(e.target as Node)) {
-    console.log('[spellcheck-menu] Outside click detected, target:', (e.target as HTMLElement).className);
     dismissMenu();
   }
 }
@@ -142,9 +141,7 @@ export function showSpellcheckMenu(options: SpellcheckMenuOptions): void {
   // Dismiss handlers — 150ms delay ensures all events from the ctrl+click
   // release (mouseup, click) have fired before we start listening for outside clicks.
   // requestAnimationFrame (~16ms) was too short and the release click would dismiss the menu.
-  console.log('[spellcheck-menu] Menu created at', options.x, options.y);
   setTimeout(() => {
-    console.log('[spellcheck-menu] Dismiss handlers installed');
     document.addEventListener('click', handleOutsideClick);
     document.addEventListener('keydown', handleEscape);
     document.addEventListener('scroll', dismissMenu, true);

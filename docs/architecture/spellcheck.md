@@ -1,6 +1,44 @@
-# Spell Check Architecture
+# Spell Check & Proofing Architecture
 
-Spell checking bridges macOS NSSpellChecker to web editors via WKWebView message handlers.
+Dual-provider system: macOS NSSpellChecker for spelling + optional LanguageTool HTTP API for grammar/style. Web editors communicate with Swift via WKWebView message handlers.
+
+---
+
+## Provider Architecture
+
+```
+ProofingProvider (protocol)
+    ├── BuiltInProvider      → NSSpellChecker (spelling only)
+    └── LanguageToolProvider  → HTTP API (grammar + style)
+
+SpellCheckService (dispatcher)
+    - Always routes spelling to BuiltInProvider
+    - Routes grammar/style to LanguageToolProvider when configured
+    - Filters LT results to exclude spelling (avoids duplicates)
+```
+
+### ProofingSettings
+
+Singleton `@Observable` class storing user preferences in UserDefaults:
+
+| Key | Default | Purpose |
+|-----|---------|---------|
+| `proofingMode` | `builtIn` | Provider mode (builtIn / languageToolFree / languageToolPremium) |
+| `ltPickyMode` | `false` | Stricter style checks |
+| `ltLanguage` | `auto` | Language for LT API |
+| `ltDisabledRules` | `[]` | User-suppressed rule IDs |
+| `ltUsername` | `""` | LT Premium email |
+| `ltApiKey` | `""` | LT Premium API key |
+
+### ProofingMode
+
+Three modes with different capabilities:
+
+| Mode | Spelling | Grammar | Style | API |
+|------|----------|---------|-------|-----|
+| Built-in | NSSpellChecker | — | — | — |
+| LT Free | NSSpellChecker | LT public API | — | `api.languagetool.org` |
+| LT Premium | NSSpellChecker | LT premium API | LT premium API | `api.languagetoolplus.com` |
 
 ---
 
@@ -8,17 +46,22 @@ Spell checking bridges macOS NSSpellChecker to web editors via WKWebView message
 
 ```
 Web Editor (400ms debounce)
-    |
-    | postMessage("spellcheck", {action:"check", segments, requestId})
-    v
+    │
+    │ postMessage("spellcheck", {action:"check", segments, requestId})
+    ▼
 Swift Coordinator (MilkdownCoordinator / CodeMirrorCoordinator)
-    |
-    | SpellCheckService.shared.check(segments:)
-    v
-NSSpellChecker (spelling only)
-    |
-    | evaluateJavaScript: window.FinalFinal.setSpellcheckResults(requestId, results)
-    v
+    │
+    │ SpellCheckService.shared.check(segments:)
+    ▼
+SpellCheckService (dispatch)
+    ├──▶ BuiltInProvider  → NSSpellChecker (spelling results)
+    └──▶ LanguageToolProvider → HTTP POST /v2/check (grammar/style results)
+    │
+    │ Merge results, return via evaluateJavaScript
+    ▼
+window.FinalFinal.setSpellcheckResults(requestId, results)
+    │
+    ▼
 Web Editor (validates requestId, applies decorations)
 ```
 
@@ -28,17 +71,54 @@ All go through `window.webkit.messageHandlers.spellcheck.postMessage()`:
 
 | Action | Data | Purpose |
 |--------|------|---------|
-| `check` | `{segments: [{text, from, to}], requestId}` | Request spellcheck for visible text |
+| `check` | `{segments: [{text, from, to}], requestId}` | Request proofing for visible text |
 | `learn` | `{word}` | Add word to user dictionary |
 | `ignore` | `{word}` | Ignore word for this session |
+| `disableRule` | `{ruleId}` | Suppress a grammar/style rule |
 
 ### Swift → Web Callback
 
 `window.FinalFinal.setSpellcheckResults(requestId, results)` where each result:
 
 ```json
-{ "from": 42, "to": 48, "word": "teh", "type": "spelling", "suggestions": ["the"], "message": null }
+{
+  "from": 42, "to": 48,
+  "word": "teh",
+  "type": "spelling",
+  "suggestions": ["the"],
+  "message": null,
+  "shortMessage": null,
+  "ruleId": null,
+  "isPicky": false
+}
 ```
+
+Result `type` values: `"spelling"`, `"grammar"`, `"style"`.
+
+---
+
+## LanguageTool Integration
+
+### Segment Consolidation
+
+LanguageToolProvider consolidates all text segments into a single string (joined by `\n\n`) with an offset map. This sends one HTTP request per check cycle instead of one per segment. Response offsets are mapped back to editor positions using the offset map.
+
+### Error Classification
+
+LT responses are classified by category:
+- `TYPOS` / `SPELLING` category or `misspelling` issue type → `"spelling"` (filtered out by dispatcher to avoid duplicating BuiltInProvider results)
+- `style` / `typographical` issue type → `"style"`
+- Everything else → `"grammar"`
+
+### Connection Status
+
+`LTConnectionStatus` enum tracks API state: `.connected`, `.disconnected`, `.authError`, `.rateLimited`, `.checking`. Displayed in the status bar as a colored dot with popover detail.
+
+### Cloud Dictionary Sync
+
+When a Premium user clicks "Learn Spelling", the word is added to both the local macOS dictionary and the LT cloud dictionary via `POST /v2/words/add`.
+
+---
 
 ## Race Prevention
 
@@ -53,15 +133,43 @@ Both editors extract text segments, skipping non-prose content:
 - **Milkdown**: Walks ProseMirror node tree, skips code blocks, citations, bibliography
 - **CodeMirror**: Uses Lezer syntax tree, strips hidden anchor markers to avoid false positives
 
-## Current Scope: Spelling Only
+## Decoration Types
 
-`SpellCheckService` uses `NSSpellChecker.check()` and filters for `.spelling` results only. Testing showed that `checkGrammarOfString` does not reliably reproduce the grammar checking that TextEdit provides programmatically.
+Three CSS classes for underline decorations:
 
-Grammar and style checking are deferred to **LanguageTool** (optional, via local HTTP server). The web plugins already support `type: "grammar"` decorations (`.cm-grammar-error` / `.grammar-error` CSS classes) and will display grammar results when a LanguageTool backend is connected.
+| Type | Milkdown class | CodeMirror class | Color |
+|------|---------------|-----------------|-------|
+| Spelling | `.spelling-error` | `.cm-spelling-error` | Red wavy underline |
+| Grammar | `.grammar-error` | `.cm-grammar-error` | Blue wavy underline |
+| Style | `.style-error` | `.cm-style-error` | Yellow wavy underline |
 
-## Context Menu
+## Context Menu (Popover)
 
-Right-clicking a decorated word shows a native-style menu with:
+Right-clicking a decorated word shows a popover with:
+- Error message and short description (grammar/style only)
 - Replacement suggestions (click to apply)
-- "Learn Spelling" (adds to macOS user dictionary)
+- "Learn Spelling" (adds to macOS dictionary + LT cloud if Premium)
 - "Ignore" (session-only ignore list)
+- "Disable Rule" (grammar/style only — permanently suppresses the rule via ProofingSettings)
+
+## Notification-Based Communication
+
+Settings changes propagate via NotificationCenter:
+
+| Notification | Trigger | Effect |
+|-------------|---------|--------|
+| `.proofingModeChanged` | Provider picker changed | Re-runs proofing with new provider |
+| `.proofingSettingsChanged` | Language, picky mode, credentials, or disabled rules changed | Re-runs proofing with updated settings |
+| `.proofingConnectionStatusChanged` | After each check completes | Status bar updates connection indicator |
+
+Credential fields use a 1.5s debounce before posting `.proofingSettingsChanged` to avoid hammering the API while the user types.
+
+## Preferences Pane
+
+`ProofingPreferencesPane` provides:
+- Radio group for provider mode (Built-in / LT Free / LT Premium)
+- Credential fields (email + API key) — shown only for Premium
+- "Test Connection" button with status indicator
+- Picky mode toggle
+- Language picker (auto-detect + common languages)
+- Disabled rules list with re-enable buttons

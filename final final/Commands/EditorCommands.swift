@@ -6,6 +6,9 @@
 import SwiftUI
 
 struct EditorCommands: Commands {
+    @AppStorage("isSpellingEnabled") private var spellingEnabled = true
+    @AppStorage("isGrammarEnabled") private var grammarEnabled = true
+
     var body: some Commands {
         // Find commands - replace default Find menu
         CommandGroup(replacing: .textEditing) {
@@ -49,10 +52,19 @@ struct EditorCommands: Commands {
             }
             .keyboardShortcut("/", modifiers: .command)
 
-            Button("Check Spelling and Grammar") {
-                NotificationCenter.default.post(name: .toggleSpellcheck, object: nil)
-            }
+            Toggle("Check Spelling", isOn: Binding(
+                get: { spellingEnabled },
+                set: { spellingEnabled = $0
+                       NotificationCenter.default.post(name: .spellcheckTypeToggled, object: nil) }
+            ))
             .keyboardShortcut(";", modifiers: .command)
+
+            Toggle("Check Grammar", isOn: Binding(
+                get: { grammarEnabled },
+                set: { grammarEnabled = $0
+                       NotificationCenter.default.post(name: .spellcheckTypeToggled, object: nil) }
+            ))
+            .keyboardShortcut(";", modifiers: [.command, .shift])
 
             Divider()
 
@@ -103,7 +115,7 @@ struct EditorCommands: Commands {
 extension Notification.Name {
     static let toggleFocusMode = Notification.Name("toggleFocusMode")
     static let toggleEditorMode = Notification.Name("toggleEditorMode")
-    static let toggleSpellcheck = Notification.Name("toggleSpellcheck")
+    static let spellcheckTypeToggled = Notification.Name("spellcheckTypeToggled")
     static let proofingModeChanged = Notification.Name("proofingModeChanged")
     static let proofingSettingsChanged = Notification.Name("proofingSettingsChanged")
     static let openProofingPreferences = Notification.Name("openProofingPreferences")

@@ -2,8 +2,8 @@
 //  SpellCheckService.swift
 //  final final
 //
-//  Dispatches proofing requests to the active provider.
-//  Coordinators call this; it delegates to BuiltInProvider or LanguageToolProvider.
+//  Dual-provider dispatch: BuiltInProvider for spelling, LanguageToolProvider for grammar/style.
+//  Coordinators call this; it routes to one or both providers based on user settings.
 //
 
 import AppKit
@@ -25,17 +25,15 @@ final class SpellCheckService {
         let type: String
         let suggestions: [String]
         let message: String?
+        let shortMessage: String?
         let ruleId: String?
         let isPicky: Bool
     }
 
     private let builtInProvider = BuiltInProvider()
     let languageToolProvider = LanguageToolProvider()
-    private(set) var activeProvider: ProofingProvider
 
-    private init() {
-        activeProvider = builtInProvider
-    }
+    private init() {}
 
     // MARK: - Document Tag Lifecycle
 
@@ -47,26 +45,6 @@ final class SpellCheckService {
         builtInProvider.closeDocument()
     }
 
-    // MARK: - Provider Switching
-
-    func setProvider(_ provider: ProofingProvider) {
-        activeProvider = provider
-    }
-
-    func resetToBuiltIn() {
-        activeProvider = builtInProvider
-    }
-
-    /// Switch provider based on current ProofingSettings mode
-    func updateProviderForCurrentMode() {
-        switch ProofingSettings.shared.mode {
-        case .builtIn:
-            activeProvider = builtInProvider
-        case .languageToolFree, .languageToolPremium:
-            activeProvider = languageToolProvider
-        }
-    }
-
     /// Current LanguageTool connection status (for status bar display)
     var connectionStatus: LTConnectionStatus {
         languageToolProvider.connectionStatus
@@ -75,17 +53,36 @@ final class SpellCheckService {
     // MARK: - Dispatch
 
     func check(segments: [TextSegment]) async -> [SpellCheckResult] {
-        let results = await activeProvider.check(segments: segments)
+        let spellingOn = UserDefaults.standard.object(forKey: "isSpellingEnabled") == nil
+            ? true : UserDefaults.standard.bool(forKey: "isSpellingEnabled")
+        let grammarOn = UserDefaults.standard.object(forKey: "isGrammarEnabled") == nil
+            ? true : UserDefaults.standard.bool(forKey: "isGrammarEnabled")
+
+        var results: [SpellCheckResult] = []
+
+        // Spelling: always use BuiltInProvider (macOS NSSpellChecker)
+        if spellingOn {
+            results.append(contentsOf: await builtInProvider.check(segments: segments))
+        }
+
+        // Grammar/style: use LanguageTool when configured and grammar is enabled
+        if grammarOn && ProofingSettings.shared.mode.isLanguageTool {
+            let ltResults = await languageToolProvider.check(segments: segments)
+            results.append(contentsOf: ltResults.filter { $0.type != "spelling" })
+        }
+
         // Post notification so status bar can update connection status
         NotificationCenter.default.post(name: .proofingConnectionStatusChanged, object: nil)
         return results
     }
 
     func learnWord(_ word: String) {
-        activeProvider.learnWord(word)
+        builtInProvider.learnWord(word)
+        languageToolProvider.learnWord(word)
     }
 
     func ignoreWord(_ word: String) {
-        activeProvider.ignoreWord(word)
+        builtInProvider.ignoreWord(word)
+        languageToolProvider.ignoreWord(word)
     }
 }

@@ -20,17 +20,20 @@ class EditorViewState {
     /// LanguageTool connection status (only visible when LT mode is active)
     var proofingConnectionStatus: LTConnectionStatus = .disconnected
 
-    /// Spellcheck state - persists across app launches via UserDefaults (defaults to true)
-    var isSpellcheckEnabled: Bool = {
-        // Default to true if key hasn't been set
-        if UserDefaults.standard.object(forKey: "isSpellcheckEnabled") == nil {
-            return true
-        }
-        return UserDefaults.standard.bool(forKey: "isSpellcheckEnabled")
+    /// Spelling check state - persists across app launches via UserDefaults (defaults to true)
+    var isSpellingEnabled: Bool = {
+        if UserDefaults.standard.object(forKey: "isSpellingEnabled") == nil { return true }
+        return UserDefaults.standard.bool(forKey: "isSpellingEnabled")
     }() {
-        didSet {
-            UserDefaults.standard.set(isSpellcheckEnabled, forKey: "isSpellcheckEnabled")
-        }
+        didSet { UserDefaults.standard.set(isSpellingEnabled, forKey: "isSpellingEnabled") }
+    }
+
+    /// Grammar check state - persists across app launches via UserDefaults (defaults to true)
+    var isGrammarEnabled: Bool = {
+        if UserDefaults.standard.object(forKey: "isGrammarEnabled") == nil { return true }
+        return UserDefaults.standard.bool(forKey: "isGrammarEnabled")
+    }() {
+        didSet { UserDefaults.standard.set(isGrammarEnabled, forKey: "isGrammarEnabled") }
     }
 
     /// Snapshot of pre-focus-mode state for restoration on exit (session-only, not persisted)
