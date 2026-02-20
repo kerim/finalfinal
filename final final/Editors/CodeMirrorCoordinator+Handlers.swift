@@ -316,6 +316,11 @@ extension CodeMirrorEditor.Coordinator {
                     guard let word = body["word"] as? String else { return }
                     SpellCheckService.shared.ignoreWord(word)
 
+                case "disableRule":
+                    guard let ruleId = body["ruleId"] as? String else { return }
+                    ProofingSettings.shared.disableRule(ruleId)
+                    NotificationCenter.default.post(name: .proofingSettingsChanged, object: nil)
+
                 default: break
                 }
             }

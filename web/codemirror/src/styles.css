@@ -148,6 +148,92 @@ body {
   cursor: pointer;
 }
 
+/* Proofing popover for grammar/style errors */
+.proofing-popover {
+  position: fixed;
+  z-index: 10001;
+  background: var(--editor-bg, #fff);
+  border: 1px solid rgba(128, 128, 128, 0.3);
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  padding: 12px;
+  max-width: 350px;
+  min-width: 200px;
+  font-size: 13px;
+}
+
+.proofing-popover-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.proofing-popover-rule {
+  font-weight: 600;
+  color: var(--text-color, #333);
+}
+
+.proofing-popover-disable {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 18px;
+  color: var(--secondary-text, #999);
+  padding: 0 4px;
+}
+
+.proofing-popover-disable:hover {
+  color: var(--text-color, #333);
+}
+
+.proofing-popover-message {
+  color: var(--secondary-text, #666);
+  margin-bottom: 10px;
+  line-height: 1.4;
+}
+
+.proofing-popover-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.proofing-popover-suggestion {
+  background: #3b82f6;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  padding: 4px 10px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.proofing-popover-suggestion:hover {
+  background: #2563eb;
+}
+
+.proofing-popover-ignore {
+  background: var(--editor-bg, #f5f5f5);
+  border: 1px solid rgba(128, 128, 128, 0.3);
+  border-radius: 4px;
+  padding: 4px 10px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.proofing-popover-footer {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(128, 128, 128, 0.2);
+  font-size: 12px;
+}
+
+.proofing-popover-picky {
+  color: var(--secondary-text, #999);
+  font-style: italic;
+}
+
 /* Spellcheck context menu */
 .spellcheck-menu {
   position: fixed;

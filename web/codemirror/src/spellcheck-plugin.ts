@@ -11,6 +11,7 @@ import { Decoration, type DecorationSet, type EditorView, ViewPlugin, type ViewU
 import { ALL_HIDDEN_MARKERS_REGEX } from './anchor-plugin';
 import { getEditorView } from './editor-state';
 import { showSpellcheckMenu } from './spellcheck-menu';
+import { dismissPopover, showProofingPopover } from './spellcheck-popover';
 
 // --- Types ---
 
@@ -298,6 +299,9 @@ export function spellcheckPlugin() {
             const result = findResultAtPos(pos);
             if (!result) return false;
 
+            // Grammar/style uses click popover, not context menu
+            if (result.type === 'grammar' || result.type === 'style') return false;
+
             event.preventDefault();
 
             showSpellcheckMenu({
@@ -308,8 +312,6 @@ export function spellcheckPlugin() {
               suggestions: result.suggestions,
               message: result.message,
               onReplace: (replacement: string) => {
-                console.log('[spellcheck-cm] onReplace called:', replacement, 'at', result.from, result.to);
-                console.log('[spellcheck-cm] current text at pos:', view.state.doc.sliceString(result.from, result.to));
                 view.dispatch({
                   changes: { from: result.from, to: result.to, insert: replacement },
                 });
@@ -325,6 +327,49 @@ export function spellcheckPlugin() {
                 view.dispatch({});
                 window.webkit?.messageHandlers?.spellcheck?.postMessage({ action: 'ignore', word });
                 triggerCheck();
+              },
+            });
+
+            return true;
+          },
+          click(event: MouseEvent, view: EditorView) {
+            if (!enabled) return false;
+
+            const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
+            if (pos === null) return false;
+
+            const result = findResultAtPos(pos);
+            if (!result) return false;
+
+            // Only show popover for grammar/style (spelling uses context menu)
+            if (result.type === 'spelling') return false;
+
+            dismissPopover();
+
+            showProofingPopover({
+              x: event.clientX,
+              y: event.clientY + 20,
+              word: result.word,
+              type: result.type,
+              message: result.message || '',
+              ruleId: result.ruleId || '',
+              isPicky: result.isPicky || false,
+              suggestions: result.suggestions,
+              onReplace: (suggestion: string) => {
+                view.dispatch({
+                  changes: { from: result.from, to: result.to, insert: suggestion },
+                });
+              },
+              onIgnore: () => {
+                spellcheckResults = spellcheckResults.filter((r) => r !== result);
+                view.dispatch({});
+                window.webkit?.messageHandlers?.spellcheck?.postMessage({ action: 'ignore', word: result.word });
+                triggerCheck();
+              },
+              onDisableRule: (ruleId: string) => {
+                spellcheckResults = spellcheckResults.filter((r) => r.ruleId !== ruleId);
+                view.dispatch({});
+                window.webkit?.messageHandlers?.spellcheck?.postMessage({ action: 'disableRule', ruleId });
               },
             });
 

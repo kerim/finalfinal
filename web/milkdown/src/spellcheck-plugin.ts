@@ -11,6 +11,7 @@ import { Decoration, DecorationSet, type EditorView } from '@milkdown/kit/prose/
 import { $prose } from '@milkdown/kit/utils';
 import { getEditorInstance } from './editor-state';
 import { showSpellcheckMenu } from './spellcheck-menu';
+import { dismissPopover, showProofingPopover } from './spellcheck-popover';
 
 // --- Module state ---
 
@@ -221,6 +222,9 @@ function handleContextMenu(view: EditorView, event: MouseEvent): boolean {
   const result = findResultAtPos(pos.pos);
   if (!result) return false;
 
+  // For grammar/style, context menu is not used (click handler shows popover)
+  if (result.type === 'grammar' || result.type === 'style') return false;
+
   event.preventDefault();
 
   showSpellcheckMenu({
@@ -231,18 +235,13 @@ function handleContextMenu(view: EditorView, event: MouseEvent): boolean {
     suggestions: result.suggestions,
     message: result.message,
     onReplace: (replacement: string) => {
-      console.log('[spellcheck] onReplace called:', replacement, 'at', result.from, result.to);
-      console.log('[spellcheck] current text at pos:', view.state.doc.textBetween(result.from, result.to));
-      // Replace the word in the editor
       const tr = view.state.tr.replaceWith(result.from, result.to, view.state.schema.text(replacement));
       view.dispatch(tr);
     },
     onLearn: (word: string) => {
-      // Remove decorations for this word immediately
       spellcheckResults = spellcheckResults.filter((r) => r.word !== word);
-      view.dispatch(view.state.tr); // Force redecorate
+      view.dispatch(view.state.tr);
       window.webkit?.messageHandlers?.spellcheck?.postMessage({ action: 'learn', word });
-      // Re-trigger check to confirm
       triggerCheck();
     },
     onIgnore: (word: string) => {
@@ -250,6 +249,49 @@ function handleContextMenu(view: EditorView, event: MouseEvent): boolean {
       view.dispatch(view.state.tr);
       window.webkit?.messageHandlers?.spellcheck?.postMessage({ action: 'ignore', word });
       triggerCheck();
+    },
+  });
+
+  return true;
+}
+
+function handleClick(view: EditorView, event: MouseEvent): boolean {
+  if (!enabled) return false;
+
+  const pos = view.posAtCoords({ left: event.clientX, top: event.clientY });
+  if (!pos) return false;
+
+  const result = findResultAtPos(pos.pos);
+  if (!result) return false;
+
+  // Only show popover for grammar/style (spelling uses context menu)
+  if (result.type === 'spelling') return false;
+
+  dismissPopover();
+
+  showProofingPopover({
+    x: event.clientX,
+    y: event.clientY + 20,
+    word: result.word,
+    type: result.type,
+    message: result.message || '',
+    ruleId: result.ruleId || '',
+    isPicky: result.isPicky || false,
+    suggestions: result.suggestions,
+    onReplace: (suggestion: string) => {
+      const tr = view.state.tr.replaceWith(result.from, result.to, view.state.schema.text(suggestion));
+      view.dispatch(tr);
+    },
+    onIgnore: () => {
+      spellcheckResults = spellcheckResults.filter((r) => r !== result);
+      view.dispatch(view.state.tr);
+      window.webkit?.messageHandlers?.spellcheck?.postMessage({ action: 'ignore', word: result.word });
+      triggerCheck();
+    },
+    onDisableRule: (ruleId: string) => {
+      spellcheckResults = spellcheckResults.filter((r) => r.ruleId !== ruleId);
+      view.dispatch(view.state.tr);
+      window.webkit?.messageHandlers?.spellcheck?.postMessage({ action: 'disableRule', ruleId });
     },
   });
 
@@ -294,6 +336,9 @@ export const spellcheckPlugin = $prose(() => {
       handleDOMEvents: {
         contextmenu(view, event) {
           return handleContextMenu(view, event as MouseEvent);
+        },
+        click(view, event) {
+          return handleClick(view, event as MouseEvent);
         },
       },
     },
