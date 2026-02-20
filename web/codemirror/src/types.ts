@@ -61,6 +61,20 @@ declare global {
       citationPickerCallback: (data: any, items: any[]) => void;
       citationPickerCancelled: () => void;
       citationPickerError: (message: string) => void;
+      // Spellcheck API
+      setSpellcheckResults: (
+        requestId: number,
+        results: Array<{
+          from: number;
+          to: number;
+          word: string;
+          type: string;
+          suggestions: string[];
+          message?: string | null;
+        }>
+      ) => void;
+      enableSpellcheck: () => void;
+      disableSpellcheck: () => void;
       // Find/replace API
       find: (query: string, options?: FindOptions) => FindResult;
       findNext: () => FindResult | null;

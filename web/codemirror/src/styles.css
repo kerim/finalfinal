@@ -123,3 +123,75 @@ body {
 .cm-search.cm-panel {
   display: none;
 }
+
+/* === Spellcheck Styles === */
+
+/* Spelling error underline */
+.cm-spell-error {
+  text-decoration: underline wavy rgba(255, 0, 0, 0.7);
+  text-decoration-skip-ink: none;
+  text-underline-offset: 2px;
+}
+
+/* Grammar error underline */
+.cm-grammar-error {
+  text-decoration: underline dashed rgba(0, 100, 255, 0.7);
+  text-decoration-skip-ink: none;
+  text-underline-offset: 2px;
+}
+
+/* Spellcheck context menu */
+.spellcheck-menu {
+  position: fixed;
+  z-index: 10000;
+  background: var(--editor-bg, #fff);
+  border: 1px solid rgba(128, 128, 128, 0.3);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+  padding: 4px 0;
+  min-width: 160px;
+  max-width: 280px;
+  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+  font-size: 13px;
+  color: var(--editor-text, #000);
+}
+
+@media (prefers-color-scheme: dark) {
+  .spellcheck-menu {
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  }
+}
+
+.spellcheck-menu-item {
+  padding: 6px 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.spellcheck-menu-item:hover {
+  background: var(--editor-selection, rgba(0, 122, 255, 0.15));
+}
+
+.spellcheck-menu-primary {
+  font-weight: 600;
+}
+
+.spellcheck-menu-suggestion {
+  color: var(--accent-color, #007aff);
+}
+
+.spellcheck-menu-separator {
+  height: 1px;
+  background: rgba(128, 128, 128, 0.2);
+  margin: 4px 0;
+}
+
+.spellcheck-menu-message {
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--editor-muted, #666);
+  border-bottom: 1px solid rgba(128, 128, 128, 0.15);
+  margin-bottom: 4px;
+}

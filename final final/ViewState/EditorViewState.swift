@@ -17,6 +17,19 @@ class EditorViewState {
         }
     }
 
+    /// Spellcheck state - persists across app launches via UserDefaults (defaults to true)
+    var isSpellcheckEnabled: Bool = {
+        // Default to true if key hasn't been set
+        if UserDefaults.standard.object(forKey: "isSpellcheckEnabled") == nil {
+            return true
+        }
+        return UserDefaults.standard.bool(forKey: "isSpellcheckEnabled")
+    }() {
+        didSet {
+            UserDefaults.standard.set(isSpellcheckEnabled, forKey: "isSpellcheckEnabled")
+        }
+    }
+
     /// Snapshot of pre-focus-mode state for restoration on exit (session-only, not persisted)
     var preFocusModeState: FocusModeSnapshot?
 

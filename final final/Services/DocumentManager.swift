@@ -150,6 +150,9 @@ final class DocumentManager {
         // Add to recent projects
         addToRecentProjects(url: packageURL, title: title)
 
+        // Open spell check document for this project session
+        SpellCheckService.shared.openDocument()
+
         return project.id
     }
 
@@ -200,6 +203,9 @@ final class DocumentManager {
         // Save as last project for restore on launch
         saveAsLastProject(url: url)
 
+        // Open spell check document for this project session
+        SpellCheckService.shared.openDocument()
+
         print("[DocumentManager] Opened project: \(project.title) at \(url.path)")
         return project.id
     }
@@ -240,11 +246,17 @@ final class DocumentManager {
             print("[DocumentManager] Force-opened project (no record) at \(url.path)")
         }
 
+        // Open spell check document for this project session
+        SpellCheckService.shared.openDocument()
+
         return project?.id
     }
 
     /// Close the current project
     func closeProject() {
+        // Close spell check document for this project session
+        SpellCheckService.shared.closeDocument()
+
         // Note: Database changes are auto-committed by GRDB
         projectDatabase = nil
         projectURL = nil

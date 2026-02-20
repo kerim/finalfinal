@@ -133,14 +133,44 @@ extension ContentView {
             .filter { !$0.isBibliography }
             .sorted { $0.sortOrder < $1.sortOrder }
 
-        // Recalculate offsets for anchor injection
+        // Compute offsets from blocks (same data that produced editorState.content)
         var adjustedSections: [SectionViewModel] = []
-        var adjustedOffset = 0
-        for section in sectionsForAnchors {
-            adjustedSections.append(section.withUpdates(startOffset: adjustedOffset))
-            adjustedOffset += section.markdownContent.count
-            if !section.markdownContent.hasSuffix("\n") {
-                adjustedOffset += 1
+        if let db = documentManager.projectDatabase,
+           let pid = documentManager.projectId {
+            do {
+                let fetchedBlocks: [Block]
+                if let zoomedIds = editorState.zoomedSectionIds {
+                    let allBlocks = try db.fetchBlocks(projectId: pid)
+                    fetchedBlocks = filterBlocksForZoom(
+                        allBlocks, zoomedIds: zoomedIds,
+                        zoomedBlockRange: editorState.zoomedBlockRange)
+                } else {
+                    fetchedBlocks = try db.fetchBlocks(projectId: pid)
+                }
+
+                // Sort with same tie-breaking as assembleMarkdown
+                let sorted = fetchedBlocks.sorted { a, b in
+                    let aKey = (a.sortOrder, a.blockType == .heading ? 0 : 1)
+                    let bKey = (b.sortOrder, b.blockType == .heading ? 0 : 1)
+                    return aKey < bKey
+                }
+
+                // Build block-ID → Character offset map
+                var blockOffset: [String: Int] = [:]
+                var offset = 0
+                for (i, block) in sorted.enumerated() {
+                    if i > 0 { offset += 2 }  // "\n\n" separator
+                    blockOffset[block.id] = offset
+                    offset += block.markdownFragment.count
+                }
+
+                for section in sectionsForAnchors {
+                    if let off = blockOffset[section.id] {
+                        adjustedSections.append(section.withUpdates(startOffset: off))
+                    }
+                }
+            } catch {
+                print("[updateSourceContentIfNeeded] Block fetch error: \(error)")
             }
         }
 

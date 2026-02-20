@@ -85,6 +85,7 @@
 		8384B00E2738A39290BDCB1B /* ThemeManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27856E54C5B28F839E83F154 /* ThemeManager.swift */; };
 		83EF38E6AD012B11C741891D /* OutlineFilterBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABFC8351EA2CEE315AFD46C8 /* OutlineFilterBar.swift */; };
 		84D6884875EFB8B07BD1C64C /* CitationCommands.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9CFDC0132E6797F539579F0 /* CitationCommands.swift */; };
+		852514D39E219CD8C349556A /* SpellCheckService.swift in Sources */ = {isa = PBXBuildFile; fileRef = CBEC345FCF94A399DA799342 /* SpellCheckService.swift */; };
 		873F99F4E522EE5DD90C8AB2 /* EditorBridgeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4DB38C1663B804694C7D3D31 /* EditorBridgeTests.swift */; };
 		88AB6DED4A2E398862C569CE /* ProjectPickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA8E40231CCB32EC98E3B48F /* ProjectPickerView.swift */; };
 		8A96868113B77FF320A4AFB9 /* CSLItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8D61CFAC6D761917B29935C /* CSLItem.swift */; };
@@ -272,6 +273,7 @@
 		C7DACB449A648403C7CCDD3F /* GitInfo.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitInfo.swift; sourceTree = "<group>"; };
 		C8498B4341C08418634FB2AC /* VersionHistoryWindow+Restore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "VersionHistoryWindow+Restore.swift"; sourceTree = "<group>"; };
 		CB51F453D350DBA8D3632F22 /* SnapshotService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SnapshotService.swift; sourceTree = "<group>"; };
+		CBEC345FCF94A399DA799342 /* SpellCheckService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpellCheckService.swift; sourceTree = "<group>"; };
 		CC5B8A956E441E29032AE5F9 /* AnnotationPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnnotationPanel.swift; sourceTree = "<group>"; };
 		CE36F17D91BD28DBE49E98F8 /* Typography.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Typography.swift; sourceTree = "<group>"; };
 		CE6D9836DD14A789629A10CB /* EditorSchemeHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorSchemeHandler.swift; sourceTree = "<group>"; };
@@ -541,6 +543,7 @@
 				5F9E113796E1D22FF7D8AB97 /* SectionSyncService+Anchors.swift */,
 				5BE4605C3214124AFB7C06FB /* SectionSyncService+Parsing.swift */,
 				CB51F453D350DBA8D3632F22 /* SnapshotService.swift */,
+				CBEC345FCF94A399DA799342 /* SpellCheckService.swift */,
 				2070D9DD040736953F1CAA08 /* ZoteroChecker.swift */,
 				E16909CB53D2BCFD8CC1B0BF /* ZoteroService.swift */,
 				6E8F8EC247BCC5E3E00BA145 /* ZoteroService+CAYW.swift */,
@@ -932,6 +935,7 @@
 				0482D5E5C956125D76159EA2 /* SectionTypography.swift in Sources */,
 				E46A01D58B8F56C1034EB422 /* Snapshot.swift in Sources */,
 				F0FB047FF7AE11991447AF4E /* SnapshotService.swift in Sources */,
+				852514D39E219CD8C349556A /* SpellCheckService.swift in Sources */,
 				AD8451C7428BC1E2016746D1 /* StatusBar.swift in Sources */,
 				5C07BE1D08BFF8C132BC10C7 /* StatusDot.swift in Sources */,
 				80DDD68802F44504ACF653A7 /* StringExtensions.swift in Sources */,
@@ -1086,7 +1090,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = "final final/final final.entitlements";
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 0.2.40;
+				CURRENT_PROJECT_VERSION = 0.2.41;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "final final/Info.plist";
 				INFOPLIST_GENERATION_MODE = GeneratedFile;
@@ -1110,7 +1114,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = "final final/final final.entitlements";
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 0.2.40;
+				CURRENT_PROJECT_VERSION = 0.2.41;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "final final/Info.plist";
 				INFOPLIST_GENERATION_MODE = GeneratedFile;

@@ -153,13 +153,28 @@ extension EditorViewState {
 
             // Update sourceContent for CodeMirror
             if editorMode == .source, let syncService = sectionSyncService {
-                let zoomedSections = sections.filter { descendantIds.contains($0.id) && !$0.isBibliography }
-                let sortedZoomedSections = zoomedSections.sorted { $0.sortOrder < $1.sortOrder }
+                // Compute offsets from zoomedBlocks (same data that produced zoomedContent)
+                let sortedBlocks = zoomedBlocks.sorted { a, b in
+                    let aKey = (a.sortOrder, a.blockType == .heading ? 0 : 1)
+                    let bKey = (b.sortOrder, b.blockType == .heading ? 0 : 1)
+                    return aKey < bKey
+                }
+                var blockOffset: [String: Int] = [:]
+                var offset = 0
+                for (i, block) in sortedBlocks.enumerated() {
+                    if i > 0 { offset += 2 }
+                    blockOffset[block.id] = offset
+                    offset += block.markdownFragment.count
+                }
+
+                let zoomedSections = sections
+                    .filter { descendantIds.contains($0.id) && !$0.isBibliography }
+                    .sorted { $0.sortOrder < $1.sortOrder }
                 var adjustedSections: [SectionViewModel] = []
-                var currentOffset = 0
-                for section in sortedZoomedSections {
-                    adjustedSections.append(section.withUpdates(startOffset: currentOffset))
-                    currentOffset += section.markdownContent.count
+                for section in zoomedSections {
+                    if let off = blockOffset[section.id] {
+                        adjustedSections.append(section.withUpdates(startOffset: off))
+                    }
                 }
                 sourceContent = syncService.injectSectionAnchors(
                     markdown: zoomedContent,
@@ -210,12 +225,26 @@ extension EditorViewState {
 
             // Update sourceContent for CodeMirror
             if editorMode == .source, let syncService = sectionSyncService {
+                // Compute offsets from allBlocks (same data that produced mergedContent)
+                let sortedBlocks = allBlocks.sorted { a, b in
+                    let aKey = (a.sortOrder, a.blockType == .heading ? 0 : 1)
+                    let bKey = (b.sortOrder, b.blockType == .heading ? 0 : 1)
+                    return aKey < bKey
+                }
+                var blockOffset: [String: Int] = [:]
+                var offset = 0
+                for (i, block) in sortedBlocks.enumerated() {
+                    if i > 0 { offset += 2 }
+                    blockOffset[block.id] = offset
+                    offset += block.markdownFragment.count
+                }
+
                 let allSectionsList = sections.filter { !$0.isBibliography }.sorted { $0.sortOrder < $1.sortOrder }
                 var adjustedSections: [SectionViewModel] = []
-                var currentOffset = 0
                 for section in allSectionsList {
-                    adjustedSections.append(section.withUpdates(startOffset: currentOffset))
-                    currentOffset += section.markdownContent.count
+                    if let off = blockOffset[section.id] {
+                        adjustedSections.append(section.withUpdates(startOffset: off))
+                    }
                 }
                 let withAnchors = syncService.injectSectionAnchors(
                     markdown: mergedContent,

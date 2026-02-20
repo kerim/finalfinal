@@ -40,6 +40,8 @@ extension Notification.Name {
     /// Posted when zoom-out completes and contentState is back to idle
     /// Used to trigger bibliography sync after zoom-out (citations added during zoom)
     static let didZoomOut = Notification.Name("didZoomOut")
+    /// Posted when spellcheck is toggled on/off - editors should enable/disable spellcheck
+    static let spellcheckStateChanged = Notification.Name("spellcheckStateChanged")
 }
 
 enum EditorMode: String, CaseIterable {

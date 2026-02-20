@@ -234,14 +234,46 @@ extension ContentView {
 
         var mutableSections = sections
 
-        // Recalculate sort orders and offsets
-        var currentOffset = 0
+        // Recalculate sort orders
         for index in mutableSections.indices {
             mutableSections[index] = mutableSections[index].withUpdates(
-                sortOrder: Double(index),
-                startOffset: currentOffset
+                sortOrder: Double(index)
             )
-            currentOffset += mutableSections[index].markdownContent.count
+        }
+
+        // Compute offsets from blocks (consistent with updateSourceContentIfNeeded)
+        if let db = documentManager.projectDatabase,
+           let pid = documentManager.projectId {
+            do {
+                let fetchedBlocks: [Block]
+                if let zoomedIds = editorState.zoomedSectionIds {
+                    let allBlocks = try db.fetchBlocks(projectId: pid)
+                    fetchedBlocks = filterBlocksForZoom(
+                        allBlocks, zoomedIds: zoomedIds,
+                        zoomedBlockRange: editorState.zoomedBlockRange)
+                } else {
+                    fetchedBlocks = try db.fetchBlocks(projectId: pid)
+                }
+                let sorted = fetchedBlocks.sorted { a, b in
+                    let aKey = (a.sortOrder, a.blockType == .heading ? 0 : 1)
+                    let bKey = (b.sortOrder, b.blockType == .heading ? 0 : 1)
+                    return aKey < bKey
+                }
+                var blockOffset: [String: Int] = [:]
+                var offset = 0
+                for (i, block) in sorted.enumerated() {
+                    if i > 0 { offset += 2 }
+                    blockOffset[block.id] = offset
+                    offset += block.markdownFragment.count
+                }
+                for index in mutableSections.indices {
+                    if let off = blockOffset[mutableSections[index].id] {
+                        mutableSections[index] = mutableSections[index].withUpdates(startOffset: off)
+                    }
+                }
+            } catch {
+                print("[finalizeSectionReorder] Block fetch error: \(error)")
+            }
         }
 
         // Single atomic update to trigger SwiftUI

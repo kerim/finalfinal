@@ -32,7 +32,8 @@ const BIBLIOGRAPHY_START_REGEX = /<!-- ::auto-bibliography:: -->/g;
 
 // Combined regex for stripping all hidden markers from clipboard
 // No end marker - only start marker and section anchors
-const ALL_HIDDEN_MARKERS_REGEX = /<!-- @sid:[0-9a-fA-F-]+ -->|<!-- ::auto-bibliography:: -->/g;
+// Exported for spellcheck-plugin to strip markers before checking
+export const ALL_HIDDEN_MARKERS_REGEX = /<!-- @sid:[0-9a-fA-F-]+ -->|<!-- ::auto-bibliography:: -->/g;
 
 /**
  * Find all hidden marker ranges in the document for decoration purposes

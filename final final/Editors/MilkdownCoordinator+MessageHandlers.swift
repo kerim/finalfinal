@@ -226,6 +226,48 @@ extension MilkdownEditor.Coordinator {
                 }
             }
         }
+
+        // Handle spellcheck messages from editor
+        if message.name == "spellcheck" {
+            Task { @MainActor in
+                guard let body = message.body as? [String: Any],
+                      let action = body["action"] as? String else { return }
+
+                switch action {
+                case "check":
+                    guard let segmentsData = body["segments"] as? [[String: Any]],
+                          let requestId = body["requestId"] as? Int else { return }
+                    let segments = segmentsData.compactMap { dict -> SpellCheckService.TextSegment? in
+                        guard let text = dict["text"] as? String,
+                              let from = dict["from"] as? Int,
+                              let to = dict["to"] as? Int else { return nil }
+                        return SpellCheckService.TextSegment(text: text, from: from, to: to)
+                    }
+                    self.spellcheckTask?.cancel()
+                    self.spellcheckTask = Task {
+                        let results = await SpellCheckService.shared.check(segments: segments)
+                        guard !Task.isCancelled else { return }
+                        let encoder = JSONEncoder()
+                        guard let data = try? encoder.encode(results),
+                              let json = String(data: data, encoding: .utf8) else { return }
+                        let escaped = json.escapedForJSTemplateLiteral
+                        self.webView?.evaluateJavaScript(
+                            "window.FinalFinal.setSpellcheckResults(\(requestId), JSON.parse(`\(escaped)`))"
+                        ) { _, _ in }
+                    }
+
+                case "learn":
+                    guard let word = body["word"] as? String else { return }
+                    SpellCheckService.shared.learnWord(word)
+
+                case "ignore":
+                    guard let word = body["word"] as? String else { return }
+                    SpellCheckService.shared.ignoreWord(word)
+
+                default: break
+                }
+            }
+        }
     }
 
     /// Handle citation search request from web editor

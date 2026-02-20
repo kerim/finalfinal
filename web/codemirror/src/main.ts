@@ -50,6 +50,7 @@ import { customHighlightStyle, headingDecorationPlugin, syntaxHighlighting } fro
 import { installLineHeightFix } from './line-height-fix';
 import { scrollStabilizer } from './scroll-stabilizer';
 import { slashCompletions } from './slash-completions';
+import { disableSpellcheck, enableSpellcheck, setSpellcheckResults, spellcheckPlugin } from './spellcheck-plugin';
 import './styles.css';
 // Import types.ts for declare global side-effect
 import './types';
@@ -188,6 +189,8 @@ function initEditor() {
     }),
     // Section anchor plugin - hides <!-- @sid:UUID --> comments and handles clipboard
     anchorPlugin(),
+    // Spellcheck/grammar decorations via NSSpellChecker
+    ...spellcheckPlugin(),
   ];
 
   setEditorExtensions(extensions);
@@ -234,6 +237,10 @@ window.FinalFinal = {
   citationPickerCallback,
   citationPickerCancelled,
   citationPickerError,
+  // Spellcheck API
+  setSpellcheckResults,
+  enableSpellcheck,
+  disableSpellcheck,
   find,
   findNext: apiFindNext,
   findPrevious: apiFindPrevious,

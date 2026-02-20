@@ -90,6 +90,12 @@ import { searchPlugin } from './search-plugin';
 import { sectionBreakPlugin } from './section-break-plugin';
 import { configureSlash, slash } from './slash-commands';
 import { sourceModePlugin } from './source-mode-plugin';
+import {
+  disableSpellcheck as disableSpellcheckImpl,
+  enableSpellcheck as enableSpellcheckImpl,
+  setSpellcheckResults as setSpellcheckResultsImpl,
+  spellcheckPlugin,
+} from './spellcheck-plugin';
 import './styles.css';
 // Import types to ensure declare global is included in the bundle
 import './types';
@@ -133,6 +139,7 @@ async function initEditor() {
       .use(headingNodeViewPlugin) // Custom heading rendering for source mode # selection
       // citationNodeView is now included in citationPlugin (same file = correct atom identity)
       .use(searchPlugin) // Search highlighting decorations
+      .use(spellcheckPlugin) // Spellcheck/grammar decorations via NSSpellChecker
       .use(linkTooltipPlugin) // Custom link preview/edit tooltips (no Vue dependency)
       .use(slash)
       .create();
@@ -292,6 +299,10 @@ window.FinalFinal = {
   // Cleanup API
   resetEditorState,
   resetForProjectSwitch,
+  // Spellcheck API
+  setSpellcheckResults: setSpellcheckResultsImpl,
+  enableSpellcheck: enableSpellcheckImpl,
+  disableSpellcheck: disableSpellcheckImpl,
   // Find/replace API
   find: findApi,
   findNext: findNextApi,

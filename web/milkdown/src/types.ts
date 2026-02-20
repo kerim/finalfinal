@@ -125,6 +125,20 @@ declare global {
       // Cleanup API (for state reset before project switch)
       resetEditorState: () => void;
       resetForProjectSwitch: () => void;
+      // Spellcheck API
+      setSpellcheckResults: (
+        requestId: number,
+        results: Array<{
+          from: number;
+          to: number;
+          word: string;
+          type: string;
+          suggestions: string[];
+          message?: string | null;
+        }>
+      ) => void;
+      enableSpellcheck: () => void;
+      disableSpellcheck: () => void;
       // Find/replace API
       find: (query: string, options?: FindOptions) => FindResult;
       findNext: () => FindResult | null;

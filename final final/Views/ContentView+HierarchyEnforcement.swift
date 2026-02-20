@@ -143,14 +143,32 @@ extension ContentView {
                 let sectionsForAnchors = editorState.sections
                     .filter { !$0.isBibliography }
                     .sorted { $0.sortOrder < $1.sortOrder }
+
+                // Compute offsets from blocks (same data that produced editorState.content)
+                let blocksForOffsets: [Block]
+                if let zoomedIds = editorState.zoomedSectionIds {
+                    blocksForOffsets = filterBlocksForZoomStatic(
+                        allBlocks, zoomedIds: zoomedIds,
+                        zoomedBlockRange: editorState.zoomedBlockRange)
+                } else {
+                    blocksForOffsets = allBlocks
+                }
+                let sortedBlocks = blocksForOffsets.sorted { a, b in
+                    let aKey = (a.sortOrder, a.blockType == .heading ? 0 : 1)
+                    let bKey = (b.sortOrder, b.blockType == .heading ? 0 : 1)
+                    return aKey < bKey
+                }
+                var blockOffset: [String: Int] = [:]
+                var bOffset = 0
+                for (i, block) in sortedBlocks.enumerated() {
+                    if i > 0 { bOffset += 2 }
+                    blockOffset[block.id] = bOffset
+                    bOffset += block.markdownFragment.count
+                }
                 var adjusted: [SectionViewModel] = []
-                var offset = 0
                 for section in sectionsForAnchors {
-                    adjusted.append(section.withUpdates(startOffset: offset))
-                    offset += section.markdownContent.count
-                    // Match updateSourceContentIfNeeded() newline handling
-                    if !section.markdownContent.hasSuffix("\n") {
-                        offset += 1
+                    if let off = blockOffset[section.id] {
+                        adjusted.append(section.withUpdates(startOffset: off))
                     }
                 }
                 let withAnchors = syncService.injectSectionAnchors(

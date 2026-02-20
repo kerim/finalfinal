@@ -49,6 +49,11 @@ struct EditorCommands: Commands {
             }
             .keyboardShortcut("/", modifiers: .command)
 
+            Button("Check Spelling and Grammar") {
+                NotificationCenter.default.post(name: .toggleSpellcheck, object: nil)
+            }
+            .keyboardShortcut(";", modifiers: .command)
+
             Divider()
 
             Button("Insert Section Break") {
@@ -98,6 +103,7 @@ struct EditorCommands: Commands {
 extension Notification.Name {
     static let toggleFocusMode = Notification.Name("toggleFocusMode")
     static let toggleEditorMode = Notification.Name("toggleEditorMode")
+    static let toggleSpellcheck = Notification.Name("toggleSpellcheck")
     static let insertSectionBreak = Notification.Name("insertSectionBreak")
 
     // Find commands

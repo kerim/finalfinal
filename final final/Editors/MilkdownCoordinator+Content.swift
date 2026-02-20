@@ -13,6 +13,8 @@ extension MilkdownEditor.Coordinator {
 
     func cleanup() {
         isCleanedUp = true
+        spellcheckTask?.cancel()
+        spellcheckTask = nil
         pollingTimer?.invalidate()
         pollingTimer = nil
         if let observer = toggleObserver {
@@ -46,6 +48,10 @@ extension MilkdownEditor.Coordinator {
         if let observer = editorModeObserver {
             NotificationCenter.default.removeObserver(observer)
             editorModeObserver = nil
+        }
+        if let observer = spellcheckStateObserver {
+            NotificationCenter.default.removeObserver(observer)
+            spellcheckStateObserver = nil
         }
         webView = nil
     }
@@ -276,6 +282,12 @@ extension MilkdownEditor.Coordinator {
     func setFocusMode(_ enabled: Bool) {
         guard isEditorReady, let webView else { return }
         webView.evaluateJavaScript("window.FinalFinal.setFocusMode(\(enabled))") { _, _ in }
+    }
+
+    func setSpellcheck(_ enabled: Bool) {
+        guard isEditorReady, let webView else { return }
+        let fn = enabled ? "enableSpellcheck" : "disableSpellcheck"
+        webView.evaluateJavaScript("window.FinalFinal.\(fn)()") { _, _ in }
     }
 
     func setTheme(_ cssVariables: String) {

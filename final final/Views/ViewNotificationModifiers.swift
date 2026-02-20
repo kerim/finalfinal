@@ -21,6 +21,15 @@ extension View {
             .onReceive(NotificationCenter.default.publisher(for: .toggleFocusMode)) { _ in
                 editorState.toggleFocusMode()
             }
+            .onReceive(NotificationCenter.default.publisher(for: .toggleSpellcheck)) { _ in
+                editorState.isSpellcheckEnabled.toggle()
+                // Notify editors to enable/disable spellcheck
+                NotificationCenter.default.post(
+                    name: .spellcheckStateChanged,
+                    object: nil,
+                    userInfo: ["enabled": editorState.isSpellcheckEnabled]
+                )
+            }
             .onReceive(NotificationCenter.default.publisher(for: .toggleEditorMode)) { _ in
                 // Clear find bar state when switching editors
                 findBarState.clearSearch()
@@ -38,12 +47,40 @@ extension View {
                         sectionsToInject = editorState.sections
                     }
 
-                    // Recalculate offsets relative to current content (not full document)
+                    // Compute offsets from blocks (same data that produced editorState.content)
                     var adjustedSections: [SectionViewModel] = []
-                    var currentOffset = 0
-                    for section in sectionsToInject.sorted(by: { $0.sortOrder < $1.sortOrder }) {
-                        adjustedSections.append(section.withUpdates(startOffset: currentOffset))
-                        currentOffset += section.markdownContent.count
+                    if let db = editorState.projectDatabase,
+                       let pid = editorState.currentProjectId {
+                        do {
+                            let fetchedBlocks: [Block]
+                            if let zoomedIds = editorState.zoomedSectionIds {
+                                let allBlocks = try db.fetchBlocks(projectId: pid)
+                                fetchedBlocks = ContentView.filterBlocksForZoomStatic(
+                                    allBlocks, zoomedIds: zoomedIds,
+                                    zoomedBlockRange: editorState.zoomedBlockRange)
+                            } else {
+                                fetchedBlocks = try db.fetchBlocks(projectId: pid)
+                            }
+                            let sorted = fetchedBlocks.sorted { a, b in
+                                let aKey = (a.sortOrder, a.blockType == .heading ? 0 : 1)
+                                let bKey = (b.sortOrder, b.blockType == .heading ? 0 : 1)
+                                return aKey < bKey
+                            }
+                            var blockOffset: [String: Int] = [:]
+                            var offset = 0
+                            for (i, block) in sorted.enumerated() {
+                                if i > 0 { offset += 2 }
+                                blockOffset[block.id] = offset
+                                offset += block.markdownFragment.count
+                            }
+                            for section in sectionsToInject.sorted(by: { $0.sortOrder < $1.sortOrder }) {
+                                if let off = blockOffset[section.id] {
+                                    adjustedSections.append(section.withUpdates(startOffset: off))
+                                }
+                            }
+                        } catch {
+                            print("[toggleEditorMode] Block fetch error: \(error)")
+                        }
                     }
 
                     let withAnchors = sectionSyncService.injectSectionAnchors(
@@ -97,6 +134,20 @@ extension View {
             }
             .onReceive(NotificationCenter.default.publisher(for: .toggleAnnotationSidebar)) { _ in
                 editorState.toggleAnnotationPanel()
+            }
+            .onAppear {
+                // Push initial spellcheck state to editors on launch
+                // (JS defaults to enabled, but UserDefaults may have it disabled)
+                if !editorState.isSpellcheckEnabled {
+                    // Small delay to let editors initialize
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                        NotificationCenter.default.post(
+                            name: .spellcheckStateChanged,
+                            object: nil,
+                            userInfo: ["enabled": false]
+                        )
+                    }
+                }
             }
     }
 

@@ -44,6 +44,7 @@ struct CodeMirrorEditor: NSViewRepresentable {
             controller.add(context.coordinator, name: "openCitationPicker")
             controller.add(context.coordinator, name: "paintComplete")
             controller.add(context.coordinator, name: "openURL")
+            controller.add(context.coordinator, name: "spellcheck")
 
             preloaded.navigationDelegate = context.coordinator
             context.coordinator.webView = preloaded
@@ -100,6 +101,7 @@ struct CodeMirrorEditor: NSViewRepresentable {
         configuration.userContentController.add(context.coordinator, name: "openCitationPicker")
         configuration.userContentController.add(context.coordinator, name: "paintComplete")
         configuration.userContentController.add(context.coordinator, name: "openURL")
+        configuration.userContentController.add(context.coordinator, name: "spellcheck")
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = context.coordinator
@@ -204,6 +206,10 @@ struct CodeMirrorEditor: NSViewRepresentable {
         var annotationDisplayModesObserver: NSObjectProtocol?
         var insertAnnotationObserver: NSObjectProtocol?
         var toggleHighlightObserver: NSObjectProtocol?
+        var spellcheckStateObserver: NSObjectProtocol?
+
+        /// Active spellcheck task (cancelled on new check or cleanup)
+        var spellcheckTask: Task<Void, Never>?
 
         /// Last sent annotation display modes (to avoid redundant calls)
         var lastAnnotationDisplayModes: [AnnotationType: AnnotationDisplayMode] = [:]
@@ -284,6 +290,17 @@ struct CodeMirrorEditor: NSViewRepresentable {
             ) { [weak self] _ in
                 self?.toggleHighlight()
             }
+
+            // Subscribe to spellcheck toggle
+            spellcheckStateObserver = NotificationCenter.default.addObserver(
+                forName: .spellcheckStateChanged,
+                object: nil,
+                queue: .main
+            ) { [weak self] notification in
+                if let enabled = notification.userInfo?["enabled"] as? Bool {
+                    self?.setSpellcheck(enabled)
+                }
+            }
         }
 
         deinit {
@@ -301,6 +318,9 @@ struct CodeMirrorEditor: NSViewRepresentable {
                 NotificationCenter.default.removeObserver(observer)
             }
             if let observer = toggleHighlightObserver {
+                NotificationCenter.default.removeObserver(observer)
+            }
+            if let observer = spellcheckStateObserver {
                 NotificationCenter.default.removeObserver(observer)
             }
         }
