@@ -119,16 +119,24 @@ final class LanguageToolProvider: ProofingProvider {
     ) -> (String, [SegmentMapping]) {
         var fullText = ""
         var offsetMap: [SegmentMapping] = []
+        var lastBlockId: Int?
 
         for (i, segment) in segments.enumerated() {
             if !fullText.isEmpty {
-                fullText += "\n\n"
+                // Same paragraph: join with space to preserve sentence context
+                // Different paragraph (or no blockId): join with paragraph break
+                if let bid = segment.blockId, bid == lastBlockId {
+                    fullText += " "
+                } else {
+                    fullText += "\n\n"
+                }
             }
             offsetMap.append(SegmentMapping(
                 index: i,
                 fullTextOffset: fullText.utf16.count,
                 segment: segment))
             fullText += segment.text
+            lastBlockId = segment.blockId
         }
 
         return (fullText, offsetMap)
@@ -156,10 +164,19 @@ final class LanguageToolProvider: ProofingProvider {
             guard let mapping = findSegment(for: offset, in: offsetMap) else { continue }
 
             let localOffset = offset - mapping.fullTextOffset
+
+            // Skip matches that span across same-block segment boundaries
+            // (these cross the injected space between segments and are always false positives)
+            let segmentTextLength = (mapping.segment.text as NSString).length
+            if localOffset + length > segmentTextLength { continue }
+
             let word = extractWord(from: mapping.segment.text, offset: localOffset, length: length)
 
             // Skip ignored words
             if ignoredWords.contains(word) { continue }
+
+            // Skip matches targeting non-Latin text (CJK, Arabic, Devanagari, etc.)
+            if containsNonLatinScript(word) { continue }
 
             // Map to editor positions
             let editorFrom = mapping.segment.from + localOffset
@@ -246,6 +263,28 @@ final class LanguageToolProvider: ProofingProvider {
     }
 
     // MARK: - Helpers
+
+    /// Returns true if the text contains non-Latin alphabetic characters (CJK, Arabic, etc.)
+    /// Used to filter false positives from LanguageTool on non-English scripts.
+    private static let latinLetters: CharacterSet = {
+        // Basic Latin + Latin-1 Supplement + Latin Extended A/B + Additional
+        var set = CharacterSet(charactersIn: "\u{0041}"..."\u{005A}")  // A-Z
+        set.formUnion(.init(charactersIn: "\u{0061}"..."\u{007A}"))  // a-z
+        set.formUnion(.init(charactersIn: "\u{00C0}"..."\u{024F}"))  // Latin Extended A/B
+        set.formUnion(.init(charactersIn: "\u{1E00}"..."\u{1EFF}"))  // Latin Extended Additional
+        set.formUnion(.init(charactersIn: "\u{2C60}"..."\u{2C7F}"))  // Latin Extended-C
+        set.formUnion(.init(charactersIn: "\u{A720}"..."\u{A7FF}"))  // Latin Extended-D
+        return set
+    }()
+
+    private func containsNonLatinScript(_ text: String) -> Bool {
+        for scalar in text.unicodeScalars {
+            if CharacterSet.letters.contains(scalar) && !Self.latinLetters.contains(scalar) {
+                return true
+            }
+        }
+        return false
+    }
 
     private func urlEncode(_ string: String) -> String {
         string.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? string

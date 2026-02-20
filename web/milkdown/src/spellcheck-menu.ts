@@ -17,7 +17,7 @@ export interface SpellcheckMenuOptions {
 
 let activeMenu: HTMLElement | null = null;
 
-function dismissMenu() {
+export function dismissMenu() {
   if (activeMenu) {
     activeMenu.remove();
     activeMenu = null;

@@ -10,7 +10,7 @@ import { Plugin, PluginKey } from '@milkdown/kit/prose/state';
 import { Decoration, DecorationSet, type EditorView } from '@milkdown/kit/prose/view';
 import { $prose } from '@milkdown/kit/utils';
 import { getEditorInstance } from './editor-state';
-import { showSpellcheckMenu } from './spellcheck-menu';
+import { dismissMenu, showSpellcheckMenu } from './spellcheck-menu';
 import { dismissPopover, showProofingPopover } from './spellcheck-popover';
 
 // --- Module state ---
@@ -79,6 +79,7 @@ interface TextSegment {
   text: string;
   from: number;
   to: number;
+  blockId?: number;
 }
 
 /** Node types to skip entirely (no text extraction) */
@@ -127,13 +128,14 @@ function extractSegments(view: EditorView): TextSegment[] {
     let blockText = '';
     const blockFrom = pos + 1; // +1 for entering the block node
     let segmentStart = blockFrom;
+    const blockId = pos; // Paragraph position used to group related segments
 
     node.forEach((child, offset) => {
       // Skip citation nodes (inline atoms)
       if (child.type.name === 'citation' || child.type.name === 'section_break') {
         // If we have accumulated text, emit a segment
         if (blockText.length > 0) {
-          segments.push({ text: blockText, from: segmentStart, to: segmentStart + blockText.length });
+          segments.push({ text: blockText, from: segmentStart, to: segmentStart + blockText.length, blockId });
           blockText = '';
         }
         segmentStart = blockFrom + offset + child.nodeSize;
@@ -143,7 +145,7 @@ function extractSegments(view: EditorView): TextSegment[] {
       // Skip nodes with code_inline mark
       if (child.isText && child.marks.some((m) => SKIP_MARK_TYPES.has(m.type.name))) {
         if (blockText.length > 0) {
-          segments.push({ text: blockText, from: segmentStart, to: segmentStart + blockText.length });
+          segments.push({ text: blockText, from: segmentStart, to: segmentStart + blockText.length, blockId });
           blockText = '';
         }
         segmentStart = blockFrom + offset + child.nodeSize;
@@ -156,9 +158,9 @@ function extractSegments(view: EditorView): TextSegment[] {
         }
         blockText += child.text || '';
       } else {
-        // Non-text inline node (hard break, etc.) — split segment
+        // Non-text inline node (hard break, annotation, etc.) — split segment
         if (blockText.length > 0) {
-          segments.push({ text: blockText, from: segmentStart, to: segmentStart + blockText.length });
+          segments.push({ text: blockText, from: segmentStart, to: segmentStart + blockText.length, blockId });
           blockText = '';
         }
         segmentStart = blockFrom + offset + child.nodeSize;
@@ -167,7 +169,7 @@ function extractSegments(view: EditorView): TextSegment[] {
 
     // Flush remaining text for this block
     if (blockText.length > 0) {
-      segments.push({ text: blockText, from: segmentStart, to: segmentStart + blockText.length });
+      segments.push({ text: blockText, from: segmentStart, to: segmentStart + blockText.length, blockId });
     }
 
     return false; // Already processed children
@@ -198,7 +200,7 @@ function triggerCheck(): void {
 
   window.webkit?.messageHandlers?.spellcheck?.postMessage({
     action: 'check',
-    segments: segments.map((s) => ({ text: s.text, from: s.from, to: s.to })),
+    segments: segments.map((s) => ({ text: s.text, from: s.from, to: s.to, blockId: s.blockId })),
     requestId,
   });
 }
@@ -265,9 +267,38 @@ function handleClick(view: EditorView, event: MouseEvent): boolean {
   const result = findResultAtPos(pos.pos);
   if (!result) return false;
 
-  // Only show popover for grammar/style (spelling uses context menu)
-  if (result.type === 'spelling') return false;
+  // Spelling: show spell menu on click
+  if (result.type === 'spelling') {
+    dismissPopover();
+    showSpellcheckMenu({
+      x: event.clientX,
+      y: event.clientY,
+      word: result.word,
+      type: result.type as 'spelling' | 'grammar',
+      suggestions: result.suggestions,
+      message: result.message,
+      onReplace: (replacement: string) => {
+        const tr = view.state.tr.replaceWith(result.from, result.to, view.state.schema.text(replacement));
+        view.dispatch(tr);
+      },
+      onLearn: (word: string) => {
+        spellcheckResults = spellcheckResults.filter((r) => r.word !== word);
+        view.dispatch(view.state.tr);
+        window.webkit?.messageHandlers?.spellcheck?.postMessage({ action: 'learn', word });
+        triggerCheck();
+      },
+      onIgnore: (word: string) => {
+        spellcheckResults = spellcheckResults.filter((r) => r.word !== word);
+        view.dispatch(view.state.tr);
+        window.webkit?.messageHandlers?.spellcheck?.postMessage({ action: 'ignore', word });
+        triggerCheck();
+      },
+    });
+    return true;
+  }
 
+  // Grammar/style: show proofing popover
+  dismissMenu();
   dismissPopover();
 
   showProofingPopover({

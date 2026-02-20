@@ -16,6 +16,7 @@ final class SpellCheckService {
         let text: String
         let from: Int
         let to: Int
+        let blockId: Int?  // Paragraph ID for grouping related segments
     }
 
     struct SpellCheckResult: Codable, Sendable {

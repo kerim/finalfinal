@@ -10,7 +10,7 @@ import { RangeSetBuilder } from '@codemirror/state';
 import { Decoration, type DecorationSet, type EditorView, ViewPlugin, type ViewUpdate } from '@codemirror/view';
 import { ALL_HIDDEN_MARKERS_REGEX } from './anchor-plugin';
 import { getEditorView } from './editor-state';
-import { showSpellcheckMenu } from './spellcheck-menu';
+import { dismissMenu, showSpellcheckMenu } from './spellcheck-menu';
 import { dismissPopover, showProofingPopover } from './spellcheck-popover';
 
 // --- Types ---
@@ -31,6 +31,7 @@ interface TextSegment {
   text: string;
   from: number;
   to: number;
+  blockId?: number;
 }
 
 // --- Module state ---
@@ -93,7 +94,7 @@ function stripHiddenMarkers(segments: TextSegment[]): TextSegment[] {
       if (m.index > lastIdx) {
         const text = seg.text.slice(lastIdx, m.index);
         if (text.trim().length > 0) {
-          parts.push({ text, from: seg.from + lastIdx, to: seg.from + m.index });
+          parts.push({ text, from: seg.from + lastIdx, to: seg.from + m.index, blockId: seg.blockId });
         }
       }
       lastIdx = m.index + m[0].length;
@@ -102,11 +103,27 @@ function stripHiddenMarkers(segments: TextSegment[]): TextSegment[] {
     if (lastIdx < seg.text.length) {
       const text = seg.text.slice(lastIdx);
       if (text.trim().length > 0) {
-        parts.push({ text, from: seg.from + lastIdx, to: seg.from + lastIdx + text.length });
+        parts.push({ text, from: seg.from + lastIdx, to: seg.from + lastIdx + text.length, blockId: seg.blockId });
       }
     }
     return parts;
   });
+}
+
+// --- Citation stripping ---
+
+/** Matches segments that are entirely Pandoc citation content (no brackets — those are stripped by LinkMark skip) */
+const CITATION_CONTENT_REGEX = /^-?@[\w]/;
+
+/**
+ * Filter out segments that are bare citation keys.
+ * Lezer's LinkMark (in SKIP_NODES) strips [ and ] brackets, so citation
+ * content like `@friedmanLearningLocalLanguages2005` appears as its own
+ * segment without brackets. We filter these out entirely so LanguageTool
+ * never sees them.
+ */
+function stripCitations(segments: TextSegment[]): TextSegment[] {
+  return segments.filter((seg) => !CITATION_CONTENT_REGEX.test(seg.text.trim()));
 }
 
 // --- Text extraction ---
@@ -123,6 +140,7 @@ const SKIP_NODES = new Set([
   'CodeInfo',
   'HTMLBlock',
   'CommentBlock',
+  'Comment', // inline HTML comments (annotations, section anchors)
   // Markdown marker nodes — syntax characters (# > - * _ ` [ ] etc.)
   // that would cause false positives if sent to NSSpellChecker
   'HeaderMark',
@@ -177,7 +195,7 @@ function extractSegments(view: EditorView): TextSegment[] {
       if (textEnd > textStart) {
         const text = doc.sliceString(textStart, textEnd);
         if (text.trim().length > 0) {
-          segments.push({ text, from: textStart, to: textEnd });
+          segments.push({ text, from: textStart, to: textEnd, blockId: lineNum });
         }
       }
       pos = Math.max(pos, skip.to);
@@ -188,14 +206,14 @@ function extractSegments(view: EditorView): TextSegment[] {
       const textStart = Math.max(pos, line.from);
       const text = doc.sliceString(textStart, lineEnd);
       if (text.trim().length > 0) {
-        segments.push({ text, from: textStart, to: lineEnd });
+        segments.push({ text, from: textStart, to: lineEnd, blockId: lineNum });
       }
     }
   }
 
   // Strip hidden markers (anchor comments, bibliography markers) that
   // are visually collapsed but present in raw text — prevents false positives
-  return stripHiddenMarkers(segments);
+  return stripCitations(stripHiddenMarkers(segments));
 }
 
 // --- Check trigger ---
@@ -219,7 +237,7 @@ function triggerCheck(): void {
 
   window.webkit?.messageHandlers?.spellcheck?.postMessage({
     action: 'check',
-    segments: segments.map((s) => ({ text: s.text, from: s.from, to: s.to })),
+    segments: segments.map((s) => ({ text: s.text, from: s.from, to: s.to, blockId: s.blockId })),
     requestId,
   });
 }
@@ -337,9 +355,39 @@ export function spellcheckPlugin() {
             const result = findResultAtPos(pos);
             if (!result) return false;
 
-            // Only show popover for grammar/style (spelling uses context menu)
-            if (result.type === 'spelling') return false;
+            // Spelling: show spell menu on click
+            if (result.type === 'spelling') {
+              dismissPopover();
+              showSpellcheckMenu({
+                x: event.clientX,
+                y: event.clientY,
+                word: result.word,
+                type: result.type as 'spelling' | 'grammar',
+                suggestions: result.suggestions,
+                message: result.message,
+                onReplace: (replacement: string) => {
+                  view.dispatch({
+                    changes: { from: result.from, to: result.to, insert: replacement },
+                  });
+                },
+                onLearn: (word: string) => {
+                  spellcheckResults = spellcheckResults.filter((r) => r.word !== word);
+                  view.dispatch({});
+                  window.webkit?.messageHandlers?.spellcheck?.postMessage({ action: 'learn', word });
+                  triggerCheck();
+                },
+                onIgnore: (word: string) => {
+                  spellcheckResults = spellcheckResults.filter((r) => r.word !== word);
+                  view.dispatch({});
+                  window.webkit?.messageHandlers?.spellcheck?.postMessage({ action: 'ignore', word });
+                  triggerCheck();
+                },
+              });
+              return true;
+            }
 
+            // Grammar/style: show proofing popover
+            dismissMenu();
             dismissPopover();
 
             showProofingPopover({

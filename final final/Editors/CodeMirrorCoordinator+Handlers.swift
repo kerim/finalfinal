@@ -293,7 +293,8 @@ extension CodeMirrorEditor.Coordinator {
                         guard let text = dict["text"] as? String,
                               let from = dict["from"] as? Int,
                               let to = dict["to"] as? Int else { return nil }
-                        return SpellCheckService.TextSegment(text: text, from: from, to: to)
+                        let blockId = dict["blockId"] as? Int
+                        return SpellCheckService.TextSegment(text: text, from: from, to: to, blockId: blockId)
                     }
                     self.spellcheckTask?.cancel()
                     self.spellcheckTask = Task {

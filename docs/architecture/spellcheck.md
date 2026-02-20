@@ -71,7 +71,7 @@ All go through `window.webkit.messageHandlers.spellcheck.postMessage()`:
 
 | Action | Data | Purpose |
 |--------|------|---------|
-| `check` | `{segments: [{text, from, to}], requestId}` | Request proofing for visible text |
+| `check` | `{segments: [{text, from, to, blockId?}], requestId}` | Request proofing for visible text |
 | `learn` | `{word}` | Add word to user dictionary |
 | `ignore` | `{word}` | Ignore word for this session |
 | `disableRule` | `{ruleId}` | Suppress a grammar/style rule |
@@ -101,7 +101,11 @@ Result `type` values: `"spelling"`, `"grammar"`, `"style"`.
 
 ### Segment Consolidation
 
-LanguageToolProvider consolidates all text segments into a single string (joined by `\n\n`) with an offset map. This sends one HTTP request per check cycle instead of one per segment. Response offsets are mapped back to editor positions using the offset map.
+LanguageToolProvider consolidates all text segments into a single string with an offset map. This sends one HTTP request per check cycle instead of one per segment. Response offsets are mapped back to editor positions using the offset map.
+
+Segments include an optional `blockId` (paragraph identifier) that controls joining:
+- **Same blockId** → joined with a single space (preserves sentence context within a paragraph)
+- **Different blockId or no blockId** → joined with `\n\n` (paragraph break)
 
 ### Error Classification
 
@@ -128,10 +132,17 @@ When a Premium user clicks "Learn Spelling", the word is added to both the local
 
 ## Segment Extraction
 
-Both editors extract text segments, skipping non-prose content:
+Both editors extract text segments, skipping non-prose content. Each segment includes a `blockId` to identify its parent paragraph.
 
-- **Milkdown**: Walks ProseMirror node tree, skips code blocks, citations, bibliography
-- **CodeMirror**: Uses Lezer syntax tree, strips hidden anchor markers to avoid false positives
+- **Milkdown**: Walks ProseMirror node tree, skips code blocks, citations, section breaks, bibliography. `blockId` = paragraph node position.
+- **CodeMirror**: Uses Lezer syntax tree. Skips code, URLs, HTML (including inline `Comment` nodes for annotations/anchors), and markdown syntax markers. Strips hidden anchor markers and filters bare citation keys (`@citekey`). `blockId` = line number.
+
+### False Positive Filtering
+
+LanguageToolProvider applies post-processing filters to reduce false positives:
+
+- **Cross-segment boundary**: Matches spanning the injected space between same-block segments are discarded (always false positives from joining)
+- **Non-Latin script**: Matches targeting CJK, Arabic, Devanagari, or other non-Latin text are skipped (LT only supports Latin-script languages)
 
 ## Decoration Types
 
@@ -143,14 +154,22 @@ Three CSS classes for underline decorations:
 | Grammar | `.grammar-error` | `.cm-grammar-error` | Blue wavy underline |
 | Style | `.style-error` | `.cm-style-error` | Yellow wavy underline |
 
-## Context Menu (Popover)
+## Click Interaction
 
-Right-clicking a decorated word shows a popover with:
-- Error message and short description (grammar/style only)
+Clicking any decorated word shows an inline UI. The UI type depends on the error:
+
+**Spelling errors** → Spell menu (compact dropdown):
 - Replacement suggestions (click to apply)
 - "Learn Spelling" (adds to macOS dictionary + LT cloud if Premium)
 - "Ignore" (session-only ignore list)
-- "Disable Rule" (grammar/style only — permanently suppresses the rule via ProofingSettings)
+
+**Grammar/style errors** → Proofing popover (richer panel):
+- Error message and short description
+- Replacement suggestions (click to apply)
+- "Ignore" (session-only ignore list)
+- "Disable Rule" (permanently suppresses the rule via ProofingSettings)
+
+Right-clicking a spelling error also opens the spell menu (context menu handler preserved). Cross-dismissal ensures only one menu/popover is visible at a time.
 
 ## Notification-Based Communication
 
