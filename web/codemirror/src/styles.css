@@ -140,6 +140,14 @@ body {
   text-underline-offset: 2px;
 }
 
+/* Style error underline */
+.cm-style-error {
+  text-decoration: underline dotted #22c55e;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
 /* Spellcheck context menu */
 .spellcheck-menu {
   position: fixed;

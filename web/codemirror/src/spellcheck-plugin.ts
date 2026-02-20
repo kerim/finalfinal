@@ -18,9 +18,11 @@ interface SpellcheckResult {
   from: number;
   to: number;
   word: string;
-  type: 'spelling' | 'grammar';
+  type: 'spelling' | 'grammar' | 'style';
   suggestions: string[];
   message?: string | null;
+  ruleId?: string | null;
+  isPicky?: boolean;
 }
 
 interface TextSegment {
@@ -240,6 +242,7 @@ function findResultAtPos(pos: number): SpellcheckResult | null {
 
 const spellingDeco = Decoration.mark({ class: 'cm-spell-error' });
 const grammarDeco = Decoration.mark({ class: 'cm-grammar-error' });
+const styleDeco = Decoration.mark({ class: 'cm-style-error' });
 
 function buildDecorations(view: EditorView): DecorationSet {
   if (!enabled || spellcheckResults.length === 0) {
@@ -255,7 +258,8 @@ function buildDecorations(view: EditorView): DecorationSet {
     .sort((a, b) => a.from - b.from || a.to - b.to);
 
   for (const result of sorted) {
-    builder.add(result.from, result.to, result.type === 'grammar' ? grammarDeco : spellingDeco);
+    const deco = result.type === 'grammar' ? grammarDeco : result.type === 'style' ? styleDeco : spellingDeco;
+    builder.add(result.from, result.to, deco);
   }
 
   return builder.finish();

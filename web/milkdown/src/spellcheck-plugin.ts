@@ -18,9 +18,11 @@ interface SpellcheckResult {
   from: number;
   to: number;
   word: string;
-  type: 'spelling' | 'grammar';
+  type: 'spelling' | 'grammar' | 'style';
   suggestions: string[];
   message?: string | null;
+  ruleId?: string | null;
+  isPicky?: boolean;
 }
 
 let spellcheckResults: SpellcheckResult[] = [];
@@ -273,7 +275,8 @@ export const spellcheckPlugin = $prose(() => {
             continue;
           }
 
-          const className = result.type === 'grammar' ? 'grammar-error' : 'spell-error';
+          const className =
+            result.type === 'grammar' ? 'grammar-error' : result.type === 'style' ? 'style-error' : 'spell-error';
           const attrs: Record<string, string> = { class: className };
           if (result.message) {
             attrs.title = result.message;

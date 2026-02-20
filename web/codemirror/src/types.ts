@@ -71,6 +71,8 @@ declare global {
           type: string;
           suggestions: string[];
           message?: string | null;
+          ruleId?: string | null;
+          isPicky?: boolean;
         }>
       ) => void;
       enableSpellcheck: () => void;
