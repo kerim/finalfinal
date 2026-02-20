@@ -106,6 +106,8 @@ extension Notification.Name {
     static let toggleSpellcheck = Notification.Name("toggleSpellcheck")
     static let proofingModeChanged = Notification.Name("proofingModeChanged")
     static let proofingSettingsChanged = Notification.Name("proofingSettingsChanged")
+    static let openProofingPreferences = Notification.Name("openProofingPreferences")
+    static let proofingConnectionStatusChanged = Notification.Name("proofingConnectionStatusChanged")
     static let insertSectionBreak = Notification.Name("insertSectionBreak")
 
     // Find commands

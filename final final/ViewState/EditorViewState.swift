@@ -17,6 +17,9 @@ class EditorViewState {
         }
     }
 
+    /// LanguageTool connection status (only visible when LT mode is active)
+    var proofingConnectionStatus: LTConnectionStatus = .disconnected
+
     /// Spellcheck state - persists across app launches via UserDefaults (defaults to true)
     var isSpellcheckEnabled: Bool = {
         // Default to true if key hasn't been set

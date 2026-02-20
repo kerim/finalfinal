@@ -67,10 +67,18 @@ final class SpellCheckService {
         }
     }
 
+    /// Current LanguageTool connection status (for status bar display)
+    var connectionStatus: LTConnectionStatus {
+        languageToolProvider.connectionStatus
+    }
+
     // MARK: - Dispatch
 
     func check(segments: [TextSegment]) async -> [SpellCheckResult] {
-        await activeProvider.check(segments: segments)
+        let results = await activeProvider.check(segments: segments)
+        // Post notification so status bar can update connection status
+        NotificationCenter.default.post(name: .proofingConnectionStatusChanged, object: nil)
+        return results
     }
 
     func learnWord(_ word: String) {
