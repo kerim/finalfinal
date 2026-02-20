@@ -55,6 +55,10 @@ export function enableSpellcheck(): void {
   triggerCheck();
 }
 
+export function triggerSpellcheck(): void {
+  triggerCheck();
+}
+
 export function disableSpellcheck(): void {
   enabled = false;
   spellcheckResults = [];

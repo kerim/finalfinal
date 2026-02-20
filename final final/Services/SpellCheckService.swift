@@ -30,6 +30,7 @@ final class SpellCheckService {
     }
 
     private let builtInProvider = BuiltInProvider()
+    let languageToolProvider = LanguageToolProvider()
     private(set) var activeProvider: ProofingProvider
 
     private init() {
@@ -54,6 +55,16 @@ final class SpellCheckService {
 
     func resetToBuiltIn() {
         activeProvider = builtInProvider
+    }
+
+    /// Switch provider based on current ProofingSettings mode
+    func updateProviderForCurrentMode() {
+        switch ProofingSettings.shared.mode {
+        case .builtIn:
+            activeProvider = builtInProvider
+        case .languageToolFree, .languageToolPremium:
+            activeProvider = languageToolProvider
+        }
     }
 
     // MARK: - Dispatch

@@ -50,7 +50,7 @@ import { customHighlightStyle, headingDecorationPlugin, syntaxHighlighting } fro
 import { installLineHeightFix } from './line-height-fix';
 import { scrollStabilizer } from './scroll-stabilizer';
 import { slashCompletions } from './slash-completions';
-import { disableSpellcheck, enableSpellcheck, setSpellcheckResults, spellcheckPlugin } from './spellcheck-plugin';
+import { disableSpellcheck, enableSpellcheck, setSpellcheckResults, triggerSpellcheck, spellcheckPlugin } from './spellcheck-plugin';
 import './styles.css';
 // Import types.ts for declare global side-effect
 import './types';
@@ -241,6 +241,7 @@ window.FinalFinal = {
   setSpellcheckResults,
   enableSpellcheck,
   disableSpellcheck,
+  triggerSpellcheck,
   find,
   findNext: apiFindNext,
   findPrevious: apiFindPrevious,

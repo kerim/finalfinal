@@ -139,6 +139,7 @@ declare global {
       ) => void;
       enableSpellcheck: () => void;
       disableSpellcheck: () => void;
+      triggerSpellcheck: () => void;
       // Find/replace API
       find: (query: string, options?: FindOptions) => FindResult;
       findNext: () => FindResult | null;

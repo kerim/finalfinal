@@ -233,6 +233,8 @@ struct MilkdownEditor: NSViewRepresentable {
         var refreshAllCitationsObserver: NSObjectProtocol?
         var editorModeObserver: NSObjectProtocol?
         var spellcheckStateObserver: NSObjectProtocol?
+        var proofingModeObserver: NSObjectProtocol?
+        var proofingSettingsObserver: NSObjectProtocol?
 
         /// Active spellcheck task (cancelled on new check or cleanup)
         var spellcheckTask: Task<Void, Never>?
@@ -361,6 +363,25 @@ struct MilkdownEditor: NSViewRepresentable {
                     self?.setSpellcheck(enabled)
                 }
             }
+
+            // Subscribe to proofing mode change (swap provider + re-check)
+            proofingModeObserver = NotificationCenter.default.addObserver(
+                forName: .proofingModeChanged,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                SpellCheckService.shared.updateProviderForCurrentMode()
+                self?.triggerSpellcheck()
+            }
+
+            // Subscribe to proofing settings change (re-check with new settings)
+            proofingSettingsObserver = NotificationCenter.default.addObserver(
+                forName: .proofingSettingsChanged,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                self?.triggerSpellcheck()
+            }
         }
 
         deinit {
@@ -390,6 +411,12 @@ struct MilkdownEditor: NSViewRepresentable {
                 NotificationCenter.default.removeObserver(observer)
             }
             if let observer = spellcheckStateObserver {
+                NotificationCenter.default.removeObserver(observer)
+            }
+            if let observer = proofingModeObserver {
+                NotificationCenter.default.removeObserver(observer)
+            }
+            if let observer = proofingSettingsObserver {
                 NotificationCenter.default.removeObserver(observer)
             }
         }

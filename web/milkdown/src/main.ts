@@ -94,6 +94,7 @@ import {
   disableSpellcheck as disableSpellcheckImpl,
   enableSpellcheck as enableSpellcheckImpl,
   setSpellcheckResults as setSpellcheckResultsImpl,
+  triggerSpellcheck as triggerSpellcheckImpl,
   spellcheckPlugin,
 } from './spellcheck-plugin';
 import './styles.css';
@@ -303,6 +304,7 @@ window.FinalFinal = {
   setSpellcheckResults: setSpellcheckResultsImpl,
   enableSpellcheck: enableSpellcheckImpl,
   disableSpellcheck: disableSpellcheckImpl,
+  triggerSpellcheck: triggerSpellcheckImpl,
   // Find/replace API
   find: findApi,
   findNext: findNextApi,
