@@ -13,6 +13,7 @@ enum PreferencesTab: String, CaseIterable, Identifiable {
     case export
     case appearance
     case goals
+    case proofing
 
     var id: String { rawValue }
 
@@ -21,6 +22,7 @@ enum PreferencesTab: String, CaseIterable, Identifiable {
         case .export: return "Export"
         case .appearance: return "Appearance"
         case .goals: return "Goals"
+        case .proofing: return "Proofing"
         }
     }
 
@@ -29,6 +31,7 @@ enum PreferencesTab: String, CaseIterable, Identifiable {
         case .export: return "square.and.arrow.up"
         case .appearance: return "paintbrush"
         case .goals: return "target"
+        case .proofing: return "textformat.abc"
         }
     }
 }
@@ -56,6 +59,12 @@ struct PreferencesView: View {
                     Label(PreferencesTab.goals.title, systemImage: PreferencesTab.goals.icon)
                 }
                 .tag(PreferencesTab.goals)
+
+            ProofingPreferencesPane()
+                .tabItem {
+                    Label(PreferencesTab.proofing.title, systemImage: PreferencesTab.proofing.icon)
+                }
+                .tag(PreferencesTab.proofing)
         }
         .frame(width: 700, height: 550)
         .padding()

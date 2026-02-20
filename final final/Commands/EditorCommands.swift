@@ -104,6 +104,8 @@ extension Notification.Name {
     static let toggleFocusMode = Notification.Name("toggleFocusMode")
     static let toggleEditorMode = Notification.Name("toggleEditorMode")
     static let toggleSpellcheck = Notification.Name("toggleSpellcheck")
+    static let proofingModeChanged = Notification.Name("proofingModeChanged")
+    static let proofingSettingsChanged = Notification.Name("proofingSettingsChanged")
     static let insertSectionBreak = Notification.Name("insertSectionBreak")
 
     // Find commands
