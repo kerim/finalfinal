@@ -21,6 +21,10 @@ Also, a lot of things you would expect from a word processor aren't there yet: t
 
 # What's New
 
+## Version 0.2.4.2
+
+- Improved grammar and spell check, skipping annotations, citations, and non-latin script.
+
 ## Version 0.2.41
 
 - Fixed pasting markdown
@@ -41,22 +45,6 @@ Also, a lot of things you would expect from a word processor aren't there yet: t
 ## Version 0.2.38
 
 - Greatly improved scrolling performance in Markdown mode, though there are still situations where it can break.
-
-## Version 0.2.37
-
-- Brought the raw Markdown editor CSS in line with the WYSIWYG editor. 
-
-## Version 0.2.36
-
-- Fixed bug that would preserve old data when writing over an existing project. Also added build info to the debug logging 
-
-## Version 0.2.35
-
-- Third attempt at switching to block-based architecture. Hopefully got it right this time! Also refactored and linted code, which should make maintenance easier. Fixed a number of bugs with zooming, scrolling, bibliography creation, switching between editors, etc. Initial version of word-count goals are in place, but I have plans to improve that.
-
-## Version 0.2.34
-
-- Fixed a very annoying but that caused the editor to loose CSS settings when switching between projects
 
 # Roadmap
 
