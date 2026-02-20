@@ -33,6 +33,15 @@ Also, a lot of things you would expect from a word processor aren't there yet: t
 
 # What's New
 
+## Version 0.2.41
+
+- Fixed pasting markdown
+- Fixed /cite remaining after cancelled citation lookup
+- Added warning when Zotero isn't running
+- Added support for pasting and editing URLs
+- Fixed Zooming in for sections
+- NEW FEATURE: Spelling and grammar check (grammar check uses Language Tool, free or premium)
+
 ## Version 0.2.40
 
 - Fixed option-zoom bug and drag-and-drop bug
@@ -67,13 +76,10 @@ Also, a lot of things you would expect from a word processor aren't there yet: t
 
 - Editing Toolbar
 - Footnotes
-- Spelling and Grammar Check
 
 ## Known bugs
 
-- Deleting all the text in a document can have strange effects
 - PDF export doesn't format in-text citations
-- Source view is highlighting the current paragraph (it shouldn't)
 
 # Set-up
 
@@ -91,9 +97,11 @@ Better BibTeX requires some setup to work right:
 
 * In the Main Zotero settings, under `Advanced`, check `Allow other applications on this computer to communicate with Zotero`.
 
-* In the Better Bibtex section of your Zotero settings, ensure that `Automatically pin citation key after X seconds` is set to `1`.
+* In the Better Bibtex section of your Zotero settings, ensure that `Automatically pin citation key after X seconds` is set to `1`. 
 
 * Note: Citation keys need to be **both** set up and pinned in Zotero 8.
+
+* UPDATE: I think pinning citations keys is no longer necessary in Zotero 8! Need to double-check.
 
 * Restart Zotero.
 
@@ -108,6 +116,10 @@ Alternatively, you can install pandoc using [Homebrew](https://brew.sh/):
 ```
  brew install pandoc
 ```
+
+## Language Tool Premium
+
+Grammar checking can use the free version of Language Tool out-of-the box, but if you want enhanced grammar checking you need to sign up for [the premium version](https://languagetool.org/premium) and get an API key.
 
 # Using FINAL|FINAL
 
