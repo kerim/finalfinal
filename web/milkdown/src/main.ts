@@ -94,8 +94,8 @@ import {
   disableSpellcheck as disableSpellcheckImpl,
   enableSpellcheck as enableSpellcheckImpl,
   setSpellcheckResults as setSpellcheckResultsImpl,
-  triggerSpellcheck as triggerSpellcheckImpl,
   spellcheckPlugin,
+  triggerSpellcheck as triggerSpellcheckImpl,
 } from './spellcheck-plugin';
 import './styles.css';
 // Import types to ensure declare global is included in the bundle
