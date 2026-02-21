@@ -61,6 +61,22 @@ extension MilkdownEditor.Coordinator {
             NotificationCenter.default.removeObserver(observer)
             proofingSettingsObserver = nil
         }
+        if let observer = insertFootnoteObserver {
+            NotificationCenter.default.removeObserver(observer)
+            insertFootnoteObserver = nil
+        }
+        if let observer = renumberFootnotesObserver {
+            NotificationCenter.default.removeObserver(observer)
+            renumberFootnotesObserver = nil
+        }
+        if let observer = footnoteDefsObserver {
+            NotificationCenter.default.removeObserver(observer)
+            footnoteDefsObserver = nil
+        }
+        if let observer = blockSyncPushObserver {
+            NotificationCenter.default.removeObserver(observer)
+            blockSyncPushObserver = nil
+        }
         webView = nil
     }
 
@@ -123,6 +139,29 @@ extension MilkdownEditor.Coordinator {
         guard isEditorReady, let webView else { return }
         let escaped = itemsJSON.escapedForJSTemplateLiteral
         webView.evaluateJavaScript("window.FinalFinal.setCitationLibrary(JSON.parse(`\(escaped)`))") { _, _ in }
+    }
+
+    /// Insert a footnote reference at the current cursor position
+    func insertFootnoteAtCursor() {
+        guard isEditorReady, let webView else { return }
+        webView.evaluateJavaScript("window.FinalFinal.insertFootnote()") { _, _ in }
+    }
+
+    /// Renumber footnote references in the editor using old→new label mapping
+    func renumberFootnotes(mapping: [String: String]) {
+        guard isEditorReady, let webView else { return }
+        guard let jsonData = try? JSONSerialization.data(withJSONObject: mapping),
+              let json = String(data: jsonData, encoding: .utf8) else { return }
+        webView.evaluateJavaScript("window.FinalFinal.renumberFootnotes(\(json))") { _, _ in }
+    }
+
+    func setFootnoteDefinitions(_ defs: [String: String]) {
+        guard isEditorReady, let webView else { return }
+        // Convert to JSON and call the API
+        guard let jsonData = try? JSONSerialization.data(withJSONObject: defs),
+              let jsonString = String(data: jsonData, encoding: .utf8) else { return }
+        let escaped = jsonString.escapedForJSTemplateLiteral
+        webView.evaluateJavaScript("window.FinalFinal.setFootnoteDefinitions(JSON.parse(`\(escaped)`))") { _, _ in }
     }
 
     /// Set CSL style for citation formatting

@@ -33,6 +33,7 @@ extension ContentView {
         sectionSyncService.configure(database: db, projectId: pid)
         annotationSyncService.configure(database: db, contentId: cid)
         bibliographySyncService.configure(database: db, projectId: pid)
+        footnoteSyncService.configure(database: db, projectId: pid)
         autoBackupService.configure(database: db, projectId: pid)
 
         // Inject sectionSyncService reference for zoom sourceContent updates
@@ -101,6 +102,11 @@ extension ContentView {
 
         // Load content from blocks (or fall back to legacy content table)
         do {
+            // Clean up orphaned footnote definitions from previous sessions before assembling
+            try db.write { database in
+                try FootnoteSyncService.deleteOrphanedFootnoteDefinitions(db: database, projectId: pid)
+            }
+
             let existingBlocks = try db.fetchBlocks(projectId: pid)
 
             if !existingBlocks.isEmpty {
@@ -179,6 +185,7 @@ extension ContentView {
         sectionSyncService.cancelPendingSync()
         annotationSyncService.cancelPendingSync()
         bibliographySyncService.reset()
+        footnoteSyncService.reset()
         autoBackupService.reset()
 
         // Set flag to prevent polling from overwriting empty content during reset
@@ -260,6 +267,7 @@ extension ContentView {
         sectionSyncService.cancelPendingSync()
         annotationSyncService.cancelPendingSync()
         bibliographySyncService.reset()
+        footnoteSyncService.reset()
         autoBackupService.reset()
 
         // Reset all project-specific state (content, sourceContent, zoom, tasks, etc.)

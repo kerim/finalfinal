@@ -71,8 +71,8 @@ class SectionReconciler {
         }
 
         // Unmatched DB sections were deleted from markdown
-        // EXCEPT bibliography sections which are managed separately by BibliographySyncService
-        for section in sortedDB where !matchedDBIds.contains(section.id) && !section.isBibliography {
+        // EXCEPT bibliography/notes sections which are managed separately by their sync services
+        for section in sortedDB where !matchedDBIds.contains(section.id) && !section.isBibliography && !section.isNotes {
             changes.append(.delete(id: section.id))
         }
 
@@ -97,7 +97,7 @@ class SectionReconciler {
         // 1. OutlineParser markers prevent parsed headers FROM the bibliography
         // 2. But we also need to prevent parsed headers from matching TO the bibliography
         //    section via Tier 3 proximity matching. BibliographySyncService owns this section.
-        let available = sections.filter { !excluding.contains($0.id) && !$0.isBibliography }
+        let available = sections.filter { !excluding.contains($0.id) && !$0.isBibliography && !$0.isNotes }
 
         // Tier 1: Exact position match (most common - edits within a section)
         if let match = available.first(where: { $0.sortOrder == header.position }) {

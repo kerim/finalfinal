@@ -76,6 +76,7 @@ struct Block: Codable, Identifiable, Equatable, Sendable, FetchableRecord, Mutab
 
     // Special flags
     var isBibliography: Bool
+    var isNotes: Bool               // Footnote notes section
     var isPseudoSection: Bool       // Section break markers
 
     var createdAt: Date
@@ -100,6 +101,7 @@ struct Block: Codable, Identifiable, Equatable, Sendable, FetchableRecord, Mutab
         aggregateGoalType: GoalType = .approx,
         wordCount: Int = 0,
         isBibliography: Bool = false,
+        isNotes: Bool = false,
         isPseudoSection: Bool = false,
         createdAt: Date = Date(),
         updatedAt: Date = Date()
@@ -120,6 +122,7 @@ struct Block: Codable, Identifiable, Equatable, Sendable, FetchableRecord, Mutab
         self.aggregateGoalType = aggregateGoalType
         self.wordCount = wordCount
         self.isBibliography = isBibliography
+        self.isNotes = isNotes
         self.isPseudoSection = isPseudoSection
         self.createdAt = createdAt
         self.updatedAt = updatedAt
@@ -144,6 +147,7 @@ struct Block: Codable, Identifiable, Equatable, Sendable, FetchableRecord, Mutab
         case aggregateGoalType
         case wordCount
         case isBibliography
+        case isNotes
         case isPseudoSection
         case createdAt
         case updatedAt
@@ -168,6 +172,7 @@ struct Block: Codable, Identifiable, Equatable, Sendable, FetchableRecord, Mutab
         case aggregateGoalType
         case wordCount
         case isBibliography
+        case isNotes
         case isPseudoSection
         case createdAt
         case updatedAt
@@ -214,6 +219,7 @@ struct Block: Codable, Identifiable, Equatable, Sendable, FetchableRecord, Mutab
         }
         wordCount = try container.decode(Int.self, forKey: .wordCount)
         isBibliography = try container.decode(Bool.self, forKey: .isBibliography)
+        isNotes = try container.decode(Bool.self, forKey: .isNotes)
         isPseudoSection = try container.decode(Bool.self, forKey: .isPseudoSection)
         createdAt = try container.decode(Date.self, forKey: .createdAt)
         updatedAt = try container.decode(Date.self, forKey: .updatedAt)
@@ -253,6 +259,7 @@ struct Block: Codable, Identifiable, Equatable, Sendable, FetchableRecord, Mutab
         try container.encode(aggregateGoalType.rawValue, forKey: .aggregateGoalType)
         try container.encode(wordCount, forKey: .wordCount)
         try container.encode(isBibliography, forKey: .isBibliography)
+        try container.encode(isNotes, forKey: .isNotes)
         try container.encode(isPseudoSection, forKey: .isPseudoSection)
         try container.encode(createdAt, forKey: .createdAt)
         try container.encode(updatedAt, forKey: .updatedAt)

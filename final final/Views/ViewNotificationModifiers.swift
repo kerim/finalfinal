@@ -256,6 +256,7 @@ extension View {
         sectionSyncService: SectionSyncService,
         annotationSyncService: AnnotationSyncService,
         bibliographySyncService: BibliographySyncService,
+        footnoteSyncService: FootnoteSyncService,
         autoBackupService: AutoBackupService,
         documentManager: DocumentManager
     ) -> some View {
@@ -319,6 +320,14 @@ extension View {
                     bibliographySyncService.checkAndUpdateBibliography(
                         currentCitekeys: citekeys,
                         projectId: projectId
+                    )
+
+                    // Check for footnote changes and update #Notes section
+                    let footnoteRefs = FootnoteSyncService.extractFootnoteRefs(from: newValue)
+                    footnoteSyncService.checkAndUpdateFootnotes(
+                        footnoteRefs: footnoteRefs,
+                        projectId: projectId,
+                        fullContent: newValue
                     )
                 }
 

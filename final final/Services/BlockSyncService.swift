@@ -160,6 +160,13 @@ class BlockSyncService {
             }
         }
 
+        // Notify coordinator so it updates lastPushedContent (prevents redundant updateNSView push)
+        NotificationCenter.default.post(
+            name: .blockSyncDidPushContent,
+            object: nil,
+            userInfo: ["markdown": markdown]
+        )
+
         #if DEBUG
         print("[BlockSyncService] Set content with \(blockIds.count) block IDs atomically")
         #endif

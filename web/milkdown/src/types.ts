@@ -142,6 +142,10 @@ declare global {
       enableSpellcheck: () => void;
       disableSpellcheck: () => void;
       triggerSpellcheck: () => void;
+      // Footnote API
+      setFootnoteDefinitions: (defs: Record<string, string>) => void;
+      insertFootnote: () => string | null;
+      renumberFootnotes: (mapping: Record<string, string>) => void;
       // Find/replace API
       find: (query: string, options?: FindOptions) => FindResult;
       findNext: () => FindResult | null;

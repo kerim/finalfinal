@@ -300,6 +300,16 @@ final class ProjectDatabase: Sendable {
             }
         }
 
+        // Footnotes: add isNotes flag to section and block tables
+        migrator.registerMigration("v12_notes_section") { db in
+            try db.alter(table: "section") { t in
+                t.add(column: "isNotes", .boolean).notNull().defaults(to: false)
+            }
+            try db.alter(table: "block") { t in
+                t.add(column: "isNotes", .boolean).notNull().defaults(to: false)
+            }
+        }
+
         try migrator.migrate(dbWriter)
     }
 

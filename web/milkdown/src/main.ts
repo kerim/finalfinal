@@ -74,6 +74,7 @@ import { blockSyncPlugin } from './block-sync-plugin';
 import { openCAYWPicker } from './cayw';
 import { citationPlugin } from './citation-plugin';
 import { restoreCitationLibrary } from './citation-search';
+import { footnotePlugin, insertFootnote, renumberFootnotes, setFootnoteDefinitions } from './footnote-plugin';
 import {
   getCurrentContent,
   getEditorInstance,
@@ -128,6 +129,7 @@ async function initEditor() {
       .use(bibliographyPlugin) // Intercept <!-- ::auto-bibliography:: --> before commonmark filters it
       .use(annotationPlugin) // Intercept annotation comments before filtering
       .use(citationPlugin) // Parse [@citekey] citations before commonmark
+      .use(footnotePlugin) // Parse [^N] footnote references before commonmark
       .use(commonmark)
       .use(gfm)
       .use(autolinkPlugin) // Auto-link bare URLs on space - AFTER commonmark for link schema
@@ -229,6 +231,19 @@ async function initEditor() {
     true
   );
 
+  // Add keyboard shortcut: Cmd+Shift+N inserts footnote
+  document.addEventListener(
+    'keydown',
+    (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'n') {
+        e.preventDefault();
+        e.stopPropagation();
+        insertFootnote();
+      }
+    },
+    true
+  );
+
   // Add keyboard shortcut: Cmd+K opens link creation/editing
   document.addEventListener(
     'keydown',
@@ -305,6 +320,10 @@ window.FinalFinal = {
   enableSpellcheck: enableSpellcheckImpl,
   disableSpellcheck: disableSpellcheckImpl,
   triggerSpellcheck: triggerSpellcheckImpl,
+  // Footnote API
+  setFootnoteDefinitions,
+  insertFootnote,
+  renumberFootnotes,
   // Find/replace API
   find: findApi,
   findNext: findNextApi,

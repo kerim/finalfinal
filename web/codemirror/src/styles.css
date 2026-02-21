@@ -290,3 +290,25 @@ body {
   border-bottom: 1px solid rgba(128, 128, 128, 0.15);
   margin-bottom: 4px;
 }
+
+/* === Footnote Decoration Styles === */
+
+/* Footnote references [^N] — styled as link, clickable */
+.cm-footnote-ref {
+  color: var(--accent-color, #007aff);
+  cursor: pointer;
+}
+
+.cm-footnote-ref:hover {
+  text-decoration: underline;
+}
+
+/* Footnote definition prefixes [^N]: — styled as link, clickable back-link */
+.cm-footnote-def {
+  color: var(--accent-color, #007aff);
+  cursor: pointer;
+}
+
+.cm-footnote-def:hover {
+  text-decoration: underline;
+}

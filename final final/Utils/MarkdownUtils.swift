@@ -98,6 +98,20 @@ enum MarkdownUtils {
             result = regex.stringByReplacingMatches(in: result, options: [], range: range, withTemplate: "")
         }
 
+        // Remove footnote references: [^1], [^2], etc.
+        let footnoteRefPattern = "\\[\\^\\d+\\](?!:)"
+        if let regex = try? NSRegularExpression(pattern: footnoteRefPattern) {
+            let range = NSRange(result.startIndex..., in: result)
+            result = regex.stringByReplacingMatches(in: result, options: [], range: range, withTemplate: "")
+        }
+
+        // Remove footnote definition prefixes: [^1]: at line start
+        let footnoteDefPattern = "^\\[\\^\\d+\\]:\\s*"
+        if let regex = try? NSRegularExpression(pattern: footnoteDefPattern, options: .anchorsMatchLines) {
+            let range = NSRange(result.startIndex..., in: result)
+            result = regex.stringByReplacingMatches(in: result, options: [], range: range, withTemplate: "")
+        }
+
         // Remove annotations: <!-- ::type:: content -->
         result = stripAnnotations(from: result)
 

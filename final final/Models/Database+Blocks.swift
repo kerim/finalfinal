@@ -466,6 +466,13 @@ extension ProjectDatabase {
                     headingLevel: effectiveHeadingLevel
                 )
                 block.recalculateWordCount()
+
+                // Mark footnote definitions as isNotes (safety net for editor-created blocks)
+                let fragTrimmed = insert.markdownFragment.trimmingCharacters(in: .whitespacesAndNewlines)
+                if fragTrimmed.range(of: #"^\[\^\d+\]:\s*"#, options: .regularExpression) != nil {
+                    block.isNotes = true
+                }
+
                 try block.insert(db)
 
                 // Record the mapping from temp ID to permanent ID

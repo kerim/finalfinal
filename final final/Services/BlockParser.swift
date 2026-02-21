@@ -32,6 +32,7 @@ enum BlockParser {
         let rawBlocks = splitIntoRawBlocks(markdown)
 
         var inBibliographySection = false
+        var inNotesSection = false
 
         for rawBlock in rawBlocks {
             let trimmed = rawBlock.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -54,6 +55,15 @@ enum BlockParser {
                 inBibliographySection = false
             }
             let isBibliography = inBibliographySection
+
+            // Notes section: mark ALL blocks under # Notes with isNotes=true
+            let isNotesHeading = trimmed.lowercased() == "# notes"
+            if isNotesHeading {
+                inNotesSection = true
+            } else if inNotesSection && blockType == .heading {
+                inNotesSection = false
+            }
+            let isNotes = inNotesSection
             let isPseudoSection = trimmed.contains("<!-- ::break:: -->")
 
             // Look up existing metadata for this heading if available
@@ -92,6 +102,7 @@ enum BlockParser {
                 wordGoal: wordGoal,
                 wordCount: wordCount,
                 isBibliography: isBibliography,
+                isNotes: isNotes,
                 isPseudoSection: isPseudoSection
             )
 
@@ -103,18 +114,23 @@ enum BlockParser {
     }
 
     /// Split markdown into raw block strings, respecting code blocks
+    /// Regex pattern for footnote definition start: [^N]:
+    private static let footnoteDefStartPattern = try! NSRegularExpression(pattern: #"^\[\^(\d+)\]:"#)
+
     private static func splitIntoRawBlocks(_ markdown: String) -> [String] {
         var blocks: [String] = []
         var currentBlock = ""
         var inCodeBlock = false
         var inTable = false
+        var inFootnoteDef = false  // Track multi-paragraph footnote definitions
 
         let lines = markdown.components(separatedBy: "\n")
 
-        for line in lines {
+        for (index, line) in lines.enumerated() {
             // Check for code fence
             if line.hasPrefix("```") {
                 inCodeBlock.toggle()
+                inFootnoteDef = false
                 currentBlock += line + "\n"
                 continue
             }
@@ -128,6 +144,7 @@ enum BlockParser {
                 }
                 currentBlock = ""
                 inTable = true
+                inFootnoteDef = false
             } else if !isTableLine && inTable && !line.trimmingCharacters(in: .whitespaces).isEmpty {
                 // Ending a table
                 blocks.append(currentBlock)
@@ -140,13 +157,35 @@ enum BlockParser {
                 continue
             }
 
-            // Empty line marks paragraph boundary
+            // Empty line handling — check for footnote definition continuations
             if line.trimmingCharacters(in: .whitespaces).isEmpty {
+                if inFootnoteDef {
+                    // In a footnote def: peek at next line to see if it's a 4-space continuation
+                    let nextIndex = index + 1
+                    if nextIndex < lines.count && lines[nextIndex].hasPrefix("    ") {
+                        // Keep the empty line as part of the footnote definition block
+                        currentBlock += line + "\n"
+                        continue
+                    } else {
+                        // End of footnote definition
+                        inFootnoteDef = false
+                    }
+                }
                 if !currentBlock.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     blocks.append(currentBlock)
                     currentBlock = ""
                 }
             } else {
+                // Check if this line starts a footnote definition
+                let lineRange = NSRange(line.startIndex..., in: line)
+                if footnoteDefStartPattern.firstMatch(in: line, range: lineRange) != nil {
+                    // Flush previous block before starting footnote def
+                    if !currentBlock.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        blocks.append(currentBlock)
+                        currentBlock = ""
+                    }
+                    inFootnoteDef = true
+                }
                 currentBlock += line + "\n"
             }
         }
@@ -155,6 +194,18 @@ enum BlockParser {
         if !currentBlock.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             blocks.append(currentBlock)
         }
+
+        #if DEBUG
+        let footnoteBlocks = blocks.filter {
+            $0.range(of: #"\[\^\d+\]:"#, options: .regularExpression) != nil
+        }
+        if !footnoteBlocks.isEmpty {
+            print("[DIAG-FN] splitIntoRawBlocks: \(blocks.count) total blocks, \(footnoteBlocks.count) contain [^N]:")
+            for (i, fb) in footnoteBlocks.enumerated() {
+                print("[DIAG-FN]   fn-block[\(i)]: \"\(fb.trimmingCharacters(in: .whitespacesAndNewlines).prefix(80))\"")
+            }
+        }
+        #endif
 
         return blocks
     }
@@ -278,6 +329,12 @@ enum BlockParser {
             break
         }
 
+        // Strip footnote definition prefixes: [^N]: at line start
+        if let regex = try? NSRegularExpression(pattern: #"^\[\^\d+\]:\s*"#, options: .anchorsMatchLines) {
+            let range = NSRange(text.startIndex..., in: text)
+            text = regex.stringByReplacingMatches(in: text, options: [], range: range, withTemplate: "")
+        }
+
         // Strip remaining markdown syntax
         text = MarkdownUtils.stripMarkdownSyntax(from: text)
 
@@ -292,9 +349,32 @@ enum BlockParser {
             let bKey = (b.sortOrder, b.blockType == .heading ? 0 : 1)
             return aKey < bKey
         }
-        return sorted
+        let result = sorted
             .map { $0.markdownFragment }
             .joined(separator: "\n\n")
+
+        #if DEBUG
+        if let defPattern = try? NSRegularExpression(pattern: #"^\[\^(\d+)\]:"#, options: .anchorsMatchLines) {
+            let range = NSRange(result.startIndex..., in: result)
+            let matches = defPattern.matches(in: result, range: range)
+            if matches.count > 0 {
+                var labels: [String] = []
+                for match in matches {
+                    if let r = Range(match.range(at: 1), in: result) {
+                        labels.append(String(result[r]))
+                    }
+                }
+                let grouped = Dictionary(grouping: labels, by: { $0 })
+                let duplicates = grouped.filter { $0.value.count > 1 }
+                if !duplicates.isEmpty {
+                    print("[DIAG-FN] assembleMarkdown: DUPLICATE definitions: \(duplicates.keys.sorted())")
+                }
+                print("[DIAG-FN] assembleMarkdown: \(matches.count) definition(s) for labels \(labels)")
+            }
+        }
+        #endif
+
+        return result
     }
 }
 

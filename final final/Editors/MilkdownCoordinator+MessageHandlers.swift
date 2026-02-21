@@ -227,6 +227,15 @@ extension MilkdownEditor.Coordinator {
             }
         }
 
+        // Handle footnote navigation requests from editor
+        if message.name == "navigateToFootnote", let body = message.body as? [String: Any] {
+            Task { @MainActor in
+                guard let label = body["label"] as? String,
+                      let direction = body["direction"] as? String else { return }
+                self.handleNavigateToFootnote(label: label, direction: direction)
+            }
+        }
+
         // Handle spellcheck messages from editor
         if message.name == "spellcheck" {
             Task { @MainActor in
@@ -272,6 +281,31 @@ extension MilkdownEditor.Coordinator {
 
                 default: break
                 }
+            }
+        }
+    }
+
+    /// Handle footnote navigation — find offset of target and scroll to it
+    @MainActor
+    func handleNavigateToFootnote(label: String, direction: String) {
+        // Get current content from the binding to search for offset
+        let content = contentBinding.wrappedValue
+
+        if direction == "toDefinition" {
+            // Find [^N]: definition in #Notes section
+            let pattern = "[^\(label)]:"
+            if let range = content.range(of: pattern) {
+                let offset = content.distance(from: content.startIndex, to: range.lowerBound)
+                scrollToOffset(offset)
+            }
+        } else if direction == "toReference" {
+            // Find first [^N] reference in document body (not in #Notes)
+            // Use regex to match [^N] but NOT [^N]:
+            let pattern = "\\[\\^\(label)\\](?!:)"
+            if let regex = try? NSRegularExpression(pattern: pattern),
+               let match = regex.firstMatch(in: content, range: NSRange(content.startIndex..., in: content)) {
+                let offset = match.range.location
+                scrollToOffset(offset)
             }
         }
     }

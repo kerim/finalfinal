@@ -125,9 +125,11 @@ extension EditorViewState {
             zoomedBlockRange = (start: headingBlock.sortOrder, end: endSortOrder)
 
             // Fetch blocks in the range (including the heading itself)
+            // Exclude bibliography and notes blocks (managed sections)
             var zoomedBlocks = sorted.filter { block in
                 block.sortOrder >= headingBlock.sortOrder &&
                 !block.isBibliography &&
+                !block.isNotes &&
                 (endSortOrder == nil || block.sortOrder < endSortOrder!)
             }
 
@@ -140,7 +142,25 @@ extension EditorViewState {
             }
             #endif
 
-            let zoomedContent = BlockParser.assembleMarkdown(from: zoomedBlocks)
+            var zoomedContent = BlockParser.assembleMarkdown(from: zoomedBlocks)
+
+            // Append mini #Notes section if zoomed content contains footnote references
+            let footnoteRefs = FootnoteSyncService.extractFootnoteRefs(from: zoomedContent)
+            if !footnoteRefs.isEmpty {
+                // Find the #Notes block from the full document
+                if let notesBlock = sorted.first(where: { $0.isNotes }) {
+                    let defs = FootnoteSyncService.extractFootnoteDefinitions(from: notesBlock.markdownFragment)
+                    var miniNotes = "\n\n<!-- ::zoom-notes:: -->\n# Notes\n"
+                    for ref in footnoteRefs {
+                        if let def = defs[ref], !def.isEmpty {
+                            miniNotes += "\n[^\(ref)]: \(def)\n"
+                        } else {
+                            miniNotes += "\n[^\(ref)]: \n"
+                        }
+                    }
+                    zoomedContent += miniNotes
+                }
+            }
 
             #if DEBUG
             print("[Zoom] Content preview (\(zoomedContent.count) chars): \(String(zoomedContent.prefix(200)))")
@@ -316,8 +336,11 @@ extension EditorViewState {
                 )
             }
 
+            // Strip mini #Notes marker before parsing (only present when zoomed)
+            let contentToParse = SectionSyncService.stripZoomNotes(from: content).stripped
+
             let blocks = BlockParser.parse(
-                markdown: content,
+                markdown: contentToParse,
                 projectId: pid,
                 existingSectionMetadata: metadata.isEmpty ? nil : metadata
             )

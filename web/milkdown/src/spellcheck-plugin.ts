@@ -131,8 +131,8 @@ function extractSegments(view: EditorView): TextSegment[] {
     const blockId = pos; // Paragraph position used to group related segments
 
     node.forEach((child, offset) => {
-      // Skip citation nodes (inline atoms)
-      if (child.type.name === 'citation' || child.type.name === 'section_break') {
+      // Skip inline atom nodes (citations, section breaks, footnote refs)
+      if (child.type.name === 'citation' || child.type.name === 'section_break' || child.type.name === 'footnote_ref') {
         // If we have accumulated text, emit a segment
         if (blockText.length > 0) {
           segments.push({ text: blockText, from: segmentStart, to: segmentStart + blockText.length, blockId });

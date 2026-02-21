@@ -13,12 +13,14 @@ extension SectionSyncService {
     /// - Parameters:
     ///   - markdown: The markdown content to parse
     ///   - existingBibTitle: Title of the existing bibliography section (if any) to detect bibliography by title match
-    func parseHeaders(from markdown: String, existingBibTitle: String? = nil) -> [ParsedHeader] {
+    ///   - existingNotesTitle: Title of the existing notes section (if any) to detect notes by title match
+    func parseHeaders(from markdown: String, existingBibTitle: String? = nil, existingNotesTitle: String? = nil) -> [ParsedHeader] {
 
         var headers: [ParsedHeader] = []
         var currentOffset = 0
         var inCodeBlock = false
         var inAutoBibliography = false  // Track auto-bibliography section (managed by BibliographySyncService)
+        var inAutoNotes = false  // Track auto-notes section (managed by FootnoteSyncService)
 
         // Track section boundaries
         struct SectionBoundary {
@@ -31,11 +33,19 @@ extension SectionSyncService {
         var boundaries: [SectionBoundary] = []
         var lastActualHeaderLevel: Int = 1  // Default to H1 for pseudo-sections at document start
 
-        // Track where bibliography section starts (to end preceding section there)
+        // Track where bibliography/notes sections start (to end preceding section there)
         var bibliographyStartOffset: Int?
+        var notesStartOffset: Int?
+
+        // For import auto-detection: track "Notes" heading found without existingNotesTitle
+        // Will be confirmed as notes section if content contains [^N]: patterns
+        var pendingNotesOffset: Int?
+        var pendingNotesBoundaryIndex: Int?
 
         // Bibliography detection: use existing title if provided, otherwise fall back to configured name
         let bibHeaderName = existingBibTitle ?? ExportSettingsManager.shared.bibliographyHeaderName
+        // Notes detection: use existing title if provided, otherwise fall back to "Notes"
+        let notesHeaderName = existingNotesTitle ?? "Notes"
 
         // First pass: find all headers and pseudo-sections
         let lines = markdown.split(separator: "\n", omittingEmptySubsequences: false)
@@ -57,8 +67,8 @@ extension SectionSyncService {
                 continue  // Skip - header on same line, don't parse as separate section
             }
 
-            // Skip headers inside code blocks or auto-bibliography sections
-            if !inCodeBlock && !inAutoBibliography {
+            // Skip headers inside code blocks or auto-managed sections
+            if !inCodeBlock && !inAutoBibliography && !inAutoNotes {
                 // Check for pseudo-section marker
                 if trimmed == "<!-- ::break:: -->" {
                     // Pseudo-sections inherit level from preceding header (not 0!)
@@ -78,6 +88,22 @@ extension SectionSyncService {
                         inAutoBibliography = true
                         bibliographyStartOffset = currentOffset
                         // Don't add to boundaries - bibliography is managed separately
+                    } else if header.title == notesHeaderName && existingNotesTitle != nil {
+                        inAutoNotes = true
+                        notesStartOffset = currentOffset
+                        // Don't add to boundaries - notes section is managed separately
+                    } else if header.title == "Notes" && existingNotesTitle == nil {
+                        // Import auto-detection: tentatively add as regular section,
+                        // but record its index so we can remove it if content has [^N]: patterns
+                        lastActualHeaderLevel = header.level
+                        boundaries.append(SectionBoundary(
+                            startOffset: currentOffset,
+                            level: header.level,
+                            title: header.title,
+                            isPseudoSection: false
+                        ))
+                        pendingNotesOffset = currentOffset
+                        pendingNotesBoundaryIndex = boundaries.count - 1
                     } else {
                         lastActualHeaderLevel = header.level  // Track for subsequent pseudo-sections
                         boundaries.append(SectionBoundary(
@@ -93,6 +119,26 @@ extension SectionSyncService {
             currentOffset += lineStr.count + 1 // +1 for newline
         }
 
+        // Import auto-detection: if we found a "Notes" heading without an existing DB entry,
+        // check if its content contains [^N]: footnote definitions to avoid false positives
+        if let pendingIndex = pendingNotesBoundaryIndex, let pendingOffset = pendingNotesOffset {
+            // Extract the content of the pending notes section
+            let nextBoundaryOffset = pendingIndex + 1 < boundaries.count
+                ? boundaries[pendingIndex + 1].startOffset
+                : markdown.count
+            let startIdx = markdown.index(markdown.startIndex, offsetBy: min(pendingOffset, markdown.count))
+            let endIdx = markdown.index(markdown.startIndex, offsetBy: min(nextBoundaryOffset, markdown.count))
+            let pendingContent = String(markdown[startIdx..<endIdx])
+
+            // Check for [^N]: definition patterns
+            if pendingContent.range(of: #"\[\^\d+\]:"#, options: .regularExpression) != nil {
+                // Confirmed as notes section — remove from boundaries and mark as managed
+                boundaries.remove(at: pendingIndex)
+                notesStartOffset = pendingOffset
+                inAutoNotes = true
+            }
+        }
+
         guard !boundaries.isEmpty else { return [] }
 
         // Second pass: calculate content for each section
@@ -106,10 +152,14 @@ extension SectionSyncService {
                 endOffset = contentLength
             }
 
-            // If this is the last section before bibliography, end it at the bibliography marker
-            // This prevents bibliography content from being absorbed into the preceding section
+            // If this is the last section before bibliography/notes, end it at the managed section
+            // This prevents managed section content from being absorbed into the preceding section
+            if let notesStart = notesStartOffset {
+                if boundary.startOffset < notesStart && endOffset > notesStart {
+                    endOffset = notesStart
+                }
+            }
             if let bibStart = bibliographyStartOffset {
-                // Check if this section would absorb the bibliography
                 if boundary.startOffset < bibStart && endOffset > bibStart {
                     endOffset = bibStart
                 }

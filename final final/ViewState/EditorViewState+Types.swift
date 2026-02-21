@@ -35,6 +35,12 @@ extension Notification.Name {
     static let citationLibraryChanged = Notification.Name("citationLibraryChanged")
     /// Posted when bibliography section content changes in the database
     static let bibliographySectionChanged = Notification.Name("bibliographySectionChanged")
+    /// Posted when footnote notes section content changes in the database
+    static let notesSectionChanged = Notification.Name("notesSectionChanged")
+    /// Posted to insert a footnote at the current cursor position (Cmd+Shift+N)
+    static let insertFootnote = Notification.Name("insertFootnote")
+    /// Posted when footnote references need renumbering - editors should call renumberFootnotes(mapping)
+    static let renumberFootnotes = Notification.Name("renumberFootnotes")
     /// Posted when editor appearance mode changes (WYSIWYG ↔ source) - Phase C dual-appearance
     static let editorAppearanceModeChanged = Notification.Name("editorAppearanceModeChanged")
     /// Posted when zoom-out completes and contentState is back to idle
@@ -42,6 +48,8 @@ extension Notification.Name {
     static let didZoomOut = Notification.Name("didZoomOut")
     /// Posted when spellcheck is toggled on/off - editors should enable/disable spellcheck
     static let spellcheckStateChanged = Notification.Name("spellcheckStateChanged")
+    /// Posted after BlockSyncService pushes content to JS — coordinator updates lastPushedContent
+    static let blockSyncDidPushContent = Notification.Name("blockSyncDidPushContent")
 }
 
 enum EditorMode: String, CaseIterable {

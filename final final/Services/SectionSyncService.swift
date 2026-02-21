@@ -4,6 +4,7 @@
 //
 
 import Foundation
+import GRDB
 
 /// Service to sync editor content with sections database
 /// Uses position-based reconciliation with surgical database updates
@@ -207,9 +208,10 @@ class SectionSyncService {
             return
         }
 
-        // 2. Parse headers from markdown (pass existing bibliography title for detection)
+        // 2. Parse headers from markdown (pass existing bibliography/notes title for detection)
         let existingBibTitle = dbSections.first(where: { $0.isBibliography })?.title
-        let headers = parseHeaders(from: markdown, existingBibTitle: existingBibTitle)
+        let existingNotesTitle = dbSections.first(where: { $0.isNotes })?.title
+        let headers = parseHeaders(from: markdown, existingBibTitle: existingBibTitle, existingNotesTitle: existingNotesTitle)
         guard !headers.isEmpty else { return }
 
         // 3. Reconcile to find minimal changes
@@ -258,9 +260,19 @@ class SectionSyncService {
             return
         }
 
-        // Parse zoomed markdown to extract section content (pass bibliography title for detection)
+        // Strip mini #Notes section (zoom-notes marker) before parsing
+        // The marker is appended during zoom-in for display purposes only
+        let (strippedMarkdown, miniNotesContent) = Self.stripZoomNotes(from: markdown)
+
+        // Parse zoomed markdown to extract section content (pass bibliography/notes title for detection)
         let existingBibTitle = existingSections.first(where: { $0.isBibliography })?.title
-        let headers = parseHeaders(from: markdown, existingBibTitle: existingBibTitle)
+        let existingNotesTitle = existingSections.first(where: { $0.isNotes })?.title
+        let headers = parseHeaders(from: strippedMarkdown, existingBibTitle: existingBibTitle, existingNotesTitle: existingNotesTitle)
+
+        // If mini #Notes was edited while zoomed, sync definitions back to main Notes block
+        if let miniNotes = miniNotesContent {
+            syncMiniNotesBack(miniNotes, existingSections: existingSections, db: db, pid: pid)
+        }
 
         // Build lookup of zoomed sections by sortOrder within zoomed subset
         let zoomedExisting = existingSections
@@ -364,6 +376,75 @@ class SectionSyncService {
             } catch {
                 print("[SectionSyncService] Error updating zoomed sections: \(error)")
             }
+        }
+    }
+
+    // MARK: - Zoom Notes Helpers
+
+    /// Strip the `<!-- ::zoom-notes:: -->` marker and everything after it from zoomed markdown.
+    /// Returns the stripped markdown and the mini #Notes content (if any).
+    static func stripZoomNotes(from markdown: String) -> (stripped: String, miniNotes: String?) {
+        let marker = "<!-- ::zoom-notes:: -->"
+        guard let range = markdown.range(of: marker) else {
+            return (markdown, nil)
+        }
+        let stripped = String(markdown[..<range.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+        let miniNotes = String(markdown[range.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+        return (stripped, miniNotes.isEmpty ? nil : miniNotes)
+    }
+
+    /// Sync edited mini #Notes definitions back to the main Notes block in the database.
+    /// Called when zoomed content contains `<!-- ::zoom-notes:: -->` marker with definitions.
+    private func syncMiniNotesBack(
+        _ miniNotesContent: String,
+        existingSections: [Section],
+        db: ProjectDatabase,
+        pid: String
+    ) {
+        // Extract definitions from the mini #Notes content
+        let editedDefs = FootnoteSyncService.extractFootnoteDefinitions(from: miniNotesContent)
+        guard !editedDefs.isEmpty else { return }
+
+        // Find the main Notes section
+        guard let notesSection = existingSections.first(where: { $0.isNotes }) else { return }
+
+        // Extract current definitions from the main Notes section
+        let currentDefs = FootnoteSyncService.extractFootnoteDefinitions(from: notesSection.markdownContent)
+
+        // Merge: edited definitions override current ones for matching labels
+        var mergedDefs = currentDefs
+        for (label, text) in editedDefs {
+            mergedDefs[label] = text
+        }
+
+        // Check if anything actually changed
+        guard mergedDefs != currentDefs else { return }
+
+        // Rebuild the #Notes markdown with merged definitions
+        // Sort labels numerically for consistent ordering
+        let sortedLabels = mergedDefs.keys.sorted { (Int($0) ?? 0) < (Int($1) ?? 0) }
+        var newNotesMarkdown = "# Notes\n\n"
+        for label in sortedLabels {
+            let def = mergedDefs[label] ?? ""
+            newNotesMarkdown += "[^\(label)]: \(def)\n\n"
+        }
+
+        // Update the Notes block in the database
+        do {
+            try db.write { dbConn in
+                if var notesBlock = try Block
+                    .filter(Block.Columns.projectId == pid)
+                    .filter(Block.Columns.isNotes == true)
+                    .fetchOne(dbConn) {
+                    notesBlock.markdownFragment = newNotesMarkdown
+                    notesBlock.textContent = "Notes"
+                    notesBlock.wordCount = MarkdownUtils.wordCount(for: newNotesMarkdown)
+                    notesBlock.updatedAt = Date()
+                    try notesBlock.update(dbConn)
+                }
+            }
+        } catch {
+            print("[SectionSyncService] Error syncing mini notes back: \(error)")
         }
     }
 

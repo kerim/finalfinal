@@ -29,6 +29,7 @@ private struct HeadingMetadata {
     let aggregateGoal: Int?
     let aggregateGoalType: GoalType
     let isBibliography: Bool
+    let isNotes: Bool
 }
 
 // MARK: - ProjectDatabase Block Reorder/Replace
@@ -54,7 +55,7 @@ extension ProjectDatabase {
                     status: block.status, tags: block.tags,
                     wordGoal: block.wordGoal, goalType: block.goalType,
                     aggregateGoal: block.aggregateGoal, aggregateGoalType: block.aggregateGoalType,
-                    isBibliography: block.isBibliography
+                    isBibliography: block.isBibliography, isNotes: block.isNotes
                 )
             }
 
@@ -73,9 +74,26 @@ extension ProjectDatabase {
                     block.aggregateGoal = meta.aggregateGoal
                     block.aggregateGoalType = meta.aggregateGoalType
                     if meta.isBibliography { block.isBibliography = true }
+                    if meta.isNotes { block.isNotes = true }
                 }
                 try block.insert(db)
             }
+
+            #if DEBUG
+            let allInserted = try Block
+                .filter(Block.Columns.projectId == projectId)
+                .fetchAll(db)
+            let notesCount = allInserted.filter { $0.isNotes }.count
+            let fnBlocks = allInserted.filter {
+                $0.markdownFragment.range(of: #"\[\^\d+\]:"#, options: .regularExpression) != nil
+            }
+            if !fnBlocks.isEmpty {
+                print("[DIAG-FN] replaceBlocks: \(allInserted.count) total, \(notesCount) isNotes=true, \(fnBlocks.count) contain [^N]:")
+                for block in fnBlocks {
+                    print("[DIAG-FN]   id=\(block.id.prefix(8))… type=\(block.blockType) isNotes=\(block.isNotes) frag=\"\(block.markdownFragment.prefix(60))\"")
+                }
+            }
+            #endif
         }
     }
 
@@ -110,7 +128,8 @@ extension ProjectDatabase {
                     goalType: block.goalType,
                     aggregateGoal: block.aggregateGoal,
                     aggregateGoalType: block.aggregateGoalType,
-                    isBibliography: block.isBibliography
+                    isBibliography: block.isBibliography,
+                    isNotes: block.isNotes
                 )
                 if idByTitle[block.textContent] == nil {
                     idByTitle[block.textContent] = block.id
@@ -161,6 +180,7 @@ extension ProjectDatabase {
                     block.aggregateGoal = meta.aggregateGoal
                     block.aggregateGoalType = meta.aggregateGoalType
                     if meta.isBibliography { block.isBibliography = true }
+                    if meta.isNotes { block.isNotes = true }
                 }
 
                 try block.insert(db)

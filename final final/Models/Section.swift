@@ -118,6 +118,7 @@ struct Section: Codable, Identifiable, Equatable, Sendable, FetchableRecord, Mut
     var headerLevel: Int  // 1-6 for headers (pseudo-sections inherit level from preceding section)
     var isPseudoSection: Bool  // True for break markers (<!-- ::break:: -->)
     var isBibliography: Bool  // True for auto-generated bibliography section
+    var isNotes: Bool  // True for auto-generated footnote notes section
     var title: String
     var markdownContent: String
     var status: SectionStatus
@@ -141,6 +142,7 @@ struct Section: Codable, Identifiable, Equatable, Sendable, FetchableRecord, Mut
         headerLevel: Int,
         isPseudoSection: Bool = false,
         isBibliography: Bool = false,
+        isNotes: Bool = false,
         title: String,
         markdownContent: String = "",
         status: SectionStatus = .next,
@@ -161,6 +163,7 @@ struct Section: Codable, Identifiable, Equatable, Sendable, FetchableRecord, Mut
         self.headerLevel = headerLevel
         self.isPseudoSection = isPseudoSection
         self.isBibliography = isBibliography
+        self.isNotes = isNotes
         self.title = title
         self.markdownContent = markdownContent
         self.status = status
@@ -185,6 +188,7 @@ struct Section: Codable, Identifiable, Equatable, Sendable, FetchableRecord, Mut
         case headerLevel
         case isPseudoSection
         case isBibliography
+        case isNotes
         case title
         case markdownContent
         case status
@@ -209,6 +213,7 @@ struct Section: Codable, Identifiable, Equatable, Sendable, FetchableRecord, Mut
         case headerLevel
         case isPseudoSection
         case isBibliography
+        case isNotes
         case title
         case markdownContent
         case status
@@ -232,6 +237,7 @@ struct Section: Codable, Identifiable, Equatable, Sendable, FetchableRecord, Mut
         headerLevel = try container.decode(Int.self, forKey: .headerLevel)
         isPseudoSection = try container.decode(Bool.self, forKey: .isPseudoSection)
         isBibliography = try container.decode(Bool.self, forKey: .isBibliography)
+        isNotes = try container.decode(Bool.self, forKey: .isNotes)
         title = try container.decode(String.self, forKey: .title)
         markdownContent = try container.decode(String.self, forKey: .markdownContent)
         status = try container.decode(SectionStatus.self, forKey: .status)
@@ -263,6 +269,7 @@ struct Section: Codable, Identifiable, Equatable, Sendable, FetchableRecord, Mut
         try container.encode(headerLevel, forKey: .headerLevel)
         try container.encode(isPseudoSection, forKey: .isPseudoSection)
         try container.encode(isBibliography, forKey: .isBibliography)
+        try container.encode(isNotes, forKey: .isNotes)
         try container.encode(title, forKey: .title)
         try container.encode(markdownContent, forKey: .markdownContent)
         try container.encode(status, forKey: .status)

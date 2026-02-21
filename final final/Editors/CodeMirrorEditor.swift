@@ -45,6 +45,7 @@ struct CodeMirrorEditor: NSViewRepresentable {
             controller.add(context.coordinator, name: "paintComplete")
             controller.add(context.coordinator, name: "openURL")
             controller.add(context.coordinator, name: "spellcheck")
+            controller.add(context.coordinator, name: "navigateToFootnote")
 
             preloaded.navigationDelegate = context.coordinator
             context.coordinator.webView = preloaded
@@ -102,6 +103,7 @@ struct CodeMirrorEditor: NSViewRepresentable {
         configuration.userContentController.add(context.coordinator, name: "paintComplete")
         configuration.userContentController.add(context.coordinator, name: "openURL")
         configuration.userContentController.add(context.coordinator, name: "spellcheck")
+        configuration.userContentController.add(context.coordinator, name: "navigateToFootnote")
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = context.coordinator
@@ -209,6 +211,8 @@ struct CodeMirrorEditor: NSViewRepresentable {
         var spellcheckStateObserver: NSObjectProtocol?
         var proofingModeObserver: NSObjectProtocol?
         var proofingSettingsObserver: NSObjectProtocol?
+        var insertFootnoteObserver: NSObjectProtocol?
+        var renumberFootnotesObserver: NSObjectProtocol?
 
         /// Active spellcheck task (cancelled on new check or cleanup)
         var spellcheckTask: Task<Void, Never>?
@@ -321,6 +325,26 @@ struct CodeMirrorEditor: NSViewRepresentable {
             ) { [weak self] _ in
                 self?.triggerSpellcheck()
             }
+
+            // Subscribe to insert footnote notification (Cmd+Shift+N)
+            insertFootnoteObserver = NotificationCenter.default.addObserver(
+                forName: .insertFootnote,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                self?.insertFootnoteAtCursor()
+            }
+
+            // Subscribe to renumber footnotes notification
+            renumberFootnotesObserver = NotificationCenter.default.addObserver(
+                forName: .renumberFootnotes,
+                object: nil,
+                queue: .main
+            ) { [weak self] notification in
+                if let mapping = notification.userInfo?["mapping"] as? [String: String] {
+                    self?.renumberFootnotes(mapping: mapping)
+                }
+            }
         }
 
         deinit {
@@ -347,6 +371,12 @@ struct CodeMirrorEditor: NSViewRepresentable {
                 NotificationCenter.default.removeObserver(observer)
             }
             if let observer = proofingSettingsObserver {
+                NotificationCenter.default.removeObserver(observer)
+            }
+            if let observer = insertFootnoteObserver {
+                NotificationCenter.default.removeObserver(observer)
+            }
+            if let observer = renumberFootnotesObserver {
                 NotificationCenter.default.removeObserver(observer)
             }
         }

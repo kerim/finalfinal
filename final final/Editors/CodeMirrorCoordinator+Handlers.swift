@@ -49,6 +49,14 @@ extension CodeMirrorEditor.Coordinator {
             NotificationCenter.default.removeObserver(observer)
             proofingSettingsObserver = nil
         }
+        if let observer = insertFootnoteObserver {
+            NotificationCenter.default.removeObserver(observer)
+            insertFootnoteObserver = nil
+        }
+        if let observer = renumberFootnotesObserver {
+            NotificationCenter.default.removeObserver(observer)
+            renumberFootnotesObserver = nil
+        }
         webView = nil
     }
 
@@ -276,6 +284,15 @@ extension CodeMirrorEditor.Coordinator {
                    ["http", "https", "mailto"].contains(scheme) {
                     NSWorkspace.shared.open(url)
                 }
+            }
+        }
+
+        // Handle footnote navigation requests from editor
+        if message.name == "navigateToFootnote", let body = message.body as? [String: Any] {
+            Task { @MainActor in
+                guard let label = body["label"] as? String,
+                      let direction = body["direction"] as? String else { return }
+                self.handleNavigateToFootnote(label: label, direction: direction)
             }
         }
 
@@ -652,6 +669,43 @@ extension CodeMirrorEditor.Coordinator {
     func insertAnnotation(type: AnnotationType) {
         guard isEditorReady, let webView else { return }
         webView.evaluateJavaScript("window.FinalFinal.insertAnnotation('\(type.rawValue)')") { _, _ in }
+    }
+
+    /// Handle footnote navigation — find offset of target and scroll to it
+    @MainActor
+    func handleNavigateToFootnote(label: String, direction: String) {
+        let content = contentBinding.wrappedValue
+
+        if direction == "toDefinition" {
+            // Find [^N]: definition in #Notes section
+            let pattern = "[^\(label)]:"
+            if let range = content.range(of: pattern) {
+                let offset = content.distance(from: content.startIndex, to: range.lowerBound)
+                scrollToOffset(offset)
+            }
+        } else if direction == "toReference" {
+            // Find first [^N] reference in document body (not in #Notes)
+            let pattern = "\\[\\^\(label)\\](?!:)"
+            if let regex = try? NSRegularExpression(pattern: pattern),
+               let match = regex.firstMatch(in: content, range: NSRange(content.startIndex..., in: content)) {
+                let offset = match.range.location
+                scrollToOffset(offset)
+            }
+        }
+    }
+
+    /// Insert a footnote reference at the current cursor position (Cmd+Shift+N)
+    func insertFootnoteAtCursor() {
+        guard isEditorReady, let webView else { return }
+        webView.evaluateJavaScript("window.FinalFinal.insertFootnote()") { _, _ in }
+    }
+
+    /// Renumber footnote references in the editor using old→new label mapping
+    func renumberFootnotes(mapping: [String: String]) {
+        guard isEditorReady, let webView else { return }
+        guard let jsonData = try? JSONSerialization.data(withJSONObject: mapping),
+              let json = String(data: jsonData, encoding: .utf8) else { return }
+        webView.evaluateJavaScript("window.FinalFinal.renumberFootnotes(\(json))") { _, _ in }
     }
 
     /// Toggle highlight mark on selected text (Cmd+Shift+H)

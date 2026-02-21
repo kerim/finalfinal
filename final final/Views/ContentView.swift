@@ -51,6 +51,7 @@ struct ContentView: View {
     @State var blockSyncService = BlockSyncService()
     @State var annotationSyncService = AnnotationSyncService()
     @State var bibliographySyncService = BibliographySyncService()
+    @State var footnoteSyncService = FootnoteSyncService()
     @State var autoBackupService = AutoBackupService()
     @State private var sidebarVisibility: NavigationSplitViewVisibility = .all
 
@@ -173,6 +174,34 @@ struct ContentView: View {
                     // setContentWithBlockIds' defer clears isSyncSuppressed
                 }
             }
+            .onReceive(NotificationCenter.default.publisher(for: .notesSectionChanged)) { _ in
+                // Notes section was updated in the database - rebuild editor content
+                guard editorState.zoomedSectionId == nil else { return }
+                guard editorState.contentState == .idle else { return }
+                guard !editorState.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+
+                // Atomic content+IDs push (same pattern as bibliography)
+                editorState.contentState = .bibliographyUpdate  // Reuse same state
+                blockSyncService.isSyncSuppressed = true
+                editorState.isResettingContent = true
+
+                guard let result = fetchBlocksWithIds() else {
+                    editorState.isResettingContent = false
+                    editorState.contentState = .idle
+                    blockSyncService.isSyncSuppressed = false
+                    return
+                }
+
+                editorState.content = result.markdown
+                updateSourceContentIfNeeded()
+
+                Task {
+                    await blockSyncService.setContentWithBlockIds(
+                        markdown: result.markdown, blockIds: result.blockIds)
+                    editorState.isResettingContent = false
+                    editorState.contentState = .idle
+                }
+            }
             .onReceive(NotificationCenter.default.publisher(for: .didZoomOut)) { _ in
                 // Re-sync annotations with full document content after zoom-out.
                 // During zoom, annotation reconciliation deletes annotations outside the zoomed
@@ -247,6 +276,7 @@ struct ContentView: View {
                 sectionSyncService: sectionSyncService,
                 annotationSyncService: annotationSyncService,
                 bibliographySyncService: bibliographySyncService,
+                footnoteSyncService: footnoteSyncService,
                 autoBackupService: autoBackupService,
                 documentManager: documentManager
             )

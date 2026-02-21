@@ -29,7 +29,9 @@ import {
   insertAnnotation,
   insertAtCursor,
   insertBreak,
+  insertFootnote,
   insertLink,
+  renumberFootnotes,
   replaceCurrent,
   resetForProjectSwitch,
   scrollCursorToCenter,
@@ -46,6 +48,7 @@ import {
 import { updateCitationAddButton } from './citations';
 import { getPendingSlashUndo, setEditorExtensions, setEditorView, setPendingSlashUndo } from './editor-state';
 import { focusModePlugin, isFocusModeEnabled } from './focus-mode-plugin';
+import { footnoteDecorationPlugin } from './footnote-decoration-plugin';
 import { customHighlightStyle, headingDecorationPlugin, syntaxHighlighting } from './heading-plugin';
 import { installLineHeightFix } from './line-height-fix';
 import { scrollStabilizer } from './scroll-stabilizer';
@@ -195,6 +198,8 @@ function initEditor() {
     }),
     // Section anchor plugin - hides <!-- @sid:UUID --> comments and handles clipboard
     anchorPlugin(),
+    // Footnote decoration plugin - clickable [^N] refs and [^N]: defs
+    footnoteDecorationPlugin(),
     // Spellcheck/grammar decorations via NSSpellChecker
     ...spellcheckPlugin(),
   ];
@@ -243,6 +248,12 @@ window.FinalFinal = {
   citationPickerCallback,
   citationPickerCancelled,
   citationPickerError,
+  // Footnote API
+  setFootnoteDefinitions: (_defs: Record<string, string>) => {
+    // CodeMirror shows raw markdown — no popup needed, but API must exist for Swift calls
+  },
+  insertFootnote,
+  renumberFootnotes,
   // Spellcheck API
   setSpellcheckResults,
   enableSpellcheck,

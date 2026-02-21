@@ -323,12 +323,15 @@ extension ContentView {
                         if let db = documentManager.projectDatabase,
                            let pid = documentManager.projectId {
                             blockSyncService.configure(database: db, projectId: pid, webView: webView)
+                            // Prevent updateNSView race during initial content push
+                            editorState.isResettingContent = true
                             // Atomic push: content + block IDs in one JS call (no temp ID warnings)
                             Task {
                                 if let result = fetchBlocksWithIds() {
                                     await blockSyncService.setContentWithBlockIds(
                                         markdown: result.markdown, blockIds: result.blockIds)
                                 }
+                                editorState.isResettingContent = false
                                 blockSyncService.startPolling()
                             }
                         }

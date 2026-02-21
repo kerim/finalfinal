@@ -173,12 +173,26 @@ export function getContent(): string {
   // Only matches \# followed by 1-5 more # chars and whitespace at line start.
   markdown = markdown.replace(/^\\(#{1,6}\s)/gm, '$1');
 
+  // Unescape footnote definition brackets escaped by ProseMirror's serializer.
+  // Definitions are text paragraphs in # Notes — restore [^N]: for correct parsing.
+  markdown = markdown.replace(/^\\(\[\^\d+\]:)/gm, '$1');
+
   // Fix double ## prefixes in source mode: "## ## Heading" → "## Heading"
   if (sourceEnabled) {
     markdown = markdown.replace(/^(#{1,6}) \1 /gm, '$1 ');
   }
 
   const trimmed = markdown.trim();
+
+  // [DIAG-FN] Check Notes section serialization
+  const notesIdx = markdown.indexOf('# Notes');
+  if (notesIdx !== -1) {
+    const notesPreview = markdown.slice(notesIdx, notesIdx + 300);
+    console.log('[DIAG-FN] getContent Notes:', JSON.stringify(notesPreview));
+    if (notesPreview.includes('\\[') || notesPreview.includes('\\]')) {
+      console.log('[DIAG-FN] WARNING: Escaped brackets in Notes!');
+    }
+  }
 
   // Empty/minimal document may serialize to just a section break marker - treat as empty
   if (trimmed === '' || trimmed === '<!-- ::break:: -->') {
@@ -288,14 +302,86 @@ export function setContentWithBlockIds(
   blockIds: string[],
   options?: { scrollToStart?: boolean }
 ): void {
-  // 1. Set content (parse, dispatch, resetAndSnapshot already called inside)
-  setContent(markdown, options);
-  // 2. Immediately assign real block IDs (still synchronous, same JS turn)
   const editorInstance = getEditorInstance();
-  if (blockIds.length > 0 && editorInstance) {
-    const view = editorInstance.ctx.get(editorViewCtx);
-    setBlockIdsForTopLevel(blockIds, view.state.doc);
-    resetAndSnapshot(view.state.doc);
+  if (!editorInstance) {
+    setCurrentContent(markdown);
+    return;
+  }
+
+  // Empty content: clear block IDs and snapshot
+  if (!markdown.trim()) {
+    setIsSettingContent(true);
+    setSyncPaused(true);
+    try {
+      editorInstance.action((ctx) => {
+        const view = ctx.get(editorViewCtx);
+        const emptyParagraph = view.state.schema.nodes.paragraph.create();
+        const emptyDoc = view.state.schema.nodes.doc.create(null, emptyParagraph);
+        const tr = view.state.tr.replaceWith(0, view.state.doc.content.size, emptyDoc.content);
+        view.dispatch(tr.setSelection(Selection.atStart(tr.doc)));
+        clearBlockIds();
+        resetAndSnapshot(view.state.doc);
+      });
+      setCurrentContent(markdown);
+    } finally {
+      setIsSettingContent(false);
+      setSyncPaused(false);
+    }
+    return;
+  }
+
+  // Match applyBlocks pattern: sync paused through ENTIRE operation
+  setIsSettingContent(true);
+  setSyncPaused(true);
+  let parseSucceeded = false;
+  try {
+    editorInstance.action((ctx) => {
+      const view = ctx.get(editorViewCtx);
+      const parser = ctx.get(parserCtx);
+
+      let doc;
+      try {
+        doc = parser(markdown);
+      } catch (e) {
+        console.error('[Milkdown] setContentWithBlockIds parser error:', e);
+        resetAndSnapshot(view.state.doc);
+        return;
+      }
+      if (!doc) {
+        resetAndSnapshot(view.state.doc);
+        return;
+      }
+
+      const { from } = view.state.selection;
+      const docSize = view.state.doc.content.size;
+      let tr = view.state.tr.replace(0, docSize, new Slice(doc.content, 0, 0));
+
+      if (options?.scrollToStart) {
+        tr = tr.setSelection(Selection.atStart(tr.doc));
+      } else {
+        const safeFrom = Math.min(from, Math.max(0, doc.content.size - 1));
+        try {
+          tr = tr.setSelection(Selection.near(tr.doc.resolve(safeFrom)));
+        } catch {
+          tr = tr.setSelection(Selection.atStart(tr.doc));
+        }
+      }
+      view.dispatch(tr);
+      parseSucceeded = true;
+
+      // Clear stale IDs, assign real ones, snapshot — all within syncPaused
+      clearBlockIds();
+      if (blockIds.length > 0) {
+        setBlockIdsForTopLevel(blockIds, view.state.doc);
+      }
+      resetAndSnapshot(view.state.doc);
+    });
+    if (parseSucceeded) {
+      setCurrentContent(markdown);
+    }
+  } finally {
+    setIsSettingContent(false);
+    setSyncPaused(false);
   }
 }
 

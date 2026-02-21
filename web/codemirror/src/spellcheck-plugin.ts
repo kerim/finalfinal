@@ -126,6 +126,37 @@ function stripCitations(segments: TextSegment[]): TextSegment[] {
   return segments.filter((seg) => !CITATION_CONTENT_REGEX.test(seg.text.trim()));
 }
 
+// --- Footnote marker stripping ---
+
+/** Matches [^N] footnote references and [^N]: definition prefixes */
+const FOOTNOTE_REF_REGEX = /\[\^\d+\]/g;
+const FOOTNOTE_DEF_REGEX = /^\[\^\d+\]:\s*/;
+
+/**
+ * Strip footnote markers from segments to prevent spellcheck false positives.
+ * Removes [^N] references inline and [^N]: prefixes at line start.
+ */
+function stripFootnoteMarkers(segments: TextSegment[]): TextSegment[] {
+  return segments
+    .map((seg) => {
+      let { text, from } = seg;
+
+      // Strip [^N]: prefix at line start
+      const defMatch = FOOTNOTE_DEF_REGEX.exec(text);
+      if (defMatch) {
+        text = text.slice(defMatch[0].length);
+        from += defMatch[0].length;
+      }
+
+      // Strip [^N] references inline
+      text = text.replace(FOOTNOTE_REF_REGEX, '');
+
+      if (text.trim().length === 0) return null;
+      return { ...seg, text, from };
+    })
+    .filter((seg): seg is TextSegment => seg !== null);
+}
+
 // --- Text extraction ---
 
 /** Lezer node types to skip (no text extraction inside these) */
@@ -211,9 +242,9 @@ function extractSegments(view: EditorView): TextSegment[] {
     }
   }
 
-  // Strip hidden markers (anchor comments, bibliography markers) that
-  // are visually collapsed but present in raw text — prevents false positives
-  return stripCitations(stripHiddenMarkers(segments));
+  // Strip hidden markers (anchor comments, bibliography markers) and footnote syntax
+  // that are visually collapsed but present in raw text — prevents false positives
+  return stripCitations(stripFootnoteMarkers(stripHiddenMarkers(segments)));
 }
 
 // --- Check trigger ---

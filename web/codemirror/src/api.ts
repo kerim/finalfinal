@@ -417,6 +417,68 @@ export function insertAnnotation(type: string): void {
   view.focus();
 }
 
+// --- Footnote API ---
+
+export function insertFootnote(): string | null {
+  const view = getEditorView();
+  if (!view) return null;
+
+  // Scan document for existing [^N] references to find max label
+  const content = view.state.doc.toString();
+  const refRegex = /\[\^(\d+)\](?!:)/g;
+  let maxLabel = 0;
+  let match;
+  while ((match = refRegex.exec(content)) !== null) {
+    const label = Number.parseInt(match[1], 10);
+    if (!Number.isNaN(label) && label > maxLabel) {
+      maxLabel = label;
+    }
+  }
+
+  const newLabel = String(maxLabel + 1);
+  const insertText = `[^${newLabel}]`;
+
+  const { from, to } = view.state.selection.main;
+  view.dispatch({
+    changes: { from, to, insert: insertText },
+    selection: { anchor: from + insertText.length },
+  });
+  view.focus();
+
+  return newLabel;
+}
+
+/**
+ * Renumber footnote references and definitions using a mapping of old → new labels.
+ * Uses targeted CodeMirror changes to preserve cursor position.
+ */
+export function renumberFootnotes(mapping: Record<string, string>): void {
+  const view = getEditorView();
+  if (!view) return;
+
+  const content = view.state.doc.toString();
+  const changes: Array<{ from: number; to: number; insert: string }> = [];
+
+  // Find all [^N] occurrences (both refs and defs) and apply mapping
+  for (const [oldLabel, newLabel] of Object.entries(mapping)) {
+    const regex = new RegExp(`\\[\\^${oldLabel}\\]`, 'g');
+    let match;
+    while ((match = regex.exec(content)) !== null) {
+      changes.push({
+        from: match.index,
+        to: match.index + match[0].length,
+        insert: `[^${newLabel}]`,
+      });
+    }
+  }
+
+  if (changes.length > 0) {
+    // Sort by position for correct application
+    changes.sort((a, b) => a.from - b.from);
+    view.dispatch({ changes });
+  }
+}
+
 // --- Highlight API ---
 
 export function toggleHighlight(): boolean {

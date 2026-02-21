@@ -30,6 +30,7 @@
 		27788FB6CF7677E47103E1D6 /* EditorViewState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 31C89F3A4269349290CD8F03 /* EditorViewState.swift */; };
 		2802A3278F0A84FA184FCCBD /* VersionHistoryWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6BDEEE9C10B3CB00393F7E53 /* VersionHistoryWindow.swift */; };
 		2A5EB4F121ED5781FDD710A7 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AD4BB30F275702838E8D3F8 /* AppDelegate.swift */; };
+		2A991A819263234EDC320A38 /* FootnoteSyncService.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF34C45C645EA726101A81D6 /* FootnoteSyncService.swift */; };
 		340253991038A90C28898154 /* DocumentPreviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 944062D49633F32557CC7161 /* DocumentPreviewView.swift */; };
 		35FA3CC0FED14ED1D7FD9000 /* TagPillView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65E7386521E240F08687F38B /* TagPillView.swift */; };
 		3809CA424F5F60778B029882 /* UITestHelpers.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA881EDD8E51F372A2C980A5 /* UITestHelpers.swift */; };
@@ -315,6 +316,7 @@
 		FA8E40231CCB32EC98E3B48F /* ProjectPickerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectPickerView.swift; sourceTree = "<group>"; };
 		FDA7C9F1CFBE9EDB2C4D818C /* OutlineParserTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutlineParserTests.swift; sourceTree = "<group>"; };
 		FE24C13995368C23BC470A26 /* FinalFinalApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FinalFinalApp.swift; sourceTree = "<group>"; };
+		FF34C45C645EA726101A81D6 /* FootnoteSyncService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FootnoteSyncService.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -547,6 +549,7 @@
 				4B4047E7D3F51B03731AAA62 /* DocumentManager+RecentProjects.swift */,
 				1EC960E239AB6BAACD5BC0A3 /* EditorPreloader.swift */,
 				6C65021F994002F139C1184C /* ExportService.swift */,
+				FF34C45C645EA726101A81D6 /* FootnoteSyncService.swift */,
 				3E573D126ADEE441215EE597 /* KeychainHelper.swift */,
 				3A530A55D9265E47C5CF4EB3 /* LanguageToolProvider.swift */,
 				5A1E8A83A78A7909AA1289DB /* OutlineParser.swift */,
@@ -912,6 +915,7 @@
 				6D12AEF734B0A4D7D05F681F /* FinalFinalApp.swift in Sources */,
 				ABB3B86E925FF4196F579E31 /* FindBarState.swift in Sources */,
 				59E041D4F98FE5B1F9A13ED4 /* FindBarView.swift in Sources */,
+				2A991A819263234EDC320A38 /* FootnoteSyncService.swift in Sources */,
 				802A2E3DC7C417EF81173AF8 /* FullScreenManager.swift in Sources */,
 				025311FF492B505FC913440D /* GitInfo.swift in Sources */,
 				B87F92C053B192CE869087C1 /* GoalColorSettings.swift in Sources */,

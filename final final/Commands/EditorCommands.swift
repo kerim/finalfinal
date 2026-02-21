@@ -81,6 +81,14 @@ struct EditorCommands: Commands {
             }
             .keyboardShortcut("h", modifiers: [.command, .shift])
 
+            // Footnote command
+            Button("Insert Footnote") {
+                NotificationCenter.default.post(name: .insertFootnote, object: nil)
+            }
+            .keyboardShortcut("n", modifiers: [.command, .shift])
+
+            Divider()
+
             // Annotation commands
             Button("Insert Task") {
                 NotificationCenter.default.post(

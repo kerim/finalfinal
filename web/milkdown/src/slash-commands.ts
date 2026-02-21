@@ -13,6 +13,7 @@ import {
   setPendingSlashRedo,
   setPendingSlashUndo,
 } from './editor-state';
+import { footnoteRefNode, insertFootnote } from './footnote-plugin';
 import { sectionBreakNode } from './section-break-plugin';
 
 // === Slash command definitions ===
@@ -33,6 +34,7 @@ const slashCommands: SlashCommand[] = [
   { label: '/comment', replacement: '', description: 'Insert comment annotation', isNodeInsertion: true },
   { label: '/reference', replacement: '', description: 'Insert reference annotation', isNodeInsertion: true },
   { label: '/cite', replacement: '', description: 'Insert citation', isNodeInsertion: true },
+  { label: '/footnote', replacement: '', description: 'Insert footnote', isNodeInsertion: true },
 ];
 
 // === Slash menu UI state ===
@@ -239,6 +241,29 @@ function executeSlashCommand(index: number) {
       // cmdStart = start of annotation node, cmdStart + 1 = inside node's content
       tr = tr.setSelection(Selection.near(tr.doc.resolve(cmdStart + 1)));
 
+      view.dispatch(tr);
+    } else if (cmd.label === '/footnote') {
+      // Insert footnote reference node at cursor
+      // First delete the slash command text, then insert the footnote node
+      const nodeType = footnoteRefNode.type(editorInstance.ctx);
+
+      // Scan document for existing footnote_ref nodes to find max label
+      let maxLabel = 0;
+      view.state.doc.descendants((docNode: any) => {
+        if (docNode.type.name === 'footnote_ref') {
+          const label = Number.parseInt(docNode.attrs.label, 10);
+          if (!Number.isNaN(label) && label > maxLabel) {
+            maxLabel = label;
+          }
+        }
+      });
+
+      const newLabel = String(maxLabel + 1);
+      const node = nodeType.create({ label: newLabel });
+
+      // Delete slash command text and insert footnote node
+      let tr = view.state.tr.delete(cmdStart, from);
+      tr = tr.insert(cmdStart, node);
       view.dispatch(tr);
     } else if (cmd.label === '/cite') {
       // Open Zotero's native CAYW picker via Swift bridge
