@@ -83,6 +83,7 @@ struct EditorCommands: Commands {
 
             // Footnote command
             Button("Insert Footnote") {
+                print("[DIAG-FN] \(Date()) EditorCommands: posting .insertFootnote notification")
                 NotificationCenter.default.post(name: .insertFootnote, object: nil)
             }
             .keyboardShortcut("n", modifiers: [.command, .shift])

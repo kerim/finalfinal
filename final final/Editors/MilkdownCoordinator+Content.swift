@@ -69,6 +69,10 @@ extension MilkdownEditor.Coordinator {
             NotificationCenter.default.removeObserver(observer)
             renumberFootnotesObserver = nil
         }
+        if let observer = scrollToFootnoteDefObserver {
+            NotificationCenter.default.removeObserver(observer)
+            scrollToFootnoteDefObserver = nil
+        }
         if let observer = footnoteDefsObserver {
             NotificationCenter.default.removeObserver(observer)
             footnoteDefsObserver = nil
@@ -141,10 +145,28 @@ extension MilkdownEditor.Coordinator {
         webView.evaluateJavaScript("window.FinalFinal.setCitationLibrary(JSON.parse(`\(escaped)`))") { _, _ in }
     }
 
-    /// Insert a footnote reference at the current cursor position
+    /// Insert a footnote reference at the current cursor position.
+    /// Captures the returned label via completion handler and posts notification
+    /// for immediate Notes section creation (bypasses 3s debounce).
     func insertFootnoteAtCursor() {
+        print("[DIAG-FN] \(Date()) MW insertFootnoteAtCursor() called, isEditorReady=\(isEditorReady), webView=\(webView != nil)")
         guard isEditorReady, let webView else { return }
-        webView.evaluateJavaScript("window.FinalFinal.insertFootnote()") { _, _ in }
+        // JS insertFootnote() sends postMessage({label}) which triggers .footnoteInsertedImmediate
+        // via the footnoteInserted message handler — no need to post from completion handler
+        webView.evaluateJavaScript("window.FinalFinal.insertFootnote()") { _, error in
+            if let error {
+                print("[DIAG-FN] \(Date()) MW insertFootnote evaluateJavaScript error: \(error)")
+            }
+        }
+    }
+
+    /// Scroll to the footnote definition [^N]: in the Notes section
+    func scrollToFootnoteDefinition(label: String) {
+        guard isEditorReady, let webView else { return }
+        guard label.allSatisfy(\.isNumber) else { return }
+        webView.evaluateJavaScript(
+            "window.FinalFinal.scrollToFootnoteDefinition('\(label)')"
+        ) { _, _ in }
     }
 
     /// Renumber footnote references in the editor using old→new label mapping

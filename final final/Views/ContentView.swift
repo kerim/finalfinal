@@ -76,6 +76,11 @@ struct ContentView: View {
     /// (it fires from the old project's debounced citekey check and is redundant)
     @State var suppressNextBibliographyRebuild = false
 
+    /// Queued footnote label for double-insertion safety.
+    /// If user presses Cmd+Shift+N while contentState != .idle, the label is stored
+    /// here and processed when contentState returns to .idle.
+    @State var pendingFootnoteLabel: String?
+
     /// Callback when project is closed (to return to picker)
     var onProjectClosed: (() -> Void)?
 
@@ -200,6 +205,107 @@ struct ContentView: View {
                         markdown: result.markdown, blockIds: result.blockIds)
                     editorState.isResettingContent = false
                     editorState.contentState = .idle
+                }
+            }
+            .onChange(of: editorState.contentState) { _, newValue in
+                // Process queued footnote label when contentState returns to idle
+                if newValue == .idle, let pending = pendingFootnoteLabel {
+                    pendingFootnoteLabel = nil
+                    NotificationCenter.default.post(
+                        name: .footnoteInsertedImmediate,
+                        object: nil,
+                        userInfo: ["label": pending]
+                    )
+                }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .footnoteInsertedImmediate)) { notification in
+                print("[DIAG-FN] \(Date()) ContentView: .footnoteInsertedImmediate notification arrived, userInfo=\(String(describing: notification.userInfo))")
+                guard let label = notification.userInfo?["label"] as? String,
+                      let projectId = documentManager.projectId else {
+                    print("[DIAG-FN] guard FAILED - label=\(notification.userInfo?["label"] ?? "nil"), projectId=\(documentManager.projectId ?? "nil")")
+                    return
+                }
+                // Skip during zoom (defer to debounce path)
+                guard editorState.zoomedSectionId == nil else {
+                    print("[DIAG-FN] guard FAILED - zoomedSectionId=\(String(describing: editorState.zoomedSectionId))")
+                    return
+                }
+
+                // Rapid double-insertion safety: queue label if busy
+                guard editorState.contentState == .idle else {
+                    print("[DIAG-FN] guard FAILED - contentState=\(editorState.contentState), queueing label=\(label)")
+                    pendingFootnoteLabel = label
+                    return
+                }
+
+                print("[DIAG-FN] All guards passed, proceeding with immediate insertion for label=\(label)")
+
+                // Set sync suppression BEFORE DB write
+                editorState.contentState = .bibliographyUpdate
+                blockSyncService.isSyncSuppressed = true
+                editorState.isResettingContent = true
+
+                // editorState.content is fresh (coordinator synced via getContent before posting)
+                // Strip old Notes section, preserving body and bibliography
+                let stripped = FootnoteSyncService.stripNotesSection(from: editorState.content)
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+
+                footnoteSyncService.handleImmediateInsertion(label: label, projectId: projectId)
+
+                // Build Notes section from freshly-created DB blocks
+                let notesMarkdown = footnoteSyncService.buildNotesSectionMarkdown(projectId: projectId)
+
+                // Insert Notes between body and bibliography (preserving correct block order)
+                let combined: String
+                if let notes = notesMarkdown {
+                    // Find bibliography heading to insert Notes before it
+                    let bibHeading = "# " + ExportSettingsManager.shared.bibliographyHeaderName
+                    let lines = stripped.components(separatedBy: "\n")
+                    if let bibIdx = lines.firstIndex(where: { $0.trimmingCharacters(in: .whitespaces) == bibHeading }) {
+                        let bodyPart = lines[..<bibIdx].joined(separator: "\n")
+                            .trimmingCharacters(in: .whitespacesAndNewlines)
+                        let bibPart = lines[bibIdx...].joined(separator: "\n")
+                            .trimmingCharacters(in: .whitespacesAndNewlines)
+                        combined = bodyPart + "\n\n" + notes + "\n\n" + bibPart
+                    } else {
+                        combined = stripped + "\n\n" + notes
+                    }
+                } else {
+                    combined = stripped
+                }
+
+                print("[DIAG-FN] combined markdown length=\(combined.count)")
+
+                editorState.content = combined
+                updateSourceContentIfNeeded()
+
+                Task {
+                    // Get block IDs from DB (count matches because slash commands
+                    // don't add/remove blocks — they only replace text within one block)
+                    guard let result = fetchBlocksWithIds() else {
+                        editorState.isResettingContent = false
+                        editorState.contentState = .idle
+                        blockSyncService.isSyncSuppressed = false
+                        return
+                    }
+
+                    // Push fresh content with real block IDs atomically
+                    // (same pattern as bibliography — prevents temp ID race)
+                    await blockSyncService.setContentWithBlockIds(
+                        markdown: combined, blockIds: result.blockIds)
+
+                    editorState.isResettingContent = false
+                    editorState.contentState = .idle
+                    // setContentWithBlockIds' defer clears isSyncSuppressed
+
+                    await Task.yield()
+
+                    // Navigate cursor to new definition
+                    NotificationCenter.default.post(
+                        name: .scrollToFootnoteDefinition,
+                        object: nil,
+                        userInfo: ["label": label]
+                    )
                 }
             }
             .onReceive(NotificationCenter.default.publisher(for: .didZoomOut)) { _ in

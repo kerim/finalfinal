@@ -53,6 +53,7 @@ struct MilkdownEditor: NSViewRepresentable {
             controller.add(context.coordinator, name: "openURL")
             controller.add(context.coordinator, name: "spellcheck")
             controller.add(context.coordinator, name: "navigateToFootnote")
+            controller.add(context.coordinator, name: "footnoteInserted")
 
             preloaded.navigationDelegate = context.coordinator
             context.coordinator.webView = preloaded
@@ -115,6 +116,7 @@ struct MilkdownEditor: NSViewRepresentable {
         configuration.userContentController.add(context.coordinator, name: "openURL")
         configuration.userContentController.add(context.coordinator, name: "spellcheck")
         configuration.userContentController.add(context.coordinator, name: "navigateToFootnote")
+        configuration.userContentController.add(context.coordinator, name: "footnoteInserted")
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = context.coordinator
@@ -240,6 +242,7 @@ struct MilkdownEditor: NSViewRepresentable {
         var footnoteDefsObserver: NSObjectProtocol?
         var insertFootnoteObserver: NSObjectProtocol?
         var renumberFootnotesObserver: NSObjectProtocol?
+        var scrollToFootnoteDefObserver: NSObjectProtocol?
         var blockSyncPushObserver: NSObjectProtocol?
 
         /// Active spellcheck task (cancelled on new check or cleanup)
@@ -405,6 +408,7 @@ struct MilkdownEditor: NSViewRepresentable {
                 object: nil,
                 queue: .main
             ) { [weak self] _ in
+                print("[DIAG-FN] \(Date()) MilkdownEditor: received .insertFootnote notification")
                 self?.insertFootnoteAtCursor()
             }
 
@@ -416,6 +420,17 @@ struct MilkdownEditor: NSViewRepresentable {
             ) { [weak self] notification in
                 if let mapping = notification.userInfo?["mapping"] as? [String: String] {
                     self?.renumberFootnotes(mapping: mapping)
+                }
+            }
+
+            // Subscribe to scroll-to-footnote-definition notification
+            scrollToFootnoteDefObserver = NotificationCenter.default.addObserver(
+                forName: .scrollToFootnoteDefinition,
+                object: nil,
+                queue: .main
+            ) { [weak self] notification in
+                if let label = notification.userInfo?["label"] as? String {
+                    self?.scrollToFootnoteDefinition(label: label)
                 }
             }
 
@@ -474,6 +489,9 @@ struct MilkdownEditor: NSViewRepresentable {
                 NotificationCenter.default.removeObserver(observer)
             }
             if let observer = renumberFootnotesObserver {
+                NotificationCenter.default.removeObserver(observer)
+            }
+            if let observer = scrollToFootnoteDefObserver {
                 NotificationCenter.default.removeObserver(observer)
             }
             if let observer = blockSyncPushObserver {

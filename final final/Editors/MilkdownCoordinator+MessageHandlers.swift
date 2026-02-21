@@ -227,6 +227,28 @@ extension MilkdownEditor.Coordinator {
             }
         }
 
+        // Handle footnote inserted notification from JS (slash command or evaluateJavaScript path)
+        // Sync editor content BEFORE posting notification to prevent stale DB body overwrite
+        if message.name == "footnoteInserted", let body = message.body as? [String: Any],
+           let label = body["label"] as? String, !label.isEmpty {
+            Task { @MainActor [weak self] in
+                guard let self, let webView = self.webView else { return }
+                webView.evaluateJavaScript("window.FinalFinal.getContent()") { [weak self] result, _ in
+                    guard let self, let content = result as? String else { return }
+                    Task { @MainActor in
+                        self.lastPushedContent = content
+                        self.lastReceivedFromEditor = Date()
+                        self.contentBinding.wrappedValue = content
+                        print("[DIAG-FN] \(Date()) MW footnoteInserted: synced content, posting notification for label=\(label)")
+                        NotificationCenter.default.post(
+                            name: .footnoteInsertedImmediate, object: nil,
+                            userInfo: ["label": label]
+                        )
+                    }
+                }
+            }
+        }
+
         // Handle footnote navigation requests from editor
         if message.name == "navigateToFootnote", let body = message.body as? [String: Any] {
             Task { @MainActor in

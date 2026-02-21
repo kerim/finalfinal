@@ -50,6 +50,10 @@ extension Notification.Name {
     static let spellcheckStateChanged = Notification.Name("spellcheckStateChanged")
     /// Posted after BlockSyncService pushes content to JS — coordinator updates lastPushedContent
     static let blockSyncDidPushContent = Notification.Name("blockSyncDidPushContent")
+    /// Posted when a footnote was inserted in JS — label captured via evaluateJavaScript completion
+    static let footnoteInsertedImmediate = Notification.Name("footnoteInsertedImmediate")
+    /// Posted to scroll the editor to a footnote definition [^N]: in the Notes section
+    static let scrollToFootnoteDefinition = Notification.Name("scrollToFootnoteDefinition")
 }
 
 enum EditorMode: String, CaseIterable {

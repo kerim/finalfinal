@@ -74,7 +74,7 @@ import { blockSyncPlugin } from './block-sync-plugin';
 import { openCAYWPicker } from './cayw';
 import { citationPlugin } from './citation-plugin';
 import { restoreCitationLibrary } from './citation-search';
-import { footnotePlugin, insertFootnote, renumberFootnotes, setFootnoteDefinitions } from './footnote-plugin';
+import { footnotePlugin, insertFootnote, renumberFootnotes, scrollToFootnoteDefinition, setFootnoteDefinitions } from './footnote-plugin';
 import {
   getCurrentContent,
   getEditorInstance,
@@ -231,18 +231,10 @@ async function initEditor() {
     true
   );
 
-  // Add keyboard shortcut: Cmd+Shift+N inserts footnote
-  document.addEventListener(
-    'keydown',
-    (e) => {
-      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'n') {
-        e.preventDefault();
-        e.stopPropagation();
-        insertFootnote();
-      }
-    },
-    true
-  );
+  // NOTE: Cmd+Shift+N footnote insertion is handled by the macOS menu command
+  // (EditorCommands.swift), which calls evaluateJavaScript("insertFootnote()").
+  // The JS postMessage in footnote-plugin.ts then notifies Swift of the label.
+  // No JS keydown handler needed — it would double-fire with the native menu.
 
   // Add keyboard shortcut: Cmd+K opens link creation/editing
   document.addEventListener(
@@ -322,8 +314,14 @@ window.FinalFinal = {
   triggerSpellcheck: triggerSpellcheckImpl,
   // Footnote API
   setFootnoteDefinitions,
-  insertFootnote,
+  insertFootnote: (...args: Parameters<typeof insertFootnote>) => {
+    console.log('[DIAG-FN] window.FinalFinal.insertFootnote() called via API');
+    const result = insertFootnote(...args);
+    console.log('[DIAG-FN] window.FinalFinal.insertFootnote() returned:', result);
+    return result;
+  },
   renumberFootnotes,
+  scrollToFootnoteDefinition,
   // Find/replace API
   find: findApi,
   findNext: findNextApi,

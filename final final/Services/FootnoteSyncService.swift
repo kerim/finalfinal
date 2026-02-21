@@ -135,7 +135,7 @@ final class FootnoteSyncService {
     }
 
     /// Strip the #Notes section from markdown content (returns body only)
-    private static func stripNotesSection(from markdown: String) -> String {
+    static func stripNotesSection(from markdown: String) -> String {
         // Find "# Notes" heading (case-insensitive)
         let lines = markdown.components(separatedBy: "\n")
         var result: [String] = []
@@ -159,6 +159,26 @@ final class FootnoteSyncService {
         return result.joined(separator: "\n")
     }
 
+    /// Build the Notes section markdown from DB blocks (heading + definitions)
+    /// Returns nil if no notes blocks exist
+    func buildNotesSectionMarkdown(projectId: String) -> String? {
+        guard let database else { return nil }
+        do {
+            let notesBlocks = try database.read { db in
+                try Block
+                    .filter(Block.Columns.projectId == projectId)
+                    .filter(Block.Columns.isNotes == true)
+                    .order(Block.Columns.sortOrder)
+                    .fetchAll(db)
+            }
+            guard !notesBlocks.isEmpty else { return nil }
+            return BlockParser.assembleMarkdown(from: notesBlocks)
+        } catch {
+            print("[FootnoteSyncService] Error building notes markdown: \(error)")
+            return nil
+        }
+    }
+
     // MARK: - Public Methods
 
     /// Configure the service with a database
@@ -172,7 +192,11 @@ final class FootnoteSyncService {
         projectId: String,
         fullContent: String
     ) {
-        guard state == .idle else { return }
+        print("[DIAG-FN] \(Date()) checkAndUpdateFootnotes: refs=\(footnoteRefs), lastKnownRefs=\(lastKnownRefs), state=\(state)")
+        guard state == .idle else {
+            print("[DIAG-FN] checkAndUpdateFootnotes: returning early, state=\(state)")
+            return
+        }
 
         // Check if refs have changed
         guard footnoteRefs != lastKnownRefs else {
@@ -183,6 +207,7 @@ final class FootnoteSyncService {
         }
 
         // Debounce the update
+        print("[DIAG-FN] \(Date()) checkAndUpdateFootnotes: refs changed, starting 3s debounce")
         debounceTask?.cancel()
         debounceTask = Task { [weak self] in
             guard !Task.isCancelled else { return }
@@ -190,6 +215,7 @@ final class FootnoteSyncService {
             try? await Task.sleep(nanoseconds: UInt64(3_000_000_000))
 
             guard !Task.isCancelled else { return }
+            print("[DIAG-FN] \(Date()) debounce timer fired, calling performFootnoteUpdate")
             await self?.performFootnoteUpdate(refs: footnoteRefs, projectId: projectId, fullContent: fullContent)
         }
     }
@@ -236,6 +262,135 @@ final class FootnoteSyncService {
         lastKnownRefs = []
         lastRenumberedHash = 0
         state = .idle
+    }
+
+    /// Handle immediate footnote insertion — bypasses 3s debounce.
+    /// Called from ContentView when JS returns the label via evaluateJavaScript completion.
+    /// Reads existing defs from DB, shifts labels, creates Notes heading + definition blocks.
+    func handleImmediateInsertion(label: String, projectId: String) {
+        print("[DIAG-FN] \(Date()) handleImmediateInsertion called with label=\(label), projectId=\(projectId)")
+        guard let database else {
+            print("[DIAG-FN] handleImmediateInsertion: database is nil, returning")
+            return
+        }
+
+        debounceTask?.cancel()
+        debounceTask = nil
+
+        state = .syncing
+        defer { state = .idle }
+
+        var computedTotalCount = 0
+
+        do {
+            try database.write { db in
+                // 1. Read existing defs from DB
+                let existingDefBlocks = try Block
+                    .filter(Block.Columns.projectId == projectId)
+                    .filter(Block.Columns.isNotes == true)
+                    .filter(Block.Columns.blockType == BlockType.paragraph.rawValue)
+                    .order(Block.Columns.sortOrder)
+                    .fetchAll(db)
+
+                var dbDefs: [String: String] = [:]
+                for block in existingDefBlocks {
+                    let frag = block.markdownFragment
+                    let range = NSRange(frag.startIndex..., in: frag)
+                    if let match = Self.footnoteDefPattern.firstMatch(in: frag, range: range),
+                       let labelRange = Range(match.range(at: 1), in: frag),
+                       let textRange = Range(match.range(at: 2), in: frag) {
+                        dbDefs[String(frag[labelRange])] = String(frag[textRange])
+                    }
+                }
+
+                print("[DIAG-FN] existing dbDefs: \(dbDefs)")
+
+                // 2. Compute new refs and shifted defs
+                let newLabelInt = Int(label) ?? 1
+                computedTotalCount = dbDefs.count + 1
+                let effectiveRefs = (1...computedTotalCount).map { String($0) }
+
+                var newDefs: [String: String] = [:]
+                for (oldLabel, defText) in dbDefs {
+                    if let oldInt = Int(oldLabel) {
+                        if oldInt < newLabelInt {
+                            newDefs[oldLabel] = defText
+                        } else {
+                            newDefs[String(oldInt + 1)] = defText
+                        }
+                    }
+                }
+
+                print("[DIAG-FN] shifted newDefs: \(newDefs), computedTotalCount: \(computedTotalCount)")
+
+                // 3. Delete all notes blocks + orphan cleanup
+                try Block.filter(Block.Columns.projectId == projectId)
+                    .filter(Block.Columns.isNotes == true).deleteAll(db)
+                try Self.deleteOrphanedFootnoteDefinitions(db: db, projectId: projectId)
+
+                // 4. Get sort order (notes after content, before bibliography)
+                let maxNonBibSortOrder = try Block
+                    .filter(Block.Columns.projectId == projectId)
+                    .filter(Block.Columns.isBibliography == false)
+                    .order(Block.Columns.sortOrder.desc)
+                    .fetchOne(db)?.sortOrder ?? 0
+                let baseSortOrder = maxNonBibSortOrder + 0.5
+
+                // 5. Insert heading block
+                var headingBlock = Block(
+                    projectId: projectId,
+                    sortOrder: baseSortOrder,
+                    blockType: .heading,
+                    textContent: "Notes",
+                    markdownFragment: "# Notes",
+                    headingLevel: 1,
+                    status: .final_,
+                    isNotes: true
+                )
+                try headingBlock.insert(db)
+
+                // 6. Insert definition blocks
+                for (index, ref) in effectiveRefs.enumerated() {
+                    let defText = newDefs[ref] ?? ""
+                    var defBlock = Block(
+                        projectId: projectId,
+                        sortOrder: baseSortOrder + Double(index + 1),
+                        blockType: .paragraph,
+                        textContent: defText,
+                        markdownFragment: "[^\(ref)]: \(defText)",
+                        isNotes: true
+                    )
+                    defBlock.recalculateWordCount()
+                    try defBlock.insert(db)
+                }
+
+                // 7. Re-sort: content → notes → bibliography
+                let allBlocks = try Block
+                    .filter(Block.Columns.projectId == projectId)
+                    .order(Block.Columns.sortOrder).fetchAll(db)
+                let sorted = allBlocks.sorted { a, b in
+                    let aGroup = a.isBibliography ? 2 : (a.isNotes ? 1 : 0)
+                    let bGroup = b.isBibliography ? 2 : (b.isNotes ? 1 : 0)
+                    if aGroup != bGroup { return aGroup < bGroup }
+                    return a.sortOrder < b.sortOrder
+                }
+                let now = Date()
+                for (index, var block) in sorted.enumerated() {
+                    let newSortOrder = Double(index + 1)
+                    if block.sortOrder != newSortOrder {
+                        block.sortOrder = newSortOrder
+                        block.updatedAt = now
+                        try block.update(db)
+                    }
+                }
+            }
+
+            // Update state to prevent debounce re-trigger
+            lastKnownRefs = (1...computedTotalCount).map { String($0) }
+            lastRenumberedHash = lastKnownRefs.joined(separator: ",").hashValue
+        } catch {
+            print("[FootnoteSyncService] Immediate insertion failed: \(error)")
+        }
     }
 
     // MARK: - Private Methods

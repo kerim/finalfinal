@@ -419,33 +419,154 @@ export function insertAnnotation(type: string): void {
 
 // --- Footnote API ---
 
-export function insertFootnote(): string | null {
+/**
+ * Insert a footnote reference at the given position (or current cursor).
+ * Assigns sequential label based on cursor position among existing refs,
+ * renumbers subsequent refs and defs in one atomic dispatch.
+ */
+export function insertFootnote(atPosition?: number): string | null {
   const view = getEditorView();
   if (!view) return null;
 
-  // Scan document for existing [^N] references to find max label
+  const insertPos = atPosition ?? view.state.selection.main.from;
   const content = view.state.doc.toString();
+  console.log('[DIAG-FN] CM insertFootnote() called, insertPos:', insertPos);
+
+  // Collect all existing refs with positions (exclude definitions [^N]:)
   const refRegex = /\[\^(\d+)\](?!:)/g;
-  let maxLabel = 0;
+  const existingRefs: Array<{ from: number; to: number; label: number }> = [];
   let match;
   while ((match = refRegex.exec(content)) !== null) {
-    const label = Number.parseInt(match[1], 10);
-    if (!Number.isNaN(label) && label > maxLabel) {
-      maxLabel = label;
+    existingRefs.push({ from: match.index, to: match.index + match[0].length, label: parseInt(match[1]) });
+  }
+  existingRefs.sort((a, b) => a.from - b.from);
+
+  // Count refs before cursor = insertion index
+  const insertionIndex = existingRefs.filter((r) => r.from < insertPos).length;
+  const newLabel = insertionIndex + 1;
+
+  // Build changes array (all positions relative to original doc)
+  const changes: Array<{ from: number; to: number; insert: string }> = [];
+
+  // Rename refs [^N] → [^N+1] where N >= newLabel
+  for (const ref of existingRefs) {
+    if (ref.label >= newLabel) {
+      changes.push({ from: ref.from, to: ref.to, insert: `[^${ref.label + 1}]` });
     }
   }
 
-  const newLabel = String(maxLabel + 1);
-  const insertText = `[^${newLabel}]`;
+  // Rename def prefixes [^N]: → [^N+1]: where N >= newLabel
+  const defRegex = /\[\^(\d+)\]:/g;
+  while ((match = defRegex.exec(content)) !== null) {
+    const defLabel = parseInt(match[1]);
+    if (defLabel >= newLabel) {
+      changes.push({ from: match.index, to: match.index + match[0].length, insert: `[^${defLabel + 1}]:` });
+    }
+  }
 
-  const { from, to } = view.state.selection.main;
+  // Insert the new footnote ref at cursor
+  changes.push({ from: insertPos, to: insertPos, insert: `[^${newLabel}]` });
+
+  // Sort forward (CodeMirror applies simultaneously)
+  changes.sort((a, b) => a.from - b.from);
+
   view.dispatch({
-    changes: { from, to, insert: insertText },
-    selection: { anchor: from + insertText.length },
+    changes,
+    selection: { anchor: insertPos + `[^${newLabel}]`.length },
   });
   view.focus();
 
-  return newLabel;
+  // Notify Swift immediately via postMessage (works for slash commands AND keyboard shortcuts)
+  if (typeof (window as any).webkit?.messageHandlers?.footnoteInserted?.postMessage === 'function') {
+    (window as any).webkit.messageHandlers.footnoteInserted.postMessage({ label: String(newLabel) });
+  }
+
+  console.log('[DIAG-FN] CM insertFootnote() returning label:', String(newLabel));
+  return String(newLabel);
+}
+
+/**
+ * Insert a footnote reference while simultaneously replacing a range (e.g. slash command text).
+ * All operations happen in a single CodeMirror dispatch for atomic undo.
+ */
+export function insertFootnoteReplacingRange(from: number, to: number): string | null {
+  const view = getEditorView();
+  if (!view) return null;
+
+  const content = view.state.doc.toString();
+
+  // Collect all existing refs with positions (exclude definitions [^N]:)
+  const refRegex = /\[\^(\d+)\](?!:)/g;
+  const existingRefs: Array<{ from: number; to: number; label: number }> = [];
+  let match;
+  while ((match = refRegex.exec(content)) !== null) {
+    existingRefs.push({ from: match.index, to: match.index + match[0].length, label: parseInt(match[1]) });
+  }
+  existingRefs.sort((a, b) => a.from - b.from);
+
+  // Count refs before the insertion point = insertion index
+  const insertionIndex = existingRefs.filter((r) => r.from < from).length;
+  const newLabel = insertionIndex + 1;
+
+  // Build changes array (all positions relative to original doc)
+  const changes: Array<{ from: number; to: number; insert: string }> = [];
+
+  // Rename refs [^N] → [^N+1] where N >= newLabel
+  for (const ref of existingRefs) {
+    if (ref.label >= newLabel) {
+      changes.push({ from: ref.from, to: ref.to, insert: `[^${ref.label + 1}]` });
+    }
+  }
+
+  // Rename def prefixes [^N]: → [^N+1]: where N >= newLabel
+  const defRegex = /\[\^(\d+)\]:/g;
+  while ((match = defRegex.exec(content)) !== null) {
+    const defLabel = parseInt(match[1]);
+    if (defLabel >= newLabel) {
+      changes.push({ from: match.index, to: match.index + match[0].length, insert: `[^${defLabel + 1}]:` });
+    }
+  }
+
+  // Replace the slash command range with the new footnote ref
+  changes.push({ from, to, insert: `[^${newLabel}]` });
+
+  // Sort forward (CodeMirror applies simultaneously)
+  changes.sort((a, b) => a.from - b.from);
+
+  view.dispatch({
+    changes,
+    selection: { anchor: from + `[^${newLabel}]`.length },
+  });
+  view.focus();
+
+  // Notify Swift immediately via postMessage (works for slash commands AND keyboard shortcuts)
+  if (typeof (window as any).webkit?.messageHandlers?.footnoteInserted?.postMessage === 'function') {
+    (window as any).webkit.messageHandlers.footnoteInserted.postMessage({ label: String(newLabel) });
+  }
+
+  return String(newLabel);
+}
+
+/**
+ * Scroll to and focus the footnote definition [^N]: in the Notes section.
+ */
+export function scrollToFootnoteDefinition(label: string): void {
+  const view = getEditorView();
+  if (!view) return;
+
+  const content = view.state.doc.toString();
+  const searchText = `[^${label}]:`;
+  const idx = content.indexOf(searchText);
+  if (idx === -1) return;
+
+  // Position cursor after "[^N]: " prefix for immediate typing
+  const cursorPos = Math.min(idx + searchText.length + 1, content.length);
+
+  view.dispatch({
+    selection: { anchor: cursorPos },
+    effects: EditorView.scrollIntoView(cursorPos, { y: 'center', yMargin: 100 }),
+  });
+  view.focus();
 }
 
 /**

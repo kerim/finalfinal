@@ -1,5 +1,6 @@
 import type { CompletionContext, CompletionResult } from '@codemirror/autocomplete';
 import type { EditorView } from '@codemirror/view';
+import { insertFootnoteReplacingRange } from './api';
 import { getEditorView, setPendingCAYWRange, setPendingSlashUndo } from './editor-state';
 
 // Slash command completions for section breaks and other commands
@@ -141,34 +142,10 @@ export function slashCompletions(context: CompletionContext): CompletionResult |
       {
         label: '/footnote',
         detail: 'Insert footnote',
-        apply: (view: EditorView, _completion: any, from: number, to: number) => {
-          // Scan document for existing [^N] references to find max label
-          const content = view.state.doc.toString();
-          const refRegex = /\[\^(\d+)\](?!:)/g;
-          let maxLabel = 0;
-          let match;
-          while ((match = refRegex.exec(content)) !== null) {
-            const label = Number.parseInt(match[1], 10);
-            if (!Number.isNaN(label) && label > maxLabel) {
-              maxLabel = label;
-            }
-          }
-          const newLabel = String(maxLabel + 1);
-          console.log(`[DIAG-FN] CM /footnote: ${content.length} chars, maxLabel=${maxLabel}, newLabel=${newLabel}`);
-          const firstRef = content.match(/\[\^(\d+)\](?!:)/);
-          if (firstRef) {
-            console.log(`[DIAG-FN] CM /footnote: first ref="${firstRef[0]}" at pos=${firstRef.index}`);
-          } else {
-            console.log('[DIAG-FN] CM /footnote: NO refs found!');
-            const ni = content.indexOf('Notes');
-            if (ni !== -1) console.log(`[DIAG-FN] CM Notes preview: ${JSON.stringify(content.slice(Math.max(0, ni - 50), ni + 150))}`);
-          }
-          const insertText = `[^${newLabel}]`;
-
-          view.dispatch({
-            changes: { from, to, insert: insertText },
-            selection: { anchor: from + insertText.length },
-          });
+        apply: (_view: EditorView, _completion: any, from: number, to: number) => {
+          // Single dispatch — delete slash text + insert + renumber
+          console.log('[DIAG-FN] CM Slash /footnote triggered, from:', from, 'to:', to);
+          insertFootnoteReplacingRange(from, to);
           setPendingSlashUndo(true);
         },
       },

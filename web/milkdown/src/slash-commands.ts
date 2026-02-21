@@ -13,7 +13,7 @@ import {
   setPendingSlashRedo,
   setPendingSlashUndo,
 } from './editor-state';
-import { footnoteRefNode, insertFootnote } from './footnote-plugin';
+import { insertFootnoteWithDelete } from './footnote-plugin';
 import { sectionBreakNode } from './section-break-plugin';
 
 // === Slash command definitions ===
@@ -243,28 +243,9 @@ function executeSlashCommand(index: number) {
 
       view.dispatch(tr);
     } else if (cmd.label === '/footnote') {
-      // Insert footnote reference node at cursor
-      // First delete the slash command text, then insert the footnote node
-      const nodeType = footnoteRefNode.type(editorInstance.ctx);
-
-      // Scan document for existing footnote_ref nodes to find max label
-      let maxLabel = 0;
-      view.state.doc.descendants((docNode: any) => {
-        if (docNode.type.name === 'footnote_ref') {
-          const label = Number.parseInt(docNode.attrs.label, 10);
-          if (!Number.isNaN(label) && label > maxLabel) {
-            maxLabel = label;
-          }
-        }
-      });
-
-      const newLabel = String(maxLabel + 1);
-      const node = nodeType.create({ label: newLabel });
-
-      // Delete slash command text and insert footnote node
-      let tr = view.state.tr.delete(cmdStart, from);
-      tr = tr.insert(cmdStart, node);
-      view.dispatch(tr);
+      // Insert footnote reference node — single transaction (delete slash + insert + renumber)
+      console.log('[DIAG-FN] Slash /footnote triggered, cmdStart:', cmdStart, 'from:', from);
+      insertFootnoteWithDelete(view, editorInstance, cmdStart, from);
     } else if (cmd.label === '/cite') {
       // Open Zotero's native CAYW picker via Swift bridge
       // Pass both cmdStart (position of /) and from (cursor at end of /cite)

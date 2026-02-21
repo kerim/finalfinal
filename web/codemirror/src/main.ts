@@ -32,6 +32,7 @@ import {
   insertFootnote,
   insertLink,
   renumberFootnotes,
+  scrollToFootnoteDefinition,
   replaceCurrent,
   resetForProjectSwitch,
   scrollCursorToCenter,
@@ -252,8 +253,14 @@ window.FinalFinal = {
   setFootnoteDefinitions: (_defs: Record<string, string>) => {
     // CodeMirror shows raw markdown — no popup needed, but API must exist for Swift calls
   },
-  insertFootnote,
+  insertFootnote: (...args: Parameters<typeof insertFootnote>) => {
+    console.log('[DIAG-FN] CM window.FinalFinal.insertFootnote() called via API');
+    const result = insertFootnote(...args);
+    console.log('[DIAG-FN] CM window.FinalFinal.insertFootnote() returned:', result);
+    return result;
+  },
   renumberFootnotes,
+  scrollToFootnoteDefinition,
   // Spellcheck API
   setSpellcheckResults,
   enableSpellcheck,

@@ -343,41 +343,183 @@ const footnoteRefNodeView = $view(footnoteRefNode, (_ctx: Ctx) => {
 });
 
 /**
- * Insert a footnote reference at the current cursor position.
- * Scans the document for existing [^N] nodes to determine the next label number.
- * Returns the label string (e.g. "3") or null if editor is not ready.
+ * Insert a footnote reference at the given position (or current cursor).
+ * Assigns sequential label based on cursor position among existing refs,
+ * renumbers subsequent refs in one atomic transaction.
+ * Returns the label string (e.g. "2") or null if editor is not ready.
  */
-export function insertFootnote(): string | null {
+export function insertFootnote(atPosition?: number): string | null {
   const editorInstance = getEditorInstance();
   if (!editorInstance) return null;
 
   const view = editorInstance.ctx.get(editorViewCtx);
   if (!view) return null;
 
-  // Scan document for existing footnote_ref nodes to find max label
-  let maxLabel = 0;
-  view.state.doc.descendants((node: any) => {
+  const insertPos = atPosition ?? view.state.selection.from;
+
+  // Collect all existing refs with positions
+  const existingRefs: Array<{ pos: number; label: string }> = [];
+  view.state.doc.descendants((node: Node, pos: number) => {
     if (node.type.name === 'footnote_ref') {
-      const label = Number.parseInt(node.attrs.label, 10);
-      if (!Number.isNaN(label) && label > maxLabel) {
-        maxLabel = label;
-      }
+      existingRefs.push({ pos, label: node.attrs.label });
+    }
+  });
+  console.log('[DIAG-FN] insertFootnote() called, insertPos:', insertPos, 'existingRefs:', existingRefs.length);
+
+  // Sort by position to determine insertion index
+  existingRefs.sort((a, b) => a.pos - b.pos);
+  const insertionIndex = existingRefs.filter((r) => r.pos < insertPos).length;
+  const newLabel = String(insertionIndex + 1);
+
+  // Refs that need renumbering: those with label >= newLabel
+  const toRenumber = existingRefs
+    .filter((r) => parseInt(r.label) >= parseInt(newLabel))
+    .sort((a, b) => b.pos - a.pos); // REVERSE order for safe setNodeMarkup
+
+  // Single transaction: renumber FIRST (reverse order), then insert
+  const tr = view.state.tr;
+
+  for (const ref of toRenumber) {
+    tr.setNodeMarkup(ref.pos, undefined, {
+      label: String(parseInt(ref.label) + 1),
+    });
+  }
+
+  const nodeType = footnoteRefNode.type(editorInstance.ctx);
+  const newNode = nodeType.create({ label: newLabel });
+  tr.insert(insertPos, newNode);
+
+  view.dispatch(tr);
+
+  // Shift definitions map
+  const oldDefs = new Map(footnoteDefinitions);
+  footnoteDefinitions.clear();
+  for (const [label, def] of oldDefs) {
+    const labelInt = parseInt(label, 10);
+    if (labelInt < parseInt(newLabel)) {
+      footnoteDefinitions.set(label, def);
+    } else {
+      footnoteDefinitions.set(String(labelInt + 1), def);
+    }
+  }
+  footnoteDefinitions.set(newLabel, '');
+
+  // Notify Swift immediately via postMessage (works for slash commands AND keyboard shortcuts)
+  if (typeof (window as any).webkit?.messageHandlers?.footnoteInserted?.postMessage === 'function') {
+    (window as any).webkit.messageHandlers.footnoteInserted.postMessage({ label: newLabel });
+  }
+
+  console.log('[DIAG-FN] insertFootnote() returning label:', newLabel);
+  return newLabel;
+}
+
+/**
+ * Insert a footnote reference while simultaneously deleting a range (e.g. slash command text).
+ * All operations happen in a single ProseMirror transaction for atomic undo.
+ * Returns the label string or null if editor is not ready.
+ */
+export function insertFootnoteWithDelete(
+  view: any,
+  editorInstance: any,
+  deleteFrom: number,
+  deleteTo: number
+): string | null {
+  // Collect existing refs
+  const existingRefs: Array<{ pos: number; label: string }> = [];
+  view.state.doc.descendants((node: Node, pos: number) => {
+    if (node.type.name === 'footnote_ref') {
+      existingRefs.push({ pos, label: node.attrs.label });
+    }
+  });
+  existingRefs.sort((a, b) => a.pos - b.pos);
+
+  // Insertion index based on deleteFrom (where slash text starts)
+  const insertionIndex = existingRefs.filter((r) => r.pos < deleteFrom).length;
+  const newLabel = String(insertionIndex + 1);
+
+  const toRenumber = existingRefs
+    .filter((r) => parseInt(r.label) >= parseInt(newLabel))
+    .sort((a, b) => b.pos - a.pos);
+
+  const tr = view.state.tr;
+
+  // ORDER MATTERS:
+  // 1. setNodeMarkup FIRST (doesn't change positions)
+  for (const ref of toRenumber) {
+    tr.setNodeMarkup(ref.pos, undefined, { label: String(parseInt(ref.label) + 1) });
+  }
+  // 2. delete SECOND (shifts positions after deleteFrom)
+  tr.delete(deleteFrom, deleteTo);
+  // 3. insert LAST (at deleteFrom, which is now the collapsed position)
+  const nodeType = footnoteRefNode.type(editorInstance.ctx);
+  tr.insert(deleteFrom, nodeType.create({ label: newLabel }));
+
+  view.dispatch(tr);
+
+  // Shift definitions map (same as insertFootnote)
+  const oldDefs = new Map(footnoteDefinitions);
+  footnoteDefinitions.clear();
+  for (const [label, def] of oldDefs) {
+    const labelInt = parseInt(label, 10);
+    if (labelInt < parseInt(newLabel)) {
+      footnoteDefinitions.set(label, def);
+    } else {
+      footnoteDefinitions.set(String(labelInt + 1), def);
+    }
+  }
+  footnoteDefinitions.set(newLabel, '');
+
+  // Notify Swift immediately via postMessage (works for slash commands AND keyboard shortcuts)
+  if (typeof (window as any).webkit?.messageHandlers?.footnoteInserted?.postMessage === 'function') {
+    (window as any).webkit.messageHandlers.footnoteInserted.postMessage({ label: newLabel });
+  }
+
+  return newLabel;
+}
+
+/**
+ * Scroll to and focus the footnote definition [^N]: in the Notes section.
+ * Reuses the click handler logic: find paragraph starting with [^N]:,
+ * create TextSelection after prefix, scrollIntoView, focus.
+ */
+export function scrollToFootnoteDefinition(label: string): void {
+  const editorInstance = getEditorInstance();
+  if (!editorInstance) return;
+
+  const view = editorInstance.ctx.get(editorViewCtx);
+  if (!view) return;
+
+  const searchText = `[^${label}]:`;
+
+  // Search ProseMirror doc for paragraph starting with [^N]:
+  let targetPos = -1;
+  view.state.doc.descendants((node: Node, pos: number) => {
+    if (targetPos !== -1) return false;
+    if (node.isTextblock && node.textContent.startsWith(searchText)) {
+      targetPos = pos;
+      return false;
     }
   });
 
-  const newLabel = String(maxLabel + 1);
-  console.log(`[DIAG-FN] MD insertFootnote: maxLabel=${maxLabel}, newLabel=${newLabel}`);
-
-  // Get the footnote_ref node type from the schema
-  const nodeType = footnoteRefNode.type(editorInstance.ctx);
-  const newNode = nodeType.create({ label: newLabel });
-
-  // Insert at current cursor position
-  const { from } = view.state.selection;
-  const tr = view.state.tr.insert(from, newNode);
-  view.dispatch(tr);
-
-  return newLabel;
+  if (targetPos !== -1) {
+    try {
+      // Position cursor after "[^N]: " prefix for immediate typing
+      const prefixLength = searchText.length + 1; // +1 for the space
+      const cursorPos = Math.min(targetPos + 1 + prefixLength, view.state.doc.resolve(targetPos + 1).end());
+      const sel = TextSelection.create(view.state.doc, cursorPos);
+      view.dispatch(view.state.tr.setSelection(sel));
+      const coords = view.coordsAtPos(targetPos);
+      if (coords) {
+        window.scrollTo({
+          top: Math.max(0, coords.top + window.scrollY - 100),
+          behavior: 'smooth',
+        });
+      }
+      view.focus();
+    } catch {
+      /* scroll failed */
+    }
+  }
 }
 
 /**
