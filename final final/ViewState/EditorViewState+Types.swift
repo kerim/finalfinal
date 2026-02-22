@@ -54,6 +54,8 @@ extension Notification.Name {
     static let footnoteInsertedImmediate = Notification.Name("footnoteInsertedImmediate")
     /// Posted to scroll the editor to a footnote definition [^N]: in the Notes section
     static let scrollToFootnoteDefinition = Notification.Name("scrollToFootnoteDefinition")
+    /// Posted to set zoom footnote state in JS editors (isZoomMode + max label)
+    static let setZoomFootnoteState = Notification.Name("setZoomFootnoteState")
 }
 
 enum EditorMode: String, CaseIterable {

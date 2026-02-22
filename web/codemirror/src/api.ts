@@ -13,11 +13,13 @@ import { stripAnchors } from './anchor-plugin';
 import { hideCitationAddButton, mergeCitations } from './citations';
 import {
   getCitationAddButton,
+  getDocumentFootnoteCount,
   getCurrentMatchIndex,
   getCurrentSearchOptions,
   getCurrentSearchQuery,
   getEditorExtensions,
   getEditorView,
+  getIsZoomMode,
   getPendingAppendMode,
   getPendingAppendRange,
   getPendingCAYWRange,
@@ -28,6 +30,7 @@ import {
   setPendingAppendRange,
   setPendingCAYWRange,
   setPendingSlashUndo,
+  setZoomFootnoteState,
 } from './editor-state';
 import { setFocusModeEffect, setFocusModeEnabled } from './focus-mode-plugin';
 import { installLineHeightFix, invalidateHeadingMetricsCache } from './line-height-fix';
@@ -429,8 +432,29 @@ export function insertFootnote(atPosition?: number): string | null {
   if (!view) return null;
 
   const insertPos = atPosition ?? view.state.selection.main.from;
-  const content = view.state.doc.toString();
   console.log('[DIAG-FN] CM insertFootnote() called, insertPos:', insertPos);
+
+  // Zoom mode: use next document-level label, no renumbering
+  if (getIsZoomMode()) {
+    const currentMax = getDocumentFootnoteCount();
+    const newLabel = currentMax + 1;
+    setZoomFootnoteState(true, newLabel);
+
+    view.dispatch({
+      changes: { from: insertPos, insert: `[^${newLabel}]` },
+      selection: { anchor: insertPos + `[^${newLabel}]`.length },
+    });
+    view.focus();
+
+    if (typeof (window as any).webkit?.messageHandlers?.footnoteInserted?.postMessage === 'function') {
+      (window as any).webkit.messageHandlers.footnoteInserted.postMessage({ label: String(newLabel) });
+    }
+
+    console.log('[DIAG-FN] CM insertFootnote() zoom mode returning label:', String(newLabel));
+    return String(newLabel);
+  }
+
+  const content = view.state.doc.toString();
 
   // Collect all existing refs with positions (exclude definitions [^N]:)
   const refRegex = /\[\^(\d+)\](?!:)/g;
@@ -492,6 +516,25 @@ export function insertFootnote(atPosition?: number): string | null {
 export function insertFootnoteReplacingRange(from: number, to: number): string | null {
   const view = getEditorView();
   if (!view) return null;
+
+  // Zoom mode: use next document-level label, no renumbering
+  if (getIsZoomMode()) {
+    const currentMax = getDocumentFootnoteCount();
+    const newLabel = currentMax + 1;
+    setZoomFootnoteState(true, newLabel);
+
+    view.dispatch({
+      changes: { from, to, insert: `[^${newLabel}]` },
+      selection: { anchor: from + `[^${newLabel}]`.length },
+    });
+    view.focus();
+
+    if (typeof (window as any).webkit?.messageHandlers?.footnoteInserted?.postMessage === 'function') {
+      (window as any).webkit.messageHandlers.footnoteInserted.postMessage({ label: String(newLabel) });
+    }
+
+    return String(newLabel);
+  }
 
   const content = view.state.doc.toString();
 
@@ -914,6 +957,7 @@ export function resetForProjectSwitch(): void {
 
   // Clear transient module-level state
   setPendingSlashUndo(false);
+  setZoomFootnoteState(false, 0);
   setPendingCAYWRange(null);
   setPendingAppendMode(false);
   setPendingAppendRange(null);

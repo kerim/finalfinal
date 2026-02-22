@@ -101,7 +101,7 @@ extension View {
                 } else {
                     // Switching FROM source mode TO WYSIWYG - set state BEFORE flush
                     editorState.contentState = .editorTransition
-                    editorState.flushCodeMirrorSyncIfNeeded()
+                    editorState.flushContentToDatabase()
 
                     // Extract anchors and strip bibliography marker
                     let (cleaned, anchors) = sectionSyncService.extractSectionAnchors(
@@ -304,7 +304,7 @@ extension View {
                             try? await Task.sleep(for: .milliseconds(1000))
                             guard !Task.isCancelled, editorState.contentState == .idle,
                                   editorState.editorMode == .source else { return }
-                            editorState.flushCodeMirrorSyncIfNeeded()
+                            editorState.flushContentToDatabase()
                         }
                     }
                 }

@@ -99,3 +99,18 @@ export function getCurrentMatchIndex(): number {
 export function setCurrentMatchIndex(value: number): void {
   currentMatchIndex = value;
 }
+
+// Track zoom mode state for footnote insertion
+let isZoomMode = false;
+let documentFootnoteCount = 0;
+
+export function getIsZoomMode(): boolean {
+  return isZoomMode;
+}
+export function getDocumentFootnoteCount(): number {
+  return documentFootnoteCount;
+}
+export function setZoomFootnoteState(zoomed: boolean, maxLabel: number): void {
+  isZoomMode = zoomed;
+  documentFootnoteCount = maxLabel;
+}

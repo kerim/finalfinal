@@ -81,8 +81,8 @@ extension EditorViewState {
         // SET CONTENTSTATE FIRST - before flush to prevent observation race conditions
         contentState = .zoomTransition
 
-        // Flush any pending CodeMirror edits before zooming
-        flushCodeMirrorSyncIfNeeded()
+        // Flush any pending editor edits before zooming
+        flushContentToDatabase()
 
         // If already zoomed to a different section, unzoom first
         if zoomedSectionId != nil && zoomedSectionId != sectionId {
@@ -147,9 +147,11 @@ extension EditorViewState {
             // Append mini #Notes section if zoomed content contains footnote references
             let footnoteRefs = FootnoteSyncService.extractFootnoteRefs(from: zoomedContent)
             if !footnoteRefs.isEmpty {
-                // Find the #Notes block from the full document
-                if let notesBlock = sorted.first(where: { $0.isNotes }) {
-                    let defs = FootnoteSyncService.extractFootnoteDefinitions(from: notesBlock.markdownFragment)
+                // Get ALL notes blocks from the full document (heading + definition blocks)
+                let notesBlocks = sorted.filter { $0.isNotes }
+                if !notesBlocks.isEmpty {
+                    let notesMd = BlockParser.assembleMarkdown(from: notesBlocks)
+                    let defs = FootnoteSyncService.extractFootnoteDefinitions(from: notesMd)
                     var miniNotes = "\n\n<!-- ::zoom-notes:: -->\n# Notes\n"
                     for ref in footnoteRefs {
                         if let def = defs[ref], !def.isEmpty {
@@ -161,6 +163,19 @@ extension EditorViewState {
                     zoomedContent += miniNotes
                 }
             }
+
+            // Compute max footnote label across full document body
+            let bodyBlocks = sorted.filter { !$0.isNotes && !$0.isBibliography }
+            let fullBodyContent = BlockParser.assembleMarkdown(from: bodyBlocks)
+            let allDocRefs = FootnoteSyncService.extractFootnoteRefs(from: fullBodyContent)
+            let maxLabel = allDocRefs.compactMap { Int($0) }.max() ?? 0
+
+            // Push zoom footnote state to JS BEFORE setting content (prevents timing gap)
+            NotificationCenter.default.post(
+                name: .setZoomFootnoteState,
+                object: nil,
+                userInfo: ["zoomed": true, "maxLabel": maxLabel]
+            )
 
             #if DEBUG
             print("[Zoom] Content preview (\(zoomedContent.count) chars): \(String(zoomedContent.prefix(200)))")
@@ -232,13 +247,20 @@ extension EditorViewState {
             contentState = .zoomTransition
         }
 
-        // Flush any pending CodeMirror edits before reading from DB
-        flushCodeMirrorSyncIfNeeded()
+        // Flush any pending editor edits before reading from DB
+        flushContentToDatabase()
 
         do {
             // Fetch ALL blocks from DB - database is always complete
             let allBlocks = try db.fetchBlocks(projectId: pid)
             let mergedContent = BlockParser.assembleMarkdown(from: allBlocks)
+
+            // Clear zoom footnote state BEFORE pushing full document content
+            NotificationCenter.default.post(
+                name: .setZoomFootnoteState,
+                object: nil,
+                userInfo: ["zoomed": false, "maxLabel": 0]
+            )
 
             isZoomingContent = true
             content = mergedContent
@@ -312,12 +334,12 @@ extension EditorViewState {
 
     // MARK: - CodeMirror Flush
 
-    /// Immediately persist CodeMirror content to the block database (no debounce).
-    /// Called before zoom-out, zoom-to, and editor switch to ensure CM edits are saved.
+    /// Immediately persist editor content to the block database (no debounce).
+    /// Called before zoom-out, zoom-to, and editor switch to ensure edits are saved.
     /// Handles both zoomed (range replace) and non-zoomed (full replace) cases.
-    func flushCodeMirrorSyncIfNeeded() {
-        // Only flush when in source mode with actual content
-        guard editorMode == .source, !content.isEmpty else { return }
+    /// Works for both Milkdown and CodeMirror — content is always available in editorState.content.
+    func flushContentToDatabase() {
+        guard !content.isEmpty else { return }
         guard let db = projectDatabase, let pid = currentProjectId else { return }
 
         // Cancel any pending debounced re-parse

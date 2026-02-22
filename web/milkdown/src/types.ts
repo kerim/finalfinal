@@ -147,6 +147,7 @@ declare global {
       insertFootnote: (atPosition?: number) => string | null;
       renumberFootnotes: (mapping: Record<string, string>) => void;
       scrollToFootnoteDefinition: (label: string) => void;
+      setZoomFootnoteState: (zoomed: boolean, maxLabel: number) => void;
       // Find/replace API
       find: (query: string, options?: FindOptions) => FindResult;
       findNext: () => FindResult | null;

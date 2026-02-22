@@ -244,6 +244,7 @@ struct MilkdownEditor: NSViewRepresentable {
         var renumberFootnotesObserver: NSObjectProtocol?
         var scrollToFootnoteDefObserver: NSObjectProtocol?
         var blockSyncPushObserver: NSObjectProtocol?
+        var zoomFootnoteStateObserver: NSObjectProtocol?
 
         /// Active spellcheck task (cancelled on new check or cleanup)
         var spellcheckTask: Task<Void, Never>?
@@ -445,6 +446,18 @@ struct MilkdownEditor: NSViewRepresentable {
                 self?.lastPushedContent = markdown
                 self?.lastPushTime = Date()
             }
+
+            // Subscribe to zoom footnote state changes
+            zoomFootnoteStateObserver = NotificationCenter.default.addObserver(
+                forName: .setZoomFootnoteState,
+                object: nil,
+                queue: .main
+            ) { [weak self] notification in
+                if let zoomed = notification.userInfo?["zoomed"] as? Bool,
+                   let maxLabel = notification.userInfo?["maxLabel"] as? Int {
+                    self?.setZoomFootnoteState(zoomed: zoomed, maxLabel: maxLabel)
+                }
+            }
         }
 
         deinit {
@@ -495,6 +508,9 @@ struct MilkdownEditor: NSViewRepresentable {
                 NotificationCenter.default.removeObserver(observer)
             }
             if let observer = blockSyncPushObserver {
+                NotificationCenter.default.removeObserver(observer)
+            }
+            if let observer = zoomFootnoteStateObserver {
                 NotificationCenter.default.removeObserver(observer)
             }
         }

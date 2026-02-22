@@ -11,6 +11,7 @@ import {
   getAllBlockIds,
   getBlockIdAtPos,
   resetBlockIdState,
+  setBlockIdZoomMode,
   setBlockIdsForTopLevel,
 } from './block-id-plugin';
 import {
@@ -30,12 +31,14 @@ import {
   setIsSettingContent,
   setPendingSlashRedo,
   setPendingSlashUndo,
+  setZoomFootnoteState,
 } from './editor-state';
 import { clearSearch } from './find-replace';
 import { isSourceModeEnabled } from './source-mode-plugin';
 import type { Block } from './types';
 
 export function setContent(markdown: string, options?: { scrollToStart?: boolean }): void {
+  setBlockIdZoomMode(false); // Clear zoom mode when loading full content
   const editorInstance = getEditorInstance();
   if (!editorInstance) {
     setCurrentContent(markdown);
@@ -217,6 +220,7 @@ export function resetForProjectSwitch(): void {
   setIsSettingContent(false);
   setPendingSlashUndo(false);
   setPendingSlashRedo(false);
+  setZoomFootnoteState(false, 0);
   // Clear search state
   clearSearch();
 
@@ -302,6 +306,7 @@ export function setContentWithBlockIds(
   blockIds: string[],
   options?: { scrollToStart?: boolean }
 ): void {
+  setBlockIdZoomMode(false); // Clear zoom mode when loading full content
   const editorInstance = getEditorInstance();
   if (!editorInstance) {
     setCurrentContent(markdown);
@@ -459,6 +464,7 @@ export function syncBlockIds(orderedIds: string[]): void {
   const editorInstance = getEditorInstance();
   if (!editorInstance) return;
   const view = editorInstance.ctx.get(editorViewCtx);
+  setBlockIdZoomMode(true); // Enable zoom mode before setting body-only IDs
   setBlockIdsForTopLevel(orderedIds, view.state.doc);
   resetAndSnapshot(view.state.doc);
 }

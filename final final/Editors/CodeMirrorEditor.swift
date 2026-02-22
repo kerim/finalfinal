@@ -216,6 +216,7 @@ struct CodeMirrorEditor: NSViewRepresentable {
         var insertFootnoteObserver: NSObjectProtocol?
         var renumberFootnotesObserver: NSObjectProtocol?
         var scrollToFootnoteDefObserver: NSObjectProtocol?
+        var zoomFootnoteStateObserver: NSObjectProtocol?
 
         /// Active spellcheck task (cancelled on new check or cleanup)
         var spellcheckTask: Task<Void, Never>?
@@ -360,6 +361,18 @@ struct CodeMirrorEditor: NSViewRepresentable {
                     self?.scrollToFootnoteDefinition(label: label)
                 }
             }
+
+            // Subscribe to zoom footnote state changes
+            zoomFootnoteStateObserver = NotificationCenter.default.addObserver(
+                forName: .setZoomFootnoteState,
+                object: nil,
+                queue: .main
+            ) { [weak self] notification in
+                if let zoomed = notification.userInfo?["zoomed"] as? Bool,
+                   let maxLabel = notification.userInfo?["maxLabel"] as? Int {
+                    self?.setZoomFootnoteState(zoomed: zoomed, maxLabel: maxLabel)
+                }
+            }
         }
 
         deinit {
@@ -395,6 +408,9 @@ struct CodeMirrorEditor: NSViewRepresentable {
                 NotificationCenter.default.removeObserver(observer)
             }
             if let observer = scrollToFootnoteDefObserver {
+                NotificationCenter.default.removeObserver(observer)
+            }
+            if let observer = zoomFootnoteStateObserver {
                 NotificationCenter.default.removeObserver(observer)
             }
         }

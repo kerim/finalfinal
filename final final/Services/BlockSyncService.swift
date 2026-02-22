@@ -89,9 +89,9 @@ class BlockSyncService {
             let filtered: [Block]
             if let range = range {
                 if let end = range.end {
-                    filtered = blocks.filter { $0.sortOrder >= range.start && !$0.isBibliography && $0.sortOrder < end }
+                    filtered = blocks.filter { $0.sortOrder >= range.start && !$0.isBibliography && !$0.isNotes && $0.sortOrder < end }
                 } else {
-                    filtered = blocks.filter { $0.sortOrder >= range.start && !$0.isBibliography }
+                    filtered = blocks.filter { $0.sortOrder >= range.start && !$0.isBibliography && !$0.isNotes }
                 }
             } else {
                 filtered = blocks

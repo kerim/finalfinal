@@ -10,7 +10,7 @@ import { Plugin, Selection, TextSelection } from '@milkdown/kit/prose/state';
 import { $node, $prose, $remark, $view } from '@milkdown/kit/utils';
 import type { Root } from 'mdast';
 import { visit } from 'unist-util-visit';
-import { getEditorInstance } from './editor-state';
+import { getDocumentFootnoteCount, getEditorInstance, getIsZoomMode, setZoomFootnoteState } from './editor-state';
 import { isSourceModeEnabled } from './source-mode-plugin';
 
 // === Footnote Definitions State ===
@@ -357,6 +357,27 @@ export function insertFootnote(atPosition?: number): string | null {
 
   const insertPos = atPosition ?? view.state.selection.from;
 
+  // Zoom mode: use next document-level label, no renumbering
+  if (getIsZoomMode()) {
+    const currentMax = getDocumentFootnoteCount();
+    const newLabel = currentMax + 1;
+    setZoomFootnoteState(true, newLabel); // increment for next insertion
+
+    const nodeType = footnoteRefNode.type(editorInstance.ctx);
+    const newNode = nodeType.create({ label: String(newLabel) });
+    const tr = view.state.tr.insert(insertPos, newNode);
+    view.dispatch(tr);
+
+    footnoteDefinitions.set(String(newLabel), '');
+
+    if (typeof (window as any).webkit?.messageHandlers?.footnoteInserted?.postMessage === 'function') {
+      (window as any).webkit.messageHandlers.footnoteInserted.postMessage({ label: String(newLabel) });
+    }
+
+    console.log('[DIAG-FN] insertFootnote() zoom mode returning label:', String(newLabel));
+    return String(newLabel);
+  }
+
   // Collect all existing refs with positions
   const existingRefs: Array<{ pos: number; label: string }> = [];
   view.state.doc.descendants((node: Node, pos: number) => {
@@ -424,6 +445,27 @@ export function insertFootnoteWithDelete(
   deleteFrom: number,
   deleteTo: number
 ): string | null {
+  // Zoom mode: use next document-level label, no renumbering
+  if (getIsZoomMode()) {
+    const currentMax = getDocumentFootnoteCount();
+    const newLabel = currentMax + 1;
+    setZoomFootnoteState(true, newLabel);
+
+    const tr = view.state.tr;
+    tr.delete(deleteFrom, deleteTo);
+    const nodeType = footnoteRefNode.type(editorInstance.ctx);
+    tr.insert(deleteFrom, nodeType.create({ label: String(newLabel) }));
+    view.dispatch(tr);
+
+    footnoteDefinitions.set(String(newLabel), '');
+
+    if (typeof (window as any).webkit?.messageHandlers?.footnoteInserted?.postMessage === 'function') {
+      (window as any).webkit.messageHandlers.footnoteInserted.postMessage({ label: String(newLabel) });
+    }
+
+    return String(newLabel);
+  }
+
   // Collect existing refs
   const existingRefs: Array<{ pos: number; label: string }> = [];
   view.state.doc.descendants((node: Node, pos: number) => {

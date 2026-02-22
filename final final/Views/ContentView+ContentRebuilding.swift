@@ -369,4 +369,87 @@ extension ContentView {
             }
         }
     }
+
+    // MARK: - Zoomed Footnote Insertion
+
+    func handleZoomedFootnoteInsertion(label: String, projectId: String) {
+        editorState.contentState = .bibliographyUpdate
+        blockSyncService.isSyncSuppressed = true
+
+        // Flush current editor content to DB before modifying
+        editorState.flushContentToDatabase()
+
+        // Sync mini Notes definitions back to DB BEFORE creating new definition
+        // (preserves user edits to existing definitions made during this zoom session)
+        let (_, existingMiniNotes) = SectionSyncService.stripZoomNotes(from: editorState.content)
+        if let miniNotes = existingMiniNotes {
+            sectionSyncService.syncMiniNotesBackPublic(miniNotes, projectId: projectId)
+        }
+
+        // Create definition in DB (reuses existing logic)
+        footnoteSyncService.handleImmediateInsertion(label: label, projectId: projectId)
+
+        // Recalculate zoom range using count-based boundary
+        recalculateZoomRangeCountBased(projectId: projectId)
+
+        // Rebuild zoomed content with updated mini #Notes
+        let (body, _) = SectionSyncService.stripZoomNotes(from: editorState.content)
+        let refs = FootnoteSyncService.extractFootnoteRefs(from: body)
+
+        // Get ALL definitions from DB
+        let notesMd = footnoteSyncService.buildNotesSectionMarkdown(projectId: projectId) ?? ""
+        let allDefs = FootnoteSyncService.extractFootnoteDefinitions(from: notesMd)
+
+        var miniNotesSection = "\n\n<!-- ::zoom-notes:: -->\n# Notes\n"
+        for ref in refs {
+            let def = allDefs[ref] ?? ""
+            miniNotesSection += "\n[^\(ref)]: \(def)\n"
+        }
+
+        let combined = body + miniNotesSection
+        editorState.content = combined
+        updateSourceContentIfNeeded()
+
+        // Push to editor via normal content path, then push block IDs for body only
+        Task {
+            guard let range = editorState.zoomedBlockRange else {
+                editorState.contentState = .idle
+                blockSyncService.isSyncSuppressed = false
+                return
+            }
+
+            // Push block IDs for body blocks in zoom range
+            await blockSyncService.pushBlockIds(for: range)
+
+            editorState.contentState = .idle
+            // pushBlockIds defer clears isSyncSuppressed
+
+            await Task.yield()
+
+            // Scroll to new definition
+            NotificationCenter.default.post(
+                name: .scrollToFootnoteDefinition,
+                object: nil,
+                userInfo: ["label": label]
+            )
+        }
+    }
+
+    private func recalculateZoomRangeCountBased(projectId: String) {
+        guard let db = documentManager.projectDatabase,
+              let zoomedId = editorState.zoomedSectionId,
+              let headingBlock = try? db.fetchBlock(id: zoomedId) else { return }
+
+        let newStart = headingBlock.sortOrder
+
+        // Count body blocks in zoom scope (same approach as flushContentToDatabase)
+        let (body, _) = SectionSyncService.stripZoomNotes(from: editorState.content)
+        let bodyBlocks = BlockParser.parse(markdown: body, projectId: projectId)
+        let newEnd = newStart + Double(bodyBlocks.count)
+
+        let allBlocks = (try? db.fetchBlocks(projectId: projectId)) ?? []
+        let blockAtEnd = allBlocks.first { $0.sortOrder >= newEnd }
+
+        editorState.zoomedBlockRange = (start: newStart, end: blockAtEnd?.sortOrder)
+    }
 }

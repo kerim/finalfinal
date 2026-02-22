@@ -81,6 +81,10 @@ extension MilkdownEditor.Coordinator {
             NotificationCenter.default.removeObserver(observer)
             blockSyncPushObserver = nil
         }
+        if let observer = zoomFootnoteStateObserver {
+            NotificationCenter.default.removeObserver(observer)
+            zoomFootnoteStateObserver = nil
+        }
         webView = nil
     }
 
@@ -175,6 +179,13 @@ extension MilkdownEditor.Coordinator {
         guard let jsonData = try? JSONSerialization.data(withJSONObject: mapping),
               let json = String(data: jsonData, encoding: .utf8) else { return }
         webView.evaluateJavaScript("window.FinalFinal.renumberFootnotes(\(json))") { _, _ in }
+    }
+
+    func setZoomFootnoteState(zoomed: Bool, maxLabel: Int) {
+        guard isEditorReady, let webView else { return }
+        webView.evaluateJavaScript(
+            "window.FinalFinal.setZoomFootnoteState(\(zoomed), \(maxLabel))"
+        ) { _, _ in }
     }
 
     func setFootnoteDefinitions(_ defs: [String: String]) {

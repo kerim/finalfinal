@@ -81,6 +81,7 @@ import {
   getIsSettingContent,
   setCurrentContent,
   setEditorInstance,
+  setZoomFootnoteState,
 } from './editor-state';
 import { focusModePlugin, isFocusModeEnabled } from './focus-mode-plugin';
 import { headingNodeViewPlugin } from './heading-nodeview-plugin';
@@ -322,6 +323,9 @@ window.FinalFinal = {
   },
   renumberFootnotes,
   scrollToFootnoteDefinition,
+  setZoomFootnoteState: (zoomed: boolean, maxLabel: number) => {
+    setZoomFootnoteState(zoomed, maxLabel);
+  },
   // Find/replace API
   find: findApi,
   findNext: findNextApi,

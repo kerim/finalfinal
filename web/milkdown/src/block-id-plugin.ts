@@ -52,6 +52,14 @@ interface BlockIdPluginState {
 let currentBlockIds: Map<number, string> = new Map();
 const pendingConfirmations: Map<string, string> = new Map();
 
+// Zoom mode flag: when true, assignBlockIds skips unmatched nodes
+// (prevents mini-Notes nodes from getting temp IDs)
+let blockIdZoomMode = false;
+
+export function setBlockIdZoomMode(enabled: boolean): void {
+  blockIdZoomMode = enabled;
+}
+
 /**
  * Reset module-level state (call when destroying editor instance)
  */
@@ -212,6 +220,11 @@ function assignBlockIds(doc: Node, existingIds: Map<number, string>): Map<number
         }
 
         if (!found) {
+          if (blockIdZoomMode) {
+            // In zoom mode, don't generate temp IDs for unmatched nodes
+            // (mini-Notes nodes would get temp IDs and cause spurious DB inserts)
+            return;
+          }
           // New block - assign temporary ID
           const newId = TEMP_ID_PREFIX + generateBlockId();
           newIds.set(offset, newId);

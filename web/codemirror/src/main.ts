@@ -47,7 +47,7 @@ import {
   wrapSelection,
 } from './api';
 import { updateCitationAddButton } from './citations';
-import { getPendingSlashUndo, setEditorExtensions, setEditorView, setPendingSlashUndo } from './editor-state';
+import { getPendingSlashUndo, setEditorExtensions, setEditorView, setPendingSlashUndo, setZoomFootnoteState } from './editor-state';
 import { focusModePlugin, isFocusModeEnabled } from './focus-mode-plugin';
 import { footnoteDecorationPlugin } from './footnote-decoration-plugin';
 import { customHighlightStyle, headingDecorationPlugin, syntaxHighlighting } from './heading-plugin';
@@ -261,6 +261,9 @@ window.FinalFinal = {
   },
   renumberFootnotes,
   scrollToFootnoteDefinition,
+  setZoomFootnoteState: (zoomed: boolean, maxLabel: number) => {
+    setZoomFootnoteState(zoomed, maxLabel);
+  },
   // Spellcheck API
   setSpellcheckResults,
   enableSpellcheck,

@@ -393,6 +393,14 @@ class SectionSyncService {
         return (stripped, miniNotes.isEmpty ? nil : miniNotes)
     }
 
+    /// Public entry point for syncing mini Notes definitions back to DB.
+    /// Called from handleZoomedFootnoteInsertion to preserve user edits before insertion.
+    func syncMiniNotesBackPublic(_ miniNotesContent: String, projectId: String) {
+        guard let db = projectDatabase else { return }
+        let existingSections = (try? db.fetchSections(projectId: projectId)) ?? []
+        syncMiniNotesBack(miniNotesContent, existingSections: existingSections, db: db, pid: projectId)
+    }
+
     /// Sync edited mini #Notes definitions back to the main Notes block in the database.
     /// Called when zoomed content contains `<!-- ::zoom-notes:: -->` marker with definitions.
     private func syncMiniNotesBack(
@@ -420,27 +428,45 @@ class SectionSyncService {
         // Check if anything actually changed
         guard mergedDefs != currentDefs else { return }
 
-        // Rebuild the #Notes markdown with merged definitions
+        // Rebuild the #Notes as individual blocks (matches handleImmediateInsertion structure)
         // Sort labels numerically for consistent ordering
         let sortedLabels = mergedDefs.keys.sorted { (Int($0) ?? 0) < (Int($1) ?? 0) }
-        var newNotesMarkdown = "# Notes\n\n"
-        for label in sortedLabels {
-            let def = mergedDefs[label] ?? ""
-            newNotesMarkdown += "[^\(label)]: \(def)\n\n"
-        }
 
-        // Update the Notes block in the database
+        // Delete all existing notes blocks and recreate individually
         do {
             try db.write { dbConn in
-                if var notesBlock = try Block
-                    .filter(Block.Columns.projectId == pid)
+                // Delete ALL existing notes blocks
+                try Block.filter(Block.Columns.projectId == pid)
                     .filter(Block.Columns.isNotes == true)
-                    .fetchOne(dbConn) {
-                    notesBlock.markdownFragment = newNotesMarkdown
-                    notesBlock.textContent = "Notes"
-                    notesBlock.wordCount = MarkdownUtils.wordCount(for: newNotesMarkdown)
-                    notesBlock.updatedAt = Date()
-                    try notesBlock.update(dbConn)
+                    .deleteAll(dbConn)
+
+                // Find max sort order of non-bibliography blocks
+                let maxNonBibSort = try Block
+                    .filter(Block.Columns.projectId == pid)
+                    .filter(Block.Columns.isBibliography == false)
+                    .order(Block.Columns.sortOrder.desc)
+                    .fetchOne(dbConn)?.sortOrder ?? 0
+                let baseSortOrder = maxNonBibSort + 0.5
+
+                // Heading block
+                var heading = Block(
+                    projectId: pid, sortOrder: baseSortOrder,
+                    blockType: .heading, textContent: "Notes",
+                    markdownFragment: "# Notes", headingLevel: 1,
+                    status: .final_, isNotes: true
+                )
+                try heading.insert(dbConn)
+
+                // Definition blocks
+                for (index, label) in sortedLabels.enumerated() {
+                    let def = mergedDefs[label] ?? ""
+                    var defBlock = Block(
+                        projectId: pid, sortOrder: baseSortOrder + Double(index + 1),
+                        blockType: .paragraph, textContent: def,
+                        markdownFragment: "[^\(label)]: \(def)", isNotes: true
+                    )
+                    defBlock.recalculateWordCount()
+                    try defBlock.insert(dbConn)
                 }
             }
         } catch {

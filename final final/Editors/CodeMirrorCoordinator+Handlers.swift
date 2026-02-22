@@ -746,6 +746,13 @@ extension CodeMirrorEditor.Coordinator {
         ) { _, _ in }
     }
 
+    func setZoomFootnoteState(zoomed: Bool, maxLabel: Int) {
+        guard isEditorReady, let webView else { return }
+        webView.evaluateJavaScript(
+            "window.FinalFinal.setZoomFootnoteState(\(zoomed), \(maxLabel))"
+        ) { _, _ in }
+    }
+
     /// Renumber footnote references in the editor using old→new label mapping
     func renumberFootnotes(mapping: [String: String]) {
         guard isEditorReady, let webView else { return }

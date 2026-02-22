@@ -225,9 +225,10 @@ struct ContentView: View {
                     print("[DIAG-FN] guard FAILED - label=\(notification.userInfo?["label"] ?? "nil"), projectId=\(documentManager.projectId ?? "nil")")
                     return
                 }
-                // Skip during zoom (defer to debounce path)
-                guard editorState.zoomedSectionId == nil else {
-                    print("[DIAG-FN] guard FAILED - zoomedSectionId=\(String(describing: editorState.zoomedSectionId))")
+                // Zoom-aware handling: use zoom-specific insertion path
+                if editorState.zoomedSectionId != nil {
+                    print("[DIAG-FN] zoom mode - dispatching to handleZoomedFootnoteInsertion for label=\(label)")
+                    handleZoomedFootnoteInsertion(label: label, projectId: projectId)
                     return
                 }
 
@@ -336,6 +337,15 @@ struct ContentView: View {
                 bibliographySyncService.checkAndUpdateBibliography(
                     currentCitekeys: citekeys,
                     projectId: projectId
+                )
+
+                // Sync footnotes with full document content
+                // Updates lastKnownRefs to prevent debounce from deleting definitions
+                let footnoteRefs = FootnoteSyncService.extractFootnoteRefs(from: editorState.content)
+                footnoteSyncService.checkAndUpdateFootnotes(
+                    footnoteRefs: footnoteRefs,
+                    projectId: projectId,
+                    fullContent: editorState.content
                 )
             }
             .integrityAlert(
