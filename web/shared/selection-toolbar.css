@@ -13,7 +13,7 @@
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.3);
   font-size: 13px;
   line-height: 1;
-  pointer-events: auto;
+  pointer-events: none;
   user-select: none;
 
   /* Animation */
@@ -27,6 +27,7 @@
 .selection-toolbar.visible {
   opacity: 1;
   transform: translateY(0);
+  pointer-events: auto;
 }
 
 .selection-toolbar.hiding {
