@@ -21,7 +21,11 @@ Also, a lot of things you would expect from a word processor aren't there yet: t
 
 # What's New
 
-## Version 0.2.4.2
+## Version 0.2.43
+
+- New feature: Footnotes!
+
+## Version 0.2.42
 
 - Improved grammar and spell check, skipping annotations, citations, and non-latin script.
 
@@ -41,10 +45,6 @@ Also, a lot of things you would expect from a word processor aren't there yet: t
 ## Version 0.2.39
 
 - Fixed situations where markdown scrolling could still break.
-
-## Version 0.2.38
-
-- Greatly improved scrolling performance in Markdown mode, though there are still situations where it can break.
 
 # Roadmap
 
