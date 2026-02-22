@@ -11,8 +11,8 @@ import {
   getAllBlockIds,
   getBlockIdAtPos,
   resetBlockIdState,
-  setBlockIdZoomMode,
   setBlockIdsForTopLevel,
+  setBlockIdZoomMode,
 } from './block-id-plugin';
 import {
   type BlockChanges,
@@ -191,16 +191,6 @@ export function getContent(): string {
   }
 
   const trimmed = markdown.trim();
-
-  // [DIAG-FN] Check Notes section serialization
-  const notesIdx = markdown.indexOf('# Notes');
-  if (notesIdx !== -1) {
-    const notesPreview = markdown.slice(notesIdx, notesIdx + 300);
-    console.log('[DIAG-FN] getContent Notes:', JSON.stringify(notesPreview));
-    if (notesPreview.includes('\\[') || notesPreview.includes('\\]')) {
-      console.log('[DIAG-FN] WARNING: Escaped brackets in Notes!');
-    }
-  }
 
   // Empty/minimal document may serialize to just a section break marker - treat as empty
   if (trimmed === '' || trimmed === '<!-- ::break:: -->') {

@@ -74,7 +74,6 @@ import { blockSyncPlugin } from './block-sync-plugin';
 import { openCAYWPicker } from './cayw';
 import { citationPlugin } from './citation-plugin';
 import { restoreCitationLibrary } from './citation-search';
-import { footnotePlugin, insertFootnote, renumberFootnotes, scrollToFootnoteDefinition, setFootnoteDefinitions } from './footnote-plugin';
 import {
   getCurrentContent,
   getEditorInstance,
@@ -84,13 +83,19 @@ import {
   setZoomFootnoteState,
 } from './editor-state';
 import { focusModePlugin, isFocusModeEnabled } from './focus-mode-plugin';
+import {
+  footnotePlugin,
+  insertFootnote,
+  renumberFootnotes,
+  scrollToFootnoteDefinition,
+  setFootnoteDefinitions,
+} from './footnote-plugin';
 import { headingNodeViewPlugin } from './heading-nodeview-plugin';
 import { highlightPlugin } from './highlight-plugin';
 import './link-click-handler';
 import { linkTooltipPlugin, openLinkEdit } from './link-tooltip';
 import { searchPlugin } from './search-plugin';
 import { sectionBreakPlugin } from './section-break-plugin';
-import { zoomNotesMarkerPlugin } from './zoom-notes-marker-plugin';
 import { configureSlash, slash } from './slash-commands';
 import { sourceModePlugin } from './source-mode-plugin';
 import {
@@ -100,6 +105,7 @@ import {
   spellcheckPlugin,
   triggerSpellcheck as triggerSpellcheckImpl,
 } from './spellcheck-plugin';
+import { zoomNotesMarkerPlugin } from './zoom-notes-marker-plugin';
 import './styles.css';
 // Import types to ensure declare global is included in the bundle
 import './types';
@@ -317,12 +323,7 @@ window.FinalFinal = {
   triggerSpellcheck: triggerSpellcheckImpl,
   // Footnote API
   setFootnoteDefinitions,
-  insertFootnote: (...args: Parameters<typeof insertFootnote>) => {
-    console.log('[DIAG-FN] window.FinalFinal.insertFootnote() called via API');
-    const result = insertFootnote(...args);
-    console.log('[DIAG-FN] window.FinalFinal.insertFootnote() returned:', result);
-    return result;
-  },
+  insertFootnote,
   renumberFootnotes,
   scrollToFootnoteDefinition,
   setZoomFootnoteState: (zoomed: boolean, maxLabel: number) => {

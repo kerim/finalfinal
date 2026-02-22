@@ -79,21 +79,6 @@ extension ProjectDatabase {
                 try block.insert(db)
             }
 
-            #if DEBUG
-            let allInserted = try Block
-                .filter(Block.Columns.projectId == projectId)
-                .fetchAll(db)
-            let notesCount = allInserted.filter { $0.isNotes }.count
-            let fnBlocks = allInserted.filter {
-                $0.markdownFragment.range(of: #"\[\^\d+\]:"#, options: .regularExpression) != nil
-            }
-            if !fnBlocks.isEmpty {
-                print("[DIAG-FN] replaceBlocks: \(allInserted.count) total, \(notesCount) isNotes=true, \(fnBlocks.count) contain [^N]:")
-                for block in fnBlocks {
-                    print("[DIAG-FN]   id=\(block.id.prefix(8))… type=\(block.blockType) isNotes=\(block.isNotes) frag=\"\(block.markdownFragment.prefix(60))\"")
-                }
-            }
-            #endif
         }
     }
 

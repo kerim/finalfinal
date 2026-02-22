@@ -144,7 +144,6 @@ export function slashCompletions(context: CompletionContext): CompletionResult |
         detail: 'Insert footnote',
         apply: (_view: EditorView, _completion: any, from: number, to: number) => {
           // Single dispatch — delete slash text + insert + renumber
-          console.log('[DIAG-FN] CM Slash /footnote triggered, from:', from, 'to:', to);
           insertFootnoteReplacingRange(from, to);
           setPendingSlashUndo(true);
         },

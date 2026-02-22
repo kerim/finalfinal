@@ -219,27 +219,21 @@ struct ContentView: View {
                 }
             }
             .onReceive(NotificationCenter.default.publisher(for: .footnoteInsertedImmediate)) { notification in
-                print("[DIAG-FN] \(Date()) ContentView: .footnoteInsertedImmediate notification arrived, userInfo=\(String(describing: notification.userInfo))")
                 guard let label = notification.userInfo?["label"] as? String,
                       let projectId = documentManager.projectId else {
-                    print("[DIAG-FN] guard FAILED - label=\(notification.userInfo?["label"] ?? "nil"), projectId=\(documentManager.projectId ?? "nil")")
                     return
                 }
                 // Zoom-aware handling: use zoom-specific insertion path
                 if editorState.zoomedSectionId != nil {
-                    print("[DIAG-FN] zoom mode - dispatching to handleZoomedFootnoteInsertion for label=\(label)")
                     handleZoomedFootnoteInsertion(label: label, projectId: projectId)
                     return
                 }
 
                 // Rapid double-insertion safety: queue label if busy
                 guard editorState.contentState == .idle else {
-                    print("[DIAG-FN] guard FAILED - contentState=\(editorState.contentState), queueing label=\(label)")
                     pendingFootnoteLabel = label
                     return
                 }
-
-                print("[DIAG-FN] All guards passed, proceeding with immediate insertion for label=\(label)")
 
                 // Set sync suppression BEFORE DB write
                 editorState.contentState = .bibliographyUpdate
@@ -274,8 +268,6 @@ struct ContentView: View {
                 } else {
                     combined = stripped
                 }
-
-                print("[DIAG-FN] combined markdown length=\(combined.count)")
 
                 editorState.content = combined
                 updateSourceContentIfNeeded()

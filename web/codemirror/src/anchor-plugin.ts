@@ -37,7 +37,8 @@ const ZOOM_NOTES_MARKER_REGEX = /<!-- ::zoom-notes:: -->/g;
 // Combined regex for stripping all hidden markers from clipboard
 // No end marker - only start marker and section anchors
 // Exported for spellcheck-plugin to strip markers before checking
-export const ALL_HIDDEN_MARKERS_REGEX = /<!-- @sid:[0-9a-fA-F-]+ -->|<!-- ::auto-bibliography:: -->|<!-- ::zoom-notes:: -->/g;
+export const ALL_HIDDEN_MARKERS_REGEX =
+  /<!-- @sid:[0-9a-fA-F-]+ -->|<!-- ::auto-bibliography:: -->|<!-- ::zoom-notes:: -->/g;
 
 /**
  * Find all hidden marker ranges in the document for decoration purposes

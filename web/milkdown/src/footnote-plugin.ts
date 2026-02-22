@@ -188,7 +188,6 @@ export const footnoteRefNode = $node('footnote_ref', () => ({
     match: (node: Node) => node.type.name === 'footnote_ref',
     runner: (state: any, node: Node) => {
       const label = node.attrs.label;
-      console.log(`[DIAG-FN] toMarkdown footnote_ref: label="${label}"`);
       // Use 'html' node type to output raw content without escaping
       // (text nodes escape [ to \[ which breaks footnote syntax)
       state.addNode('html', undefined, `[^${label}]`);
@@ -282,10 +281,7 @@ const footnoteRefNodeView = $view(footnoteRefNode, (_ctx: Ctx) => {
         try {
           // Position cursor after "[^N]: " prefix for immediate typing
           const prefixLength = searchText.length + 1; // searchText is "[^N]:", +1 for the space
-          const cursorPos = Math.min(
-            targetPos + 1 + prefixLength,
-            view.state.doc.resolve(targetPos + 1).end()
-          );
+          const cursorPos = Math.min(targetPos + 1 + prefixLength, view.state.doc.resolve(targetPos + 1).end());
           const sel = TextSelection.create(view.state.doc, cursorPos);
           view.dispatch(view.state.tr.setSelection(sel));
           const coords = view.coordsAtPos(targetPos);
@@ -296,7 +292,9 @@ const footnoteRefNodeView = $view(footnoteRefNode, (_ctx: Ctx) => {
             });
           }
           view.focus();
-        } catch { /* scroll failed */ }
+        } catch {
+          /* scroll failed */
+        }
       }
     });
 
@@ -374,7 +372,6 @@ export function insertFootnote(atPosition?: number): string | null {
       (window as any).webkit.messageHandlers.footnoteInserted.postMessage({ label: String(newLabel) });
     }
 
-    console.log('[DIAG-FN] insertFootnote() zoom mode returning label:', String(newLabel));
     return String(newLabel);
   }
 
@@ -385,8 +382,6 @@ export function insertFootnote(atPosition?: number): string | null {
       existingRefs.push({ pos, label: node.attrs.label });
     }
   });
-  console.log('[DIAG-FN] insertFootnote() called, insertPos:', insertPos, 'existingRefs:', existingRefs.length);
-
   // Sort by position to determine insertion index
   existingRefs.sort((a, b) => a.pos - b.pos);
   const insertionIndex = existingRefs.filter((r) => r.pos < insertPos).length;
@@ -394,7 +389,7 @@ export function insertFootnote(atPosition?: number): string | null {
 
   // Refs that need renumbering: those with label >= newLabel
   const toRenumber = existingRefs
-    .filter((r) => parseInt(r.label) >= parseInt(newLabel))
+    .filter((r) => parseInt(r.label, 10) >= parseInt(newLabel, 10))
     .sort((a, b) => b.pos - a.pos); // REVERSE order for safe setNodeMarkup
 
   // Single transaction: renumber FIRST (reverse order), then insert
@@ -402,7 +397,7 @@ export function insertFootnote(atPosition?: number): string | null {
 
   for (const ref of toRenumber) {
     tr.setNodeMarkup(ref.pos, undefined, {
-      label: String(parseInt(ref.label) + 1),
+      label: String(parseInt(ref.label, 10) + 1),
     });
   }
 
@@ -417,7 +412,7 @@ export function insertFootnote(atPosition?: number): string | null {
   footnoteDefinitions.clear();
   for (const [label, def] of oldDefs) {
     const labelInt = parseInt(label, 10);
-    if (labelInt < parseInt(newLabel)) {
+    if (labelInt < parseInt(newLabel, 10)) {
       footnoteDefinitions.set(label, def);
     } else {
       footnoteDefinitions.set(String(labelInt + 1), def);
@@ -430,7 +425,6 @@ export function insertFootnote(atPosition?: number): string | null {
     (window as any).webkit.messageHandlers.footnoteInserted.postMessage({ label: newLabel });
   }
 
-  console.log('[DIAG-FN] insertFootnote() returning label:', newLabel);
   return newLabel;
 }
 
@@ -480,7 +474,7 @@ export function insertFootnoteWithDelete(
   const newLabel = String(insertionIndex + 1);
 
   const toRenumber = existingRefs
-    .filter((r) => parseInt(r.label) >= parseInt(newLabel))
+    .filter((r) => parseInt(r.label, 10) >= parseInt(newLabel, 10))
     .sort((a, b) => b.pos - a.pos);
 
   const tr = view.state.tr;
@@ -488,7 +482,7 @@ export function insertFootnoteWithDelete(
   // ORDER MATTERS:
   // 1. setNodeMarkup FIRST (doesn't change positions)
   for (const ref of toRenumber) {
-    tr.setNodeMarkup(ref.pos, undefined, { label: String(parseInt(ref.label) + 1) });
+    tr.setNodeMarkup(ref.pos, undefined, { label: String(parseInt(ref.label, 10) + 1) });
   }
   // 2. delete SECOND (shifts positions after deleteFrom)
   tr.delete(deleteFrom, deleteTo);
@@ -503,7 +497,7 @@ export function insertFootnoteWithDelete(
   footnoteDefinitions.clear();
   for (const [label, def] of oldDefs) {
     const labelInt = parseInt(label, 10);
-    if (labelInt < parseInt(newLabel)) {
+    if (labelInt < parseInt(newLabel, 10)) {
       footnoteDefinitions.set(label, def);
     } else {
       footnoteDefinitions.set(String(labelInt + 1), def);
@@ -649,7 +643,9 @@ const footnoteClickPlugin = $prose(() => {
               });
             }
             view.focus();
-          } catch { /* scroll failed */ }
+          } catch {
+            /* scroll failed */
+          }
           return true;
         }
 
@@ -661,5 +657,8 @@ const footnoteClickPlugin = $prose(() => {
 
 // Export the plugin array — node view MUST be in same array to maintain atom identity
 export const footnotePlugin: MilkdownPlugin[] = [
-  remarkFootnotePlugin, footnoteRefNode, footnoteRefNodeView, footnoteClickPlugin,
+  remarkFootnotePlugin,
+  footnoteRefNode,
+  footnoteRefNodeView,
+  footnoteClickPlugin,
 ].flat();

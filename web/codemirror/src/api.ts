@@ -13,10 +13,10 @@ import { stripAnchors } from './anchor-plugin';
 import { hideCitationAddButton, mergeCitations } from './citations';
 import {
   getCitationAddButton,
-  getDocumentFootnoteCount,
   getCurrentMatchIndex,
   getCurrentSearchOptions,
   getCurrentSearchQuery,
+  getDocumentFootnoteCount,
   getEditorExtensions,
   getEditorView,
   getIsZoomMode,
@@ -432,7 +432,6 @@ export function insertFootnote(atPosition?: number): string | null {
   if (!view) return null;
 
   const insertPos = atPosition ?? view.state.selection.main.from;
-  console.log('[DIAG-FN] CM insertFootnote() called, insertPos:', insertPos);
 
   // Zoom mode: use next document-level label, no renumbering
   if (getIsZoomMode()) {
@@ -450,7 +449,6 @@ export function insertFootnote(atPosition?: number): string | null {
       (window as any).webkit.messageHandlers.footnoteInserted.postMessage({ label: String(newLabel) });
     }
 
-    console.log('[DIAG-FN] CM insertFootnote() zoom mode returning label:', String(newLabel));
     return String(newLabel);
   }
 
@@ -461,7 +459,7 @@ export function insertFootnote(atPosition?: number): string | null {
   const existingRefs: Array<{ from: number; to: number; label: number }> = [];
   let match;
   while ((match = refRegex.exec(content)) !== null) {
-    existingRefs.push({ from: match.index, to: match.index + match[0].length, label: parseInt(match[1]) });
+    existingRefs.push({ from: match.index, to: match.index + match[0].length, label: parseInt(match[1], 10) });
   }
   existingRefs.sort((a, b) => a.from - b.from);
 
@@ -482,7 +480,7 @@ export function insertFootnote(atPosition?: number): string | null {
   // Rename def prefixes [^N]: → [^N+1]: where N >= newLabel
   const defRegex = /\[\^(\d+)\]:/g;
   while ((match = defRegex.exec(content)) !== null) {
-    const defLabel = parseInt(match[1]);
+    const defLabel = parseInt(match[1], 10);
     if (defLabel >= newLabel) {
       changes.push({ from: match.index, to: match.index + match[0].length, insert: `[^${defLabel + 1}]:` });
     }
@@ -505,7 +503,6 @@ export function insertFootnote(atPosition?: number): string | null {
     (window as any).webkit.messageHandlers.footnoteInserted.postMessage({ label: String(newLabel) });
   }
 
-  console.log('[DIAG-FN] CM insertFootnote() returning label:', String(newLabel));
   return String(newLabel);
 }
 
@@ -543,7 +540,7 @@ export function insertFootnoteReplacingRange(from: number, to: number): string |
   const existingRefs: Array<{ from: number; to: number; label: number }> = [];
   let match;
   while ((match = refRegex.exec(content)) !== null) {
-    existingRefs.push({ from: match.index, to: match.index + match[0].length, label: parseInt(match[1]) });
+    existingRefs.push({ from: match.index, to: match.index + match[0].length, label: parseInt(match[1], 10) });
   }
   existingRefs.sort((a, b) => a.from - b.from);
 
@@ -564,7 +561,7 @@ export function insertFootnoteReplacingRange(from: number, to: number): string |
   // Rename def prefixes [^N]: → [^N+1]: where N >= newLabel
   const defRegex = /\[\^(\d+)\]:/g;
   while ((match = defRegex.exec(content)) !== null) {
-    const defLabel = parseInt(match[1]);
+    const defLabel = parseInt(match[1], 10);
     if (defLabel >= newLabel) {
       changes.push({ from: match.index, to: match.index + match[0].length, insert: `[^${defLabel + 1}]:` });
     }

@@ -73,7 +73,8 @@ function handleClick(view: EditorView, event: MouseEvent): boolean {
         view.dispatch({
           selection: { anchor: defMatch.index },
           effects: EditorView.scrollIntoView(defMatch.index, {
-            y: 'center', yMargin: 100,
+            y: 'center',
+            yMargin: 100,
           }),
         });
       }
@@ -92,7 +93,8 @@ function handleClick(view: EditorView, event: MouseEvent): boolean {
         view.dispatch({
           selection: { anchor: refMatch.index },
           effects: EditorView.scrollIntoView(refMatch.index, {
-            y: 'center', yMargin: 100,
+            y: 'center',
+            yMargin: 100,
           }),
         });
       }

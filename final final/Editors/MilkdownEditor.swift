@@ -409,7 +409,6 @@ struct MilkdownEditor: NSViewRepresentable {
                 object: nil,
                 queue: .main
             ) { [weak self] _ in
-                print("[DIAG-FN] \(Date()) MilkdownEditor: received .insertFootnote notification")
                 self?.insertFootnoteAtCursor()
             }
 

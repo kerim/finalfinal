@@ -336,7 +336,6 @@ struct CodeMirrorEditor: NSViewRepresentable {
                 object: nil,
                 queue: .main
             ) { [weak self] _ in
-                print("[DIAG-FN] \(Date()) CodeMirrorEditor: received .insertFootnote notification")
                 self?.insertFootnoteAtCursor()
             }
 

@@ -14,6 +14,7 @@ How the app is built. Read these before modifying core systems.
 - [editor-communication.md](architecture/editor-communication.md) -- WebView bridge API, source mode, SectionSyncService, find bar, bibliography
 - [state-machine.md](architecture/state-machine.md) -- Content state enum, zoom in/out, hierarchy constraints, ValueObservation, drag-drop reordering
 - [word-count.md](architecture/word-count.md) -- Section-only vs aggregate counts, goal types, goal popover, zoom-mode updates
+- [footnotes.md](architecture/footnotes.md) -- Footnote refs, Notes section, Milkdown/CodeMirror plugins, zoom-notes behavior, definition preservation
 
 ## Roadmap
 
@@ -56,6 +57,7 @@ Bug investigation reports with root cause analysis and solutions.
 - [cm-scroll-stabilizer.md](findings/cm-scroll-stabilizer.md) -- Persistent blank gaps after rapid scrolling due to height map drift; fixed with adaptive post-scroll requestMeasure() cycles
 - [zoom-word-count-stale.md](findings/zoom-word-count-stale.md) -- Sidebar word counts don't update while zoomed (removeDuplicates suppresses derived-data emissions)
 - [bibliography-marker-stripping.md](findings/bibliography-marker-stripping.md) -- assembleMarkdown defense-in-depth stripped bibliography marker, deleting bibliography on round-trip
+- [footnote-development-issues.md](findings/footnote-development-issues.md) -- Footnote development issues: bracket escaping, GFM conflicts, zoom behavior, block ID desync
 
 ## Deferred
 
@@ -66,6 +68,7 @@ Features and fixes tracked for future work.
 - [per-citation-author-suppression.md](deferred/per-citation-author-suppression.md) -- Per-citation author suppression bug fix plan
 - [section-break-cleanup-after-delete-all.md](deferred/section-break-cleanup-after-delete-all.md) -- § placeholder appears after delete-all (ProseMirror default block type)
 - [tagging-keyboard-nav.md](deferred/tagging-keyboard-nav.md) -- Tag input enhancement and sidebar keyboard navigation
+- [notes-block-id-desync.md](deferred/notes-block-id-desync.md) -- Notes block ID desync during immediate insertion (interim fix in place)
 
 ## Plans
 

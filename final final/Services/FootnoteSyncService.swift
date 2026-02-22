@@ -192,9 +192,7 @@ final class FootnoteSyncService {
         projectId: String,
         fullContent: String
     ) {
-        print("[DIAG-FN] \(Date()) checkAndUpdateFootnotes: refs=\(footnoteRefs), lastKnownRefs=\(lastKnownRefs), state=\(state)")
         guard state == .idle else {
-            print("[DIAG-FN] checkAndUpdateFootnotes: returning early, state=\(state)")
             return
         }
 
@@ -207,7 +205,6 @@ final class FootnoteSyncService {
         }
 
         // Debounce the update
-        print("[DIAG-FN] \(Date()) checkAndUpdateFootnotes: refs changed, starting 3s debounce")
         debounceTask?.cancel()
         debounceTask = Task { [weak self] in
             guard !Task.isCancelled else { return }
@@ -215,7 +212,6 @@ final class FootnoteSyncService {
             try? await Task.sleep(nanoseconds: UInt64(3_000_000_000))
 
             guard !Task.isCancelled else { return }
-            print("[DIAG-FN] \(Date()) debounce timer fired, calling performFootnoteUpdate")
             await self?.performFootnoteUpdate(refs: footnoteRefs, projectId: projectId, fullContent: fullContent)
         }
     }
@@ -268,9 +264,7 @@ final class FootnoteSyncService {
     /// Called from ContentView when JS returns the label via evaluateJavaScript completion.
     /// Reads existing defs from DB, shifts labels, creates Notes heading + definition blocks.
     func handleImmediateInsertion(label: String, projectId: String) {
-        print("[DIAG-FN] \(Date()) handleImmediateInsertion called with label=\(label), projectId=\(projectId)")
         guard let database else {
-            print("[DIAG-FN] handleImmediateInsertion: database is nil, returning")
             return
         }
 
@@ -303,8 +297,6 @@ final class FootnoteSyncService {
                     }
                 }
 
-                print("[DIAG-FN] existing dbDefs: \(dbDefs)")
-
                 // 2. Compute new refs and shifted defs
                 let newLabelInt = Int(label) ?? 1
                 computedTotalCount = dbDefs.count + 1
@@ -320,8 +312,6 @@ final class FootnoteSyncService {
                         }
                     }
                 }
-
-                print("[DIAG-FN] shifted newDefs: \(newDefs), computedTotalCount: \(computedTotalCount)")
 
                 // 3. Delete all notes blocks + orphan cleanup
                 try Block.filter(Block.Columns.projectId == projectId)
@@ -489,18 +479,6 @@ final class FootnoteSyncService {
             // Clean up orphaned footnote definitions from before isNotes propagation fix
             try Self.deleteOrphanedFootnoteDefinitions(db: db, projectId: projectId)
 
-            #if DEBUG
-            let deletedCount = db.changesCount
-            let orphanCount = try Block
-                .filter(Block.Columns.projectId == projectId)
-                .filter(Block.Columns.isNotes == false)
-                .fetchAll(db)
-                .filter { $0.markdownFragment.range(of: #"\[\^\d+\]:"#, options: .regularExpression) != nil }
-                .count
-            print("[DIAG-FN] updateNotesBlock: deleted \(deletedCount) isNotes blocks, \(orphanCount) orphaned def blocks remain")
-            print("[DIAG-FN] updateNotesBlock: creating \(effectiveRefs.count + 1) individual blocks (1 heading + \(effectiveRefs.count) defs)")
-            #endif
-
             // Get max sort order from non-bibliography blocks
             // Notes should appear after user content but before bibliography
             let maxNonBibSortOrder = try Block
@@ -566,10 +544,18 @@ final class FootnoteSyncService {
         }
     }
 
+    /// Pre-compiled regex for orphaned footnote definition detection
+    private static let orphanedDefPattern: NSRegularExpression = {
+        do {
+            return try NSRegularExpression(pattern: #"^\[\^\d+\]:\s*"#)
+        } catch {
+            fatalError("Invalid orphaned def regex pattern: \(error)")
+        }
+    }()
+
     /// Delete orphaned footnote definition blocks (isNotes=false but contain [^N]: text)
     /// Cleans up corruption from before Fix 1 marked all Notes children with isNotes=true
     static func deleteOrphanedFootnoteDefinitions(db: Database, projectId: String) throws {
-        let orphanedDefPattern = try! NSRegularExpression(pattern: #"^\[\^\d+\]:\s*"#)
         let candidates = try Block
             .filter(Block.Columns.projectId == projectId)
             .filter(Block.Columns.isNotes == false)

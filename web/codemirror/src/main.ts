@@ -32,11 +32,11 @@ import {
   insertFootnote,
   insertLink,
   renumberFootnotes,
-  scrollToFootnoteDefinition,
   replaceCurrent,
   resetForProjectSwitch,
   scrollCursorToCenter,
   scrollToAnnotation,
+  scrollToFootnoteDefinition,
   scrollToOffset,
   setAnnotationDisplayModes,
   setContent,
@@ -47,7 +47,13 @@ import {
   wrapSelection,
 } from './api';
 import { updateCitationAddButton } from './citations';
-import { getPendingSlashUndo, setEditorExtensions, setEditorView, setPendingSlashUndo, setZoomFootnoteState } from './editor-state';
+import {
+  getPendingSlashUndo,
+  setEditorExtensions,
+  setEditorView,
+  setPendingSlashUndo,
+  setZoomFootnoteState,
+} from './editor-state';
 import { focusModePlugin, isFocusModeEnabled } from './focus-mode-plugin';
 import { footnoteDecorationPlugin } from './footnote-decoration-plugin';
 import { customHighlightStyle, headingDecorationPlugin, syntaxHighlighting } from './heading-plugin';
@@ -253,12 +259,7 @@ window.FinalFinal = {
   setFootnoteDefinitions: (_defs: Record<string, string>) => {
     // CodeMirror shows raw markdown — no popup needed, but API must exist for Swift calls
   },
-  insertFootnote: (...args: Parameters<typeof insertFootnote>) => {
-    console.log('[DIAG-FN] CM window.FinalFinal.insertFootnote() called via API');
-    const result = insertFootnote(...args);
-    console.log('[DIAG-FN] CM window.FinalFinal.insertFootnote() returned:', result);
-    return result;
-  },
+  insertFootnote,
   renumberFootnotes,
   scrollToFootnoteDefinition,
   setZoomFootnoteState: (zoomed: boolean, maxLabel: number) => {

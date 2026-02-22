@@ -6,7 +6,7 @@ import { Selection } from '@milkdown/kit/prose/state';
 import { getMarkdown } from '@milkdown/kit/utils';
 import { getContent, setContent } from './api-content';
 import { mdToTextOffset, textToMdOffset } from './cursor-mapping';
-import { getCurrentContent, getEditorInstance } from './editor-state';
+import { getEditorInstance } from './editor-state';
 import {
   clearSearch as clearSearchImpl,
   find as findImpl,
@@ -16,7 +16,7 @@ import {
   replaceAll as replaceAllImpl,
   replaceCurrent as replaceCurrentImpl,
 } from './find-replace';
-import { focusModePlugin, isFocusModeEnabled, setFocusModeEnabled } from './focus-mode-plugin';
+import { setFocusModeEnabled } from './focus-mode-plugin';
 import { sectionBreakNode } from './section-break-plugin';
 import { isSourceModeEnabled, setSourceModeEnabled } from './source-mode-plugin';
 import type { FindOptions, FindResult, SearchState } from './types';

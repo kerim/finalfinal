@@ -153,13 +153,12 @@ extension MilkdownEditor.Coordinator {
     /// Captures the returned label via completion handler and posts notification
     /// for immediate Notes section creation (bypasses 3s debounce).
     func insertFootnoteAtCursor() {
-        print("[DIAG-FN] \(Date()) MW insertFootnoteAtCursor() called, isEditorReady=\(isEditorReady), webView=\(webView != nil)")
         guard isEditorReady, let webView else { return }
         // JS insertFootnote() sends postMessage({label}) which triggers .footnoteInsertedImmediate
         // via the footnoteInserted message handler — no need to post from completion handler
         webView.evaluateJavaScript("window.FinalFinal.insertFootnote()") { _, error in
             if let error {
-                print("[DIAG-FN] \(Date()) MW insertFootnote evaluateJavaScript error: \(error)")
+                print("[FootnoteSyncService] insertFootnote evaluateJavaScript error: \(error)")
             }
         }
     }

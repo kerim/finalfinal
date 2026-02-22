@@ -239,7 +239,6 @@ extension MilkdownEditor.Coordinator {
                         self.lastPushedContent = content
                         self.lastReceivedFromEditor = Date()
                         self.contentBinding.wrappedValue = content
-                        print("[DIAG-FN] \(Date()) MW footnoteInserted: synced content, posting notification for label=\(label)")
                         NotificationCenter.default.post(
                             name: .footnoteInsertedImmediate, object: nil,
                             userInfo: ["label": label]

@@ -244,7 +244,6 @@ function executeSlashCommand(index: number) {
       view.dispatch(tr);
     } else if (cmd.label === '/footnote') {
       // Insert footnote reference node — single transaction (delete slash + insert + renumber)
-      console.log('[DIAG-FN] Slash /footnote triggered, cmdStart:', cmdStart, 'from:', from);
       insertFootnoteWithDelete(view, editorInstance, cmdStart, from);
     } else if (cmd.label === '/cite') {
       // Open Zotero's native CAYW picker via Swift bridge

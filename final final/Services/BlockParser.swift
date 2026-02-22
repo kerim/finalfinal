@@ -115,7 +115,13 @@ enum BlockParser {
 
     /// Split markdown into raw block strings, respecting code blocks
     /// Regex pattern for footnote definition start: [^N]:
-    private static let footnoteDefStartPattern = try! NSRegularExpression(pattern: #"^\[\^(\d+)\]:"#)
+    private static let footnoteDefStartPattern: NSRegularExpression = {
+        do {
+            return try NSRegularExpression(pattern: #"^\[\^(\d+)\]:"#)
+        } catch {
+            fatalError("Invalid footnote def start regex pattern: \(error)")
+        }
+    }()
 
     private static func splitIntoRawBlocks(_ markdown: String) -> [String] {
         var blocks: [String] = []
@@ -194,18 +200,6 @@ enum BlockParser {
         if !currentBlock.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             blocks.append(currentBlock)
         }
-
-        #if DEBUG
-        let footnoteBlocks = blocks.filter {
-            $0.range(of: #"\[\^\d+\]:"#, options: .regularExpression) != nil
-        }
-        if !footnoteBlocks.isEmpty {
-            print("[DIAG-FN] splitIntoRawBlocks: \(blocks.count) total blocks, \(footnoteBlocks.count) contain [^N]:")
-            for (i, fb) in footnoteBlocks.enumerated() {
-                print("[DIAG-FN]   fn-block[\(i)]: \"\(fb.trimmingCharacters(in: .whitespacesAndNewlines).prefix(80))\"")
-            }
-        }
-        #endif
 
         return blocks
     }
@@ -352,27 +346,6 @@ enum BlockParser {
         let result = sorted
             .map { $0.markdownFragment }
             .joined(separator: "\n\n")
-
-        #if DEBUG
-        if let defPattern = try? NSRegularExpression(pattern: #"^\[\^(\d+)\]:"#, options: .anchorsMatchLines) {
-            let range = NSRange(result.startIndex..., in: result)
-            let matches = defPattern.matches(in: result, range: range)
-            if matches.count > 0 {
-                var labels: [String] = []
-                for match in matches {
-                    if let r = Range(match.range(at: 1), in: result) {
-                        labels.append(String(result[r]))
-                    }
-                }
-                let grouped = Dictionary(grouping: labels, by: { $0 })
-                let duplicates = grouped.filter { $0.value.count > 1 }
-                if !duplicates.isEmpty {
-                    print("[DIAG-FN] assembleMarkdown: DUPLICATE definitions: \(duplicates.keys.sorted())")
-                }
-                print("[DIAG-FN] assembleMarkdown: \(matches.count) definition(s) for labels \(labels)")
-            }
-        }
-        #endif
 
         return result
     }
