@@ -90,6 +90,7 @@ import './link-click-handler';
 import { linkTooltipPlugin, openLinkEdit } from './link-tooltip';
 import { searchPlugin } from './search-plugin';
 import { sectionBreakPlugin } from './section-break-plugin';
+import { zoomNotesMarkerPlugin } from './zoom-notes-marker-plugin';
 import { configureSlash, slash } from './slash-commands';
 import { sourceModePlugin } from './source-mode-plugin';
 import {
@@ -127,6 +128,7 @@ async function initEditor() {
       .use(blockIdPlugin) // Assign stable IDs to block-level nodes
       .use(blockSyncPlugin) // Track block changes for Swift sync
       .use(sectionBreakPlugin) // Intercept <!-- ::break:: --> before commonmark filters it
+      .use(zoomNotesMarkerPlugin) // Intercept <!-- ::zoom-notes:: --> before commonmark filters it
       .use(bibliographyPlugin) // Intercept <!-- ::auto-bibliography:: --> before commonmark filters it
       .use(annotationPlugin) // Intercept annotation comments before filtering
       .use(citationPlugin) // Parse [@citekey] citations before commonmark

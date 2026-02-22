@@ -114,7 +114,7 @@ declare global {
       getBlockChanges: () => BlockChanges;
       applyBlocks: (blocks: Block[]) => void;
       confirmBlockIds: (mapping: Record<string, string>) => void;
-      syncBlockIds: (orderedIds: string[]) => void;
+      syncBlockIds: (orderedIds: string[], zoomMode: boolean) => void;
       setContentWithBlockIds: (markdown: string, blockIds: string[], options?: { scrollToStart?: boolean }) => void;
       scrollToBlock: (blockId: string) => void;
       getBlockAtCursor: () => { blockId: string; offset: number } | null;

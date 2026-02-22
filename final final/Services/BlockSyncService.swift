@@ -113,8 +113,9 @@ class BlockSyncService {
                 .replacingOccurrences(of: "`", with: "\\`")
                 .replacingOccurrences(of: "${", with: "\\${")
 
+            let zoomMode = range != nil ? "true" : "false"
             await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-                webView.evaluateJavaScript("window.FinalFinal.syncBlockIds(JSON.parse(`\(escaped)`))") { _, _ in
+                webView.evaluateJavaScript("window.FinalFinal.syncBlockIds(JSON.parse(`\(escaped)`), \(zoomMode))") { _, _ in
                     continuation.resume()
                 }
             }

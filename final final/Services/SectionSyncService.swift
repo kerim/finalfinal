@@ -271,7 +271,7 @@ class SectionSyncService {
 
         // If mini #Notes was edited while zoomed, sync definitions back to main Notes block
         if let miniNotes = miniNotesContent {
-            syncMiniNotesBack(miniNotes, existingSections: existingSections, db: db, pid: pid)
+            syncMiniNotesBack(miniNotes, db: db, pid: pid)
         }
 
         // Build lookup of zoomed sections by sortOrder within zoomed subset
@@ -397,15 +397,13 @@ class SectionSyncService {
     /// Called from handleZoomedFootnoteInsertion to preserve user edits before insertion.
     func syncMiniNotesBackPublic(_ miniNotesContent: String, projectId: String) {
         guard let db = projectDatabase else { return }
-        let existingSections = (try? db.fetchSections(projectId: projectId)) ?? []
-        syncMiniNotesBack(miniNotesContent, existingSections: existingSections, db: db, pid: projectId)
+        syncMiniNotesBack(miniNotesContent, db: db, pid: projectId)
     }
 
     /// Sync edited mini #Notes definitions back to the main Notes block in the database.
     /// Called when zoomed content contains `<!-- ::zoom-notes:: -->` marker with definitions.
     private func syncMiniNotesBack(
         _ miniNotesContent: String,
-        existingSections: [Section],
         db: ProjectDatabase,
         pid: String
     ) {
@@ -413,11 +411,24 @@ class SectionSyncService {
         let editedDefs = FootnoteSyncService.extractFootnoteDefinitions(from: miniNotesContent)
         guard !editedDefs.isEmpty else { return }
 
-        // Find the main Notes section
-        guard let notesSection = existingSections.first(where: { $0.isNotes }) else { return }
-
-        // Extract current definitions from the main Notes section
-        let currentDefs = FootnoteSyncService.extractFootnoteDefinitions(from: notesSection.markdownContent)
+        // Read current definitions from Block table (not Section table).
+        // No Section record with isNotes=true exists — Notes are managed as blocks only.
+        let currentDefs: [String: String]
+        do {
+            let notesBlocks = try db.read { dbConn in
+                try Block
+                    .filter(Block.Columns.projectId == pid)
+                    .filter(Block.Columns.isNotes == true)
+                    .order(Block.Columns.sortOrder)
+                    .fetchAll(dbConn)
+            }
+            guard !notesBlocks.isEmpty else { return }
+            let notesMd = BlockParser.assembleMarkdown(from: notesBlocks)
+            currentDefs = FootnoteSyncService.extractFootnoteDefinitions(from: notesMd)
+        } catch {
+            print("[SectionSyncService] Error reading notes blocks: \(error)")
+            return
+        }
 
         // Merge: edited definitions override current ones for matching labels
         var mergedDefs = currentDefs

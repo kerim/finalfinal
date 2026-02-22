@@ -250,6 +250,13 @@ extension EditorViewState {
         // Flush any pending editor edits before reading from DB
         flushContentToDatabase()
 
+        // Sync mini-Notes definitions back to DB before fetching fresh blocks
+        // (mirrors handleZoomedFootnoteInsertion pattern at ContentView+ContentRebuilding.swift:384-387)
+        let (_, miniNotesContent) = SectionSyncService.stripZoomNotes(from: content)
+        if let miniNotes = miniNotesContent {
+            sectionSyncService?.syncMiniNotesBackPublic(miniNotes, projectId: pid)
+        }
+
         do {
             // Fetch ALL blocks from DB - database is always complete
             let allBlocks = try db.fetchBlocks(projectId: pid)

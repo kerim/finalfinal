@@ -38,7 +38,12 @@ import { isSourceModeEnabled } from './source-mode-plugin';
 import type { Block } from './types';
 
 export function setContent(markdown: string, options?: { scrollToStart?: boolean }): void {
-  setBlockIdZoomMode(false); // Clear zoom mode when loading full content
+  // NOTE: Do NOT clear zoom mode here. setContent() is called from updateNSView
+  // during zoom, and clearing zoom mode causes temp IDs to be generated for mini-Notes
+  // nodes before pushBlockIds re-enables it. Zoom mode is independently managed by:
+  // - setContentWithBlockIds() for full document loads
+  // - resetForProjectSwitch() for project switches
+  // - syncBlockIds() with explicit zoomMode parameter
   const editorInstance = getEditorInstance();
   if (!editorInstance) {
     setCurrentContent(markdown);
@@ -460,11 +465,11 @@ export function confirmBlockIdsApi(mapping: Record<string, string>): void {
   // No empty transaction needed — IDs updated synchronously in maps
 }
 
-export function syncBlockIds(orderedIds: string[]): void {
+export function syncBlockIds(orderedIds: string[], zoomMode: boolean): void {
   const editorInstance = getEditorInstance();
   if (!editorInstance) return;
   const view = editorInstance.ctx.get(editorViewCtx);
-  setBlockIdZoomMode(true); // Enable zoom mode before setting body-only IDs
+  setBlockIdZoomMode(zoomMode); // Set zoom mode based on caller context
   setBlockIdsForTopLevel(orderedIds, view.state.doc);
   resetAndSnapshot(view.state.doc);
 }
