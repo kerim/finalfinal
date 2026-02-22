@@ -46,6 +46,17 @@ import {
   syncBlockIds,
 } from './api-content';
 import {
+  insertLinkAtCursor,
+  setHeading,
+  toggleBlockquote,
+  toggleBold,
+  toggleBulletList,
+  toggleCodeBlock,
+  toggleItalic,
+  toggleNumberList,
+  toggleStrikethrough,
+} from './api-formatting';
+import {
   clearSearchApi,
   findApi,
   findNextApi,
@@ -96,6 +107,7 @@ import './link-click-handler';
 import { linkTooltipPlugin, openLinkEdit } from './link-tooltip';
 import { searchPlugin } from './search-plugin';
 import { sectionBreakPlugin } from './section-break-plugin';
+import { selectionToolbarPlugin } from './selection-toolbar-plugin';
 import { configureSlash, slash } from './slash-commands';
 import { sourceModePlugin } from './source-mode-plugin';
 import {
@@ -153,6 +165,7 @@ async function initEditor() {
       .use(searchPlugin) // Search highlighting decorations
       .use(spellcheckPlugin) // Spellcheck/grammar decorations via NSSpellChecker
       .use(linkTooltipPlugin) // Custom link preview/edit tooltips (no Vue dependency)
+      .use(selectionToolbarPlugin) // Selection toolbar (floating format bar)
       .use(slash)
       .create();
 
@@ -329,6 +342,17 @@ window.FinalFinal = {
   setZoomFootnoteState: (zoomed: boolean, maxLabel: number) => {
     setZoomFootnoteState(zoomed, maxLabel);
   },
+  // Formatting API
+  toggleBold,
+  toggleItalic,
+  toggleStrikethrough,
+  setHeading,
+  toggleBulletList,
+  toggleNumberList,
+  toggleBlockquote,
+  toggleCodeBlock,
+  insertLink: insertLinkAtCursor,
+
   // Find/replace API
   find: findApi,
   findNext: findNextApi,

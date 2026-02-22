@@ -8,7 +8,10 @@ import SwiftUI
 struct StatusBar: View {
     @Environment(ThemeManager.self) private var themeManager
     let editorState: EditorViewState
+    @AppStorage("isSpellingEnabled") private var spellingEnabled = true
+    @AppStorage("isGrammarEnabled") private var grammarEnabled = true
     @State private var showProofingPopover = false
+    @State private var showOutlinePopover = false
 
     var body: some View {
         HStack {
@@ -20,6 +23,20 @@ struct StatusBar: View {
                 .font(.caption)
             Spacer()
 
+            // Document outline popover
+            Button {
+                showOutlinePopover.toggle()
+            } label: {
+                Image(systemName: "list.bullet.indent")
+                    .font(.caption)
+            }
+            .buttonStyle(.plain)
+            .help("Document outline")
+            .popover(isPresented: $showOutlinePopover) {
+                outlinePopover
+            }
+            .accessibilityIdentifier("status-bar-outline")
+
             // Proofing status indicator (only when LanguageTool is active)
             if ProofingSettings.shared.mode.isLanguageTool {
                 proofingIndicator
@@ -28,13 +45,52 @@ struct StatusBar: View {
                     }
             }
 
-            Text(editorState.editorMode.rawValue)
-                .font(.caption)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 2)
-                .background(themeManager.currentTheme.accentColor.opacity(0.2))
-                .cornerRadius(4)
-                .accessibilityIdentifier("status-bar-editor-mode")
+            // Spelling toggle
+            Button {
+                spellingEnabled.toggle()
+                NotificationCenter.default.post(name: .spellcheckTypeToggled, object: nil)
+            } label: {
+                Text("Spelling")
+                    .font(.caption)
+                    .strikethrough(!spellingEnabled)
+            }
+            .buttonStyle(.plain)
+            .foregroundColor(spellingEnabled
+                ? themeManager.currentTheme.accentColor
+                : themeManager.currentTheme.sidebarText.opacity(0.4))
+            .help(spellingEnabled ? "Spelling: on (⌘;)" : "Spelling: off (⌘;)")
+            .accessibilityIdentifier("status-bar-spelling")
+
+            // Grammar toggle
+            Button {
+                grammarEnabled.toggle()
+                NotificationCenter.default.post(name: .spellcheckTypeToggled, object: nil)
+            } label: {
+                Text("Grammar")
+                    .font(.caption)
+                    .strikethrough(!grammarEnabled)
+            }
+            .buttonStyle(.plain)
+            .foregroundColor(grammarEnabled
+                ? themeManager.currentTheme.accentColor
+                : themeManager.currentTheme.sidebarText.opacity(0.4))
+            .help(grammarEnabled ? "Grammar: on (⌘⇧;)" : "Grammar: off (⌘⇧;)")
+            .accessibilityIdentifier("status-bar-grammar")
+
+            // Clickable editor mode badge
+            Button {
+                NotificationCenter.default.post(name: .willToggleEditorMode, object: nil)
+            } label: {
+                Text(editorState.editorMode.rawValue)
+                    .font(.caption)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 2)
+                    .background(themeManager.currentTheme.accentColor.opacity(0.2))
+                    .cornerRadius(4)
+            }
+            .buttonStyle(.plain)
+            .help("Toggle editor mode (⌘/)")
+            .accessibilityIdentifier("status-bar-editor-mode")
 
             if editorState.focusModeEnabled {
                 Text("Focus")
@@ -57,6 +113,70 @@ struct StatusBar: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .proofingModeChanged)) { _ in
             editorState.proofingConnectionStatus = SpellCheckService.shared.connectionStatus
+        }
+    }
+
+    // MARK: - Outline Popover
+
+    private var outlinePopover: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 2) {
+                if editorState.sections.isEmpty {
+                    Text("No headings")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .padding(8)
+                } else {
+                    ForEach(editorState.sections) { section in
+                        Button {
+                            showOutlinePopover = false
+                            NotificationCenter.default.post(
+                                name: .scrollToSection,
+                                object: nil,
+                                userInfo: ["sectionId": section.id]
+                            )
+                        } label: {
+                            HStack(spacing: 6) {
+                                Circle()
+                                    .fill(statusColor(for: section))
+                                    .frame(width: 6, height: 6)
+                                Text(section.title.isEmpty ? "Untitled" : section.title)
+                                    .font(.caption)
+                                    .lineLimit(1)
+                                    .truncationMode(.tail)
+                                Spacer()
+                            }
+                            .padding(.leading, CGFloat((section.headerLevel - 1) * 16))
+                            .padding(.vertical, 3)
+                            .padding(.horizontal, 8)
+                            .background(
+                                section.title == editorState.currentSectionName
+                                    ? themeManager.currentTheme.accentColor.opacity(0.15)
+                                    : Color.clear
+                            )
+                            .cornerRadius(4)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+            .padding(4)
+        }
+        .frame(minWidth: 200, maxWidth: 300, maxHeight: 400)
+    }
+
+    private func statusColor(for section: SectionViewModel) -> Color {
+        switch section.status {
+        case .next:
+            return .gray.opacity(0.3)
+        case .writing:
+            return .yellow
+        case .waiting:
+            return .orange
+        case .review:
+            return .blue
+        case .final_:
+            return .green
         }
     }
 

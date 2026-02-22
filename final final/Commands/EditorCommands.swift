@@ -10,6 +10,70 @@ struct EditorCommands: Commands {
     @AppStorage("isGrammarEnabled") private var grammarEnabled = true
 
     var body: some Commands {
+        // Format menu
+        CommandMenu("Format") {
+            Button("Bold") {
+                NotificationCenter.default.post(name: .toggleBold, object: nil)
+            }
+            .keyboardShortcut("b", modifiers: .command)
+
+            Button("Italic") {
+                NotificationCenter.default.post(name: .toggleItalic, object: nil)
+            }
+            .keyboardShortcut("i", modifiers: .command)
+
+            Button("Strikethrough") {
+                NotificationCenter.default.post(name: .toggleStrikethrough, object: nil)
+            }
+
+            Divider()
+
+            Menu("Heading") {
+                ForEach(1...6, id: \.self) { level in
+                    Button("Heading \(level)") {
+                        NotificationCenter.default.post(
+                            name: .setHeading,
+                            object: nil,
+                            userInfo: ["level": level]
+                        )
+                    }
+                }
+                Divider()
+                Button("Paragraph") {
+                    NotificationCenter.default.post(
+                        name: .setHeading,
+                        object: nil,
+                        userInfo: ["level": 0]
+                    )
+                }
+            }
+
+            Divider()
+
+            Button("Bullet List") {
+                NotificationCenter.default.post(name: .toggleBulletList, object: nil)
+            }
+
+            Button("Numbered List") {
+                NotificationCenter.default.post(name: .toggleNumberList, object: nil)
+            }
+
+            Button("Blockquote") {
+                NotificationCenter.default.post(name: .toggleBlockquote, object: nil)
+            }
+
+            Button("Code Block") {
+                NotificationCenter.default.post(name: .toggleCodeBlock, object: nil)
+            }
+
+            Divider()
+
+            Button("Link") {
+                NotificationCenter.default.post(name: .insertLink, object: nil)
+            }
+            .keyboardShortcut("k", modifiers: .command)
+        }
+
         // Find commands - replace default Find menu
         CommandGroup(replacing: .textEditing) {
             Button("Find...") {

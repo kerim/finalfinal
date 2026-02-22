@@ -15,6 +15,7 @@ How the app is built. Read these before modifying core systems.
 - [state-machine.md](architecture/state-machine.md) -- Content state enum, zoom in/out, hierarchy constraints, ValueObservation, drag-drop reordering
 - [word-count.md](architecture/word-count.md) -- Section-only vs aggregate counts, goal types, goal popover, zoom-mode updates
 - [footnotes.md](architecture/footnotes.md) -- Footnote refs, Notes section, Milkdown/CodeMirror plugins, zoom-notes behavior, definition preservation
+- [toolbar-ui.md](architecture/toolbar-ui.md) -- Five formatting UI areas: Format menu, editor toolbar, selection toolbar, slash commands, status bar
 
 ## Roadmap
 

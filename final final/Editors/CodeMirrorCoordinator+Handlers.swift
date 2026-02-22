@@ -61,7 +61,34 @@ extension CodeMirrorEditor.Coordinator {
             NotificationCenter.default.removeObserver(observer)
             scrollToFootnoteDefObserver = nil
         }
+        // Formatting command observers cleanup
+        for observer in [toggleBoldObserver, toggleItalicObserver, toggleStrikethroughObserver,
+                         setHeadingObserver, toggleBulletListObserver, toggleNumberListObserver,
+                         toggleBlockquoteObserver, toggleCodeBlockObserver, insertLinkObserver] {
+            if let observer { NotificationCenter.default.removeObserver(observer) }
+        }
+        toggleBoldObserver = nil
+        toggleItalicObserver = nil
+        toggleStrikethroughObserver = nil
+        setHeadingObserver = nil
+        toggleBulletListObserver = nil
+        toggleNumberListObserver = nil
+        toggleBlockquoteObserver = nil
+        toggleCodeBlockObserver = nil
+        insertLinkObserver = nil
         webView = nil
+    }
+
+    /// Execute a formatting command via window.FinalFinal API
+    func executeFormatting(_ method: String, argument: String? = nil) {
+        guard isEditorReady, let webView else { return }
+        let script: String
+        if let arg = argument {
+            script = "window.FinalFinal.\(method)(\(arg))"
+        } else {
+            script = "window.FinalFinal.\(method)()"
+        }
+        webView.evaluateJavaScript(script) { _, _ in }
     }
 
     func insertSectionBreak() {

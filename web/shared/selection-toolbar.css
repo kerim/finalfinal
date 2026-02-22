@@ -1,0 +1,169 @@
+/* Selection Toolbar - Floating format bar that appears on text selection */
+
+.selection-toolbar {
+  position: fixed;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  padding: 3px 4px;
+  background: rgba(30, 30, 30, 0.95);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.3);
+  font-size: 13px;
+  line-height: 1;
+  pointer-events: auto;
+  user-select: none;
+
+  /* Animation */
+  opacity: 0;
+  transform: translateY(4px);
+  transition:
+    opacity 150ms ease-out,
+    transform 150ms ease-out;
+}
+
+.selection-toolbar.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.selection-toolbar.hiding {
+  opacity: 0;
+  transform: translateY(0);
+  transition:
+    opacity 100ms ease-in,
+    transform 100ms ease-in;
+}
+
+/* Position transition for moving toolbar */
+.selection-toolbar.repositioning {
+  transition:
+    opacity 150ms ease-out,
+    transform 150ms ease-out,
+    top 100ms ease-out,
+    left 100ms ease-out;
+}
+
+/* Arrow pointing down at the selection */
+.selection-toolbar::after {
+  content: "";
+  position: absolute;
+  bottom: -5px;
+  left: var(--arrow-left, 50%);
+  width: 8px;
+  height: 8px;
+  background: rgba(30, 30, 30, 0.95);
+  border-right: 1px solid rgba(255, 255, 255, 0.1);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  transform: translateX(-50%) rotate(45deg);
+}
+
+/* When toolbar is below selection, arrow points up */
+.selection-toolbar.below::after {
+  bottom: auto;
+  top: -5px;
+  transform: translateX(-50%) rotate(-135deg);
+}
+
+.selection-toolbar-separator {
+  width: 1px;
+  height: 20px;
+  background: rgba(255, 255, 255, 0.15);
+  margin: 0 3px;
+  flex-shrink: 0;
+}
+
+.selection-toolbar-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 26px;
+  height: 26px;
+  padding: 0 5px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.85);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1;
+  transition: background 100ms ease;
+}
+
+.selection-toolbar-btn:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.selection-toolbar-btn.active {
+  background: var(--accent-color, #0066cc);
+  color: #fff;
+}
+
+.selection-toolbar-btn.active:hover {
+  background: var(--accent-color, #0066cc);
+  opacity: 0.9;
+}
+
+/* Bold button */
+.selection-toolbar-btn[data-command="bold"] {
+  font-weight: 700;
+}
+
+/* Italic button */
+.selection-toolbar-btn[data-command="italic"] {
+  font-style: italic;
+  font-family: Georgia, "Times New Roman", serif;
+}
+
+/* Strikethrough button */
+.selection-toolbar-btn[data-command="strikethrough"] {
+  text-decoration: line-through;
+}
+
+/* Heading dropdown */
+.selection-toolbar-heading-wrapper {
+  position: relative;
+}
+
+.selection-toolbar-heading-menu {
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  margin-top: 4px;
+  padding: 4px 0;
+  background: rgba(30, 30, 30, 0.95);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  min-width: 120px;
+  z-index: 10000;
+}
+
+.selection-toolbar-heading-item {
+  padding: 4px 12px;
+  cursor: pointer;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.85);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.selection-toolbar-heading-item:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.selection-toolbar-heading-item.active {
+  color: var(--accent-color, #0066cc);
+  font-weight: 600;
+}
+
+.selection-toolbar-heading-item .check {
+  width: 14px;
+  text-align: center;
+  font-size: 11px;
+}

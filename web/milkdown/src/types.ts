@@ -87,6 +87,16 @@ declare global {
       setHideCompletedTasks: (enabled: boolean) => void;
       // Highlight API
       toggleHighlight: () => boolean;
+      // Formatting API
+      toggleBold: () => boolean;
+      toggleItalic: () => boolean;
+      toggleStrikethrough: () => boolean;
+      setHeading: (level: number) => boolean;
+      toggleBulletList: () => boolean;
+      toggleNumberList: () => boolean;
+      toggleBlockquote: () => boolean;
+      toggleCodeBlock: () => boolean;
+      insertLink: () => boolean;
       // Citation API
       setCitationLibrary: (items: CSLItem[]) => void;
       setCitationStyle: (styleXML: string) => void;

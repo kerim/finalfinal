@@ -1,0 +1,48 @@
+/* Shared slash menu styles — used by both Milkdown and CodeMirror */
+
+.slash-menu {
+  position: absolute;
+  padding: 4px 0;
+  background: var(--editor-bg, white);
+  border: 1px solid var(--editor-border, #e0e0e0);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  border-radius: 6px;
+  font-size: 14px;
+  font-family: var(--font-body, -apple-system, BlinkMacSystemFont, sans-serif);
+  min-width: 220px;
+  max-height: 320px;
+  overflow-y: auto;
+  z-index: 1000;
+  color: var(--editor-text, #333);
+}
+
+.slash-menu[data-show="false"] {
+  display: none;
+}
+
+.slash-menu-item {
+  padding: 6px 12px;
+  cursor: pointer;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.slash-menu-item:hover,
+.slash-menu-item.selected {
+  background: var(--editor-selection, #e8f0fe);
+}
+
+.slash-menu-item-label {
+  font-weight: 500;
+  min-width: 80px;
+}
+
+.slash-menu-item-description {
+  color: var(--editor-muted, #666);
+}
+
+.slash-menu-empty {
+  padding: 8px 12px;
+  color: var(--editor-muted, #999);
+}

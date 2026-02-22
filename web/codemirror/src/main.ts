@@ -1,5 +1,4 @@
 /// <reference types="../global" />
-import { autocompletion } from '@codemirror/autocomplete';
 import { defaultKeymap, history, redo, undo } from '@codemirror/commands';
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { syntaxTree } from '@codemirror/language';
@@ -44,8 +43,18 @@ import {
   setFocusMode,
   setTheme,
   toggleHighlight,
-  wrapSelection,
 } from './api';
+import {
+  insertLinkAtCursor,
+  setHeading,
+  toggleBlockquote,
+  toggleBold,
+  toggleBulletList,
+  toggleCodeBlock,
+  toggleItalic,
+  toggleNumberList,
+  toggleStrikethrough,
+} from './api-formatting';
 import { updateCitationAddButton } from './citations';
 import {
   getPendingSlashUndo,
@@ -59,7 +68,8 @@ import { footnoteDecorationPlugin } from './footnote-decoration-plugin';
 import { customHighlightStyle, headingDecorationPlugin, syntaxHighlighting } from './heading-plugin';
 import { installLineHeightFix } from './line-height-fix';
 import { scrollStabilizer } from './scroll-stabilizer';
-import { slashCompletions } from './slash-completions';
+import { selectionToolbarPlugin } from './selection-toolbar-plugin';
+import { slashMenuPlugin } from './slash-completions';
 import {
   disableSpellcheck,
   enableSpellcheck,
@@ -88,7 +98,7 @@ function initEditor() {
     scrollStabilizer,
     // Search extension - headless mode (no default keybindings, controlled via Swift)
     search({ top: false }),
-    autocompletion({ override: [slashCompletions] }),
+    slashMenuPlugin,
     keymap.of([
       // Filter out Mod-/ (toggle comment) from default keymap to allow Swift to handle mode toggle
       ...defaultKeymap.filter((k) => k.key !== 'Mod-/'),
@@ -120,21 +130,15 @@ function initEditor() {
       // Redo bindings (Mac and Windows)
       { key: 'Mod-Shift-z', run: (view) => redo(view) },
       { key: 'Mod-y', run: (view) => redo(view) },
-      // Cmd+B: Bold
+      // Cmd+B: Bold (toggle)
       {
         key: 'Mod-b',
-        run: () => {
-          wrapSelection('**');
-          return true;
-        },
+        run: () => toggleBold(),
       },
-      // Cmd+I: Italic
+      // Cmd+I: Italic (toggle)
       {
         key: 'Mod-i',
-        run: () => {
-          wrapSelection('*');
-          return true;
-        },
+        run: () => toggleItalic(),
       },
       // Cmd+K: Link
       {
@@ -207,6 +211,8 @@ function initEditor() {
     anchorPlugin(),
     // Footnote decoration plugin - clickable [^N] refs and [^N]: defs
     footnoteDecorationPlugin(),
+    // Selection toolbar - floating format bar on text selection
+    selectionToolbarPlugin,
     // Spellcheck/grammar decorations via NSSpellChecker
     ...spellcheckPlugin(),
   ];
@@ -265,6 +271,17 @@ window.FinalFinal = {
   setZoomFootnoteState: (zoomed: boolean, maxLabel: number) => {
     setZoomFootnoteState(zoomed, maxLabel);
   },
+  // Formatting API
+  toggleBold,
+  toggleItalic,
+  toggleStrikethrough,
+  setHeading,
+  toggleBulletList,
+  toggleNumberList,
+  toggleBlockquote,
+  toggleCodeBlock,
+  insertLink: insertLinkAtCursor,
+
   // Spellcheck API
   setSpellcheckResults,
   enableSpellcheck,

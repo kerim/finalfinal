@@ -1,167 +1,334 @@
-import type { CompletionContext, CompletionResult } from '@codemirror/autocomplete';
-import type { EditorView } from '@codemirror/view';
+// Custom slash menu plugin for CodeMirror — matches Milkdown's visual appearance
+// Uses shared slash-menu.css classes for consistent styling between editors
+
+import { type EditorView, ViewPlugin, type ViewUpdate } from '@codemirror/view';
+import '../../shared/slash-menu.css';
 import { insertFootnoteReplacingRange } from './api';
 import { getEditorView, setPendingCAYWRange, setPendingSlashUndo } from './editor-state';
 
-// Slash command completions for section breaks and other commands
-export function slashCompletions(context: CompletionContext): CompletionResult | null {
-  const word = context.matchBefore(/\/\w*/);
-  if (!word) return null;
-  if (word.from === word.to && !context.explicit) return null;
-
-  return {
-    from: word.from,
-    options: [
-      {
-        label: '/break',
-        detail: 'Insert section break',
-        apply: (_view: EditorView, _completion: any, from: number, to: number) => {
-          getEditorView()?.dispatch({
-            changes: { from, to, insert: '<!-- ::break:: -->\n\n' },
-          });
-          setPendingSlashUndo(true);
-        },
-      },
-      {
-        label: '/h1',
-        detail: 'Heading 1',
-        apply: (view: EditorView, _completion: any, from: number, to: number) => {
-          // Transform entire line to heading
-          const line = view.state.doc.lineAt(from);
-          const lineText = line.text;
-
-          // Calculate slash position from `from` parameter
-          const slashPosInLine = from - line.from;
-          // Use actual matched length (to - from) instead of hardcoded command length
-          const matchedLength = to - from;
-
-          // Extract text before slash and after the matched command
-          const textBeforeSlash = lineText.slice(0, slashPosInLine);
-          const textAfterCommand = lineText.slice(slashPosInLine + matchedLength);
-
-          // Remove existing heading markers, concatenate directly (no join with space)
-          const cleanBefore = textBeforeSlash.replace(/^#+\s*/, '');
-          const combinedText = (cleanBefore + textAfterCommand).trim();
-
-          // Replace entire line with new heading
-          view.dispatch({
-            changes: { from: line.from, to: line.to, insert: `# ${combinedText}` },
-          });
-          setPendingSlashUndo(true);
-        },
-      },
-      {
-        label: '/h2',
-        detail: 'Heading 2',
-        apply: (view: EditorView, _completion: any, from: number, to: number) => {
-          // Transform entire line to heading
-          const line = view.state.doc.lineAt(from);
-          const lineText = line.text;
-
-          // Calculate slash position from `from` parameter
-          const slashPosInLine = from - line.from;
-          // Use actual matched length (to - from) instead of hardcoded command length
-          const matchedLength = to - from;
-
-          // Extract text before slash and after the matched command
-          const textBeforeSlash = lineText.slice(0, slashPosInLine);
-          const textAfterCommand = lineText.slice(slashPosInLine + matchedLength);
-
-          // Remove existing heading markers, concatenate directly (no join with space)
-          const cleanBefore = textBeforeSlash.replace(/^#+\s*/, '');
-          const combinedText = (cleanBefore + textAfterCommand).trim();
-
-          // Replace entire line with new heading
-          view.dispatch({
-            changes: { from: line.from, to: line.to, insert: `## ${combinedText}` },
-          });
-          setPendingSlashUndo(true);
-        },
-      },
-      {
-        label: '/h3',
-        detail: 'Heading 3',
-        apply: (view: EditorView, _completion: any, from: number, to: number) => {
-          // Transform entire line to heading
-          const line = view.state.doc.lineAt(from);
-          const lineText = line.text;
-
-          // Calculate slash position from `from` parameter
-          const slashPosInLine = from - line.from;
-          // Use actual matched length (to - from) instead of hardcoded command length
-          const matchedLength = to - from;
-
-          // Extract text before slash and after the matched command
-          const textBeforeSlash = lineText.slice(0, slashPosInLine);
-          const textAfterCommand = lineText.slice(slashPosInLine + matchedLength);
-
-          // Remove existing heading markers, concatenate directly (no join with space)
-          const cleanBefore = textBeforeSlash.replace(/^#+\s*/, '');
-          const combinedText = (cleanBefore + textAfterCommand).trim();
-
-          // Replace entire line with new heading
-          view.dispatch({
-            changes: { from: line.from, to: line.to, insert: `### ${combinedText}` },
-          });
-          setPendingSlashUndo(true);
-        },
-      },
-      {
-        label: '/task',
-        detail: 'Insert task annotation',
-        apply: (view: EditorView, _completion: any, from: number, to: number) => {
-          view.dispatch({
-            changes: { from, to, insert: '<!-- ::task:: [ ]  -->' },
-            selection: { anchor: from + 17 }, // Position cursor inside the task
-          });
-          setPendingSlashUndo(true);
-        },
-      },
-      {
-        label: '/comment',
-        detail: 'Insert comment annotation',
-        apply: (view: EditorView, _completion: any, from: number, to: number) => {
-          view.dispatch({
-            changes: { from, to, insert: '<!-- ::comment::  -->' },
-            selection: { anchor: from + 17 }, // Position cursor inside the comment
-          });
-          setPendingSlashUndo(true);
-        },
-      },
-      {
-        label: '/reference',
-        detail: 'Insert reference annotation',
-        apply: (view: EditorView, _completion: any, from: number, to: number) => {
-          view.dispatch({
-            changes: { from, to, insert: '<!-- ::reference::  -->' },
-            selection: { anchor: from + 19 }, // Position cursor inside the reference
-          });
-          setPendingSlashUndo(true);
-        },
-      },
-      {
-        label: '/footnote',
-        detail: 'Insert footnote',
-        apply: (_view: EditorView, _completion: any, from: number, to: number) => {
-          // Single dispatch — delete slash text + insert + renumber
-          insertFootnoteReplacingRange(from, to);
-          setPendingSlashUndo(true);
-        },
-      },
-      {
-        label: '/cite',
-        detail: 'Insert citation from Zotero',
-        apply: (_view: EditorView, _completion: any, from: number, to: number) => {
-          // Store the range to replace (the /cite text)
-          setPendingCAYWRange({ start: from, end: to });
-          // Call Swift to open CAYW picker
-          if ((window as any).webkit?.messageHandlers?.openCitationPicker) {
-            (window as any).webkit.messageHandlers.openCitationPicker.postMessage(from);
-          } else {
-            setPendingCAYWRange(null);
-          }
-        },
-      },
-    ],
-  };
+// === Slash command definitions (same order as Milkdown) ===
+interface SlashCommand {
+  label: string;
+  description: string;
+  apply: (view: EditorView, from: number, to: number) => void;
 }
+
+/** Helper: replace the /command text with a heading transformation */
+function applyHeading(view: EditorView, from: number, to: number, level: number) {
+  const line = view.state.doc.lineAt(from);
+  const slashPosInLine = from - line.from;
+  const matchedLength = to - from;
+  const textBeforeSlash = line.text.slice(0, slashPosInLine);
+  const textAfterCommand = line.text.slice(slashPosInLine + matchedLength);
+  const cleanBefore = textBeforeSlash.replace(/^#+\s*/, '');
+  const combinedText = (cleanBefore + textAfterCommand).trim();
+  const prefix = '#'.repeat(level);
+  view.dispatch({
+    changes: { from: line.from, to: line.to, insert: `${prefix} ${combinedText}` },
+  });
+  setPendingSlashUndo(true);
+}
+
+/** Helper: replace the /command text with a line prefix (bullet, number, quote) */
+function applyLinePrefix(view: EditorView, from: number, to: number, prefix: string) {
+  const line = view.state.doc.lineAt(from);
+  const slashPosInLine = from - line.from;
+  const matchedLength = to - from;
+  const textBeforeSlash = line.text.slice(0, slashPosInLine);
+  const textAfterCommand = line.text.slice(slashPosInLine + matchedLength);
+  const combinedText = (textBeforeSlash + textAfterCommand).trim();
+  view.dispatch({
+    changes: { from: line.from, to: line.to, insert: `${prefix}${combinedText}` },
+  });
+  setPendingSlashUndo(true);
+}
+
+const slashCommands: SlashCommand[] = [
+  {
+    label: '/break',
+    description: 'Insert section break',
+    apply: (_view, from, to) => {
+      getEditorView()?.dispatch({ changes: { from, to, insert: '<!-- ::break:: -->\n\n' } });
+      setPendingSlashUndo(true);
+    },
+  },
+  { label: '/h1', description: 'Heading 1', apply: (v, f, t) => applyHeading(v, f, t, 1) },
+  { label: '/h2', description: 'Heading 2', apply: (v, f, t) => applyHeading(v, f, t, 2) },
+  { label: '/h3', description: 'Heading 3', apply: (v, f, t) => applyHeading(v, f, t, 3) },
+  { label: '/h4', description: 'Heading 4', apply: (v, f, t) => applyHeading(v, f, t, 4) },
+  { label: '/h5', description: 'Heading 5', apply: (v, f, t) => applyHeading(v, f, t, 5) },
+  { label: '/h6', description: 'Heading 6', apply: (v, f, t) => applyHeading(v, f, t, 6) },
+  { label: '/bullet', description: 'Bullet list', apply: (v, f, t) => applyLinePrefix(v, f, t, '- ') },
+  { label: '/number', description: 'Numbered list', apply: (v, f, t) => applyLinePrefix(v, f, t, '1. ') },
+  { label: '/quote', description: 'Blockquote', apply: (v, f, t) => applyLinePrefix(v, f, t, '> ') },
+  {
+    label: '/code',
+    description: 'Code block',
+    apply: (view, from, to) => {
+      view.dispatch({ changes: { from, to, insert: '```\n\n```' }, selection: { anchor: from + 4 } });
+      setPendingSlashUndo(true);
+    },
+  },
+  {
+    label: '/link',
+    description: 'Insert link',
+    apply: (_view, from, to) => {
+      getEditorView()?.dispatch({
+        changes: { from, to, insert: '[link text](url)' },
+        selection: { anchor: from + 1, head: from + 10 },
+      });
+      setPendingSlashUndo(true);
+    },
+  },
+  {
+    label: '/highlight',
+    description: 'Toggle highlight',
+    apply: (view, from, to) => {
+      view.dispatch({ changes: { from, to, insert: '' } });
+      window.FinalFinal.toggleHighlight();
+      setPendingSlashUndo(true);
+    },
+  },
+  {
+    label: '/task',
+    description: 'Insert task annotation',
+    apply: (view, from, to) => {
+      view.dispatch({
+        changes: { from, to, insert: '<!-- ::task:: [ ]  -->' },
+        selection: { anchor: from + 17 },
+      });
+      setPendingSlashUndo(true);
+    },
+  },
+  {
+    label: '/comment',
+    description: 'Insert comment annotation',
+    apply: (view, from, to) => {
+      view.dispatch({
+        changes: { from, to, insert: '<!-- ::comment::  -->' },
+        selection: { anchor: from + 17 },
+      });
+      setPendingSlashUndo(true);
+    },
+  },
+  {
+    label: '/reference',
+    description: 'Insert reference annotation',
+    apply: (view, from, to) => {
+      view.dispatch({
+        changes: { from, to, insert: '<!-- ::reference::  -->' },
+        selection: { anchor: from + 19 },
+      });
+      setPendingSlashUndo(true);
+    },
+  },
+  {
+    label: '/footnote',
+    description: 'Insert footnote',
+    apply: (_view, from, to) => {
+      insertFootnoteReplacingRange(from, to);
+      setPendingSlashUndo(true);
+    },
+  },
+  {
+    label: '/cite',
+    description: 'Insert citation from Zotero',
+    apply: (_view, from, to) => {
+      setPendingCAYWRange({ start: from, end: to });
+      if ((window as any).webkit?.messageHandlers?.openCitationPicker) {
+        (window as any).webkit.messageHandlers.openCitationPicker.postMessage(from);
+      } else {
+        setPendingCAYWRange(null);
+      }
+    },
+  },
+];
+
+// === Custom slash menu ViewPlugin ===
+
+class SlashMenuPlugin {
+  private menuEl: HTMLElement | null = null;
+  private selectedIndex = 0;
+  private filteredCommands: SlashCommand[] = [];
+  private slashFrom = 0; // Position of the `/` in the doc
+  private slashTo = 0; // End position of the matched text
+  private isVisible = false;
+
+  constructor(private view: EditorView) {
+    this.handleKeydown = this.handleKeydown.bind(this);
+    document.addEventListener('keydown', this.handleKeydown, true);
+  }
+
+  update(update: ViewUpdate) {
+    if (!update.docChanged && !update.selectionSet) return;
+
+    const { head } = update.view.state.selection.main;
+    const line = update.view.state.doc.lineAt(head);
+    const textBefore = update.view.state.sliceDoc(line.from, head);
+
+    // Match `/` at line start or after whitespace, followed by optional word chars
+    const match = textBefore.match(/(^|(?<=\s))\/(\w*)$/);
+    if (match) {
+      const query = match[2].toLowerCase();
+      this.slashFrom = head - match[0].length + (match[1] ? match[1].length : 0);
+      this.slashTo = head;
+
+      this.filteredCommands = slashCommands.filter(
+        (cmd) => cmd.label.toLowerCase().includes(`/${query}`) || cmd.description.toLowerCase().includes(query)
+      );
+
+      if (this.filteredCommands.length > 0) {
+        this.selectedIndex = Math.min(this.selectedIndex, this.filteredCommands.length - 1);
+        this.show();
+        this.renderItems();
+        this.position();
+      } else {
+        this.hide();
+      }
+    } else {
+      this.hide();
+    }
+  }
+
+  destroy() {
+    document.removeEventListener('keydown', this.handleKeydown, true);
+    if (this.menuEl) {
+      this.menuEl.remove();
+      this.menuEl = null;
+    }
+  }
+
+  private ensureMenu(): HTMLElement {
+    if (!this.menuEl) {
+      this.menuEl = document.createElement('div');
+      this.menuEl.className = 'slash-menu';
+      this.menuEl.setAttribute('data-show', 'false');
+
+      // Prevent clicks from stealing editor focus
+      this.menuEl.addEventListener('mousedown', (e) => e.preventDefault());
+
+      document.body.appendChild(this.menuEl);
+    }
+    return this.menuEl;
+  }
+
+  private show() {
+    const menu = this.ensureMenu();
+    menu.setAttribute('data-show', 'true');
+    this.isVisible = true;
+  }
+
+  private hide() {
+    if (this.menuEl) {
+      this.menuEl.setAttribute('data-show', 'false');
+    }
+    this.isVisible = false;
+    this.selectedIndex = 0;
+    this.filteredCommands = [];
+  }
+
+  private renderItems() {
+    const menu = this.ensureMenu();
+
+    // Clear existing content
+    while (menu.firstChild) {
+      menu.removeChild(menu.firstChild);
+    }
+
+    if (this.filteredCommands.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'slash-menu-empty';
+      empty.textContent = 'No commands found';
+      menu.appendChild(empty);
+      return;
+    }
+
+    this.filteredCommands.forEach((cmd, i) => {
+      const item = document.createElement('div');
+      item.className = `slash-menu-item${i === this.selectedIndex ? ' selected' : ''}`;
+      item.dataset.index = String(i);
+
+      const labelSpan = document.createElement('span');
+      labelSpan.className = 'slash-menu-item-label';
+      labelSpan.textContent = cmd.label;
+
+      const descSpan = document.createElement('span');
+      descSpan.className = 'slash-menu-item-description';
+      descSpan.textContent = cmd.description;
+
+      item.appendChild(labelSpan);
+      item.appendChild(descSpan);
+
+      item.addEventListener('click', () => {
+        this.executeCommand(i);
+      });
+      item.addEventListener('mouseenter', () => {
+        this.selectedIndex = i;
+        this.updateSelection();
+      });
+
+      menu.appendChild(item);
+    });
+  }
+
+  private updateSelection() {
+    if (!this.menuEl) return;
+    const items = this.menuEl.querySelectorAll('.slash-menu-item');
+    items.forEach((item, i) => {
+      item.classList.toggle('selected', i === this.selectedIndex);
+    });
+  }
+
+  private position() {
+    const menu = this.ensureMenu();
+    const coords = this.view.coordsAtPos(this.slashFrom);
+    if (!coords) return;
+
+    const lineHeight = this.view.defaultLineHeight;
+    menu.style.left = `${coords.left}px`;
+    menu.style.top = `${coords.bottom + lineHeight * 0.1}px`;
+  }
+
+  private executeCommand(index: number) {
+    if (index >= this.filteredCommands.length) return;
+    const cmd = this.filteredCommands[index];
+    cmd.apply(this.view, this.slashFrom, this.slashTo);
+    this.hide();
+  }
+
+  private handleKeydown(e: KeyboardEvent) {
+    if (!this.isVisible || this.filteredCommands.length === 0) return;
+
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      e.stopPropagation();
+      this.selectedIndex = (this.selectedIndex + 1) % this.filteredCommands.length;
+      this.updateSelection();
+      this.scrollToSelected();
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      e.stopPropagation();
+      this.selectedIndex = (this.selectedIndex - 1 + this.filteredCommands.length) % this.filteredCommands.length;
+      this.updateSelection();
+      this.scrollToSelected();
+    } else if (e.key === 'Enter' || e.key === 'Tab') {
+      e.preventDefault();
+      e.stopPropagation();
+      this.executeCommand(this.selectedIndex);
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      this.hide();
+    }
+  }
+
+  private scrollToSelected() {
+    if (!this.menuEl) return;
+    const selectedItem = this.menuEl.querySelector('.slash-menu-item.selected');
+    if (selectedItem) {
+      selectedItem.scrollIntoView({ block: 'nearest' });
+    }
+  }
+}
+
+export const slashMenuPlugin = ViewPlugin.fromClass(SlashMenuPlugin);

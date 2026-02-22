@@ -43,6 +43,26 @@ extension Notification.Name {
     static let renumberFootnotes = Notification.Name("renumberFootnotes")
     /// Posted when editor appearance mode changes (WYSIWYG ↔ source) - Phase C dual-appearance
     static let editorAppearanceModeChanged = Notification.Name("editorAppearanceModeChanged")
+    // MARK: - Formatting Command Notifications
+    /// Posted to toggle bold on selected text
+    static let toggleBold = Notification.Name("toggleBold")
+    /// Posted to toggle italic on selected text
+    static let toggleItalic = Notification.Name("toggleItalic")
+    /// Posted to toggle strikethrough on selected text
+    static let toggleStrikethrough = Notification.Name("toggleStrikethrough")
+    /// Posted to set heading level (userInfo: ["level": Int], 0 = paragraph)
+    static let setHeading = Notification.Name("setHeading")
+    /// Posted to toggle bullet list on current block
+    static let toggleBulletList = Notification.Name("toggleBulletList")
+    /// Posted to toggle numbered list on current block
+    static let toggleNumberList = Notification.Name("toggleNumberList")
+    /// Posted to toggle blockquote on current block
+    static let toggleBlockquote = Notification.Name("toggleBlockquote")
+    /// Posted to toggle code block on current block
+    static let toggleCodeBlock = Notification.Name("toggleCodeBlock")
+    /// Posted to insert a link at the cursor
+    static let insertLink = Notification.Name("insertLink")
+
     /// Posted when zoom-out completes and contentState is back to idle
     /// Used to trigger bibliography sync after zoom-out (citations added during zoom)
     static let didZoomOut = Notification.Name("didZoomOut")

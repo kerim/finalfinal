@@ -1,5 +1,6 @@
 // Slash command definitions, UI, keyboard handling, and plugin setup
 
+import '../../shared/slash-menu.css';
 import { type Ctx, editorViewCtx } from '@milkdown/kit/core';
 import { redo, undo } from '@milkdown/kit/prose/history';
 import { Selection } from '@milkdown/kit/prose/state';
@@ -22,7 +23,8 @@ interface SlashCommand {
   replacement: string;
   description: string;
   isNodeInsertion?: boolean; // If true, uses custom node insertion instead of text
-  headingLevel?: 1 | 2 | 3; // For heading commands, transforms paragraph to heading node
+  headingLevel?: number; // For heading commands, transforms paragraph to heading node
+  apiCommand?: string; // If set, calls window.FinalFinal[apiCommand]() instead of custom logic
 }
 
 const slashCommands: SlashCommand[] = [
@@ -30,6 +32,15 @@ const slashCommands: SlashCommand[] = [
   { label: '/h1', replacement: '', description: 'Heading 1', headingLevel: 1 },
   { label: '/h2', replacement: '', description: 'Heading 2', headingLevel: 2 },
   { label: '/h3', replacement: '', description: 'Heading 3', headingLevel: 3 },
+  { label: '/h4', replacement: '', description: 'Heading 4', headingLevel: 4 },
+  { label: '/h5', replacement: '', description: 'Heading 5', headingLevel: 5 },
+  { label: '/h6', replacement: '', description: 'Heading 6', headingLevel: 6 },
+  { label: '/bullet', replacement: '', description: 'Bullet list', apiCommand: 'toggleBulletList' },
+  { label: '/number', replacement: '', description: 'Numbered list', apiCommand: 'toggleNumberList' },
+  { label: '/quote', replacement: '', description: 'Blockquote', apiCommand: 'toggleBlockquote' },
+  { label: '/code', replacement: '', description: 'Code block', apiCommand: 'toggleCodeBlock' },
+  { label: '/link', replacement: '', description: 'Insert link', apiCommand: 'insertLink' },
+  { label: '/highlight', replacement: '', description: 'Toggle highlight', apiCommand: 'toggleHighlight' },
   { label: '/task', replacement: '', description: 'Insert task annotation', isNodeInsertion: true },
   { label: '/comment', replacement: '', description: 'Insert comment annotation', isNodeInsertion: true },
   { label: '/reference', replacement: '', description: 'Insert reference annotation', isNodeInsertion: true },
@@ -50,18 +61,6 @@ function createSlashMenu(): HTMLElement {
   const menu = document.createElement('div');
   menu.className = 'slash-menu';
   menu.setAttribute('data-show', 'false'); // Prevent flash on load
-  menu.style.cssText = `
-    position: absolute;
-    padding: 4px 0;
-    background: var(--editor-bg, white);
-    border: 1px solid var(--editor-border, #e0e0e0);
-    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
-    border-radius: 6px;
-    font-size: 14px;
-    min-width: 220px;
-    z-index: 1000;
-    color: var(--editor-text, #333);
-  `;
   return menu;
 }
 
@@ -69,21 +68,13 @@ function createMenuItem(cmd: SlashCommand, index: number, isSelected: boolean): 
   const item = document.createElement('div');
   item.className = `slash-menu-item${isSelected ? ' selected' : ''}`;
   item.dataset.index = String(index);
-  item.style.cssText = `
-    padding: 6px 12px;
-    cursor: pointer;
-    display: flex;
-    gap: 8px;
-    align-items: center;
-    ${isSelected ? 'background: var(--editor-selection, #e8f0fe);' : ''}
-  `;
 
   const labelSpan = document.createElement('span');
-  labelSpan.style.cssText = 'font-weight: 500; min-width: 60px;';
+  labelSpan.className = 'slash-menu-item-label';
   labelSpan.textContent = cmd.label;
 
   const descSpan = document.createElement('span');
-  descSpan.style.cssText = 'color: var(--editor-muted, #666);';
+  descSpan.className = 'slash-menu-item-description';
   descSpan.textContent = cmd.description;
 
   item.appendChild(labelSpan);
@@ -117,7 +108,7 @@ function updateSlashMenu(filter: string) {
 
   if (filteredCommands.length === 0) {
     const noResults = document.createElement('div');
-    noResults.style.cssText = 'padding: 8px 12px; color: #999;';
+    noResults.className = 'slash-menu-empty';
     noResults.textContent = 'No commands found';
     slashMenuElement.appendChild(noResults);
     return;
@@ -138,9 +129,7 @@ function updateMenuSelection() {
   if (!slashMenuElement) return;
   const items = slashMenuElement.querySelectorAll('.slash-menu-item');
   items.forEach((item, i) => {
-    const isSelected = i === selectedIndex;
-    item.classList.toggle('selected', isSelected);
-    (item as HTMLElement).style.background = isSelected ? 'var(--editor-selection, #e8f0fe)' : '';
+    item.classList.toggle('selected', i === selectedIndex);
   });
 }
 
@@ -245,6 +234,13 @@ function executeSlashCommand(index: number) {
     } else if (cmd.label === '/footnote') {
       // Insert footnote reference node — single transaction (delete slash + insert + renumber)
       insertFootnoteWithDelete(view, editorInstance, cmdStart, from);
+    } else if (cmd.apiCommand) {
+      // API-based commands: delete slash text, then call the FinalFinal API method
+      const tr = view.state.tr.delete(cmdStart, from);
+      view.dispatch(tr);
+      // Call the API method after the slash text is deleted
+      const fn = (window.FinalFinal as any)[cmd.apiCommand];
+      if (typeof fn === 'function') fn();
     } else if (cmd.label === '/cite') {
       // Open Zotero's native CAYW picker via Swift bridge
       // Pass both cmdStart (position of /) and from (cursor at end of /cite)

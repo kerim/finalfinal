@@ -57,6 +57,16 @@ declare global {
       insertAnnotation: (type: string) => void;
       // Highlight API
       toggleHighlight: () => boolean;
+      // Formatting API
+      toggleBold: () => boolean;
+      toggleItalic: () => boolean;
+      toggleStrikethrough: () => boolean;
+      setHeading: (level: number) => boolean;
+      toggleBulletList: () => boolean;
+      toggleNumberList: () => boolean;
+      toggleBlockquote: () => boolean;
+      toggleCodeBlock: () => boolean;
+      insertLink: () => boolean;
       // Citation API (CAYW picker callbacks)
       citationPickerCallback: (data: any, items: any[]) => void;
       citationPickerCancelled: () => void;

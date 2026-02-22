@@ -340,6 +340,11 @@ struct ContentView: View {
                     fullContent: editorState.content
                 )
             }
+            .onReceive(NotificationCenter.default.publisher(for: .scrollToSection)) { notification in
+                if let sectionId = notification.userInfo?["sectionId"] as? String {
+                    scrollToSection(sectionId)
+                }
+            }
             .integrityAlert(
                 report: $integrityReport,
                 onRepair: { report in
@@ -407,7 +412,7 @@ struct ContentView: View {
             detailView
         }
         .navigationTitle(documentManager.projectTitle ?? "Untitled")
-        .toolbar { annotationPanelToolbar }
+        .toolbar { EditorToolbar(editorState: editorState) }
         // Hide window toolbar in focus mode for distraction-free writing
         .toolbar(editorState.focusModeEnabled ? .hidden : .visible, for: .windowToolbar)
         .task {
@@ -497,23 +502,6 @@ struct ContentView: View {
         .accessibilityIdentifier("outline-sidebar")
     }
 
-    /// Toolbar content for annotation panel toggle
-    @ToolbarContentBuilder
-    private var annotationPanelToolbar: some ToolbarContent {
-        ToolbarItemGroup(placement: .primaryAction) {
-            NativeToolbarButton(
-                systemSymbolName: "sidebar.right",
-                accessibilityLabel: editorState.isAnnotationPanelVisible
-                    ? "Hide annotations panel"
-                    : "Show annotations panel"
-            ) {
-                editorState.toggleAnnotationPanel()
-            }
-            .help(editorState.isAnnotationPanelVisible
-                  ? "Hide annotations panel (⌘])"
-                  : "Show annotations panel (⌘])")
-        }
-    }
 }
 
 #Preview {

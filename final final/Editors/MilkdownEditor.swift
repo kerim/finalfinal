@@ -246,6 +246,17 @@ struct MilkdownEditor: NSViewRepresentable {
         var blockSyncPushObserver: NSObjectProtocol?
         var zoomFootnoteStateObserver: NSObjectProtocol?
 
+        // Formatting command observers
+        var toggleBoldObserver: NSObjectProtocol?
+        var toggleItalicObserver: NSObjectProtocol?
+        var toggleStrikethroughObserver: NSObjectProtocol?
+        var setHeadingObserver: NSObjectProtocol?
+        var toggleBulletListObserver: NSObjectProtocol?
+        var toggleNumberListObserver: NSObjectProtocol?
+        var toggleBlockquoteObserver: NSObjectProtocol?
+        var toggleCodeBlockObserver: NSObjectProtocol?
+        var insertLinkObserver: NSObjectProtocol?
+
         /// Active spellcheck task (cancelled on new check or cleanup)
         var spellcheckTask: Task<Void, Never>?
 
@@ -446,6 +457,47 @@ struct MilkdownEditor: NSViewRepresentable {
                 self?.lastPushTime = Date()
             }
 
+            // Subscribe to formatting command notifications
+            toggleBoldObserver = NotificationCenter.default.addObserver(
+                forName: .toggleBold, object: nil, queue: .main
+            ) { [weak self] _ in self?.executeFormatting("toggleBold") }
+
+            toggleItalicObserver = NotificationCenter.default.addObserver(
+                forName: .toggleItalic, object: nil, queue: .main
+            ) { [weak self] _ in self?.executeFormatting("toggleItalic") }
+
+            toggleStrikethroughObserver = NotificationCenter.default.addObserver(
+                forName: .toggleStrikethrough, object: nil, queue: .main
+            ) { [weak self] _ in self?.executeFormatting("toggleStrikethrough") }
+
+            setHeadingObserver = NotificationCenter.default.addObserver(
+                forName: .setHeading, object: nil, queue: .main
+            ) { [weak self] notification in
+                if let level = notification.userInfo?["level"] as? Int {
+                    self?.executeFormatting("setHeading", argument: "\(level)")
+                }
+            }
+
+            toggleBulletListObserver = NotificationCenter.default.addObserver(
+                forName: .toggleBulletList, object: nil, queue: .main
+            ) { [weak self] _ in self?.executeFormatting("toggleBulletList") }
+
+            toggleNumberListObserver = NotificationCenter.default.addObserver(
+                forName: .toggleNumberList, object: nil, queue: .main
+            ) { [weak self] _ in self?.executeFormatting("toggleNumberList") }
+
+            toggleBlockquoteObserver = NotificationCenter.default.addObserver(
+                forName: .toggleBlockquote, object: nil, queue: .main
+            ) { [weak self] _ in self?.executeFormatting("toggleBlockquote") }
+
+            toggleCodeBlockObserver = NotificationCenter.default.addObserver(
+                forName: .toggleCodeBlock, object: nil, queue: .main
+            ) { [weak self] _ in self?.executeFormatting("toggleCodeBlock") }
+
+            insertLinkObserver = NotificationCenter.default.addObserver(
+                forName: .insertLink, object: nil, queue: .main
+            ) { [weak self] _ in self?.executeFormatting("insertLink") }
+
             // Subscribe to zoom footnote state changes
             zoomFootnoteStateObserver = NotificationCenter.default.addObserver(
                 forName: .setZoomFootnoteState,
@@ -511,6 +563,12 @@ struct MilkdownEditor: NSViewRepresentable {
             }
             if let observer = zoomFootnoteStateObserver {
                 NotificationCenter.default.removeObserver(observer)
+            }
+            // Formatting command observers cleanup
+            for observer in [toggleBoldObserver, toggleItalicObserver, toggleStrikethroughObserver,
+                             setHeadingObserver, toggleBulletListObserver, toggleNumberListObserver,
+                             toggleBlockquoteObserver, toggleCodeBlockObserver, insertLinkObserver] {
+                if let observer { NotificationCenter.default.removeObserver(observer) }
             }
         }
     }
