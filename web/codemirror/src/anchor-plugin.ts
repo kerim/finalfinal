@@ -4,6 +4,7 @@
  * Hides invisible markers in the editor while preserving them in the document:
  * - `<!-- @sid:UUID -->` - Section anchors for ID tracking
  * - `<!-- ::auto-bibliography:: -->` - Bibliography marker (on same line as header)
+ * - `<!-- ::zoom-notes:: -->` - Zoom-notes separator (between content and footnotes)
  *
  * Features:
  * - Decoration.replace() makes markers invisible
@@ -30,10 +31,13 @@ const ANCHOR_DECORATION_REGEX = /<!-- @sid:[0-9a-fA-F-]+ -->/g;
 // Pattern: <!-- ::auto-bibliography:: --># Bibliography
 const BIBLIOGRAPHY_START_REGEX = /<!-- ::auto-bibliography:: -->/g;
 
+// Zoom-notes marker - separates main content from footnotes when zoomed into a section
+const ZOOM_NOTES_MARKER_REGEX = /<!-- ::zoom-notes:: -->/g;
+
 // Combined regex for stripping all hidden markers from clipboard
 // No end marker - only start marker and section anchors
 // Exported for spellcheck-plugin to strip markers before checking
-export const ALL_HIDDEN_MARKERS_REGEX = /<!-- @sid:[0-9a-fA-F-]+ -->|<!-- ::auto-bibliography:: -->/g;
+export const ALL_HIDDEN_MARKERS_REGEX = /<!-- @sid:[0-9a-fA-F-]+ -->|<!-- ::auto-bibliography:: -->|<!-- ::zoom-notes:: -->/g;
 
 /**
  * Find all hidden marker ranges in the document for decoration purposes
@@ -56,6 +60,15 @@ function findHiddenMarkers(state: EditorState): { from: number; to: number }[] {
   // Find bibliography start markers (on same line as header, no end marker)
   BIBLIOGRAPHY_START_REGEX.lastIndex = 0;
   while ((match = BIBLIOGRAPHY_START_REGEX.exec(text)) !== null) {
+    markers.push({
+      from: match.index,
+      to: match.index + match[0].length,
+    });
+  }
+
+  // Find zoom-notes markers (separates content from footnotes in zoomed sections)
+  ZOOM_NOTES_MARKER_REGEX.lastIndex = 0;
+  while ((match = ZOOM_NOTES_MARKER_REGEX.exec(text)) !== null) {
     markers.push({
       from: match.index,
       to: match.index + match[0].length,
