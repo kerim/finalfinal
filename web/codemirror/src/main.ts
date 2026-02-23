@@ -22,6 +22,7 @@ import {
   getContent,
   getContentClean,
   getContentRaw,
+  getCurrentSectionTitle,
   getCursorPosition,
   getStats,
   initialize,
@@ -240,6 +241,7 @@ function initEditor() {
 window.FinalFinal = {
   setContent,
   getContent,
+  getCurrentSectionTitle,
   getContentClean,
   getContentRaw,
   setFocusMode,

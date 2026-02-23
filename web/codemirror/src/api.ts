@@ -177,6 +177,31 @@ export function setFocusMode(enabled: boolean): void {
   }
 }
 
+export function getCurrentSectionTitle(): string | null {
+  const view = getEditorView();
+  if (!view) return null;
+
+  try {
+    const cursor = view.state.selection.main.head;
+    const doc = view.state.doc;
+    const cursorLine = doc.lineAt(cursor);
+
+    // Scan backwards from cursor line for a heading
+    for (let lineNum = cursorLine.number; lineNum >= 1; lineNum--) {
+      const line = doc.line(lineNum);
+      const cleanText = stripAnchors(line.text);
+      const match = cleanText.match(/^#{1,6}\s+(.+)/);
+      if (match) {
+        return match[1].trim();
+      }
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 export function getStats(): { words: number; characters: number } {
   const view = getEditorView();
   // Use stripped content for accurate word/char counts (exclude hidden anchors and annotations)

@@ -31,6 +31,7 @@ struct MilkdownEditor: NSViewRepresentable {
 
     let onContentChange: (String) -> Void
     let onStatsChange: (Int, Int) -> Void
+    let onSectionChange: (String) -> Void
     let onCursorPositionSaved: (CursorPosition) -> Void
 
     /// Callback invoked when editor confirms content was set
@@ -177,6 +178,7 @@ struct MilkdownEditor: NSViewRepresentable {
             contentState: contentState,
             onContentChange: onContentChange,
             onStatsChange: onStatsChange,
+            onSectionChange: onSectionChange,
             onCursorPositionSaved: onCursorPositionSaved,
             onContentAcknowledged: onContentAcknowledged,
             onWebViewReady: onWebViewReady
@@ -201,6 +203,7 @@ struct MilkdownEditor: NSViewRepresentable {
         var isResettingContentBinding: Binding<Bool>
         let onContentChange: (String) -> Void
         let onStatsChange: (Int, Int) -> Void
+        let onSectionChange: (String) -> Void
         let onCursorPositionSaved: (CursorPosition) -> Void
 
         var pollingTimer: Timer?
@@ -274,6 +277,7 @@ struct MilkdownEditor: NSViewRepresentable {
             contentState: EditorContentState,
             onContentChange: @escaping (String) -> Void,
             onStatsChange: @escaping (Int, Int) -> Void,
+            onSectionChange: @escaping (String) -> Void,
             onCursorPositionSaved: @escaping (CursorPosition) -> Void,
             onContentAcknowledged: (() -> Void)?,
             onWebViewReady: ((WKWebView) -> Void)?
@@ -285,6 +289,7 @@ struct MilkdownEditor: NSViewRepresentable {
             self.contentState = contentState
             self.onContentChange = onContentChange
             self.onStatsChange = onStatsChange
+            self.onSectionChange = onSectionChange
             self.onCursorPositionSaved = onCursorPositionSaved
             self.onContentAcknowledged = onContentAcknowledged
             self.onWebViewReady = onWebViewReady

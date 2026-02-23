@@ -31,6 +31,28 @@ export function setFocusMode(enabled: boolean): void {
   }
 }
 
+export function getCurrentSectionTitle(): string | null {
+  const editorInstance = getEditorInstance();
+  if (!editorInstance) return null;
+
+  try {
+    const view = editorInstance.ctx.get(editorViewCtx);
+    const { head } = view.state.selection;
+    let lastHeadingText: string | null = null;
+
+    view.state.doc.nodesBetween(0, head, (node) => {
+      if (node.type.name === 'heading') {
+        lastHeadingText = node.textContent;
+      }
+      return true;
+    });
+
+    return lastHeadingText;
+  } catch {
+    return null;
+  }
+}
+
 export function getStats(): { words: number; characters: number } {
   const content = getContent();
   // Strip annotations before counting (<!-- ::type:: content -->)
