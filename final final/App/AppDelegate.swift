@@ -127,6 +127,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 #if DEBUG
                 print("[AppDelegate] Set window delegate for Cmd-W interception")
                 #endif
+
+                // If macOS restored the window to fullscreen (Saved Application State),
+                // ensure we switch to that Space immediately
+                if window.styleMask.contains(.fullScreen) {
+                    window.makeKeyAndOrderFront(nil)
+                    NSApp.activate()
+                }
             }
         }
 
@@ -233,5 +240,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // Return false to prevent window from actually closing
         // The project picker will be shown instead
         return false
+    }
+
+    func windowDidEnterFullScreen(_ notification: Notification) {
+        // Force macOS to switch to this window's fullscreen Space.
+        // Without this, programmatic fullscreen (e.g., focus mode restoration on launch)
+        // creates the Space but doesn't switch to it.
+        if let window = notification.object as? NSWindow {
+            window.makeKeyAndOrderFront(nil)
+        }
+        NSApp.activate()
     }
 }
