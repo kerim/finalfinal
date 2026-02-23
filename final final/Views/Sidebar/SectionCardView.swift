@@ -22,7 +22,7 @@ struct SectionCardView: View {
     var body: some View {
 
         VStack(alignment: .leading, spacing: 4) {
-            // Header row: HashBar/BibIcon on left, StatusDot on right
+            // Header row: HashBar/BibIcon on left, StatusBadge on right
             HStack {
                 if section.isBibliography {
                     // Bibliography section gets book icon instead of hash bar
@@ -31,7 +31,9 @@ struct SectionCardView: View {
                     HashBar(level: section.headerLevel, isPseudoSection: section.isPseudoSection)
                 }
                 Spacer()
-                StatusDot(status: $section.status)
+                if !section.isBibliography && !section.isNotes {
+                    StatusBadge(status: $section.status)
+                }
             }
 
             Text(section.title)
@@ -330,6 +332,7 @@ class SectionViewModel: Identifiable {
     var headerLevel: Int
     var isPseudoSection: Bool  // Stored, not computed
     var isBibliography: Bool   // Auto-generated bibliography section
+    var isNotes: Bool          // Auto-generated footnote notes section
     var title: String
     var markdownContent: String
     var status: SectionStatus
@@ -350,6 +353,7 @@ class SectionViewModel: Identifiable {
         self.headerLevel = section.headerLevel
         self.isPseudoSection = section.isPseudoSection
         self.isBibliography = section.isBibliography
+        self.isNotes = section.isNotes
         self.title = section.title
         // Strip legacy bibliography marker from content (migration for old format)
         // The marker is now injected only for CodeMirror source mode, not stored
@@ -374,6 +378,7 @@ class SectionViewModel: Identifiable {
         self.headerLevel = block.headingLevel ?? 1
         self.isPseudoSection = block.isPseudoSection
         self.isBibliography = block.isBibliography
+        self.isNotes = block.isNotes
         self.title = block.outlineTitle
         self.markdownContent = block.markdownFragment
         self.status = block.status ?? .writing
@@ -421,6 +426,7 @@ class SectionViewModel: Identifiable {
             headerLevel: headerLevel,
             isPseudoSection: isPseudoSection,
             isBibliography: isBibliography,
+            isNotes: isNotes,
             title: title,
             markdownContent: markdownContent,
             status: status,
@@ -445,6 +451,7 @@ class SectionViewModel: Identifiable {
         headerLevel: Int? = nil,
         isPseudoSection: Bool? = nil,
         isBibliography: Bool? = nil,
+        isNotes: Bool? = nil,
         markdownContent: String? = nil,
         startOffset: Int? = nil
     ) -> SectionViewModel {
@@ -456,6 +463,7 @@ class SectionViewModel: Identifiable {
             headerLevel: headerLevel ?? self.headerLevel,
             isPseudoSection: isPseudoSection ?? self.isPseudoSection,
             isBibliography: isBibliography ?? self.isBibliography,
+            isNotes: isNotes ?? self.isNotes,
             title: self.title,
             markdownContent: markdownContent ?? self.markdownContent,
             status: self.status,

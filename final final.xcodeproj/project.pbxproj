@@ -60,7 +60,6 @@
 		5AF10728B84222571BDBB8A1 /* DraggableCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B94BA0DFF06C7D3B1B7F38F5 /* DraggableCardView.swift */; };
 		5AFFFF64449FC6C7058004E5 /* ContentView+ContentRebuilding.swift in Sources */ = {isa = PBXBuildFile; fileRef = E856C7AE9A5FD0C74735140C /* ContentView+ContentRebuilding.swift */; };
 		5B5AFBF103A6E02BD4EB4898 /* Database+Annotations.swift in Sources */ = {isa = PBXBuildFile; fileRef = 728F6240519F3BDA2753E515 /* Database+Annotations.swift */; };
-		5C07BE1D08BFF8C132BC10C7 /* StatusDot.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F774D004F48293691E2241C /* StatusDot.swift */; };
 		5D11CB5DD10F6D6E3560D087 /* PreferencesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 87026C4D0F2AEB394A0A85D9 /* PreferencesView.swift */; };
 		5DC993888BDFB3602E1FA2AA /* EditorSchemeHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE6D9836DD14A789629A10CB /* EditorSchemeHandler.swift */; };
 		5DCCCD27DB39DACD3CDDDBB4 /* ExportSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = B188809C6D7BE7E2CB11C3A3 /* ExportSettings.swift */; };
@@ -125,6 +124,7 @@
 		B17C6E9C011435B07C9EFF38 /* editor in Resources */ = {isa = PBXBuildFile; fileRef = 80D86FAB5657E30D2DC86655 /* editor */; };
 		B2F771834247C01B57FEE863 /* PreferencesView+Presets.swift in Sources */ = {isa = PBXBuildFile; fileRef = 84C5212CE3DA7F15153B8897 /* PreferencesView+Presets.swift */; };
 		B87F92C053B192CE869087C1 /* GoalColorSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = A253238E869E099DD21CF7DE /* GoalColorSettings.swift */; };
+		B909EC7584F7C0BC29A8E884 /* StatusBadge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 901504B12579978740C78EC9 /* StatusBadge.swift */; };
 		BF3262499946BF393105A3F8 /* ProofingProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB67FDEBDA369B54F8FED127 /* ProofingProvider.swift */; };
 		C3333CCD923C6BDE144086D9 /* AnnotationViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B220BEC12CB629DCB165D755 /* AnnotationViewModel.swift */; };
 		C63065FEE9261025A22945D6 /* Fixtures in Resources */ = {isa = PBXBuildFile; fileRef = 6D1C9C394433400E8BE7F59C /* Fixtures */; };
@@ -212,7 +212,6 @@
 		4C0F17548A3E883FD14975A0 /* AnnotationSyncService+Markdown.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AnnotationSyncService+Markdown.swift"; sourceTree = "<group>"; };
 		4DB38C1663B804694C7D3D31 /* EditorBridgeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorBridgeTests.swift; sourceTree = "<group>"; };
 		4E15DA17E982BE8595CD07FE /* Block.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Block.swift; sourceTree = "<group>"; };
-		4F774D004F48293691E2241C /* StatusDot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusDot.swift; sourceTree = "<group>"; };
 		540DB80C2488D249796ABEAA /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		54B0DE603A99327D920573B6 /* Document.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Document.swift; sourceTree = "<group>"; };
 		55069760CD7C2E13C59E0E39 /* ExportCommands.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportCommands.swift; sourceTree = "<group>"; };
@@ -258,6 +257,7 @@
 		8787EE28839E44DAAF698741 /* Database+BlocksObservation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Database+BlocksObservation.swift"; sourceTree = "<group>"; };
 		87F00396843D1E0300C1624A /* Snapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Snapshot.swift; sourceTree = "<group>"; };
 		8C997BC2679C3F7349B8B7E8 /* Export */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Export; path = "final final/Resources/Export"; sourceTree = SOURCE_ROOT; };
+		901504B12579978740C78EC9 /* StatusBadge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusBadge.swift; sourceTree = "<group>"; };
 		92AF8BACE222B0C414BF2E8C /* SectionCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SectionCardView.swift; sourceTree = "<group>"; };
 		93141FCBB4923D0F28E8C236 /* TestFixtureFactory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TestFixtureFactory.swift; sourceTree = "<group>"; };
 		944062D49633F32557CC7161 /* DocumentPreviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocumentPreviewView.swift; sourceTree = "<group>"; };
@@ -527,6 +527,13 @@
 			path = "final final";
 			sourceTree = "<group>";
 		};
+		897DF43C87D41FD1A0CCF1C9 /* editor */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			path = editor;
+			sourceTree = "<group>";
+		};
 		8A579DFDA89ED4D43AE65852 /* Components */ = {
 			isa = PBXGroup;
 			children = (
@@ -624,6 +631,7 @@
 			isa = PBXGroup;
 			children = (
 				5AC92738325B26E686EFFCF3 /* getting-started.md */,
+				897DF43C87D41FD1A0CCF1C9 /* editor */,
 			);
 			path = Resources;
 			sourceTree = "<group>";
@@ -649,7 +657,7 @@
 				B590B43C3202D0C1BF230EFA /* OutlineSidebar+Models.swift */,
 				92AF8BACE222B0C414BF2E8C /* SectionCardView.swift */,
 				049B00CFA6C19B14553937F3 /* SectionTypography.swift */,
-				4F774D004F48293691E2241C /* StatusDot.swift */,
+				901504B12579978740C78EC9 /* StatusBadge.swift */,
 				65E7386521E240F08687F38B /* TagPillView.swift */,
 			);
 			path = Sidebar;
@@ -968,8 +976,8 @@
 				E46A01D58B8F56C1034EB422 /* Snapshot.swift in Sources */,
 				F0FB047FF7AE11991447AF4E /* SnapshotService.swift in Sources */,
 				852514D39E219CD8C349556A /* SpellCheckService.swift in Sources */,
+				B909EC7584F7C0BC29A8E884 /* StatusBadge.swift in Sources */,
 				AD8451C7428BC1E2016746D1 /* StatusBar.swift in Sources */,
-				5C07BE1D08BFF8C132BC10C7 /* StatusDot.swift in Sources */,
 				80DDD68802F44504ACF653A7 /* StringExtensions.swift in Sources */,
 				35FA3CC0FED14ED1D7FD9000 /* TagPillView.swift in Sources */,
 				6BBC4709B786A0181888FC76 /* TestMode.swift in Sources */,

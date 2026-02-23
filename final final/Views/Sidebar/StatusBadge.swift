@@ -1,5 +1,5 @@
 //
-//  StatusDot.swift
+//  StatusBadge.swift
 //  final final
 //
 
@@ -158,41 +158,37 @@ private class RightClickView: NSView {
     }
 }
 
-// MARK: - StatusDot
+// MARK: - StatusBadge
 
-/// Colored dot indicating section status
+/// Colored text label indicating section status
 /// - Single click: Cycles to next status with animation
 /// - Long press / Right-click / Ctrl-click: Shows NSMenu for direct selection
-struct StatusDot: View {
+struct StatusBadge: View {
     @Binding var status: SectionStatus
     @Environment(ThemeManager.self) private var themeManager
-    @State private var isPressed = false
-    @State private var brightness: Double = 0
+    @State private var opacity: Double = 1.0
 
     private var statusColor: Color {
         themeManager.currentTheme.statusColors.color(for: status)
     }
 
     var body: some View {
-        Circle()
-            .fill(statusColor)
-            .frame(width: 14, height: 14)
-            .brightness(brightness)
-            .scaleEffect(isPressed ? 0.7 : 1.0)
-            .animation(.spring(response: 0.15, dampingFraction: 0.5), value: isPressed)
-            .contentShape(Circle().size(width: 24, height: 24))
+        Text(status.displayName)
+            .font(.system(size: TypeScale.smallUI, weight: .medium))
+            .foregroundColor(statusColor)
+            .frame(minWidth: 48, alignment: .trailing)
+            .opacity(opacity)
+            .contentShape(Rectangle())
             .onTapGesture {
-                // Immediate visual feedback
-                withAnimation(.spring(response: 0.1, dampingFraction: 0.4)) {
-                    isPressed = true
-                    brightness = 0.3
+                // Immediate visual feedback: dim
+                withAnimation(.easeOut(duration: 0.08)) {
+                    opacity = 0.4
                 }
                 // Change status immediately
                 status = status.nextStatus
-                // Spring back
-                withAnimation(.spring(response: 0.2, dampingFraction: 0.5).delay(0.05)) {
-                    isPressed = false
-                    brightness = 0
+                // Fade back
+                withAnimation(.easeIn(duration: 0.15).delay(0.05)) {
+                    opacity = 1.0
                 }
             }
             .onLongPressGesture(minimumDuration: 0.5) {
@@ -214,11 +210,12 @@ struct StatusDot: View {
 }
 
 #Preview {
-    @Previewable @State var status: SectionStatus = .next
+    @Previewable @State var statuses: [SectionStatus] = SectionStatus.allCases
 
-    HStack(spacing: 16) {
-        StatusDot(status: $status)
-        Text(status.displayName)
+    VStack(alignment: .trailing, spacing: 8) {
+        ForEach(Array(statuses.enumerated()), id: \.offset) { index, _ in
+            StatusBadge(status: $statuses[index])
+        }
     }
     .padding()
     .environment(ThemeManager.shared)
