@@ -33,6 +33,10 @@ Also, a lot of things you would expect from a word processor aren't there yet: t
 
 # What's New
 
+## Version 0.2.49
+
+- Fullscreen launch bug fixed
+
 ## Version 0.2.48
 
 - Cleaned up menus
@@ -48,19 +52,6 @@ Also, a lot of things you would expect from a word processor aren't there yet: t
 ## Version 0.2.42
 
 - Improved grammar and spell check, skipping annotations, citations, and non-latin script.
-
-## Version 0.2.41
-
-- Fixed pasting markdown
-- Fixed /cite remaining after cancelled citation lookup
-- Added warning when Zotero isn't running
-- Added support for pasting and editing URLs
-- Fixed Zooming in for sections
-- NEW FEATURE: Spelling and grammar check (grammar check uses Language Tool, free or premium)
-
-## Version 0.2.40
-
-- Fixed option-zoom bug and drag-and-drop bug
 
 # Roadmap
 
