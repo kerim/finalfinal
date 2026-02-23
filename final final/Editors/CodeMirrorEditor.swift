@@ -31,6 +31,7 @@ struct CodeMirrorEditor: NSViewRepresentable {
 
     let onContentChange: (String) -> Void
     let onStatsChange: (Int, Int) -> Void
+    let onSectionChange: (String) -> Void
     let onCursorPositionSaved: (CursorPosition) -> Void
 
     /// Callback to provide the WebView reference (for find operations)
@@ -162,6 +163,7 @@ struct CodeMirrorEditor: NSViewRepresentable {
             isResettingContent: $isResettingContent,
             onContentChange: onContentChange,
             onStatsChange: onStatsChange,
+            onSectionChange: onSectionChange,
             onCursorPositionSaved: onCursorPositionSaved,
             onWebViewReady: onWebViewReady
         )
@@ -185,6 +187,7 @@ struct CodeMirrorEditor: NSViewRepresentable {
         var isResettingContentBinding: Binding<Bool>
         let onContentChange: (String) -> Void
         let onStatsChange: (Int, Int) -> Void
+        let onSectionChange: (String) -> Void
         let onCursorPositionSaved: (CursorPosition) -> Void
 
         var pollingTimer: Timer?
@@ -248,6 +251,7 @@ struct CodeMirrorEditor: NSViewRepresentable {
             isResettingContent: Binding<Bool>,
             onContentChange: @escaping (String) -> Void,
             onStatsChange: @escaping (Int, Int) -> Void,
+            onSectionChange: @escaping (String) -> Void,
             onCursorPositionSaved: @escaping (CursorPosition) -> Void,
             onWebViewReady: ((WKWebView) -> Void)?
         ) {
@@ -257,6 +261,7 @@ struct CodeMirrorEditor: NSViewRepresentable {
             self.isResettingContentBinding = isResettingContent
             self.onContentChange = onContentChange
             self.onStatsChange = onStatsChange
+            self.onSectionChange = onSectionChange
             self.onCursorPositionSaved = onCursorPositionSaved
             self.onWebViewReady = onWebViewReady
             super.init()

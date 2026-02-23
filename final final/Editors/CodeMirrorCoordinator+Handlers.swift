@@ -688,6 +688,11 @@ extension CodeMirrorEditor.Coordinator {
                   let words = dict["words"] as? Int, let chars = dict["characters"] as? Int else { return }
             self.onStatsChange(words, chars)
         }
+
+        webView.evaluateJavaScript("window.FinalFinal.getCurrentSectionTitle()") { [weak self] result, _ in
+            guard let self, !self.isCleanedUp else { return }
+            self.onSectionChange((result as? String) ?? "")
+        }
     }
 
     // MARK: - Annotation API

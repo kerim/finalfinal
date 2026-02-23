@@ -15,7 +15,15 @@ extension ContentView {
 
         do {
             let allBlocks = try db.fetchBlocks(projectId: pid)
-            let sorted = allBlocks.sorted { $0.sortOrder < $1.sortOrder }
+            // When zoomed, filter to only the blocks visible in the editor
+            let blocks: [Block]
+            if let zoomedIds = editorState.zoomedSectionIds {
+                blocks = filterBlocksForZoom(allBlocks, zoomedIds: zoomedIds,
+                                             zoomedBlockRange: editorState.zoomedBlockRange)
+            } else {
+                blocks = allBlocks
+            }
+            let sorted = blocks.sorted { $0.sortOrder < $1.sortOrder }
             var offset = 0
             for block in sorted {
                 if block.id == sectionId {

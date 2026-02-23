@@ -19,16 +19,36 @@ struct StatusBar: View {
                 .font(.caption)
                 .accessibilityIdentifier("status-bar-word-count")
             Spacer()
-            Text(editorState.currentSectionName.isEmpty ? "No section" : editorState.currentSectionName)
-                .font(.caption)
-            Spacer()
-
-            // Document outline popover
             Button {
                 showOutlinePopover.toggle()
             } label: {
-                Image(systemName: "list.bullet.indent")
-                    .font(.caption)
+                HStack(spacing: 4) {
+                    ZStack {
+                        // Hidden sizer: all titles overlap, ZStack gets width of widest
+                        ZStack {
+                            ForEach(editorState.outlineSections) { section in
+                                Text(section.title.isEmpty ? "Untitled" : section.title)
+                                    .font(.caption)
+                                    .lineLimit(1)
+                            }
+                        }
+                        .hidden()
+                        .accessibilityHidden(true)
+                        // Visible current title
+                        Text(displayTitle)
+                            .font(.caption)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
+                    .frame(maxWidth: 200)
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 7))
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 2)
+                .background(themeManager.currentTheme.accentColor.opacity(0.2))
+                .cornerRadius(4)
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .help("Document outline")
@@ -36,6 +56,7 @@ struct StatusBar: View {
                 outlinePopover
             }
             .accessibilityIdentifier("status-bar-outline")
+            Spacer()
 
             // Proofing status indicator (only when LanguageTool is active)
             if ProofingSettings.shared.mode.isLanguageTool {
@@ -116,18 +137,22 @@ struct StatusBar: View {
         }
     }
 
+    private var displayTitle: String {
+        editorState.currentSectionName.isEmpty ? "No section" : editorState.currentSectionName
+    }
+
     // MARK: - Outline Popover
 
     private var outlinePopover: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 2) {
-                if editorState.sections.isEmpty {
+                if editorState.outlineSections.isEmpty {
                     Text("No headings")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .padding(8)
                 } else {
-                    ForEach(editorState.sections) { section in
+                    ForEach(editorState.outlineSections) { section in
                         Button {
                             showOutlinePopover = false
                             NotificationCenter.default.post(
@@ -155,6 +180,7 @@ struct StatusBar: View {
                                     : Color.clear
                             )
                             .cornerRadius(4)
+                            .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
                     }

@@ -309,6 +309,9 @@ extension ContentView {
                     onStatsChange: { words, characters in
                         editorState.updateStats(words: words, characters: characters)
                     },
+                    onSectionChange: { title in
+                        editorState.currentSectionName = title
+                    },
                     onCursorPositionSaved: { position in
                         cursorPositionToRestore = position
                     },
@@ -358,6 +361,9 @@ extension ContentView {
                     },
                     onStatsChange: { words, characters in
                         editorState.updateStats(words: words, characters: characters)
+                    },
+                    onSectionChange: { title in
+                        editorState.currentSectionName = title
                     },
                     onCursorPositionSaved: { position in
                         cursorPositionToRestore = position

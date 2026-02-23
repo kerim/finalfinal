@@ -65,6 +65,7 @@ declare global {
       getContent: () => string;
       setFocusMode: (enabled: boolean) => void;
       getStats: () => { words: number; characters: number };
+      getCurrentSectionTitle: () => string | null;
       scrollToOffset: (offset: number) => void;
       setTheme: (cssVariables: string) => void;
       getCursorPosition: () => { line: number; column: number };

@@ -150,12 +150,12 @@ A SwiftUI `View` at the bottom of the editor window. Displays state and provides
 | Element | Description |
 |---------|------------|
 | Word count | Shows `X words` or `X/Y words` if document goal is set. Uses `filteredTotalWordCount` (respects bibliography exclusion). |
-| Section name | Current section from `editorState.currentSectionName` |
-| Outline popover | Button with `list.bullet.indent` icon. Opens a popover listing all sections with status colors, indented by heading level. Clicking scrolls to that section. |
+| Section button | Styled button showing current section name + chevron. Uses a hidden `ZStack` sizer (all section titles overlaid) so width stays stable when switching sections. Centered text, accent-colored rounded-rect background matching the editor mode badge, full-area hit target via `.contentShape(Rectangle())`. Capped at 200pt width. Click opens the outline popover. |
+| Outline popover | Popover listing all sections with status-color dots, indented by heading level. Clicking a section scrolls the editor to it. |
 | Proofing indicator | Green/yellow/red dot showing LanguageTool connection status. Only visible when LanguageTool mode is active. Popover shows details + link to preferences. |
 | Spelling toggle | Click to toggle spell-checking. Strikethrough text when disabled. Posts `.spellcheckTypeToggled`. |
 | Grammar toggle | Same pattern as spelling toggle. |
-| Editor mode badge | Shows "WYSIWYG" or "Source". Click to toggle (posts `.willToggleEditorMode`). Styled with accent-colored background. |
+| Editor mode badge | Shows "WYSIWYG" or "Source". Click to toggle (posts `.willToggleEditorMode`). Styled with accent-colored rounded-rect background. |
 | Focus badge | Shows "Focus" when focus mode is active. Display-only. |
 
 ## Formatting API (Bridge Layer)

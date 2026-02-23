@@ -343,6 +343,14 @@ class EditorViewState {
         return result
     }
 
+    /// Sections for outline navigation popover (zoom-filtered only, no status filter)
+    var outlineSections: [SectionViewModel] {
+        if let zoomId = zoomedSectionId {
+            return filterToSubtree(sections: sections, rootId: zoomId)
+        }
+        return sections
+    }
+
     /// Find zoomed section for breadcrumb display
     var zoomedSection: SectionViewModel? {
         guard let zoomId = zoomedSectionId else { return nil }
