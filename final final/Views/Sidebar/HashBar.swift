@@ -23,15 +23,24 @@ struct HashBar: View {
         HStack(spacing: 2) {
             // Standard H1-H6 indicators
             ForEach(1...6, id: \.self) { position in
+                let isActive = position <= min(level, 6)
                 Text("#")
-                    .font(.system(size: TypeScale.smallUI, weight: .medium, design: .monospaced))
-                    .foregroundColor(colorFor(position: position))
+                    .font(.system(
+                        size: TypeScale.smallUI * 1.5,
+                        weight: isActive ? .semibold : .ultraLight,
+                        design: .monospaced
+                    ))
+                    .foregroundColor(
+                        isActive
+                            ? themeManager.currentTheme.accentColor
+                            : themeManager.currentTheme.sidebarText.opacity(0.15)
+                    )
             }
 
             // Deep header suffix for H7+
             if overflowCount > 0 {
                 Text("+\(overflowCount)")
-                    .font(.system(size: TypeScale.smallUI, weight: .bold, design: .monospaced))
+                    .font(.system(size: TypeScale.smallUI * 1.5, weight: .bold, design: .monospaced))
                     .foregroundColor(themeManager.currentTheme.accentColor)
             }
 
@@ -39,14 +48,6 @@ struct HashBar: View {
         }
     }
 
-    private func colorFor(position: Int) -> Color {
-        // For deep headers (H7+), all 6 positions are filled
-        let effectiveLevel = min(level, 6)
-        if position <= effectiveLevel {
-            return themeManager.currentTheme.accentColor
-        }
-        return themeManager.currentTheme.sidebarText.opacity(0.3)
-    }
 }
 
 #Preview {
