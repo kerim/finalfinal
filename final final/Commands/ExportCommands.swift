@@ -2,50 +2,11 @@
 //  ExportCommands.swift
 //  final final
 //
-//  Export submenu commands for Word, PDF, and ODT export.
+//  Export notification names and operation handlers.
 //
 
 import SwiftUI
 import AppKit
-
-struct ExportCommands: Commands {
-    var body: some Commands {
-        // Add Export submenu after the existing Import/Export group
-        CommandMenu("Export") {
-            Button("Export as Word...") {
-                NotificationCenter.default.post(
-                    name: .exportDocument,
-                    object: nil,
-                    userInfo: ["format": ExportFormat.word]
-                )
-            }
-            .keyboardShortcut("e", modifiers: [.command, .option])
-
-            Button("Export as PDF...") {
-                NotificationCenter.default.post(
-                    name: .exportDocument,
-                    object: nil,
-                    userInfo: ["format": ExportFormat.pdf]
-                )
-            }
-            .keyboardShortcut("p", modifiers: [.command, .option])
-
-            Button("Export as ODT...") {
-                NotificationCenter.default.post(
-                    name: .exportDocument,
-                    object: nil,
-                    userInfo: ["format": ExportFormat.odt]
-                )
-            }
-
-            Divider()
-
-            Button("Export Preferences...") {
-                NotificationCenter.default.post(name: .showExportPreferences, object: nil)
-            }
-        }
-    }
-}
 
 // MARK: - Notification Names
 

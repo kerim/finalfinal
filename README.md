@@ -33,7 +33,11 @@ Also, a lot of things you would expect from a word processor aren't there yet: t
 
 # What's New
 
-## Version 0.2.45
+## Version 0.2.48
+
+- Cleaned up menus
+
+## Version 0.2.47
 
 - Toolbars, status bars, pop-up menus, and other UI niceties! 
 

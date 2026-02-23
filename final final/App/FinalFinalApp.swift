@@ -87,10 +87,7 @@ struct FinalFinalApp: App {
         .commands {
             FileCommands()
             ViewCommands()
-            ThemeCommands()
             EditorCommands()
-            CitationCommands()
-            ExportCommands()
             HelpCommands(onGettingStarted: {
                 // Post notification to handle in view hierarchy
                 NotificationCenter.default.post(name: .openGettingStarted, object: nil)

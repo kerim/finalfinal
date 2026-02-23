@@ -66,6 +66,38 @@ struct FileCommands: Commands {
                 NotificationCenter.default.post(name: .exportMarkdown, object: nil)
             }
             .keyboardShortcut("e", modifiers: [.command, .shift])
+
+            Divider()
+
+            Button("Export as Word...") {
+                NotificationCenter.default.post(
+                    name: .exportDocument,
+                    object: nil,
+                    userInfo: ["format": ExportFormat.word]
+                )
+            }
+            .keyboardShortcut("e", modifiers: [.command, .option])
+
+            Button("Export as PDF...") {
+                NotificationCenter.default.post(
+                    name: .exportDocument,
+                    object: nil,
+                    userInfo: ["format": ExportFormat.pdf]
+                )
+            }
+            .keyboardShortcut("p", modifiers: [.command, .option])
+
+            Button("Export as ODT...") {
+                NotificationCenter.default.post(
+                    name: .exportDocument,
+                    object: nil,
+                    userInfo: ["format": ExportFormat.odt]
+                )
+            }
+
+            Button("Export Preferences...") {
+                NotificationCenter.default.post(name: .showExportPreferences, object: nil)
+            }
         }
     }
 }
