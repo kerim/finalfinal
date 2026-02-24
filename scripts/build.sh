@@ -117,7 +117,7 @@ echo ""
 # Step 6: Commit version bump
 echo -e "${YELLOW}Step 6: Committing version bump...${NC}"
 cd "$PROJECT_DIR"
-git add project.yml web/package.json
+git add project.yml web/package.json "final final.xcodeproj/project.pbxproj"
 git commit -m "Build v${NEW_VERSION}"
 echo -e "${GREEN}  Committed${NC}"
 echo ""
