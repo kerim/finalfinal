@@ -114,6 +114,14 @@ ditto -c -k --sequesterRsrc --keepParent "/Applications/$APP_NAME.app" "$ZIP_PAT
 echo -e "${GREEN}  Zip created${NC}"
 echo ""
 
+# Step 6: Commit version bump
+echo -e "${YELLOW}Step 6: Committing version bump...${NC}"
+cd "$PROJECT_DIR"
+git add project.yml web/package.json
+git commit -m "Build v${NEW_VERSION}"
+echo -e "${GREEN}  Committed${NC}"
+echo ""
+
 # Summary
 echo -e "${GREEN}========================================${NC}"
 echo -e "${GREEN}  Build Complete!${NC}"
