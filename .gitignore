@@ -22,6 +22,7 @@ web/codemirror/dist/
 final\ final/Resources/editor/
 build/
 temp/
+*.tmp
 
 # Internal docs
 docs/
