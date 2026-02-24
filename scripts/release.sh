@@ -43,94 +43,73 @@ fi
 echo -e "${GREEN}  Zip found: $ZIP_PATH${NC}"
 echo ""
 
-# Step 4: Collect commits since last tag
-echo -e "${YELLOW}Step 4: Collecting commits...${NC}"
-LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
-if [ -z "$LAST_TAG" ]; then
-    echo "  No previous tags found — using full history"
-    COMMITS=$(git log --oneline)
-else
-    echo "  Since tag: $LAST_TAG"
-    COMMITS=$(git log "$LAST_TAG..HEAD" --oneline)
-fi
-
-if [ -z "$COMMITS" ]; then
-    echo -e "${RED}Error: No new commits since $LAST_TAG${NC}"
-    exit 1
-fi
-echo ""
-
-# Step 5: Draft changelog entry
-TODAY=$(date +%Y-%m-%d)
+# Step 4: Get or create changelog entry
 TMPFILE=$(mktemp)
+TODAY=$(date +%Y-%m-%d)
 
-cat > "$TMPFILE" <<EOF
-## [$VERSION] - $TODAY
+# Check if CHANGELOG.md already has an entry for this version
+EXISTING_ENTRY=$(awk "/^## \[$VERSION\]/{found=1; next} /^## \[/{if(found) exit} found" "$CHANGELOG")
 
-### Changed
+if [ -n "$EXISTING_ENTRY" ]; then
+    echo -e "${GREEN}Step 4: Found existing changelog entry for $VERSION${NC}"
+    echo "$EXISTING_ENTRY" > "$TMPFILE"
+    echo ""
+else
+    echo -e "${YELLOW}Step 4: No changelog entry found - drafting from commits...${NC}"
+    LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+    if [ -z "$LAST_TAG" ]; then
+        COMMITS=$(git log --oneline)
+    else
+        COMMITS=$(git log "$LAST_TAG..HEAD" --oneline)
+    fi
 
-$(echo "$COMMITS" | sed 's/^[a-f0-9]* /- /')
+    if [ -z "$COMMITS" ]; then
+        echo -e "${RED}Error: No new commits since $LAST_TAG${NC}"
+        exit 1
+    fi
 
-EOF
+    printf "### Changed\n\n%s\n\n" "$(echo "$COMMITS" | sed 's/^[a-f0-9]* /- /')" > "$TMPFILE"
 
-echo -e "${YELLOW}Step 5: Edit the changelog entry...${NC}"
-echo "  Opening editor. Save and close to continue, or empty the file to abort."
-echo ""
+    echo "  Opening editor. Save and close to continue, or empty the file to abort."
+    echo ""
+    bbedit --wait "$TMPFILE"
 
-# Open editor
-bbedit --wait "$TMPFILE"
+    if [ ! -s "$TMPFILE" ]; then
+        echo -e "${YELLOW}Aborted: changelog entry was empty.${NC}"
+        rm -f "$TMPFILE"
+        exit 0
+    fi
 
-# Check if user emptied the file (abort)
-if [ ! -s "$TMPFILE" ]; then
-    echo -e "${YELLOW}Aborted: changelog entry was empty.${NC}"
-    rm -f "$TMPFILE"
-    exit 0
+    # Prepend entry to CHANGELOG.md (below ## [Unreleased])
+    echo -e "${YELLOW}Step 5: Updating CHANGELOG.md...${NC}"
+    HEADER="## [$VERSION] - $TODAY"
+    BODY=$(cat "$TMPFILE")
+    ENTRY=$(printf "%s\n\n%s" "$HEADER" "$BODY")
+
+    awk -v entry="$ENTRY" '/^## \[Unreleased\]/ { print; print ""; print entry; next } { print }' "$CHANGELOG" > "$CHANGELOG.tmp" && mv "$CHANGELOG.tmp" "$CHANGELOG"
+
+    echo -e "${GREEN}  CHANGELOG.md updated${NC}"
+    echo ""
+
+    git add CHANGELOG.md
+    git commit -m "Release v${VERSION}"
 fi
 
-# Step 6: Prepend entry to CHANGELOG.md (below ## [Unreleased])
-echo -e "${YELLOW}Step 6: Updating CHANGELOG.md...${NC}"
-
-# Read the draft entry
-ENTRY=$(cat "$TMPFILE")
-
-# Insert after the ## [Unreleased] line
-awk -v entry="$ENTRY" '
-    /^## \[Unreleased\]/ {
-        print
-        print ""
-        print entry
-        next
-    }
-    { print }
-' "$CHANGELOG" > "$CHANGELOG.tmp" && mv "$CHANGELOG.tmp" "$CHANGELOG"
-
-echo -e "${GREEN}  CHANGELOG.md updated${NC}"
-echo ""
-
-# Step 7: Commit
-echo -e "${YELLOW}Step 7: Committing...${NC}"
-git add CHANGELOG.md
-git commit -m "Release v${VERSION}"
-echo -e "${GREEN}  Committed${NC}"
-echo ""
-
-# Step 8: Tag
-echo -e "${YELLOW}Step 8: Tagging v${VERSION}...${NC}"
+# Tag
+echo -e "${YELLOW}Tagging v${VERSION}...${NC}"
 git tag "v${VERSION}"
 echo -e "${GREEN}  Tagged${NC}"
 echo ""
 
-# Step 9: Push
-echo -e "${YELLOW}Step 9: Pushing to origin...${NC}"
+# Push
+echo -e "${YELLOW}Pushing to origin...${NC}"
 git push origin main --tags
 echo -e "${GREEN}  Pushed${NC}"
 echo ""
 
-# Step 10: Create GitHub release
-echo -e "${YELLOW}Step 10: Creating GitHub release...${NC}"
-gh release create "v${VERSION}" "$ZIP_PATH" \
-    --title "v${VERSION}" \
-    --notes-file "$TMPFILE"
+# Create GitHub release
+echo -e "${YELLOW}Creating GitHub release...${NC}"
+gh release create "v${VERSION}" "$ZIP_PATH" --title "v${VERSION}" --notes-file "$TMPFILE"
 
 rm -f "$TMPFILE"
 
