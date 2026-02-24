@@ -1,6 +1,6 @@
 {
   "name": "final-final-web",
-  "version": "0.2.49",
+  "version": "0.2.51",
   "private": true,
   "scripts": {
     "build": "pnpm -r build",
