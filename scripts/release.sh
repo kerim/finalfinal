@@ -78,7 +78,7 @@ echo "  Opening editor. Save and close to continue, or empty the file to abort."
 echo ""
 
 # Open editor
-${EDITOR:-nano} "$TMPFILE"
+bbedit --wait "$TMPFILE"
 
 # Check if user emptied the file (abort)
 if [ ! -s "$TMPFILE" ]; then
