@@ -3,9 +3,8 @@
   "version": "0.2.49",
   "private": true,
   "scripts": {
-    "build": "pnpm -r build && pnpm run docs",
+    "build": "pnpm -r build",
     "dev": "pnpm -r dev",
-    "docs": "node ../scripts/generate-getting-started.js",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
     "format": "biome format --write ."

@@ -23,6 +23,16 @@ final\ final/Resources/editor/
 build/
 temp/
 
+# Internal docs
+docs/
+CLAUDE.md
+
+# Memory files
+.claude/
+
+# Test fixtures with local paths
+test-data/
+
 # IDE
 .idea/
 .vscode/

@@ -15,7 +15,7 @@ FINAL|FINAL was built for academics, but it should be just as useful for longfor
 
 # Installation
 
-1. Download  the zip file
+1. Download the latest zip from [GitHub Releases](https://github.com/kerim/finalfinal/releases/latest)
 2. Unzip to extract `final final.app`
 3. Move the app to `/Applications` (optional)
 4. **First launch:** Right-click → Open (not double-click) to bypass Gatekeeper, or run:
@@ -31,34 +31,7 @@ Although most of the core features (listed above) are already implemented, [FINA
 
 Also, a lot of things you would expect from a word processor aren't there yet: toolbars, keyboard shortcuts, spell checking, find-and-replace, etc. The idea was to focus on the things that make FINAL|FINAL unique first, and make sure that the underlying architecture is sound, before adding such nicities. 
 
-# What's New
-
-## Version 0.2.49
-
-- Fullscreen launch bug fixed
-
-## Version 0.2.48
-
-- Cleaned up menus
-
-## Version 0.2.47
-
-- Toolbars, status bars, pop-up menus, and other UI niceties! 
-
-## Version 0.2.43
-
-- New feature: Footnotes!
-
-## Version 0.2.42
-
-- Improved grammar and spell check, skipping annotations, citations, and non-latin script.
-
 # Roadmap
-
-## Planned Features
-
-- Editing Toolbar
-- Footnotes
 
 ## Known bugs
 
@@ -189,6 +162,3 @@ https://finalfinalapp.cc/
 
 [FINAL|FINAL](https://finalfinalapp.cc/) was built by [P. Kerim Friedman](https://kerim.one/) with the help of [Claude Code](https://claude.ai/), and inspiration from a number of open source projects.
 
-***
-
-*This is the Getting Started guide. Your changes won't be saved here — create a new project to start your own work.*

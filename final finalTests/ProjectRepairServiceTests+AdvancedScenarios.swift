@@ -158,7 +158,7 @@ extension ProjectRepairServiceTests {
     /// Tests repair against actual corrupted backup files (if they exist)
     /// These are copies of demo1 copy 3.ff and demo2 copy.ff
     @Test func repairRealCorruptedBackupDemo1() throws {
-        let basePath = "/Users/niyaro/Documents/Code/final final development/document-integrity-check"
+        let basePath = FileManager.default.temporaryDirectory.appendingPathComponent("document-integrity-check").path
         let backupPath = URL(fileURLWithPath: "\(basePath)/test-data/corrupted-backups/demo1-copy-3.ff")
 
         // Skip if backup doesn't exist
@@ -199,7 +199,7 @@ extension ProjectRepairServiceTests {
     }
 
     @Test func repairRealCorruptedBackupDemo2() throws {
-        let basePath = "/Users/niyaro/Documents/Code/final final development/document-integrity-check"
+        let basePath = FileManager.default.temporaryDirectory.appendingPathComponent("document-integrity-check").path
         let backupPath = URL(fileURLWithPath: "\(basePath)/test-data/corrupted-backups/demo2-copy.ff")
 
         // Skip if backup doesn't exist

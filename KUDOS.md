@@ -1,4 +1,4 @@
-# KARMA.md
+# KUDOS.md
 
 Attribution for code, libraries, and inspiration used in final final.
 
@@ -126,10 +126,3 @@ See: http://www.apache.org/licenses/LICENSE-2.0
 
 ---
 
-## Changelog
-
-| Date | Phase | Changes |
-|------|-------|---------|
-| 2026-01-30 | Export | Added TinyTeX for PDF export support |
-| 2026-01-29 | 1.8 | Added citeproc-js, fuse.js, CSL style/locale files for Zotero citation integration |
-| 2026-01-29 | 1.7 | Initial KARMA.md created; documented all bundled dependencies and inspiration sources |

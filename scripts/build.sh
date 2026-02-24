@@ -1,7 +1,7 @@
 #!/bin/bash
 #
-# build-and-distribute.sh
-# Builds the app, installs to /Applications, and distributes to iCloud share folder
+# build.sh
+# Builds the app, installs to /Applications, and creates a versioned zip in build/
 #
 
 set -e  # Exit on first error
@@ -13,14 +13,13 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 # Paths
-PROJECT_DIR="/Users/niyaro/Documents/Code/final final"
+PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 PROJECT_YML="$PROJECT_DIR/project.yml"
 PACKAGE_JSON="$PROJECT_DIR/web/package.json"
-ICLOUD_SHARE="/Users/niyaro/Library/Mobile Documents/com~apple~CloudDocs/To Share/apps"
 APP_NAME="FINAL|FINAL"
 
 echo -e "${GREEN}========================================${NC}"
-echo -e "${GREEN}  Build & Distribute: $APP_NAME${NC}"
+echo -e "${GREEN}  Build: $APP_NAME${NC}"
 echo -e "${GREEN}========================================${NC}"
 echo ""
 
@@ -90,34 +89,28 @@ cp -R "$BUILD_PATH" "/Applications/"
 echo -e "${GREEN}  Installed to /Applications${NC}"
 echo ""
 
-# Step 4: Copy README to iCloud share folder
-echo -e "${YELLOW}Step 4: Copying README to iCloud share folder...${NC}"
-
-# Ensure iCloud folder exists
-mkdir -p "$ICLOUD_SHARE"
-
-cp "$PROJECT_DIR/README.md" "$ICLOUD_SHARE/README.md"
-echo -e "${GREEN}  README copied${NC}"
-echo ""
-
-# Step 4.5: Ad-hoc sign for distribution (allows right-click → Open on other Macs)
-echo -e "${YELLOW}Step 4.5: Ad-hoc signing for distribution...${NC}"
+# Step 4: Ad-hoc sign for distribution (allows right-click -> Open on other Macs)
+echo -e "${YELLOW}Step 4: Ad-hoc signing for distribution...${NC}"
 codesign --force --deep --sign - "/Applications/$APP_NAME.app"
 echo -e "${GREEN}  Ad-hoc signed${NC}"
 echo ""
 
-# Step 5: Create zip in iCloud share folder
+# Step 5: Create versioned zip in build/
 echo -e "${YELLOW}Step 5: Creating zip for distribution...${NC}"
 
-cd "/Applications"
+mkdir -p "$PROJECT_DIR/build"
+
+ZIP_NAME="FINAL-FINAL-v${NEW_VERSION}.zip"
+ZIP_PATH="$PROJECT_DIR/build/$ZIP_NAME"
 
 # Remove existing zip if present
-if [ -f "$ICLOUD_SHARE/$APP_NAME.zip" ]; then
-    rm -f "$ICLOUD_SHARE/$APP_NAME.zip"
+if [ -f "$ZIP_PATH" ]; then
+    rm -f "$ZIP_PATH"
 fi
 
-# Use ditto instead of zip - properly handles macOS app bundles
-ditto -c -k --sequesterRsrc --keepParent "$APP_NAME.app" "$ICLOUD_SHARE/$APP_NAME.zip"
+# Use ditto - properly handles macOS app bundles
+# Zip from the codesigned copy in /Applications
+ditto -c -k --sequesterRsrc --keepParent "/Applications/$APP_NAME.app" "$ZIP_PATH"
 echo -e "${GREEN}  Zip created${NC}"
 echo ""
 
@@ -128,7 +121,6 @@ echo -e "${GREEN}========================================${NC}"
 echo ""
 echo "  Version: $NEW_VERSION"
 echo "  App: /Applications/$APP_NAME.app"
-echo "  Zip: $ICLOUD_SHARE/$APP_NAME.zip"
-echo "  README: $ICLOUD_SHARE/README.md"
+echo "  Zip: $ZIP_PATH"
 echo ""
 echo -e "${GREEN}Done!${NC}"
