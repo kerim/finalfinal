@@ -47,7 +47,7 @@ echo ""
 TMPFILE=$(mktemp)
 TODAY=$(date +%Y-%m-%d)
 
-# Check if CHANGELOG.md already has an entry for this version
+# Option A: CHANGELOG.md already has a versioned entry for this version
 EXISTING_ENTRY=$(awk "/^## \[$VERSION\]/{found=1; next} /^## \[/{if(found) exit} found" "$CHANGELOG")
 
 if [ -n "$EXISTING_ENTRY" ]; then
@@ -55,44 +55,74 @@ if [ -n "$EXISTING_ENTRY" ]; then
     echo "$EXISTING_ENTRY" > "$TMPFILE"
     echo ""
 else
-    echo -e "${YELLOW}Step 4: No changelog entry found - drafting from commits...${NC}"
-    LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
-    if [ -z "$LAST_TAG" ]; then
-        COMMITS=$(git log --oneline)
+    # Option B: Non-empty content under ## [Unreleased]
+    UNRELEASED=$(awk '/^## \[Unreleased\]/{found=1; next} /^## \[/{if(found) exit} found' "$CHANGELOG")
+    UNRELEASED_TRIMMED=$(echo "$UNRELEASED" | sed '/^[[:space:]]*$/d')
+
+    if [ -n "$UNRELEASED_TRIMMED" ]; then
+        echo -e "${GREEN}Step 4: Using [Unreleased] changelog content${NC}"
+        echo "$UNRELEASED" > "$TMPFILE"
+        echo ""
+
+        # Replace [Unreleased] header with fresh empty one + versioned header
+        echo -e "${YELLOW}Step 5: Updating CHANGELOG.md...${NC}"
+        awk -v version="$VERSION" -v date="$TODAY" '
+            /^## \[Unreleased\]/ {
+                print "## [Unreleased]"
+                print ""
+                print "## [" version "] - " date
+                next
+            }
+            { print }
+        ' "$CHANGELOG" > "$CHANGELOG.tmp" && mv "$CHANGELOG.tmp" "$CHANGELOG"
+
+        echo -e "${GREEN}  CHANGELOG.md updated${NC}"
+        echo ""
+
+        git add CHANGELOG.md
+        git commit -m "Release v${VERSION}"
+
+    # Option C: Draft from commits and open editor
     else
-        COMMITS=$(git log "$LAST_TAG..HEAD" --oneline)
+        echo -e "${YELLOW}Step 4: No changelog entry found - drafting from commits...${NC}"
+        LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+        if [ -z "$LAST_TAG" ]; then
+            COMMITS=$(git log --oneline)
+        else
+            COMMITS=$(git log "$LAST_TAG..HEAD" --oneline)
+        fi
+
+        if [ -z "$COMMITS" ]; then
+            echo -e "${RED}Error: No new commits since $LAST_TAG${NC}"
+            exit 1
+        fi
+
+        printf "### Changed\n\n%s\n\n" "$(echo "$COMMITS" | sed 's/^[a-f0-9]* /- /')" > "$TMPFILE"
+
+        echo "  Opening editor. Save and close to continue, or empty the file to abort."
+        echo ""
+        bbedit --wait "$TMPFILE"
+
+        if [ ! -s "$TMPFILE" ]; then
+            echo -e "${YELLOW}Aborted: changelog entry was empty.${NC}"
+            rm -f "$TMPFILE"
+            exit 0
+        fi
+
+        # Prepend entry to CHANGELOG.md (below ## [Unreleased])
+        echo -e "${YELLOW}Step 5: Updating CHANGELOG.md...${NC}"
+        HEADER="## [$VERSION] - $TODAY"
+        BODY=$(cat "$TMPFILE")
+        ENTRY=$(printf "%s\n\n%s" "$HEADER" "$BODY")
+
+        awk -v entry="$ENTRY" '/^## \[Unreleased\]/ { print; print ""; print entry; next } { print }' "$CHANGELOG" > "$CHANGELOG.tmp" && mv "$CHANGELOG.tmp" "$CHANGELOG"
+
+        echo -e "${GREEN}  CHANGELOG.md updated${NC}"
+        echo ""
+
+        git add CHANGELOG.md
+        git commit -m "Release v${VERSION}"
     fi
-
-    if [ -z "$COMMITS" ]; then
-        echo -e "${RED}Error: No new commits since $LAST_TAG${NC}"
-        exit 1
-    fi
-
-    printf "### Changed\n\n%s\n\n" "$(echo "$COMMITS" | sed 's/^[a-f0-9]* /- /')" > "$TMPFILE"
-
-    echo "  Opening editor. Save and close to continue, or empty the file to abort."
-    echo ""
-    bbedit --wait "$TMPFILE"
-
-    if [ ! -s "$TMPFILE" ]; then
-        echo -e "${YELLOW}Aborted: changelog entry was empty.${NC}"
-        rm -f "$TMPFILE"
-        exit 0
-    fi
-
-    # Prepend entry to CHANGELOG.md (below ## [Unreleased])
-    echo -e "${YELLOW}Step 5: Updating CHANGELOG.md...${NC}"
-    HEADER="## [$VERSION] - $TODAY"
-    BODY=$(cat "$TMPFILE")
-    ENTRY=$(printf "%s\n\n%s" "$HEADER" "$BODY")
-
-    awk -v entry="$ENTRY" '/^## \[Unreleased\]/ { print; print ""; print entry; next } { print }' "$CHANGELOG" > "$CHANGELOG.tmp" && mv "$CHANGELOG.tmp" "$CHANGELOG"
-
-    echo -e "${GREEN}  CHANGELOG.md updated${NC}"
-    echo ""
-
-    git add CHANGELOG.md
-    git commit -m "Release v${VERSION}"
 fi
 
 # Publish filtered commits to GitHub
