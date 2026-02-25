@@ -102,9 +102,7 @@ function updateSlashMenu(filter: string) {
 
   // Filter commands based on what user typed after /
   const query = filter.slice(1).toLowerCase(); // Remove leading /
-  filteredCommands = slashCommands.filter(
-    (cmd) => cmd.label.toLowerCase().includes(query) || cmd.description.toLowerCase().includes(query)
-  );
+  filteredCommands = slashCommands.filter((cmd) => cmd.label.toLowerCase().startsWith(`/${query}`));
 
   if (filteredCommands.length === 0) {
     const noResults = document.createElement('div');
