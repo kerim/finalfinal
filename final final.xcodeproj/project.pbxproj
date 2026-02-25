@@ -26,6 +26,7 @@
 		24E6DCFA94F75C5A30CF12D4 /* MilkdownCoordinator+Content.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2892EEB9AB8A127B61B8B1D8 /* MilkdownCoordinator+Content.swift */; };
 		2607C5DF7DE82A639CC52E8D /* AnnotationFilterBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 988DC867E52B507551B94D73 /* AnnotationFilterBar.swift */; };
 		26CBEFD0C2BEA4FD5BBAF49E /* RadixScales+Semantic.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8022FED1E4C6607CD01857B7 /* RadixScales+Semantic.swift */; };
+		270928CAC5EB8D7CEE22A39E /* FocusModeSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0766B65EF63ED8A07F52CDAC /* FocusModeSettings.swift */; };
 		27788FB6CF7677E47103E1D6 /* EditorViewState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 31C89F3A4269349290CD8F03 /* EditorViewState.swift */; };
 		2802A3278F0A84FA184FCCBD /* VersionHistoryWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6BDEEE9C10B3CB00393F7E53 /* VersionHistoryWindow.swift */; };
 		2A5EB4F121ED5781FDD710A7 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AD4BB30F275702838E8D3F8 /* AppDelegate.swift */; };
@@ -134,6 +135,7 @@
 		D30B35EAC392DBFD98D4C432 /* IntegrityAlertView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 64284CE23032DBF7F70EFE87 /* IntegrityAlertView.swift */; };
 		D3927D5FD341BF8E01C931A9 /* FixtureGeneratorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A6B768093BB98E0220CDC6C /* FixtureGeneratorTests.swift */; };
 		D3FF566198A11C644E49B4D8 /* EditorViewState+FocusMode.swift in Sources */ = {isa = PBXBuildFile; fileRef = DBBD3F44DAC64E5BDF50919F /* EditorViewState+FocusMode.swift */; };
+		D615E07DF0A19D4C4FBDCFC1 /* FocusPreferencesPane.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4374F299CFAEF4BB30A12F3 /* FocusPreferencesPane.swift */; };
 		D6A0D3C2D59070E808EFA6C9 /* ProjectPackage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 734874328EB5518EAC0C2517 /* ProjectPackage.swift */; };
 		D7D157CF0D11B4297B531B0D /* VersionHistorySheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = ADDBB952E065FAA3EC8B0789 /* VersionHistorySheet.swift */; };
 		E028FEF9DCA9E380AE542AF2 /* RecentProject.swift in Sources */ = {isa = PBXBuildFile; fileRef = 87363EA3909D1FDA8BFDB5F1 /* RecentProject.swift */; };
@@ -174,6 +176,7 @@
 		03BD491F2B87E03E136E9140 /* EditorCommands.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorCommands.swift; sourceTree = "<group>"; };
 		049B00CFA6C19B14553937F3 /* SectionTypography.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SectionTypography.swift; sourceTree = "<group>"; };
 		0513B2CBDCA0C3202CEDE7E4 /* OutlineSidebar+Components.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "OutlineSidebar+Components.swift"; sourceTree = "<group>"; };
+		0766B65EF63ED8A07F52CDAC /* FocusModeSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FocusModeSettings.swift; sourceTree = "<group>"; };
 		07DB82121B58A51D0946666A /* ContentView+ProjectLifecycle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ContentView+ProjectLifecycle.swift"; sourceTree = "<group>"; };
 		0CEC9B25AB24040A17CC1589 /* HashBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HashBar.swift; sourceTree = "<group>"; };
 		0E843650744C2F13D1618667 /* FinalFinalTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FinalFinalTests.swift; sourceTree = "<group>"; };
@@ -291,6 +294,7 @@
 		CF113F2ADAA8371F7C810BF0 /* OutlineNode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutlineNode.swift; sourceTree = "<group>"; };
 		CF38A145CE15C32F45EBB00D /* PandocLocator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PandocLocator.swift; sourceTree = "<group>"; };
 		D13D076E04BD3B0EA34D5E26 /* FindBarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FindBarView.swift; sourceTree = "<group>"; };
+		D4374F299CFAEF4BB30A12F3 /* FocusPreferencesPane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FocusPreferencesPane.swift; sourceTree = "<group>"; };
 		D567C1445BFF0160D8410001 /* ProjectStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectStore.swift; sourceTree = "<group>"; };
 		D678FA29904C6946CACDC1D6 /* ViewCommands.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ViewCommands.swift; sourceTree = "<group>"; };
 		D7CDE9D1D9ECA8A2C882564D /* EditorViewState+Zoom.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "EditorViewState+Zoom.swift"; sourceTree = "<group>"; };
@@ -488,6 +492,7 @@
 				6E07FED1E8BB1958EF4F04CF /* Database+Snapshots.swift */,
 				54B0DE603A99327D920573B6 /* Document.swift */,
 				B188809C6D7BE7E2CB11C3A3 /* ExportSettings.swift */,
+				0766B65EF63ED8A07F52CDAC /* FocusModeSettings.swift */,
 				A253238E869E099DD21CF7DE /* GoalColorSettings.swift */,
 				CF113F2ADAA8371F7C810BF0 /* OutlineNode.swift */,
 				DFB3FE823FEA8DAD86CD01A9 /* ProjectDatabase.swift */,
@@ -664,6 +669,7 @@
 			isa = PBXGroup;
 			children = (
 				BEC20B55C260FCF5460E4E23 /* ExportPreferencesPane.swift */,
+				D4374F299CFAEF4BB30A12F3 /* FocusPreferencesPane.swift */,
 				B09119DC4E9BBDC1E741006B /* GoalPreferencesPane.swift */,
 				87026C4D0F2AEB394A0A85D9 /* PreferencesView.swift */,
 				A97DAA603C9EB29DE79FB8EB /* PreferencesView+Actions.swift */,
@@ -912,6 +918,8 @@
 				6D12AEF734B0A4D7D05F681F /* FinalFinalApp.swift in Sources */,
 				ABB3B86E925FF4196F579E31 /* FindBarState.swift in Sources */,
 				59E041D4F98FE5B1F9A13ED4 /* FindBarView.swift in Sources */,
+				270928CAC5EB8D7CEE22A39E /* FocusModeSettings.swift in Sources */,
+				D615E07DF0A19D4C4FBDCFC1 /* FocusPreferencesPane.swift in Sources */,
 				2A991A819263234EDC320A38 /* FootnoteSyncService.swift in Sources */,
 				802A2E3DC7C417EF81173AF8 /* FullScreenManager.swift in Sources */,
 				025311FF492B505FC913440D /* GitInfo.swift in Sources */,
@@ -1114,7 +1122,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = "final final/final final.entitlements";
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 0.2.52;
+				CURRENT_PROJECT_VERSION = 0.2.53;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "final final/Info.plist";
 				INFOPLIST_GENERATION_MODE = GeneratedFile;
@@ -1138,7 +1146,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = "final final/final final.entitlements";
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 0.2.52;
+				CURRENT_PROJECT_VERSION = 0.2.53;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "final final/Info.plist";
 				INFOPLIST_GENERATION_MODE = GeneratedFile;

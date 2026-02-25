@@ -39,6 +39,18 @@ class EditorViewState {
     /// Snapshot of pre-focus-mode state for restoration on exit (session-only, not persisted)
     var preFocusModeState: FocusModeSnapshot?
 
+    /// Active focus mode effects (set in enterFocusMode, cleared in exitFocusMode)
+    /// Pre-initialized from settings when focusModeEnabled is persisted to prevent
+    /// toolbar/status bar flash on app relaunch (~500ms gap before enterFocusMode runs)
+    var focusModeHidesToolbar: Bool = {
+        guard UserDefaults.standard.bool(forKey: "focusModeEnabled") else { return false }
+        return FocusModeSettingsManager.shared.hideToolbar
+    }()
+    var focusModeHidesStatusBar: Bool = {
+        guard UserDefaults.standard.bool(forKey: "focusModeEnabled") else { return false }
+        return FocusModeSettingsManager.shared.hideStatusBar
+    }()
+
     /// Controls visibility of the focus mode toast notification
     var showFocusModeToast: Bool = false
 

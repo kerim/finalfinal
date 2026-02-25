@@ -8,7 +8,7 @@ I built [FINAL|FINAL](https://finalfinalapp.cc/) out of years of frustration wit
 4. **WYSIWYG editing** without the surprises that you get when working in Word. In FINAL|FINAL you can switch seemlessly between formatted text or **raw markdown** without loosing your place, or giving up any features.
 5. **Tasks** and **annotations** that can appear inline, as pop-ups, or completely hidden from the main document, and which can always be accessed from a dedicated sidebar.
 6. **Status markers**, **word counts**, and **writing goals** to easily track what still needs to be done.
-7. A **focus mode** that let’s you hide all distractions other than the paragraph you are working on.
+7. A configurable **focus mode** that lets you choose which distractions to hide while writing.
 8. Easy **theming** so you can customize every aspect of how it looks to suit your personal preferences.
 
 FINAL|FINAL was built for academics, but it should be just as useful for longform fiction projects, screenplays, or technical documentation, any project where you need to keep track of your context while you focus on what you write.
@@ -107,7 +107,17 @@ Use `/task`, `/comment`, or `/reference` to add annotations. Tasks have check bo
 
 ### Focus Mode
 
-Press **⌘⇧F** to dim everything except the paragraph you're editing. This helps maintain flow during longer writing sessions.
+Press **⌘⇧F** to enter focus mode for distraction-free writing. By default, focus mode enters full screen, hides both sidebars, the toolbar, and the status bar, and dims everything except the paragraph you're editing.
+
+You can customize which elements are affected in **Preferences → Focus**:
+
+* **Hide Outline Sidebar** — hides the left sidebar
+* **Hide Annotation Panel** — hides the right sidebar and collapses annotations
+* **Hide Toolbar** — hides the window toolbar
+* **Hide Status Bar** — hides the bottom status bar
+* **Paragraph Highlighting** — dims all paragraphs except the one you're editing
+
+All settings are on by default. Changes take effect the next time you enter focus mode.
 
 ### Version History
 
