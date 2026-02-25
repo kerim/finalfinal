@@ -6,6 +6,7 @@
 import { editorViewCtx } from '@milkdown/kit/core';
 import type { Ctx, MilkdownPlugin } from '@milkdown/kit/ctx';
 import type { Node } from '@milkdown/kit/prose/model';
+import { InputRule, inputRules } from '@milkdown/kit/prose/inputrules';
 import { Plugin, Selection, TextSelection } from '@milkdown/kit/prose/state';
 import { $node, $prose, $remark, $view } from '@milkdown/kit/utils';
 import type { Root } from 'mdast';
@@ -56,16 +57,19 @@ function extractTextFromChildren(children: any[]): string {
 // Passes 1-2 handle GFM's micromark-parsed MDAST nodes (footnoteDefinition, footnoteReference)
 // Pass 3 is the original text-node fallback for edge cases
 const remarkFootnotePlugin = $remark('footnote', () => () => (tree: Root) => {
-  // Pass 1: Convert GFM footnoteDefinition → plain paragraph
+  // Pass 1: Convert GFM footnoteDefinition → paragraph with footnote_def node + text
   // GFM parses `[^1]: text` as footnoteDefinition { identifier, children: [paragraph] }
-  // Convert back so it renders as editable text in ProseMirror
+  // Convert to footnote_def atom node followed by the definition text
   visit(tree, 'footnoteDefinition', (node: any, index: number | null, parent: any) => {
     if (!parent || typeof index !== 'number') return;
     const id = node.identifier || node.label || '?';
     const childText = extractTextFromChildren(node.children);
     const replacement: any = {
       type: 'paragraph',
-      children: [{ type: 'text', value: `[^${id}]: ${childText}` }],
+      children: [
+        { type: 'footnote_def', data: { label: id } },
+        { type: 'text', value: ` ${childText}` },
+      ],
     };
     parent.children.splice(index, 1, replacement);
     return index; // revisit this index (new node inserted)
@@ -141,6 +145,27 @@ const remarkFootnotePlugin = $remark('footnote', () => () => (tree: Root) => {
       parent.children.splice(index, 1, ...newChildren);
     }
   });
+
+  // Pass 4: Text-node fallback for footnote definitions [^N]: at paragraph start
+  // Handles cases where GFM didn't intercept (e.g., Swift-inserted raw text via setContent())
+  const defAtStartRegex = /^\[\^(\d+)\]:\s?/;
+  visit(tree, 'text', (node: any, index: number | null, parent: any) => {
+    if (!parent || typeof index !== 'number') return;
+    // Only match at the first child of a paragraph
+    if (parent.type !== 'paragraph' || index !== 0) return;
+    const value = node.value as string;
+    if (!value) return;
+    const defMatch = value.match(defAtStartRegex);
+    if (!defMatch) return;
+
+    const label = defMatch[1];
+    const remaining = value.slice(defMatch[0].length);
+    const newChildren: any[] = [
+      { type: 'footnote_def', data: { label } },
+    ];
+    newChildren.push({ type: 'text', value: remaining.length > 0 ? ` ${remaining}` : ' ' });
+    parent.children.splice(index, 1, ...newChildren);
+  });
 });
 
 // Define the footnote_ref node (atomic, not editable inline)
@@ -195,6 +220,149 @@ export const footnoteRefNode = $node('footnote_ref', () => ({
   },
 }));
 
+// Define the footnote_def node (atomic pill at definition sites)
+export const footnoteDefNode = $node('footnote_def', () => ({
+  group: 'inline',
+  inline: true,
+  atom: true,
+  selectable: false,
+  draggable: false,
+
+  attrs: {
+    label: { default: '0' },
+  },
+
+  parseDOM: [
+    {
+      tag: 'span.ff-footnote-def',
+      getAttrs: (dom: HTMLElement) => ({
+        label: dom.dataset.label || '0',
+      }),
+    },
+  ],
+
+  toDOM: (node: Node) => {
+    return [
+      'span',
+      {
+        class: 'ff-footnote-def',
+        'data-label': node.attrs.label,
+      },
+      node.attrs.label,
+    ];
+  },
+
+  parseMarkdown: {
+    match: (node: any) => node.type === 'footnote_def',
+    runner: (state: any, node: any, type: any) => {
+      state.addNode(type, {
+        label: node.data.label,
+      });
+    },
+  },
+
+  toMarkdown: {
+    match: (node: Node) => node.type.name === 'footnote_def',
+    runner: (state: any, node: Node) => {
+      const label = node.attrs.label;
+      // Use 'html' node type to output raw content without escaping
+      state.addNode('html', undefined, `[^${label}]:`);
+    },
+  },
+}));
+
+// NodeView for footnote definition pill with click-to-navigate-back
+const footnoteDefNodeView = $view(footnoteDefNode, (_ctx: Ctx) => {
+  return (node, _view, _getPos) => {
+    const attrs = { label: node.attrs.label as string };
+
+    // Track source mode at NodeView creation time
+    const createdInSourceMode = isSourceModeEnabled();
+
+    // Create DOM structure
+    const dom = document.createElement('span');
+    dom.className = 'ff-footnote-def';
+    dom.dataset.label = attrs.label;
+
+    const updateDisplay = () => {
+      if (isSourceModeEnabled()) {
+        // Source mode: show raw markdown syntax
+        dom.textContent = `[^${attrs.label}]:`;
+        dom.className = 'ff-footnote-def source-mode-footnote-def';
+        return;
+      }
+
+      // WYSIWYG mode: show number in pill
+      dom.textContent = attrs.label;
+      dom.className = 'ff-footnote-def';
+      dom.dataset.label = attrs.label;
+    };
+
+    // Click handler — navigate back to matching footnote_ref
+    dom.addEventListener('click', (e) => {
+      if (isSourceModeEnabled()) return;
+      e.preventDefault();
+      e.stopPropagation();
+
+      const editorInstance = getEditorInstance();
+      if (!editorInstance) return;
+
+      const view = editorInstance.ctx.get(editorViewCtx);
+      const label = attrs.label;
+
+      // Find first footnote_ref node with matching label
+      let refPos = -1;
+      view.state.doc.descendants((node: Node, nodePos: number) => {
+        if (refPos !== -1) return false;
+        if (node.type.name === 'footnote_ref' && node.attrs.label === label) {
+          refPos = nodePos;
+          return false;
+        }
+      });
+
+      if (refPos !== -1) {
+        try {
+          const sel = Selection.near(view.state.doc.resolve(refPos));
+          view.dispatch(view.state.tr.setSelection(sel).scrollIntoView());
+          const coords = view.coordsAtPos(refPos);
+          if (coords) {
+            window.scrollTo({
+              top: Math.max(0, coords.top + window.scrollY - 100),
+              behavior: 'smooth',
+            });
+          }
+          view.focus();
+        } catch {
+          /* scroll failed */
+        }
+      }
+    });
+
+    // Initial render
+    updateDisplay();
+
+    return {
+      dom,
+      update: (updatedNode) => {
+        if (updatedNode.type.name !== 'footnote_def') return false;
+
+        // Force recreation if source mode changed
+        if (isSourceModeEnabled() !== createdInSourceMode) {
+          return false;
+        }
+
+        // Update attrs
+        attrs.label = updatedNode.attrs.label as string;
+        updateDisplay();
+        return true;
+      },
+      destroy: () => {},
+      stopEvent: () => false,
+      ignoreMutation: () => true,
+    };
+  };
+});
+
 // NodeView for custom rendering with superscript display and hover tooltip
 // This must be in the same file as footnoteRefNode to maintain atom identity with $view
 const footnoteRefNodeView = $view(footnoteRefNode, (_ctx: Ctx) => {
@@ -230,13 +398,13 @@ const footnoteRefNodeView = $view(footnoteRefNode, (_ctx: Ctx) => {
       }
 
       tooltip.textContent = defText;
-      tooltip.style.display = 'block';
+      tooltip.classList.add('ff-footnote-tooltip-visible');
     };
 
     const hideTooltip = () => {
       if (tooltip) {
         hideTimeout = setTimeout(() => {
-          if (tooltip) tooltip.style.display = 'none';
+          if (tooltip) tooltip.classList.remove('ff-footnote-tooltip-visible');
         }, 150);
       }
     };
@@ -265,25 +433,51 @@ const footnoteRefNodeView = $view(footnoteRefNode, (_ctx: Ctx) => {
       if (!editorInstance) return;
 
       const view = editorInstance.ctx.get(editorViewCtx);
-      const searchText = `[^${attrs.label}]:`;
 
-      // Search ProseMirror doc for paragraph starting with [^N]:
+      // Search for footnote_def node with matching label
       let targetPos = -1;
+      let usedTextFallback = false;
       view.state.doc.descendants((node: Node, pos: number) => {
         if (targetPos !== -1) return false;
-        if (node.isTextblock && node.textContent.startsWith(searchText)) {
+        if (node.type.name === 'footnote_def' && node.attrs.label === attrs.label) {
           targetPos = pos;
           return false;
         }
       });
 
+      // Fallback: text-based search for transition safety
+      if (targetPos === -1) {
+        const searchText = `[^${attrs.label}]:`;
+        view.state.doc.descendants((node: Node, pos: number) => {
+          if (targetPos !== -1) return false;
+          if (node.isTextblock && node.textContent.startsWith(searchText)) {
+            targetPos = pos;
+            usedTextFallback = true;
+            return false;
+          }
+        });
+      }
+
       if (targetPos !== -1) {
         try {
-          // Position cursor after "[^N]: " prefix for immediate typing
-          const prefixLength = searchText.length + 1; // searchText is "[^N]:", +1 for the space
-          const cursorPos = Math.min(targetPos + 1 + prefixLength, view.state.doc.resolve(targetPos + 1).end());
+          let cursorPos: number;
+          if (usedTextFallback) {
+            // Text-based: targetPos is paragraph position, content starts at +1
+            const searchText = `[^${attrs.label}]:`;
+            const contentStart = targetPos + 1;
+            const paragraphEnd = view.state.doc.resolve(contentStart).end();
+            // Place cursor after "[^N]: " (prefix + space)
+            cursorPos = Math.min(contentStart + searchText.length + 1, paragraphEnd);
+          } else {
+            // Node-based: targetPos is the atom node position
+            const resolvedTarget = view.state.doc.resolve(targetPos);
+            const parentStart = resolvedTarget.start(resolvedTarget.depth);
+            const parentEnd = view.state.doc.resolve(parentStart).end();
+            // Place cursor after atom (1) + space (1) = offset 2 from inside paragraph
+            cursorPos = Math.min(parentStart + 2, parentEnd);
+          }
           const sel = TextSelection.create(view.state.doc, cursorPos);
-          view.dispatch(view.state.tr.setSelection(sel));
+          view.dispatch(view.state.tr.setSelection(sel).scrollIntoView());
           const coords = view.coordsAtPos(targetPos);
           if (coords) {
             window.scrollTo({
@@ -525,33 +719,65 @@ export function scrollToFootnoteDefinition(label: string): void {
   const view = editorInstance.ctx.get(editorViewCtx);
   if (!view) return;
 
-  const searchText = `[^${label}]:`;
-
-  // Search ProseMirror doc for paragraph starting with [^N]:
+  // Search for footnote_def node with matching label
   let targetPos = -1;
+  let usedTextFallback = false;
   view.state.doc.descendants((node: Node, pos: number) => {
     if (targetPos !== -1) return false;
-    if (node.isTextblock && node.textContent.startsWith(searchText)) {
+    if (node.type.name === 'footnote_def' && node.attrs.label === label) {
       targetPos = pos;
       return false;
     }
   });
 
+  // Fallback: text-based search for transition safety
+  if (targetPos === -1) {
+    const searchText = `[^${label}]:`;
+    view.state.doc.descendants((node: Node, pos: number) => {
+      if (targetPos !== -1) return false;
+      if (node.isTextblock && node.textContent.startsWith(searchText)) {
+        targetPos = pos;
+        usedTextFallback = true;
+        return false;
+      }
+    });
+  }
+
   if (targetPos !== -1) {
     try {
-      // Position cursor after "[^N]: " prefix for immediate typing
-      const prefixLength = searchText.length + 1; // +1 for the space
-      const cursorPos = Math.min(targetPos + 1 + prefixLength, view.state.doc.resolve(targetPos + 1).end());
-      const sel = TextSelection.create(view.state.doc, cursorPos);
-      view.dispatch(view.state.tr.setSelection(sel));
-      const coords = view.coordsAtPos(targetPos);
-      if (coords) {
-        window.scrollTo({
-          top: Math.max(0, coords.top + window.scrollY - 100),
-          behavior: 'smooth',
-        });
+      let cursorPos: number;
+      if (usedTextFallback) {
+        // Text-based: targetPos is paragraph position, content starts at +1
+        const searchText = `[^${label}]:`;
+        const contentStart = targetPos + 1;
+        const paragraphEnd = view.state.doc.resolve(contentStart).end();
+        cursorPos = Math.min(contentStart + searchText.length + 1, paragraphEnd);
+      } else {
+        // Node-based: targetPos is the atom node position
+        const resolvedTarget = view.state.doc.resolve(targetPos);
+        const parentStart = resolvedTarget.start(resolvedTarget.depth);
+        const parentEnd = view.state.doc.resolve(parentStart).end();
+        cursorPos = Math.min(parentStart + 2, parentEnd);
       }
-      view.focus();
+      const sel = TextSelection.create(view.state.doc, cursorPos);
+      view.dispatch(view.state.tr.setSelection(sel).scrollIntoView());
+      // Defer focus + scroll to next frame so WebKit completes layout
+      // after document replacement (footnote creation replaces entire
+      // document via setContentWithBlockIds before calling this)
+      requestAnimationFrame(() => {
+        try {
+          view.focus();
+          const coords = view.coordsAtPos(targetPos);
+          if (coords) {
+            window.scrollTo({
+              top: Math.max(0, coords.top + window.scrollY - 100),
+              behavior: 'smooth',
+            });
+          }
+        } catch {
+          /* focus/scroll failed */
+        }
+      });
     } catch {
       /* scroll failed */
     }
@@ -570,10 +796,10 @@ export function renumberFootnotes(mapping: Record<string, string>): void {
   const view = editorInstance.ctx.get(editorViewCtx);
   if (!view) return;
 
-  // Collect all nodes that need renumbering (with positions)
+  // Collect all nodes that need renumbering (refs and defs, with positions)
   const changes: Array<{ pos: number; newLabel: string }> = [];
   view.state.doc.descendants((node: Node, pos: number) => {
-    if (node.type.name === 'footnote_ref' && mapping[node.attrs.label]) {
+    if ((node.type.name === 'footnote_ref' || node.type.name === 'footnote_def') && mapping[node.attrs.label]) {
       changes.push({ pos, newLabel: mapping[node.attrs.label] });
     }
   });
@@ -599,29 +825,41 @@ export function renumberFootnotes(mapping: Record<string, string>): void {
   }
 }
 
-// ProseMirror plugin for clicking footnote definitions [^N]: to navigate back to the reference
-const footnoteClickPlugin = $prose(() => {
+// Input rule: typing [^N]: at paragraph start converts to footnote_def pill + space
+const footnoteDefInputRule = $prose((ctx) => {
+  const defInputRule = new InputRule(/^\[\^(\d+)\]:\s$/, (state, match, start, end) => {
+    const label = match[1];
+    const defNodeType = footnoteDefNode.type(ctx);
+    const defNode = defNodeType.create({ label });
+    // Replace the typed text with the footnote_def atom node + space
+    return state.tr.delete(start, end).insert(start, defNode).insertText(' ', start + 1);
+  });
+
+  return inputRules({ rules: [defInputRule] });
+});
+
+// Safety net: handle clicks on raw [^N]: text during transitions before remark plugin processes
+const footnoteClickPlugin = $prose((_ctx) => {
   return new Plugin({
     props: {
       handleClick(view, pos, _event) {
-        if (isSourceModeEnabled()) return false;
-
-        // Find the text node at click position
-        const resolved = view.state.doc.resolve(pos);
-        const parent = resolved.parent;
+        if (pos < 0) return false;
+        const $pos = view.state.doc.resolve(pos);
+        const parent = $pos.parent;
         if (!parent.isTextblock) return false;
 
         const text = parent.textContent;
         const defMatch = text.match(/^\[\^(\d+)\]:/);
         if (!defMatch) return false;
 
-        // Only navigate when clicking the [^N] back-link, not the definition text
-        const linkLength = defMatch[0].length - 1; // "[^1]:" → 4 ("[^1]")
-        if (resolved.parentOffset >= linkLength) return false;
+        // Only handle clicks within the [^N]: prefix
+        const parentStart = $pos.start();
+        const clickOffset = pos - parentStart;
+        if (clickOffset > defMatch[0].length) return false;
 
         const label = defMatch[1];
 
-        // Find first footnote_ref node with matching label
+        // Navigate to the corresponding footnote_ref
         let refPos = -1;
         view.state.doc.descendants((node: Node, nodePos: number) => {
           if (refPos !== -1) return false;
@@ -634,7 +872,7 @@ const footnoteClickPlugin = $prose(() => {
         if (refPos !== -1) {
           try {
             const sel = Selection.near(view.state.doc.resolve(refPos));
-            view.dispatch(view.state.tr.setSelection(sel));
+            view.dispatch(view.state.tr.setSelection(sel).scrollIntoView());
             const coords = view.coordsAtPos(refPos);
             if (coords) {
               window.scrollTo({
@@ -644,7 +882,7 @@ const footnoteClickPlugin = $prose(() => {
             }
             view.focus();
           } catch {
-            /* scroll failed */
+            /* navigation failed */
           }
           return true;
         }
@@ -660,5 +898,8 @@ export const footnotePlugin: MilkdownPlugin[] = [
   remarkFootnotePlugin,
   footnoteRefNode,
   footnoteRefNodeView,
+  footnoteDefNode,
+  footnoteDefNodeView,
+  footnoteDefInputRule,
   footnoteClickPlugin,
 ].flat();

@@ -414,7 +414,7 @@ struct ContentView: View {
         .navigationTitle(documentManager.projectTitle ?? "Untitled")
         .toolbar { EditorToolbar(editorState: editorState) }
         // Hide window toolbar in focus mode for distraction-free writing
-        .toolbar(editorState.focusModeHidesToolbar ? .hidden : .visible, for: .windowToolbar)
+        .toolbar(editorState.focusModeEnabled ? .hidden : .visible, for: .windowToolbar)
         .task {
             AppDelegate.shared?.editorState = editorState
             await initializeProject()

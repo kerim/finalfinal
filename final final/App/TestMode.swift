@@ -21,7 +21,6 @@ enum TestMode {
         defaults.removeObject(forKey: "com.kerim.final-final.recentProjects")
         defaults.removeObject(forKey: "com.kerim.final-final.lastSeenVersion")
         defaults.removeObject(forKey: "focusModeEnabled")
-        defaults.removeObject(forKey: "com.kerim.final-final.focusModeSettings")
         defaults.removeObject(forKey: "hasSeenSubtreeDragHint")
     }
 }

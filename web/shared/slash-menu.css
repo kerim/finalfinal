@@ -20,10 +20,6 @@
   display: none;
 }
 
-.slash-menu[data-show="true"] {
-  display: block;
-}
-
 .slash-menu-item {
   padding: 6px 12px;
   cursor: pointer;

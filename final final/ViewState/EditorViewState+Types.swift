@@ -12,9 +12,9 @@ import SwiftUI
 /// a fresh snapshot is captured on next launch before applying focus mode.
 struct FocusModeSnapshot: Sendable {
     let wasInFullScreen: Bool
-    let outlineSidebarVisible: Bool?  // nil if not modified by focus mode
-    let annotationPanelVisible: Bool? // nil if not modified by focus mode
-    let annotationDisplayModes: [AnnotationType: AnnotationDisplayMode]? // nil if not modified
+    let outlineSidebarVisible: Bool
+    let annotationPanelVisible: Bool
+    let annotationDisplayModes: [AnnotationType: AnnotationDisplayMode]
 }
 
 // MARK: - Editor Toggle Notifications

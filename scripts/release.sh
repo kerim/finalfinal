@@ -95,21 +95,15 @@ else
     git commit -m "Release v${VERSION}"
 fi
 
-# Publish filtered commits to GitHub
-echo -e "${YELLOW}Publishing to GitHub...${NC}"
-"$PROJECT_DIR/scripts/publish.sh"
-echo -e "${GREEN}  Published${NC}"
-echo ""
-
-# Tag the public (filtered) commit, not main
+# Tag
 echo -e "${YELLOW}Tagging v${VERSION}...${NC}"
-git tag "v${VERSION}" public
+git tag "v${VERSION}"
 echo -e "${GREEN}  Tagged${NC}"
 echo ""
 
-# Push the tag
-echo -e "${YELLOW}Pushing tag...${NC}"
-git push origin "v${VERSION}"
+# Push
+echo -e "${YELLOW}Pushing to origin...${NC}"
+git push origin main --tags
 echo -e "${GREEN}  Pushed${NC}"
 echo ""
 
