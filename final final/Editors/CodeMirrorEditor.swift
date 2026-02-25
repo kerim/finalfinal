@@ -129,10 +129,9 @@ struct CodeMirrorEditor: NSViewRepresentable {
         context.coordinator.isZoomingContent = isZoomingContent
         context.coordinator.contentState = contentState
 
-        let effectiveFocusMode = focusModeEnabled && FocusModeSettingsManager.shared.enableParagraphHighlighting
-        if context.coordinator.lastFocusModeState != effectiveFocusMode {
-            context.coordinator.lastFocusModeState = effectiveFocusMode
-            context.coordinator.setFocusMode(effectiveFocusMode)
+        if context.coordinator.lastFocusModeState != focusModeEnabled {
+            context.coordinator.lastFocusModeState = focusModeEnabled
+            context.coordinator.setFocusMode(focusModeEnabled)
         }
 
         // Skip content/theme pushes during project reset to prevent empty flash

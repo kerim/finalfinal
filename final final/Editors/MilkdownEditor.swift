@@ -141,10 +141,9 @@ struct MilkdownEditor: NSViewRepresentable {
         context.coordinator.contentState = contentState
         context.coordinator.onContentAcknowledged = onContentAcknowledged
 
-        let effectiveFocusMode = focusModeEnabled && FocusModeSettingsManager.shared.enableParagraphHighlighting
-        if context.coordinator.lastFocusModeState != effectiveFocusMode {
-            context.coordinator.lastFocusModeState = effectiveFocusMode
-            context.coordinator.setFocusMode(effectiveFocusMode)
+        if context.coordinator.lastFocusModeState != focusModeEnabled {
+            context.coordinator.lastFocusModeState = focusModeEnabled
+            context.coordinator.setFocusMode(focusModeEnabled)
         }
 
         // Skip content/theme pushes during project reset to prevent empty flash

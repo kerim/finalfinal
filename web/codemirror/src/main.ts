@@ -65,7 +65,6 @@ import {
   setZoomFootnoteState,
 } from './editor-state';
 import { focusModePlugin, isFocusModeEnabled } from './focus-mode-plugin';
-import { annotationDecorationPlugin } from './annotation-decoration-plugin';
 import { footnoteDecorationPlugin } from './footnote-decoration-plugin';
 import { customHighlightStyle, headingDecorationPlugin, syntaxHighlighting } from './heading-plugin';
 import { installLineHeightFix } from './line-height-fix';
@@ -92,6 +91,13 @@ function initEditor() {
 
   // Store extensions at module level so resetForProjectSwitch can recreate EditorState
   const extensions = [
+    EditorView.exceptionSink.of((e) => {
+      console.error('[CM Plugin Error]', e);
+      (window as any).webkit?.messageHandlers?.errorHandler?.postMessage({
+        type: 'plugin-error',
+        message: e instanceof Error ? e.message + '\n' + e.stack : String(e),
+      });
+    }),
     history(),
     markdown({ base: markdownLanguage, codeLanguages: languages }),
     syntaxHighlighting(customHighlightStyle),
@@ -213,8 +219,6 @@ function initEditor() {
     anchorPlugin(),
     // Footnote decoration plugin - clickable [^N] refs and [^N]: defs
     footnoteDecorationPlugin(),
-    // Annotation decoration plugin - type-colored annotation marks
-    annotationDecorationPlugin(),
     // Selection toolbar - floating format bar on text selection
     selectionToolbarPlugin,
     // Spellcheck/grammar decorations via NSSpellChecker

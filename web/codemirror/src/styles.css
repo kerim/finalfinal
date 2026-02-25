@@ -312,33 +312,3 @@ body {
 .cm-footnote-def:hover {
   text-decoration: underline;
 }
-
-/* === Annotation Decoration Styles === */
-
-/* Annotation delimiters (<!-- and -->) - muted, smaller, lighter */
-.cm-editor .cm-annotation-delim {
-  color: var(--editor-text-secondary, #999) !important;
-  font-size: 0.85em;
-  font-weight: 300;
-}
-
-/* Annotation content by type - slightly reduced size for metadata feel */
-.cm-editor .cm-annotation-task {
-  color: var(--annotation-task, #f59e0b);
-  font-size: 0.9em;
-}
-
-.cm-editor .cm-annotation-task-completed {
-  color: var(--annotation-task-completed, #10b981);
-  font-size: 0.9em;
-}
-
-.cm-editor .cm-annotation-comment {
-  color: var(--annotation-comment, #3b82f6);
-  font-size: 0.9em;
-}
-
-.cm-editor .cm-annotation-reference {
-  color: var(--annotation-reference, #8b5cf6);
-  font-size: 0.9em;
-}

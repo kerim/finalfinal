@@ -6,19 +6,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-### Added
-
-- Focus Mode preferences tab (Preferences → Focus) with 5 configurable toggles: hide outline sidebar, hide annotation panel, hide toolbar, hide status bar, and paragraph highlighting
-- `FocusModeSettings` model and `FocusModeSettingsManager` singleton for persisting focus mode preferences in UserDefaults
-
-### Changed
-
-- Focus mode now conditionally applies settings based on preferences instead of hardcoding all behaviors
-- `FocusModeSnapshot` fields are now optional — only elements modified by focus mode are captured and restored on exit
-- `EditorViewState` gains `focusModeHidesToolbar` and `focusModeHidesStatusBar` runtime properties, pre-initialized from persisted state to prevent toolbar/status bar flash on app relaunch
-- Toolbar and status bar visibility now driven by dedicated runtime properties instead of the `focusModeEnabled` flag directly
-- Paragraph highlighting in both editors (Milkdown, CodeMirror) now respects the `enableParagraphHighlighting` setting
-
 ## [0.2.52] - 2026-02-24
 
 ### Added
