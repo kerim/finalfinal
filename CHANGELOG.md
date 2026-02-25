@@ -8,16 +8,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
-- Focus Mode preferences tab (Preferences → Focus) with 5 configurable toggles: hide outline sidebar, hide annotation panel, hide toolbar, hide status bar, and paragraph highlighting
-- `FocusModeSettings` model and `FocusModeSettingsManager` singleton for persisting focus mode preferences in UserDefaults
+- **Configurable Focus Mode** — new Preferences → Focus tab with 5 toggles (hide outline sidebar, hide annotation panel, hide toolbar, hide status bar, paragraph highlighting). Settings persist in UserDefaults and are snapshot-at-entry, so focus mode only affects the elements you choose.
 
-### Changed
+### Improved
 
-- Focus mode now conditionally applies settings based on preferences instead of hardcoding all behaviors
-- `FocusModeSnapshot` fields are now optional — only elements modified by focus mode are captured and restored on exit
-- `EditorViewState` gains `focusModeHidesToolbar` and `focusModeHidesStatusBar` runtime properties, pre-initialized from persisted state to prevent toolbar/status bar flash on app relaunch
-- Toolbar and status bar visibility now driven by dedicated runtime properties instead of the `focusModeEnabled` flag directly
-- Paragraph highlighting in both editors (Milkdown, CodeMirror) now respects the `enableParagraphHighlighting` setting
+- Footnote definitions (`[^N]:`) render as styled pills in WYSIWYG mode with click-to-navigate-back and tooltip fade transitions
+- Status bar shows the current section name; clicking it opens a section navigation popup
+- Slash menu filtering in both editors now matches label prefixes only, preventing false matches
+
+### Fixed
+
+- CodeMirror slash menu positioning uses `requestMeasure` instead of direct `coordsAtPos`, preventing layout glitches
+- Status bar section popup display corrected
+- Caret now renders properly after scrolling to a footnote definition
 
 ## [0.2.52] - 2026-02-24
 
