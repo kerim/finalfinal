@@ -12,6 +12,7 @@ import AppKit
 enum PreferencesTab: String, CaseIterable, Identifiable {
     case export
     case appearance
+    case focus
     case goals
     case proofing
 
@@ -21,6 +22,7 @@ enum PreferencesTab: String, CaseIterable, Identifiable {
         switch self {
         case .export: return "Export"
         case .appearance: return "Appearance"
+        case .focus: return "Focus"
         case .goals: return "Goals"
         case .proofing: return "Proofing"
         }
@@ -30,6 +32,7 @@ enum PreferencesTab: String, CaseIterable, Identifiable {
         switch self {
         case .export: return "square.and.arrow.up"
         case .appearance: return "paintbrush"
+        case .focus: return "eye.slash"
         case .goals: return "target"
         case .proofing: return "textformat.abc"
         }
@@ -53,6 +56,12 @@ struct PreferencesView: View {
                     Label(PreferencesTab.appearance.title, systemImage: PreferencesTab.appearance.icon)
                 }
                 .tag(PreferencesTab.appearance)
+
+            FocusPreferencesPane()
+                .tabItem {
+                    Label(PreferencesTab.focus.title, systemImage: PreferencesTab.focus.icon)
+                }
+                .tag(PreferencesTab.focus)
 
             GoalPreferencesPane()
                 .tabItem {

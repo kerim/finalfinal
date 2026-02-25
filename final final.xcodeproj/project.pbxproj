@@ -62,6 +62,8 @@
 		5D11CB5DD10F6D6E3560D087 /* PreferencesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 87026C4D0F2AEB394A0A85D9 /* PreferencesView.swift */; };
 		5DC993888BDFB3602E1FA2AA /* EditorSchemeHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE6D9836DD14A789629A10CB /* EditorSchemeHandler.swift */; };
 		5DCCCD27DB39DACD3CDDDBB4 /* ExportSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = B188809C6D7BE7E2CB11C3A3 /* ExportSettings.swift */; };
+		F1A2B3C4D5E6F7081234ABCD /* FocusModeSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A2B3C4D5E6F7089876FEDC /* FocusModeSettings.swift */; };
+		F1A2B3C4D5E6F708AABB1122 /* FocusPreferencesPane.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A2B3C4D5E6F708CCDD3344 /* FocusPreferencesPane.swift */; };
 		5E65B667DA5C19888B7BF88E /* Typography.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE36F17D91BD28DBE49E98F8 /* Typography.swift */; };
 		63072A9E8DE3BC6324759AE9 /* ProjectDatabase.swift in Sources */ = {isa = PBXBuildFile; fileRef = DFB3FE823FEA8DAD86CD01A9 /* ProjectDatabase.swift */; };
 		639B3B47C550E26A3EE3F0D2 /* PandocLocator.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF38A145CE15C32F45EBB00D /* PandocLocator.swift */; };
@@ -273,6 +275,8 @@
 		B09119DC4E9BBDC1E741006B /* GoalPreferencesPane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoalPreferencesPane.swift; sourceTree = "<group>"; };
 		B1679600B9A0C29D5BB56601 /* NativeToolbarButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeToolbarButton.swift; sourceTree = "<group>"; };
 		B188809C6D7BE7E2CB11C3A3 /* ExportSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportSettings.swift; sourceTree = "<group>"; };
+		F1A2B3C4D5E6F7089876FEDC /* FocusModeSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FocusModeSettings.swift; sourceTree = "<group>"; };
+		F1A2B3C4D5E6F708CCDD3344 /* FocusPreferencesPane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FocusPreferencesPane.swift; sourceTree = "<group>"; };
 		B1CCD9944C68301C7B49A3FC /* final finalUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "final finalUITests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 		B220BEC12CB629DCB165D755 /* AnnotationViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnnotationViewModel.swift; sourceTree = "<group>"; };
 		B590B43C3202D0C1BF230EFA /* OutlineSidebar+Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "OutlineSidebar+Models.swift"; sourceTree = "<group>"; };
@@ -488,6 +492,7 @@
 				6E07FED1E8BB1958EF4F04CF /* Database+Snapshots.swift */,
 				54B0DE603A99327D920573B6 /* Document.swift */,
 				B188809C6D7BE7E2CB11C3A3 /* ExportSettings.swift */,
+				F1A2B3C4D5E6F7089876FEDC /* FocusModeSettings.swift */,
 				A253238E869E099DD21CF7DE /* GoalColorSettings.swift */,
 				CF113F2ADAA8371F7C810BF0 /* OutlineNode.swift */,
 				DFB3FE823FEA8DAD86CD01A9 /* ProjectDatabase.swift */,
@@ -664,6 +669,7 @@
 			isa = PBXGroup;
 			children = (
 				BEC20B55C260FCF5460E4E23 /* ExportPreferencesPane.swift */,
+				F1A2B3C4D5E6F708CCDD3344 /* FocusPreferencesPane.swift */,
 				B09119DC4E9BBDC1E741006B /* GoalPreferencesPane.swift */,
 				87026C4D0F2AEB394A0A85D9 /* PreferencesView.swift */,
 				A97DAA603C9EB29DE79FB8EB /* PreferencesView+Actions.swift */,
@@ -907,6 +913,8 @@
 				533D8BDE9118ACC34CF4BF89 /* ExportPreferencesPane.swift in Sources */,
 				53A856455FD6985D356DF716 /* ExportService.swift in Sources */,
 				5DCCCD27DB39DACD3CDDDBB4 /* ExportSettings.swift in Sources */,
+				F1A2B3C4D5E6F7081234ABCD /* FocusModeSettings.swift in Sources */,
+				F1A2B3C4D5E6F708AABB1122 /* FocusPreferencesPane.swift in Sources */,
 				0784ABBC885E7F022DDC0D6B /* ExportViewModel.swift in Sources */,
 				3957C98BBCB2699A33E2C288 /* FileCommands.swift in Sources */,
 				6D12AEF734B0A4D7D05F681F /* FinalFinalApp.swift in Sources */,
