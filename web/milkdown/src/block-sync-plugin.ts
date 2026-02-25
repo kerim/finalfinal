@@ -117,8 +117,10 @@ function serializeInlineContent(node: Node): string {
         }
       } else if (child.type.name === 'footnote_ref') {
         result += `[^${child.attrs.label}]`;
-        // IMPORTANT: Inline atom nodes (citation, annotation, footnote_ref) must be
-        // handled explicitly above — child.textContent returns '' for atom nodes.
+      } else if (child.type.name === 'footnote_def') {
+        result += `[^${child.attrs.label}]:`;
+        // IMPORTANT: Inline atom nodes (citation, annotation, footnote_ref, footnote_def)
+        // must be handled explicitly above — child.textContent returns '' for atom nodes.
       } else {
         result += child.textContent;
       }
