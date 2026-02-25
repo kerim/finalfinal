@@ -196,7 +196,13 @@ extension MilkdownEditor.Coordinator {
         guard label.allSatisfy(\.isNumber) else { return }
         webView.evaluateJavaScript(
             "window.FinalFinal.scrollToFootnoteDefinition('\(label)')"
-        ) { _, _ in }
+        ) { [weak webView] _, _ in
+            // Ensure WKWebView is macOS first responder for caret rendering
+            // (JS view.focus() sets DOM focus but not the NSWindow responder chain)
+            if let webView, let window = webView.window {
+                window.makeFirstResponder(webView)
+            }
+        }
     }
 
     /// Renumber footnote references in the editor using old→new label mapping
