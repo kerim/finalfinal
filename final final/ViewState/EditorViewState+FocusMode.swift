@@ -20,16 +20,18 @@ extension EditorViewState {
         }
     }
 
-    /// Enter focus mode with full screen, hidden sidebars, and paragraph highlighting
+    /// Enter focus mode with configurable UI hiding based on preferences
     func enterFocusMode() async {
         guard !focusModeEnabled else { return }
 
-        // 1. Capture pre-focus state for restoration on exit
+        let settings = FocusModeSettingsManager.shared
+
+        // 1. Capture pre-focus state — only for elements that will be modified
         preFocusModeState = FocusModeSnapshot(
             wasInFullScreen: FullScreenManager.isInFullScreen(),
-            outlineSidebarVisible: isOutlineSidebarVisible,
-            annotationPanelVisible: isAnnotationPanelVisible,
-            annotationDisplayModes: annotationDisplayModes
+            outlineSidebarVisible: settings.hideLeftSidebar ? isOutlineSidebarVisible : nil,
+            annotationPanelVisible: settings.hideRightSidebar ? isAnnotationPanelVisible : nil,
+            annotationDisplayModes: settings.hideRightSidebar ? annotationDisplayModes : nil
         )
 
         // 2. Enter full screen (if not already)
@@ -39,31 +41,39 @@ extension EditorViewState {
             try? await Task.sleep(nanoseconds: 600_000_000)
         }
 
-        // 3. Hide sidebars with animation
+        // 3. Conditionally hide sidebars with animation
         withAnimation(.easeInOut(duration: 0.3)) {
-            isOutlineSidebarVisible = false
-            isAnnotationPanelVisible = false
+            if settings.hideLeftSidebar { isOutlineSidebarVisible = false }
+            if settings.hideRightSidebar { isAnnotationPanelVisible = false }
         }
 
-        // 4. Collapse all annotations
-        for type in AnnotationType.allCases {
-            annotationDisplayModes[type] = .collapsed
+        // 4. Collapse annotations only if hiding right sidebar
+        if settings.hideRightSidebar {
+            for type in AnnotationType.allCases {
+                annotationDisplayModes[type] = .collapsed
+            }
         }
 
-        // 5. Enable focus mode (triggers paragraph highlighting in Milkdown)
+        // 5. Set runtime state for toolbar/status bar (read by views)
+        focusModeHidesToolbar = settings.hideToolbar
+        focusModeHidesStatusBar = settings.hideStatusBar
+
+        // 6. Enable focus mode (triggers paragraph highlighting in editors)
         focusModeEnabled = true
 
-        // 6. Show toast notification
+        // 7. Show toast notification
         showFocusModeToast = true
     }
 
-    /// Exit focus mode, restoring pre-focus state
+    /// Exit focus mode, restoring only the elements that were modified on entry
     func exitFocusMode() async {
         guard focusModeEnabled else { return }
 
         guard let snapshot = preFocusModeState else {
             // No snapshot available - just disable focus mode
             focusModeEnabled = false
+            focusModeHidesToolbar = false
+            focusModeHidesStatusBar = false
             return
         }
 
@@ -74,19 +84,23 @@ extension EditorViewState {
             try? await Task.sleep(nanoseconds: 600_000_000)
         }
 
-        // 2. Restore sidebar visibility with animation
+        // 2. Restore only elements that were captured (non-nil)
         withAnimation(.easeInOut(duration: 0.3)) {
-            isOutlineSidebarVisible = snapshot.outlineSidebarVisible
-            isAnnotationPanelVisible = snapshot.annotationPanelVisible
+            if let visible = snapshot.outlineSidebarVisible { isOutlineSidebarVisible = visible }
+            if let visible = snapshot.annotationPanelVisible { isAnnotationPanelVisible = visible }
         }
 
-        // 3. Restore annotation display modes
-        annotationDisplayModes = snapshot.annotationDisplayModes
+        // 3. Restore annotation display modes if they were captured
+        if let modes = snapshot.annotationDisplayModes { annotationDisplayModes = modes }
 
-        // 4. Disable focus mode (disables paragraph highlighting in Milkdown)
+        // 4. Clear runtime state
+        focusModeHidesToolbar = false
+        focusModeHidesStatusBar = false
+
+        // 5. Disable focus mode (disables paragraph highlighting in editors)
         focusModeEnabled = false
 
-        // 5. Clear snapshot
+        // 6. Clear snapshot
         preFocusModeState = nil
     }
 

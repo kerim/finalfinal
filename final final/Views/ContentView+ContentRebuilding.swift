@@ -194,7 +194,7 @@ extension ContentView {
 
                 editorView
                 // Hide status bar in focus mode for distraction-free writing
-                if !editorState.focusModeEnabled {
+                if !editorState.focusModeHidesStatusBar {
                     StatusBar(editorState: editorState)
                 }
             }
