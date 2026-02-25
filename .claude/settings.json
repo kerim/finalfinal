@@ -1,0 +1,45 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(xcodebuild:*)",
+      "Bash(xcodegen:*)",
+      "Bash(swift:*)"
+    ]
+  },
+  "sandbox": {
+    "additionalWritePaths": [
+      "/Users/niyaro/Library/Developer/Xcode/DerivedData",
+      "/Users/niyaro/Library/Caches/org.swift.swiftpm",
+      "/Users/niyaro/Library/Developer/CoreSimulator",
+      "/tmp/claude-501"
+    ],
+    "network": {
+      "allowedHosts": [
+        "registry.npmjs.org"
+      ]
+    }
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/protect-backups.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/protect-backups-git.sh"
+          }
+        ]
+      }
+    ]
+  },
+  "plansDirectory": "./docs/plans"
+}
