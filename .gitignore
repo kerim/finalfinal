@@ -24,15 +24,10 @@ build/
 temp/
 *.tmp
 
-# Internal docs
-docs/
-CLAUDE.md
-
-# Memory files
-.claude/
-
-# Test fixtures with local paths
-test-data/
+# Claude Code runtime (not project config)
+.claude/worktrees/
+.claude/settings.local.json
+.claude/debug/
 
 # IDE
 .idea/
