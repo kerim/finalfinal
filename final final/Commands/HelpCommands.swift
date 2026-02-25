@@ -19,6 +19,22 @@ struct HelpCommands: Commands {
 
             Divider()
 
+            Button("Check for Updates...") {
+                Task {
+                    let status = await UpdateChecker().check()
+                    switch status {
+                    case .updateAvailable(let version, let url):
+                        UpdateChecker.showUpdateAlert(version: version, url: url)
+                    case .upToDate:
+                        UpdateChecker.showUpToDateAlert()
+                    case .error(let message):
+                        UpdateChecker.showErrorAlert(message)
+                    }
+                }
+            }
+
+            Divider()
+
             Link("Report an Issue...", destination: URL(string: "https://github.com/kerim/final-final/issues")!)
         }
     }
