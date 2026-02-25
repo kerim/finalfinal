@@ -92,6 +92,13 @@ function initEditor() {
 
   // Store extensions at module level so resetForProjectSwitch can recreate EditorState
   const extensions = [
+    EditorView.exceptionSink.of((e) => {
+      console.error('[CM Plugin Error]', e);
+      (window as any).webkit?.messageHandlers?.errorHandler?.postMessage({
+        type: 'plugin-error',
+        message: e instanceof Error ? e.message + '\n' + e.stack : String(e),
+      });
+    }),
     history(),
     markdown({ base: markdownLanguage, codeLanguages: languages }),
     syntaxHighlighting(customHighlightStyle),

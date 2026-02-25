@@ -4,7 +4,23 @@
 import { type EditorView, ViewPlugin, type ViewUpdate } from '@codemirror/view';
 import '../../shared/slash-menu.css';
 import { insertFootnoteReplacingRange } from './api';
-import { getEditorView, setPendingCAYWRange, setPendingSlashUndo } from './editor-state';
+import { setPendingCAYWRange, setPendingSlashUndo } from './editor-state';
+
+/** Route diagnostic messages through the WKWebView errorHandler bridge.
+ *  JS console.log/error are NOT bridged to Xcode — this is the only visible channel. */
+function slashLog(...args: unknown[]) {
+  const msg = args
+    .map((a) => {
+      if (a instanceof Error) return `${a.message}\n${a.stack}`;
+      if (typeof a === 'string') return a;
+      return JSON.stringify(a);
+    })
+    .join(' ');
+  (window as any).webkit?.messageHandlers?.errorHandler?.postMessage({
+    type: 'slash-diag',
+    message: msg,
+  });
+}
 
 // === Slash command definitions (same order as Milkdown) ===
 interface SlashCommand {
@@ -47,8 +63,8 @@ const slashCommands: SlashCommand[] = [
   {
     label: '/break',
     description: 'Insert section break',
-    apply: (_view, from, to) => {
-      getEditorView()?.dispatch({ changes: { from, to, insert: '<!-- ::break:: -->\n\n' } });
+    apply: (view, from, to) => {
+      view.dispatch({ changes: { from, to, insert: '<!-- ::break:: -->\n\n' } });
       setPendingSlashUndo(true);
     },
   },
@@ -72,8 +88,8 @@ const slashCommands: SlashCommand[] = [
   {
     label: '/link',
     description: 'Insert link',
-    apply: (_view, from, to) => {
-      getEditorView()?.dispatch({
+    apply: (view, from, to) => {
+      view.dispatch({
         changes: { from, to, insert: '[link text](url)' },
         selection: { anchor: from + 1, head: from + 10 },
       });
@@ -155,42 +171,64 @@ class SlashMenuPlugin {
   private isVisible = false;
 
   constructor(private view: EditorView) {
+    slashLog('[SlashMenu] Plugin constructed');
     this.handleKeydown = this.handleKeydown.bind(this);
     document.addEventListener('keydown', this.handleKeydown, true);
   }
 
   update(update: ViewUpdate) {
-    if (!update.docChanged && !update.selectionSet) return;
+    try {
+      if (!update.docChanged && !update.selectionSet) return;
+      slashLog('[SlashMenu] update() called, docChanged:', update.docChanged, 'selectionSet:', update.selectionSet);
 
-    const { head } = update.view.state.selection.main;
-    const line = update.view.state.doc.lineAt(head);
-    const textBefore = update.view.state.sliceDoc(line.from, head);
+      const { head } = update.view.state.selection.main;
+      const line = update.view.state.doc.lineAt(head);
+      const textBefore = update.view.state.sliceDoc(line.from, head);
 
-    // Match `/` at line start or after whitespace, followed by optional word chars
-    const match = textBefore.match(/(^|(?<=\s))\/(\w*)$/);
-    if (match) {
-      const query = match[2].toLowerCase();
-      this.slashFrom = head - match[0].length + (match[1] ? match[1].length : 0);
-      this.slashTo = head;
+      // Match `/` followed by optional word chars at end of text
+      const slashMatch = textBefore.match(/\/(\w*)$/);
+      slashLog('[SlashMenu] textBefore:', JSON.stringify(textBefore), 'slashMatch:', slashMatch);
+      if (slashMatch) {
+        const slashPos = textBefore.length - slashMatch[0].length;
+        const query = slashMatch[1].toLowerCase();
+        this.slashFrom = line.from + slashPos;
+        this.slashTo = head;
+        this.selectedIndex = 0;
 
-      this.filteredCommands = slashCommands.filter(
-        (cmd) => cmd.label.toLowerCase().includes(`/${query}`) || cmd.description.toLowerCase().includes(query)
-      );
+        this.filteredCommands = slashCommands.filter((cmd) => cmd.label.toLowerCase().startsWith(`/${query}`));
 
-      if (this.filteredCommands.length > 0) {
-        this.selectedIndex = Math.min(this.selectedIndex, this.filteredCommands.length - 1);
-        this.show();
-        this.renderItems();
-        this.position();
+        if (this.filteredCommands.length > 0) {
+          this.show();
+          this.renderItems();
+          // Defer layout reads — coordsAtPos and defaultLineHeight call
+          // readMeasured(), which throws during update() (updateState == 2).
+          // Use requestMeasure to schedule reads after the update cycle.
+          this.view.requestMeasure({
+            read: (view) => ({
+              coords: view.coordsAtPos(this.slashFrom),
+              lineHeight: view.defaultLineHeight,
+            }),
+            write: (measured) => {
+              slashLog('[SlashMenu] position() coords:', measured.coords, 'slashFrom:', this.slashFrom);
+              if (!measured.coords) return;
+              const menu = this.ensureMenu();
+              menu.style.left = `${measured.coords.left}px`;
+              menu.style.top = `${measured.coords.bottom + measured.lineHeight * 0.1}px`;
+            },
+          });
+        } else {
+          this.hide();
+        }
       } else {
         this.hide();
       }
-    } else {
-      this.hide();
+    } catch (e) {
+      slashLog('[SlashMenu] update error:', e);
     }
   }
 
   destroy() {
+    slashLog('[SlashMenu] Plugin DESTROYED');
     document.removeEventListener('keydown', this.handleKeydown, true);
     if (this.menuEl) {
       this.menuEl.remove();
@@ -213,6 +251,7 @@ class SlashMenuPlugin {
   }
 
   private show() {
+    slashLog('[SlashMenu] show() called');
     const menu = this.ensureMenu();
     menu.setAttribute('data-show', 'true');
     this.isVisible = true;
@@ -277,16 +316,6 @@ class SlashMenuPlugin {
     items.forEach((item, i) => {
       item.classList.toggle('selected', i === this.selectedIndex);
     });
-  }
-
-  private position() {
-    const menu = this.ensureMenu();
-    const coords = this.view.coordsAtPos(this.slashFrom);
-    if (!coords) return;
-
-    const lineHeight = this.view.defaultLineHeight;
-    menu.style.left = `${coords.left}px`;
-    menu.style.top = `${coords.bottom + lineHeight * 0.1}px`;
   }
 
   private executeCommand(index: number) {
