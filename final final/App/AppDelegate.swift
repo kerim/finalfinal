@@ -79,6 +79,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             #endif
         }
 
+        // Check for updates on launch (silent -- only alerts if update available)
+        if !TestMode.isUITesting {
+            Task {
+                let status = await UpdateChecker().check()
+                if case .updateAvailable(let version, let url) = status {
+                    UpdateChecker.showUpdateAlert(version: version, url: url)
+                }
+            }
+        }
+
         // Handle newProject and openProject from File menu
         // AppDelegate always exists, so it can handle these even with zero windows
         NotificationCenter.default.addObserver(
