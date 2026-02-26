@@ -76,6 +76,7 @@
 		75D604E7143573D4BFD533FD /* MilkdownEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7EEDC491836013F46E97FAE8 /* MilkdownEditor.swift */; };
 		762C4F8744B0DB84218E14EF /* Database+Sections.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5FD87E27CB1257814D589880 /* Database+Sections.swift */; };
 		781C1DA25364AA396413E82F /* OutlineSidebar+DropDelegates.swift in Sources */ = {isa = PBXBuildFile; fileRef = 31937040D58CFFD751C3C45D /* OutlineSidebar+DropDelegates.swift */; };
+		7822E56C21A84E51080B9715 /* MarkdownRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1ABF169E4CCADE457BF4C7B7 /* MarkdownRenderer.swift */; };
 		790667B521454C125B0FE74B /* ColorScheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2AAD6FB6258FBF011A89ECFC /* ColorScheme.swift */; };
 		79C23EF8EBD0D2FB15865C37 /* AppearanceSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = E614BA7EFA79C8EAF96B80C0 /* AppearanceSettings.swift */; };
 		7A766FE31F56DB4FFCE73D8C /* VersionHistoryCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3BB70B8A6DD5904EC181116A /* VersionHistoryCoordinator.swift */; };
@@ -108,6 +109,7 @@
 		9E8D8F33D47F7001D135296C /* ZoteroService.swift in Sources */ = {isa = PBXBuildFile; fileRef = E16909CB53D2BCFD8CC1B0BF /* ZoteroService.swift */; };
 		9E99C57C2D8101B560301BAE /* BlockParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0EE6A723C923D316B9CE89C /* BlockParser.swift */; };
 		9F8A84E5700503E3140BB6AC /* Database+Blocks.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3B8BDB22DF0AC3535250A72E /* Database+Blocks.swift */; };
+		A05325CD92CBB929824DD2D3 /* SQLiteReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 19D9D6FF0D1C77C27B991957 /* SQLiteReader.swift */; };
 		A260B9AEA58D00DA58E332AD /* content.sqlite in Resources */ = {isa = PBXBuildFile; fileRef = 342DA0CDD64AC4355DCB9DA7 /* content.sqlite */; };
 		A36206EB02FE6CAD10AC3076 /* ZoteroService+CAYW.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6E8F8EC247BCC5E3E00BA145 /* ZoteroService+CAYW.swift */; };
 		A63A6CAA68FA3A786C2E8B9F /* EditorViewState+Zoom.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7CDE9D1D9ECA8A2C882564D /* EditorViewState+Zoom.swift */; };
@@ -121,6 +123,7 @@
 		AD8451C7428BC1E2016746D1 /* StatusBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF41CB39EB2C5BD4E30A2CDA /* StatusBar.swift */; };
 		B170D8E5C33C7D7D14A350D4 /* AnnotationSyncService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6253961779E064C92D1B172E /* AnnotationSyncService.swift */; };
 		B17C6E9C011435B07C9EFF38 /* editor in Resources */ = {isa = PBXBuildFile; fileRef = 80D86FAB5657E30D2DC86655 /* editor */; };
+		B259B700914FE014C1073B42 /* PreviewViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2FED51A67AC5513383E13195 /* PreviewViewController.swift */; };
 		B2F771834247C01B57FEE863 /* PreferencesView+Presets.swift in Sources */ = {isa = PBXBuildFile; fileRef = 84C5212CE3DA7F15153B8897 /* PreferencesView+Presets.swift */; };
 		B87F92C053B192CE869087C1 /* GoalColorSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = A253238E869E099DD21CF7DE /* GoalColorSettings.swift */; };
 		B909EC7584F7C0BC29A8E884 /* StatusBadge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 901504B12579978740C78EC9 /* StatusBadge.swift */; };
@@ -140,6 +143,7 @@
 		D6A0D3C2D59070E808EFA6C9 /* ProjectPackage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 734874328EB5518EAC0C2517 /* ProjectPackage.swift */; };
 		D7D157CF0D11B4297B531B0D /* VersionHistorySheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = ADDBB952E065FAA3EC8B0789 /* VersionHistorySheet.swift */; };
 		E028FEF9DCA9E380AE542AF2 /* RecentProject.swift in Sources */ = {isa = PBXBuildFile; fileRef = 87363EA3909D1FDA8BFDB5F1 /* RecentProject.swift */; };
+		E24F860E7538A80ED50DF123 /* QuickLook Extension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = AEA97EE7FBB6B6E21D5FA0F0 /* QuickLook Extension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		E2936B1395E60EDCD0D14969 /* CodeMirrorCoordinator+Handlers.swift in Sources */ = {isa = PBXBuildFile; fileRef = 47F42FEEB5EFB471BDEDB2DB /* CodeMirrorCoordinator+Handlers.swift */; };
 		E46A01D58B8F56C1034EB422 /* Snapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = 87F00396843D1E0300C1624A /* Snapshot.swift */; };
 		E46F3ED58DA8FEDB5213C283 /* AnnotationCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5903AE3511C621FF3093E3C9 /* AnnotationCardView.swift */; };
@@ -162,6 +166,13 @@
 			remoteGlobalIDString = 4A3B93CDDB27C36925E7EC59;
 			remoteInfo = "final final";
 		};
+		E692EB543D627B9001FF1A00 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = F0BAF9FF1D366B40F0176899 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = D529D3B3388A2FCF4CDD62EF;
+			remoteInfo = "QuickLook Extension";
+		};
 		E9D6219838BBB44E7B87DA90 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = F0BAF9FF1D366B40F0176899 /* Project object */;
@@ -170,6 +181,20 @@
 			remoteInfo = "final final";
 		};
 /* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		051E97E9BA4EECE25798542E /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				E24F860E7538A80ED50DF123 /* QuickLook Extension.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		018453199CEAFE2FCD69DCBD /* ProofingSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProofingSettings.swift; sourceTree = "<group>"; };
@@ -185,6 +210,8 @@
 		109DDCE3DD312B1666618AD5 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		10BA92FC730511D06959AEDB /* StringExtensions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StringExtensions.swift; sourceTree = "<group>"; };
 		13133CB5518EA086A3120EDE /* Database+CRUD.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Database+CRUD.swift"; sourceTree = "<group>"; };
+		19D9D6FF0D1C77C27B991957 /* SQLiteReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SQLiteReader.swift; sourceTree = "<group>"; };
+		1ABF169E4CCADE457BF4C7B7 /* MarkdownRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownRenderer.swift; sourceTree = "<group>"; };
 		1C9A6AA1550623CEDFA4ACB8 /* RadixScales.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RadixScales.swift; sourceTree = "<group>"; };
 		1EC960E239AB6BAACD5BC0A3 /* EditorPreloader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorPreloader.swift; sourceTree = "<group>"; };
 		2070D9DD040736953F1CAA08 /* ZoteroChecker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZoteroChecker.swift; sourceTree = "<group>"; };
@@ -192,6 +219,7 @@
 		2892EEB9AB8A127B61B8B1D8 /* MilkdownCoordinator+Content.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "MilkdownCoordinator+Content.swift"; sourceTree = "<group>"; };
 		2AAD6FB6258FBF011A89ECFC /* ColorScheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ColorScheme.swift; sourceTree = "<group>"; };
 		2B7205FC48760A149A8B0BF8 /* AutoBackupService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutoBackupService.swift; sourceTree = "<group>"; };
+		2FED51A67AC5513383E13195 /* PreviewViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreviewViewController.swift; sourceTree = "<group>"; };
 		31937040D58CFFD751C3C45D /* OutlineSidebar+DropDelegates.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "OutlineSidebar+DropDelegates.swift"; sourceTree = "<group>"; };
 		31C89F3A4269349290CD8F03 /* EditorViewState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorViewState.swift; sourceTree = "<group>"; };
 		342DA0CDD64AC4355DCB9DA7 /* content.sqlite */ = {isa = PBXFileReference; lastKnownFileType = file; path = content.sqlite; sourceTree = "<group>"; };
@@ -244,6 +272,7 @@
 		728F6240519F3BDA2753E515 /* Database+Annotations.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Database+Annotations.swift"; sourceTree = "<group>"; };
 		7311920CB617B184B124B6F4 /* Annotation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Annotation.swift; sourceTree = "<group>"; };
 		734874328EB5518EAC0C2517 /* ProjectPackage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectPackage.swift; sourceTree = "<group>"; };
+		739CB4B020AEA60C43F07BBC /* QuickLook Extension.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = "QuickLook Extension.entitlements"; sourceTree = "<group>"; };
 		73EA833CAD13B84DA71C0544 /* CodeMirrorEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodeMirrorEditor.swift; sourceTree = "<group>"; };
 		75B3D65D281D81B769D7DF96 /* OutlineSidebar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutlineSidebar.swift; sourceTree = "<group>"; };
 		76CC075151A2E6342FFE523E /* TinyTeX */ = {isa = PBXFileReference; lastKnownFileType = folder; name = TinyTeX; path = "final final/Resources/TinyTeX"; sourceTree = SOURCE_ROOT; };
@@ -274,6 +303,7 @@
 		AB67FDEBDA369B54F8FED127 /* ProofingProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProofingProvider.swift; sourceTree = "<group>"; };
 		ABFC8351EA2CEE315AFD46C8 /* OutlineFilterBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutlineFilterBar.swift; sourceTree = "<group>"; };
 		ADDBB952E065FAA3EC8B0789 /* VersionHistorySheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VersionHistorySheet.swift; sourceTree = "<group>"; };
+		AEA97EE7FBB6B6E21D5FA0F0 /* QuickLook Extension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = "QuickLook Extension.appex"; sourceTree = BUILT_PRODUCTS_DIR; };
 		B09119DC4E9BBDC1E741006B /* GoalPreferencesPane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoalPreferencesPane.swift; sourceTree = "<group>"; };
 		B1679600B9A0C29D5BB56601 /* NativeToolbarButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeToolbarButton.swift; sourceTree = "<group>"; };
 		B188809C6D7BE7E2CB11C3A3 /* ExportSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportSettings.swift; sourceTree = "<group>"; };
@@ -318,6 +348,7 @@
 		F37D8109D489C3EF73C167C0 /* RadixScales+Custom.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "RadixScales+Custom.swift"; sourceTree = "<group>"; };
 		F64B2180C529F611804A094B /* UpdateChecker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdateChecker.swift; sourceTree = "<group>"; };
 		FA8E40231CCB32EC98E3B48F /* ProjectPickerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectPickerView.swift; sourceTree = "<group>"; };
+		FB77BD6B3DD5AF1E074B30A4 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		FDA7C9F1CFBE9EDB2C4D818C /* OutlineParserTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutlineParserTests.swift; sourceTree = "<group>"; };
 		FE24C13995368C23BC470A26 /* FinalFinalApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FinalFinalApp.swift; sourceTree = "<group>"; };
 		FF34C45C645EA726101A81D6 /* FootnoteSyncService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FootnoteSyncService.swift; sourceTree = "<group>"; };
@@ -372,6 +403,18 @@
 				10BA92FC730511D06959AEDB /* StringExtensions.swift */,
 			);
 			path = Editors;
+			sourceTree = "<group>";
+		};
+		20FB68996DE4352104B0F75C /* QuickLook Extension */ = {
+			isa = PBXGroup;
+			children = (
+				FB77BD6B3DD5AF1E074B30A4 /* Info.plist */,
+				1ABF169E4CCADE457BF4C7B7 /* MarkdownRenderer.swift */,
+				2FED51A67AC5513383E13195 /* PreviewViewController.swift */,
+				739CB4B020AEA60C43F07BBC /* QuickLook Extension.entitlements */,
+				19D9D6FF0D1C77C27B991957 /* SQLiteReader.swift */,
+			);
+			path = "QuickLook Extension";
 			sourceTree = "<group>";
 		};
 		286B8E2A62BC888E4FCC6A09 /* Utils */ = {
@@ -442,6 +485,7 @@
 				5741EAE0DDD338AB4D025101 /* final final.app */,
 				788D4C2FB2475A38D3477A97 /* final finalTests.xctest */,
 				B1CCD9944C68301C7B49A3FC /* final finalUITests.xctest */,
+				AEA97EE7FBB6B6E21D5FA0F0 /* QuickLook Extension.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -464,6 +508,7 @@
 				887202FB500BDC677B0C41F3 /* final final */,
 				96FDF83C9E576F31361DF979 /* final finalTests */,
 				A97A6B60AEBBB808E8AAC5AA /* final finalUITests */,
+				20FB68996DE4352104B0F75C /* QuickLook Extension */,
 				5D30D849AC613F46C575C190 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -719,11 +764,13 @@
 				AC02281FB7B2A5BB611B1A29 /* Sources */,
 				3BC3CAED088CEF7AE191FA7D /* Resources */,
 				E9038C5955C3D5D57EF730DB /* Frameworks */,
+				051E97E9BA4EECE25798542E /* Embed Foundation Extensions */,
 				FEF6C6A737962720093F21D9 /* Stamp Git Info into Info.plist */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				62ABA6D3CE742FC590C14B53 /* PBXTargetDependency */,
 			);
 			name = "final final";
 			packageProductDependencies = (
@@ -751,6 +798,23 @@
 			productName = "final finalUITests";
 			productReference = B1CCD9944C68301C7B49A3FC /* final finalUITests.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+		D529D3B3388A2FCF4CDD62EF /* QuickLook Extension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 45792B58A7F6711740027C0E /* Build configuration list for PBXNativeTarget "QuickLook Extension" */;
+			buildPhases = (
+				07040D6C9E2CECC04AA4C7E0 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = "QuickLook Extension";
+			packageProductDependencies = (
+			);
+			productName = "QuickLook Extension";
+			productReference = AEA97EE7FBB6B6E21D5FA0F0 /* QuickLook Extension.appex */;
+			productType = "com.apple.product-type.app-extension";
 		};
 /* End PBXNativeTarget section */
 
@@ -783,6 +847,7 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
+				D529D3B3388A2FCF4CDD62EF /* QuickLook Extension */,
 				4A3B93CDDB27C36925E7EC59 /* final final */,
 				48CF9BA009EA11ACC33BFB55 /* final finalTests */,
 				BD340BCA01ABBD8642AA6DA9 /* final finalUITests */,
@@ -844,6 +909,16 @@
 /* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		07040D6C9E2CECC04AA4C7E0 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				7822E56C21A84E51080B9715 /* MarkdownRenderer.swift in Sources */,
+				B259B700914FE014C1073B42 /* PreviewViewController.swift in Sources */,
+				A05325CD92CBB929824DD2D3 /* SQLiteReader.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		2D0D2A66A7555B777B919AF8 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -1015,6 +1090,11 @@
 			target = 4A3B93CDDB27C36925E7EC59 /* final final */;
 			targetProxy = 85A3B3E0AB1C74B3DD84AF0C /* PBXContainerItemProxy */;
 		};
+		62ABA6D3CE742FC590C14B53 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = D529D3B3388A2FCF4CDD62EF /* QuickLook Extension */;
+			targetProxy = E692EB543D627B9001FF1A00 /* PBXContainerItemProxy */;
+		};
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
@@ -1134,7 +1214,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = "final final/final final.entitlements";
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 0.0.1;
+				CURRENT_PROJECT_VERSION = 0.2.54;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "final final/Info.plist";
 				INFOPLIST_GENERATION_MODE = GeneratedFile;
@@ -1152,13 +1232,39 @@
 			};
 			name = Debug;
 		};
+		787907BB59FE77A664638113 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = "QuickLook Extension/QuickLook Extension.entitlements";
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 0.2.54;
+				INFOPLIST_FILE = "QuickLook Extension/Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1;
+				OTHER_LDFLAGS = (
+					"-lsqlite3",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "com.kerim.final-final.quicklook";
+				PRODUCT_MODULE_NAME = QuickLook_Extension;
+				PRODUCT_NAME = "QuickLook Extension";
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.9;
+			};
+			name = Debug;
+		};
 		7F944E942DFED44C9A711E4F /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = "final final/final final.entitlements";
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 0.0.1;
+				CURRENT_PROJECT_VERSION = 0.2.54;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "final final/Info.plist";
 				INFOPLIST_GENERATION_MODE = GeneratedFile;
@@ -1172,6 +1278,32 @@
 				PRODUCT_MODULE_NAME = final_final;
 				PRODUCT_NAME = "FINAL|FINAL";
 				SDKROOT = macosx;
+				SWIFT_VERSION = 5.9;
+			};
+			name = Release;
+		};
+		9DCC347FF419380C686FD4E6 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = "QuickLook Extension/QuickLook Extension.entitlements";
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 0.2.54;
+				INFOPLIST_FILE = "QuickLook Extension/Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1;
+				OTHER_LDFLAGS = (
+					"-lsqlite3",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "com.kerim.final-final.quicklook";
+				PRODUCT_MODULE_NAME = QuickLook_Extension;
+				PRODUCT_NAME = "QuickLook Extension";
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
 				SWIFT_VERSION = 5.9;
 			};
 			name = Release;
@@ -1274,6 +1406,15 @@
 			buildConfigurations = (
 				DD0356459FEFE41CCC3AEA03 /* Debug */,
 				05D68221E751AE7AB86E28DB /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		45792B58A7F6711740027C0E /* Build configuration list for PBXNativeTarget "QuickLook Extension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				787907BB59FE77A664638113 /* Debug */,
+				9DCC347FF419380C686FD4E6 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;

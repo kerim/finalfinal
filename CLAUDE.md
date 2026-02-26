@@ -65,6 +65,8 @@ Custom `editor://` URL scheme + 500ms polling:
 | `Theme/ColorScheme.swift` | App color scheme definitions |
 | `web/milkdown/src/main.ts` | WYSIWYG editor + focus mode plugin |
 | `web/codemirror/src/main.ts` | Source editor |
+| `QuickLook Extension/PreviewViewController.swift` | QLPreviewingController for Finder previews |
+| `QuickLook Extension/MarkdownRenderer.swift` | Markdown → NSAttributedString with block styling |
 
 ### window.FinalFinal API
 
@@ -191,6 +193,7 @@ Or use the reflect command for instruction improvements:
 - [x] **Phase 1.7** - Annotations (task, comment, reference) (2026-01-29)
 - [x] **Phase 1.8** - Zotero citation integration (2026-01-29)
 - [x] **Phase 1.9** - Onboarding (project picker, Getting Started guide, sidebar toggles) (2026-01-31)
+- [x] **Quick Look** - Finder preview extension for .ff files with markdown rendering (2026-02-26)
 
 ## Phase 1 Verification
 

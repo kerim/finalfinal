@@ -16,6 +16,7 @@ How the app is built. Read these before modifying core systems.
 - [word-count.md](architecture/word-count.md) -- Section-only vs aggregate counts, goal types, goal popover, zoom-mode updates
 - [footnotes.md](architecture/footnotes.md) -- Footnote refs, Notes section, Milkdown/CodeMirror plugins, zoom-notes behavior, definition preservation
 - [toolbar-ui.md](architecture/toolbar-ui.md) -- Five formatting UI areas: Format menu, editor toolbar, selection toolbar, slash commands, status bar
+- Quick Look Extension -- QLPreviewingController + MarkdownRenderer for Finder previews of .ff files (see `QuickLook Extension/`)
 
 ## Roadmap
 
@@ -39,7 +40,7 @@ Patterns and pitfalls discovered during development. Consult before writing rela
 - [grdb-database.md](lessons/grdb-database.md) -- ValueObservation races, dual content properties, eraseDatabaseOnSchemaChange danger
 - [zoom-patterns.md](lessons/zoom-patterns.md) -- Async coordination, state protection, database-as-truth, bibliography sync, dual editor mode
 - [block-sync-patterns.md](lessons/block-sync-patterns.md) -- Pseudo-section document-order ownership, sidebar zoom ID sharing
-- [misc-patterns.md](lessons/misc-patterns.md) -- JavaScript shift-key, cursor offset mapping, Vite emptyOutDir, XeTeX path spaces
+- [misc-patterns.md](lessons/misc-patterns.md) -- JavaScript shift-key, cursor offset mapping, Vite emptyOutDir, XeTeX path spaces, AttributedString block separation
 
 ## Findings
 

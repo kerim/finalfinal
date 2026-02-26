@@ -131,3 +131,28 @@ arguments.append(contentsOf: ["--pdf-engine-opt", "-output-driver=\(wrapperURL.p
 **Reference:** [XeTeX Reference Guide](https://mirrors.mit.edu/CTAN/info/xetexref/xetex-reference.pdf) -- the `-output-driver=CMD` option "use CMD as the XDV-to-PDF driver instead of xdvipdfmx"
 
 **General principle:** When bundling TeX in macOS apps, avoid spaces in the app name. If unavoidable, use `-output-driver` to redirect xdvipdfmx calls through a wrapper script at a space-free path.
+
+---
+
+## AttributedString Markdown Block Separation
+
+### Problem
+
+`AttributedString(markdown:, interpretedSyntax: .full)` strips original whitespace between block-level elements (headings, paragraphs, code blocks, etc.) and stores block structure only as `PresentationIntent` metadata attributes. Without explicit newline characters, `NSTextView` concatenates all blocks onto a single line.
+
+### Solution
+
+After parsing, iterate `PresentationIntent` runs in **reversed order** and insert `\n` at each block's `lowerBound` (skipping the first block). Reversed iteration is essential — it prevents earlier insertions from invalidating later range indices.
+
+```swift
+for (intent, range) in attributed.runs[\.presentationIntent].reversed() {
+    guard intent != nil, range.lowerBound != attributed.startIndex else { continue }
+    attributed.characters.insert(contentsOf: "\n", at: range.lowerBound)
+}
+```
+
+This must happen **before** applying any styling (fonts, paragraph styles, colors), since the insertions shift all subsequent ranges.
+
+**Reference:** [AttributedStringStyledMarkdown](https://github.com/frankrausch/AttributedStringStyledMarkdown) by Frank Rausch documents this pattern.
+
+**Used in:** `QuickLook Extension/MarkdownRenderer.swift` — the `parseAndStyle()` method.

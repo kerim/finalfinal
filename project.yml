@@ -11,6 +11,7 @@ schemes:
     build:
       targets:
         final final: all
+        QuickLook Extension: all
         final finalTests: [test]
         final finalUITests: [test]
     run:
@@ -73,6 +74,9 @@ targets:
         CODE_SIGN_ENTITLEMENTS: final final/final final.entitlements
     dependencies:
       - package: GRDB
+      - target: QuickLook Extension
+        embed: true
+        link: false
     info:
       path: final final/Info.plist
       properties:
@@ -109,6 +113,38 @@ targets:
             UTTypeTagSpecification:
               public.mime-type:
                 - application/x-final-final-section
+
+  QuickLook Extension:
+    type: app-extension
+    platform: macOS
+    sources:
+      - path: QuickLook Extension
+        excludes:
+          - "**/.DS_Store"
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.kerim.final-final.quicklook
+        PRODUCT_NAME: QuickLook Extension
+        PRODUCT_MODULE_NAME: QuickLook_Extension
+        SWIFT_VERSION: "5.9"
+        MACOSX_DEPLOYMENT_TARGET: "14.0"
+        MARKETING_VERSION: "1"
+        CURRENT_PROJECT_VERSION: "0.2.54"
+        CODE_SIGN_ENTITLEMENTS: QuickLook Extension/QuickLook Extension.entitlements
+        SKIP_INSTALL: YES
+        OTHER_LDFLAGS: ["-lsqlite3"]
+    info:
+      path: QuickLook Extension/Info.plist
+      properties:
+        CFBundleDisplayName: FINAL|FINAL Quick Look
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.quicklook.preview
+          NSExtensionPrincipalClass: QuickLook_Extension.PreviewViewController
+          NSExtensionAttributes:
+            QLSupportedContentTypes:
+              - com.kerim.final-final.document
 
   final finalTests:
     type: bundle.unit-test
