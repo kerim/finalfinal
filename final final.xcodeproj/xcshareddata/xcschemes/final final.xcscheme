@@ -1,10 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Scheme
    LastUpgradeVersion = "1500"
-   version = "1.3">
+   wasCreatedForAppExtension = "YES"
+   version = "1.7">
    <BuildAction
       parallelizeBuildables = "YES"
-      buildImplicitDependencies = "YES">
+      buildImplicitDependencies = "YES"
+      runPostActionsOnFailure = "NO">
       <BuildActionEntries>
          <BuildActionEntry
             buildForTesting = "YES"
@@ -14,8 +16,22 @@
             buildForAnalyzing = "YES">
             <BuildableReference
                BuildableIdentifier = "primary"
+               BlueprintIdentifier = "D529D3B3388A2FCF4CDD62EF"
+               BuildableName = "QuickLook Extension.appex"
+               BlueprintName = "QuickLook Extension"
+               ReferencedContainer = "container:final final.xcodeproj">
+            </BuildableReference>
+         </BuildActionEntry>
+         <BuildActionEntry
+            buildForTesting = "YES"
+            buildForRunning = "YES"
+            buildForProfiling = "YES"
+            buildForArchiving = "YES"
+            buildForAnalyzing = "YES">
+            <BuildableReference
+               BuildableIdentifier = "primary"
                BlueprintIdentifier = "4A3B93CDDB27C36925E7EC59"
-               BuildableName = "FINAL|FINAL.app"
+               BuildableName = "final final.app"
                BlueprintName = "final final"
                ReferencedContainer = "container:final final.xcodeproj">
             </BuildableReference>
@@ -54,13 +70,14 @@
       buildConfiguration = "Debug"
       selectedDebuggerIdentifier = "Xcode.DebuggerFoundation.Debugger.LLDB"
       selectedLauncherIdentifier = "Xcode.DebuggerFoundation.Launcher.LLDB"
-      shouldUseLaunchSchemeArgsEnv = "YES">
+      shouldUseLaunchSchemeArgsEnv = "YES"
+      onlyGenerateCoverageForSpecifiedTargets = "NO">
       <MacroExpansion>
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "4A3B93CDDB27C36925E7EC59"
-            BuildableName = "FINAL|FINAL.app"
-            BlueprintName = "final final"
+            BlueprintIdentifier = "D529D3B3388A2FCF4CDD62EF"
+            BuildableName = "QuickLook Extension.appex"
+            BlueprintName = "QuickLook Extension"
             ReferencedContainer = "container:final final.xcodeproj">
          </BuildableReference>
       </MacroExpansion>
@@ -77,7 +94,8 @@
             </BuildableReference>
          </TestableReference>
          <TestableReference
-            skipped = "NO">
+            skipped = "NO"
+            parallelizable = "NO">
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "BD340BCA01ABBD8642AA6DA9"
@@ -87,27 +105,32 @@
             </BuildableReference>
          </TestableReference>
       </Testables>
+      <CommandLineArguments>
+      </CommandLineArguments>
    </TestAction>
    <LaunchAction
       buildConfiguration = "Debug"
-      selectedDebuggerIdentifier = "Xcode.DebuggerFoundation.Debugger.LLDB"
-      selectedLauncherIdentifier = "Xcode.DebuggerFoundation.Launcher.LLDB"
+      selectedDebuggerIdentifier = ""
+      selectedLauncherIdentifier = "Xcode.IDEFoundation.Launcher.PosixSpawn"
       launchStyle = "0"
       useCustomWorkingDirectory = "NO"
       ignoresPersistentStateOnLaunch = "NO"
       debugDocumentVersioning = "YES"
       debugServiceExtension = "internal"
-      allowLocationSimulation = "YES">
+      allowLocationSimulation = "YES"
+      launchAutomaticallySubstyle = "2">
       <BuildableProductRunnable
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "4A3B93CDDB27C36925E7EC59"
-            BuildableName = "FINAL|FINAL.app"
-            BlueprintName = "final final"
+            BlueprintIdentifier = "D529D3B3388A2FCF4CDD62EF"
+            BuildableName = "QuickLook Extension.appex"
+            BlueprintName = "QuickLook Extension"
             ReferencedContainer = "container:final final.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
+      <CommandLineArguments>
+      </CommandLineArguments>
    </LaunchAction>
    <ProfileAction
       buildConfiguration = "Release"
@@ -119,9 +142,9 @@
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "4A3B93CDDB27C36925E7EC59"
-            BuildableName = "FINAL|FINAL.app"
-            BlueprintName = "final final"
+            BlueprintIdentifier = "D529D3B3388A2FCF4CDD62EF"
+            BuildableName = "QuickLook Extension.appex"
+            BlueprintName = "QuickLook Extension"
             ReferencedContainer = "container:final final.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
