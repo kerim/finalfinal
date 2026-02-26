@@ -29,7 +29,7 @@ echo -e "${GREEN}  Working tree is clean${NC}"
 echo ""
 
 # Step 2: Read current version
-VERSION=$(grep 'CURRENT_PROJECT_VERSION:' "$PROJECT_YML" | sed 's/.*"\(.*\)"/\1/')
+VERSION=$(grep -m1 'CURRENT_PROJECT_VERSION:' "$PROJECT_YML" | sed 's/.*"\(.*\)"/\1/')
 echo -e "${YELLOW}Step 2: Version is $VERSION${NC}"
 echo ""
 
