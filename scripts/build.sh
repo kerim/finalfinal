@@ -27,7 +27,7 @@ echo ""
 echo -e "${YELLOW}Step 1: Incrementing version...${NC}"
 
 # Read current version from project.yml
-CURRENT_VERSION=$(grep 'CURRENT_PROJECT_VERSION:' "$PROJECT_YML" | sed 's/.*"\(.*\)"/\1/')
+CURRENT_VERSION=$(grep -m1 'CURRENT_PROJECT_VERSION:' "$PROJECT_YML" | sed 's/.*"\(.*\)"/\1/')
 echo "  Current version: $CURRENT_VERSION"
 
 # Parse version parts (e.g., 0.2.2 -> MAJOR=0, MINOR=2, BUILD=2)
