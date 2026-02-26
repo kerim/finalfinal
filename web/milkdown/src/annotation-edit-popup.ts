@@ -1,5 +1,5 @@
 // Annotation Edit Popup
-// In-app popup for editing annotation text (type indicator, checkbox for tasks, text input)
+// In-app popup for editing annotation text (type indicator with clickable task icon, textarea)
 // Singleton pattern modeled on citation-edit-popup.ts
 
 import type { EditorView } from '@milkdown/kit/prose/view';
@@ -8,14 +8,14 @@ import { annotationMarkers, completedTaskMarker } from './annotation-plugin';
 
 // Annotation edit popup state (module-level singleton)
 let editPopup: HTMLElement | null = null;
-let editPopupInput: HTMLInputElement | null = null;
-let editPopupCheckbox: HTMLInputElement | null = null;
-let editPopupCheckboxRow: HTMLElement | null = null;
+let editPopupInput: HTMLTextAreaElement | null = null;
 let editPopupTypeLabel: HTMLElement | null = null;
 let editPopupTypeIcon: HTMLElement | null = null;
 let editingNodePos: number | null = null;
 let editingView: EditorView | null = null;
 let editPopupBlurTimeout: ReturnType<typeof setTimeout> | null = null;
+let editPopupCompleted = false;
+let currentEditType: AnnotationType = 'comment';
 
 // Type display labels
 const typeLabels: Record<AnnotationType, string> = {
@@ -54,7 +54,7 @@ function createAnnotationEditPopup(): HTMLElement {
   `;
 
   const typeIcon = document.createElement('span');
-  typeIcon.style.cssText = 'font-size: 14px;';
+  typeIcon.style.cssText = 'font-size: 14px; transition: transform 0.15s ease; display: inline-block;';
   editPopupTypeIcon = typeIcon;
 
   const typeLabel = document.createElement('span');
@@ -64,37 +64,30 @@ function createAnnotationEditPopup(): HTMLElement {
   typeRow.appendChild(typeIcon);
   typeRow.appendChild(typeLabel);
 
-  // Checkbox row (visible only for tasks)
-  const checkboxRow = document.createElement('label');
-  checkboxRow.style.cssText = `
-    display: none;
-    align-items: center;
-    gap: 6px;
-    margin-bottom: 6px;
-    font-size: 13px;
-    color: var(--text-primary, #333);
-    cursor: pointer;
-  `;
+  // Type icon click handler (toggles completion for tasks)
+  typeIcon.addEventListener('click', () => {
+    if (currentEditType !== 'task') return;
+    editPopupCompleted = !editPopupCompleted;
+    typeIcon.textContent = editPopupCompleted ? completedTaskMarker : annotationMarkers.task;
+  });
 
-  const checkbox = document.createElement('input');
-  checkbox.type = 'checkbox';
-  checkbox.style.cssText = 'margin: 0;';
-  editPopupCheckbox = checkbox;
+  // Hover effect for task icon
+  typeIcon.addEventListener('mouseenter', () => {
+    if (currentEditType === 'task') {
+      typeIcon.style.transform = 'scale(1.2)';
+    }
+  });
+  typeIcon.addEventListener('mouseleave', () => {
+    typeIcon.style.transform = 'scale(1)';
+  });
 
-  const checkboxLabel = document.createElement('span');
-  checkboxLabel.textContent = 'Completed';
-
-  checkboxRow.appendChild(checkbox);
-  checkboxRow.appendChild(checkboxLabel);
-  editPopupCheckboxRow = checkboxRow;
-
-  // Text input
-  const input = document.createElement('input');
-  input.type = 'text';
-  input.className = 'ff-annotation-edit-input';
-  input.placeholder = 'Annotation text...';
-  input.spellcheck = true;
-  input.style.cssText = `
+  // Textarea input
+  const textarea = document.createElement('textarea');
+  textarea.className = 'ff-annotation-edit-input';
+  textarea.placeholder = 'Annotation text...';
+  textarea.spellcheck = true;
+  textarea.rows = 3;
+  textarea.style.cssText = `
     width: 100%;
     padding: 6px 8px;
     border: 1px solid var(--border-color, #ccc);
@@ -103,12 +96,16 @@ function createAnnotationEditPopup(): HTMLElement {
     background: var(--bg-secondary, #f5f5f5);
     color: var(--text-primary, #333);
     box-sizing: border-box;
+    resize: vertical;
+    max-height: 150px;
+    overflow-y: auto;
+    font-family: inherit;
   `;
-  editPopupInput = input;
+  editPopupInput = textarea;
 
   // Hint
   const hint = document.createElement('div');
-  hint.textContent = 'Enter to save \u2022 Escape to cancel';
+  hint.textContent = 'Enter to save \u2022 Shift+Enter for new line \u2022 Escape to cancel';
   hint.style.cssText = `
     margin-top: 6px;
     font-size: 11px;
@@ -118,22 +115,22 @@ function createAnnotationEditPopup(): HTMLElement {
 
   // Assemble popup
   popup.appendChild(typeRow);
-  popup.appendChild(checkboxRow);
-  popup.appendChild(input);
+  popup.appendChild(textarea);
   popup.appendChild(hint);
 
   // Event handlers
-  input.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
+  textarea.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       commitAnnotationEdit();
     } else if (e.key === 'Escape') {
       e.preventDefault();
       cancelAnnotationEdit();
     }
+    // Shift+Enter falls through — default textarea newline behavior
   });
 
-  input.addEventListener('blur', () => {
+  textarea.addEventListener('blur', () => {
     editPopupBlurTimeout = setTimeout(() => {
       if (editPopup?.style.display !== 'none') {
         commitAnnotationEdit();
@@ -141,7 +138,7 @@ function createAnnotationEditPopup(): HTMLElement {
     }, 150);
   });
 
-  input.addEventListener('focus', () => {
+  textarea.addEventListener('focus', () => {
     if (editPopupBlurTimeout) {
       clearTimeout(editPopupBlurTimeout);
       editPopupBlurTimeout = null;
@@ -150,8 +147,8 @@ function createAnnotationEditPopup(): HTMLElement {
 
   // Prevent popup clicks from triggering blur commit
   popup.addEventListener('mousedown', (e) => {
-    // Don't prevent default on the input itself
-    if (e.target !== input) {
+    // Don't prevent default on the textarea itself
+    if (e.target !== textarea) {
       e.preventDefault();
     }
   });
@@ -176,25 +173,22 @@ export function showAnnotationEditPopup(pos: number, view: EditorView, attrs: An
   const popup = createAnnotationEditPopup();
   const input = editPopupInput!;
 
-  // Update type indicator
+  // Update type indicator and completion state
   const type = attrs.type;
+  currentEditType = type;
+  editPopupCompleted = type === 'task' ? attrs.isCompleted : false;
+
   if (editPopupTypeIcon) {
     let marker = annotationMarkers[type];
-    if (type === 'task' && attrs.isCompleted) {
+    if (type === 'task' && editPopupCompleted) {
       marker = completedTaskMarker;
     }
     editPopupTypeIcon.textContent = marker;
+    // Set cursor style based on type
+    editPopupTypeIcon.style.cursor = type === 'task' ? 'pointer' : 'default';
   }
   if (editPopupTypeLabel) {
     editPopupTypeLabel.textContent = typeLabels[type];
-  }
-
-  // Show/hide checkbox row
-  if (editPopupCheckboxRow) {
-    editPopupCheckboxRow.style.display = type === 'task' ? 'flex' : 'none';
-  }
-  if (editPopupCheckbox) {
-    editPopupCheckbox.checked = attrs.isCompleted;
   }
 
   // Position popup below the annotation
@@ -222,7 +216,7 @@ function commitAnnotationEdit(): void {
   }
 
   const newText = editPopupInput?.value || '';
-  const isCompleted = editPopupCheckbox?.checked || false;
+  const isCompleted = editPopupCompleted;
 
   // Verify node still exists at position
   const currentNode = view.state.doc.nodeAt(pos);
