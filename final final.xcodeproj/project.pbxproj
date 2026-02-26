@@ -573,13 +573,6 @@
 			path = "final final";
 			sourceTree = "<group>";
 		};
-		897DF43C87D41FD1A0CCF1C9 /* editor */ = {
-			isa = PBXGroup;
-			children = (
-			);
-			path = editor;
-			sourceTree = "<group>";
-		};
 		8A579DFDA89ED4D43AE65852 /* Components */ = {
 			isa = PBXGroup;
 			children = (
@@ -678,7 +671,6 @@
 			isa = PBXGroup;
 			children = (
 				5AC92738325B26E686EFFCF3 /* getting-started.md */,
-				897DF43C87D41FD1A0CCF1C9 /* editor */,
 			);
 			path = Resources;
 			sourceTree = "<group>";

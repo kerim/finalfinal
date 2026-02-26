@@ -16,6 +16,7 @@ schemes:
         final finalUITests: [test]
     run:
       config: Debug
+      executable: final final
     test:
       config: Debug
       targets:

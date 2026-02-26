@@ -193,7 +193,7 @@ body {
 
 /* === Annotation Styles === */
 
-/* Base annotation container (Hybrid pattern) */
+/* Base annotation container (atomic node with click-to-edit popup) */
 .ff-annotation {
   display: inline;
   font-size: 0.9em;
@@ -201,6 +201,7 @@ body {
   border-radius: 2px;
   vertical-align: baseline;
   background: rgba(128, 128, 128, 0.05);
+  cursor: pointer;
 }
 
 /* Non-editable marker */
@@ -209,16 +210,14 @@ body {
   margin-right: 2px;
 }
 
-/* Editable text area */
+/* Text display area (non-editable, click opens popup) */
 .ff-annotation-text {
-  outline: none;
-  min-width: 1em;
   display: inline;
 }
 
 /* Empty annotation placeholder */
 .ff-annotation-text:empty::before {
-  content: "type here...";
+  content: "...";
   color: var(--editor-muted, #999);
   font-style: italic;
 }
