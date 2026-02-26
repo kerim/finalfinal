@@ -5,6 +5,8 @@ import { type Ctx, editorViewCtx } from '@milkdown/kit/core';
 import { redo, undo } from '@milkdown/kit/prose/history';
 import { Selection } from '@milkdown/kit/prose/state';
 import { SlashProvider, slashFactory } from '@milkdown/plugin-slash';
+import { showAnnotationEditPopup } from './annotation-edit-popup';
+import type { AnnotationAttrs } from './annotation-plugin';
 import { type AnnotationType, annotationNode } from './annotation-plugin';
 import { openCAYWPicker } from './cayw';
 import {
@@ -210,25 +212,34 @@ function executeSlashCommand(index: number) {
 
       view.dispatch(tr);
     } else if (cmd.isNodeInsertion && ['/task', '/comment', '/reference'].includes(cmd.label)) {
-      // Insert annotation node with empty text content
-      const annotationType = cmd.label.slice(1) as AnnotationType; // Remove leading '/'
+      // Insert annotation atom node
+      const annotationType = cmd.label.slice(1) as AnnotationType;
       const nodeType = annotationNode.type(editorInstance.ctx);
 
-      // Create annotation node with no text content (enables :empty placeholder CSS)
-      const node = nodeType.create(
-        { type: annotationType, isCompleted: false }
-        // No text content - allows CSS :empty::before placeholder to show
-      );
+      const attrs: AnnotationAttrs = { type: annotationType, isCompleted: false, text: '' };
+      const node = nodeType.create(attrs);
 
       // Delete the slash command and insert the annotation node inline
       let tr = view.state.tr.delete(cmdStart, from);
       tr = tr.insert(cmdStart, node);
 
-      // Position cursor inside the annotation's content area
-      // cmdStart = start of annotation node, cmdStart + 1 = inside node's content
-      tr = tr.setSelection(Selection.near(tr.doc.resolve(cmdStart + 1)));
+      // Position cursor after the atom node
+      tr = tr.setSelection(Selection.near(tr.doc.resolve(cmdStart + node.nodeSize)));
 
       view.dispatch(tr);
+
+      // Open popup for editing after insertion
+      showAnnotationEditPopup(cmdStart, view, attrs);
+
+      // Don't set pendingSlashUndo - popup edit is a separate user action
+      if (slashProviderInstance) {
+        slashProviderInstance.hide();
+      }
+      filteredCommands = [];
+      requestAnimationFrame(() => {
+        suppressSlashMenu = false;
+      });
+      return; // Early return to skip pendingSlashUndo
     } else if (cmd.label === '/footnote') {
       // Insert footnote reference node — single transaction (delete slash + insert + renumber)
       insertFootnoteWithDelete(view, editorInstance, cmdStart, from);

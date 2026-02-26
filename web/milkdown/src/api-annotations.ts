@@ -1,12 +1,12 @@
 // Annotation + citation API method implementations for window.FinalFinal
 
 import { editorViewCtx } from '@milkdown/kit/core';
-import { Selection } from '@milkdown/kit/prose/state';
 import {
   setAnnotationDisplayModes as setDisplayModes,
   setHideCompletedTasks as setHideCompletedTasksPlugin,
 } from './annotation-display-plugin';
-import { type AnnotationType, annotationNode } from './annotation-plugin';
+import { showAnnotationEditPopup } from './annotation-edit-popup';
+import { type AnnotationAttrs, type AnnotationType, annotationNode } from './annotation-plugin';
 import { scrollToOffset } from './api-modes';
 import {
   getCAYWDebugState as getCAYWDebugStateImpl,
@@ -50,11 +50,10 @@ export function getAnnotations(): Array<{ type: string; text: string; offset: nu
 
     doc.descendants((node, pos) => {
       if (node.type.name === 'annotation') {
-        // Text is now content of the node, not an attribute
-        const text = node.textContent || '';
+        const text = (node.attrs.text || '').trim();
         annotations.push({
           type: node.attrs.type,
-          text: text.trim(),
+          text,
           offset: pos,
           completed: node.attrs.type === 'task' ? node.attrs.isCompleted : undefined,
         });
@@ -82,18 +81,15 @@ export function insertAnnotation(type: string): void {
     const { from } = view.state.selection;
     const nodeType = annotationNode.type(editorInstance.ctx);
 
-    // Create annotation node with no text content (enables :empty placeholder CSS)
-    const node = nodeType.create(
-      { type: type as AnnotationType, isCompleted: false }
-      // No text content - allows CSS :empty::before placeholder to show
-    );
+    const attrs: AnnotationAttrs = { type: type as AnnotationType, isCompleted: false, text: '' };
+    const node = nodeType.create(attrs);
 
-    let tr = view.state.tr.insert(from, node);
-    // Position cursor inside the annotation's content area
-    // from = start of annotation node, from + 1 = inside node's content
-    tr = tr.setSelection(Selection.near(tr.doc.resolve(from + 1)));
+    const tr = view.state.tr.insert(from, node);
     view.dispatch(tr);
     view.focus();
+
+    // Open popup for editing after insertion
+    showAnnotationEditPopup(from, view, attrs);
   } catch {
     // Insert failed, ignore
   }

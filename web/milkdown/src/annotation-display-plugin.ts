@@ -81,18 +81,7 @@ export const annotationDisplayPlugin = $prose(() => {
     props: {
       decorations(state) {
         const decorations: Decoration[] = [];
-        const { doc, selection } = state;
-        const { $from } = selection;
-
-        // Find if cursor is currently inside an annotation
-        // This allows typing in newly inserted collapsed-mode annotations
-        let cursorAnnotationPos: number | null = null;
-        for (let d = $from.depth; d > 0; d--) {
-          if ($from.node(d).type.name === 'annotation') {
-            cursorAnnotationPos = $from.before(d);
-            break;
-          }
-        }
+        const { doc } = state;
 
         // Find all annotation nodes and apply display mode decorations
         doc.descendants((node, pos) => {
@@ -100,44 +89,32 @@ export const annotationDisplayPlugin = $prose(() => {
             const type = node.attrs.type as AnnotationType;
             const isCompleted = node.attrs.isCompleted === true;
             const mode = displayModes[type];
-
-            // Skip collapse if cursor is inside this annotation
-            // This allows typing in newly inserted collapsed-mode annotations
-            const isCursorInside = cursorAnnotationPos === pos;
+            const text = node.attrs.text || '';
 
             if (isPanelOnlyMode) {
               // Global panel-only mode - hide ALL annotations
-              // But keep visible if cursor is inside (for editing)
-              if (!isCursorInside) {
-                decorations.push(
-                  Decoration.node(pos, pos + node.nodeSize, {
-                    class: 'ff-annotation-hidden',
-                    'data-text': node.textContent,
-                  })
-                );
-              }
+              decorations.push(
+                Decoration.node(pos, pos + node.nodeSize, {
+                  class: 'ff-annotation-hidden',
+                  'data-text': text,
+                })
+              );
             } else if (hideCompletedTasks && type === 'task' && isCompleted) {
               // Hide completed tasks when filter is active
-              // But keep visible if cursor is inside (for editing)
-              if (!isCursorInside) {
-                decorations.push(
-                  Decoration.node(pos, pos + node.nodeSize, {
-                    class: 'ff-annotation-hidden',
-                    'data-text': node.textContent,
-                  })
-                );
-              }
+              decorations.push(
+                Decoration.node(pos, pos + node.nodeSize, {
+                  class: 'ff-annotation-hidden',
+                  'data-text': text,
+                })
+              );
             } else if (mode === 'collapsed') {
               // Show only the marker, hide text
-              // But keep visible if cursor is inside (for editing)
-              if (!isCursorInside) {
-                decorations.push(
-                  Decoration.node(pos, pos + node.nodeSize, {
-                    class: 'ff-annotation-collapsed',
-                    'data-text': node.textContent,
-                  })
-                );
-              }
+              decorations.push(
+                Decoration.node(pos, pos + node.nodeSize, {
+                  class: 'ff-annotation-collapsed',
+                  'data-text': text,
+                })
+              );
             }
             // 'inline' mode shows everything - no decoration needed
           }

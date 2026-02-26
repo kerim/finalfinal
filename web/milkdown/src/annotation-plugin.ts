@@ -1,6 +1,6 @@
 // Annotation Plugin for Milkdown
-// Renders annotations as inline markers with editable text content
-// Uses Hybrid pattern: marker (non-editable) + text (ProseMirror-managed)
+// Renders annotations as atomic inline nodes with text stored as attribute
+// Click to edit via popup (annotation-edit-popup.ts)
 // Serializes to <!-- ::type:: content --> HTML comments
 // Types: task (☐/☑), comment (◇), reference (▤)
 
@@ -9,6 +9,7 @@ import type { Node } from '@milkdown/kit/prose/model';
 import { $node, $remark, $view } from '@milkdown/kit/utils';
 import type { Root } from 'mdast';
 import { visit } from 'unist-util-visit';
+import { showAnnotationEditPopup } from './annotation-edit-popup';
 import { isSourceModeEnabled } from './source-mode-plugin';
 
 // Annotation type definitions
@@ -17,6 +18,7 @@ export type AnnotationType = 'task' | 'comment' | 'reference';
 export interface AnnotationAttrs {
   type: AnnotationType;
   isCompleted: boolean;
+  text: string;
 }
 
 // Marker symbols for display
@@ -76,14 +78,15 @@ const remarkAnnotationPlugin = $remark('annotation', () => () => (tree: Root) =>
       }
     }
 
-    // Transform to annotation node with text as child
+    // Transform to annotation node with text stored in data (for atom node)
     node.type = 'annotation';
     node.data = {
       annotationType: type,
       isCompleted,
+      text: text.trim(),
     };
-    // Store text as children for the parser
-    node.children = [{ type: 'text', value: text.trim() }];
+    // No children for atomic node
+    node.children = [];
     delete node.value;
 
     // If annotation is a direct child of root (block-level), mark it for wrapping
@@ -105,18 +108,18 @@ const remarkAnnotationPlugin = $remark('annotation', () => () => (tree: Root) =>
   }
 });
 
-// Define the annotation node with editable content
+// Define the annotation node as atomic (non-editable, text stored in attrs)
 const annotationNode = $node('annotation', () => ({
   group: 'inline',
   inline: true,
-  // Remove atom: true to allow text content
-  content: 'text*', // Allow text children for editable content
+  atom: true,
   selectable: true,
   draggable: false,
 
   attrs: {
     type: { default: 'comment' },
     isCompleted: { default: false },
+    text: { default: '' },
   },
 
   parseDOM: [
@@ -125,14 +128,13 @@ const annotationNode = $node('annotation', () => ({
       getAttrs: (dom: HTMLElement) => ({
         type: dom.dataset.type || 'comment',
         isCompleted: dom.dataset.completed === 'true',
+        text: dom.dataset.text || '',
       }),
-      // Content is parsed from the .ff-annotation-text child
-      contentElement: '.ff-annotation-text',
     },
   ],
 
   toDOM: (node: Node) => {
-    const { type, isCompleted } = node.attrs as AnnotationAttrs;
+    const { type, isCompleted, text } = node.attrs as AnnotationAttrs;
     let marker = annotationMarkers[type];
 
     if (type === 'task' && isCompleted) {
@@ -143,51 +145,41 @@ const annotationNode = $node('annotation', () => ({
       .filter(Boolean)
       .join(' ');
 
-    // Get text content for data-text attribute (for tooltips and display modes)
-    const textContent = node.textContent || '';
-
-    // Hybrid structure: marker (non-editable) + text container (editable)
+    // Atomic structure: marker + static text span (no content hole)
     return [
       'span',
       {
         class: classes,
         'data-type': type,
-        'data-text': textContent,
+        'data-text': text,
         'data-completed': String(isCompleted),
-        title: textContent,
+        title: text,
       },
       // Marker span (non-editable)
       ['span', { class: 'ff-annotation-marker', contenteditable: 'false' }, marker],
-      // Text span (editable, contains ProseMirror content)
-      ['span', { class: 'ff-annotation-text' }, 0], // 0 = contentDOM hole
+      // Text span (static display, not editable inline)
+      ['span', { class: 'ff-annotation-text' }, text || ''],
     ];
   },
 
   parseMarkdown: {
     match: (node: any) => node.type === 'annotation',
     runner: (state: any, node: any, type: any) => {
-      // Open the annotation node
-      state.openNode(type, {
+      // Add as atom node with text in attrs
+      state.addNode(type, {
         type: node.data.annotationType,
         isCompleted: node.data.isCompleted,
+        text: node.data.text || '',
       });
-      // Add text content as children
-      if (node.children && node.children.length > 0) {
-        state.next(node.children);
-      }
-      // Close the annotation node
-      state.closeNode();
     },
   },
 
   toMarkdown: {
     match: (node: Node) => node.type.name === 'annotation',
     runner: (state: any, node: Node) => {
-      const { type, isCompleted } = node.attrs as AnnotationAttrs;
-      // Extract text from child nodes and sanitize newlines
-      // Replace all line endings (Windows \r\n, Unix \n, old Mac \r) with spaces
-      // Then normalize multiple consecutive spaces to single space
-      const text = (node.textContent || '')
+      const { type, isCompleted, text: rawText } = node.attrs as AnnotationAttrs;
+      // Sanitize newlines in text attribute
+      const text = (rawText || '')
         .replace(/[\r\n]+/g, ' ')
         .replace(/\s+/g, ' ')
         .trim();
@@ -205,44 +197,42 @@ const annotationNode = $node('annotation', () => ({
   },
 }));
 
-// NodeView for custom rendering with non-editable marker
-// This allows the marker to be completely non-editable while text is editable
-// NOTE: $view expects (ctx) => NodeViewConstructor, NOT () => (ctx) => NodeViewConstructor
+// NodeView for atomic annotation rendering with click-to-edit popup
 const annotationNodeView = $view(annotationNode, (_ctx: Ctx) => {
   return (node, view, getPos) => {
-    const { type, isCompleted } = node.attrs as AnnotationAttrs;
+    const attrs = node.attrs as AnnotationAttrs;
 
     // Track source mode at NodeView creation time
-    // When mode changes, update() returns false to force NodeView recreation
     const createdInSourceMode = isSourceModeEnabled();
 
     // Create the wrapper span
     const dom = document.createElement('span');
-    dom.className = ['ff-annotation', `ff-annotation-${type}`, isCompleted ? 'ff-annotation-completed' : '']
+    dom.className = ['ff-annotation', `ff-annotation-${attrs.type}`, attrs.isCompleted ? 'ff-annotation-completed' : '']
       .filter(Boolean)
       .join(' ');
-    dom.dataset.type = type;
-    dom.dataset.completed = String(isCompleted);
+    dom.dataset.type = attrs.type;
+    dom.dataset.completed = String(attrs.isCompleted);
+    dom.dataset.text = attrs.text || '';
+    dom.title = attrs.text || '';
 
     // Create the marker span (non-editable)
     const markerSpan = document.createElement('span');
     markerSpan.className = 'ff-annotation-marker';
     markerSpan.contentEditable = 'false';
-    let marker = annotationMarkers[type];
-    if (type === 'task' && isCompleted) {
+    let marker = annotationMarkers[attrs.type];
+    if (attrs.type === 'task' && attrs.isCompleted) {
       marker = completedTaskMarker;
     }
     markerSpan.textContent = marker;
 
     // Handle marker click for task completion toggle
-    if (type === 'task') {
+    if (attrs.type === 'task') {
       markerSpan.style.cursor = 'pointer';
       markerSpan.addEventListener('click', (e) => {
         e.preventDefault();
         e.stopPropagation();
         const pos = typeof getPos === 'function' ? getPos() : null;
         if (pos !== null && pos !== undefined) {
-          // Get CURRENT node state at click time (not stale closure value)
           const currentNode = view.state.doc.nodeAt(pos);
           if (currentNode && currentNode.type.name === 'annotation') {
             const currentCompleted = currentNode.attrs.isCompleted;
@@ -256,78 +246,62 @@ const annotationNodeView = $view(annotationNode, (_ctx: Ctx) => {
       });
     }
 
-    // Create the text span (editable - contentDOM)
-    const contentDOM = document.createElement('span');
-    contentDOM.className = 'ff-annotation-text';
+    // Create the text span (non-editable display)
+    const textSpan = document.createElement('span');
+    textSpan.className = 'ff-annotation-text';
+    textSpan.textContent = attrs.text || '';
 
-    dom.appendChild(markerSpan);
-    dom.appendChild(contentDOM);
+    // Click handler to open edit popup (skip if click was on marker for task toggle)
+    dom.addEventListener('click', (e) => {
+      // Don't open popup if marker was clicked (task toggle handles it)
+      if (markerSpan.contains(e.target as HTMLElement)) return;
+      // Don't open popup in source mode
+      if (isSourceModeEnabled()) return;
 
-    // Update tooltip when text changes
-    const _updateTooltip = () => {
-      const text = contentDOM.textContent || '';
-      dom.dataset.text = text;
-      dom.title = text;
-    };
-
-    // Initialize tooltip data from node content
-    const initialText = node.textContent || '';
-    dom.dataset.text = initialText;
-    dom.title = initialText;
-
-    // MutationObserver disabled - tooltip updated via update() instead
-    const textObserver = { disconnect: () => {} }; // Stub for destroy()
-
-    // Helper to update display based on source mode
-    const updateSourceModeDisplay = (attrs: AnnotationAttrs, text: string) => {
-      if (isSourceModeEnabled()) {
-        // Source mode: show raw markdown syntax
-        const checkbox = attrs.type === 'task' ? (attrs.isCompleted ? '[x] ' : '[ ] ') : '';
-        dom.textContent = `<!-- ::${attrs.type}:: ${checkbox}${text} -->`;
-        dom.classList.add('source-mode-annotation');
-        // Remove structured children in source mode
-        while (dom.firstChild) {
-          dom.removeChild(dom.firstChild);
+      const pos = typeof getPos === 'function' ? getPos() : null;
+      if (pos !== null && pos !== undefined) {
+        const currentNode = view.state.doc.nodeAt(pos);
+        if (currentNode && currentNode.type.name === 'annotation') {
+          showAnnotationEditPopup(pos, view, currentNode.attrs as AnnotationAttrs);
         }
-        dom.textContent = `<!-- ::${attrs.type}:: ${checkbox}${text} -->`;
-        return true; // No contentDOM in source mode
-      } else {
-        // WYSIWYG mode: structured display
-        dom.classList.remove('source-mode-annotation');
-        // Ensure marker and contentDOM are present
-        if (!dom.contains(markerSpan)) {
-          dom.appendChild(markerSpan);
-        }
-        if (!dom.contains(contentDOM)) {
-          dom.appendChild(contentDOM);
-        }
-        return false; // Has contentDOM
       }
+    });
+
+    // Source mode rendering helper
+    const renderSourceMode = (a: AnnotationAttrs) => {
+      const checkbox = a.type === 'task' ? (a.isCompleted ? '[x] ' : '[ ] ') : '';
+      while (dom.firstChild) dom.removeChild(dom.firstChild);
+      dom.textContent = `<!-- ::${a.type}:: ${checkbox}${a.text || ''} -->`;
+      dom.classList.add('source-mode-annotation');
     };
 
     // Initial render
-    const sourceMode = updateSourceModeDisplay({ type, isCompleted }, initialText);
+    if (createdInSourceMode) {
+      renderSourceMode(attrs);
+    } else {
+      dom.appendChild(markerSpan);
+      dom.appendChild(textSpan);
+    }
 
     return {
       dom,
-      // In source mode, there's no editable content area
-      contentDOM: sourceMode ? undefined : contentDOM,
       update: (updatedNode) => {
         if (updatedNode.type.name !== 'annotation') {
           return false;
         }
 
         // Force recreation if source mode changed
-        // contentDOM is fixed at creation time, so we must recreate to switch between
-        // source mode (no contentDOM) and WYSIWYG mode (has contentDOM)
         if (isSourceModeEnabled() !== createdInSourceMode) {
           return false;
         }
 
-        // Update attributes
         const newAttrs = updatedNode.attrs as AnnotationAttrs;
+
+        // Update wrapper attributes
         dom.dataset.type = newAttrs.type;
         dom.dataset.completed = String(newAttrs.isCompleted);
+        dom.dataset.text = newAttrs.text || '';
+        dom.title = newAttrs.text || '';
         dom.className = [
           'ff-annotation',
           `ff-annotation-${newAttrs.type}`,
@@ -336,49 +310,22 @@ const annotationNodeView = $view(annotationNode, (_ctx: Ctx) => {
           .filter(Boolean)
           .join(' ');
 
-        // Check source mode for display update
-        const text = updatedNode.textContent || '';
         if (isSourceModeEnabled()) {
-          // Source mode: show raw markdown
-          const checkbox = newAttrs.type === 'task' ? (newAttrs.isCompleted ? '[x] ' : '[ ] ') : '';
-          dom.textContent = `<!-- ::${newAttrs.type}:: ${checkbox}${text} -->`;
-          dom.classList.add('source-mode-annotation');
+          renderSourceMode(newAttrs);
         } else {
-          // WYSIWYG mode: structured display
-          dom.classList.remove('source-mode-annotation');
-          // Rebuild structure if needed
-          if (!dom.contains(markerSpan)) {
-            dom.textContent = ''; // Clear raw text
-            dom.appendChild(markerSpan);
-            dom.appendChild(contentDOM);
-          }
           // Update marker
           let newMarker = annotationMarkers[newAttrs.type];
           if (newAttrs.type === 'task' && newAttrs.isCompleted) {
             newMarker = completedTaskMarker;
           }
           markerSpan.textContent = newMarker;
+          // Update text display
+          textSpan.textContent = newAttrs.text || '';
         }
 
         return true;
       },
-      destroy: () => {
-        textObserver.disconnect();
-      },
-      // Tell ProseMirror to ignore mutations we make to the wrapper DOM
-      // (tooltip updates via MutationObserver). Only content changes in contentDOM matter.
-      ignoreMutation: (mutation: MutationRecord) => {
-        // Ignore attribute changes on the wrapper (our tooltip updates)
-        if (mutation.type === 'attributes' && mutation.target === dom) {
-          return true;
-        }
-        // Ignore changes to the marker span (non-editable)
-        if (markerSpan.contains(mutation.target as Node)) {
-          return true;
-        }
-        // Let ProseMirror handle contentDOM changes normally
-        return false;
-      },
+      ignoreMutation: () => true, // Atom node - ignore all mutations
     };
   };
 });

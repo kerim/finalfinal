@@ -106,7 +106,7 @@ function serializeInlineContent(node: Node): string {
         }
       } else if (child.type.name === 'annotation') {
         const { type, isCompleted } = child.attrs;
-        const text = (child.textContent || '')
+        const text = (child.attrs.text || '')
           .replace(/[\r\n]+/g, ' ')
           .replace(/\s+/g, ' ')
           .trim();
