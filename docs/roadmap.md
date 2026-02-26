@@ -84,6 +84,8 @@ Phase planning and design decisions.
 - Expanded appearance settings (font family, size, line spacing, line numbers)
 - Find & Replace (Cmd+F, Cmd+Shift+F)
 - Option-click header in editor -> zoom to section
+- [x] Annotation edit popup: multi-line textarea (3 rows, vertical resize), Shift+Enter for newlines
+- [x] Annotation edit popup: task completion toggle merged into type icon (clickable ☐/☑ with hover effect)
 
 ### 0.2.1 -- Editor & Theme Polish
 - Editor load time optimization

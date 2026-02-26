@@ -64,6 +64,7 @@ Custom `editor://` URL scheme + 500ms polling:
 | `Views/Sidebar/SectionCardView.swift` | Individual section card + SectionViewModel |
 | `Theme/ColorScheme.swift` | App color scheme definitions |
 | `web/milkdown/src/main.ts` | WYSIWYG editor + focus mode plugin |
+| `web/milkdown/src/annotation-edit-popup.ts` | Annotation edit popup (textarea, clickable task icon) |
 | `web/codemirror/src/main.ts` | Source editor |
 | `QuickLook Extension/PreviewViewController.swift` | QLPreviewingController for Finder previews |
 | `QuickLook Extension/MarkdownRenderer.swift` | Markdown → NSAttributedString with block styling |
