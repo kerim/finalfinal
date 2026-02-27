@@ -125,7 +125,6 @@ git commit -m "Title" -m "Body line 1" -m "Body line 2"
 
 ## Documentation
 
-- `docs/plans/` - Feature plans (protected from overwrites)
 - `docs/deferred/` - Abandoned approaches that might be revisited later
 - `docs/LESSONS-LEARNED.md` - Technical patterns discovered
 - `docs/design.md` - Master design document
@@ -142,17 +141,6 @@ When completing a feature phase, update these documents:
    - Add to appropriate "Bundled Dependencies" table
    - Include package name, version, license, author, and URL
    - Update the "Last updated" date
-
-### Plan Files
-
-Plan files in `docs/plans/` are **immutable** once created. A hook blocks overwrites.
-
-**To revise a plan:** Create a new version with `-v02`, `-v03` suffix:
-- `feature-name.md` (original)
-- `feature-name-v02.md` (first revision)
-- `feature-name-v03.md` (second revision)
-
-Never edit existing plan files. Always create a new versioned file.
 
 ## Swift Engineering Plugin
 
