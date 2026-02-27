@@ -220,16 +220,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         print("[AppDelegate] Application terminating")
         #endif
 
+        // Flush pending content to prevent data loss on quit.
+        // Synchronous — GRDB writes complete before process exits.
+        // Handles both zoomed (range replace) and non-zoomed (full replace) cases.
+        editorState?.flushContentToDatabase()
+
         // Remove Esc key monitor
         removeEscapeKeyMonitor()
-
-        // If zoomed, merge content back before quitting
-        // This is fire-and-forget since we're terminating anyway
-        if let state = editorState, state.zoomedSectionId != nil {
-            Task { @MainActor in
-                await state.zoomOut()
-            }
-        }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {

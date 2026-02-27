@@ -178,9 +178,16 @@ extension ContentView {
 
     /// Handle project opened notification
     func handleProjectOpened() async {
-        // Stop existing observation and services
-        editorState.stopObserving()
+        // Stop block polling FIRST — prevents poll timer from firing during
+        // the await suspension points in flushAllPendingContent() and writing
+        // conflicting data to the database.
         blockSyncService.stopPolling()
+
+        // Flush all pending content to OLD project's database before switching.
+        await flushAllPendingContent()
+
+        // Stop remaining services
+        editorState.stopObserving()
         blockSyncService.cancelPendingSync()
         sectionSyncService.cancelPendingSync()
         annotationSyncService.cancelPendingSync()
@@ -253,6 +260,10 @@ extension ContentView {
 
     /// Actually close the project and reset state
     func performProjectClose() {
+        // Flush pending content synchronously before closing.
+        // editorState.content is current (JS 50ms debounce has fired by button click time).
+        editorState.flushContentToDatabase()
+
         // Create auto-backup before closing if there are unsaved changes (not for Getting Started)
         if !documentManager.isGettingStartedProject {
             Task {
@@ -414,5 +425,55 @@ extension ContentView {
     func handleIntegrityCancel() {
         pendingProjectURL = nil
         // Could optionally open demo project or show welcome state
+    }
+
+    // MARK: - Content Flush Helpers
+
+    /// Fetch latest content directly from WebView, bypassing JS 50ms debounce.
+    /// Returns nil if WebView is unavailable, JS call fails, or 2s timeout elapses.
+    private func fetchContentFromWebView() async -> String? {
+        guard let webView = findBarState.activeWebView else { return nil }
+        return await withTaskGroup(of: String?.self) { group in
+            group.addTask {
+                await withCheckedContinuation { continuation in
+                    webView.evaluateJavaScript("window.FinalFinal.getContent()") { result, error in
+                        #if DEBUG
+                        if let error { print("[ContentView] fetchContentFromWebView JS error: \(error)") }
+                        #endif
+                        continuation.resume(returning: result as? String)
+                    }
+                }
+            }
+            group.addTask {
+                try? await Task.sleep(for: .seconds(2))
+                return nil
+            }
+            let first = await group.next() ?? nil
+            group.cancelAll()
+            return first
+        }
+    }
+
+    /// Flush all pending content to DB before project switch/close.
+    /// Must be called BEFORE resetForProjectSwitch() which clears editorState.content.
+    private func flushAllPendingContent() async {
+        // 1. Fetch fresh content from WebView (catches edits within JS 50ms debounce)
+        if let freshContent = await fetchContentFromWebView(), !freshContent.isEmpty {
+            editorState.content = freshContent
+        }
+        guard !editorState.content.isEmpty else { return }
+
+        // 2. Flush blocks to DB (synchronous — re-parses content into blocks and writes)
+        editorState.flushContentToDatabase()
+
+        // 3. Flush section metadata (immediate write, bypasses 500ms debounce)
+        await sectionSyncService.syncNow(editorState.content)
+
+        // 4. Flush annotation positions
+        await annotationSyncService.syncNow(editorState.content)
+
+        #if DEBUG
+        print("[ContentView] flushAllPendingContent completed")
+        #endif
     }
 }
