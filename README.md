@@ -32,9 +32,10 @@ Although most of the core features (listed above) are already implemented, [FINA
 
 # Roadmap
 
-## Known bugs
+## Known limitations
 
-- PDF export doesn't format in-text citations
+- Inserting images, tables, and mathematical formulas is not yet supported
+- Exporting PDFs with bi-directional text, or mathematical formulas is not yet supported 
 
 # Set-up
 
