@@ -134,6 +134,36 @@ arguments.append(contentsOf: ["--pdf-engine-opt", "-output-driver=\(wrapperURL.p
 
 ---
 
+## QuickLook Extension Registration
+
+### xcodegen Rewrites Source Info.plist
+
+xcodegen completely regenerates the source `Info.plist` from `info.properties` on every `xcodegen generate`. Keys in the source plist that are NOT in `info.properties` are **silently deleted**. This means the source plist is not a reliable place to add keys manually — they must be declared in `project.yml`.
+
+For QuickLook extensions, the `NSExtension` dict (including `QLSupportsSecureCoding`) must be in `project.yml`'s `info.properties` to survive xcodegen regeneration.
+
+### pluginkit Registration Required for Script Builds
+
+When building with `xcodebuild` via a build script (not the Xcode IDE), macOS may not automatically discover the extension. The build script must:
+
+1. **Before build:** Remove stale registrations from DerivedData leftovers:
+   ```bash
+   pluginkit -r -i com.kerim.final-final.quicklook 2>/dev/null || true
+   ```
+
+2. **After signing:** Explicitly register the extension:
+   ```bash
+   pluginkit -a "$APPEX_PATH"
+   ```
+
+Without `pluginkit -a`, the system may continue using stale registrations pointing to old DerivedData builds, or fall back to the system's `Package.qlgenerator` for content types conforming to `com.apple.package`.
+
+### QLSupportsSecureCoding Is Required
+
+Without `QLSupportsSecureCoding: true` in `NSExtensionAttributes`, macOS does not recognize the extension as a valid QuickLook preview provider. The extension won't appear in `pluginkit -m -p com.apple.quicklook.preview` output.
+
+---
+
 ## AttributedString Markdown Block Separation
 
 ### Problem

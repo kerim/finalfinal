@@ -51,6 +51,10 @@ echo "  Updated web/package.json"
 echo -e "${GREEN}  Version incremented to $NEW_VERSION${NC}"
 echo ""
 
+# Step 1b: Clean stale QuickLook extension registrations (DerivedData leftovers)
+echo "  Cleaning stale QuickLook extension registrations..."
+pluginkit -r -i com.kerim.final-final.quicklook 2>/dev/null || true
+
 # Step 2: Build the app
 echo -e "${YELLOW}Step 2: Building the app...${NC}"
 
@@ -90,9 +94,49 @@ echo -e "${GREEN}  Installed to /Applications${NC}"
 echo ""
 
 # Step 4: Ad-hoc sign for distribution (allows right-click -> Open on other Macs)
+# Sign inside-out: extension first (with sandbox entitlement), then main app.
+# WARNING: Never use --deep here — it strips entitlements from nested components.
 echo -e "${YELLOW}Step 4: Ad-hoc signing for distribution...${NC}"
-codesign --force --deep --sign - "/Applications/$APP_NAME.app"
-echo -e "${GREEN}  Ad-hoc signed${NC}"
+
+APPEX_PATH="/Applications/$APP_NAME.app/Contents/PlugIns/QuickLook Extension.appex"
+QL_ENTITLEMENTS="$PROJECT_DIR/QuickLook Extension/QuickLook Extension.entitlements"
+APP_ENTITLEMENTS="$PROJECT_DIR/final final/final final.entitlements"
+
+# Sign embedded frameworks first (if any exist)
+FRAMEWORKS_DIR="/Applications/$APP_NAME.app/Contents/Frameworks"
+if [ -d "$FRAMEWORKS_DIR" ]; then
+    echo "  Signing embedded frameworks..."
+    for framework in "$FRAMEWORKS_DIR"/*.framework; do
+        [ -d "$framework" ] && codesign --force --sign - "$framework"
+    done
+fi
+
+# Sign the QuickLook extension (must exist, must be sandboxed)
+if [ ! -d "$APPEX_PATH" ]; then
+    echo -e "${RED}Error: QuickLook extension not found at $APPEX_PATH${NC}"
+    exit 1
+fi
+
+echo "  Signing QuickLook extension (sandboxed)..."
+codesign --force --sign - --entitlements "$QL_ENTITLEMENTS" "$APPEX_PATH"
+
+echo "  Signing main app..."
+codesign --force --sign - --entitlements "$APP_ENTITLEMENTS" "/Applications/$APP_NAME.app"
+
+# Verify the signature is valid
+echo "  Verifying code signature..."
+if ! codesign --verify --deep --strict "/Applications/$APP_NAME.app" 2>&1; then
+    echo -e "${RED}Error: Code signature verification failed${NC}"
+    exit 1
+fi
+
+echo -e "${GREEN}  Ad-hoc signed and verified${NC}"
+echo ""
+
+# Step 4b: Register QuickLook extension
+echo -e "${YELLOW}Step 4b: Registering QuickLook extension...${NC}"
+pluginkit -a "$APPEX_PATH"
+echo -e "${GREEN}  QuickLook extension registered${NC}"
 echo ""
 
 # Step 5: Create versioned zip in build/
