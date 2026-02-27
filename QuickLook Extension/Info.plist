@@ -28,6 +28,8 @@
 			<array>
 				<string>com.kerim.final-final.document</string>
 			</array>
+			<key>QLSupportsSecureCoding</key>
+			<true/>
 		</dict>
 		<key>NSExtensionPointIdentifier</key>
 		<string>com.apple.quicklook.preview</string>
