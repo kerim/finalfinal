@@ -1206,7 +1206,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = "final final/final final.entitlements";
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 0.2.57;
+				CURRENT_PROJECT_VERSION = 0.2.58;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "final final/Info.plist";
 				INFOPLIST_GENERATION_MODE = GeneratedFile;
@@ -1229,7 +1229,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = "QuickLook Extension/QuickLook Extension.entitlements";
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 0.2.57;
+				CURRENT_PROJECT_VERSION = 0.2.58;
 				INFOPLIST_FILE = "QuickLook Extension/Info.plist";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -1256,7 +1256,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = "final final/final final.entitlements";
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 0.2.57;
+				CURRENT_PROJECT_VERSION = 0.2.58;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "final final/Info.plist";
 				INFOPLIST_GENERATION_MODE = GeneratedFile;
@@ -1279,7 +1279,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = "QuickLook Extension/QuickLook Extension.entitlements";
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 0.2.57;
+				CURRENT_PROJECT_VERSION = 0.2.58;
 				INFOPLIST_FILE = "QuickLook Extension/Info.plist";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
