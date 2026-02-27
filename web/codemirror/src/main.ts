@@ -58,6 +58,7 @@ import {
 } from './api-formatting';
 import { updateCitationAddButton } from './citations';
 import {
+  getEditorView,
   getPendingSlashUndo,
   setEditorExtensions,
   setEditorView,
@@ -216,6 +217,21 @@ function initEditor() {
         updateCitationAddButton(update.view);
       }
     }),
+    // Debounced push-based content messaging to Swift (replaces 500ms polling as primary)
+    (() => {
+      let cmPushTimer: ReturnType<typeof setTimeout> | null = null;
+      return EditorView.updateListener.of((update) => {
+        if (update.docChanged) {
+          if (cmPushTimer) clearTimeout(cmPushTimer);
+          cmPushTimer = setTimeout(() => {
+            const view = getEditorView();
+            if (!view) return;
+            const raw = view.state.doc.toString(); // raw includes anchors
+            (window as any).webkit?.messageHandlers?.contentChanged?.postMessage(raw);
+          }, 50);
+        }
+      });
+    })(),
     // Section anchor plugin - hides <!-- @sid:UUID --> comments and handles clipboard
     anchorPlugin(),
     // Footnote decoration plugin - clickable [^N] refs and [^N]: defs
@@ -307,6 +323,14 @@ window.FinalFinal = {
   clearSearch,
   getSearchState: apiGetSearchState,
   resetForProjectSwitch,
+
+  // Combined poll data for batched 3s fallback polling
+  getPollData() {
+    return JSON.stringify({
+      stats: window.FinalFinal.getStats(),
+      sectionTitle: window.FinalFinal.getCurrentSectionTitle(),
+    });
+  },
 
   // Test snapshot hook — read-only, calls existing API methods, no behavior change
   __testSnapshot() {
