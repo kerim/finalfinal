@@ -60,6 +60,7 @@ Bug investigation reports with root cause analysis and solutions.
 - [zoom-word-count-stale.md](findings/zoom-word-count-stale.md) -- Sidebar word counts don't update while zoomed (removeDuplicates suppresses derived-data emissions)
 - [bibliography-marker-stripping.md](findings/bibliography-marker-stripping.md) -- assembleMarkdown defense-in-depth stripped bibliography marker, deleting bibliography on round-trip
 - [footnote-development-issues.md](findings/footnote-development-issues.md) -- Footnote development issues: bracket escaping, GFM conflicts, zoom behavior, block ID desync
+- [quicklook-extension-not-loading.md](findings/quicklook-extension-not-loading.md) -- QuickLook blank preview: QLSupportsSecureCoding stripped by xcodegen, stale pluginkit registration, Package.qlgenerator fallback
 
 ## Deferred
 

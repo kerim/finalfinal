@@ -2,7 +2,7 @@
 //  SQLiteReader.swift
 //  QuickLook Extension
 //
-//  Read-only SQLite3 C API wrapper with immutable=1 URI mode.
+//  Read-only SQLite3 C API wrapper.
 //  Reads project title and markdown content from .ff package databases.
 //
 
@@ -25,13 +25,7 @@ enum SQLiteReader {
         let dbPath = packageURL.appendingPathComponent("content.sqlite").path
         var db: OpaquePointer?
 
-        let uri = "file:\(dbPath)?immutable=1"
-        let rc = sqlite3_open_v2(
-            uri,
-            &db,
-            SQLITE_OPEN_READONLY | SQLITE_OPEN_URI,
-            nil
-        )
+        let rc = sqlite3_open_v2(dbPath, &db, SQLITE_OPEN_READONLY, nil)
 
         guard rc == SQLITE_OK, let db else {
             let message = db.map { String(cString: sqlite3_errmsg($0)) } ?? "unknown error"
@@ -50,7 +44,7 @@ enum SQLiteReader {
             db: db,
             sql: """
                 SELECT group_concat(markdownFragment, char(10) || char(10))
-                FROM (SELECT markdownFragment FROM block WHERE isNotes = 0 ORDER BY sortOrder)
+                FROM (SELECT markdownFragment FROM block WHERE isNotes = 0 AND isBibliography = 0 ORDER BY sortOrder)
                 """
         )
 

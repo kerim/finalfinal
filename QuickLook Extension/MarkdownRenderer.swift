@@ -186,6 +186,14 @@ enum MarkdownRenderer {
             offset = run.range.upperBound
         }
 
-        return try! NSAttributedString(attributed, including: \.appKit)
+        if let result = try? NSAttributedString(attributed, including: \.appKit) {
+            return result
+        }
+        // Fallback: render as plain text if AppKit conversion fails
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 14),
+            .foregroundColor: NSColor.labelColor
+        ]
+        return NSAttributedString(string: String(attributed.characters[...]), attributes: attrs)
     }
 }

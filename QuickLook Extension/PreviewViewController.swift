@@ -7,8 +7,11 @@
 //
 
 import AppKit
+import os.log
 import QuickLookUI
 import Quartz
+
+private let logger = Logger(subsystem: "com.kerim.final-final.quicklook", category: "preview")
 
 class PreviewViewController: NSViewController, QLPreviewingController {
     private var textView: NSTextView!
@@ -37,12 +40,22 @@ class PreviewViewController: NSViewController, QLPreviewingController {
     }
 
     func preparePreviewOfFile(at url: URL, completionHandler handler: @escaping (Error?) -> Void) {
+        logger.info("preparePreviewOfFile called for: \(url.path, privacy: .public)")
+
+        let didAccess = url.startAccessingSecurityScopedResource()
+        logger.info("startAccessingSecurityScopedResource: \(didAccess, privacy: .public)")
+        defer {
+            if didAccess { url.stopAccessingSecurityScopedResource() }
+        }
+
         do {
             let data = try SQLiteReader.read(from: url)
+            logger.info("Read succeeded: title=\(data.title, privacy: .public), markdown length=\(data.markdown.count)")
             let attributed = MarkdownRenderer.render(title: data.title, markdown: data.markdown)
             textView.textStorage?.setAttributedString(attributed)
             handler(nil)
         } catch {
+            logger.error("Read failed: \(error.localizedDescription, privacy: .public)")
             let errorText = MarkdownRenderer.renderError()
             textView.textStorage?.setAttributedString(errorText)
             handler(nil)
