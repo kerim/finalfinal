@@ -61,7 +61,7 @@ enum DropPosition: Equatable {
 // MARK: - Level Calculation
 
 /// Calculate target header level from horizontal drop position using zone-based selection
-/// Returns one of 2-3 valid level options based on x position relative to predecessor
+/// Returns a level from 1 to predecessorLevel+1 based on x position within the sidebar
 /// - Parameters:
 ///   - x: Horizontal position of the drop
 ///   - sidebarWidth: Total width of the sidebar for zone calculation
@@ -73,28 +73,16 @@ func calculateZoneLevel(x: CGFloat, sidebarWidth: CGFloat, predecessorLevel: Int
         return 1
     }
 
-    // Allow levels beyond H6 (deep headers from subtree drags)
-    let minLevel = max(1, predecessorLevel - 1)
-    let maxLevel = predecessorLevel + 1  // No cap - allow H7+
+    let minLevel = 1
+    let maxLevel = predecessorLevel + 1
 
-    // Determine how many unique levels are available
-    let uniqueLevels = Set([minLevel, predecessorLevel, maxLevel]).sorted()
+    // All available levels from H1 to one deeper than predecessor
+    let levels = Array(minLevel...maxLevel)
 
-    if uniqueLevels.count == 2 {
-        // Only 2 options (e.g., predecessor at level 1 gives [1, 2])
-        let zoneWidth = sidebarWidth / 2
-        return x < zoneWidth ? uniqueLevels[0] : uniqueLevels[1]
-    } else {
-        // 3 options: minLevel, same level, maxLevel
-        let zoneWidth = sidebarWidth / 3
-        if x < zoneWidth {
-            return minLevel
-        } else if x < zoneWidth * 2 {
-            return predecessorLevel
-        } else {
-            return maxLevel
-        }
-    }
+    // Divide sidebar width evenly among levels
+    let zoneWidth = sidebarWidth / CGFloat(levels.count)
+    let zoneIndex = min(Int(x / zoneWidth), levels.count - 1)
+    return levels[max(0, zoneIndex)]
 }
 
 /// Structured request for section reordering with full context
