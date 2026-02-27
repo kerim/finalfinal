@@ -31,13 +31,28 @@ export const focusModePlugin = $prose(() => {
         const currentPos = selection.from;
         const decorations: Decoration[] = [];
 
-        // Single-pass: find cursor block and dim all others
+        // Find the block containing the cursor
+        let currentBlockStart = 0;
+        let _currentBlockEnd = doc.content.size;
+
         doc.descendants((node, pos) => {
           if (node.isBlock && node.isTextblock) {
             const nodeEnd = pos + node.nodeSize;
-            if (currentPos >= pos && currentPos < nodeEnd) {
-              // Cursor's block — skip (don't dim)
-            } else {
+            if (currentPos >= pos && currentPos <= nodeEnd) {
+              currentBlockStart = pos;
+              _currentBlockEnd = nodeEnd;
+            }
+          }
+          return true;
+        });
+
+        // Add 'dimmed' decoration to all blocks except current
+        doc.descendants((node, pos) => {
+          if (node.isBlock && node.isTextblock) {
+            const nodeEnd = pos + node.nodeSize;
+            const isCurrent = pos === currentBlockStart;
+
+            if (!isCurrent) {
               decorations.push(Decoration.node(pos, nodeEnd, { class: 'ff-dimmed' }));
             }
           }

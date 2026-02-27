@@ -12,12 +12,7 @@ final class ProjectDatabase: Sendable {
 
     init(package: ProjectPackage) throws {
         self.package = package
-        var config = Configuration()
-        config.prepareDatabase { db in
-            try db.execute(sql: "PRAGMA synchronous = NORMAL")
-        }
-        // DatabasePool enables WAL automatically and allows concurrent readers + writer
-        self.dbWriter = try DatabasePool(path: package.databaseURL.path, configuration: config)
+        self.dbWriter = try DatabaseQueue(path: package.databaseURL.path)
         try migrate()
     }
 

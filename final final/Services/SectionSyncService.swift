@@ -170,7 +170,7 @@ class SectionSyncService {
     /// Used for initial sync when database has no sections yet
     func parseAndGetSections(from markdown: String) -> [SectionViewModel] {
         guard let pid = projectId else { return [] }
-        let headers = SectionSyncService.parseHeaders(from: markdown)
+        let headers = parseHeaders(from: markdown)
         let sections = headers.map { header in
             Section(
                 projectId: pid,
@@ -188,7 +188,6 @@ class SectionSyncService {
     // MARK: - Private Methods
 
     /// Core sync method using position-based reconciliation
-    /// DB reads/writes are dispatched off the main thread via Task.detached
     private func syncContent(_ markdown: String, zoomedIds: Set<String>? = nil) async {
         guard let db = projectDatabase, let pid = projectId else { return }
 
@@ -200,44 +199,50 @@ class SectionSyncService {
             return
         }
 
-        // Capture @MainActor values before detaching
-        let isZoomed = isContentZoomed
-        let reconciler = self.reconciler
-        let fallbackBibTitle = ExportSettingsManager.shared.bibliographyHeaderName
-
+        // 1. Get current DB sections first (need to identify bibliography by title)
+        let dbSections: [Section]
         do {
-            try await Task.detached(priority: .utility) {
-                // 1. Get current DB sections first (need to identify bibliography by title)
-                let dbSections = try db.fetchSections(projectId: pid)
-
-                // 2. Parse headers from markdown (pass existing bibliography/notes title for detection)
-                let existingBibTitle = dbSections.first(where: { $0.isBibliography })?.title
-                let existingNotesTitle = dbSections.first(where: { $0.isNotes })?.title
-                let headers = SectionSyncService.parseHeaders(
-                    from: markdown, existingBibTitle: existingBibTitle,
-                    existingNotesTitle: existingNotesTitle, fallbackBibTitle: fallbackBibTitle)
-                guard !headers.isEmpty else { return }
-
-                // 3. Reconcile to find minimal changes
-                let changes = reconciler.reconcile(headers: headers, dbSections: dbSections, projectId: pid)
-
-                // 4. Apply changes to database (if any)
-                if !changes.isEmpty {
-                    try db.applySectionChanges(changes, for: pid)
-                }
-
-                // 5. Save full content to database ONLY when not zoomed
-                if !isZoomed {
-                    try db.saveContent(markdown: markdown, for: pid)
-                }
-            }.value
+            dbSections = try db.fetchSections(projectId: pid)
         } catch {
-            print("[SectionSyncService] Error: \(error)")
+            print("[SectionSyncService] Error fetching sections: \(error.localizedDescription)")
+            return
         }
 
-        // Back on MainActor
+        // 2. Parse headers from markdown (pass existing bibliography/notes title for detection)
+        let existingBibTitle = dbSections.first(where: { $0.isBibliography })?.title
+        let existingNotesTitle = dbSections.first(where: { $0.isNotes })?.title
+        let headers = parseHeaders(from: markdown, existingBibTitle: existingBibTitle, existingNotesTitle: existingNotesTitle)
+        guard !headers.isEmpty else { return }
+
+        // 3. Reconcile to find minimal changes
+        let changes = reconciler.reconcile(headers: headers, dbSections: dbSections, projectId: pid)
+
+        // 4. Apply changes to database (if any)
+        if !changes.isEmpty {
+            do {
+                try db.applySectionChanges(changes, for: pid)
+            } catch {
+                print("[SectionSyncService] Error applying changes: \(error.localizedDescription)")
+            }
+        }
+
+        // 5. Save full content to database ONLY when not zoomed
+        if !isContentZoomed {
+            do {
+                try db.saveContent(markdown: markdown, for: pid)
+            } catch {
+                print("[SectionSyncService] Error saving content: \(error.localizedDescription)")
+            }
+        }
+
+        // Track synced content to prevent feedback loops
         lastSyncedContent = markdown
+
+        // Check if user made edits to Getting Started
         DocumentManager.shared.checkGettingStartedEdited(currentMarkdown: markdown)
+
+        // Note: UI updates happen automatically via ValueObservation in EditorViewState
+        // Hierarchy enforcement is handled via onChange in ContentView
     }
 
     /// Sync zoomed content without replacing the full sections array
@@ -246,120 +251,131 @@ class SectionSyncService {
     private func syncZoomedSections(from markdown: String, zoomedIds: Set<String>) async {
         guard let db = projectDatabase, let pid = projectId else { return }
 
-        // Capture @MainActor value before detaching
-        let fallbackBibTitle = ExportSettingsManager.shared.bibliographyHeaderName
-
-        // Strip mini #Notes section (zoom-notes marker) before parsing
-        let (strippedMarkdown, miniNotesContent) = Self.stripZoomNotes(from: markdown)
-
-        let updatedZoomedIds: Set<String>?
+        // Fetch existing sections from database first (need bibliography title for detection)
+        let existingSections: [Section]
         do {
-            updatedZoomedIds = try await Task.detached(priority: .utility) {
-                // Fetch existing sections from database first (need bibliography title for detection)
-                let existingSections = try db.fetchSections(projectId: pid)
-
-                // Parse zoomed markdown to extract section content (pass bibliography/notes title for detection)
-                let existingBibTitle = existingSections.first(where: { $0.isBibliography })?.title
-                let existingNotesTitle = existingSections.first(where: { $0.isNotes })?.title
-                let headers = SectionSyncService.parseHeaders(
-                    from: strippedMarkdown, existingBibTitle: existingBibTitle,
-                    existingNotesTitle: existingNotesTitle, fallbackBibTitle: fallbackBibTitle)
-
-                // If mini #Notes was edited while zoomed, sync definitions back to main Notes block
-                if let miniNotes = miniNotesContent {
-                    SectionSyncService.syncMiniNotesBackDetached(miniNotes, db: db, pid: pid)
-                }
-
-                // Build lookup of zoomed sections by sortOrder within zoomed subset
-                let zoomedExisting = existingSections
-                    .filter { zoomedIds.contains($0.id) }
-                    .sorted { $0.sortOrder < $1.sortOrder }
-
-                let allSorted = existingSections.sorted { $0.sortOrder < $1.sortOrder }
-
-                // Match parsed headers to existing zoomed sections by position and update
-                var changes: [SectionChange] = []
-                let matchCount = min(headers.count, zoomedExisting.count)
-                for index in 0..<matchCount {
-                    let header = headers[index]
-                    let existing = zoomedExisting[index]
-                    var updates = SectionUpdates()
-                    var hasChanges = false
-
-                    if header.title != existing.title {
-                        updates.title = header.title
-                        hasChanges = true
-                    }
-                    if header.level != existing.headerLevel {
-                        updates.headerLevel = header.level
-                        hasChanges = true
-                    }
-                    if header.markdownContent != existing.markdownContent {
-                        updates.markdownContent = header.markdownContent
-                        updates.wordCount = header.wordCount
-                        hasChanges = true
-                    }
-                    if header.startOffset != existing.startOffset {
-                        updates.startOffset = header.startOffset
-                        hasChanges = true
-                    }
-                    if hasChanges {
-                        changes.append(.update(id: existing.id, updates: updates))
-                    }
-                }
-
-                var updatedIds = zoomedIds
-
-                // Handle NEW sections (user added headers while zoomed)
-                if headers.count > zoomedExisting.count {
-                    let newCount = headers.count - zoomedExisting.count
-                    let lastZoomedSortOrder = zoomedExisting.last?.sortOrder ?? 0
-                    let firstAfterZoomed = allSorted.first { $0.sortOrder > lastZoomedSortOrder && !zoomedIds.contains($0.id) }
-
-                    if let firstAfter = firstAfterZoomed {
-                        let sectionsToShift = allSorted.filter { $0.sortOrder >= firstAfter.sortOrder }
-                        for section in sectionsToShift {
-                            changes.append(.update(id: section.id, updates: SectionUpdates(sortOrder: section.sortOrder + newCount)))
-                        }
-                    }
-
-                    for i in zoomedExisting.count..<headers.count {
-                        let header = headers[i]
-                        let newSortOrder = lastZoomedSortOrder + (i - zoomedExisting.count) + 1
-                        let newSection = Section(
-                            projectId: pid, sortOrder: newSortOrder, headerLevel: header.level,
-                            isPseudoSection: header.isPseudoSection, title: header.title,
-                            markdownContent: header.markdownContent, wordCount: header.wordCount,
-                            startOffset: header.startOffset
-                        )
-                        changes.append(.insert(newSection))
-                        updatedIds.insert(newSection.id)
-                    }
-                }
-
-                // Handle DELETED sections (user removed headers while zoomed)
-                if headers.count < zoomedExisting.count {
-                    for i in headers.count..<zoomedExisting.count {
-                        let removedSection = zoomedExisting[i]
-                        changes.append(.delete(id: removedSection.id))
-                        updatedIds.remove(removedSection.id)
-                    }
-                }
-
-                if !changes.isEmpty {
-                    try db.applySectionChanges(changes, for: pid)
-                    return updatedIds
-                }
-                return nil
-            }.value
+            existingSections = try db.fetchSections(projectId: pid)
         } catch {
-            print("[SectionSyncService] Error updating zoomed sections: \(error)")
+            print("[SectionSyncService] Error fetching sections: \(error)")
             return
         }
 
-        // Back on MainActor — notify for UI refresh
-        if let updatedIds = updatedZoomedIds {
-            onZoomedSectionsUpdated?(updatedIds)
+        // Strip mini #Notes section (zoom-notes marker) before parsing
+        // The marker is appended during zoom-in for display purposes only
+        let (strippedMarkdown, miniNotesContent) = Self.stripZoomNotes(from: markdown)
+
+        // Parse zoomed markdown to extract section content (pass bibliography/notes title for detection)
+        let existingBibTitle = existingSections.first(where: { $0.isBibliography })?.title
+        let existingNotesTitle = existingSections.first(where: { $0.isNotes })?.title
+        let headers = parseHeaders(from: strippedMarkdown, existingBibTitle: existingBibTitle, existingNotesTitle: existingNotesTitle)
+
+        // If mini #Notes was edited while zoomed, sync definitions back to main Notes block
+        if let miniNotes = miniNotesContent {
+            syncMiniNotesBack(miniNotes, db: db, pid: pid)
+        }
+
+        // Build lookup of zoomed sections by sortOrder within zoomed subset
+        let zoomedExisting = existingSections
+            .filter { zoomedIds.contains($0.id) }
+            .sorted { $0.sortOrder < $1.sortOrder }
+
+        let allSorted = existingSections.sorted { $0.sortOrder < $1.sortOrder }
+
+        // Match parsed headers to existing zoomed sections by position and update
+        var changes: [SectionChange] = []
+        let matchCount = min(headers.count, zoomedExisting.count)
+        for index in 0..<matchCount {
+            let header = headers[index]
+            let existing = zoomedExisting[index]
+            var updates = SectionUpdates()
+            var hasChanges = false
+
+            // Check if title changed (e.g., user edited "# A" to "# A Renamed")
+            if header.title != existing.title {
+                updates.title = header.title
+                hasChanges = true
+            }
+
+            // Check if header level changed (e.g., "##" → "#")
+            if header.level != existing.headerLevel {
+                updates.headerLevel = header.level
+                hasChanges = true
+            }
+
+            if header.markdownContent != existing.markdownContent {
+                updates.markdownContent = header.markdownContent
+                updates.wordCount = header.wordCount
+                hasChanges = true
+            }
+            if header.startOffset != existing.startOffset {
+                updates.startOffset = header.startOffset
+                hasChanges = true
+            }
+
+            if hasChanges {
+                changes.append(.update(id: existing.id, updates: updates))
+            }
+        }
+
+        // Track updated zoomed IDs (may grow with insertions or shrink with deletions)
+        var updatedZoomedIds = zoomedIds
+
+        // Handle NEW sections (user added headers while zoomed)
+        if headers.count > zoomedExisting.count {
+            let newCount = headers.count - zoomedExisting.count
+
+            // Find the sortOrder boundary: last zoomed section's sortOrder
+            let lastZoomedSortOrder = zoomedExisting.last?.sortOrder ?? 0
+
+            // Find first non-zoomed section after the zoomed set
+            let firstAfterZoomed = allSorted.first { $0.sortOrder > lastZoomedSortOrder && !zoomedIds.contains($0.id) }
+
+            // Shift all sections after the zoomed set to make room
+            if let firstAfter = firstAfterZoomed {
+                let sectionsToShift = allSorted.filter { $0.sortOrder >= firstAfter.sortOrder }
+                for section in sectionsToShift {
+                    changes.append(.update(id: section.id, updates: SectionUpdates(sortOrder: section.sortOrder + newCount)))
+                }
+            }
+
+            // Insert new sections
+            for i in zoomedExisting.count..<headers.count {
+                let header = headers[i]
+                let newSortOrder = lastZoomedSortOrder + (i - zoomedExisting.count) + 1
+                let newSection = Section(
+                    projectId: pid,
+                    sortOrder: newSortOrder,
+                    headerLevel: header.level,
+                    isPseudoSection: header.isPseudoSection,
+                    title: header.title,
+                    markdownContent: header.markdownContent,
+                    wordCount: header.wordCount,
+                    startOffset: header.startOffset
+                )
+                changes.append(.insert(newSection))
+                updatedZoomedIds.insert(newSection.id)
+            }
+        }
+
+        // Handle DELETED sections (user removed headers while zoomed)
+        if headers.count < zoomedExisting.count {
+            // Sections beyond the parsed header count have been removed
+            for i in headers.count..<zoomedExisting.count {
+                let removedSection = zoomedExisting[i]
+                print("[SectionSyncService] Removing section '\(removedSection.title)' (zoomed deletion)")
+                changes.append(.delete(id: removedSection.id))
+                updatedZoomedIds.remove(removedSection.id)
+            }
+        }
+
+        if !changes.isEmpty {
+            do {
+                try db.applySectionChanges(changes, for: pid)
+                // Notify for UI refresh - passes updated IDs (including new sections)
+                onZoomedSectionsUpdated?(updatedZoomedIds)
+            } catch {
+                print("[SectionSyncService] Error updating zoomed sections: \(error)")
+            }
         }
     }
 
@@ -391,29 +407,12 @@ class SectionSyncService {
         db: ProjectDatabase,
         pid: String
     ) {
-        Self.syncMiniNotesBackImpl(miniNotesContent, db: db, pid: pid)
-    }
-
-    /// Static version of mini notes sync for use from detached tasks.
-    nonisolated static func syncMiniNotesBackDetached(
-        _ miniNotesContent: String,
-        db: ProjectDatabase,
-        pid: String
-    ) {
-        syncMiniNotesBackImpl(miniNotesContent, db: db, pid: pid)
-    }
-
-    /// Shared implementation for syncing mini notes back to DB.
-    nonisolated private static func syncMiniNotesBackImpl(
-        _ miniNotesContent: String,
-        db: ProjectDatabase,
-        pid: String
-    ) {
         // Extract definitions from the mini #Notes content
         let editedDefs = FootnoteSyncService.extractFootnoteDefinitions(from: miniNotesContent)
         guard !editedDefs.isEmpty else { return }
 
         // Read current definitions from Block table (not Section table).
+        // No Section record with isNotes=true exists — Notes are managed as blocks only.
         let currentDefs: [String: String]
         do {
             let notesBlocks = try db.read { dbConn in
@@ -437,16 +436,22 @@ class SectionSyncService {
             mergedDefs[label] = text
         }
 
+        // Check if anything actually changed
         guard mergedDefs != currentDefs else { return }
 
+        // Rebuild the #Notes as individual blocks (matches handleImmediateInsertion structure)
+        // Sort labels numerically for consistent ordering
         let sortedLabels = mergedDefs.keys.sorted { (Int($0) ?? 0) < (Int($1) ?? 0) }
 
+        // Delete all existing notes blocks and recreate individually
         do {
             try db.write { dbConn in
+                // Delete ALL existing notes blocks
                 try Block.filter(Block.Columns.projectId == pid)
                     .filter(Block.Columns.isNotes == true)
                     .deleteAll(dbConn)
 
+                // Find max sort order of non-bibliography blocks
                 let maxNonBibSort = try Block
                     .filter(Block.Columns.projectId == pid)
                     .filter(Block.Columns.isBibliography == false)
@@ -454,6 +459,7 @@ class SectionSyncService {
                     .fetchOne(dbConn)?.sortOrder ?? 0
                 let baseSortOrder = maxNonBibSort + 0.5
 
+                // Heading block
                 var heading = Block(
                     projectId: pid, sortOrder: baseSortOrder,
                     blockType: .heading, textContent: "Notes",
@@ -462,6 +468,7 @@ class SectionSyncService {
                 )
                 try heading.insert(dbConn)
 
+                // Definition blocks
                 for (index, label) in sortedLabels.enumerated() {
                     let def = mergedDefs[label] ?? ""
                     var defBlock = Block(

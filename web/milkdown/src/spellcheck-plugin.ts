@@ -6,7 +6,6 @@
  */
 
 import { editorViewCtx } from '@milkdown/kit/core';
-import type { Node } from '@milkdown/kit/prose/model';
 import { Plugin, PluginKey } from '@milkdown/kit/prose/state';
 import { Decoration, DecorationSet, type EditorView } from '@milkdown/kit/prose/view';
 import { $prose } from '@milkdown/kit/utils';
@@ -41,10 +40,12 @@ export function setSpellcheckResults(requestId: number, results: SpellcheckResul
   if (requestId !== currentRequestId) return; // Discard stale results
   spellcheckResults = results;
 
+  // Force ProseMirror to re-render decorations
   const editor = getEditorInstance();
   if (editor) {
     const view = editor.ctx.get(editorViewCtx);
-    view.dispatch(view.state.tr.setMeta(spellcheckPluginKey, results));
+    // Dispatch a no-op transaction to trigger decoration rebuild
+    view.dispatch(view.state.tr);
   }
 }
 
@@ -64,40 +65,12 @@ export function disableSpellcheck(): void {
     clearTimeout(debounceTimer);
     debounceTimer = null;
   }
+  // Force decoration clear
   const editor = getEditorInstance();
   if (editor) {
     const view = editor.ctx.get(editorViewCtx);
-    view.dispatch(view.state.tr.setMeta(spellcheckPluginKey, []));
+    view.dispatch(view.state.tr);
   }
-}
-
-// --- Decoration helpers ---
-
-function buildDecorationSet(results: SpellcheckResult[], doc: Node): DecorationSet {
-  if (results.length === 0) return DecorationSet.empty;
-  const decorations: Decoration[] = [];
-  for (const result of results) {
-    if (result.from < 0 || result.to > doc.content.size || result.from >= result.to) continue;
-    const className =
-      result.type === 'grammar' ? 'grammar-error' : result.type === 'style' ? 'style-error' : 'spell-error';
-    const attrs: Record<string, string> = { class: className };
-    if (result.message) attrs.title = result.message;
-    try {
-      decorations.push(Decoration.inline(result.from, result.to, attrs));
-    } catch {
-      /* skip invalid positions */
-    }
-  }
-  return DecorationSet.create(doc, decorations);
-}
-
-function mapResults(
-  results: SpellcheckResult[],
-  mapping: { map(pos: number, assoc?: number): number }
-): SpellcheckResult[] {
-  return results
-    .map((r) => ({ ...r, from: mapping.map(r.from, 1), to: mapping.map(r.to, -1) }))
-    .filter((r) => r.from < r.to);
 }
 
 // --- Text extraction ---
@@ -218,7 +191,7 @@ function triggerCheck(): void {
 
   if (segments.length === 0) {
     spellcheckResults = [];
-    view.dispatch(view.state.tr.setMeta(spellcheckPluginKey, []));
+    view.dispatch(view.state.tr);
     return;
   }
 
@@ -265,20 +238,18 @@ function handleContextMenu(view: EditorView, event: MouseEvent): boolean {
     suggestions: result.suggestions,
     message: result.message,
     onReplace: (replacement: string) => {
-      const current = spellcheckResults.find((r) => r.word === result.word && r.type === result.type);
-      if (!current) return;
-      const tr = view.state.tr.replaceWith(current.from, current.to, view.state.schema.text(replacement));
+      const tr = view.state.tr.replaceWith(result.from, result.to, view.state.schema.text(replacement));
       view.dispatch(tr);
     },
     onLearn: (word: string) => {
       spellcheckResults = spellcheckResults.filter((r) => r.word !== word);
-      view.dispatch(view.state.tr.setMeta(spellcheckPluginKey, spellcheckResults));
+      view.dispatch(view.state.tr);
       window.webkit?.messageHandlers?.spellcheck?.postMessage({ action: 'learn', word });
       triggerCheck();
     },
     onIgnore: (word: string) => {
       spellcheckResults = spellcheckResults.filter((r) => r.word !== word);
-      view.dispatch(view.state.tr.setMeta(spellcheckPluginKey, spellcheckResults));
+      view.dispatch(view.state.tr);
       window.webkit?.messageHandlers?.spellcheck?.postMessage({ action: 'ignore', word });
       triggerCheck();
     },
@@ -307,20 +278,18 @@ function handleClick(view: EditorView, event: MouseEvent): boolean {
       suggestions: result.suggestions,
       message: result.message,
       onReplace: (replacement: string) => {
-        const current = spellcheckResults.find((r) => r.word === result.word && r.type === result.type);
-        if (!current) return;
-        const tr = view.state.tr.replaceWith(current.from, current.to, view.state.schema.text(replacement));
+        const tr = view.state.tr.replaceWith(result.from, result.to, view.state.schema.text(replacement));
         view.dispatch(tr);
       },
       onLearn: (word: string) => {
         spellcheckResults = spellcheckResults.filter((r) => r.word !== word);
-        view.dispatch(view.state.tr.setMeta(spellcheckPluginKey, spellcheckResults));
+        view.dispatch(view.state.tr);
         window.webkit?.messageHandlers?.spellcheck?.postMessage({ action: 'learn', word });
         triggerCheck();
       },
       onIgnore: (word: string) => {
         spellcheckResults = spellcheckResults.filter((r) => r.word !== word);
-        view.dispatch(view.state.tr.setMeta(spellcheckPluginKey, spellcheckResults));
+        view.dispatch(view.state.tr);
         window.webkit?.messageHandlers?.spellcheck?.postMessage({ action: 'ignore', word });
         triggerCheck();
       },
@@ -343,20 +312,18 @@ function handleClick(view: EditorView, event: MouseEvent): boolean {
     isPicky: result.isPicky || false,
     suggestions: result.suggestions,
     onReplace: (suggestion: string) => {
-      const current = spellcheckResults.find((r) => r.word === result.word && r.type === result.type);
-      if (!current) return;
-      const tr = view.state.tr.replaceWith(current.from, current.to, view.state.schema.text(suggestion));
+      const tr = view.state.tr.replaceWith(result.from, result.to, view.state.schema.text(suggestion));
       view.dispatch(tr);
     },
     onIgnore: () => {
       spellcheckResults = spellcheckResults.filter((r) => r !== result);
-      view.dispatch(view.state.tr.setMeta(spellcheckPluginKey, spellcheckResults));
+      view.dispatch(view.state.tr);
       window.webkit?.messageHandlers?.spellcheck?.postMessage({ action: 'ignore', word: result.word });
       triggerCheck();
     },
     onDisableRule: (ruleId: string) => {
       spellcheckResults = spellcheckResults.filter((r) => r.ruleId !== ruleId);
-      view.dispatch(view.state.tr.setMeta(spellcheckPluginKey, spellcheckResults));
+      view.dispatch(view.state.tr);
       window.webkit?.messageHandlers?.spellcheck?.postMessage({ action: 'disableRule', ruleId });
     },
   });
@@ -369,27 +336,35 @@ function handleClick(view: EditorView, event: MouseEvent): boolean {
 export const spellcheckPlugin = $prose(() => {
   return new Plugin({
     key: spellcheckPluginKey,
-    state: {
-      init() {
-        return DecorationSet.empty;
-      },
-      apply(tr, decorationSet) {
-        const newResults = tr.getMeta(spellcheckPluginKey);
-        if (newResults !== undefined) {
-          spellcheckResults = newResults;
-          return buildDecorationSet(newResults, tr.doc);
-        }
-        if (tr.docChanged) {
-          spellcheckResults = mapResults(spellcheckResults, tr.mapping);
-          return decorationSet.map(tr.mapping, tr.doc);
-        }
-        return decorationSet;
-      },
-    },
     props: {
       decorations(state) {
-        if (!enabled) return DecorationSet.empty;
-        return spellcheckPluginKey.getState(state) ?? DecorationSet.empty;
+        if (!enabled || spellcheckResults.length === 0) {
+          return DecorationSet.empty;
+        }
+
+        const decorations: Decoration[] = [];
+
+        for (const result of spellcheckResults) {
+          // Validate positions within document bounds
+          if (result.from < 0 || result.to > state.doc.content.size || result.from >= result.to) {
+            continue;
+          }
+
+          const className =
+            result.type === 'grammar' ? 'grammar-error' : result.type === 'style' ? 'style-error' : 'spell-error';
+          const attrs: Record<string, string> = { class: className };
+          if (result.message) {
+            attrs.title = result.message;
+          }
+
+          try {
+            decorations.push(Decoration.inline(result.from, result.to, attrs));
+          } catch {
+            // Invalid position, skip
+          }
+        }
+
+        return DecorationSet.create(state.doc, decorations);
       },
       handleDOMEvents: {
         contextmenu(view, event) {

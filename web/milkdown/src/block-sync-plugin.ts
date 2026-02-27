@@ -273,11 +273,11 @@ function detectChanges(
       oldBlock.markdownFragment !== newBlock.markdownFragment ||
       oldBlock.headingLevel !== newBlock.headingLevel
     ) {
-      // Block was updated — use pre-computed markdownFragment from snapshot
+      // Block was updated
       state.pendingUpdates.set(id, {
         id,
         textContent: newBlock.textContent,
-        markdownFragment: newBlock.markdownFragment,
+        markdownFragment: nodeToMarkdownFragment(newBlock.node),
         headingLevel: newBlock.headingLevel,
       });
     }
@@ -302,17 +302,13 @@ function detectChanges(
         tempId: id,
         blockType: newBlock.blockType,
         textContent: newBlock.textContent,
-        markdownFragment: newBlock.markdownFragment,
+        markdownFragment: nodeToMarkdownFragment(newBlock.node),
         headingLevel: newBlock.headingLevel,
         afterBlockId,
       });
     }
   }
 }
-
-// Debounce state for detectChanges() — keeps snapshotBlocks() synchronous
-let detectTimer: ReturnType<typeof setTimeout> | null = null;
-let pendingOldSnapshot: Map<string, BlockSnapshot> | null = null;
 
 // Wrap ProseMirror plugin with $prose for Milkdown compatibility
 export const blockSyncPlugin = $prose(() => {
@@ -337,36 +333,18 @@ export const blockSyncPlugin = $prose(() => {
           return value;
         }
 
-        // Snapshot is synchronous — needs current block IDs and doc positions
+        // Take new snapshot
         const newSnapshot = snapshotBlocks(newState.doc);
 
-        // Preserve the oldest un-processed snapshot across debounce resets.
-        // Without this, rapid keystrokes A→B→C would only diff B→C,
-        // losing an insert that happened at A (e.g., pressing Enter).
-        if (detectTimer) {
-          clearTimeout(detectTimer);
-          // Keep existing pendingOldSnapshot from first keystroke in burst
-        } else {
-          // First keystroke in this debounce window
-          pendingOldSnapshot = value.lastSnapshot;
-        }
+        // Detect changes
+        detectChanges(value.lastSnapshot, newSnapshot, value);
 
-        const capturedOld = pendingOldSnapshot!;
-
-        // Return proper new state first (immutable contract)
+        // Update snapshot
         const newValue = {
           ...value,
           lastSnapshot: newSnapshot,
         };
         currentState = newValue;
-
-        detectTimer = setTimeout(() => {
-          if (currentState) {
-            detectChanges(capturedOld, newSnapshot, currentState);
-          }
-          pendingOldSnapshot = null;
-          detectTimer = null;
-        }, 100);
 
         return newValue;
       },

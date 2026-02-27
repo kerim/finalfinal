@@ -188,24 +188,15 @@ async function initEditor() {
     throw e;
   }
 
-  // Track content changes with debounced push to Swift
+  // Track content changes
   const editorInstance = getEditorInstance()!;
   const view = editorInstance.ctx.get(editorViewCtx);
   const originalDispatch = view.dispatch.bind(view);
-  let contentPushTimer: ReturnType<typeof setTimeout> | null = null;
-
   view.dispatch = (tr) => {
     originalDispatch(tr);
 
     if (tr.docChanged && !getIsSettingContent()) {
-      if (contentPushTimer) clearTimeout(contentPushTimer);
-      contentPushTimer = setTimeout(() => {
-        // Re-check guard: setContent() may have run during the 50ms window
-        if (getIsSettingContent()) return;
-        const md = editorInstance.action(getMarkdown());
-        setCurrentContent(md);
-        (window as any).webkit?.messageHandlers?.contentChanged?.postMessage(md);
-      }, 50);
+      setCurrentContent(editorInstance.action(getMarkdown()));
     }
   };
 
@@ -372,14 +363,6 @@ window.FinalFinal = {
   replaceAll: replaceAllApi,
   clearSearch: clearSearchApi,
   getSearchState: getSearchStateApi,
-
-  // Combined poll data for batched 3s fallback polling
-  getPollData() {
-    return JSON.stringify({
-      stats: window.FinalFinal.getStats(),
-      sectionTitle: window.FinalFinal.getCurrentSectionTitle(),
-    });
-  },
 
   // Test snapshot hook — read-only, calls existing API methods, no behavior change
   __testSnapshot() {
