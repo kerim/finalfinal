@@ -46,6 +46,7 @@ struct MilkdownEditor: NSViewRepresentable {
         if let preloaded = EditorPreloader.shared.claimMilkdownView() {
             // Re-register message handlers with this coordinator
             let controller = preloaded.configuration.userContentController
+            controller.add(context.coordinator, name: "contentChanged")
             controller.add(context.coordinator, name: "errorHandler")
             controller.add(context.coordinator, name: "searchCitations")
             controller.add(context.coordinator, name: "openCitationPicker")
@@ -109,6 +110,7 @@ struct MilkdownEditor: NSViewRepresentable {
             forMainFrameOnly: true
         )
         configuration.userContentController.addUserScript(errorScript)
+        configuration.userContentController.add(context.coordinator, name: "contentChanged")
         configuration.userContentController.add(context.coordinator, name: "errorHandler")
         configuration.userContentController.add(context.coordinator, name: "searchCitations")
         configuration.userContentController.add(context.coordinator, name: "openCitationPicker")

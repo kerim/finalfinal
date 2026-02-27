@@ -14,7 +14,14 @@ extension SectionSyncService {
     ///   - markdown: The markdown content to parse
     ///   - existingBibTitle: Title of the existing bibliography section (if any) to detect bibliography by title match
     ///   - existingNotesTitle: Title of the existing notes section (if any) to detect notes by title match
-    func parseHeaders(from markdown: String, existingBibTitle: String? = nil, existingNotesTitle: String? = nil) -> [ParsedHeader] {
+    ///   - fallbackBibTitle: Bibliography header name from settings (captured on MainActor before calling)
+    // swiftlint:disable:next function_parameter_count
+    nonisolated static func parseHeaders(
+        from markdown: String,
+        existingBibTitle: String? = nil,
+        existingNotesTitle: String? = nil,
+        fallbackBibTitle: String = "Bibliography"
+    ) -> [ParsedHeader] {
 
         var headers: [ParsedHeader] = []
         var currentOffset = 0
@@ -43,7 +50,7 @@ extension SectionSyncService {
         var pendingNotesBoundaryIndex: Int?
 
         // Bibliography detection: use existing title if provided, otherwise fall back to configured name
-        let bibHeaderName = existingBibTitle ?? ExportSettingsManager.shared.bibliographyHeaderName
+        let bibHeaderName = existingBibTitle ?? fallbackBibTitle
         // Notes detection: use existing title if provided, otherwise fall back to "Notes"
         let notesHeaderName = existingNotesTitle ?? "Notes"
 
@@ -199,7 +206,7 @@ extension SectionSyncService {
         let title: String
     }
 
-    func parseHeaderLine(_ line: String) -> LocalParsedHeader? {
+    nonisolated static func parseHeaderLine(_ line: String) -> LocalParsedHeader? {
         guard line.hasPrefix("#") else { return nil }
 
         var level = 0
@@ -222,7 +229,7 @@ extension SectionSyncService {
 
     /// Extract a title for pseudo-sections from the first paragraph after the break marker
     /// Returns "§ " followed by the first few words (up to ~30 chars), or "§ Section Break" if no content
-    func extractPseudoSectionTitle(from markdown: String) -> String {
+    nonisolated static func extractPseudoSectionTitle(from markdown: String) -> String {
         let lines = markdown.split(separator: "\n", omittingEmptySubsequences: false)
 
         // Skip the break marker line and any empty lines to find the first paragraph
@@ -262,7 +269,7 @@ extension SectionSyncService {
     }
 
     /// Extract an excerpt from text, truncating at word boundary with ellipsis
-    func extractExcerpt(from text: String, maxLength: Int) -> String {
+    nonisolated static func extractExcerpt(from text: String, maxLength: Int) -> String {
         // Strip any markdown formatting (bold, italic, links)
         let plainText = text
             .replacingOccurrences(of: "\\*\\*([^*]+)\\*\\*", with: "$1", options: .regularExpression)

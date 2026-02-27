@@ -16,6 +16,7 @@ How the app is built. Read these before modifying core systems.
 - [word-count.md](architecture/word-count.md) -- Section-only vs aggregate counts, goal types, goal popover, zoom-mode updates
 - [footnotes.md](architecture/footnotes.md) -- Footnote refs, Notes section, Milkdown/CodeMirror plugins, zoom-notes behavior, definition preservation
 - [toolbar-ui.md](architecture/toolbar-ui.md) -- Five formatting UI areas: Format menu, editor toolbar, selection toolbar, slash commands, status bar
+- [spellcheck.md](architecture/spellcheck.md) -- Dual-provider proofing (NSSpellChecker + LanguageTool), decoration position mapping, click interaction, preferences
 - Quick Look Extension -- QLPreviewingController + MarkdownRenderer for Finder previews of .ff files (see `QuickLook Extension/`)
 
 ## Roadmap
@@ -34,13 +35,13 @@ How-to documents for development tasks.
 
 Patterns and pitfalls discovered during development. Consult before writing related code.
 
-- [prosemirror-milkdown.md](lessons/prosemirror-milkdown.md) -- Decoration system, wrapper elements, HTML filtering, slash menu, empty content
-- [codemirror.md](lessons/codemirror.md) -- ATX heading column-0 requirement, keymap vs DOM handler precedence
+- [prosemirror-milkdown.md](lessons/prosemirror-milkdown.md) -- Decoration system, wrapper elements, HTML filtering, slash menu, empty content, stateless decoration artifacts, debouncing plugin apply() side effects
+- [codemirror.md](lessons/codemirror.md) -- ATX heading column-0 requirement, keymap vs DOM handler precedence, mapping ViewPlugin decorations
 - [swiftui-webkit.md](lessons/swiftui-webkit.md) -- AppDelegate pattern, event handling, print() performance, data flow IDs, compositor caching
-- [grdb-database.md](lessons/grdb-database.md) -- ValueObservation races, dual content properties, eraseDatabaseOnSchemaChange danger
+- [grdb-database.md](lessons/grdb-database.md) -- ValueObservation races, dual content properties, DatabasePool vs DatabaseQueue, eraseDatabaseOnSchemaChange danger
 - [zoom-patterns.md](lessons/zoom-patterns.md) -- Async coordination, state protection, database-as-truth, bibliography sync, dual editor mode
 - [block-sync-patterns.md](lessons/block-sync-patterns.md) -- Pseudo-section document-order ownership, sidebar zoom ID sharing
-- [misc-patterns.md](lessons/misc-patterns.md) -- JavaScript shift-key, cursor offset mapping, Vite emptyOutDir, XeTeX path spaces, AttributedString block separation
+- [misc-patterns.md](lessons/misc-patterns.md) -- JavaScript shift-key, cursor offset mapping, push-based WKWebView sync, Vite emptyOutDir, XeTeX path spaces, AttributedString block separation
 
 ## Findings
 
@@ -61,6 +62,7 @@ Bug investigation reports with root cause analysis and solutions.
 - [bibliography-marker-stripping.md](findings/bibliography-marker-stripping.md) -- assembleMarkdown defense-in-depth stripped bibliography marker, deleting bibliography on round-trip
 - [footnote-development-issues.md](findings/footnote-development-issues.md) -- Footnote development issues: bracket escaping, GFM conflicts, zoom behavior, block ID desync
 - [quicklook-extension-not-loading.md](findings/quicklook-extension-not-loading.md) -- QuickLook blank preview: QLSupportsSecureCoding stripped by xcodegen, stale pluginkit registration, Package.qlgenerator fallback
+- [typing-latency-optimization.md](findings/typing-latency-optimization.md) -- Push-based content sync, DatabasePool+WAL, off-main-thread DB writes, block sync debouncing, focus mode single-pass, spellcheck decoration mapping
 
 ## Deferred
 

@@ -61,6 +61,41 @@ Apply offset mapping only to content after syntax, then add syntax length back.
 
 ---
 
+### Push-Based Content Sync over WKWebView Polling
+
+**Problem:** Content polling via `evaluateJavaScript("getContent()")` at 500ms intervals added latency to every edit. Three sequential JS calls per poll cycle (content, stats, section title) competed for the WebKit IPC bridge.
+
+**Solution:** Push content from JS to Swift via `window.webkit.messageHandlers.contentChanged.postMessage(markdown)` with 50ms debounce. Reduce polling to 3s fallback for supplementary data only (stats + section title), batched into a single `getPollData()` call returning JSON.
+
+```typescript
+// JS side: debounced push on doc change
+if (update.docChanged) {
+  if (pushTimer) clearTimeout(pushTimer);
+  pushTimer = setTimeout(() => {
+    window.webkit?.messageHandlers?.contentChanged?.postMessage(content);
+  }, 50);
+}
+```
+
+```swift
+// Swift side: handle push in WKScriptMessageHandler
+if message.name == "contentChanged", let content = message.body as? String {
+    Task { @MainActor in self.handleContentPush(content) }
+    return
+}
+```
+
+**Key details:**
+- Register `contentChanged` message handler in both the preloaded and fresh WebView paths (easy to forget one)
+- Milkdown: wrap in dispatch override (ProseMirror has no `updateListener` equivalent)
+- CodeMirror: use `EditorView.updateListener.of(...)` extension
+- Grace period guard prevents push handler from overwriting content that Swift just pushed to the editor via `setContent()`
+- Re-check `isSettingContent` guard after the 50ms debounce window (setContent may have run during the delay)
+
+**General principle:** For WKWebView bridge communication, prefer push-based messaging (postMessage) over polling (evaluateJavaScript) when the JS side knows when data changes. Reserve polling for data without change events.
+
+---
+
 ## Build
 
 ### Vite emptyOutDir: false

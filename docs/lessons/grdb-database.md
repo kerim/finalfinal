@@ -129,6 +129,28 @@ private func finalizeSectionReorder(sections: [SectionViewModel]) {
 
 ---
 
+### DatabasePool over DatabaseQueue for UI-Driven Apps
+
+**Problem:** Typing felt sluggish because `SectionSyncService` DB writes (triggered by content changes) blocked the main thread via an exclusive SQLite lock, stalling ValueObservation reads and UI updates.
+
+**Root Cause:** `ProjectDatabase` used `DatabaseQueue`, which serializes all access (reads and writes) through a single queue with no concurrency. Every `db.write {}` held an exclusive lock. Since section sync, block sync, and ValueObservation all competed for the same queue, a write in `syncContent()` could stall a read in `observeOutlineBlocks()`.
+
+**Solution:** Switch to `DatabasePool` with WAL mode (enabled automatically by GRDB). This allows concurrent readers alongside a single writer. Combined with `PRAGMA synchronous = NORMAL` to reduce fsync overhead:
+
+```swift
+var config = Configuration()
+config.prepareDatabase { db in
+    try db.execute(sql: "PRAGMA synchronous = NORMAL")
+}
+self.dbWriter = try DatabasePool(path: package.databaseURL.path, configuration: config)
+```
+
+Additionally, move write-heavy operations off MainActor using `Task.detached(priority: .utility)`. This requires making the types passed across isolation boundaries `Sendable` (`SectionChange`, `SectionUpdates`, `ParsedHeader`, `SectionReconciler`).
+
+**General principle:** For apps where UI responsiveness depends on DB reads (ValueObservation), use `DatabasePool` so writes don't block reads. Move write-heavy sync operations off the main thread and use `Sendable` types at the boundary.
+
+---
+
 ## GRDB Configuration
 
 ### Never Use eraseDatabaseOnSchemaChange in Production

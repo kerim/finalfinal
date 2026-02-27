@@ -241,3 +241,32 @@ Key design choices:
 **General principle:** Correcting CM6's height estimation accuracy (via `measureTextSize` patches) is necessary but not sufficient. The viewport also needs time to reconcile estimates with actual measurements. After any operation that changes the scroll position significantly, trigger `requestMeasure()` and verify heights have stabilized.
 
 **See also:** [cm-scroll-stabilizer.md](../findings/cm-scroll-stabilizer.md) for the full investigation.
+
+---
+
+## Map ViewPlugin Decorations Instead of Rebuilding
+
+**Problem:** Spell check underlines appeared on wrong words during typing. The `ViewPlugin.update()` rebuilt the entire `DecorationSet` from a module-level results array on every update, using positions that were stale after the edit.
+
+**Root Cause:** `buildDecorations()` was called unconditionally in `update()`, reading from `spellcheckResults` which held positions computed before the current edit.
+
+**Solution:** Map existing decorations on `docChanged`, and only rebuild from scratch when fresh results arrive (tracked by a `resultsVersion` counter):
+
+```typescript
+update(update: ViewUpdate) {
+  if (update.docChanged) {
+    this.decorations = this.decorations.map(update.changes);
+    results = mapResultPositions(results, update.changes);
+  }
+  if (resultsVersion !== this.lastResultsVersion) {
+    this.decorations = buildDecorations(update.view);
+    this.lastResultsVersion = resultsVersion;
+  }
+}
+```
+
+The version counter pattern is needed because CM6 `ViewPlugin.update()` has no equivalent to ProseMirror's `tr.getMeta()` for signaling "new data arrived." Incrementing `resultsVersion` in every mutation site (setResults, disable, learn, ignore, disableRule) and checking it in `update()` bridges this gap.
+
+**Position mapping uses `ChangeDesc.mapPos()` with asymmetric bias:** `from` maps with +1 (don't extend left), `to` maps with -1 (don't extend right). This prevents underlines from growing to cover newly typed characters.
+
+**General principle:** CM6's `DecorationSet.map(changes)` is the standard way to keep decorations positioned correctly through document edits. Reserve full rebuilds for when the underlying data changes, not when the document changes.
