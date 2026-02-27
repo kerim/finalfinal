@@ -11,21 +11,6 @@ import WebKit
 
 extension MilkdownEditor.Coordinator {
 
-    /// Cooldown: last time the Zotero alert was shown (prevents spam from repeated resolution failures)
-    private static var lastZoteroAlertTime: Date = .distantPast
-
-    /// Show the Zotero "not running" alert if cooldown (60s) has elapsed.
-    /// Uses the same NSAlert as the CAYW picker path for consistency.
-    private func showZoteroAlertIfNeeded() {
-        let now = Date()
-        guard now.timeIntervalSince(Self.lastZoteroAlertTime) >= 60 else { return }
-        Self.lastZoteroAlertTime = now
-        showZoteroAlert(
-            title: "Zotero Not Running",
-            message: "Zotero is not running. Please open Zotero and try again."
-        )
-    }
-
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         isEditorReady = true
         batchInitialize()
@@ -391,18 +376,6 @@ extension MilkdownEditor.Coordinator {
             }
 
             sendCitationSearchCallback(webView: webView, json: jsonString)
-        } catch ZoteroError.notRunning {
-            print("[MilkdownEditor] Citation search: Zotero not running")
-            showZoteroAlertIfNeeded()
-            sendCitationSearchCallback(webView: webView, json: "[]")
-        } catch ZoteroError.networkError(_) {
-            print("[MilkdownEditor] Citation search: network error")
-            showZoteroAlertIfNeeded()
-            sendCitationSearchCallback(webView: webView, json: "[]")
-        } catch ZoteroError.noResponse {
-            print("[MilkdownEditor] Citation search: no response")
-            showZoteroAlertIfNeeded()
-            sendCitationSearchCallback(webView: webView, json: "[]")
         } catch {
             print("[MilkdownEditor] Citation search error: \(error.localizedDescription)")
             sendCitationSearchCallback(webView: webView, json: "[]")
@@ -560,14 +533,9 @@ extension MilkdownEditor.Coordinator {
             addCitationItems(json)
         } catch ZoteroError.notRunning {
             print("[MilkdownEditor] Zotero not running - cannot resolve citekeys")
-            // Confirm with a real ping before alerting (isConnected defaults to false at launch)
-            let actuallyDown = !(await ZoteroService.shared.ping())
-            if actuallyDown {
-                showZoteroAlertIfNeeded()
-            }
+            // Don't show error to user for lazy resolution - just log it
         } catch {
             print("[MilkdownEditor] Failed to resolve citekeys: \(error.localizedDescription)")
-            showZoteroAlertIfNeeded()
         }
     }
 

@@ -310,8 +310,8 @@ final class AppearanceSettingsManager {
         if let headerColor = settings.headerColor {
             return headerColor.color
         }
-        // Fall back to theme's dedicated header color
-        return settings.textColor?.color ?? theme.editorHeaderText
+        // Fall back to text color override or theme default
+        return settings.textColor?.color ?? theme.editorText
     }
 
     /// Effective accent color (override or theme default)
