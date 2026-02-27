@@ -1,0 +1,372 @@
+%%
+%% This is file `xeCJK-listings.sty',
+%% generated with the docstrip utility.
+%%
+%% The original source files were:
+%%
+%% xeCJK.dtx  (with options: `listings')
+%% 
+%%     Copyright (C) 2007--2010 by Wenchang Sun <sunwch@nankai.edu.cn>
+%%     Copyright (C) 2009--2022 by Leo Liu <leoliu.pku@gmail.com>
+%%     Copyright (C) 2012--2022 by Qing Lee <sobenlee@gmail.com>
+%% ----------------------------------------------------------------------
+%% 
+%%     This work may be distributed and/or modified under the
+%%     conditions of the LaTeX Project Public License, either
+%%     version 1.3c of this license or (at your option) any later
+%%     version. This version of this license is in
+%%        http://www.latex-project.org/lppl/lppl-1-3c.txt
+%%     and the latest version of this license is in
+%%        http://www.latex-project.org/lppl.txt
+%%     and version 1.3 or later is part of all distributions of
+%%     LaTeX version 2005/12/01 or later.
+%% 
+%%     This work has the LPPL maintenance status "maintained".
+%% 
+%%     The Current Maintainers of this work are Leo Liu and Qing Lee.
+%% 
+%% ----------------------------------------------------------------------
+%% 
+\NeedsTeXFormat{LaTeX2e}
+\RequirePackage{expl3}
+\GetIdInfo$Id: xeCJK.dtx c4ccfae 2022-08-05 21:02:32 +0800 Qing Lee <sobenlee@gmail.com> $
+  {xeCJK patch file for listings}
+\ProvidesExplPackage{xeCJK-listings}
+  {\ExplFileDate}{3.9.1}{\ExplFileDescription}
+\DeclareOption* { \PassOptionsToPackage { \CurrentOption } { xeCJK } }
+\ProcessOptions \scan_stop:
+\RequirePackage { xeCJK }
+\RequirePackage { listings }
+\lst@AddToHook { Init } { \__xeCJK_listings_initial_hook: }
+\lst@AddToHook { SelectCharTable } { \__xeCJK_listings_toks_hook: }
+\lst@AddToHook { OutputBox }
+  {
+    \tl_set_eq:NN \l_xeCJK_punct_style_tl \c__xeCJK_punct_style_plain_tl
+    \l__xeCJK_restore_listings_toks_tl
+    \__xeCJK_listings_output_CM:
+  }
+\lst@AddToHook { PreSet } { \bool_set_true:N \l__xeCJK_listings_env_bool }
+\cs_new_protected:Npn \__xeCJK_listings_initial_hook:
+  {
+    \tex_noindent:D
+    \bool_gset_false:N \g__xeCJK_listings_CM_bool
+    \tl_put_left:Nn \lst@numberstyle { \l__xeCJK_restore_listings_toks_tl }
+    \xeCJK_add_to_shipout:n { \l__xeCJK_restore_listings_toks_tl }
+    \lst@ifbreaklines
+      \cs_set_eq:NN \__xeCJK_listings_CJK_toks_hook: \__xeCJK_listings_breaklines_toks:
+      \tl_if_empty:NF \lst@prebreak
+        { \tl_put_left:Nn \lst@prebreak { \l__xeCJK_restore_listings_toks_tl } }
+      \tl_if_empty:NF \lst@postbreak
+        { \tl_put_left:Nn \lst@postbreak { \l__xeCJK_restore_listings_toks_tl } }
+    \fi:
+    \int_set:Nn \l__xeCJK_listings_max_char_int
+      { \lst@ifec 255 \else: 127 \fi: }
+  }
+\int_new:N \l__xeCJK_listings_max_char_int
+\cs_new_protected:Npn \__xeCJK_listings_toks_hook:
+  {
+    \tl_clear:N \l__xeCJK_restore_listings_toks_tl
+    \seq_map_function:NN
+      \g__xeCJK_class_seq \__xeCJK_backup_inter_class_toks:n
+    \seq_map_inline:Nn \g__xeCJK_non_CJK_class_seq
+      {
+        \str_if_eq:nnF { ##1 } { Boundary }
+          {
+            \xeCJK_inter_class_toks:nnn { Boundary } { ##1 }
+              { \__xeCJK_listings_process_Default:nN { ##1 } }
+          }
+      }
+    \xeCJK_inter_class_toks:nnn { Boundary } { CM }
+      { \__xeCJK_listings_process_CM:nN { 0 } }
+    \__xeCJK_listings_CJK_toks_hook:
+  }
+\cs_new_protected:Npn \__xeCJK_backup_inter_class_toks:n #1
+  {
+    \tl_set:Nx \l__xeCJK_tmp_tl
+      { \xeCJK_get_inter_class_toks:nn { Boundary } {#1} }
+    \tl_put_right:Nx \l__xeCJK_restore_listings_toks_tl
+      {
+        \xeCJK_inter_class_toks:nnn { Boundary } {#1}
+          {
+            \tl_if_empty:NTF \l__xeCJK_tmp_tl
+              { \exp_not:N \prg_do_nothing: }
+              { \exp_not:o \l__xeCJK_tmp_tl }
+          }
+      }
+  }
+\tl_new:N \l__xeCJK_restore_listings_toks_tl
+\cs_new_protected:Npn \__xeCJK_listings_CJK_toks_hook:
+  {
+    \xeCJK_inter_class_toks:nnn { Boundary } { CJK }
+      { \__xeCJK_listings_process_CJK:nN { 2 } }
+    \xeCJK_inter_class_toks:nnn { Boundary } { FullLeft }
+      { \__xeCJK_listings_process_CJK:nN { 2 } }
+    \xeCJK_inter_class_toks:nnn { Boundary } { FullRight }
+      { \__xeCJK_listings_process_CJK:nN { 2 } }
+    \xeCJK_inter_class_toks:nnn { Boundary } { HangulJamo }
+      { \__xeCJK_listings_process_CJK:nN { 2 } }
+    \seq_map_inline:Nn \g__xeCJK_CJK_sub_class_seq
+      {
+        \xeCJK_inter_class_toks:nnn { Boundary } { CJK/##1 }
+          { \__xeCJK_listings_process_CJK:nN { 2 } }
+      }
+  }
+\cs_new_protected:Npn \__xeCJK_listings_breaklines_toks:
+  {
+    \xeCJK_inter_class_toks:nnn { Boundary } { CJK }
+      { \__xeCJK_listings_process_breaklines_CJK:nN { 2 } }
+    \xeCJK_inter_class_toks:nnn { Boundary } { HangulJamo }
+      { \__xeCJK_listings_process_breaklines_CJK:nN { 2 } }
+    \xeCJK_inter_class_toks:nnn { Boundary } { FullLeft }
+      { \__xeCJK_listings_process_FullLeft:nN { 2 } }
+    \xeCJK_inter_class_toks:nnn { Boundary } { FullRight }
+      { \__xeCJK_listings_process_FullRight:nN { 2 } }
+    \seq_map_inline:Nn \g__xeCJK_CJK_sub_class_seq
+      {
+        \xeCJK_inter_class_toks:nnn { Boundary } { CJK/##1 }
+          { \__xeCJK_listings_process_breaklines_CJK:nN { 2 } }
+      }
+  }
+\cs_new_protected:Npn \__xeCJK_listings_process_Default:nN #1#2
+  {
+    \int_compare:nNnTF
+      { \xeCJK_token_value_charcode:N #2 } > \l__xeCJK_listings_max_char_int
+      {
+        \token_if_letter:NTF #2
+          { \lst@ProcessLetter #2 }
+          { \lst@ProcessOther  #2 }
+      }
+      { \__xeCJK_listings_output_Default:nN {#1} #2 }
+  }
+\cs_new_protected:Npn \__xeCJK_listings_output_Default:nN #1#2
+  {
+    \group_begin:
+      \xeCJK_clear_inter_class_toks:nn { Boundary } {#1}
+      \xeCJK_inter_class_toks:nnn {#1} { Boundary } { \group_end: }
+      #2
+      \scan_stop:
+  }
+\cs_new_protected:Npn \__xeCJK_listings_process_CJK:nN #1#2
+  {
+    \token_if_letter:NTF #2
+      { \__xeCJK_listings_process_letter:nN {#1} #2 }
+      { \__xeCJK_listings_process_other:nN  {#1} #2 }
+  }
+\cs_new_protected:Npn \__xeCJK_listings_append:nN #1#2
+  {
+    \int_add:Nn \lst@length { #1 - 1 }
+    \lst@Append #2
+  }
+\cs_new_protected:Npn \__xeCJK_listings_process_letter:nN
+  {
+    \lst@whitespacefalse
+    \bool_if:NTF \l__xeCJK_listings_letter_bool
+      { \lst@lettertrue }
+      {
+        \lst@ifletter \lst@Output \else: \lst@OutputOther \lst@lettertrue \fi:
+        \bool_set_true:N \l__xeCJK_listings_letter_bool
+      }
+    \__xeCJK_listings_append:nN
+  }
+\bool_new:N \l__xeCJK_listings_letter_bool
+\cs_new_protected:Npn \__xeCJK_listings_process_other:nN #1#2
+  {
+    \lst@whitespacefalse
+    \bool_if:NTF \l__xeCJK_listings_letter_bool
+      {
+        \lst@Output \lst@letterfalse
+        \bool_set_false:N \l__xeCJK_listings_letter_bool
+      }
+      { \lst@ifletter \lst@Output \lst@letterfalse \fi: }
+    \cs_set_eq:NN \lst@lastother #2
+    \__xeCJK_listings_append:nN {#1} #2
+  }
+\cs_new_protected:Npn \__xeCJK_listings_process_breaklines_CJK:nN
+  {
+    \lst@whitespacefalse
+    \bool_if:NTF \l__xeCJK_listings_letter_bool
+      {
+        \int_compare:nNnF \l__xeCJK_listings_flag_int = 2 { \lst@Output }
+        \lst@lettertrue
+      }
+      {
+        \lst@ifletter \lst@Output \else: \lst@OutputOther \lst@lettertrue \fi:
+        \bool_set_true:N \l__xeCJK_listings_letter_bool
+      }
+    \int_set_eq:NN \l__xeCJK_listings_flag_int \c_one_int
+    \__xeCJK_listings_append:nN
+  }
+\cs_new_protected:Npn \__xeCJK_listings_process_FullLeft:nN #1#2
+  {
+    \lst@whitespacefalse
+    \bool_if:NTF \l__xeCJK_listings_letter_bool
+      {
+        \int_compare:nNnF \l__xeCJK_listings_flag_int = 2
+          {
+            \int_compare:nNnTF \l__xeCJK_listings_flag_int = 3
+              { \bool_if:NT \l__xeCJK_punct_breakable_bool { \lst@Output } }
+              { \lst@Output }
+          }
+        \lst@lettertrue
+      }
+      {
+        \lst@ifletter \lst@Output \else: \lst@OutputOther \lst@lettertrue \fi:
+        \bool_set_true:N \l__xeCJK_listings_letter_bool
+      }
+    \int_set:Nn \l__xeCJK_listings_flag_int { 2 }
+    \__xeCJK_listings_append:nN {#1} #2
+  }
+\cs_new_protected:Npn \__xeCJK_listings_process_FullRight:nN #1#2
+  {
+    \lst@whitespacefalse
+    \bool_if:NTF \l__xeCJK_listings_letter_bool
+      {
+        \int_compare:nNnT \l__xeCJK_listings_flag_int < 2
+          { \__xeCJK_punct_if_long:NT #2 { \lst@Output } }
+        \lst@lettertrue
+      }
+      {
+        \lst@ifletter \lst@Output \else: \lst@OutputOther \lst@lettertrue \fi:
+        \bool_set_true:N \l__xeCJK_listings_letter_bool
+      }
+    \int_set:Nn \l__xeCJK_listings_flag_int { 3 }
+    \__xeCJK_listings_append:nN {#1} #2
+  }
+\int_new:N \l__xeCJK_listings_flag_int
+\cs_set_protected:Npn \lst@AppendLetter
+  {
+    \bool_if:NTF \l__xeCJK_listings_letter_bool
+      {
+        \lst@Output \lst@lettertrue
+        \bool_set_false:N \l__xeCJK_listings_letter_bool
+      }
+      { \reverse_if:N \lst@ifletter \lst@OutputOther \lst@lettertrue \fi: }
+    \lst@ifbreaklines \int_zero:N \l__xeCJK_listings_flag_int \fi:
+    \lst@Append
+  }
+\cs_set_protected:Npn \lst@AppendOther
+  {
+    \bool_if:NTF \l__xeCJK_listings_letter_bool
+      {
+        \lst@Output \lst@letterfalse
+        \bool_set_false:N \l__xeCJK_listings_letter_bool
+      }
+      { \lst@ifletter \lst@Output \lst@letterfalse \fi: }
+    \lst@ifbreaklines \int_zero:N \l__xeCJK_listings_flag_int \fi:
+    \tex_futurelet:D \lst@lastother \lst@Append
+  }
+\cs_new_protected:Npn \__xeCJK_listings_process_CM:nN
+  {
+    \reverse_if:N \lst@ifflexible
+      \bool_gset_true:N \g__xeCJK_listings_CM_bool
+    \fi:
+    \__xeCJK_listings_process_letter:nN
+  }
+\cs_new_protected:Npn \__xeCJK_listings_output_CM:
+  {
+    \reverse_if:N \lst@ifflexible
+      \bool_if:NT \g__xeCJK_listings_CM_bool
+        {
+          \bool_gset_false:N \g__xeCJK_listings_CM_bool
+          \xeCJK_cs_clear:N \lst@FillOutputBox
+          \cs_set_eq:NN \CJKglue \tex_hss:D
+        }
+    \fi:
+  }
+\bool_new:N \g__xeCJK_listings_CM_bool
+\cs_new_protected:Npn \__xeCJK_listings_peek_active_loop:TF #1#2#3
+  {
+    \token_if_active:NTF #3
+      { #1#3 }
+      {
+        \token_if_cs:NTF #3
+          { #2#3 }
+          {
+            \int_compare:nNnTF { `#3 } > { \l__xeCJK_listings_max_char_int }
+              { \__xeCJK_listings_peek_active_loop:TF { #1#3 } { #2#3 } }
+              { #2#3 }
+          }
+      }
+  }
+\cs_set_eq:NN \lst@IfNextCharActive \__xeCJK_listings_peek_active_loop:TF
+\cs_new_protected:Npn \__xeCJK_listings_rescan:Nn #1#2
+  {
+    \__xeCJK_listings_set_escape:
+    \tl_set:Nn \l__xeCJK_tmp_tl {#2}
+    \__xeCJK_listings_escape_backslash:
+    \tl_set_rescan:Nno #1 { } { \l__xeCJK_tmp_tl }
+  }
+\cs_new_protected:Npn \__xeCJK_listings_inside_convert:nw #1 ~ \@empty
+  {
+    \__xeCJK_listings_rescan:Nn \l__xeCJK_tmp_tl {#1}
+    \tl_put_right:No \lst@arg { \l__xeCJK_tmp_tl }
+  }
+\cs_set_eq:NN \lst@InsideConvert@ \__xeCJK_listings_inside_convert:nw
+\cs_new_protected:Npn \__xeCJK_listings_inline_group:w
+  {
+    \exp_after:wN \__xeCJK_listings_inline_group:n
+    \exp_after:wN { \if_int_compare:w `} = \c_zero_int \fi:
+  }
+\cs_set_eq:NN \lst@InlineGJ \__xeCJK_listings_inline_group:w
+\cs_new_protected:Npn \__xeCJK_listings_inline_group:n #1
+  {
+    \__xeCJK_listings_rescan:Nn \lst@arg {#1}
+    \lst@InlineGJEnd
+  }
+\group_begin:
+\cs_set:Npn \__xeCJK_tmp:w #1
+  {
+    \group_end:
+    \cs_new_protected:Npn \__xeCJK_listings_set_escape:
+      { \xeCJK_swap_cs:NN #1 \__xeCJK_listings_escape:N }
+    \cs_new_protected:Npn \__xeCJK_listings_escape:N ##1
+      { \cs_if_eq:NNTF #1 ##1 { \__xeCJK_listings_escape:N } {##1} }
+  }
+\use:n
+  {
+    \char_set_catcode_active:N \\
+    \__xeCJK_tmp:w
+  }
+  { \ }
+\cs_new_protected:Npx \__xeCJK_listings_escape_backslash:
+  {
+    \tl_replace_all:Nnn \exp_not:N \l__xeCJK_tmp_tl
+      { \c_backslash_str }
+      { \c_backslash_str \c_backslash_str }
+  }
+%% 
+%%     This package consists of the files xeCJK.dtx,
+%%                                        full-stop.map,
+%%                                        fullwidth-stop.map,
+%%                                        han-simp.map,
+%%                                        han-trad.map,
+%%                  and the derived files xeCJK.pdf,
+%%                                        xeCJK.sty,
+%%                                        xeCJK.cfg,
+%%                                        xeCJK.ins,
+%%                                        xeCJKfntef.sty,
+%%                                        xeCJK-listings.sty,
+%%                                        xunicode-addon.sty,
+%%                                        xunicode-extra.def,
+%%                                        xeCJK-example-autofake.tex,
+%%                                        xeCJK-example-fallback.tex,
+%%                                        xeCJK-example-subCJKblock.tex,
+%%                                        xeCJK-example-CJKecglue.tex,
+%%                                        xeCJK-example-checksingle.tex,
+%%                                        xeCJK-example-CJKfntef.tex,
+%%                                        xeCJK-example-punctstyle.tex,
+%%                                        xeCJK-example-verbatim.tex,
+%%                                        xeCJK-example-CM.tex,
+%%                                        xeCJK-example-listings.tex,
+%%                                        xeCJK-example-mathblock.tex,
+%%                                        xunicode-symbols.tex,
+%%                                        xunicode-commands.tex,
+%%                                        xunicode-combine-marks.tex,
+%%                                        xunicode-symbols.pdf,
+%%                                        full-stop.tec,
+%%                                        fullwidth-stop.tec,
+%%                                        han-simp.tec,
+%%                                        han-trad.tec, and
+%%                                        README.md.
+%%
+%% End of file `xeCJK-listings.sty'.

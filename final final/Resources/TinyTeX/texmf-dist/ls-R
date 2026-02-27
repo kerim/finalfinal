@@ -6895,6 +6895,7 @@ auxhook
 base
 bookmark
 booktabs
+ctex
 epstopdf-pkg
 etoolbox
 euenc
@@ -7155,6 +7156,9 @@ bookmark.sty
 
 ./tex/latex/booktabs:
 booktabs.sty
+
+./tex/latex/ctex:
+ctexhook.sty
 
 ./tex/latex/epstopdf-pkg:
 epstopdf-base.sty
@@ -7995,8 +7999,17 @@ testfont.tex
 webmac.tex
 
 ./tex/xelatex:
+xecjk
 xetexconfig
 xunicode
+
+./tex/xelatex/xecjk:
+xeCJK-listings.sty
+xeCJK.cfg
+xeCJK.sty
+xeCJKfntef.sty
+xunicode-addon.sty
+xunicode-extra.def
 
 ./tex/xelatex/xetexconfig:
 crop.cfg

@@ -118,6 +118,18 @@ The script uses `basedOnDependencyAnalysis: false` so it runs even after a branc
 
 ## XeTeX / PDF Export
 
+### Unicode Range Scanning Over NLLanguageRecognizer for Script Detection
+
+**Problem:** `NLLanguageRecognizer` with a percentage-based confidence threshold misses non-Latin scripts in predominantly English documents. A paper with scattered Chinese terms (`九年一貫課程`, `原住民族教育法`) at ~3-5% of content falls below the 5% threshold, so the recognizer classifies the document as English-only and no CJK font gets passed to pandoc.
+
+**Root Cause:** Language detection is probabilistic and percentage-based — it answers "what language IS this document?" Not "does this document CONTAIN characters that need special font support?"
+
+**Solution:** Use Unicode scalar range scanning (Tier 1) to detect WHETHER non-Latin scripts are present. Use NLLanguageRecognizer (Tier 2) only to disambiguate WHICH CJK font when CJK ideographs are found without unambiguous script markers (Hiragana/Katakana/Hangul).
+
+**General principle:** For font selection, presence detection (Unicode ranges) is more reliable than statistical language classification. A single CJK character in an English document still needs a CJK font to render correctly.
+
+See [export.md](../architecture/export.md) for the full font detection architecture.
+
 ### Use -output-driver for Paths with Spaces
 
 **Problem:** When the app bundle path contains spaces (e.g., "final final.app"), xelatex fails with error 32512 when calling xdvipdfmx:

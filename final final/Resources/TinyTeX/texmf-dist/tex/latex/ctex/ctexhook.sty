@@ -1,0 +1,189 @@
+%%
+%% This is file `ctexhook.sty',
+%% generated with the docstrip utility.
+%%
+%% The original source files were:
+%%
+%% ctex.dtx  (with options: `ctexhook')
+%% 
+%%     Copyright (C) 2003--2022
+%%     CTEX.ORG and any individual authors listed in the documentation.
+%% ---------------------------------------------------------------------
+%% 
+%%     This work may be distributed and/or modified under the
+%%     conditions of the LaTeX Project Public License, either
+%%     version 1.3c of this license or (at your option) any later
+%%     version. This version of this license is in
+%%        http://www.latex-project.org/lppl/lppl-1-3c.txt
+%%     and the latest version of this license is in
+%%        http://www.latex-project.org/lppl.txt
+%%     and version 1.3 or later is part of all distributions of
+%%     LaTeX version 2005/12/01 or later.
+%% 
+%%     This work has the LPPL maintenance status "maintained".
+%% 
+%% ---------------------------------------------------------------------
+%% 
+\NeedsTeXFormat{LaTeX2e}
+\RequirePackage{expl3}
+\GetIdInfo$Id: ctex.dtx 13a2256 2022-07-14 18:54:09 +0800 Qing Lee <sobenlee@gmail.com> $
+  {Document and package hooks (CTEX)}
+\ProvidesExplPackage{ctexhook}
+  {\ExplFileDate}{2.5.10}{\ExplFileDescription}
+\cs_new:Npn \ctex_if_format_at_least:nTF
+  { \@ifl@t@r \fmtversion }
+\cs_new_protected:Npn \ctex_file_input:n #1
+  {
+    \ctex_push_file:
+      \file_input:n {#1}
+    \ctex_pop_file:
+  }
+\bool_if_exist:NTF \l__kernel_expl_bool
+  {
+    \cs_new_protected:Npn \ctex_push_file:
+      {
+        \seq_gpush:Nx \g__ctex_expl_status_seq
+          { \bool_if:NTF \l__kernel_expl_bool { 1 } { 0 } }
+        \bool_set_false:N \l__kernel_expl_bool
+        \cctab_begin:N \c__ctex_package_cctab
+      }
+    \cs_new_protected:Npn \ctex_pop_file:
+      {
+        \cctab_end:
+        \seq_gpop:NN \g__ctex_expl_status_seq \l__ctex_expl_status_tl
+        \int_if_odd:nTF { \l__ctex_expl_status_tl }
+          { \bool_set_true:N  \l__kernel_expl_bool }
+          { \bool_set_false:N \l__kernel_expl_bool }
+      }
+    \tl_new:N \l__ctex_expl_status_tl
+    \seq_new:N \g__ctex_expl_status_seq
+  }
+  {
+    \cs_new_protected:Npn \ctex_push_file:
+      { \cctab_begin:N \c__ctex_package_cctab }
+    \cs_new_protected:Npn \ctex_pop_file:
+      { \cctab_end: }
+  }
+\cctab_const:Nn \c__ctex_package_cctab
+  {
+    \cctab_select:N \c_document_cctab
+    \char_set_catcode_letter:n { 64 }
+  }
+\cs_new_protected:Npn \ctex_disable_package:n #1
+  {
+    \@ifpackageloaded {#1}
+      { \msg_error:nnxx }
+      { \__ctex_disable_package_aux:nnnn }
+      { ctexhook } { disable-package } {#1} { \@currname }
+  }
+\cs_new_protected:Npx \__ctex_disable_package_aux:nnnn #1#2#3#4
+  {
+    \cs_if_exist:NTF \disable@package@load
+      {
+        \exp_args:Nnx \exp_not:N \disable@package@load {#3}
+          { \msg_warning:nnnn {#1} {#2} {#3} {#4} }
+      }
+      { \tl_const:cn { ver@ #3 . \exp_not:N \@pkgextension } { 9999/99/99 } }
+  }
+\msg_new:nnn { ctexhook } { disable-package }
+  { Package~`#1'~can~not~be~loaded~with~`#2'. }
+\ctex_if_format_at_least:nTF { 2020/10/01 }
+  {
+    \cs_new_protected:Npn \ctex_replace_package:nn #1#2
+      {
+        \declare@file@substitution
+          { #1 . \@pkgextension }
+          { #2 . \@pkgextension }
+      }
+  }
+  {
+    \cs_new_protected:Npn \ctex_replace_package:nn
+      { \msg_warning:nnnn { ctexhook } { replace-package-invalid } }
+    \msg_new:nnn { ctexhook } { replace-package-invalid }
+      {
+        \token_to_str:N \ctex_replace_package:nn \{#1\}\{#2\}~is~invalid~
+        before~LaTeX~2020-10-01.
+      }
+  }
+\cs_new_protected:Npn \ctex_at_begin_package:nn #1
+  {
+    \@ifpackageloaded {#1}
+      { \__ctex_package_loaded_warning:nn {#1} }
+      { \ctex_gadd_package_hook:nnn { before } {#1} }
+  }
+\cs_new_protected:Npn \__ctex_package_loaded_warning:nn #1#2
+  { \msg_warning:nnx { ctexhook } { invalid-hook } {#1} }
+\msg_new:nnn { ctexhook } { invalid-hook }
+  {
+    Package~`#1'~is~loaded. \\
+    \token_to_str:N \ctex_at_begin_package:nn \{#1\}\{...\}~is~invalid.
+  }
+\cs_new_protected:Npn \ctex_at_end_package:nn #1
+  {
+    \@ifpackageloaded {#1}
+      { \use:n }
+      { \ctex_gadd_package_hook:nnn { after } {#1} }
+  }
+\ctex_if_format_at_least:nTF { 2020/10/01 }
+  {
+    \cs_new_protected:Npx \ctex_gadd_ltxhook:nn #1
+      { \hook_gput_code:nnn {#1} { \c_novalue_tl } }
+    \cs_new_protected:Npn \ctex_at_end_preamble:n
+      { \ctex_gadd_ltxhook:nn { begindocument/before } }
+    \cs_new_protected:Npn \ctex_after_end_preamble:n
+      { \ctex_gadd_ltxhook:nn { begindocument/end } }
+    \cs_new_protected:Npx \ctex_gadd_package_hook:nnn #1#2
+      {
+        \ctex_if_format_at_least:nTF { 2021/11/15 }
+          { \ctex_gadd_ltxhook:nn { package/#2/#1 } }
+          { \ctex_gadd_ltxhook:nn { package/#1/#2 } }
+      }
+    \file_input_stop:
+  }
+  { }
+\cs_new_protected:Npn \ctex_at_end_preamble:n
+  { \tl_gput_right:Nn \g__ctex_end_preamble_hook_tl }
+\cs_new_protected:Npn \ctex_after_end_preamble:n
+  { \tl_gput_right:Nn \g__ctex_after_end_preamble_hook_tl }
+\cs_new_protected:Npn \CTEX@document@left@hook
+  { \group_end: \g__ctex_end_preamble_hook_tl \group_begin: }
+\cs_new_protected:Npn \CTEX@document@right@hook
+  { \scan_stop: \g__ctex_after_end_preamble_hook_tl \tex_ignorespaces:D }
+\cs_set_nopar:Npx \document
+  {
+    \CTEX@document@left@hook
+    \exp_not:o { \document }
+    \CTEX@document@right@hook
+  }
+\tl_new:N \g__ctex_end_preamble_hook_tl
+\tl_new:N \g__ctex_after_end_preamble_hook_tl
+\cs_new_protected:Npn \ctex_gadd_package_hook:nnn #1#2
+  { \ctex_gadd_hook:cn { g__ctex_at_ #1 _ #2 _hook_tl } }
+\cs_new_protected:Npn \ctex_gadd_hook:Nn #1
+  {
+    \tl_if_exist:NF #1 { \tl_new:N #1 }
+    \tl_gput_right:Nn #1
+  }
+\cs_generate_variant:Nn \ctex_gadd_hook:Nn { c }
+\cs_new_protected:Npn \ctex_use_package_hook:nn #1#2
+  {
+    \group_begin: \exp_args:NNc \group_end:
+    \__ctex_use_package_hook_aux:N { g__ctex_at_ #1 _ #2 _hook_tl }
+  }
+\cs_new_protected:Npn \__ctex_use_package_hook_aux:N #1
+  { \cs_if_exist_use:NT #1 { \cs_undefine:N #1 } }
+\tl_put_right:Nn \@reset@ptions { \CTEX@reset@ptions@hook }
+\cs_new_protected:Npn \CTEX@reset@ptions@hook
+  {
+    \cs_if_eq:NNT \@currext \@pkgextension
+      { \ctex_use_package_hook:nn { before } { \@currname } }
+  }
+\tl_put_left:Nn \@popfilename { \CTEX@popfilename@hook }
+\cs_new_protected:Npn \CTEX@popfilename@hook
+  {
+    \cs_if_eq:NNT \@currext \@pkgextension
+      { \ctex_use_package_hook:nn { after } { \@currname } }
+  }
+%% 
+%%
+%% End of file `ctexhook.sty'.
