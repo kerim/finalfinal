@@ -194,6 +194,14 @@ extension MilkdownEditor.Coordinator {
 
     // Handle JS messages from WKScriptMessageHandler
     nonisolated func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        // Hot path: push-based content change from JS (replaces polling as primary)
+        if message.name == "contentChanged", let content = message.body as? String {
+            Task { @MainActor in
+                self.handleContentPush(content)
+            }
+            return
+        }
+
         #if DEBUG
         if message.name == "errorHandler", let body = message.body as? [String: Any] {
             let msgType = body["type"] as? String ?? "unknown"
@@ -634,9 +642,36 @@ extension MilkdownEditor.Coordinator {
         }
     }
 
+    // MARK: - Push-based content messaging
+
+    /// Handle content pushed from JS via window.webkit.messageHandlers.contentChanged
+    /// This is the primary content sync path (replaces 500ms polling)
+    func handleContentPush(_ content: String) {
+        guard !self.isCleanedUp, self.isEditorReady else { return }
+        guard !self.isResettingContentBinding.wrappedValue else { return }
+        guard self.contentState == .idle else { return }
+
+        // Grace period: 200ms for push-based flow (reduced from 600ms polling)
+        let timeSincePush = Date().timeIntervalSince(self.lastPushTime)
+        if timeSincePush < 0.2 && content != self.lastPushedContent { return }
+        guard content != self.lastPushedContent else { return }
+
+        // Corruption check (Milkdown-specific)
+        let pushedFirstLine = self.lastPushedContent.components(separatedBy: "\n").first ?? ""
+        let receivedFirstLine = content.components(separatedBy: "\n").first ?? ""
+        if pushedFirstLine.hasPrefix("#") && receivedFirstLine.hasPrefix("<br") { return }
+
+        self.lastReceivedFromEditor = Date()
+        self.lastPushedContent = content
+        self.contentBinding.wrappedValue = content
+        self.onContentChange(content)
+    }
+
+    // MARK: - 3s Fallback Polling (stats + section title only)
+
     func startPolling() {
         pollingTimer?.invalidate()
-        pollingTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+        pollingTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.pollContent()
             }
@@ -650,89 +685,22 @@ extension MilkdownEditor.Coordinator {
         guard !isResettingContentBinding.wrappedValue else { return }
 
         // Skip polling during content transitions (zoom, hierarchy enforcement)
-        // This prevents stale content from being read during transitions
         guard contentState == .idle else { return }
 
-        webView.evaluateJavaScript("window.FinalFinal.getContent()") { [weak self] result, _ in
+        // Batched poll: stats + section title in a single JS call
+        webView.evaluateJavaScript("window.FinalFinal.getPollData()") { [weak self] result, _ in
             guard let self, !self.isCleanedUp,
-                  let content = result as? String else { return }
+                  let jsonString = result as? String,
+                  let data = jsonString.data(using: .utf8),
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
 
-            // Double-check reset flag in callback (may have changed)
-            guard !self.isResettingContentBinding.wrappedValue else { return }
-
-            // Double-check contentState in callback (may have changed)
-            guard self.contentState == .idle else { return }
-
-            if content.isEmpty && !self.contentBinding.wrappedValue.isEmpty {
-                #if DEBUG
-                print("[MilkdownEditor] pollContent: Accepting empty content (user deleted all)")
-                #endif
+            if let stats = json["stats"] as? [String: Any],
+               let words = stats["words"] as? Int,
+               let chars = stats["characters"] as? Int {
+                self.onStatsChange(words, chars)
             }
 
-            // Grace period guard: don't overwrite recent pushes (race condition fix)
-            // Extended from 300ms to 600ms to better match polling interval + processing time
-            let timeSincePush = Date().timeIntervalSince(self.lastPushTime)
-            if timeSincePush < 0.6 && content != self.lastPushedContent {
-                #if DEBUG
-                let pollPreview = String(content.prefix(50)).replacingOccurrences(of: "\n", with: "\\n")
-                let pushPreview = String(self.lastPushedContent.prefix(50)).replacingOccurrences(of: "\n", with: "\\n")
-                print("[MilkdownEditor] pollContent: BLOCKED during grace period (\(String(format: "%.2f", timeSincePush))s)")
-                print("[MilkdownEditor]   polled: \(pollPreview)...")
-                print("[MilkdownEditor]   pushed: \(pushPreview)...")
-                #endif
-                return  // JS hasn't processed our push yet
-            }
-
-            guard content != self.lastPushedContent else { return }
-
-            // DEFENSIVE: Reject clearly corrupted content from Milkdown serialization bugs
-            // If we pushed a header and got back `<br />`, Milkdown's getMarkdown() is broken
-            let pushedFirstLine = self.lastPushedContent.components(separatedBy: "\n").first ?? ""
-            let polledFirstLine = content.components(separatedBy: "\n").first ?? ""
-
-            if pushedFirstLine.hasPrefix("#") && polledFirstLine.hasPrefix("<br") {
-                print("[MilkdownEditor] REJECTED: Milkdown returned corrupted content")
-                print("[MilkdownEditor]   pushed first line: '\(pushedFirstLine)'")
-                print("[MilkdownEditor]   polled first line: '\(polledFirstLine)'")
-                return  // Don't accept corrupted content
-            }
-
-            // DIAGNOSTIC: Detect unexpected content length changes (e.g., missing heading markers)
-            // This helps diagnose the section deletion cascade bug
-            let lengthDiff = content.count - self.lastPushedContent.count
-            if abs(lengthDiff) > 0 && abs(lengthDiff) <= 10 {
-                // Small length change (1-10 chars) might indicate missing # markers
-                if pushedFirstLine != polledFirstLine {
-                    print("[MilkdownEditor] DIAGNOSTIC: First line changed unexpectedly")
-                    print("[MilkdownEditor]   pushed first line: '\(pushedFirstLine)'")
-                    print("[MilkdownEditor]   polled first line: '\(polledFirstLine)'")
-                    print("[MilkdownEditor]   length diff: \(lengthDiff) chars")
-                }
-            }
-
-            #if DEBUG
-            // PASTE DEBUG: Log when poll updates the binding
-            let pollPreview = String(content.prefix(100)).replacingOccurrences(of: "\n", with: "\\n")
-            print("[MilkdownEditor] pollContent: Updating binding with \(content.count) chars: \(pollPreview)...")
-            print("[MilkdownEditor] pollContent: timeSincePush=\(String(format: "%.2f", timeSincePush))s")
-            #endif
-
-            self.lastReceivedFromEditor = Date()
-            self.lastPushedContent = content
-            self.contentBinding.wrappedValue = content
-            self.onContentChange(content)
-        }
-
-        webView.evaluateJavaScript("window.FinalFinal.getStats()") { [weak self] result, _ in
-            guard let self, !self.isCleanedUp,
-                  let dict = result as? [String: Any],
-                  let words = dict["words"] as? Int, let chars = dict["characters"] as? Int else { return }
-            self.onStatsChange(words, chars)
-        }
-
-        webView.evaluateJavaScript("window.FinalFinal.getCurrentSectionTitle()") { [weak self] result, _ in
-            guard let self, !self.isCleanedUp else { return }
-            self.onSectionChange((result as? String) ?? "")
+            self.onSectionChange((json["sectionTitle"] as? String) ?? "")
         }
     }
 }

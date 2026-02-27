@@ -6,7 +6,7 @@
  */
 
 import { syntaxTree } from '@codemirror/language';
-import { RangeSetBuilder } from '@codemirror/state';
+import { type ChangeDesc, RangeSetBuilder } from '@codemirror/state';
 import { Decoration, type DecorationSet, type EditorView, ViewPlugin, type ViewUpdate } from '@codemirror/view';
 import { ALL_HIDDEN_MARKERS_REGEX } from './anchor-plugin';
 import { getEditorView } from './editor-state';
@@ -40,17 +40,17 @@ let spellcheckResults: SpellcheckResult[] = [];
 let currentRequestId = 0;
 let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 let enabled = true;
+let resultsVersion = 0;
 
 // --- API exports ---
 
 export function setSpellcheckResults(requestId: number, results: SpellcheckResult[]): void {
   if (requestId !== currentRequestId) return;
   spellcheckResults = results;
+  resultsVersion++;
 
-  // Force CM6 to re-render decorations
   const view = getEditorView();
   if (view) {
-    // Dispatch a no-op transaction to trigger decoration rebuild
     view.dispatch({});
   }
 }
@@ -67,6 +67,7 @@ export function triggerSpellcheck(): void {
 export function disableSpellcheck(): void {
   enabled = false;
   spellcheckResults = [];
+  resultsVersion++;
   if (debounceTimer) {
     clearTimeout(debounceTimer);
     debounceTimer = null;
@@ -259,6 +260,7 @@ function triggerCheck(): void {
 
   if (segments.length === 0) {
     spellcheckResults = [];
+    resultsVersion++;
     view.dispatch({});
     return;
   }
@@ -282,6 +284,15 @@ function debouncedCheck(): void {
 
 function findResultAtPos(pos: number): SpellcheckResult | null {
   return spellcheckResults.find((r) => pos >= r.from && pos < r.to) ?? null;
+}
+
+// --- Position mapping ---
+
+function mapResultPositions(results: SpellcheckResult[], changes: ChangeDesc): SpellcheckResult[] {
+  if (changes.empty) return results;
+  return results
+    .map((r) => ({ ...r, from: changes.mapPos(r.from, 1), to: changes.mapPos(r.to, -1) }))
+    .filter((r) => r.from < r.to);
 }
 
 // --- Decoration builder ---
@@ -318,17 +329,23 @@ export function spellcheckPlugin() {
     ViewPlugin.fromClass(
       class {
         decorations: DecorationSet;
+        lastResultsVersion: number;
 
         constructor(view: EditorView) {
           this.decorations = buildDecorations(view);
+          this.lastResultsVersion = resultsVersion;
         }
 
         update(update: ViewUpdate) {
           if (update.docChanged) {
             debouncedCheck();
+            this.decorations = this.decorations.map(update.changes);
+            spellcheckResults = mapResultPositions(spellcheckResults, update.changes);
           }
-          // Always rebuild decorations (results may have changed)
-          this.decorations = buildDecorations(update.view);
+          if (resultsVersion !== this.lastResultsVersion) {
+            this.decorations = buildDecorations(update.view);
+            this.lastResultsVersion = resultsVersion;
+          }
         }
       },
       {
@@ -357,18 +374,22 @@ export function spellcheckPlugin() {
               suggestions: result.suggestions,
               message: result.message,
               onReplace: (replacement: string) => {
+                const current = spellcheckResults.find((r) => r.word === result.word && r.type === result.type);
+                if (!current) return;
                 view.dispatch({
-                  changes: { from: result.from, to: result.to, insert: replacement },
+                  changes: { from: current.from, to: current.to, insert: replacement },
                 });
               },
               onLearn: (word: string) => {
                 spellcheckResults = spellcheckResults.filter((r) => r.word !== word);
+                resultsVersion++;
                 view.dispatch({});
                 window.webkit?.messageHandlers?.spellcheck?.postMessage({ action: 'learn', word });
                 triggerCheck();
               },
               onIgnore: (word: string) => {
                 spellcheckResults = spellcheckResults.filter((r) => r.word !== word);
+                resultsVersion++;
                 view.dispatch({});
                 window.webkit?.messageHandlers?.spellcheck?.postMessage({ action: 'ignore', word });
                 triggerCheck();
@@ -397,18 +418,22 @@ export function spellcheckPlugin() {
                 suggestions: result.suggestions,
                 message: result.message,
                 onReplace: (replacement: string) => {
+                  const current = spellcheckResults.find((r) => r.word === result.word && r.type === result.type);
+                  if (!current) return;
                   view.dispatch({
-                    changes: { from: result.from, to: result.to, insert: replacement },
+                    changes: { from: current.from, to: current.to, insert: replacement },
                   });
                 },
                 onLearn: (word: string) => {
                   spellcheckResults = spellcheckResults.filter((r) => r.word !== word);
+                  resultsVersion++;
                   view.dispatch({});
                   window.webkit?.messageHandlers?.spellcheck?.postMessage({ action: 'learn', word });
                   triggerCheck();
                 },
                 onIgnore: (word: string) => {
                   spellcheckResults = spellcheckResults.filter((r) => r.word !== word);
+                  resultsVersion++;
                   view.dispatch({});
                   window.webkit?.messageHandlers?.spellcheck?.postMessage({ action: 'ignore', word });
                   triggerCheck();
@@ -432,18 +457,22 @@ export function spellcheckPlugin() {
               isPicky: result.isPicky || false,
               suggestions: result.suggestions,
               onReplace: (suggestion: string) => {
+                const current = spellcheckResults.find((r) => r.word === result.word && r.type === result.type);
+                if (!current) return;
                 view.dispatch({
-                  changes: { from: result.from, to: result.to, insert: suggestion },
+                  changes: { from: current.from, to: current.to, insert: suggestion },
                 });
               },
               onIgnore: () => {
                 spellcheckResults = spellcheckResults.filter((r) => r !== result);
+                resultsVersion++;
                 view.dispatch({});
                 window.webkit?.messageHandlers?.spellcheck?.postMessage({ action: 'ignore', word: result.word });
                 triggerCheck();
               },
               onDisableRule: (ruleId: string) => {
                 spellcheckResults = spellcheckResults.filter((r) => r.ruleId !== ruleId);
+                resultsVersion++;
                 view.dispatch({});
                 window.webkit?.messageHandlers?.spellcheck?.postMessage({ action: 'disableRule', ruleId });
               },

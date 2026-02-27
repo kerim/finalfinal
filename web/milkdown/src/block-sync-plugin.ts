@@ -273,11 +273,11 @@ function detectChanges(
       oldBlock.markdownFragment !== newBlock.markdownFragment ||
       oldBlock.headingLevel !== newBlock.headingLevel
     ) {
-      // Block was updated
+      // Block was updated — use pre-computed markdownFragment from snapshot
       state.pendingUpdates.set(id, {
         id,
         textContent: newBlock.textContent,
-        markdownFragment: nodeToMarkdownFragment(newBlock.node),
+        markdownFragment: newBlock.markdownFragment,
         headingLevel: newBlock.headingLevel,
       });
     }
@@ -302,13 +302,17 @@ function detectChanges(
         tempId: id,
         blockType: newBlock.blockType,
         textContent: newBlock.textContent,
-        markdownFragment: nodeToMarkdownFragment(newBlock.node),
+        markdownFragment: newBlock.markdownFragment,
         headingLevel: newBlock.headingLevel,
         afterBlockId,
       });
     }
   }
 }
+
+// Debounce state for detectChanges() — keeps snapshotBlocks() synchronous
+let detectTimer: ReturnType<typeof setTimeout> | null = null;
+let pendingOldSnapshot: Map<string, BlockSnapshot> | null = null;
 
 // Wrap ProseMirror plugin with $prose for Milkdown compatibility
 export const blockSyncPlugin = $prose(() => {
@@ -333,18 +337,36 @@ export const blockSyncPlugin = $prose(() => {
           return value;
         }
 
-        // Take new snapshot
+        // Snapshot is synchronous — needs current block IDs and doc positions
         const newSnapshot = snapshotBlocks(newState.doc);
 
-        // Detect changes
-        detectChanges(value.lastSnapshot, newSnapshot, value);
+        // Preserve the oldest un-processed snapshot across debounce resets.
+        // Without this, rapid keystrokes A→B→C would only diff B→C,
+        // losing an insert that happened at A (e.g., pressing Enter).
+        if (detectTimer) {
+          clearTimeout(detectTimer);
+          // Keep existing pendingOldSnapshot from first keystroke in burst
+        } else {
+          // First keystroke in this debounce window
+          pendingOldSnapshot = value.lastSnapshot;
+        }
 
-        // Update snapshot
+        const capturedOld = pendingOldSnapshot!;
+
+        // Return proper new state first (immutable contract)
         const newValue = {
           ...value,
           lastSnapshot: newSnapshot,
         };
         currentState = newValue;
+
+        detectTimer = setTimeout(() => {
+          if (currentState) {
+            detectChanges(capturedOld, newSnapshot, currentState);
+          }
+          pendingOldSnapshot = null;
+          detectTimer = null;
+        }, 100);
 
         return newValue;
       },
