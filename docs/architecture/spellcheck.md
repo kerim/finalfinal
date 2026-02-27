@@ -124,6 +124,35 @@ When a Premium user clicks "Learn Spelling", the word is added to both the local
 
 ---
 
+## Decoration Position Mapping
+
+Spellcheck results contain absolute document positions (`{from, to}`). When the user types, positions after the edit shift, but stored results still reference the old positions. Without mapping, decorations "travel" to wrong words until the next debounced recheck (400ms).
+
+Both editors use their native position mapping to keep decorations synchronized with document changes as they happen:
+
+**Milkdown (ProseMirror):** The plugin uses `state: { init(), apply() }` instead of stateless `props.decorations()`. On each `tr.docChanged`, `apply()` maps both the `DecorationSet` and the module-level results array:
+
+```
+apply(tr, decorationSet):
+  if tr has spellcheck meta → rebuild DecorationSet from fresh results
+  if tr.docChanged → map existing DecorationSet via tr.mapping; map results array
+  else → return unchanged
+```
+
+Fresh results are delivered via `tr.setMeta(spellcheckPluginKey, results)` rather than no-op transactions. This ensures `apply()` can distinguish "new results arrived" from "document changed" from "cursor moved."
+
+**CodeMirror:** The `ViewPlugin` maps decorations on `update.docChanged` and only rebuilds from scratch when a `resultsVersion` counter changes (incremented whenever results are mutated):
+
+```
+update(update):
+  if docChanged → map decorations + map results array; trigger debounced recheck
+  if resultsVersion changed → full rebuild from current results
+```
+
+**Position mapping bias:** Both editors use asymmetric bias values when mapping result positions: `from` maps with +1 (don't extend left) and `to` maps with -1 (don't extend right). This prevents underlines from growing to cover newly typed characters. Collapsed ranges (where the underlined text was fully deleted) are filtered out.
+
+**Stale closure protection:** Menu callbacks (`onReplace`, `onLearn`, `onIgnore`) capture the `result` object at menu-open time. If the user types between opening the menu and clicking a suggestion, the captured positions are stale. All `onReplace` callbacks re-lookup the result from the current mapped `spellcheckResults` array by matching on `word + type`, ensuring replacements target the correct text.
+
 ## Race Prevention
 
 - **Request ID**: Monotonically increasing counter; web editors discard stale results

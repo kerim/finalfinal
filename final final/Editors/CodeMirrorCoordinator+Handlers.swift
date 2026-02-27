@@ -285,6 +285,14 @@ extension CodeMirrorEditor.Coordinator {
 
     // Handle JS error messages and citation picker requests
     nonisolated func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        // Hot path: push-based content change from JS (replaces polling as primary)
+        if message.name == "contentChanged", let content = message.body as? String {
+            Task { @MainActor in
+                self.handleContentPush(content)
+            }
+            return
+        }
+
         #if DEBUG
         if message.name == "errorHandler", let body = message.body as? [String: Any] {
             let msgType = body["type"] as? String ?? "unknown"
@@ -631,10 +639,32 @@ extension CodeMirrorEditor.Coordinator {
         }
     }
 
-    // === 500ms content polling ===
+    // MARK: - Push-based content messaging
+
+    /// Handle content pushed from JS via window.webkit.messageHandlers.contentChanged
+    func handleContentPush(_ content: String) {
+        guard !self.isCleanedUp, self.isEditorReady else { return }
+        guard !self.isResettingContentBinding.wrappedValue else { return }
+        guard self.contentState == .idle else { return }
+
+        // Grace period: 150ms for push-based flow (reduced from 300ms polling)
+        let timeSincePush = Date().timeIntervalSince(self.lastPushTime)
+        if timeSincePush < 0.15 && content != self.lastPushedContent { return }
+        guard content != self.lastPushedContent else { return }
+
+        self.lastReceivedFromEditor = Date()
+        self.lastPushedContent = content
+
+        // Update binding with raw content (includes anchors)
+        self.contentBinding.wrappedValue = content
+        self.onContentChange(content)
+    }
+
+    // MARK: - 3s Fallback Polling (stats + section title only)
+
     func startPolling() {
         pollingTimer?.invalidate()
-        pollingTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+        pollingTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.pollContent()
             }
@@ -648,50 +678,22 @@ extension CodeMirrorEditor.Coordinator {
         guard !isResettingContentBinding.wrappedValue else { return }
 
         // Skip polling during content transitions (zoom, hierarchy enforcement, drag)
-        // This prevents stale content from overwriting newly rebuilt content
         guard contentState == .idle else { return }
 
-        // Get raw content (including hidden anchors) for the binding
-        // This preserves anchors so they travel with content during mode switches
-        webView.evaluateJavaScript("window.FinalFinal.getContentRaw()") { [weak self] result, _ in
+        // Batched poll: stats + section title in a single JS call
+        webView.evaluateJavaScript("window.FinalFinal.getPollData()") { [weak self] result, _ in
             guard let self, !self.isCleanedUp,
-                  let rawContent = result as? String else { return }
+                  let jsonString = result as? String,
+                  let data = jsonString.data(using: .utf8),
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
 
-            // Double-check reset flag in callback (may have changed)
-            guard !self.isResettingContentBinding.wrappedValue else { return }
-
-            // Double-check contentState in callback (may have changed during async)
-            guard self.contentState == .idle else { return }
-
-            // Grace period guard: don't overwrite recent pushes (race condition fix)
-            let timeSincePush = Date().timeIntervalSince(self.lastPushTime)
-            if timeSincePush < 0.3 && rawContent != self.lastPushedContent {
-                return  // JS hasn't processed our push yet
+            if let stats = json["stats"] as? [String: Any],
+               let words = stats["words"] as? Int,
+               let chars = stats["characters"] as? Int {
+                self.onStatsChange(words, chars)
             }
 
-            guard rawContent != self.lastPushedContent else { return }
-
-            self.lastReceivedFromEditor = Date()
-            self.lastPushedContent = rawContent
-
-            // Update binding with raw content (includes anchors)
-            self.contentBinding.wrappedValue = rawContent
-
-            // Call change handler with raw content
-            // The ContentView callback will strip anchors for section sync
-            self.onContentChange(rawContent)
-        }
-
-        webView.evaluateJavaScript("window.FinalFinal.getStats()") { [weak self] result, _ in
-            guard let self, !self.isCleanedUp,
-                  let dict = result as? [String: Any],
-                  let words = dict["words"] as? Int, let chars = dict["characters"] as? Int else { return }
-            self.onStatsChange(words, chars)
-        }
-
-        webView.evaluateJavaScript("window.FinalFinal.getCurrentSectionTitle()") { [weak self] result, _ in
-            guard let self, !self.isCleanedUp else { return }
-            self.onSectionChange((result as? String) ?? "")
+            self.onSectionChange((json["sectionTitle"] as? String) ?? "")
         }
     }
 

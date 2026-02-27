@@ -205,3 +205,64 @@ Editor.make()
 The plugin is bundled with `@milkdown/kit` — no extra install needed. It intercepts `handlePaste`: if the clipboard contains plain text only (no HTML), it parses the text as markdown via the editor's parser and converts it to ProseMirror nodes. It also handles copy by serializing ProseMirror content back to clean markdown.
 
 **Legacy workarounds:** Two workarounds existed for symptoms of this missing plugin — `api-content.ts` unescaping `\#` heading syntax, and `block-sync-plugin.ts` detecting heading syntax inside paragraph nodes. These were kept as safety nets but may be removable now.
+
+---
+
+## Stateless Decorations Cause "Traveling" Artifacts
+
+**Problem:** Spell check underlines appeared on wrong words during typing. They "traveled" across the document and only settled on the correct words after typing stopped for ~400ms.
+
+**Root Cause:** The plugin used stateless `props.decorations(state)` which rebuilt the `DecorationSet` from a module-level results array on every state change. The results array held absolute document positions computed before the edit. Each keystroke shifts positions after the edit point, but the stored positions remained unchanged.
+
+**Solution:** Convert to plugin `state` with `init()`/`apply()`. On `tr.docChanged`, use `DecorationSet.map(tr.mapping, tr.doc)` to shift decoration positions. Also map the module-level results array (for click handlers) with asymmetric bias: `from` maps with +1 (don't extend left), `to` maps with -1 (don't extend right).
+
+Deliver fresh results via `tr.setMeta(pluginKey, results)` instead of no-op transactions. This lets `apply()` distinguish "new results" from "document changed" from "cursor moved."
+
+```typescript
+// Wrong — rebuilds from stale positions on every state change
+props: {
+  decorations(state) {
+    return DecorationSet.create(state.doc, resultsToDecorations(results));
+  }
+}
+
+// Right — maps positions through document changes
+state: {
+  init() { return DecorationSet.empty; },
+  apply(tr, decorationSet) {
+    if (tr.getMeta(pluginKey) !== undefined)
+      return buildDecorationSet(tr.getMeta(pluginKey), tr.doc);
+    if (tr.docChanged)
+      return decorationSet.map(tr.mapping, tr.doc);
+    return decorationSet;
+  }
+}
+```
+
+**General principle:** Any plugin storing absolute document positions must map them through transaction changes. ProseMirror's `DecorationSet.map()` and `Mapping.map()` exist exactly for this purpose. Stateless `props.decorations()` is only safe when decorations are derived purely from the current document state (e.g., syntax highlighting), not from external data with stored positions.
+
+---
+
+## Debounce Plugin `apply()` Side Effects, Not State Updates
+
+**Problem:** The block-sync plugin called `detectChanges()` synchronously inside `apply()` on every doc-changing transaction. This ran string serialization (`nodeToMarkdownFragment`) per keystroke, adding main-thread overhead.
+
+**Root Cause:** ProseMirror's `apply()` must return the new plugin state synchronously — but the *side effects* of state changes (like network calls or heavy computations) don't need to run immediately.
+
+**Solution:** Separate the snapshot (synchronous, needed for correct state) from change detection (debounced side effect). Return the updated state immediately but defer `detectChanges()` with a 100ms timer. Preserve the oldest un-processed snapshot across debounce resets so rapid keystrokes A→B→C diff A→C, not B→C.
+
+```typescript
+apply(tr, value, _oldState, newState) {
+  const newSnapshot = snapshotBlocks(newState.doc); // synchronous — state needs this
+  if (detectTimer) clearTimeout(detectTimer);
+  else pendingOldSnapshot = value.lastSnapshot;     // preserve baseline from first keystroke
+  detectTimer = setTimeout(() => {
+    detectChanges(pendingOldSnapshot, newSnapshot, currentState); // deferred
+    pendingOldSnapshot = null;
+    detectTimer = null;
+  }, 100);
+  return { ...value, lastSnapshot: newSnapshot };
+}
+```
+
+**General principle:** In ProseMirror plugin `apply()`, keep state updates synchronous but debounce expensive side effects. When debouncing diffs, always compare against the oldest un-processed state, not the most recent, or intermediate changes are lost.

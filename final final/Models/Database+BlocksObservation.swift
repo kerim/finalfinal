@@ -52,6 +52,7 @@ extension ProjectDatabase {
                     .order(Block.Columns.isBibliography.asc, Block.Columns.sortOrder.asc)
                     .fetchAll(db)
             }
+            .removeDuplicates()
 
         return AsyncThrowingStream { continuation in
             let cancellable = observation.start(

@@ -15,11 +15,14 @@ setContent(markdown)                   // Load content into editor
 getContent()                           // Get current markdown
 setContentWithBlockIds(md, ids, opts)  // Atomic content + block ID push
 
-// --- Block sync (300ms polling) ---
+// --- Block sync (2s polling) ---
 hasBlockChanges()         // Check for pending changes (returns boolean)
 getBlockChanges()         // Get {updates, inserts, deletes} changeset
 syncBlockIds(ids)         // Align editor block order with DB IDs
 confirmBlockIds(mapping)  // Confirm temp->permanent ID mapping
+
+// --- Batched fallback poll (3s) ---
+getPollData()             // Returns JSON: {stats, sectionTitle}
 
 // --- UI ---
 setFocusMode(enabled)    // Toggle paragraph dimming (WYSIWYG only)
@@ -28,11 +31,15 @@ scrollToOffset(n)        // Scroll to character offset
 setTheme(css)            // Apply theme CSS variables
 ```
 
-**Polling**: Two polling loops run concurrently:
-- **Block polling** (300ms): `BlockSyncService` polls `hasBlockChanges()` -> `getBlockChanges()` for structural content sync
-- **Content polling** (500ms): Reads `getContent()` for content binding + annotation sync via `SectionSyncService`
+**Content Sync (push + fallback poll)**:
 
-**Feedback Prevention**: `isSettingContent` flag prevents feedback loops when Swift pushes content to editor. `resetAndSnapshot(doc)` must be called after any `setContent()` to prevent false change waves. `isSyncSuppressed` on BlockSyncService gates polling during drag operations and block ID pushes.
+Primary content sync is push-based: both editors push content to Swift via `window.webkit.messageHandlers.contentChanged.postMessage(markdown)` with a 50ms debounce after each doc change. This fires on every meaningful edit (keystroke, paste, delete) with ~50ms latency instead of the previous 500ms polling.
+
+Fallback polling runs at 3s intervals for supplementary data only: `getPollData()` returns a batched JSON with `{stats, sectionTitle}` in a single JS call. Content is no longer polled — the push path handles it.
+
+**Block Sync (2s polling)**: `BlockSyncService` polls `hasBlockChanges()` -> `getBlockChanges()` at 2s intervals for structural content sync. Block change detection is debounced (100ms) in the JS plugin to batch rapid keystrokes.
+
+**Feedback Prevention**: `isSettingContent` flag prevents feedback loops when Swift pushes content to editor. `resetAndSnapshot(doc)` must be called after any `setContent()` to prevent false change waves. `isSyncSuppressed` on BlockSyncService gates polling during drag operations and block ID pushes. Push-based content uses grace period guards (150ms CodeMirror, 200ms Milkdown) to avoid overwriting recently pushed content.
 
 ---
 
@@ -64,10 +71,10 @@ Responsible for legacy section sync, anchor injection/extraction, and bibliograp
 
 **Key Methods**:
 - `contentChanged(_ markdown:)` -- Debounced entry point (500ms)
-- `syncContent(_ markdown:)` -- Parses headers, reconciles with database
-- `parseHeaders(from markdown:)` -- Extracts section boundaries
+- `syncContent(_ markdown:)` -- Parses headers, reconciles with database (DB work dispatched off main thread via `Task.detached`)
+- `parseHeaders(from markdown:)` -- `nonisolated static` method, extracts section boundaries (callable from detached tasks)
 
-**Reconciliation**: Uses `SectionReconciler` to compute minimal database changes (insert, update, delete) by comparing parsed headers against existing sections.
+**Reconciliation**: Uses `SectionReconciler` (a `Sendable` struct) to compute minimal database changes (insert, update, delete) by comparing parsed headers against existing sections. All DB reads/writes run off the main thread; only `lastSyncedContent` tracking and UI notifications happen back on MainActor.
 
 ---
 

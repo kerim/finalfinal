@@ -12,7 +12,7 @@
 import Foundation
 
 /// Parsed header information from markdown content
-struct ParsedHeader {
+struct ParsedHeader: Sendable {
     let position: Int           // 0-indexed position among headers
     let title: String
     let level: Int              // Header level (1-6, pseudo-sections inherit from preceding)
@@ -24,7 +24,7 @@ struct ParsedHeader {
 
 /// Core reconciliation engine for section sync
 /// Compares parsed headers with database sections to produce surgical changes
-class SectionReconciler {
+struct SectionReconciler: Sendable {
 
     /// Reconcile parsed headers with existing database sections
     /// Returns the minimal set of changes needed to update the database

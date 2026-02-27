@@ -9,14 +9,14 @@ import GRDB
 // MARK: - Section Change Types
 
 /// Represents a surgical change to apply to the sections table
-enum SectionChange {
+enum SectionChange: Sendable {
     case insert(Section)
     case update(id: String, updates: SectionUpdates)
     case delete(id: String)
 }
 
 /// Updates to apply to an existing section (all fields optional)
-struct SectionUpdates {
+struct SectionUpdates: Sendable {
     var title: String?
     var headerLevel: Int?
     var isPseudoSection: Bool?

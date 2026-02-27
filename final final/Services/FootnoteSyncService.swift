@@ -58,7 +58,7 @@ final class FootnoteSyncService {
 
     /// Pre-compiled regex for footnote definition extraction
     /// Matches [^N]: at line start, capturing label and rest of line
-    private static let footnoteDefPattern: NSRegularExpression = {
+    nonisolated(unsafe) private static let footnoteDefPattern: NSRegularExpression = {
         do {
             return try NSRegularExpression(
                 pattern: #"^\[\^(\d+)\]:\s*(.*)"#,
@@ -91,7 +91,7 @@ final class FootnoteSyncService {
 
     /// Extract footnote definitions from the #Notes section content
     /// Returns a dictionary of label → definition text (including multi-paragraph)
-    static func extractFootnoteDefinitions(from notesContent: String) -> [String: String] {
+    nonisolated static func extractFootnoteDefinitions(from notesContent: String) -> [String: String] {
         var definitions: [String: String] = [:]
         let lines = notesContent.components(separatedBy: "\n")
 

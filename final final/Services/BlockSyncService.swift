@@ -15,7 +15,7 @@ import WebKit
 @Observable
 class BlockSyncService {
     private var pollTimer: Timer?
-    private let pollInterval: TimeInterval = 0.3  // 300ms polling
+    private let pollInterval: TimeInterval = 2.0  // 2s polling (block changes accumulate in JS)
 
     private var projectDatabase: ProjectDatabase?
     private var projectId: String?
@@ -254,12 +254,13 @@ class BlockSyncService {
         }
     }
 
-    /// Apply block changes to the database
+    /// Apply block changes to the database (off main thread)
     private func applyChanges(_ changes: BlockChanges, database: ProjectDatabase, projectId: String) async throws {
-        // Apply changes and get the actual ID mapping from the database method
-        let idMapping = try database.applyBlockChangesFromEditor(changes, for: projectId)
+        let idMapping = try await Task.detached(priority: .utility) {
+            try database.applyBlockChangesFromEditor(changes, for: projectId)
+        }.value
 
-        // Store the mapping for sending back to the editor
+        // Back on MainActor — store the mapping for sending back to the editor
         for (tempId, permanentId) in idMapping {
             self.pendingConfirmations[tempId] = permanentId
         }
