@@ -108,7 +108,6 @@ struct AppColorScheme: Identifiable, Equatable, Sendable {
     let sidebarSelectedBackground: Color
     let editorBackground: Color
     let editorText: Color
-    let editorHeaderText: Color
     let editorTextSecondary: Color
     let editorSelection: Color
     let accentColor: Color
@@ -137,7 +136,6 @@ struct AppColorScheme: Identifiable, Equatable, Sendable {
         """
         --editor-bg: \(editorBackground.cssHex);
         --editor-text: \(editorText.cssHex);
-        --editor-heading-text: \(editorHeaderText.cssHex);
         --editor-text-secondary: \(editorTextSecondary.cssHex);
         --editor-selection: \(editorSelection.cssHexWithAlpha);
         --accent-color: \(accentColor.cssHex);
@@ -241,7 +239,6 @@ extension AppColorScheme {
         sidebarSelectedBackground: RadixScales.blue.step9.opacity(0.35),
         editorBackground: RadixScales.gray.step1,                // #fcfcfc
         editorText: RadixScales.gray.step12,                     // #202020
-        editorHeaderText: RadixScales.gray.step12,               // #202020 (same as body)
         editorTextSecondary: RadixScales.gray.step11,            // #646464
         editorSelection: RadixScales.blue.step9.opacity(0.25),
         accentColor: RadixScales.blue.step9,                     // #0090ff
@@ -267,7 +264,6 @@ extension AppColorScheme {
         sidebarSelectedBackground: RadixScales.parchment.step9.opacity(0.25),
         editorBackground: RadixScales.parchment.step1,           // #fdfbf7
         editorText: RadixScales.parchment.step12,                // #3d3425
-        editorHeaderText: RadixScales.parchment.step12,          // #3d3425 (same as body)
         editorTextSecondary: RadixScales.parchment.step11,       // #6b5d42
         editorSelection: RadixScales.parchment.step9.opacity(0.25),
         accentColor: RadixScales.parchment.step9,                // #a69676 - warm brown accent
@@ -290,17 +286,16 @@ extension AppColorScheme {
         sidebarBackground: RadixScales.grayDark.step1,           // #111111
         sidebarText: RadixScales.orangeDark.step9,               // #f76b15
         sidebarTextSecondary: RadixScales.orangeDark.step11,     // #ffa057
-        sidebarSelectedBackground: Color(red: 1.0, green: 0.719, blue: 0.0).opacity(0.30),  // golden amber
+        sidebarSelectedBackground: RadixScales.orangeDark.step10.opacity(0.30),
         editorBackground: RadixScales.oledBlack,                 // #0a0a0a
-        editorText: Color(red: 0.740, green: 0.420, blue: 0.082),  // #BD6B15 - darker orange
-        editorHeaderText: Color.white,                           // #FFFFFF - white headers
+        editorText: RadixScales.orangeDark.step9,                // #f76b15
         editorTextSecondary: RadixScales.orangeDark.step11,      // #ffa057
-        editorSelection: Color(red: 1.0, green: 0.719, blue: 0.0).opacity(0.30),  // golden amber
-        accentColor: Color(red: 1.0, green: 0.719, blue: 0.0),  // #FFB700 - golden amber
+        editorSelection: RadixScales.orangeDark.step10.opacity(0.30),
+        accentColor: RadixScales.orangeDark.step10,              // #ff801f
         dividerColor: RadixScales.grayDark.step6,                // #3a3a3a
         statusColors: .dark,
         annotationColors: .highContrastNight,
-        highlightBackground: Color(red: 1.0, green: 0.719, blue: 0.0).opacity(0.25),  // golden amber
+        highlightBackground: RadixScales.orangeDark.step10.opacity(0.25),
         tooltipBackground: RadixScales.orangeDark.step9,         // inverted - orange bg
         tooltipText: RadixScales.oledBlack,                      // inverted - black text
         shortcutKey: "3"
@@ -316,13 +311,12 @@ extension AppColorScheme {
         sidebarBackground: RadixScales.slateDark.step2,          // #18191b
         sidebarText: RadixScales.slateDark.step11,               // #b0b4ba
         sidebarTextSecondary: RadixScales.slateDark.step10,      // #777b84
-        sidebarSelectedBackground: Color(red: 0.0, green: 0.785, blue: 1.0).opacity(0.25),  // bright cyan
+        sidebarSelectedBackground: RadixScales.cyanDark.step9.opacity(0.25),
         editorBackground: RadixScales.slateDark.step1,           // #111113
-        editorText: Color(red: 0.648, green: 0.840, blue: 0.904),  // #A5D6E7 - light cyan
-        editorHeaderText: Color(red: 0.298, green: 0.596, blue: 0.794),  // #4C98CA - medium blue
+        editorText: RadixScales.slateDark.step11,                // #b0b4ba
         editorTextSecondary: RadixScales.slateDark.step10,       // #777b84
-        editorSelection: Color(red: 0.0, green: 0.785, blue: 1.0).opacity(0.25),  // bright cyan
-        accentColor: Color(red: 0.0, green: 0.785, blue: 1.0),  // #00C8FF - bright cyan
+        editorSelection: RadixScales.cyanDark.step9.opacity(0.25),
+        accentColor: RadixScales.cyanDark.step9,                 // #00a2c7
         dividerColor: RadixScales.slateDark.step6,               // #363a3f
         statusColors: .nord,
         annotationColors: .nord,

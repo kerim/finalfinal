@@ -20,7 +20,7 @@ extension AppearancePreferencesPane {
         selectedFontFamily = settings.fontFamily ?? ""
 
         textColor = settings.textColor?.color ?? themeManager.currentTheme.editorText
-        headerColor = settings.headerColor?.color ?? themeManager.currentTheme.editorHeaderText
+        headerColor = settings.headerColor?.color ?? textColor
         accentColor = settings.accentColor?.color ?? themeManager.currentTheme.accentColor
 
         selectedColumnWidth = settings.columnWidth ?? .normal
