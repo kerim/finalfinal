@@ -29,7 +29,7 @@ struct ExportOperations {
     /// Handle export request with specified format
     static func handleExport(format: ExportFormat) {
         // Get current content from DocumentManager
-        guard let content = try? DocumentManager.shared.loadContent(), !content.isEmpty else {
+        guard let content = try? DocumentManager.shared.loadContentForExport(), !content.isEmpty else {
             showNoContentAlert()
             return
         }
