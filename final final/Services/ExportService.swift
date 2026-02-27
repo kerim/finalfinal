@@ -126,8 +126,8 @@ actor ExportService {
         let luaScriptPath = settings.effectiveLuaScriptPath
         let referenceDocPath = settings.effectiveReferenceDocPath
 
-        // Validate Lua script if using Zotero filter
-        if let luaPath = luaScriptPath {
+        // Validate Lua script if needed (DOCX/ODT only; PDF uses --citeproc)
+        if format != .pdf, let luaPath = luaScriptPath {
             guard FileManager.default.fileExists(atPath: luaPath) else {
                 throw ExportError.luaScriptNotFound(luaPath)
             }
@@ -140,9 +140,10 @@ actor ExportService {
             }
         }
 
-        // Create temp file for input
+        // Create temp files
         let tempDir = FileManager.default.temporaryDirectory
         let inputURL = tempDir.appendingPathComponent(UUID().uuidString + ".md")
+        var tempBibURL: URL?
 
         do {
             try processedContent.write(to: inputURL, atomically: true, encoding: .utf8)
@@ -152,7 +153,13 @@ actor ExportService {
 
         defer {
             try? FileManager.default.removeItem(at: inputURL)
+            if let bibURL = tempBibURL {
+                try? FileManager.default.removeItem(at: bibURL)
+            }
         }
+
+        // Collect warnings
+        var warnings: [String] = []
 
         // Build Pandoc arguments
         var arguments = [
@@ -183,16 +190,41 @@ actor ExportService {
             arguments.append(contentsOf: ["--reference-doc", refPath])
         }
 
-        // Add Lua filter for Zotero citations
-        if let luaPath = luaScriptPath {
-            arguments.append(contentsOf: ["--lua-filter", luaPath])
+        // Citation handling: branch by format
+        if hasCitations {
+            if format == .pdf {
+                // PDF: use pandoc's --citeproc with bibliography from Zotero
+                if zoteroStatus == .running {
+                    let citekeys = Array(Set(extractCitekeys(from: processedContent)))
+                    if let bibJSON = await fetchBibliographyJSON(for: citekeys) {
+                        let bibURL = tempDir.appendingPathComponent(UUID().uuidString + ".json")
+                        do {
+                            try bibJSON.write(to: bibURL, atomically: true, encoding: .utf8)
+                            tempBibURL = bibURL
+                            arguments.append(contentsOf: ["--citeproc", "--bibliography", bibURL.path])
+                            if let cslPath = ExportService.bundledCSLStylePath {
+                                arguments.append(contentsOf: ["--csl", cslPath])
+                            }
+                        } catch {
+                            warnings.append("Could not write bibliography data. Citations were not resolved.")
+                        }
+                    } else {
+                        warnings.append("Could not fetch bibliography data from Zotero. Citations were not resolved.")
+                    }
+                }
+                // If Zotero not running, warnings are added below
+            } else {
+                // DOCX/ODT: use Lua filter for Zotero field codes
+                if let luaPath = luaScriptPath {
+                    arguments.append(contentsOf: ["--lua-filter", luaPath])
+                }
+            }
         }
 
         // Run Pandoc
         try await runPandoc(at: pandocPath, arguments: arguments)
 
-        // Collect warnings (only for documents with citations)
-        var warnings: [String] = []
+        // Add Zotero status warnings (only for documents with citations)
         if hasCitations {
             switch zoteroStatus {
             case .notRunning:
@@ -288,6 +320,11 @@ extension ExportService {
         Bundle.main.url(forResource: "reference", withExtension: "docx", subdirectory: "Export")?.path
     }
 
+    /// Get path to bundled CSL citation style
+    static var bundledCSLStylePath: String? {
+        Bundle.main.url(forResource: "chicago-author-date", withExtension: "csl", subdirectory: "Export")?.path
+    }
+
     /// Get path to bundled TinyTeX xelatex binary (direct path, may fail if app path has spaces)
     static var bundledXelatexPath: String? {
         // xelatex is a symlink to xetex in TinyTeX
@@ -364,6 +401,65 @@ extension ExportService {
             of: #"\[[^\]]*@[\w:.-]+[^\]]*\]"#,
             options: .regularExpression
         ) != nil
+    }
+
+    /// Extract citekeys from markdown content.
+    /// Duplicates BibliographySyncService.extractCitekeys regex to avoid @MainActor isolation.
+    private func extractCitekeys(from content: String) -> [String] {
+        let pattern = #"(?:\[|; )@([^\],;\s]+)"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
+        let range = NSRange(content.startIndex..., in: content)
+        return regex.matches(in: content, range: range).compactMap { match in
+            guard let r = Range(match.range(at: 1), in: content) else { return nil }
+            return String(content[r])
+        }
+    }
+
+    /// Fetch bibliography as raw CSL-JSON string from Zotero/BBT for the given citekeys.
+    /// Uses the same JSON-RPC endpoint as ZoteroService.fetchItemsForCitekeys()
+    /// but returns the raw JSON string for pandoc to consume directly.
+    private func fetchBibliographyJSON(for citekeys: [String]) async -> String? {
+        guard !citekeys.isEmpty else { return nil }
+
+        let url = URL(string: "http://127.0.0.1:23119/better-bibtex/json-rpc")!
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = 10
+
+        let body: [String: Any] = [
+            "jsonrpc": "2.0",
+            "method": "item.export",
+            "params": [citekeys, "Better CSL JSON"]
+        ]
+
+        do {
+            request.httpBody = try JSONSerialization.data(withJSONObject: body)
+            let (data, response) = try await URLSession.shared.data(for: request)
+
+            guard let httpResponse = response as? HTTPURLResponse,
+                  httpResponse.statusCode == 200 else {
+                return nil
+            }
+
+            // item.export returns JSON-RPC wrapper; extract the result
+            guard let jsonObj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                return nil
+            }
+
+            // Result may be a JSON string or an array
+            if let resultString = jsonObj["result"] as? String, !resultString.isEmpty {
+                return resultString
+            } else if let resultArray = jsonObj["result"] as? [[String: Any]], !resultArray.isEmpty {
+                let resultData = try JSONSerialization.data(withJSONObject: resultArray)
+                return String(data: resultData, encoding: .utf8)
+            }
+            return nil
+        } catch {
+            print("[ExportService] Failed to fetch bibliography JSON: \(error)")
+            return nil
+        }
     }
 
     /// Strip annotation HTML comments from markdown content
