@@ -7,6 +7,7 @@
 //
 
 import Foundation
+import NaturalLanguage
 
 /// Errors that can occur during export
 enum ExportError: Error, LocalizedError {
@@ -169,75 +170,37 @@ actor ExportService {
             "--output", outputURL.path
         ]
 
-        // Add PDF engine for PDF exports
-        if format == ExportFormat.pdf {
-            // Use bundled TinyTeX with -output-driver to work around spaces in path
-            // Reference: XeTeX's -output-driver option specifies the XDV-to-PDF driver
-            if let tinyTeX = try? prepareBundledTinyTeX() {
-                arguments.append(contentsOf: ["--pdf-engine", tinyTeX.xelatexPath])
-                arguments.append(contentsOf: ["--pdf-engine-opt", tinyTeX.outputDriverArg])
-            } else if let bundledPath = ExportService.bundledXelatexPath {
-                // Direct path fallback (may fail if app path has spaces)
-                arguments.append(contentsOf: ["--pdf-engine", bundledPath])
-            } else {
-                // System xelatex fallback
-                arguments.append(contentsOf: ["--pdf-engine", "xelatex"])
-            }
+        // PDF: engine + font variables
+        if format == .pdf {
+            arguments.append(contentsOf: pdfEngineArguments())
+            arguments.append(contentsOf: fontArguments(for: processedContent))
         }
 
-        // Add reference document for docx/odt (not applicable for PDF)
-        if let refPath = referenceDocPath, format != ExportFormat.pdf {
+        // Reference document (DOCX/ODT only)
+        if let refPath = referenceDocPath, format != .pdf {
             arguments.append(contentsOf: ["--reference-doc", refPath])
         }
 
-        // Citation handling: branch by format
+        // Citations
         if hasCitations {
-            if format == .pdf {
-                // PDF: use pandoc's --citeproc with bibliography from Zotero
-                if zoteroStatus == .running {
-                    let citekeys = Array(Set(extractCitekeys(from: processedContent)))
-                    if let bibJSON = await fetchBibliographyJSON(for: citekeys) {
-                        let bibURL = tempDir.appendingPathComponent(UUID().uuidString + ".json")
-                        do {
-                            try bibJSON.write(to: bibURL, atomically: true, encoding: .utf8)
-                            tempBibURL = bibURL
-                            arguments.append(contentsOf: ["--citeproc", "--bibliography", bibURL.path])
-                            if let cslPath = ExportService.bundledCSLStylePath {
-                                arguments.append(contentsOf: ["--csl", cslPath])
-                            }
-                        } catch {
-                            warnings.append("Could not write bibliography data. Citations were not resolved.")
-                        }
-                    } else {
-                        warnings.append("Could not fetch bibliography data from Zotero. Citations were not resolved.")
-                    }
-                }
-                // If Zotero not running, warnings are added below
-            } else {
-                // DOCX/ODT: use Lua filter for Zotero field codes
-                if let luaPath = luaScriptPath {
-                    arguments.append(contentsOf: ["--lua-filter", luaPath])
-                }
-            }
+            let citation = await citationArguments(
+                format: format,
+                content: processedContent,
+                zoteroStatus: zoteroStatus,
+                luaScriptPath: luaScriptPath,
+                tempDir: tempDir
+            )
+            arguments.append(contentsOf: citation.arguments)
+            tempBibURL = citation.tempBibURL
+            warnings.append(contentsOf: citation.warnings)
         }
 
         // Run Pandoc
         try await runPandoc(at: pandocPath, arguments: arguments)
 
-        // Add Zotero status warnings (only for documents with citations)
+        // Zotero warnings (after export — export still runs, warnings inform after)
         if hasCitations {
-            switch zoteroStatus {
-            case .notRunning:
-                warnings.append("Zotero is not running. Citations were not resolved.")
-            case .betterBibTeXMissing:
-                warnings.append("Better BibTeX is not installed. Citations were not resolved.")
-            case .timeout:
-                warnings.append("Could not connect to Zotero. Citations may not be resolved.")
-            case .error(let msg):
-                warnings.append("Zotero error: \(msg)")
-            case .running:
-                break  // All good
-            }
+            warnings.append(contentsOf: zoteroWarnings(for: zoteroStatus))
         }
 
         return ExportResult(
@@ -246,6 +209,76 @@ actor ExportService {
             zoteroStatus: zoteroStatus,
             warnings: warnings
         )
+    }
+
+    // MARK: - Extracted Helpers
+
+    /// Build PDF engine arguments (bundled TinyTeX → bundled xelatex → system xelatex)
+    private func pdfEngineArguments() -> [String] {
+        if let tinyTeX = try? prepareBundledTinyTeX() {
+            return ["--pdf-engine", tinyTeX.xelatexPath,
+                    "--pdf-engine-opt", tinyTeX.outputDriverArg]
+        } else if let bundledPath = ExportService.bundledXelatexPath {
+            return ["--pdf-engine", bundledPath]
+        } else {
+            return ["--pdf-engine", "xelatex"]
+        }
+    }
+
+    /// Build citation-related Pandoc arguments and fetch bibliography if needed.
+    private func citationArguments(
+        format: ExportFormat,
+        content: String,
+        zoteroStatus: ZoteroStatus,
+        luaScriptPath: String?,
+        tempDir: URL
+    ) async -> (arguments: [String], tempBibURL: URL?, warnings: [String]) {
+        var args: [String] = []
+        var tempBibURL: URL?
+        var warnings: [String] = []
+
+        if format == .pdf {
+            if zoteroStatus == .running {
+                let citekeys = Array(Set(extractCitekeys(from: content)))
+                if let bibJSON = await fetchBibliographyJSON(for: citekeys) {
+                    let bibURL = tempDir.appendingPathComponent(UUID().uuidString + ".json")
+                    do {
+                        try bibJSON.write(to: bibURL, atomically: true, encoding: .utf8)
+                        tempBibURL = bibURL
+                        args.append(contentsOf: ["--citeproc", "--bibliography", bibURL.path])
+                        if let cslPath = ExportService.bundledCSLStylePath {
+                            args.append(contentsOf: ["--csl", cslPath])
+                        }
+                    } catch {
+                        warnings.append("Could not write bibliography data. Citations were not resolved.")
+                    }
+                } else {
+                    warnings.append("Could not fetch bibliography data from Zotero. Citations were not resolved.")
+                }
+            }
+        } else {
+            if let luaPath = luaScriptPath {
+                args.append(contentsOf: ["--lua-filter", luaPath])
+            }
+        }
+
+        return (args, tempBibURL, warnings)
+    }
+
+    /// Map Zotero status to user-facing warnings.
+    private func zoteroWarnings(for status: ZoteroStatus) -> [String] {
+        switch status {
+        case .notRunning:
+            return ["Zotero is not running. Citations were not resolved."]
+        case .betterBibTeXMissing:
+            return ["Better BibTeX is not installed. Citations were not resolved."]
+        case .timeout:
+            return ["Could not connect to Zotero. Citations may not be resolved."]
+        case .error(let msg):
+            return ["Zotero error: \(msg)"]
+        case .running:
+            return []
+        }
     }
 
     // MARK: - Pandoc Execution
@@ -473,5 +506,125 @@ extension ExportService {
             with: "",
             options: .regularExpression
         )
+    }
+}
+
+// MARK: - Script Detection & Font Mapping
+
+extension ExportService {
+
+    private struct DetectedScripts: OptionSet, Sendable {
+        let rawValue: UInt16
+        static let cjk        = DetectedScripts(rawValue: 1 << 0)
+        static let hiragana   = DetectedScripts(rawValue: 1 << 1)
+        static let katakana   = DetectedScripts(rawValue: 1 << 2)
+        static let hangul     = DetectedScripts(rawValue: 1 << 3)
+        static let devanagari = DetectedScripts(rawValue: 1 << 4)
+        static let thai       = DetectedScripts(rawValue: 1 << 5)
+        static let bengali    = DetectedScripts(rawValue: 1 << 6)
+        static let tamil      = DetectedScripts(rawValue: 1 << 7)
+        static let all: DetectedScripts = [.cjk, .hiragana, .katakana, .hangul,
+                                            .devanagari, .thai, .bengali, .tamil]
+    }
+
+    /// Single-pass Unicode range scan. Returns which non-Latin scripts are present.
+    private func detectScripts(in content: String) -> DetectedScripts {
+        var detected: DetectedScripts = []
+        for scalar in content.unicodeScalars {
+            switch scalar.value {
+            case 0x4E00...0x9FFF, 0x3400...0x4DBF, 0xF900...0xFAFF,
+                 0x20000...0x2A6DF:
+                detected.insert(.cjk)
+            case 0x3040...0x309F:
+                detected.insert(.hiragana)
+            case 0x30A0...0x30FF:
+                detected.insert(.katakana)
+            case 0xAC00...0xD7AF:
+                detected.insert(.hangul)
+            case 0x0900...0x097F:
+                detected.insert(.devanagari)
+            case 0x0E00...0x0E7F:
+                detected.insert(.thai)
+            case 0x0980...0x09FF:
+                detected.insert(.bengali)
+            case 0x0B80...0x0BFF:
+                detected.insert(.tamil)
+            default:
+                break
+            }
+            if detected == .all { break }
+        }
+        return detected
+    }
+
+    /// Returns pandoc font variable arguments for PDF export.
+    ///
+    /// Uses a two-tier strategy:
+    /// - Tier 1: Unicode range scanning determines WHETHER to add font support
+    /// - Tier 2: NLLanguageRecognizer disambiguates WHICH CJK font (SC vs TC)
+    private func fontArguments(for content: String) -> [String] {
+        let scripts = detectScripts(in: content)
+        var args = cjkFontArguments(for: scripts, content: content)
+        args.append(contentsOf: mainFontArguments(for: scripts))
+        if !args.isEmpty {
+            print("[ExportService] Font arguments: \(args)")
+        }
+        return args
+    }
+
+    private func cjkFontArguments(for scripts: DetectedScripts, content: String) -> [String] {
+        let needsCJK = !scripts.isDisjoint(with: [.cjk, .hiragana, .katakana, .hangul])
+        guard needsCJK else { return [] }
+
+        let font: String
+        if !scripts.isDisjoint(with: [.hiragana, .katakana]) {
+            font = "Hiragino Mincho ProN"
+        } else if scripts.contains(.hangul) {
+            font = "Apple SD Gothic Neo"
+        } else {
+            font = disambiguateCJKFont(in: content)
+        }
+        return ["-V", "CJKmainfont=\(font)"]
+    }
+
+    private func mainFontArguments(for scripts: DetectedScripts) -> [String] {
+        let mainFontMap: [(script: DetectedScripts, font: String)] = [
+            (.devanagari, "Kohinoor Devanagari"),
+            (.thai,       "Thonburi"),
+            (.bengali,    "Bangla Sangam MN"),
+            (.tamil,      "Tamil Sangam MN"),
+        ]
+        guard let match = mainFontMap.first(where: { scripts.contains($0.script) }) else {
+            return []
+        }
+        return ["-V", "mainfont=\(match.font)"]
+    }
+
+    /// Use NLLanguageRecognizer on CJK-only text to distinguish Simplified vs Traditional Chinese.
+    /// Filtering to CJK characters avoids the recognizer being overwhelmed by English content.
+    /// Default: Traditional Chinese (most users writing about Taiwan/HK).
+    private func disambiguateCJKFont(in content: String) -> String {
+        // Extract only CJK characters for reliable SC vs TC detection
+        let cjkText = String(content.unicodeScalars.filter {
+            let codePoint = $0.value
+            return (0x4E00...0x9FFF).contains(codePoint) ||
+                   (0x3400...0x4DBF).contains(codePoint) ||
+                   (0xF900...0xFAFF).contains(codePoint) ||
+                   (0x20000...0x2A6DF).contains(codePoint)
+        })
+
+        guard !cjkText.isEmpty else { return "Songti TC" }
+
+        let recognizer = NLLanguageRecognizer()
+        recognizer.processString(cjkText)
+        let hypotheses = recognizer.languageHypotheses(withMaximum: 10)
+
+        if let scConfidence = hypotheses[.simplifiedChinese],
+           let tcConfidence = hypotheses[.traditionalChinese],
+           scConfidence > tcConfidence {
+            return "Songti SC"
+        }
+        // Default to Traditional Chinese
+        return "Songti TC"
     }
 }

@@ -1,0 +1,717 @@
+%%
+%% This is file `xunicode-addon.sty',
+%% generated with the docstrip utility.
+%%
+%% The original source files were:
+%%
+%% xeCJK.dtx  (with options: `xunicode')
+%% 
+%%     Copyright (C) 2007--2010 by Wenchang Sun <sunwch@nankai.edu.cn>
+%%     Copyright (C) 2009--2022 by Leo Liu <leoliu.pku@gmail.com>
+%%     Copyright (C) 2012--2022 by Qing Lee <sobenlee@gmail.com>
+%% ----------------------------------------------------------------------
+%% 
+%%     This work may be distributed and/or modified under the
+%%     conditions of the LaTeX Project Public License, either
+%%     version 1.3c of this license or (at your option) any later
+%%     version. This version of this license is in
+%%        http://www.latex-project.org/lppl/lppl-1-3c.txt
+%%     and the latest version of this license is in
+%%        http://www.latex-project.org/lppl.txt
+%%     and version 1.3 or later is part of all distributions of
+%%     LaTeX version 2005/12/01 or later.
+%% 
+%%     This work has the LPPL maintenance status "maintained".
+%% 
+%%     The Current Maintainers of this work are Leo Liu and Qing Lee.
+%% 
+%% ----------------------------------------------------------------------
+%% 
+\NeedsTeXFormat{LaTeX2e}
+\RequirePackage{expl3}
+\GetIdInfo$Id: xeCJK.dtx c4ccfae 2022-08-05 21:02:32 +0800 Qing Lee <sobenlee@gmail.com> $
+  {addon file for xunicode}
+\ProvidesExplPackage{xunicode-addon}
+  {\ExplFileDate}{3.9.1}{\ExplFileDescription}
+\bool_lazy_or:nnF
+  { \sys_if_engine_xetex_p: }
+  { \sys_if_engine_luatex_p: }
+  {
+    \msg_new:nnnn { xunicode-addon } { xetex-luatex }
+      { This~package~requires~either~XeTeX~or~LuaTeX~to~function.}
+      {
+        You~must~change~your~typesetting~engine~to,~e.g.,\\
+        "xelatex"~or~"lualatex"~instead~of~plain~"latex"~or~"pdflatex".
+      }
+    \msg_critical:nn { xunicode-addon } { xetex-luatex }
+  }
+\RequirePackage { xparse }
+\clist_new:N \g__xunadd_encname_clist
+\tl_if_exist:NT \UTFencname
+  { \clist_gput_right:Nx \g__xunadd_encname_clist { \UTFencname } }
+\DeclareOption*
+  { \clist_gput_right:No \g__xunadd_encname_clist \CurrentOption }
+\ProcessOptions \scan_stop:
+\@ifpackageloaded { xunicode } { }
+  {
+    \clist_get:NNF \g__xunadd_encname_clist \UTFencname
+      {
+        \cs_if_exist:NTF \UnicodeEncodingName
+          { \tl_set:Nx \UTFencname { \UnicodeEncodingName } }
+          {
+            \sys_if_engine_xetex:TF
+              { \tl_set:Nn \UTFencname { EU1 } }
+              { \tl_set:Nn \UTFencname { EU2 } }
+          }
+        \clist_gset_eq:NN \g__xunadd_encname_clist \UTFencname
+      }
+    \sys_if_engine_xetex:TF
+      { \RequirePackage { xunicode } }
+      {
+        \cs_set_eq:NN \__xunadd_tmp:w \XeTeXpicfile
+        \cs_set_eq:NN \XeTeXpicfile \prg_do_nothing:
+        \RequirePackage { xunicode }
+        \cs_set_eq:NN \XeTeXpicfile \__xunadd_tmp:w
+      }
+  }
+\AtEndOfPackage { \__xunadd_reload:N \g__xunadd_encname_clist }
+\RenewDocumentCommand \ReloadXunicode { m }
+  {
+    \clist_set:Nx \l__xunadd_encname_clist {#1}
+    \__xunadd_reload:N \l__xunadd_encname_clist
+  }
+\cs_new_protected:Npn \__xunadd_reload:N #1
+  {
+    \cs_set_eq:NN \__xunadd_tmp:w \iftipaonetoken
+    \cs_set_eq:NN \iftipaonetoken \scan_stop:
+    \use:e
+      {
+        \ExplSyntaxOff
+        \char_set_catcode_letter:n { 64 }
+        \exp_not:N \clist_map_function:NN \exp_not:N #1 \__xunadd_reload_aux:n
+        \bool_if:NTF \l__kernel_expl_bool
+          { \ExplSyntaxOn }
+          { \ExplSyntaxOff }
+        \char_set_catcode:nn { 64 } { \char_value_catcode:n { 64 } }
+      }
+    \cs_set_eq:NN \iftipaonetoken \__xunadd_tmp:w
+  }
+\cs_new_protected:Npn \__xunadd_reload_aux:n #1
+  {
+    \cs_if_exist:cTF { T@ #1 }
+      {
+        \tl_set:Nn \UTFencname {#1}
+        \clist_if_in:NnF \g__xunadd_encname_clist {#1}
+          { \clist_gput_right:Nn \g__xunadd_encname_clist {#1} }
+        \file_input:n { xunicode.sty }
+        \file_input:n { xunicode-extra.def }
+      }
+      { \msg_error:nnn { xunicode-addon } { encoding-unknown } {#1} }
+  }
+\clist_new:N \l__xunadd_encname_clist
+\msg_new:nnnn { xunicode-addon } { encoding-unknown }
+  { Encoding~scheme~"#1"~unknown. }
+  {
+    You~may~use \\\\
+    \token_to_str:N \usepackage [ #1 , \encodingdefault ] \{fontenc\} \\\\
+    before~xunicode-addon~or~xunicode.
+  }
+\RenewDocumentCommand \DeclareUTFmathsymbols { m }
+  {
+    \bool_if:NT \l__xunadd_math_as_UTF_text_bool
+      {
+        \seq_map_inline:Nn \l__xunadd_math_as_UTF_text_seq
+          { \__xunadd_declare_math_as_UTF_text:n {##1} }
+        \bool_set_false:N \l__xunadd_math_as_UTF_text_bool
+      }
+  }
+\seq_new:N \l__xunadd_math_as_UTF_text_seq
+\seq_set_from_clist:Nn \l__xunadd_math_as_UTF_text_seq
+  { hbar , Finv , aleph , beth , gimel , daleth , Game }
+\bool_new:N \l__xunadd_math_as_UTF_text_bool
+\RenewDocumentCommand \UseMathAsText { }
+  {
+    \math@s@text@true
+    \bool_set_true:N \l__xunadd_math_as_UTF_text_bool
+  }
+\@onlypreamble \UseMathAsText
+\cs_new_protected:Npn \__xunadd_declare_math_as_UTF_text:n #1
+  {
+    \cs_if_exist:cTF {#1}
+      {
+        \cs_new_eq:cc { keepmathUTF #1 } {#1}
+        \cs_gset_protected:cpx {#1}
+          {
+            \exp_not:N \mode_if_math:TF
+              { \exp_not:c { keepmathUTF #1 } }
+              { \exp_not:c { text #1 } }
+          }
+        \tl_put_right:Nx \l__xunadd_hyperref_hook_tl
+          { \cs_set_eq:NN \exp_not:c {#1} \exp_not:c { text #1 } }
+      }
+      { \cs_new:cpx {#1} { \exp_not:c { text #1 } } }
+  }
+\tl_new:N \l__xunadd_hyperref_hook_tl
+\AtBeginDocument
+  {
+    \cs_if_free:NF \pdfstringdefDisableCommands
+      { \pdfstringdefDisableCommands { \l__xunadd_hyperref_hook_tl } }
+  }
+\prg_new_conditional:Npnn \__xunadd_glyph_if_exist:n #1 { p , T , F , TF }
+  {
+    \tex_iffontchar:D \tex_font:D \tex_numexpr:D #1 \scan_stop:
+      \prg_return_true: \else: \prg_return_false: \fi:
+  }
+\RenewDocumentCommand \UndeclareUTFcharacter { O { \UTFencname } m m }
+  {
+    \__xunadd_if_csname:nTF {#3}
+      { \UndeclareTextCommand {#3} }
+      { \exp_args:Nc \UndeclareTextCommand { \tl_to_str:n {#3} } }
+      {#1}
+  }
+\RenewDocumentCommand \UndeclareUTFcomposite { O { \UTFencname } m m m }
+  {
+    \__xunadd_if_csname:nTF {#3}
+      { \__xunadd_undeclare_composite:Nnnn #3 }
+      { \exp_args:Nc \__xunadd_undeclare_composite:Nnnn { \tl_to_str:n {#3} } }
+      {#1} {#4} {#2}
+  }
+\cs_new_protected:Npn \__xunadd_undeclare_composite:Nnnn #1#2#3#4
+  { \cs_undefine:c { \__xunadd_composite_cs:Nnn #1 {#2} {#3} } }
+\cs_new:Npx \__xunadd_composite_cs:Nnn #1#2#3
+  { \c_backslash_str #2 \exp_not:N \token_to_str:N #1 - \exp_not:N \tl_to_str:n {#3} }
+\cs_new:Npx \__xunadd_composite_cs:nnn #1#2#3
+  { \c_backslash_str #2 #1 - \exp_not:N \tl_to_str:n {#3} }
+\prg_new_conditional:Npnn \__xunadd_if_csname:n #1 { TF }
+  {
+    \tl_if_single_token:nTF {#1}
+      {
+        \token_if_cs:NTF #1
+          { \prg_return_true: }
+          {
+            \token_if_active:NTF #1
+              { \prg_return_true: }
+              { \prg_return_false: }
+          }
+      }
+      { \prg_return_false: }
+  }
+\RenewDocumentCommand \DeclareUTFcharacter { O { \UTFencname } m m }
+  {
+    \cs_if_exist_use:cF
+      { __xunadd_restore_ \tl_to_str:n {#3} : }
+      {
+        \__xunadd_if_csname:nTF {#3}
+          { \__xunadd_declare_character:Nnn #3 }
+          { \__xunadd_declare_character:cnn { \tl_to_str:n {#3} } }
+        {#1} {#2}
+      }
+  }
+\cs_new_protected:cpn
+  { __xunadd_restore_ \tl_to_str:n { \hbar } : }
+  { \__xunadd_restore_cmd:N \hbar }
+\cs_new_protected:cpn
+  { __xunadd_restore_ \tl_to_str:n { \nobreakspace } : }
+  { \__xunadd_restore_cmd:N \nobreakspace }
+\cs_new_protected:Npn \__xunadd_restore_cmd:N #1
+  { \__xunadd_restore_cmd:Ne #1 { ? - \token_to_str:N #1 } }
+\cs_new_protected:Npn \__xunadd_restore_cmd:Nn #1#2
+  {
+    \cs_if_free:cF {#2}
+      { \__xunadd_restore_cmd:Nc #1 {#2} }
+  }
+\cs_new_protected:Npn \__xunadd_restore_cmd:NN #1#2
+  {
+    \cs_gset_eq:NN #1 #2
+    \cs_undefine:N #2
+  }
+\cs_generate_variant:Nn \__xunadd_restore_cmd:Nn { Ne }
+\cs_generate_variant:Nn \__xunadd_restore_cmd:NN { Nc }
+\cs_new_protected:Npn \__xunadd_declare_character:Nnn #1#2#3
+  {
+    \__xunadd_provide_text_command_default:N #1
+    \exp_after:wN \__xunadd_declare_character:NNen
+      \tex_Uchar:D \__xunadd_check_slot:n {#3} \exp_stop_f:
+      #1 { \token_to_str:N #1 } {#2}
+  }
+\cs_generate_variant:Nn \__xunadd_declare_character:Nnn { c }
+\NewDocumentCommand \DeclareUTFSymbol { m O { \UTFencname } m }
+  { \__xunadd_declare_character:Nnn #1 {#2} {#3} }
+\NewDocumentCommand \DeclareUTFCommand { m O { \UTFencname } m }
+  { \__xunadd_text_command:Nonn #1 { \token_to_str:N #1 } {#2} {#3} }
+\cs_new_protected:Npn \__xunadd_text_command:Nnnn #1#2#3#4
+  { \DeclareTextCommand #1 {#3} { \__xunadd_text_command:nn {#2} {#4} } }
+\cs_generate_variant:Nn \__xunadd_text_command:Nnnn { No }
+\cs_new_protected:Npn \__xunadd_text_command:nn #1#2
+  {
+    \__xunadd_begin_hook:nn {#1} {#2}
+    #2
+    \__xunadd_end_hook:nn {#1} {#2}
+  }
+\cs_new_protected:Npn \__xunadd_provide_text_command_default:N #1
+  {
+    \cs_if_exist:cF { ? \token_to_str:N #1 }
+      {
+        \cs_if_free:cF { ? - \token_to_str:N #1 }
+          {
+            \exp_args:NNv \ProvideTextCommandDefault #1
+              { ? - \token_to_str:N #1 }
+          }
+      }
+  }
+\cs_new_protected:Npn \__xunadd_declare_character:NNnn #1#2#3#4
+  { \DeclareTextCommand #2 {#4} { \__xunadd_text_character:nN {#3} {#1} } }
+\cs_new_protected:Npn \__xunadd_text_character:nN #1#2
+  {
+    \__xunadd_begin_hook:nn {#1} {#2}
+    \__xunadd_glyph_if_exist:nTF { `#2 }
+      {#2} { \cs_if_exist_use:cF { ? #1 } {#2} }
+    \__xunadd_end_hook:nn {#1} {#2}
+  }
+\cs_generate_variant:Nn \__xunadd_declare_character:NNnn { NNe }
+\cs_new:Npn \__xunadd_check_slot:n #1
+  {
+    \int_eval:n
+      {
+        \tl_if_head_eq_charcode:nNTF {#1} x
+          { " \use_none:n #1 } {#1}
+      }
+  }
+\RenewDocumentCommand \DeclareUTFcomposite { O { \UTFencname } m m m }
+  {
+    \__xunadd_if_csname:nTF {#3}
+      { \__xunadd_declare_composite:Nnnn #3 }
+      { \__xunadd_declare_composite:cnnn { \tl_to_str:n {#3} } }
+      {#1} {#4} {#2}
+  }
+\cs_new_protected:Npn \__xunadd_declare_composite:Nnnn #1#2#3#4
+  {
+    \tex_afterassignment:D \use_none_delimit_by_q_stop:w
+    \__xunadd_chardef:cn { \__xunadd_composite_cs:Nnn #1 {#2} {#3} }
+      { \__xunadd_check_slot:n {#4} }
+    \q_stop
+  }
+\cs_new_protected:Npn \__xunadd_chardef:Nn #1#2
+  { \tex_chardef:D #1 = \tex_numexpr:D #2 \scan_stop: }
+\cs_generate_variant:Nn \__xunadd_chardef:Nn { c }
+\cs_generate_variant:Nn \__xunadd_declare_composite:Nnnn { c }
+\NewDocumentCommand \DeclareUTFCompositeCommand { m O { \UTFencname } m m }
+  { \cs_set_protected:cpn { \__xunadd_composite_cs:Nnn #1 {#2} {#3} } {#4} }
+\NewDocumentCommand \DeclareUTFCompositeSymbol { m O { \UTFencname } m m }
+  {
+    \__xunadd_chardef:cn { \__xunadd_composite_cs:Nnn #1 {#2} {#3} }
+      { \__xunadd_check_slot:n {#4} }
+  }
+\NewDocumentCommand \DeclareUTFComposite { m O { \UTFencname } }
+  { \use:e { \__xunadd_declare_composite:Nnn \exp_not:N #1 { \token_to_str:N #1 } {#2} } }
+\NewDocumentCommand \DeclareUTFEncodedAccent { m O { \UTFencname } m m }
+  { \__xunadd_declare_encoded:NNnnn \__xunadd_combine_accent:nnNNn #1 {#2} {#3} {#4} }
+\NewDocumentCommand \DeclareUTFEncodedAccents { m O { \UTFencname } m m }
+  { \__xunadd_declare_encoded:NNnnn \__xunadd_combine_accents:nnNNn #1 {#2} {#3} {#4} }
+\NewDocumentCommand \DeclareUTFEncodedSymbol { m O { \UTFencname } m m }
+  { \__xunadd_declare_encoded:NNnnn \__xunadd_combine_symbol:nnNNn #1 {#2} {#3} {#4} }
+\NewDocumentCommand \DeclareUTFEncodedCircle { m O { \UTFencname } m m }
+  { \__xunadd_declare_encoded:NNnnn \__xunadd_combine_circle:nnNNn #1 {#2} {#3} {#4} }
+\RenewDocumentCommand \DeclareEncodedCompositeCharacter { m m m m }
+  { \DeclareUTFEncodedSymbol #2 [#1] { "#3 } { "0#4 } }
+\RenewDocumentCommand \DeclareEncodedCompositeAccents { m m m m }
+  { \DeclareUTFEncodedAccents #2 [#1] { "#4 } { "#3 } }
+\NewDocumentCommand \DeclareUTFDoubleEncodedAccent { m O { \UTFencname } m m }
+  { \__xunadd_declare_encoded:NNnnn \__xunadd_combine_double_accent:nnNNn #1 {#2} {#3} {#4} }
+\NewDocumentCommand \DeclareUTFDoubleEncodedSymbol { m O { \UTFencname } m m }
+  { \__xunadd_declare_encoded:NNnnn \__xunadd_combine_double_symbol:nnNNn #1 {#2} {#3} {#4} }
+\cs_new_protected:Npn \__xunadd_declare_composite:Nnn #1#2#3
+  { \DeclareTextCommand #1 {#3} { \__xunadd_text_composite:nnn {#2} {#3} } }
+\cs_new_protected:Npn \__xunadd_text_composite:nnn #1#2#3
+  {
+    \__xunadd_begin_hook:nn {#1} {#3}
+    \cs_if_exist:cTF { \__xunadd_composite_cs:nnn {#1} {#2} {#3} }
+      {
+        \__xunadd_text_composite:cnn
+          { \__xunadd_composite_cs:nnn {#1} {#2} {#3} } {#1} {#3}
+      }
+      { \cs_if_exist_use:cTF { ? #1 } { {#3} } {#3} }
+    \__xunadd_end_hook:nn {#1} {#3}
+  }
+\cs_new_protected:Npn \__xunadd_text_composite:Nnn #1#2#3
+  {
+    \token_if_chardef:NTF #1
+      {
+        \__xunadd_glyph_if_exist:nTF {#1}
+          {#1} { \cs_if_exist_use:cTF { ? #2 } { {#3} } {#3} }
+      }
+      {#1}
+  }
+\cs_generate_variant:Nn \__xunadd_text_composite:Nnn { c }
+\cs_new_protected:Npn \__xunadd_declare_encoded:NNnnn #1#2#3#4#5
+  {
+    \exp_after:wN \__xunadd_declare_encoded:NNNNee
+      \tex_Uchar:D \__xunadd_check_slot:n {#4} \exp_after:wN \exp_stop_f:
+      \tex_Uchar:D \__xunadd_check_slot:n {#5} \exp_stop_f:
+      #1 #2 { \token_to_str:N #2 } {#3}
+  }
+\cs_new_protected:Npn \__xunadd_declare_encoded:NNNNnn #1#2#3#4#5#6
+  { \DeclareTextCommand #4 {#6} { #3 {#5} {#6} {#1} {#2} } }
+\cs_generate_variant:Nn \__xunadd_declare_encoded:NNnnn { c }
+\cs_generate_variant:Nn \__xunadd_declare_encoded:NNNNnn { NNNNee }
+\cs_new_protected:Npn \__xunadd_text_combine:NnnNNn #1#2#3#4#5#6
+  {
+    \__xunadd_begin_hook:nn {#2} {#6}
+    \cs_if_exist:cTF { \__xunadd_composite_cs:nnn {#2} {#3} {#6} }
+      {
+        \__xunadd_text_combine:cNnNNn
+          { \__xunadd_composite_cs:nnn {#2} {#3} {#6} } #1 {#2} {#4} {#5} {#6}
+      }
+      { #1 {#6} {#2} {#4} {#5} }
+    \__xunadd_end_hook:nn {#2} {#6}
+  }
+\cs_new_protected:Npn \__xunadd_text_combine:NNnNNn #1#2#3#4#5#6
+  {
+    \token_if_chardef:NTF #1
+      { \__xunadd_glyph_if_exist:nTF {#1} {#1} { #2 {#6} {#3} {#4} {#5} } }
+      {#1}
+  }
+\cs_generate_variant:Nn \__xunadd_text_combine:NNnNNn { c }
+\cs_new_protected:Npn \__xunadd_combine_symbol:nnNNn
+  { \__xunadd_text_combine:NnnNNn \__xunadd_add_symbol:nnNN }
+\cs_new_protected:Npn \__xunadd_add_symbol:nnNN #1#2#3#4
+  {
+    \tl_if_blank:nTF {#1}
+      {
+        \__xunadd_glyph_if_exist:nTF { `#4 }
+          {#4}
+          { \cs_if_exist_use:cTF { ? #2 } { {#1} } {#4} }
+      }
+      {
+        \__xunadd_glyph_if_exist:nTF { `#3 }
+          { #1#3 }
+          { \cs_if_exist_use:cTF { ? #2 } { {#1} } { #1#3 } }
+      }
+  }
+\cs_new_protected:Npn \__xunadd_combine_accent:nnNNn
+  { \__xunadd_text_combine:NnnNNn \__xunadd_add_accent:nnNN }
+\cs_new_protected:Npn \__xunadd_add_accent:nnNN #1#2#3#4
+  {
+    \tl_if_blank:nTF {#1}
+      {
+        \__xunadd_glyph_if_exist:nTF { `#4 }
+          {#4}
+          { \cs_if_exist_use:cTF { ? #2 } { {#1} } {#4} }
+      }
+      {
+        \__xunadd_glyph_if_exist:nTF { `#3 }
+          { #1#3 }
+          {
+            \__xunadd_glyph_if_exist:nTF { `#4 }
+              { \add@accent { `#4 } {#1} }
+              { \cs_if_exist_use:cTF { ? #2 } { {#1} } { #1#3 } }
+          }
+      }
+  }
+\cs_new_protected:Npn \__xunadd_combine_accents:nnNNn
+  { \__xunadd_text_combine:NnnNNn \__xunadd_add_accents:nnNN }
+\cs_new_protected:Npn \__xunadd_add_accents:nnNN #1#2#3#4
+  {
+    \tl_if_blank:nTF {#1}
+      { \cs_if_exist_use:cTF { ? #2 } { {#1} } {#1} }
+      {
+        \__xunadd_glyph_if_exist:nTF { `#3 }
+          { \__xunadd_glyph_if_exist:nTF { `#4 } }
+          { \use_ii:nn }
+          { #1#3#4 }
+          { \cs_if_exist_use:cTF { ? #2 } { {#1} } { #1#3#4 } }
+      }
+  }
+\cs_new_protected:Npn \__xunadd_combine_circle:nnNNn
+  { \__xunadd_text_combine:NnnNNn \__xunadd_add_circle:nnNN }
+\cs_new_protected:Npn \__xunadd_add_circle:nnNN #1#2#3#4
+  {
+    \tl_if_blank:nTF {#1}
+      {
+        \__xunadd_glyph_if_exist:nTF { `#4 }
+          {#4}
+          { \cs_if_exist_use:cTF { ? #2 } { {#1} } {#4} }
+      }
+      {
+        \__xunadd_glyph_if_exist:nTF { `#4 }
+          { \__xunadd_add_circle:nN {#1} #4 }
+          { \cs_if_exist_use:cTF { ? #2 } { {#1} } {#1} }
+      }
+  }
+\cs_new_protected:Npn \__xunadd_add_circle:nN #1#2
+  {
+    \hcoffin_set:Nn \l__xunadd_tmp_coffin {#1}
+    \hcoffin_set:Nn \l__xunadd_circle_coffin {#2}
+    \fp_set:Nn \l__xunadd_circle_scale_fp
+      {
+        \dim_to_decimal_in_unit:nn
+          {
+            \fp_use:N \l__xunadd_circle_ratio_fp
+            \coffin_wd:N \l__xunadd_circle_coffin
+          }
+          { \coffin_wd:N \l__xunadd_tmp_coffin }
+      }
+    \coffin_scale:Nnn \l__xunadd_tmp_coffin
+      { \l__xunadd_circle_scale_fp } { \l__xunadd_circle_scale_fp }
+    \coffin_attach:NnnNnnnn
+      \l__xunadd_circle_coffin { hc } { vc }
+      \l__xunadd_tmp_coffin    { hc } { vc } { \c_zero_dim } { \c_zero_dim }
+    \coffin_typeset:Nnnnn \l__xunadd_circle_coffin
+      { H } { l } { \c_zero_dim } { \c_zero_dim }
+  }
+\fp_new:N \l__xunadd_circle_scale_fp
+\coffin_new:N \l__xunadd_tmp_coffin
+\coffin_new:N \l__xunadd_circle_coffin
+\NewDocumentCommand \settextcircledratio { m }
+  { \fp_set:Nn \l__xunadd_circle_ratio_fp {#1} }
+\fp_new:N \l__xunadd_circle_ratio_fp
+\settextcircledratio { 0.7 }
+\cs_new_protected:Npn \__xunadd_combine_double_accent:nnNNn
+  { \__xunadd_text_combine:NnnNNn \__xunadd_add_double_accent:nnNN }
+\cs_new_protected:Npn \__xunadd_add_double_accent:nnNN #1#2#3#4
+  {
+    \tl_if_blank:nTF {#1}
+      {
+        \__xunadd_glyph_if_exist:nTF { `#4 }
+          {#4}
+          { \cs_if_exist_use:cTF { ? #2 } { {#1} } {#4} }
+      }
+      {
+        \__xunadd_glyph_if_exist:nTF { `#3 }
+          { \__xunadd_add_double_symbol:nN {#1} #3 }
+          {
+            \__xunadd_glyph_if_exist:nTF { `#4 }
+              { \add@accent { `#4 } {#1} }
+              { \cs_if_exist_use:cTF { ? #2 } { {#1} } { #1#3 } }
+          }
+      }
+  }
+\cs_new_protected:Npn \__xunadd_combine_double_symbol:nnNNn
+  { \__xunadd_text_combine:NnnNNn \__xunadd_add_double_symbol:nnNN }
+\cs_new_protected:Npn \__xunadd_add_double_symbol:nnNN #1#2#3#4
+  {
+    \tl_if_blank:nTF {#1}
+      {
+        \__xunadd_glyph_if_exist:nTF { `#4 }
+          {#4}
+          { \cs_if_exist_use:cTF { ? #2 } { {#1} } {#4} }
+      }
+      {
+        \__xunadd_glyph_if_exist:nTF { `#3 }
+          { \__xunadd_add_double_symbol:nN {#1} #3 }
+          { \cs_if_exist_use:cTF { ? #2 } { {#1} } { #1#3 } }
+      }
+  }
+\cs_new_protected:Npn \__xunadd_add_double_symbol:nN #1#2
+  {
+    \tl_if_head_is_N_type:nTF {#1}
+      {
+        \exp_after:wN \exp_after:wN \exp_after:wN
+        \__xunadd_add_double_symbol_aux:NnN \exp_after:wN \exp_after:wN
+          \tl_head:w #1 \q_stop \exp_after:wN { \use_none:n #1 } #2
+      }
+      { #1#2 }
+  }
+\cs_new_protected:Npn \__xunadd_add_double_symbol_aux:NnN #1#2#3
+  {
+    \bool_lazy_any:nTF
+      {
+        { \token_if_letter_p:N #1 }
+        { \token_if_other_p:N #1 }
+        { \token_if_chardef_p:N #1 }
+      }
+      { #1#3#2 }
+      { #1#2#3 }
+  }
+\NewDocumentCommand \AtBeginUTFCommand { s O { } +m }
+  {
+    \tl_if_blank:nTF {#2}
+      {
+        \IfBooleanTF {#1}
+          { \xunadd_set_begin_hook:n }
+          { \xunadd_append_begin_hook:n }
+      }
+      { \xunadd_set_begin_hook:nn {#2} }
+      {#3}
+  }
+\NewDocumentCommand \AtEndUTFCommand { s O { } +m }
+  {
+    \tl_if_blank:nTF {#2}
+      {
+        \IfBooleanTF {#1}
+          { \xunadd_set_end_hook:n }
+          { \xunadd_append_end_hook:n }
+      }
+      { \xunadd_set_end_hook:nn {#2} }
+      {#3}
+  }
+\cs_new_protected:Npn \xunadd_set_begin_hook:n
+  { \tl_set:Nn \l__xunadd_begin_hook_tl }
+\cs_new_protected:Npn \xunadd_append_begin_hook:n
+  { \tl_put_right:Nn \l__xunadd_begin_hook_tl }
+\cs_new_protected:Npn \xunadd_set_end_hook:n
+  { \tl_set:Nn \l__xunadd_end_hook_tl }
+\cs_new_protected:Npn \xunadd_append_end_hook:n
+  { \tl_put_right:Nn \l__xunadd_end_hook_tl }
+\cs_new_protected:Npn \xunadd_set_begin_hook:nn
+  { \__xunadd_set_cmd_hook:nnn { begin } }
+\cs_new_protected:Npn \xunadd_set_end_hook:nn
+  { \__xunadd_set_cmd_hook:nnn { end } }
+\cs_new_protected:Npn \__xunadd_set_cmd_hook:nnn #1#2#3
+  {
+    \cs_set_protected:cpn
+      {
+        \tl_if_single:nTF {#2}
+          { \use:c { __xunadd_#1_csname:n } { \token_to_str:N #2 } }
+          { \__xunadd_set_cmd_hook_aux:Nnwn #2 \q_stop {#1} }
+      } ##1
+      {#3}
+  }
+\cs_new:Npn \__xunadd_set_cmd_hook_aux:Nnwn #1#2 \q_stop #3
+  { \use:c { __xunadd_#3_csname:n } { \token_to_str:N #1 - \tl_to_str:n {#2} } }
+\cs_new:Npn \__xunadd_begin_csname:n #1 { __xunadd_begin_#1_hook:n }
+\cs_new:Npn \__xunadd_end_csname:n #1   { __xunadd_end_#1_hook:n }
+\tl_new:N \l__xunadd_begin_hook_tl
+\tl_new:N \l__xunadd_end_hook_tl
+\cs_new_protected:Npn \__xunadd_begin_hook:nn #1#2
+  {
+    \tl_use:N \l__xunadd_begin_hook_tl
+    \cs_if_exist_use:cF { \__xunadd_begin_csname:n { #1 - \tl_to_str:n {#2} } }
+      { \cs_if_exist_use:cF { \__xunadd_begin_csname:n {#1} } { \use_none:n } }
+      {#2}
+  }
+\cs_new_protected:Npn \__xunadd_end_hook:nn #1#2
+  {
+    \cs_if_exist_use:cF { \__xunadd_end_csname:n { #1 - \tl_to_str:n {#2} } }
+      { \cs_if_exist_use:cF { \__xunadd_end_csname:n {#1} } { \use_none:n } }
+      {#2}
+    \tl_use:N \l__xunadd_end_hook_tl
+  }
+\NewDocumentCommand \DeclareUTFTIPACommand { O { \UTFencname } m }
+  { \use:e { \__xunadd_text_tipa_command:Nnn \exp_not:N #2 { \token_to_str:N #2 } {#1} } }
+\cs_new_protected:Npn \__xunadd_text_tipa_command:Nnn #1#2#3
+  {
+    \cs_set_eq:cc { UTF/#3#2 } { #3#2 }
+    \DeclareTextCommand #1 {#3} { \__xunadd_text_tipa_command:nnn {#3} {#2} }
+  }
+\cs_new_protected:Npn \__xunadd_text_tipa_command:nnn #1#2#3
+  {
+    \exp_args:Ncc \__xunadd_check_for_tipa:NNn
+      { \use_none:n #2 } { UTF/#1#2 } {#3}
+  }
+\cs_new_protected:Npn \__xunadd_check_for_tipa:NNn #1#2#3
+  {
+    \tl_if_head_eq_meaning:nNTF {#3} \textipa
+      {
+        \exp_after:wN \tipacatchonechar \exp_after:wN
+          { \exp_after:wN #1 \use_none:n #3 }
+      }
+      { #2 {#3} }
+  }
+\cs_new_protected:Npn \xunadd_get_slot:nn #1#2
+  { \__xunadd_get_slot:wn #2 \q_nil \q_stop {#1} }
+\cs_new_protected:Npn \__xunadd_get_slot:wn #1#2#3 \q_stop #4
+  {
+    \int_set:Nn \l_xunadd_slot_int { -1 }
+    \bool_set_false:N \l_xunadd_rest_bool
+    \group_begin: \exp_args:Nccc \group_end:
+    { __xunadd_get_slot:NNnn }
+      { #4 \token_to_str:N #1 }
+      { \__xunadd_composite_cs:Nnn #1 {#4} {#2} }
+      {#2}
+      {#3}
+  }
+\int_new:N \l_xunadd_slot_int
+\bool_new:N \l_xunadd_rest_bool
+\cs_new_protected:Npn \__xunadd_get_slot:NNnn #1#2#3#4
+  {
+    \cs_if_free:NF #1
+      {
+        \cs_if_exist:NTF #2
+          { \__xunadd_get_composite_slot:Nn #2 {#4} }
+          { \__xunadd_get_character_slot:Nn #1 { #3 #4 } }
+      }
+  }
+\cs_new_protected:Npn \__xunadd_get_composite_slot:Nn #1#2
+  {
+    \token_if_chardef:NT #1
+      {
+        \int_set:Nn \l_xunadd_slot_int {#1}
+        \quark_if_nil:nF {#2}
+          { \bool_set_true:N \l_xunadd_rest_bool }
+      }
+  }
+\cs_new_protected:Npn \__xunadd_get_character_slot:Nn #1
+  {
+    \exp_after:wN \__xunadd_get_character_slot_aux:wn #1
+      \__xunadd_text_character:nN \q_nil \q_nil \q_stop
+  }
+\cs_new_protected:Npn \__xunadd_get_character_slot_aux:wn
+  #1 \__xunadd_text_character:nN #2#3#4 \q_stop #5
+  {
+    \quark_if_nil:nF {#2}
+      {
+        \int_set:Nn \l_xunadd_slot_int { `#3 }
+        \quark_if_nil:nF {#5}
+          { \bool_set_true:N \l_xunadd_rest_bool }
+      }
+  }
+\cs_new_protected_nopar:Npn \xunadd@microtype@is@charx #1 \relax
+  {
+    \use:e
+      { \xunadd_get_slot:nn { \MT@encoding } { \tex_the:D \MT@toks } }
+    \int_compare:nNnTF \l_xunadd_slot_int < \c_zero_int
+      { \xunadd@original@is@charx #1 \relax }
+      {
+        \cs_set_nopar:Npx \MT@char@ { \int_use:N \l_xunadd_slot_int }
+        \bool_if:NT \l_xunadd_rest_bool { \MT@norestfalse }
+      }
+  }
+\cs_new_protected_nopar:Npn \xunadd@microtype@hook
+  {
+    \cs_if_free:NF \MT@is@charx
+      {
+        \cs_new_eq:NN \xunadd@original@is@charx \MT@is@charx
+        \cs_set_eq:NN \MT@is@charx \xunadd@microtype@is@charx
+        \cs_set_eq:NN \MT@warn@unknown@once \use_none:n
+      }
+  }
+\@ifpackageloaded { microtype }
+  { \use:n } { \AtBeginDocument }
+  { \xunadd@microtype@hook }
+%% 
+%%     This package consists of the files xeCJK.dtx,
+%%                                        full-stop.map,
+%%                                        fullwidth-stop.map,
+%%                                        han-simp.map,
+%%                                        han-trad.map,
+%%                  and the derived files xeCJK.pdf,
+%%                                        xeCJK.sty,
+%%                                        xeCJK.cfg,
+%%                                        xeCJK.ins,
+%%                                        xeCJKfntef.sty,
+%%                                        xeCJK-listings.sty,
+%%                                        xunicode-addon.sty,
+%%                                        xunicode-extra.def,
+%%                                        xeCJK-example-autofake.tex,
+%%                                        xeCJK-example-fallback.tex,
+%%                                        xeCJK-example-subCJKblock.tex,
+%%                                        xeCJK-example-CJKecglue.tex,
+%%                                        xeCJK-example-checksingle.tex,
+%%                                        xeCJK-example-CJKfntef.tex,
+%%                                        xeCJK-example-punctstyle.tex,
+%%                                        xeCJK-example-verbatim.tex,
+%%                                        xeCJK-example-CM.tex,
+%%                                        xeCJK-example-listings.tex,
+%%                                        xeCJK-example-mathblock.tex,
+%%                                        xunicode-symbols.tex,
+%%                                        xunicode-commands.tex,
+%%                                        xunicode-combine-marks.tex,
+%%                                        xunicode-symbols.pdf,
+%%                                        full-stop.tec,
+%%                                        fullwidth-stop.tec,
+%%                                        han-simp.tec,
+%%                                        han-trad.tec, and
+%%                                        README.md.
+%%
+%% End of file `xunicode-addon.sty'.

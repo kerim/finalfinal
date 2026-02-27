@@ -98,7 +98,8 @@ Phase planning and design decisions.
 - Citation picker positioning
 - Multi-citation entry UI
 - Research Zotero native picker
-- PDF export citation formatting
+- [x] PDF export citation formatting (--citeproc with Zotero CSL-JSON)
+- [x] Non-Latin font detection for PDF (Unicode range scanning + bundled xeCJK)
 
 ### 0.2.3 -- Foundation & Stability
 - Data integrity verification and recovery
