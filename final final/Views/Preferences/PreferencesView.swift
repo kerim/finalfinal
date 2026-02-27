@@ -270,7 +270,7 @@ struct AppearancePreferencesPane: View {
                     isOverridden: appearanceManager.isHeaderColorOverridden(),
                     onReset: {
                         appearanceManager.clearHeaderColor()
-                        headerColor = appearanceManager.effectiveTextColor(theme: themeManager.currentTheme)
+                        headerColor = themeManager.currentTheme.editorHeaderText
                     },
                     content: {
                     ColorPicker("", selection: $headerColor, supportsOpacity: false)
