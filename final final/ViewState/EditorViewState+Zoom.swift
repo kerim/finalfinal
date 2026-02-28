@@ -374,6 +374,11 @@ extension EditorViewState {
                 existingSectionMetadata: metadata.isEmpty ? nil : metadata
             )
 
+            print("[FLUSH] Input length=\(contentToParse.count), parsed \(blocks.count) blocks")
+            for (i, block) in blocks.enumerated() {
+                print("[FLUSH]   [\(i)] type=\(block.blockType) frag_len=\(block.markdownFragment.count) preview=\"\(String(block.markdownFragment.prefix(80)))\"")
+            }
+
             if let range = zoomedBlockRange {
                 // Zoomed: only replace blocks within the zoom range
                 try db.replaceBlocksInRange(
@@ -418,7 +423,7 @@ extension EditorViewState {
                 try db.replaceBlocks(blocks, for: pid)
             }
         } catch {
-            print("[EditorViewState] flushCodeMirrorSyncIfNeeded error: \(error)")
+            print("[EditorViewState] flushContentToDatabase error: \(error)")
         }
     }
 

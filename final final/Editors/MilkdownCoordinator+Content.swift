@@ -297,6 +297,14 @@ extension MilkdownEditor.Coordinator {
             }
 
             if let content = contentResult as? String {
+                print("[SAVE+NOTIFY] getContent returned length=\(content.count)")
+                print("[SAVE+NOTIFY] Preview: \(String(content.prefix(300)))")
+                // Check for heading-body merges (corruption indicator)
+                let lines = content.components(separatedBy: "\n")
+                for (i, line) in lines.enumerated() where line.hasPrefix("#") {
+                    let nextLine = i + 1 < lines.count ? lines[i + 1] : "(EOF)"
+                    print("[SAVE+NOTIFY] Heading at line \(i): \"\(line.prefix(80))\" next: \"\(nextLine.prefix(40))\"")
+                }
                 self.lastPushedContent = content
                 self.contentBinding.wrappedValue = content
             }

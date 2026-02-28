@@ -315,6 +315,16 @@ final class ProjectDatabase: Sendable {
             }
         }
 
+        // Image blocks: add image metadata columns
+        migrator.registerMigration("v13_image_blocks") { db in
+            try db.alter(table: "block") { t in
+                t.add(column: "imageSrc", .text)      // media/filename.png
+                t.add(column: "imageAlt", .text)      // accessibility text
+                t.add(column: "imageCaption", .text)  // visible caption
+                t.add(column: "imageWidth", .integer)  // display width in px
+            }
+        }
+
         try migrator.migrate(dbWriter)
     }
 

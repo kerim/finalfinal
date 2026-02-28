@@ -286,6 +286,27 @@ export function applyBlocks(blocks: Block[]): void {
       clearBlockIds();
       const blockIds = sortedBlocks.map((b) => b.id);
       setBlockIdsForTopLevel(blockIds, view.state.doc);
+
+      // Inject image metadata (caption, width) from block data into figure nodes
+      const figureBlocks = sortedBlocks.filter((b) => b.blockType === 'image');
+      if (figureBlocks.length > 0) {
+        let figureIdx = 0;
+        let metaTr = view.state.tr;
+        view.state.doc.forEach((node, pos) => {
+          if (node.type.name === 'figure' && figureIdx < figureBlocks.length) {
+            const block = figureBlocks[figureIdx];
+            metaTr = metaTr.setNodeMarkup(pos, undefined, {
+              ...node.attrs,
+              caption: block.imageCaption || '',
+              width: block.imageWidth || null,
+              blockId: block.id,
+            });
+            figureIdx++;
+          }
+        });
+        if (metaTr.steps.length > 0) view.dispatch(metaTr);
+      }
+
       resetAndSnapshot(view.state.doc);
     } finally {
       setIsSettingContent(false);
@@ -462,4 +483,50 @@ export function syncBlockIds(orderedIds: string[], zoomMode: boolean): void {
   setBlockIdZoomMode(zoomMode); // Set zoom mode based on caller context
   setBlockIdsForTopLevel(orderedIds, view.state.doc);
   resetAndSnapshot(view.state.doc);
+}
+
+/**
+ * Insert an image figure node at the end of the document.
+ * Called from Swift after image import completes.
+ */
+export function insertImage(opts: {
+  src: string;
+  alt: string;
+  caption: string;
+  width: number | null;
+  blockId: string;
+}): void {
+  const editorInstance = getEditorInstance();
+  if (!editorInstance) return;
+
+  try {
+    const view = editorInstance.ctx.get(editorViewCtx);
+    const figureType = view.state.schema.nodes.figure;
+    if (!figureType) {
+      console.error('[Milkdown] figure node type not found in schema');
+      return;
+    }
+
+    const node = figureType.create({
+      src: opts.src,
+      alt: opts.alt,
+      caption: opts.caption,
+      width: opts.width,
+      blockId: opts.blockId,
+    });
+
+    // Insert after the current top-level block (depth 1), fallback to end of document
+    let insertPos: number;
+    try {
+      const { from } = view.state.selection;
+      const $from = view.state.doc.resolve(from);
+      insertPos = $from.after(1); // After current top-level block
+    } catch {
+      insertPos = view.state.doc.content.size; // Fallback: end of document
+    }
+    const tr = view.state.tr.insert(insertPos, node);
+    view.dispatch(tr);
+  } catch (e) {
+    console.error('[Milkdown] insertImage failed:', e);
+  }
 }

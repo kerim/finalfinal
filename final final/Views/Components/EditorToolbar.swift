@@ -77,12 +77,12 @@ struct EditorToolbar: ToolbarContent {
         }
 
         ToolbarItemGroup(placement: .primaryAction) {
-            // Deferred items (disabled)
-            Button {} label: {
+            Button {
+                NotificationCenter.default.post(name: .requestInsertImage, object: nil)
+            } label: {
                 Label("Image", systemImage: "photo")
             }
-            .disabled(true)
-            .help("Coming soon")
+            .help("Insert image (⌘⇧I)")
 
             Button {} label: {
                 Label("Table", systemImage: "tablecells")

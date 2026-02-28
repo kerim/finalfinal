@@ -244,6 +244,65 @@ Key design choices:
 
 ---
 
+## Block Decorations Must Come From StateField, Not ViewPlugin
+
+**Problem:** CodeMirror displayed blank/empty when documents contained image markdown `![alt](media/...)`. No content was visible at all — not even the text around the images.
+
+**Root Cause:** The image preview plugin (`image-preview-plugin.ts`) used `ViewPlugin.fromClass(...)` with `Decoration.widget({ block: true })`. CM6 enforces that block-level decorations (widgets with `block: true`) must come from a `StateField`, not a `ViewPlugin`. At runtime, CM6 throws:
+
+```
+RangeError: Block decorations may not be specified via plugins
+```
+
+This error was initially hard to diagnose because it manifested as a blank editor with no visible JS errors in the Xcode console. Adding detailed JS exception logging to the Swift `evaluateJavaScript` completion handler (extracting `WKJavaScriptExceptionMessage`, `WKJavaScriptExceptionLineNumber`, etc. from `NSError.userInfo`) revealed the `RangeError`.
+
+**Fix:** Replace `ViewPlugin.fromClass(...)` with `StateField.define<DecorationSet>(...)`:
+
+```typescript
+// WRONG: ViewPlugin cannot provide block decorations
+export function imagePreviewPlugin() {
+  return ViewPlugin.fromClass(
+    class {
+      decorations: DecorationSet;
+      constructor(view: EditorView) { this.decorations = buildDecorations(view); }
+      update(update: ViewUpdate) { this.decorations = buildDecorations(update.view); }
+    },
+    { decorations: (v) => v.decorations }
+  );
+}
+
+// RIGHT: StateField can provide block decorations
+export function imagePreviewPlugin() {
+  return StateField.define<DecorationSet>({
+    create(state) { return buildDecorations(state); },
+    update(value, tr) {
+      if (tr.docChanged) return buildDecorations(tr.state);
+      return value;
+    },
+    provide: (f) => EditorView.decorations.from(f),
+  });
+}
+```
+
+**Consequential change:** `buildDecorations` takes `EditorState` instead of `EditorView`, so widgets can't hold a `view` reference for `requestMeasure()`. Instead, use DOM traversal in the widget's `toDOM()` callbacks:
+
+```typescript
+img.onload = () => {
+  const editorRoot = wrapper.closest('.cm-editor');
+  if (editorRoot) {
+    EditorView.findFromDOM(editorRoot as HTMLElement)?.requestMeasure();
+  }
+};
+```
+
+Using `wrapper.closest('.cm-editor')` is safe even for cached images where `onload` fires synchronously before DOM attachment (returns `null`, no-op).
+
+**Swift-side debugging aid:** When diagnosing blank WebView issues, use `if let error` (not `if let error = error as? NSError`) for the guard, then `let nsError = error as NSError` inside for logging. The conditional `as? NSError` cast can skip error handling branches (e.g., resetting `lastPushedContent`) when the error type doesn't match.
+
+**General principle:** In CM6, `ViewPlugin` can only provide inline/line decorations. Block decorations (`block: true`) must come from `StateField.define(...)` with `provide: (f) => EditorView.decorations.from(f)`. This is documented in CM6 but the runtime error is not always surfaced clearly.
+
+---
+
 ## Map ViewPlugin Decorations Instead of Rebuilding
 
 **Problem:** Spell check underlines appeared on wrong words during typing. The `ViewPlugin.update()` rebuilt the entire `DecorationSet` from a module-level results array on every update, using positions that were stale after the edit.

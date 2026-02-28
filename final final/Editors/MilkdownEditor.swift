@@ -56,6 +56,9 @@ struct MilkdownEditor: NSViewRepresentable {
             controller.add(context.coordinator, name: "spellcheck")
             controller.add(context.coordinator, name: "navigateToFootnote")
             controller.add(context.coordinator, name: "footnoteInserted")
+            controller.add(context.coordinator, name: "pasteImage")
+            controller.add(context.coordinator, name: "requestImagePicker")
+            controller.add(context.coordinator, name: "updateImageMeta")
 
             preloaded.navigationDelegate = context.coordinator
             context.coordinator.webView = preloaded
@@ -79,6 +82,7 @@ struct MilkdownEditor: NSViewRepresentable {
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = sharedDataStore  // Persist localStorage across editor toggles
         configuration.setURLSchemeHandler(EditorSchemeHandler(), forURLScheme: "editor")
+        configuration.setURLSchemeHandler(MediaSchemeHandler.shared, forURLScheme: "projectmedia")
 
         // === PHASE 4: Add error handler script to capture JS errors ===
         let errorScript = WKUserScript(
@@ -120,6 +124,9 @@ struct MilkdownEditor: NSViewRepresentable {
         configuration.userContentController.add(context.coordinator, name: "spellcheck")
         configuration.userContentController.add(context.coordinator, name: "navigateToFootnote")
         configuration.userContentController.add(context.coordinator, name: "footnoteInserted")
+        configuration.userContentController.add(context.coordinator, name: "pasteImage")
+        configuration.userContentController.add(context.coordinator, name: "requestImagePicker")
+        configuration.userContentController.add(context.coordinator, name: "updateImageMeta")
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = context.coordinator
@@ -251,6 +258,7 @@ struct MilkdownEditor: NSViewRepresentable {
         var scrollToFootnoteDefObserver: NSObjectProtocol?
         var blockSyncPushObserver: NSObjectProtocol?
         var zoomFootnoteStateObserver: NSObjectProtocol?
+        var insertImageObserver: NSObjectProtocol?
 
         // Formatting command observers
         var toggleBoldObserver: NSObjectProtocol?
@@ -454,11 +462,14 @@ struct MilkdownEditor: NSViewRepresentable {
             }
 
             // Subscribe to BlockSyncService content push — sync lastPushedContent to prevent
-            // redundant updateNSView re-push that destroys block IDs
+            // redundant updateNSView re-push that destroys block IDs.
+            // queue: nil → handler fires synchronously on posting thread (MainActor).
+            // This ensures lastPushedContent is updated BEFORE the Task body continues,
+            // preventing updateNSView from seeing a stale value and re-pushing without block IDs.
             blockSyncPushObserver = NotificationCenter.default.addObserver(
                 forName: .blockSyncDidPushContent,
                 object: nil,
-                queue: .main
+                queue: nil
             ) { [weak self] notification in
                 guard let markdown = notification.userInfo?["markdown"] as? String else { return }
                 self?.lastPushedContent = markdown
@@ -517,6 +528,15 @@ struct MilkdownEditor: NSViewRepresentable {
                     self?.setZoomFootnoteState(zoomed: zoomed, maxLabel: maxLabel)
                 }
             }
+
+            // Subscribe to insert image notification (Insert > Image menu)
+            insertImageObserver = NotificationCenter.default.addObserver(
+                forName: .requestInsertImage,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                self?.handleImagePicker()
+            }
         }
 
         deinit {
@@ -570,6 +590,9 @@ struct MilkdownEditor: NSViewRepresentable {
                 NotificationCenter.default.removeObserver(observer)
             }
             if let observer = zoomFootnoteStateObserver {
+                NotificationCenter.default.removeObserver(observer)
+            }
+            if let observer = insertImageObserver {
                 NotificationCenter.default.removeObserver(observer)
             }
             // Formatting command observers cleanup

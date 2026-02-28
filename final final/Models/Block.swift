@@ -74,6 +74,12 @@ struct Block: Codable, Identifiable, Equatable, Sendable, FetchableRecord, Mutab
     var aggregateGoalType: GoalType
     var wordCount: Int
 
+    // Image metadata (image blocks only)
+    var imageSrc: String?           // Relative path: media/filename.png
+    var imageAlt: String?           // Accessibility description
+    var imageCaption: String?       // Visible caption text
+    var imageWidth: Int?            // Display width in pixels
+
     // Special flags
     var isBibliography: Bool
     var isNotes: Bool               // Footnote notes section
@@ -100,6 +106,10 @@ struct Block: Codable, Identifiable, Equatable, Sendable, FetchableRecord, Mutab
         aggregateGoal: Int? = nil,
         aggregateGoalType: GoalType = .approx,
         wordCount: Int = 0,
+        imageSrc: String? = nil,
+        imageAlt: String? = nil,
+        imageCaption: String? = nil,
+        imageWidth: Int? = nil,
         isBibliography: Bool = false,
         isNotes: Bool = false,
         isPseudoSection: Bool = false,
@@ -121,6 +131,10 @@ struct Block: Codable, Identifiable, Equatable, Sendable, FetchableRecord, Mutab
         self.aggregateGoal = aggregateGoal
         self.aggregateGoalType = aggregateGoalType
         self.wordCount = wordCount
+        self.imageSrc = imageSrc
+        self.imageAlt = imageAlt
+        self.imageCaption = imageCaption
+        self.imageWidth = imageWidth
         self.isBibliography = isBibliography
         self.isNotes = isNotes
         self.isPseudoSection = isPseudoSection
@@ -146,6 +160,10 @@ struct Block: Codable, Identifiable, Equatable, Sendable, FetchableRecord, Mutab
         case aggregateGoal
         case aggregateGoalType
         case wordCount
+        case imageSrc
+        case imageAlt
+        case imageCaption
+        case imageWidth
         case isBibliography
         case isNotes
         case isPseudoSection
@@ -171,6 +189,10 @@ struct Block: Codable, Identifiable, Equatable, Sendable, FetchableRecord, Mutab
         case aggregateGoal
         case aggregateGoalType
         case wordCount
+        case imageSrc
+        case imageAlt
+        case imageCaption
+        case imageWidth
         case isBibliography
         case isNotes
         case isPseudoSection
@@ -218,6 +240,10 @@ struct Block: Codable, Identifiable, Equatable, Sendable, FetchableRecord, Mutab
             aggregateGoalType = .approx
         }
         wordCount = try container.decode(Int.self, forKey: .wordCount)
+        imageSrc = try container.decodeIfPresent(String.self, forKey: .imageSrc)
+        imageAlt = try container.decodeIfPresent(String.self, forKey: .imageAlt)
+        imageCaption = try container.decodeIfPresent(String.self, forKey: .imageCaption)
+        imageWidth = try container.decodeIfPresent(Int.self, forKey: .imageWidth)
         isBibliography = try container.decode(Bool.self, forKey: .isBibliography)
         isNotes = try container.decode(Bool.self, forKey: .isNotes)
         isPseudoSection = try container.decode(Bool.self, forKey: .isPseudoSection)
@@ -258,6 +284,10 @@ struct Block: Codable, Identifiable, Equatable, Sendable, FetchableRecord, Mutab
         try container.encodeIfPresent(aggregateGoal, forKey: .aggregateGoal)
         try container.encode(aggregateGoalType.rawValue, forKey: .aggregateGoalType)
         try container.encode(wordCount, forKey: .wordCount)
+        try container.encodeIfPresent(imageSrc, forKey: .imageSrc)
+        try container.encodeIfPresent(imageAlt, forKey: .imageAlt)
+        try container.encodeIfPresent(imageCaption, forKey: .imageCaption)
+        try container.encodeIfPresent(imageWidth, forKey: .imageWidth)
         try container.encode(isBibliography, forKey: .isBibliography)
         try container.encode(isNotes, forKey: .isNotes)
         try container.encode(isPseudoSection, forKey: .isPseudoSection)
@@ -293,6 +323,32 @@ struct Block: Codable, Identifiable, Equatable, Sendable, FetchableRecord, Mutab
             return "\(wordCount)/\(goal)"
         }
         return "\(wordCount)"
+    }
+
+    /// Generate Pandoc-compatible markdown for export.
+    /// For image blocks, includes caption comment and width attribute from DB columns.
+    /// For non-image blocks, returns `markdownFragment` unchanged.
+    func markdownForExport() -> String {
+        guard blockType == .image, let src = imageSrc else {
+            return markdownFragment
+        }
+
+        var result = ""
+
+        // Caption as HTML comment (Pandoc convention)
+        if let caption = imageCaption, !caption.isEmpty {
+            result += "<!-- caption: \(caption) -->\n\n"
+        }
+
+        // Image markdown with optional width attribute
+        let alt = imageAlt ?? ""
+        if let width = imageWidth {
+            result += "![\(alt)](\(src)){width=\(width)px}"
+        } else {
+            result += "![\(alt)](\(src))"
+        }
+
+        return result
     }
 
     /// Whether this block is a heading that can appear in the outline sidebar

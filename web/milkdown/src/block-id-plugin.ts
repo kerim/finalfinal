@@ -20,7 +20,7 @@ const BLOCK_TYPES = new Set([
   'horizontal_rule',
   'section_break',
   'table',
-  'image',
+  'figure',
 ]);
 
 // Generate a UUID for new blocks

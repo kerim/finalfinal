@@ -164,6 +164,13 @@ struct EditorCommands: Commands {
                     )
                 }
                 .keyboardShortcut("r", modifiers: [.command, .shift])
+
+                Button("Image...") {
+                    NotificationCenter.default.post(name: .requestInsertImage, object: nil)
+                }
+                .keyboardShortcut("i", modifiers: [.command, .shift])
+
+                Divider()
             }
         }
     }

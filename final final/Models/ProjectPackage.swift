@@ -10,6 +10,7 @@ struct ProjectPackage: Sendable {
 
     var databaseURL: URL { packageURL.appendingPathComponent("content.sqlite") }
     var referencesURL: URL { packageURL.appendingPathComponent("references") }
+    var mediaURL: URL { packageURL.appendingPathComponent("media") }
 
     /// Creates a new .ff package at the specified location.
     /// If a package already exists at this URL (e.g., NSSavePanel "Replace"),
@@ -31,6 +32,10 @@ struct ProjectPackage: Sendable {
         // Create references subdirectory
         let refsURL = packageURL.appendingPathComponent("references")
         try fm.createDirectory(at: refsURL, withIntermediateDirectories: true)
+
+        // Create media subdirectory for image storage
+        let mediaURL = packageURL.appendingPathComponent("media")
+        try fm.createDirectory(at: mediaURL, withIntermediateDirectories: true)
 
         print("[ProjectPackage] Created package at: \(packageURL.path)")
         return ProjectPackage(packageURL: packageURL)

@@ -202,6 +202,18 @@ class BlockSyncService {
             "\(changes.inserts.count) inserts, \(changes.deletes.count) deletes")
         #endif
 
+        // Safety logging: warn on mass deletes that may indicate a stale snapshot bug
+        if !changes.deletes.isEmpty {
+            do {
+                let blockCount = try database.fetchBlockCount(projectId: projectId)
+                let deleteCount = changes.deletes.count
+                if blockCount > 2 && deleteCount > blockCount / 2 {
+                    print("[BlockSyncService] WARNING: Mass delete detected " +
+                        "(\(deleteCount)/\(blockCount) blocks). May indicate stale snapshot.")
+                }
+            } catch { }
+        }
+
         // Apply changes to database
         do {
             try await applyChanges(changes, database: database, projectId: projectId)

@@ -38,6 +38,7 @@ import {
   getBlockChangesApi,
   getContent,
   hasBlockChanges,
+  insertImage,
   resetEditorState,
   resetForProjectSwitch,
   scrollToBlock,
@@ -104,6 +105,7 @@ import {
 } from './footnote-plugin';
 import { headingNodeViewPlugin } from './heading-nodeview-plugin';
 import { highlightPlugin } from './highlight-plugin';
+import { imagePlugin } from './image-plugin';
 import './link-click-handler';
 import { linkTooltipPlugin, openLinkEdit } from './link-tooltip';
 import { searchPlugin } from './search-plugin';
@@ -152,6 +154,7 @@ async function initEditor() {
       .use(annotationPlugin) // Intercept annotation comments before filtering
       .use(citationPlugin) // Parse [@citekey] citations before commonmark
       .use(footnotePlugin) // Parse [^N] footnote references before commonmark
+      .use(imagePlugin) // Parse ![alt](media/...) into figure nodes before commonmark
       .use(commonmark)
       .use(gfm)
       .use(autolinkPlugin) // Auto-link bare URLs on space - AFTER commonmark for link schema
@@ -334,6 +337,8 @@ window.FinalFinal = {
   scrollToBlock,
   getBlockAtCursor,
   hasBlockChanges,
+  // Image API
+  insertImage,
   // Dual-appearance mode API (Phase C)
   setEditorMode,
   getEditorMode,

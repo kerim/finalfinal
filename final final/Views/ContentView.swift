@@ -112,7 +112,7 @@ struct ContentView: View {
             .withFileNotifications(
                 editorState: editorState,
                 syncService: sectionSyncService,
-                onOpened: { await handleProjectOpened() },
+                onOpened: { isRestore in await handleProjectOpened(isRestore: isRestore) },
                 onClosed: { handleProjectClosed() },
                 onIntegrityError: { report, url in
                     pendingProjectURL = url

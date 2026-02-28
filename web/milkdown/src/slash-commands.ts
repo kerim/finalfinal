@@ -48,6 +48,7 @@ const slashCommands: SlashCommand[] = [
   { label: '/reference', replacement: '', description: 'Insert reference annotation', isNodeInsertion: true },
   { label: '/cite', replacement: '', description: 'Insert citation', isNodeInsertion: true },
   { label: '/footnote', replacement: '', description: 'Insert footnote', isNodeInsertion: true },
+  { label: '/image', replacement: '', description: 'Insert image', isNodeInsertion: true },
 ];
 
 // === Slash menu UI state ===
@@ -261,6 +262,21 @@ function executeSlashCommand(index: number) {
       }
       filteredCommands = [];
       // Re-enable slash menu after picker closes (handled by callback)
+      requestAnimationFrame(() => {
+        suppressSlashMenu = false;
+      });
+      return; // Early return - don't set pendingSlashUndo
+    } else if (cmd.label === '/image') {
+      // Delete the /image slash text from the document
+      const tr = view.state.tr.delete(cmdStart, from);
+      view.dispatch(tr);
+      // Request native file picker via Swift bridge
+      (window as any).webkit?.messageHandlers?.requestImagePicker?.postMessage({});
+      // Hide menu and return early (file picker is async, not undoable)
+      if (slashProviderInstance) {
+        slashProviderInstance.hide();
+      }
+      filteredCommands = [];
       requestAnimationFrame(() => {
         suppressSlashMenu = false;
       });
