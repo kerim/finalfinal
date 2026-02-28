@@ -24,12 +24,6 @@ import {
   showImageCaptionPopup,
 } from './image-caption-popup';
 
-// Canary: if this appears in Xcode console, the new JS bundle is loaded
-(window as any).webkit?.messageHandlers?.errorHandler?.postMessage({
-  type: 'debug',
-  message: '[ImagePreview] Module loaded — v2 canary',
-});
-
 // --- Constants ---
 
 /** Matches image markdown: ![alt](media/filename.ext) */
@@ -134,10 +128,6 @@ class ImagePreviewWidget extends WidgetType {
 function buildDecorations(state: EditorState): DecorationSet {
   const doc = state.doc;
   const decorations: { from: number; to: number; deco: Decoration }[] = [];
-  (window as any).webkit?.messageHandlers?.errorHandler?.postMessage({
-    type: 'debug',
-    message: `[ImagePreview] buildDecorations called, lines: ${doc.lines}`,
-  });
 
   // Iterate line-by-line to check for caption comments on preceding lines
   for (let i = 1; i <= doc.lines; i++) {
@@ -168,10 +158,6 @@ function buildDecorations(state: EditorState): DecorationSet {
         if (captionMatch) {
           caption = captionMatch[1];
           captionLineNumber = checkLineNum;
-          (window as any).webkit?.messageHandlers?.errorHandler?.postMessage({
-            type: 'debug',
-            message: `[ImagePreview] Found caption: "${caption}" on line ${checkLineNum} for image on line ${i}`,
-          });
 
           // Hide from caption line start through image line start
           // This covers the caption comment and any intervening blank lines
@@ -195,13 +181,6 @@ function buildDecorations(state: EditorState): DecorationSet {
       }),
     });
   }
-
-  const replaceCount = decorations.filter((d) => d.from !== d.to).length;
-  const widgetCount = decorations.filter((d) => d.from === d.to).length;
-  (window as any).webkit?.messageHandlers?.errorHandler?.postMessage({
-    type: 'debug',
-    message: `[ImagePreview] Built ${replaceCount} replace + ${widgetCount} widget decorations`,
-  });
 
   // Sort by position, then by range length (replace before zero-width widget at same pos)
   decorations.sort((a, b) => a.from - b.from || a.to - a.from - (b.to - b.from));
