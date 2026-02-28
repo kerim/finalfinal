@@ -313,6 +313,39 @@ body {
   text-decoration: underline;
 }
 
+/* === Image Preview Styles === */
+
+/* Image preview container */
+.cm-image-preview {
+  text-align: center;
+}
+
+/* Image within preview */
+.cm-image-preview img {
+  max-width: 100%;
+  max-height: 300px; /* Initial cap, overridden by JS after load */
+  display: block;
+  margin: 4px auto 8px auto;
+  border-radius: 4px;
+}
+
+/* Caption below image */
+.cm-image-caption {
+  margin-top: -4px;
+  margin-bottom: 8px;
+  font-size: 0.85em;
+  color: var(--editor-text, #1a1a1a);
+  text-align: center;
+  font-style: italic;
+}
+
+/* Error state when image fails to load */
+.cm-image-preview-error {
+  color: var(--editor-muted, var(--editor-text-secondary, #888));
+  font-style: italic;
+  padding: 4px 0;
+}
+
 /* === Annotation Decoration Styles === */
 
 /* Annotation delimiters (<!-- and -->) - muted, smaller, lighter */

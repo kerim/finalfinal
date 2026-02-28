@@ -329,3 +329,43 @@ The version counter pattern is needed because CM6 `ViewPlugin.update()` has no e
 **Position mapping uses `ChangeDesc.mapPos()` with asymmetric bias:** `from` maps with +1 (don't extend left), `to` maps with -1 (don't extend right). This prevents underlines from growing to cover newly typed characters.
 
 **General principle:** CM6's `DecorationSet.map(changes)` is the standard way to keep decorations positioned correctly through document edits. Reserve full rebuilds for when the underlying data changes, not when the document changes.
+
+---
+
+## Static Widget Styles Belong in CSS, Not Inline JS
+
+**Problem:** The CM image preview widget (`image-preview-plugin.ts`) applied all visual styles as inline JS on DOM elements in `toDOM()`. This made styles hard to maintain, inconsistent with the Milkdown side (which uses `.figure-caption` in CSS), and introduced a `--text-secondary` typo (should be `--editor-text-secondary`) that was invisible without inspecting the JS source.
+
+**Root Cause:** The initial implementation set `wrapper.style.textAlign`, `img.style.maxWidth`, `img.style.maxHeight`, `img.style.display`, `img.style.margin`, `img.style.borderRadius`, `captionEl.style.color`, etc. directly in JavaScript. Only the `onload` handler needed to be dynamic (orientation-aware height adjustment based on `naturalWidth` vs `naturalHeight`).
+
+**Solution:** Move all static styles to CSS classes in `styles.css`:
+
+```css
+.cm-image-preview { text-align: center; }
+.cm-image-preview img {
+  max-width: 100%;
+  max-height: 300px;
+  display: block;
+  margin: 4px auto 8px auto;
+  border-radius: 4px;
+}
+.cm-image-caption {
+  margin-top: -4px;
+  margin-bottom: 8px;
+  font-size: 0.85em;
+  color: var(--editor-text, #1a1a1a);
+  text-align: center;
+  font-style: italic;
+}
+.cm-image-preview-error {
+  color: var(--editor-muted, var(--editor-text-secondary, #888));
+  font-style: italic;
+  padding: 4px 0;
+}
+```
+
+In `toDOM()`, keep only: `wrapper.className = 'cm-image-preview'`, `img.draggable = false` (not CSS-settable), and the dynamic `onload` handler that adjusts `img.style.maxHeight` based on orientation.
+
+**Bonus fix:** The error handler's `--text-secondary` typo was automatically fixed by using the CSS class `.cm-image-preview-error` with the correct `--editor-text-secondary` fallback.
+
+**General principle:** In CM6 widget `toDOM()`, use CSS classes for static visual styles and reserve inline `style` assignments for values that are only known at runtime (image dimensions, computed positions). This keeps styles maintainable, themeable via CSS variables, and consistent with the rest of the editor.

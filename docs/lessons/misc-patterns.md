@@ -233,3 +233,27 @@ This must happen **before** applying any styling (fonts, paragraph styles, color
 **Reference:** [AttributedStringStyledMarkdown](https://github.com/frankrausch/AttributedStringStyledMarkdown) by Frank Rausch documents this pattern.
 
 **Used in:** `QuickLook Extension/MarkdownRenderer.swift` — the `parseAndStyle()` method.
+
+---
+
+## CSS Variables: `--editor-muted` Is for UI Chrome, Not User Content
+
+**Problem:** Image captions used `--editor-muted` (mapped to `editorTextSecondary`) for their text color. At reduced font sizes (0.85–0.9em), the contrast dropped below readable levels, especially in Low Contrast Night (`#777b84` on `#111113` ≈ 3.5:1 ratio, below WCAG AA).
+
+**Root Cause:** Captions are **user content** (text the author wrote), but were styled like **UI chrome** (heading placeholders, section breaks, spellcheck messages). The `--editor-muted` variable is deliberately low-contrast for decorative elements that shouldn't compete with body text.
+
+**Solution:** Use `--editor-text` (primary text color) for captions. The smaller font size (0.85–0.9em) already provides sufficient visual hierarchy to distinguish captions from body text.
+
+```css
+/* WRONG: treats caption as UI chrome */
+.figure-caption { color: var(--editor-muted, #666); }
+
+/* RIGHT: treats caption as user content */
+.figure-caption { color: var(--editor-text, #1a1a1a); }
+```
+
+**Note on High Contrast Night:** In this theme, `editorText` (#BD6B15) is actually darker than `editorTextSecondary` (#ffa057) — an intentional design inversion for the amber-on-black theme. Using `--editor-text` still gives ~5:1 contrast (WCAG AA compliant) and is consistent since all text in that theme is amber.
+
+**Exception:** The `.figure-caption:empty::before` placeholder ("Add a caption…") should keep `--editor-muted` — it *is* UI chrome, not user content.
+
+**General principle:** Distinguish between user content and UI chrome when choosing CSS variables. User content (captions, footnotes, annotations with user text) should use `--editor-text`. UI chrome (placeholders, markers, decorative separators) should use `--editor-muted`.

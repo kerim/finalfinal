@@ -30,6 +30,7 @@ import {
   insertAtCursor,
   insertBreak,
   insertFootnote,
+  insertImage,
   insertLink,
   renumberFootnotes,
   replaceCurrent,
@@ -312,6 +313,9 @@ window.FinalFinal = {
   toggleBlockquote,
   toggleCodeBlock,
   insertLink: insertLinkAtCursor,
+
+  // Image API
+  insertImage,
 
   // Spellcheck API
   setSpellcheckResults,

@@ -136,3 +136,47 @@ if let end = endSortOrder {
 ```
 
 **General principle:** When inserting N items into a range that originally held M items (N > M), always shift subsequent items to make room. Don't assume the gap between the range boundaries is large enough — ranges are often tight (one sort order per block), and any overflow causes collisions. This applies to any ordered collection where items are addressed by position (sort orders, indices, display orders).
+
+---
+
+## Caption Comments Must Stay Grouped with Their Image in BlockParser
+
+**Problem:** Images with `<!-- caption: text -->` comments duplicated on each content roundtrip (edit → save → reload). After several roundtrips, multiple copies of the caption appeared as standalone paragraph blocks.
+
+**Root Cause:** The Milkdown `toMarkdown` serializer emits the caption as a separate block-level `html` mdast node before the `paragraph > image` node. Remark-stringify inserts a blank line between block-level siblings:
+
+```markdown
+<!-- caption: text -->
+
+![alt](media/file.png)
+```
+
+Swift's `splitIntoRawBlocks()` splits on blank lines, creating two blocks:
+- Block A: `<!-- caption: text -->` → classified as `.paragraph`
+- Block B: `![alt](media/file.png)` → classified as `.image`
+
+The caption paragraph block persists in the database. On each roundtrip, the caption exists in two places: as Block A (standalone paragraph) and embedded in the figure node's `caption` attribute. This accumulates over roundtrips.
+
+**Solution:** Follow the same continuation pattern used for footnote definitions. In `splitIntoRawBlocks()`, when the current block is a caption comment and the next non-blank line starts with `![`, absorb the blank line to keep caption and image in the same block:
+
+```swift
+// After footnote def check, before block flush:
+let trimmedBlock = currentBlock.trimmingCharacters(in: .whitespacesAndNewlines)
+if trimmedBlock.range(of: "^<!--\\s*caption:", options: .regularExpression) != nil
+   && trimmedBlock.hasSuffix("-->") {
+    var nextIdx = index + 1
+    while nextIdx < lines.count
+          && lines[nextIdx].trimmingCharacters(in: .whitespaces).isEmpty {
+        nextIdx += 1
+    }
+    if nextIdx < lines.count
+       && lines[nextIdx].trimmingCharacters(in: .whitespaces).hasPrefix("![") {
+        currentBlock += line + "\n"
+        continue
+    }
+}
+```
+
+Also add a `detectBlockType` case for combined caption+image blocks (classify as `.image`).
+
+**General principle:** When an upstream serializer emits logically-connected content as separate block-level nodes with blank lines between them, the block parser must recognize the pattern and keep the pieces together. The footnote continuation pattern (peek ahead for continuation lines) is reusable for any multi-line construct that remark-stringify splits apart.

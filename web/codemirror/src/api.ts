@@ -665,6 +665,54 @@ export function renumberFootnotes(mapping: Record<string, string>): void {
   }
 }
 
+// --- Image API ---
+
+/**
+ * Insert an image at the current cursor position.
+ * Inserts markdown: ![alt](src) with optional <!-- caption: text --> prefix.
+ * Ensures blank lines before/after for proper block separation.
+ */
+export function insertImage(opts: { src: string; alt?: string; caption?: string }): void {
+  const view = getEditorView();
+  if (!view) return;
+
+  const { from } = view.state.selection.main;
+  const doc = view.state.doc;
+
+  // Build the markdown to insert
+  let markdown = `![${opts.alt || ''}](${opts.src})`;
+
+  // Add caption comment before image if present
+  if (opts.caption) {
+    markdown = `<!-- caption: ${opts.caption} -->\n${markdown}`;
+  }
+
+  // Check if we need blank lines before
+  const line = doc.lineAt(from);
+  const lineText = line.text;
+  const needBlankBefore = line.number > 1 && lineText.trim() !== '';
+  const needBlankAfter = line.number < doc.lines && doc.line(line.number + 1).text.trim() !== '';
+
+  let insert = '';
+  if (needBlankBefore) {
+    insert += '\n\n';
+  }
+  insert += markdown;
+  if (needBlankAfter) {
+    insert += '\n\n';
+  } else {
+    insert += '\n';
+  }
+
+  const insertFrom = needBlankBefore ? from : line.from;
+
+  view.dispatch({
+    changes: { from: insertFrom, to: from, insert },
+    selection: { anchor: insertFrom + insert.length },
+  });
+  view.focus();
+}
+
 // --- Highlight API ---
 
 export function toggleHighlight(): boolean {

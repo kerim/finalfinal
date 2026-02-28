@@ -213,7 +213,7 @@ body {
   display: block;
   margin-top: 6px;
   font-size: 0.9em;
-  color: var(--editor-muted, #666);
+  color: var(--editor-text, #1a1a1a);
   text-align: center;
   min-height: 1.2em;
   outline: none;

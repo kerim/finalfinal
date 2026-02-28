@@ -61,6 +61,10 @@ extension CodeMirrorEditor.Coordinator {
             NotificationCenter.default.removeObserver(observer)
             scrollToFootnoteDefObserver = nil
         }
+        if let observer = insertImageObserver {
+            NotificationCenter.default.removeObserver(observer)
+            insertImageObserver = nil
+        }
         // Formatting command observers cleanup
         for observer in [toggleBoldObserver, toggleItalicObserver, toggleStrikethroughObserver,
                          setHeadingObserver, toggleBulletListObserver, toggleNumberListObserver,
@@ -345,6 +349,27 @@ extension CodeMirrorEditor.Coordinator {
                    ["http", "https", "mailto"].contains(scheme) {
                     NSWorkspace.shared.open(url)
                 }
+            }
+        }
+
+        // Handle image paste from editor (base64 data)
+        if message.name == "pasteImage", let body = message.body as? [String: Any] {
+            Task { @MainActor in
+                self.handlePasteImage(body)
+            }
+        }
+
+        // Handle image picker request from editor
+        if message.name == "requestImagePicker" {
+            Task { @MainActor in
+                self.handleImagePicker()
+            }
+        }
+
+        // Handle image metadata update from editor (caption, alt, width)
+        if message.name == "updateImageMeta", let body = message.body as? [String: Any] {
+            Task { @MainActor in
+                self.handleUpdateImageMeta(body)
             }
         }
 
@@ -818,5 +843,107 @@ extension CodeMirrorEditor.Coordinator {
     func toggleHighlight() {
         guard isEditorReady, let webView else { return }
         webView.evaluateJavaScript("window.FinalFinal.toggleHighlight()") { _, _ in }
+    }
+
+    // MARK: - Image Handling
+
+    /// Handle pasted image data from JS (base64-encoded)
+    @MainActor
+    func handlePasteImage(_ body: [String: Any]) {
+        guard let base64Data = body["data"] as? String,
+              let data = Data(base64Encoded: base64Data) else {
+            print("[CodeMirrorEditor] Invalid paste image data")
+            return
+        }
+
+        let mimeType = body["type"] as? String
+        let suggestedName = body["name"] as? String
+
+        guard let mediaDir = MediaSchemeHandler.shared.mediaDirectoryURL else {
+            print("[CodeMirrorEditor] No media directory — cannot paste image")
+            return
+        }
+
+        do {
+            let relativePath = try ImageImportService.importFromData(
+                data, suggestedName: suggestedName, mimeType: mimeType, mediaDir: mediaDir
+            )
+
+            insertImageBlock(src: relativePath, alt: suggestedName ?? "")
+        } catch {
+            print("[CodeMirrorEditor] Image paste failed: \(error.localizedDescription)")
+        }
+    }
+
+    /// Handle native file picker request
+    @MainActor
+    func handleImagePicker() {
+        guard !isCleanedUp else { return }
+
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = ImageImportService.allowedTypes
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.message = "Select an image to insert"
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        guard let mediaDir = MediaSchemeHandler.shared.mediaDirectoryURL else {
+            print("[CodeMirrorEditor] No media directory — cannot import image")
+            return
+        }
+
+        do {
+            let relativePath = try ImageImportService.importFromURL(url, mediaDir: mediaDir)
+            let alt = (url.lastPathComponent as NSString).deletingPathExtension
+            insertImageBlock(src: relativePath, alt: alt)
+        } catch {
+            print("[CodeMirrorEditor] Image import failed: \(error.localizedDescription)")
+            let alert = NSAlert()
+            alert.messageText = "Image Import Failed"
+            alert.informativeText = error.localizedDescription
+            alert.alertStyle = .warning
+            alert.runModal()
+        }
+    }
+
+    /// Handle image metadata update from JS (caption, alt, width)
+    @MainActor
+    func handleUpdateImageMeta(_ body: [String: Any]) {
+        guard let blockId = body["blockId"] as? String else {
+            print("[CodeMirrorEditor] updateImageMeta missing blockId")
+            return
+        }
+
+        guard let db = DocumentManager.shared.projectDatabase else { return }
+
+        do {
+            try db.updateBlockImageMeta(
+                id: blockId,
+                imageSrc: body["src"] as? String,
+                imageAlt: body["alt"] as? String,
+                imageCaption: body["caption"] as? String,
+                imageWidth: body["width"] as? Int
+            )
+        } catch {
+            print("[CodeMirrorEditor] Failed to update image meta: \(error)")
+        }
+    }
+
+    /// Insert image markdown at cursor via JS
+    @MainActor
+    private func insertImageBlock(src: String, alt: String) {
+        guard let webView else { return }
+        let escapedSrc = src.replacingOccurrences(of: "`", with: "\\`")
+            .replacingOccurrences(of: "$", with: "\\$")
+        let escapedAlt = alt.replacingOccurrences(of: "`", with: "\\`")
+            .replacingOccurrences(of: "$", with: "\\$")
+        webView.evaluateJavaScript(
+            "window.FinalFinal.insertImage({src: `\(escapedSrc)`, alt: `\(escapedAlt)`})"
+        ) { _, error in
+            if let error {
+                print("[CodeMirrorEditor] insertImage JS error: \(error)")
+            }
+        }
     }
 }

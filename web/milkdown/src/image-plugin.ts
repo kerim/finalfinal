@@ -18,6 +18,8 @@ import { isSourceModeEnabled } from './source-mode-plugin';
 const remarkFigurePlugin = $remark('figure', () => () => (tree: Root) => {
   // Also handle <!-- caption: text --> comments before images
   const captionMap = new Map<number, string>();
+  // Collect nodes to remove after visit completes (avoids splice-during-visit bug)
+  const toRemove: { parent: any; index: number }[] = [];
 
   visit(tree, (node: any, index: number | undefined, parent: any) => {
     // Collect caption comments
@@ -36,11 +38,9 @@ const remarkFigurePlugin = $remark('figure', () => () => (tree: Root) => {
         let caption = '';
         if (index !== undefined && index > 0 && captionMap.has(index - 1)) {
           caption = captionMap.get(index - 1) || '';
-          // Remove the caption comment node
+          // Mark caption comment for removal after visit
           if (parent?.children) {
-            parent.children.splice(index - 1, 1);
-            // Adjust index since we removed a node before this one
-            // The visit will handle re-traversal
+            toRemove.push({ parent, index: index - 1 });
           }
         }
 
@@ -55,6 +55,12 @@ const remarkFigurePlugin = $remark('figure', () => () => (tree: Root) => {
       }
     }
   });
+
+  // Remove caption comments in reverse order (preserves indices)
+  for (let i = toRemove.length - 1; i >= 0; i--) {
+    const { parent, index } = toRemove[i];
+    parent.children.splice(index, 1);
+  }
 });
 
 // Define the figure node
@@ -128,6 +134,14 @@ const figureNode = $node('figure', () => ({
   toMarkdown: {
     match: (node: ProsemirrorNode) => node.type.name === 'figure',
     runner: (state: any, node: ProsemirrorNode) => {
+      // Emit caption comment before the image if present
+      const caption = node.attrs.caption || '';
+      if (caption) {
+        state.addNode('html', undefined, undefined, {
+          value: `<!-- caption: ${caption} -->`,
+        });
+      }
+
       // Wrap image in paragraph to produce a flow-level mdast node.
       // Without this, `image` (phrasing content) at the root level
       // triggers remark-stringify's containerPhrasing for the ENTIRE

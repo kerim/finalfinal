@@ -147,6 +147,14 @@ const slashCommands: SlashCommand[] = [
     },
   },
   {
+    label: '/image',
+    description: 'Insert image from file',
+    apply: (view, from, to) => {
+      view.dispatch({ changes: { from, to, insert: '' } });
+      (window as any).webkit?.messageHandlers?.requestImagePicker?.postMessage(null);
+    },
+  },
+  {
     label: '/cite',
     description: 'Insert citation from Zotero',
     apply: (_view, from, to) => {
