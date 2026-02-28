@@ -5,8 +5,8 @@
 
 import { editorViewCtx } from '@milkdown/kit/core';
 import type { Ctx, MilkdownPlugin } from '@milkdown/kit/ctx';
-import type { Node } from '@milkdown/kit/prose/model';
 import { InputRule, inputRules } from '@milkdown/kit/prose/inputrules';
+import type { Node } from '@milkdown/kit/prose/model';
 import { Plugin, Selection, TextSelection } from '@milkdown/kit/prose/state';
 import { $node, $prose, $remark, $view } from '@milkdown/kit/utils';
 import type { Root } from 'mdast';
@@ -160,9 +160,7 @@ const remarkFootnotePlugin = $remark('footnote', () => () => (tree: Root) => {
 
     const label = defMatch[1];
     const remaining = value.slice(defMatch[0].length);
-    const newChildren: any[] = [
-      { type: 'footnote_def', data: { label } },
-    ];
+    const newChildren: any[] = [{ type: 'footnote_def', data: { label } }];
     newChildren.push({ type: 'text', value: remaining.length > 0 ? ` ${remaining}` : ' ' });
     parent.children.splice(index, 1, ...newChildren);
   });
@@ -832,7 +830,10 @@ const footnoteDefInputRule = $prose((ctx) => {
     const defNodeType = footnoteDefNode.type(ctx);
     const defNode = defNodeType.create({ label });
     // Replace the typed text with the footnote_def atom node + space
-    return state.tr.delete(start, end).insert(start, defNode).insertText(' ', start + 1);
+    return state.tr
+      .delete(start, end)
+      .insert(start, defNode)
+      .insertText(' ', start + 1);
   });
 
   return inputRules({ rules: [defInputRule] });

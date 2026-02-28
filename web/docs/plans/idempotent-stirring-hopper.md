@@ -1,65 +1,81 @@
-# Diagnostic: Capture Actual JS Exception in CodeMirror Initialization
+# Fix: CM Caption Lookup Skips Blank Lines
 
 ## Context
 
-After implementing fixes for mass deletes (queue: nil, remove contentState guard), CodeMirror still displays blank when image markdown is present. The Xcode console shows:
+The image caption hide+popup feature was implemented but captions were never found at runtime. Diagnostic logging revealed the root cause:
 
 ```
-[CodeMirrorEditor] Initialize error: A JavaScript exception occurred
+[ImagePreview] buildDecorations called, lines: 24
+[ImagePreview] Built 0 replace + 3 widget decorations
 ```
 
-This is the generic `error.localizedDescription`. The actual JS error (message, line number, source) is in `error.userInfo` but never printed. We need to see the real exception to fix the blank display.
+3 images found, 0 captions found. The code only checks `doc.line(i - 1)` which is always a blank line, not the caption comment. Image blocks are stored in the database with a standard markdown blank line between caption and image:
 
-Safari Web Inspector is not viable: the CM WebView only appears in Develop menu AFTER the switch completes, by which time the console is empty.
+```
+<!-- caption: This is a caption -->
+                                        <- blank line
+![image](media/image.jpg)
+```
 
-## What the logs show
+## Fix
 
-- The JS exception occurs during `batchInitialize()` which calls `window.FinalFinal.initialize({content: ..., theme: ..., cursorPosition: ...})`
-- It ONLY happens when content contains image markdown `![alt](media/...)`
-- Removing the image restores normal CM rendering
-- The `initialize()` JS function calls `setContent()` which dispatches a CM6 transaction, triggering `imagePreviewPlugin.update()` → `buildDecorations(view)`
+**File:** `web/codemirror/src/image-preview-plugin.ts` — `buildDecorations()`
 
-## Fix: Enhanced Error Logging
+### 1. Skip blank lines when looking backward for caption
 
-### File: `final final/Editors/CodeMirrorCoordinator+Handlers.swift` (line 258-264)
+Replace the current single-line check with a backward scan (capped at 3 lines to avoid matching distant orphaned captions):
 
-Replace the generic error print with full WKWebView JS exception details:
-
-```swift
-webView.evaluateJavaScript(script) { [weak self] _, error in
-    if let error = error as? NSError {
-        #if DEBUG
-        print("[CodeMirrorEditor] Initialize error: \(error.localizedDescription)")
-        if let message = error.userInfo["WKJavaScriptExceptionMessage"] {
-            print("[CodeMirrorEditor] JS Exception: \(message)")
-        }
-        if let line = error.userInfo["WKJavaScriptExceptionLineNumber"] {
-            print("[CodeMirrorEditor] JS Line: \(line)")
-        }
-        if let column = error.userInfo["WKJavaScriptExceptionColumnNumber"] {
-            print("[CodeMirrorEditor] JS Column: \(column)")
-        }
-        if let sourceURL = error.userInfo["WKJavaScriptExceptionSourceURL"] {
-            print("[CodeMirrorEditor] JS Source: \(sourceURL)")
-        }
-        #endif
-        // Reset so updateNSView can retry content push
-        self?.lastPushedContent = ""
-    }
-    self?.cursorPositionToRestoreBinding.wrappedValue = nil
+```typescript
+let checkLineNum = i - 1;
+const minLine = Math.max(1, i - 3);
+while (checkLineNum >= minLine && doc.line(checkLineNum).text.trim() === '') {
+  checkLineNum--;
+}
+if (checkLineNum >= 1) {
+  const captionLine = doc.line(checkLineNum);
+  const captionMatch = CAPTION_REGEX.exec(captionLine.text.trim());
+  if (captionMatch) {
+    caption = captionMatch[1];
+    captionLineNumber = checkLineNum;
+    // Hide from caption start through blank lines to image line start
+    decorations.push({
+      from: captionLine.from,
+      to: line.from,
+      deco: Decoration.replace({}),
+    });
+  }
 }
 ```
 
-## Files to Modify
+The replace range changes from "caption line + 1 char" to "caption line start through image line start" — covering the caption text and all intervening blank lines.
+
+Handles both cases: popup-inserted captions (no blank line, degrades to `i - 1`) and database-loaded captions (1 blank line, finds caption at `i - 2`).
+
+### 2. Keep diagnostic logging for now
+
+Leave the canary, entry/exit logs, and summary count in place. They will confirm the fix is working (e.g., "Built 2 replace + 3 widget decorations" instead of "0 replace"). Remove only after user verifies the fix works.
+
+## Files Modified
 
 | File | Change |
 |------|--------|
-| `final final/Editors/CodeMirrorCoordinator+Handlers.swift` | Enhanced JS error logging at line 258 |
+| `web/codemirror/src/image-preview-plugin.ts` | Fix backward scan (keep diagnostic logs until verified) |
 
 ## Verification
 
-1. Build in Xcode
-2. Open project with image content
-3. Switch to CodeMirror (Cmd+/)
-4. Read the Xcode console — should now show `[CodeMirrorEditor] JS Exception: <actual error message>` with line number
-5. Share the output to diagnose the root cause
+1. `cd web && pnpm build`
+2. Xcode: Cmd+Shift+K, Cmd+R
+3. Switch to source mode (Cmd+/)
+4. Caption comments should be hidden, captions shown below images
+5. "Add caption..." appears for captionless images
+6. Click caption to edit; cursor skips hidden range
+7. Xcode console should show "Built 2 replace + 3 widget decorations" (or similar non-zero replace count)
+
+## Code Review Summary
+
+Three independent reviewers validated the fix:
+- **CM6 correctness**: StateField with `provide: f => EditorView.decorations.from(f)` correctly supports cross-line `Decoration.replace()` (only plugins have this restriction, not StateFields)
+- **No false positives**: `CAPTION_REGEX` requires `caption:` prefix — `<!-- @sid:... -->` anchors can't match
+- **No Swift-side conflicts**: No Swift code depends on caption comment line position or visibility
+- **Both insertion paths handled**: popup-created captions (no blank line) and database-loaded captions (blank line) both work
+- **atomicRanges**: wider replace range means cursor correctly skips the full hidden region
