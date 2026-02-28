@@ -90,6 +90,22 @@ enum BlockParser {
                 }
             }
 
+            // Parse image metadata from markdown for image blocks
+            var imageSrc: String?
+            var imageAlt: String?
+            if blockType == .image {
+                if let imageMatch = trimmed.range(
+                    of: #"!\[([^\]]*)\]\(([^)]+)\)"#, options: .regularExpression
+                ) {
+                    let matchStr = String(trimmed[imageMatch])
+                    if let altRange = matchStr.range(of: #"(?<=!\[)[^\]]*(?=\])"#, options: .regularExpression),
+                       let srcRange = matchStr.range(of: #"(?<=\()[^)]+(?=\))"#, options: .regularExpression) {
+                        imageAlt = String(matchStr[altRange])
+                        imageSrc = String(matchStr[srcRange])
+                    }
+                }
+            }
+
             let block = Block(
                 projectId: projectId,
                 sortOrder: sortOrder,
@@ -101,6 +117,8 @@ enum BlockParser {
                 tags: tags,
                 wordGoal: wordGoal,
                 wordCount: wordCount,
+                imageSrc: imageSrc,
+                imageAlt: imageAlt,
                 isBibliography: isBibliography,
                 isNotes: isNotes,
                 isPseudoSection: isPseudoSection
@@ -345,6 +363,28 @@ enum BlockParser {
         }
         let result = sorted
             .map { $0.markdownFragment }
+            .joined(separator: "\n\n")
+
+        print("[ASSEMBLE] \(blocks.count) blocks -> result length=\(result.count)")
+        if blocks.count <= 5 {
+            for (i, block) in sorted.enumerated() {
+                print("[ASSEMBLE]   [\(i)] type=\(block.blockType) frag_len=\(block.markdownFragment.count)")
+            }
+        }
+
+        return result
+    }
+
+    /// Assemble blocks into Pandoc-compatible markdown for export.
+    /// Uses `markdownForExport()` which includes caption comments and width attributes for image blocks.
+    static func assembleMarkdownForExport(from blocks: [Block]) -> String {
+        let sorted = blocks.sorted { a, b in
+            let aKey = (a.sortOrder, a.blockType == .heading ? 0 : 1)
+            let bKey = (b.sortOrder, b.blockType == .heading ? 0 : 1)
+            return aKey < bKey
+        }
+        let result = sorted
+            .map { $0.markdownForExport() }
             .joined(separator: "\n\n")
 
         return result

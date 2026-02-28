@@ -68,6 +68,7 @@ import {
 import { focusModePlugin, isFocusModeEnabled } from './focus-mode-plugin';
 import { annotationDecorationPlugin } from './annotation-decoration-plugin';
 import { footnoteDecorationPlugin } from './footnote-decoration-plugin';
+import { imagePreviewPlugin } from './image-preview-plugin';
 import { customHighlightStyle, headingDecorationPlugin, syntaxHighlighting } from './heading-plugin';
 import { installLineHeightFix } from './line-height-fix';
 import { scrollStabilizer } from './scroll-stabilizer';
@@ -238,6 +239,8 @@ function initEditor() {
     footnoteDecorationPlugin(),
     // Annotation decoration plugin - type-colored annotation marks
     annotationDecorationPlugin(),
+    // Image preview plugin - inline preview below ![alt](media/...) lines
+    imagePreviewPlugin(),
     // Selection toolbar - floating format bar on text selection
     selectionToolbarPlugin,
     // Spellcheck/grammar decorations via NSSpellChecker

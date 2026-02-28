@@ -168,8 +168,8 @@ extension VersionHistoryWindow {
                 )
             }
 
-            // Notify main window to refresh
-            NotificationCenter.default.post(name: .projectDidOpen, object: nil)
+            // Notify main window to refresh (skip flush — blocks already rebuilt)
+            NotificationCenter.default.post(name: .projectDidOpen, object: nil, userInfo: ["isRestore": true])
 
             // Close window after successful restore
             dismiss()
@@ -196,8 +196,8 @@ extension VersionHistoryWindow {
                 createSafetyBackup: createSafetyBackup
             )
 
-            // Notify main window to refresh
-            NotificationCenter.default.post(name: .projectDidOpen, object: nil)
+            // Notify main window to refresh (skip flush — blocks already rebuilt)
+            NotificationCenter.default.post(name: .projectDidOpen, object: nil, userInfo: ["isRestore": true])
 
             // Close window after successful restore
             dismiss()

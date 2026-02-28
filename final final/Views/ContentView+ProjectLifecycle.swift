@@ -112,6 +112,11 @@ extension ContentView {
             if !existingBlocks.isEmpty {
                 // Blocks exist - assemble markdown from blocks
                 editorState.content = BlockParser.assembleMarkdown(from: existingBlocks)
+                print("[LOAD] Assembled \(existingBlocks.count) blocks -> content length=\(editorState.content.count)")
+                print("[LOAD] Content preview: \(String(editorState.content.prefix(300)))")
+                for (i, block) in existingBlocks.sorted(by: { $0.sortOrder < $1.sortOrder }).enumerated() {
+                    print("[LOAD]   [\(i)] type=\(block.blockType) id=\(block.id.prefix(8)) sort=\(block.sortOrder) frag_len=\(block.markdownFragment.count) preview=\"\(String(block.markdownFragment.prefix(80)))\"")
+                }
                 updateSourceContentIfNeeded()
             } else {
                 // No blocks yet - load from legacy content table and parse into blocks
@@ -177,14 +182,18 @@ extension ContentView {
     }
 
     /// Handle project opened notification
-    func handleProjectOpened() async {
+    func handleProjectOpened(isRestore: Bool = false) async {
         // Stop block polling FIRST — prevents poll timer from firing during
         // the await suspension points in flushAllPendingContent() and writing
         // conflicting data to the database.
         blockSyncService.stopPolling()
 
         // Flush all pending content to OLD project's database before switching.
-        await flushAllPendingContent()
+        // Skip flush after version restore — blocks were already rebuilt by SnapshotService
+        // and flushing would overwrite restored content with stale pre-restore editor content.
+        if !isRestore {
+            await flushAllPendingContent()
+        }
 
         // Stop remaining services
         editorState.stopObserving()

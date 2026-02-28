@@ -32,6 +32,10 @@ struct BlockUpdates {
     var aggregateGoal: Int??
     var aggregateGoalType: GoalType?
     var wordCount: Int?
+    var imageSrc: String??
+    var imageAlt: String??
+    var imageCaption: String??
+    var imageWidth: Int??
     var isBibliography: Bool?
     var isPseudoSection: Bool?
 
@@ -49,6 +53,10 @@ struct BlockUpdates {
         aggregateGoal: Int?? = nil,
         aggregateGoalType: GoalType? = nil,
         wordCount: Int? = nil,
+        imageSrc: String?? = nil,
+        imageAlt: String?? = nil,
+        imageCaption: String?? = nil,
+        imageWidth: Int?? = nil,
         isBibliography: Bool? = nil,
         isPseudoSection: Bool? = nil
     ) {
@@ -65,6 +73,10 @@ struct BlockUpdates {
         self.aggregateGoal = aggregateGoal
         self.aggregateGoalType = aggregateGoalType
         self.wordCount = wordCount
+        self.imageSrc = imageSrc
+        self.imageAlt = imageAlt
+        self.imageCaption = imageCaption
+        self.imageWidth = imageWidth
         self.isBibliography = isBibliography
         self.isPseudoSection = isPseudoSection
     }
@@ -83,6 +95,15 @@ extension ProjectDatabase {
                 .filter(Block.Columns.projectId == projectId)
                 .order(Block.Columns.sortOrder)
                 .fetchAll(db)
+        }
+    }
+
+    /// Lightweight count of blocks for a project (SELECT COUNT(*), no row fetching)
+    func fetchBlockCount(projectId: String) throws -> Int {
+        try read { db in
+            try Block
+                .filter(Block.Columns.projectId == projectId)
+                .fetchCount(db)
         }
     }
 
@@ -308,6 +329,18 @@ extension ProjectDatabase {
                     if let isBibliography = updates.isBibliography {
                         block.isBibliography = isBibliography
                     }
+                    if let imageSrcUpdate = updates.imageSrc {
+                        block.imageSrc = imageSrcUpdate
+                    }
+                    if let imageAltUpdate = updates.imageAlt {
+                        block.imageAlt = imageAltUpdate
+                    }
+                    if let imageCaptionUpdate = updates.imageCaption {
+                        block.imageCaption = imageCaptionUpdate
+                    }
+                    if let imageWidthUpdate = updates.imageWidth {
+                        block.imageWidth = imageWidthUpdate
+                    }
                     if let isPseudoSection = updates.isPseudoSection {
                         block.isPseudoSection = isPseudoSection
                     }
@@ -473,6 +506,20 @@ extension ProjectDatabase {
                     block.isNotes = true
                 }
 
+                // Auto-populate image metadata from markdown for image blocks
+                if blockType == .image {
+                    if let imageMatch = fragTrimmed.range(
+                        of: #"!\[([^\]]*)\]\(([^)]+)\)"#, options: .regularExpression
+                    ) {
+                        let matchStr = String(fragTrimmed[imageMatch])
+                        if let altRange = matchStr.range(of: #"(?<=!\[)[^\]]*(?=\])"#, options: .regularExpression),
+                           let srcRange = matchStr.range(of: #"(?<=\()[^)]+(?=\))"#, options: .regularExpression) {
+                            block.imageAlt = String(matchStr[altRange])
+                            block.imageSrc = String(matchStr[srcRange])
+                        }
+                    }
+                }
+
                 try block.insert(db)
 
                 // Record the mapping from temp ID to permanent ID
@@ -481,6 +528,40 @@ extension ProjectDatabase {
         }
 
         return idMapping
+    }
+
+    // MARK: - Image Metadata
+
+    /// Update image metadata for a block (caption, alt text, width)
+    func updateBlockImageMeta(
+        id: String,
+        imageSrc: String? = nil,
+        imageAlt: String? = nil,
+        imageCaption: String? = nil,
+        imageWidth: Int? = nil
+    ) throws {
+        try write { db in
+            guard var block = try Block.fetchOne(db, key: id) else {
+                print("[Database+Blocks] Block not found for image meta update: \(id)")
+                return
+            }
+
+            if let src = imageSrc {
+                block.imageSrc = src
+            }
+            if let alt = imageAlt {
+                block.imageAlt = alt
+            }
+            if let caption = imageCaption {
+                block.imageCaption = caption
+            }
+            if let width = imageWidth {
+                block.imageWidth = width
+            }
+
+            block.updatedAt = Date()
+            try block.update(db)
+        }
     }
 
 }

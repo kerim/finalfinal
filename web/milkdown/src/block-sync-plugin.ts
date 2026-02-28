@@ -22,7 +22,7 @@ const SYNC_BLOCK_TYPES = new Set([
   'horizontal_rule',
   'section_break',
   'table',
-  'image',
+  'figure',
 ]);
 
 // Types for block changes
@@ -173,6 +173,8 @@ function nodeToMarkdownFragment(node: Node): string {
     }
     case 'horizontal_rule':
       return '---';
+    case 'figure':
+      return `![${node.attrs.alt || ''}](${node.attrs.src || ''})`;
     case 'table':
       return node.textContent;
     default:
@@ -227,7 +229,9 @@ function snapshotBlocks(doc: Node): Map<string, BlockSnapshot> {
       if (blockId) {
         // Detect heading syntax in paragraphs (paste creates paragraphs, not headings)
         const headingMatch = node.type.name === 'paragraph' ? node.textContent.match(/^(#{1,6})\s/) : null;
-        const effectiveType = headingMatch ? 'heading' : node.type.name;
+        const effectiveType = headingMatch ? 'heading'
+          : node.type.name === 'figure' ? 'image'
+          : node.type.name;
         const effectiveLevel = headingMatch
           ? headingMatch[1].length
           : node.type.name === 'heading'
@@ -379,6 +383,12 @@ export const blockSyncPlugin = $prose(() => {
  * This clears all pending changes and the current state reference
  */
 export function resetBlockSyncState(): void {
+  // Cancel any pending detect timer — its captured snapshots are stale
+  if (detectTimer) {
+    clearTimeout(detectTimer);
+    detectTimer = null;
+    pendingOldSnapshot = null;
+  }
   if (currentState) {
     currentState.pendingUpdates.clear();
     currentState.pendingInserts.clear();
@@ -429,6 +439,12 @@ export function updateSnapshotIds(mapping: Map<string, string>): void {
  */
 export function resetAndSnapshot(doc: Node): void {
   if (!currentState) return;
+  // Cancel any pending detect timer — its captured snapshots are stale
+  if (detectTimer) {
+    clearTimeout(detectTimer);
+    detectTimer = null;
+    pendingOldSnapshot = null;
+  }
   currentState.pendingUpdates.clear();
   currentState.pendingInserts.clear();
   currentState.pendingDeletes.clear();
@@ -439,6 +455,12 @@ export function resetAndSnapshot(doc: Node): void {
  * Fully clear module state (call when destroying editor instance)
  */
 export function destroyBlockSyncState(): void {
+  // Cancel any pending detect timer — prevents stale snapshot from leaking into next editor
+  if (detectTimer) {
+    clearTimeout(detectTimer);
+    detectTimer = null;
+    pendingOldSnapshot = null;
+  }
   if (currentState) {
     currentState.pendingUpdates.clear();
     currentState.pendingInserts.clear();

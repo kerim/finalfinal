@@ -58,6 +58,9 @@ extension DocumentManager {
         self.hasUnsavedChanges = false
         self.isGettingStartedProject = true
 
+        // Wire media scheme handler
+        MediaSchemeHandler.shared.mediaDirectoryURL = package.mediaURL
+
         // Do NOT add to recent projects - Getting Started is ephemeral
 
         print("[DocumentManager] Opened Getting Started project")

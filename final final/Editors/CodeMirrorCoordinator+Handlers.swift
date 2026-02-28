@@ -140,6 +140,15 @@ extension CodeMirrorEditor.Coordinator {
             }
 
             if let content = contentResult as? String {
+                #if DEBUG
+                print("[CM-SAVE+NOTIFY] getContent returned length=\(content.count)")
+                print("[CM-SAVE+NOTIFY] Preview: \(String(content.prefix(300)))")
+                let lines = content.components(separatedBy: "\n")
+                for (i, line) in lines.enumerated() where line.hasPrefix("#") {
+                    let nextLine = i + 1 < lines.count ? lines[i + 1] : "(EOF)"
+                    print("[CM-SAVE+NOTIFY] Heading at line \(i): \"\(line.prefix(80))\" next: \"\(nextLine.prefix(40))\"")
+                }
+                #endif
                 // Update binding immediately to ensure content is preserved
                 self.lastPushedContent = content
                 self.contentBinding.wrappedValue = content
@@ -249,7 +258,20 @@ extension CodeMirrorEditor.Coordinator {
         webView.evaluateJavaScript(script) { [weak self] _, error in
             if let error {
                 #if DEBUG
-                print("[CodeMirrorEditor] Initialize error: \(error.localizedDescription)")
+                let nsError = error as NSError
+                print("[CodeMirrorEditor] Initialize error: \(nsError.localizedDescription)")
+                if let message = nsError.userInfo["WKJavaScriptExceptionMessage"] {
+                    print("[CodeMirrorEditor] JS Exception: \(message)")
+                }
+                if let line = nsError.userInfo["WKJavaScriptExceptionLineNumber"] {
+                    print("[CodeMirrorEditor] JS Line: \(line)")
+                }
+                if let column = nsError.userInfo["WKJavaScriptExceptionColumnNumber"] {
+                    print("[CodeMirrorEditor] JS Column: \(column)")
+                }
+                if let sourceURL = nsError.userInfo["WKJavaScriptExceptionSourceURL"] {
+                    print("[CodeMirrorEditor] JS Source: \(sourceURL)")
+                }
                 #endif
                 // Reset so updateNSView can retry content push
                 self?.lastPushedContent = ""

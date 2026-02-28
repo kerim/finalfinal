@@ -119,6 +119,20 @@ final class SnapshotService {
             )
             try database.insertSection(section)
         }
+
+        // Rebuild blocks from restored content to keep blocks table in sync.
+        // Build metadata from snapshot sections to preserve status/tags/wordGoal.
+        var metadata: [String: SectionMetadata] = [:]
+        for ss in snapshotSections {
+            metadata[ss.title] = SectionMetadata(
+                status: ss.status, tags: ss.tags.isEmpty ? nil : ss.tags, wordGoal: ss.wordGoal)
+        }
+        let blocks = BlockParser.parse(
+            markdown: snapshot.previewMarkdown,
+            projectId: projectId,
+            existingSectionMetadata: metadata.isEmpty ? nil : metadata
+        )
+        try database.replaceBlocks(blocks, for: projectId)
     }
 
     /// Restore a single section from a snapshot, replacing the current matching section
@@ -153,6 +167,17 @@ final class SnapshotService {
 
         // Rebuild content.markdown from sections
         try rebuildContentFromSections()
+
+        // Rebuild blocks from the new content
+        guard let contentRecord = try database.fetchContent(for: projectId) else { return }
+        let sections = try database.fetchSections(projectId: projectId)
+        var metadata: [String: SectionMetadata] = [:]
+        for s in sections { metadata[s.title] = SectionMetadata(from: s) }
+        let blocks = BlockParser.parse(
+            markdown: contentRecord.markdown, projectId: projectId,
+            existingSectionMetadata: metadata.isEmpty ? nil : metadata
+        )
+        try database.replaceBlocks(blocks, for: projectId)
     }
 
     /// Restore a section from a snapshot as a new duplicate section
@@ -205,6 +230,17 @@ final class SnapshotService {
 
         // Rebuild content.markdown
         try rebuildContentFromSections()
+
+        // Rebuild blocks from the new content
+        guard let contentRecord = try database.fetchContent(for: projectId) else { return }
+        let allSectionsAfter = try database.fetchSections(projectId: projectId)
+        var metadataForBlocks: [String: SectionMetadata] = [:]
+        for s in allSectionsAfter { metadataForBlocks[s.title] = SectionMetadata(from: s) }
+        let blocks = BlockParser.parse(
+            markdown: contentRecord.markdown, projectId: projectId,
+            existingSectionMetadata: metadataForBlocks.isEmpty ? nil : metadataForBlocks
+        )
+        try database.replaceBlocks(blocks, for: projectId)
     }
 
     // MARK: - Pruning

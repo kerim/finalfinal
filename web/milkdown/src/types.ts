@@ -30,6 +30,8 @@ export interface Block {
   markdownFragment: string;
   headingLevel?: number;
   sortOrder: number;
+  imageCaption?: string;
+  imageWidth?: number;
 }
 
 // Search match position
@@ -159,6 +161,14 @@ declare global {
       renumberFootnotes: (mapping: Record<string, string>) => void;
       scrollToFootnoteDefinition: (label: string) => void;
       setZoomFootnoteState: (zoomed: boolean, maxLabel: number) => void;
+      // Image API
+      insertImage: (opts: {
+        src: string;
+        alt: string;
+        caption: string;
+        width: number | null;
+        blockId: string;
+      }) => void;
       // Find/replace API
       find: (query: string, options?: FindOptions) => FindResult;
       findNext: () => FindResult | null;

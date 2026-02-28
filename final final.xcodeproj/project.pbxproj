@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		002BF2C251C9FE9FC8F9EC77 /* ImageImportService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 787A1493E6815DF1DA4E829D /* ImageImportService.swift */; };
 		0127F846C37CAFAFA0455C60 /* CodeMirrorEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 73EA833CAD13B84DA71C0544 /* CodeMirrorEditor.swift */; };
 		025311FF492B505FC913440D /* GitInfo.swift in Sources */ = {isa = PBXBuildFile; fileRef = C7DACB449A648403C7CCDD3F /* GitInfo.swift */; };
 		04195D3F2962ED2D9A21C2F5 /* SectionSyncService.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA5B65E36E0BB3661A7CE09A /* SectionSyncService.swift */; };
@@ -68,6 +69,7 @@
 		639B3B47C550E26A3EE3F0D2 /* PandocLocator.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF38A145CE15C32F45EBB00D /* PandocLocator.swift */; };
 		66B2E33AC24571E9D119C046 /* ChevronButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = A4E5381EEA5442B073C96943 /* ChevronButton.swift */; };
 		6906417635740343EE8F362A /* OutlineParserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FDA7C9F1CFBE9EDB2C4D818C /* OutlineParserTests.swift */; };
+		6AD39A459C755DCB8507B3FB /* MediaSchemeHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = B671C3D65663EC23DB5F698C /* MediaSchemeHandler.swift */; };
 		6BBC4709B786A0181888FC76 /* TestMode.swift in Sources */ = {isa = PBXBuildFile; fileRef = 349348AA5F221A0782421BDB /* TestMode.swift */; };
 		6D12AEF734B0A4D7D05F681F /* FinalFinalApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE24C13995368C23BC470A26 /* FinalFinalApp.swift */; };
 		6DCDEAA6E72ACBE2572AA9F3 /* EditorViewState+Types.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4841F7F108760152AC98A47B /* EditorViewState+Types.swift */; };
@@ -276,6 +278,7 @@
 		73EA833CAD13B84DA71C0544 /* CodeMirrorEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodeMirrorEditor.swift; sourceTree = "<group>"; };
 		75B3D65D281D81B769D7DF96 /* OutlineSidebar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutlineSidebar.swift; sourceTree = "<group>"; };
 		76CC075151A2E6342FFE523E /* TinyTeX */ = {isa = PBXFileReference; lastKnownFileType = folder; name = TinyTeX; path = "final final/Resources/TinyTeX"; sourceTree = SOURCE_ROOT; };
+		787A1493E6815DF1DA4E829D /* ImageImportService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageImportService.swift; sourceTree = "<group>"; };
 		788D4C2FB2475A38D3477A97 /* final finalTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "final finalTests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 		7C20C6E92294CD47FFE7539F /* MarkdownUtils.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownUtils.swift; sourceTree = "<group>"; };
 		7EEDC491836013F46E97FAE8 /* MilkdownEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MilkdownEditor.swift; sourceTree = "<group>"; };
@@ -310,6 +313,7 @@
 		B1CCD9944C68301C7B49A3FC /* final finalUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "final finalUITests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 		B220BEC12CB629DCB165D755 /* AnnotationViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnnotationViewModel.swift; sourceTree = "<group>"; };
 		B590B43C3202D0C1BF230EFA /* OutlineSidebar+Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "OutlineSidebar+Models.swift"; sourceTree = "<group>"; };
+		B671C3D65663EC23DB5F698C /* MediaSchemeHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaSchemeHandler.swift; sourceTree = "<group>"; };
 		B8D61CFAC6D761917B29935C /* CSLItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CSLItem.swift; sourceTree = "<group>"; };
 		B94BA0DFF06C7D3B1B7F38F5 /* DraggableCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DraggableCardView.swift; sourceTree = "<group>"; };
 		BC27954DE76B2ADD62BBFF00 /* Section.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Section.swift; sourceTree = "<group>"; };
@@ -397,6 +401,7 @@
 				47F42FEEB5EFB471BDEDB2DB /* CodeMirrorCoordinator+Handlers.swift */,
 				73EA833CAD13B84DA71C0544 /* CodeMirrorEditor.swift */,
 				CE6D9836DD14A789629A10CB /* EditorSchemeHandler.swift */,
+				B671C3D65663EC23DB5F698C /* MediaSchemeHandler.swift */,
 				2892EEB9AB8A127B61B8B1D8 /* MilkdownCoordinator+Content.swift */,
 				594727DD6667897CC1A2A75A /* MilkdownCoordinator+MessageHandlers.swift */,
 				7EEDC491836013F46E97FAE8 /* MilkdownEditor.swift */,
@@ -599,6 +604,7 @@
 				1EC960E239AB6BAACD5BC0A3 /* EditorPreloader.swift */,
 				6C65021F994002F139C1184C /* ExportService.swift */,
 				FF34C45C645EA726101A81D6 /* FootnoteSyncService.swift */,
+				787A1493E6815DF1DA4E829D /* ImageImportService.swift */,
 				3E573D126ADEE441215EE597 /* KeychainHelper.swift */,
 				3A530A55D9265E47C5CF4EB3 /* LanguageToolProvider.swift */,
 				5A1E8A83A78A7909AA1289DB /* OutlineParser.swift */,
@@ -1005,10 +1011,12 @@
 				175134B0E1A82073C2CB4D0F /* GoalPreferencesPane.swift in Sources */,
 				FA5C8D9CA08A0BB702BD0C7B /* HashBar.swift in Sources */,
 				F0A005E8C501B38A29B52152 /* HelpCommands.swift in Sources */,
+				002BF2C251C9FE9FC8F9EC77 /* ImageImportService.swift in Sources */,
 				D30B35EAC392DBFD98D4C432 /* IntegrityAlertView.swift in Sources */,
 				7F09171B841269E80B7A71A6 /* KeychainHelper.swift in Sources */,
 				15E9D15B0AF02828BFF55BCF /* LanguageToolProvider.swift in Sources */,
 				90566734810E75E47CEF710E /* MarkdownUtils.swift in Sources */,
+				6AD39A459C755DCB8507B3FB /* MediaSchemeHandler.swift in Sources */,
 				24E6DCFA94F75C5A30CF12D4 /* MilkdownCoordinator+Content.swift in Sources */,
 				ECA17134BABE98C9FC75300F /* MilkdownCoordinator+MessageHandlers.swift in Sources */,
 				75D604E7143573D4BFD533FD /* MilkdownEditor.swift in Sources */,

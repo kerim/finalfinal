@@ -280,6 +280,27 @@ extension MilkdownEditor.Coordinator {
             }
         }
 
+        // Handle image paste from editor (base64 data)
+        if message.name == "pasteImage", let body = message.body as? [String: Any] {
+            Task { @MainActor in
+                self.handlePasteImage(body)
+            }
+        }
+
+        // Handle image picker request from editor
+        if message.name == "requestImagePicker" {
+            Task { @MainActor in
+                self.handleImagePicker()
+            }
+        }
+
+        // Handle image metadata update from editor (caption, alt, width)
+        if message.name == "updateImageMeta", let body = message.body as? [String: Any] {
+            Task { @MainActor in
+                self.handleUpdateImageMeta(body)
+            }
+        }
+
         // Handle spellcheck messages from editor
         if message.name == "spellcheck" {
             Task { @MainActor in
@@ -701,6 +722,105 @@ extension MilkdownEditor.Coordinator {
             }
 
             self.onSectionChange((json["sectionTitle"] as? String) ?? "")
+        }
+    }
+
+    // MARK: - Image Handling
+
+    /// Handle pasted image data from JS (base64-encoded)
+    @MainActor
+    func handlePasteImage(_ body: [String: Any]) {
+        guard let base64Data = body["data"] as? String,
+              let data = Data(base64Encoded: base64Data) else {
+            print("[MilkdownEditor] Invalid paste image data")
+            return
+        }
+
+        let mimeType = body["type"] as? String
+        let suggestedName = body["name"] as? String
+
+        guard let mediaDir = MediaSchemeHandler.shared.mediaDirectoryURL else {
+            print("[MilkdownEditor] No media directory — cannot paste image")
+            return
+        }
+
+        do {
+            let relativePath = try ImageImportService.importFromData(
+                data, suggestedName: suggestedName, mimeType: mimeType, mediaDir: mediaDir
+            )
+
+            // Create image block in database
+            insertImageBlock(src: relativePath, alt: suggestedName ?? "")
+        } catch {
+            print("[MilkdownEditor] Image paste failed: \(error.localizedDescription)")
+        }
+    }
+
+    /// Handle native file picker request
+    @MainActor
+    func handleImagePicker() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = ImageImportService.allowedTypes
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.message = "Select an image to insert"
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        guard let mediaDir = MediaSchemeHandler.shared.mediaDirectoryURL else {
+            print("[MilkdownEditor] No media directory — cannot import image")
+            return
+        }
+
+        do {
+            let relativePath = try ImageImportService.importFromURL(url, mediaDir: mediaDir)
+            let alt = (url.lastPathComponent as NSString).deletingPathExtension
+            insertImageBlock(src: relativePath, alt: alt)
+        } catch {
+            print("[MilkdownEditor] Image import failed: \(error.localizedDescription)")
+            let alert = NSAlert()
+            alert.messageText = "Image Import Failed"
+            alert.informativeText = error.localizedDescription
+            alert.alertStyle = .warning
+            alert.runModal()
+        }
+    }
+
+    /// Handle image metadata update from JS (caption, alt, width)
+    @MainActor
+    func handleUpdateImageMeta(_ body: [String: Any]) {
+        guard let blockId = body["blockId"] as? String else {
+            print("[MilkdownEditor] updateImageMeta missing blockId")
+            return
+        }
+
+        guard let db = DocumentManager.shared.projectDatabase else { return }
+
+        do {
+            try db.updateBlockImageMeta(
+                id: blockId,
+                imageSrc: body["src"] as? String,
+                imageAlt: body["alt"] as? String,
+                imageCaption: body["caption"] as? String,
+                imageWidth: body["width"] as? Int
+            )
+        } catch {
+            print("[MilkdownEditor] Failed to update image meta: \(error)")
+        }
+    }
+
+    /// Insert figure node into editor via JS (editor-first approach).
+    /// No DB write — BlockSyncService detects the new node on its next poll
+    /// and creates the block record via the normal insert path.
+    @MainActor
+    private func insertImageBlock(src: String, alt: String) {
+        let escapedAlt = alt.escapedForJSTemplateLiteral
+        webView?.evaluateJavaScript(
+            "window.FinalFinal.insertImage && window.FinalFinal.insertImage({src: `\(src)`, alt: `\(escapedAlt)`, caption: '', width: null, blockId: ''})"
+        ) { _, error in
+            if let error {
+                print("[MilkdownEditor] insertImage JS error: \(error)")
+            }
         }
     }
 }

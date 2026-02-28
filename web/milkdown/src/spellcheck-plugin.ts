@@ -114,6 +114,7 @@ const SKIP_NODE_TYPES = new Set([
   'code_block',
   'fence',
   'image',
+  'figure',
   'html_block',
   'auto_bibliography_start',
   'auto_bibliography_end',

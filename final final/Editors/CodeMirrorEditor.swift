@@ -49,6 +49,9 @@ struct CodeMirrorEditor: NSViewRepresentable {
             controller.add(context.coordinator, name: "spellcheck")
             controller.add(context.coordinator, name: "navigateToFootnote")
             controller.add(context.coordinator, name: "footnoteInserted")
+            controller.add(context.coordinator, name: "pasteImage")
+            controller.add(context.coordinator, name: "requestImagePicker")
+            controller.add(context.coordinator, name: "updateImageMeta")
 
             preloaded.navigationDelegate = context.coordinator
             context.coordinator.webView = preloaded
@@ -70,6 +73,7 @@ struct CodeMirrorEditor: NSViewRepresentable {
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = sharedDataStore  // Persist localStorage across editor toggles
         configuration.setURLSchemeHandler(EditorSchemeHandler(), forURLScheme: "editor")
+        configuration.setURLSchemeHandler(MediaSchemeHandler.shared, forURLScheme: "projectmedia")
 
         // === Error handler script to capture JS errors ===
         let errorScript = WKUserScript(
@@ -109,6 +113,9 @@ struct CodeMirrorEditor: NSViewRepresentable {
         configuration.userContentController.add(context.coordinator, name: "spellcheck")
         configuration.userContentController.add(context.coordinator, name: "navigateToFootnote")
         configuration.userContentController.add(context.coordinator, name: "footnoteInserted")
+        configuration.userContentController.add(context.coordinator, name: "pasteImage")
+        configuration.userContentController.add(context.coordinator, name: "requestImagePicker")
+        configuration.userContentController.add(context.coordinator, name: "updateImageMeta")
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = context.coordinator

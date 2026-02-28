@@ -49,6 +49,7 @@ final class EditorPreloader: NSObject, WKNavigationDelegate {
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = WKWebsiteDataStore.default()
         configuration.setURLSchemeHandler(EditorSchemeHandler(), forURLScheme: "editor")
+        configuration.setURLSchemeHandler(MediaSchemeHandler.shared, forURLScheme: "projectmedia")
 
         let errorScript = WKUserScript(
             source: """
@@ -91,6 +92,7 @@ final class EditorPreloader: NSObject, WKNavigationDelegate {
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = WKWebsiteDataStore.default()
         configuration.setURLSchemeHandler(EditorSchemeHandler(), forURLScheme: "editor")
+        configuration.setURLSchemeHandler(MediaSchemeHandler.shared, forURLScheme: "projectmedia")
 
         let errorScript = WKUserScript(
             source: """

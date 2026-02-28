@@ -76,6 +76,8 @@ extension Notification.Name {
     static let scrollToFootnoteDefinition = Notification.Name("scrollToFootnoteDefinition")
     /// Posted to set zoom footnote state in JS editors (isZoomMode + max label)
     static let setZoomFootnoteState = Notification.Name("setZoomFootnoteState")
+    /// Posted to request image picker dialog (Insert > Image menu)
+    static let requestInsertImage = Notification.Name("requestInsertImage")
 }
 
 enum EditorMode: String, CaseIterable {

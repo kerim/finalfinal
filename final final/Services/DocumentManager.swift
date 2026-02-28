@@ -147,6 +147,9 @@ final class DocumentManager {
         self.contentId = try? database.fetchContent(for: project.id)?.id
         self.hasUnsavedChanges = false
 
+        // Wire media scheme handler
+        MediaSchemeHandler.shared.mediaDirectoryURL = package.mediaURL
+
         // Add to recent projects
         addToRecentProjects(url: packageURL, title: title)
 
@@ -197,6 +200,9 @@ final class DocumentManager {
         self.contentId = try? database.fetchContent(for: project.id)?.id
         self.hasUnsavedChanges = false
 
+        // Wire media scheme handler
+        MediaSchemeHandler.shared.mediaDirectoryURL = package.mediaURL
+
         // Add to recent projects
         addToRecentProjects(url: url, title: project.title)
 
@@ -238,6 +244,9 @@ final class DocumentManager {
         self.projectTitle = project?.title ?? url.deletingPathExtension().lastPathComponent
         self.hasUnsavedChanges = false
 
+        // Wire media scheme handler
+        MediaSchemeHandler.shared.mediaDirectoryURL = package.mediaURL
+
         if let project = project {
             addToRecentProjects(url: url, title: project.title)
             saveAsLastProject(url: url)
@@ -268,6 +277,9 @@ final class DocumentManager {
         gettingStartedLoadedHash = nil
         gettingStartedUserEdited = false
 
+        // Clear media scheme handler
+        MediaSchemeHandler.shared.mediaDirectoryURL = nil
+
         print("[DocumentManager] Project closed")
     }
 
@@ -297,7 +309,7 @@ final class DocumentManager {
         guard let db = projectDatabase, let pid = projectId else { return nil }
         let blocks = try db.fetchBlocks(projectId: pid)
         let exportBlocks = blocks.filter { !$0.isBibliography }
-        return BlockParser.assembleMarkdown(from: exportBlocks)
+        return BlockParser.assembleMarkdownForExport(from: exportBlocks)
     }
 
     /// Save content to the current project

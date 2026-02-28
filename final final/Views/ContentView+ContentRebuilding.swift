@@ -333,6 +333,11 @@ extension ContentView {
                                 if let result = fetchBlocksWithIds() {
                                     await blockSyncService.setContentWithBlockIds(
                                         markdown: result.markdown, blockIds: result.blockIds)
+                                    // Always sync editorState.content to DB-assembled markdown.
+                                    // Without this, updateNSView sees editorState.content (e.g. 1748 chars)
+                                    // ≠ lastPushedContent (1747 chars) and re-pushes WITHOUT block IDs,
+                                    // destroying all real UUIDs (causing mass deletes).
+                                    editorState.content = result.markdown
                                 }
                                 editorState.isResettingContent = false
                                 blockSyncService.startPolling()
