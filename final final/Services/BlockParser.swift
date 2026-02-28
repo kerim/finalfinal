@@ -195,6 +195,25 @@ enum BlockParser {
                         inFootnoteDef = false
                     }
                 }
+
+                // Check if current block is a caption comment — keep with following image
+                let trimmedBlock = currentBlock.trimmingCharacters(in: .whitespacesAndNewlines)
+                if trimmedBlock.range(of: "^<!--\\s*caption:", options: .regularExpression) != nil
+                   && trimmedBlock.hasSuffix("-->") {
+                    // Peek ahead for image line
+                    var nextIdx = index + 1
+                    while nextIdx < lines.count
+                          && lines[nextIdx].trimmingCharacters(in: .whitespaces).isEmpty {
+                        nextIdx += 1
+                    }
+                    if nextIdx < lines.count
+                       && lines[nextIdx].trimmingCharacters(in: .whitespaces).hasPrefix("![") {
+                        // Absorb blank line — keep caption and image in same block
+                        currentBlock += line + "\n"
+                        continue
+                    }
+                }
+
                 if !currentBlock.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     blocks.append(currentBlock)
                     currentBlock = ""
@@ -266,6 +285,13 @@ enum BlockParser {
         // Table: starts with |
         if trimmed.hasPrefix("|") {
             return (.table, nil)
+        }
+
+        // Caption + Image: <!-- caption: text -->\n...\n![alt](url)
+        if trimmed.hasPrefix("<!--") && trimmed.contains("caption:") {
+            if trimmed.range(of: "!\\[", options: .regularExpression) != nil {
+                return (.image, nil)
+            }
         }
 
         // Image: ![alt](url)

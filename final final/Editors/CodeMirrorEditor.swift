@@ -230,6 +230,7 @@ struct CodeMirrorEditor: NSViewRepresentable {
         var renumberFootnotesObserver: NSObjectProtocol?
         var scrollToFootnoteDefObserver: NSObjectProtocol?
         var zoomFootnoteStateObserver: NSObjectProtocol?
+        var insertImageObserver: NSObjectProtocol?
 
         // Formatting command observers
         var toggleBoldObserver: NSObjectProtocol?
@@ -399,6 +400,16 @@ struct CodeMirrorEditor: NSViewRepresentable {
                 }
             }
 
+            // Subscribe to insert image notification (Insert > Image menu)
+            insertImageObserver = NotificationCenter.default.addObserver(
+                forName: .requestInsertImage,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                guard let self, self.isEditorReady, !self.isCleanedUp else { return }
+                self.handleImagePicker()
+            }
+
             // Subscribe to formatting command notifications
             toggleBoldObserver = NotificationCenter.default.addObserver(
                 forName: .toggleBold, object: nil, queue: .main
@@ -477,6 +488,9 @@ struct CodeMirrorEditor: NSViewRepresentable {
                 NotificationCenter.default.removeObserver(observer)
             }
             if let observer = zoomFootnoteStateObserver {
+                NotificationCenter.default.removeObserver(observer)
+            }
+            if let observer = insertImageObserver {
                 NotificationCenter.default.removeObserver(observer)
             }
             // Formatting command observers cleanup

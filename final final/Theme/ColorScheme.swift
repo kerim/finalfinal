@@ -152,6 +152,7 @@ struct AppColorScheme: Identifiable, Equatable, Sendable {
         --highlight-bg: \(highlightBackground.cssHexWithAlpha);
         --tooltip-bg: \(tooltipBackground.cssHex);
         --tooltip-text: \(tooltipText.cssHex);
+        --editor-muted: \(editorTextSecondary.cssHex);
         \(typographyCssVariables)
         """
     }

@@ -85,6 +85,10 @@ extension MilkdownEditor.Coordinator {
             NotificationCenter.default.removeObserver(observer)
             zoomFootnoteStateObserver = nil
         }
+        if let observer = insertImageObserver {
+            NotificationCenter.default.removeObserver(observer)
+            insertImageObserver = nil
+        }
         // Formatting command observers cleanup
         for observer in [toggleBoldObserver, toggleItalicObserver, toggleStrikethroughObserver,
                          setHeadingObserver, toggleBulletListObserver, toggleNumberListObserver,

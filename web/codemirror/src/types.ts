@@ -103,8 +103,14 @@ declare global {
       replaceAll: (replacement: string) => number;
       clearSearch: () => void;
       getSearchState: () => SearchState | null;
+      // Image API
+      insertImage: (opts: { src: string; alt?: string; caption?: string }) => void;
       // Project switch reset
       resetForProjectSwitch: () => void;
+      // Combined poll data
+      getPollData: () => string;
+      // Test snapshot hook
+      __testSnapshot: () => any;
     };
   }
 }
