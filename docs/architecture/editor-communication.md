@@ -202,6 +202,14 @@ Uses `StateField.define<DecorationSet>()` (not `ViewPlugin`) because image previ
 
 **Key constraint:** `StateField` only has access to `EditorState` (not `EditorView`), so the widget cannot hold a `view` reference. Instead it finds the view from the DOM when needed.
 
+**Caption handling:**
+- Captions are stored as HTML comments: `<!-- caption: text -->`
+- Database-loaded images have a blank line between caption and image; popup-inserted captions have no blank line
+- `buildDecorations()` scans backward (up to 3 lines, skipping blanks) to find caption comments
+- Found captions are hidden via `Decoration.replace()` spanning from caption line start to image line start
+- `atomicRanges` makes the cursor skip over the hidden caption+blank region
+- Click-to-edit popup (`image-caption-popup.ts`) allows adding/editing captions inline
+
 ### Milkdown Implementation
 
 **Plugin:** `image-plugin.ts`
@@ -212,7 +220,8 @@ Uses Milkdown's remark/ProseMirror pipeline to handle image nodes. The `imageSch
 
 | File | Purpose |
 |------|---------|
-| `web/codemirror/src/image-preview-plugin.ts` | CM6 StateField-based block widget for image previews |
+| `web/codemirror/src/image-preview-plugin.ts` | CM6 StateField-based block widget for image previews + caption hiding |
+| `web/codemirror/src/image-caption-popup.ts` | Click-to-edit caption popup (add/edit captions) |
 | `web/milkdown/src/image-plugin.ts` | Milkdown image node with URL rewriting |
 | `final final/Editors/MediaSchemeHandler.swift` | `projectmedia://` URL scheme handler |
 | `final final/Services/ImageImportService.swift` | Image import (copy to media/, insert markdown) |

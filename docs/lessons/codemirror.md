@@ -369,3 +369,39 @@ In `toDOM()`, keep only: `wrapper.className = 'cm-image-preview'`, `img.draggabl
 **Bonus fix:** The error handler's `--text-secondary` typo was automatically fixed by using the CSS class `.cm-image-preview-error` with the correct `--editor-text-secondary` fallback.
 
 **General principle:** In CM6 widget `toDOM()`, use CSS classes for static visual styles and reserve inline `style` assignments for values that are only known at runtime (image dimensions, computed positions). This keeps styles maintainable, themeable via CSS variables, and consistent with the rest of the editor.
+
+---
+
+## Caption Comment Lookup Must Skip Blank Lines
+
+**Problem:** Image captions were never found at runtime. Diagnostic logging showed "Built 0 replace + 3 widget decorations" — three images found, zero captions matched.
+
+**Root Cause:** The caption lookup checked only `doc.line(i - 1)`, but the database stores images with a standard markdown blank line between the caption comment and the image:
+
+```markdown
+<!-- caption: This is a caption -->
+                                        ← blank line
+![image](media/image.jpg)
+```
+
+Line `i - 1` was always the blank line, so `CAPTION_REGEX` never matched.
+
+**Fix:** Scan backward (capped at 3 lines) skipping blank lines:
+
+```typescript
+let checkLineNum = i - 1;
+const minLine = Math.max(1, i - 3);
+while (checkLineNum >= minLine && doc.line(checkLineNum).text.trim() === '') {
+  checkLineNum--;
+}
+```
+
+The `Decoration.replace()` range was also widened from "caption line + 1 char" to "caption line start through image line start", covering both the caption comment and any intervening blank lines.
+
+**Both insertion paths handled:**
+- Popup-created captions (no blank line): `checkLineNum` stays at `i - 1`
+- Database-loaded captions (blank line): `checkLineNum` becomes `i - 2`
+
+**Diagnostic technique:** Used the `errorHandler` message handler bridge (see `docs/guides/webkit-debug-logging.md`) to log `buildDecorations` entry/exit and decoration counts directly to Xcode console, bypassing the need for Safari Web Inspector.
+
+**General principle:** When looking for metadata comments adjacent to content lines, never assume they're on the immediately preceding line. Different code paths (database load, user insertion, paste) may produce different amounts of whitespace between them. Scan backward with a reasonable cap.

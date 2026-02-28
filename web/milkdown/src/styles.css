@@ -487,7 +487,9 @@ mark.ff-highlight {
 .ff-footnote-tooltip {
   opacity: 0;
   visibility: hidden;
-  transition: opacity 0.15s ease, visibility 0.15s ease;
+  transition:
+    opacity 0.15s ease,
+    visibility 0.15s ease;
   position: absolute;
   bottom: 100%;
   left: 50%;
@@ -533,10 +535,17 @@ mark.ff-highlight {
   top: -0.05em;
   margin-right: 0.3em;
   user-select: none;
-  transition: filter 0.15s ease, transform 0.1s ease;
+  transition:
+    filter 0.15s ease,
+    transform 0.1s ease;
 }
-.ff-footnote-def:hover { filter: brightness(1.15); transform: scale(1.05); }
-.ff-footnote-def:active { transform: scale(0.97); }
+.ff-footnote-def:hover {
+  filter: brightness(1.15);
+  transform: scale(1.05);
+}
+.ff-footnote-def:active {
+  transform: scale(0.97);
+}
 
 /* Source mode footnote — monospace inline display */
 .source-mode-footnote {

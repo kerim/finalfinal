@@ -107,6 +107,19 @@ Set `webView.isInspectable = true` in development. Safari → Develop → [app n
 2. **Persistent debug state:** Use `window.__MILKDOWN_DEBUG__` or similar to store values, then query via `getDebugState()` before the switch
 3. **Xcode console:** All Swift `print()` output appears in Xcode's debug console and persists across editor switches
 
+### JS → Xcode Debug Logging (errorHandler bridge)
+
+`console.log()` in WKWebView is **not** bridged to Xcode. Use the `errorHandler` message handler instead — it prints to Xcode console in debug builds without requiring Safari Web Inspector:
+
+```typescript
+(window as any).webkit?.messageHandlers?.errorHandler?.postMessage({
+  type: 'debug',
+  message: `[MyPlugin] value: ${someVar}`,
+});
+```
+
+Both editors register this handler in `makeNSView()`. The Swift side (`#if DEBUG`) prints `[EditorName] JS DEBUG: ...` to Xcode console. See `docs/guides/webkit-debug-logging.md` for full details, helper patterns, and the canary technique.
+
 ## Git Commits
 
 When asked to commit changes:

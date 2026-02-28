@@ -4,8 +4,8 @@
 
 import type { MilkdownPlugin } from '@milkdown/kit/ctx';
 import type { Node as ProsemirrorNode } from '@milkdown/kit/prose/model';
-import type { EditorView, NodeView as ProsemirrorNodeView } from '@milkdown/kit/prose/view';
 import { NodeSelection, Plugin } from '@milkdown/kit/prose/state';
+import type { EditorView, NodeView as ProsemirrorNodeView } from '@milkdown/kit/prose/view';
 import { $node, $prose, $remark } from '@milkdown/kit/utils';
 import type { Root } from 'mdast';
 import { visit } from 'unist-util-visit';
@@ -428,7 +428,7 @@ const figureNodeViewPlugin = $prose(() => {
 const imagePasteDropPlugin = $prose(() => {
   return new Plugin({
     props: {
-      handlePaste(view: EditorView, event: ClipboardEvent): boolean {
+      handlePaste(_view: EditorView, event: ClipboardEvent): boolean {
         const items = event.clipboardData?.items;
         if (!items) return false;
 
@@ -454,7 +454,7 @@ const imagePasteDropPlugin = $prose(() => {
         return false;
       },
 
-      handleDrop(view: EditorView, event: DragEvent): boolean {
+      handleDrop(_view: EditorView, event: DragEvent): boolean {
         const files = event.dataTransfer?.files;
         if (!files || files.length === 0) return false;
 

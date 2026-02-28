@@ -329,7 +329,7 @@ body {
   border-radius: 4px;
 }
 
-/* Caption below image */
+/* Caption below image — clickable with hover feedback */
 .cm-image-caption {
   margin-top: -4px;
   margin-bottom: 8px;
@@ -337,6 +337,55 @@ body {
   color: var(--editor-text, #1a1a1a);
   text-align: center;
   font-style: italic;
+  cursor: pointer;
+}
+
+.cm-image-caption:hover {
+  background: var(--editor-selection, rgba(0, 122, 255, 0.1));
+  border-radius: 2px;
+}
+
+/* "Add caption" placeholder — hidden until hover */
+.cm-image-add-caption {
+  color: var(--editor-muted, var(--editor-text-secondary, #999));
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.cm-image-preview:hover .cm-image-add-caption {
+  opacity: 0.6;
+}
+
+/* Caption edit popup */
+.cm-caption-edit-popup {
+  position: fixed;
+  z-index: 10000;
+  background: var(--editor-bg, #fff);
+  border: 1px solid rgba(128, 128, 128, 0.3);
+  border-radius: 6px;
+  padding: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  min-width: 250px;
+  max-width: 400px;
+}
+
+.cm-caption-edit-popup input[type="text"] {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid rgba(128, 128, 128, 0.3);
+  border-radius: 4px;
+  font-size: 13px;
+  background: var(--editor-bg, #fff);
+  color: var(--editor-text, #333);
+  box-sizing: border-box;
+  font-family: inherit;
+}
+
+.cm-caption-edit-hint {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--editor-muted, var(--editor-text-secondary, #999));
+  text-align: center;
 }
 
 /* Error state when image fails to load */
@@ -350,7 +399,7 @@ body {
 
 /* Annotation delimiters (<!-- and -->) - muted, smaller, lighter */
 .cm-editor .cm-annotation-delim {
-  color: var(--editor-text-secondary, #999) !important;
+  color: var(--editor-text-secondary, #999);
   font-size: 0.85em;
   font-weight: 300;
 }

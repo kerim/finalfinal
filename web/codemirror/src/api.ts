@@ -33,6 +33,7 @@ import {
   setZoomFootnoteState,
 } from './editor-state';
 import { setFocusModeEffect, setFocusModeEnabled } from './focus-mode-plugin';
+import { dismissImageCaptionPopup } from './image-caption-popup';
 import { installLineHeightFix, invalidateHeadingMetricsCache } from './line-height-fix';
 import type { AnnotationType, FindOptions, FindResult, ParsedAnnotation, SearchState } from './types';
 
@@ -98,6 +99,8 @@ export function countWords(text: string): number {
 export function setContent(markdown: string, options?: { scrollToStart?: boolean }): void {
   const view = getEditorView();
   if (!view) return;
+
+  dismissImageCaptionPopup();
 
   const prevLen = view.state.doc.length;
   view.dispatch({
@@ -208,7 +211,9 @@ export function getStats(): { words: number; characters: number } {
   const rawContent = view?.state.doc.toString() || '';
   const content = stripAnchors(rawContent);
   // Strip annotations before counting (<!-- ::type:: content -->)
-  const strippedContent = content.replace(/<!--\s*::\w+::\s*[\s\S]*?-->/g, '');
+  let strippedContent = content.replace(/<!--\s*::\w+::\s*[\s\S]*?-->/g, '');
+  // Strip caption comments (metadata, not body text)
+  strippedContent = strippedContent.replace(/<!--\s*caption:\s*.+?\s*-->/g, '');
   const words = countWords(strippedContent);
   const characters = strippedContent.length;
   return { words, characters };
@@ -1024,6 +1029,8 @@ export function apiGetSearchState(): SearchState | null {
 export function resetForProjectSwitch(): void {
   const view = getEditorView();
   if (!view) return;
+
+  dismissImageCaptionPopup();
 
   // Clear transient module-level state
   setPendingSlashUndo(false);

@@ -229,9 +229,7 @@ function snapshotBlocks(doc: Node): Map<string, BlockSnapshot> {
       if (blockId) {
         // Detect heading syntax in paragraphs (paste creates paragraphs, not headings)
         const headingMatch = node.type.name === 'paragraph' ? node.textContent.match(/^(#{1,6})\s/) : null;
-        const effectiveType = headingMatch ? 'heading'
-          : node.type.name === 'figure' ? 'image'
-          : node.type.name;
+        const effectiveType = headingMatch ? 'heading' : node.type.name === 'figure' ? 'image' : node.type.name;
         const effectiveLevel = headingMatch
           ? headingMatch[1].length
           : node.type.name === 'heading'

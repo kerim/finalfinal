@@ -7,6 +7,7 @@ import { search } from '@codemirror/search';
 import { EditorState } from '@codemirror/state';
 import { EditorView, keymap } from '@codemirror/view';
 import { anchorPlugin } from './anchor-plugin';
+import { annotationDecorationPlugin } from './annotation-decoration-plugin';
 import {
   apiFindNext,
   apiFindPrevious,
@@ -67,10 +68,9 @@ import {
   setZoomFootnoteState,
 } from './editor-state';
 import { focusModePlugin, isFocusModeEnabled } from './focus-mode-plugin';
-import { annotationDecorationPlugin } from './annotation-decoration-plugin';
 import { footnoteDecorationPlugin } from './footnote-decoration-plugin';
-import { imagePreviewPlugin } from './image-preview-plugin';
 import { customHighlightStyle, headingDecorationPlugin, syntaxHighlighting } from './heading-plugin';
+import { imagePreviewPlugin } from './image-preview-plugin';
 import { installLineHeightFix } from './line-height-fix';
 import { scrollStabilizer } from './scroll-stabilizer';
 import { selectionToolbarPlugin } from './selection-toolbar-plugin';
@@ -99,7 +99,7 @@ function initEditor() {
       console.error('[CM Plugin Error]', e);
       (window as any).webkit?.messageHandlers?.errorHandler?.postMessage({
         type: 'plugin-error',
-        message: e instanceof Error ? e.message + '\n' + e.stack : String(e),
+        message: e instanceof Error ? `${e.message}\n${e.stack}` : String(e),
       });
     }),
     history(),
@@ -241,7 +241,7 @@ function initEditor() {
     // Annotation decoration plugin - type-colored annotation marks
     annotationDecorationPlugin(),
     // Image preview plugin - inline preview below ![alt](media/...) lines
-    imagePreviewPlugin(),
+    ...imagePreviewPlugin(),
     // Selection toolbar - floating format bar on text selection
     selectionToolbarPlugin,
     // Spellcheck/grammar decorations via NSSpellChecker
