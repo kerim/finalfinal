@@ -44,6 +44,10 @@ struct FileCommands: Commands {
             }
             .keyboardShortcut("s", modifiers: .command)
 
+            Button("Save As...") {
+                NotificationCenter.default.post(name: .saveProjectAs, object: nil)
+            }
+
             Divider()
 
             Button("Save Version...") {
@@ -356,6 +360,86 @@ struct FileOperations {
         // This explicit save is for any pending changes
         DocumentManager.shared.markClean()
         print("[FileOperations] Project saved")
+    }
+
+    static func handleSaveProjectAs() {
+        let dm = DocumentManager.shared
+
+        // Guard: must have an open project that isn't Getting Started
+        guard dm.hasOpenProject, let sourceURL = dm.projectURL else {
+            print("[FileOperations] Save As: no project open")
+            return
+        }
+        if dm.isGettingStartedProject {
+            print("[FileOperations] Save As: cannot Save As from Getting Started")
+            return
+        }
+
+        let defaultName = dm.projectTitle ?? sourceURL.deletingPathExtension().lastPathComponent
+
+        let savePanel = NSSavePanel()
+        savePanel.title = "Save As"
+        savePanel.nameFieldLabel = "Project Name:"
+        savePanel.nameFieldStringValue = defaultName
+        savePanel.allowedContentTypes = [.init(exportedAs: "com.kerim.final-final.document")]
+        savePanel.canCreateDirectories = true
+
+        savePanel.begin { response in
+            guard response == .OK, let destURL = savePanel.url else { return }
+
+            // Explicitly close the panel before async work
+            savePanel.orderOut(nil)
+
+            Task { @MainActor in
+                do {
+                    // Flush pending editor content to database right before copy
+                    AppDelegate.shared?.editorState?.flushContentToDatabase()
+
+                    // PASSIVE checkpoint: merges as much WAL as possible without
+                    // requiring exclusive access. copyItem copies the entire .ff
+                    // package including -wal and -shm files, so SQLite replays
+                    // any remaining WAL data when the copy is opened.
+                    do {
+                        try dm.projectDatabase?.dbWriter.write { db in
+                            try db.execute(sql: "PRAGMA wal_checkpoint(PASSIVE)")
+                        }
+                    } catch {
+                        // Non-fatal: copyItem includes WAL files, SQLite recovers on open
+                        print("[FileOperations] Save As: WAL checkpoint warning: \(error)")
+                    }
+
+                    let fm = FileManager.default
+
+                    // Remove destination if it already exists
+                    if fm.fileExists(atPath: destURL.path) {
+                        try fm.removeItem(at: destURL)
+                    }
+
+                    // Copy the entire .ff package
+                    try fm.copyItem(at: sourceURL, to: destURL)
+
+                    // Open the copy (this internally closes the current project)
+                    try dm.openProject(at: destURL)
+
+                    // Update title in copied database to match new filename
+                    let newTitle = destURL.deletingPathExtension().lastPathComponent
+                    if let db = dm.projectDatabase, var project = try db.fetchProject() {
+                        project.title = newTitle
+                        try db.updateProject(project)
+                        dm.projectTitle = newTitle
+                    }
+
+                    NotificationCenter.default.post(name: .projectDidOpen, object: nil)
+
+                    #if DEBUG
+                    print("[FileOperations] Save As completed: \(destURL.path)")
+                    #endif
+                } catch {
+                    print("[FileOperations] Save As failed: \(error)")
+                    showErrorAlert("Could Not Save Project", error: error)
+                }
+            }
+        }
     }
 
     static func handleImportMarkdown() {

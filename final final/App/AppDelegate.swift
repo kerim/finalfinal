@@ -107,6 +107,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
         }
 
+        NotificationCenter.default.addObserver(
+            forName: .saveProjectAs, object: nil, queue: .main
+        ) { _ in
+            Task { @MainActor in
+                FileOperations.handleSaveProjectAs()
+            }
+        }
+
         // Handle export notifications
         NotificationCenter.default.addObserver(
             forName: .exportDocument, object: nil, queue: .main
