@@ -44,6 +44,7 @@ import {
   setContent,
   setCursorPosition,
   setFocusMode,
+  setPendingCMDropPos,
   setTheme,
   toggleHighlight,
 } from './api';
@@ -175,7 +176,7 @@ function initEditor() {
         lineHeight: 'var(--line-height-body, 1.75)',
       },
     }),
-    // Reset pendingSlashUndo on any editing key
+    // Reset pendingSlashUndo on any editing key, handle paste/drop for images
     EditorView.domEventHandlers({
       keydown(event, _view) {
         // Reset flag on any editing key (typing, backspace, delete)
@@ -211,6 +212,53 @@ function initEditor() {
           node = node.parent;
         }
         return false;
+      },
+      paste(event, _view) {
+        const items = event.clipboardData?.items;
+        if (!items) return false;
+        for (const item of items) {
+          if (item.type.startsWith('image/')) {
+            event.preventDefault();
+            const file = item.getAsFile();
+            if (!file) return true;
+            const reader = new FileReader();
+            reader.onload = () => {
+              const base64 = (reader.result as string).split(',')[1];
+              (window as any).webkit?.messageHandlers?.pasteImage?.postMessage({
+                data: base64,
+                type: file.type,
+                name: file.name || null,
+              });
+            };
+            reader.readAsDataURL(file);
+            return true;
+          }
+        }
+        return false;
+      },
+      drop(event, view) {
+        const files = event.dataTransfer?.files;
+        if (!files || files.length === 0) return false;
+        const imageFile = Array.from(files).find((f) => f.type.startsWith('image/'));
+        if (!imageFile) return false;
+        event.preventDefault();
+        event.stopPropagation();
+
+        // Capture drop position
+        const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
+        setPendingCMDropPos(pos ?? view.state.doc.length);
+
+        const reader = new FileReader();
+        reader.onload = () => {
+          const base64 = (reader.result as string).split(',')[1];
+          (window as any).webkit?.messageHandlers?.pasteImage?.postMessage({
+            data: base64,
+            type: imageFile.type,
+            name: imageFile.name || null,
+          });
+        };
+        reader.readAsDataURL(imageFile);
+        return true;
       },
     }),
     // Update citation add button on selection changes

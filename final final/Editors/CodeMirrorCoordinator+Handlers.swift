@@ -894,7 +894,18 @@ extension CodeMirrorEditor.Coordinator {
 
             insertImageBlock(src: relativePath, alt: suggestedName ?? "")
         } catch {
+            #if DEBUG
             print("[CodeMirrorEditor] Image paste failed: \(error.localizedDescription)")
+            #endif
+            let window = webView?.window ?? NSApp.keyWindow
+            if let window {
+                let alert = NSAlert()
+                alert.messageText = "Image Import Failed"
+                alert.informativeText = error.localizedDescription
+                alert.alertStyle = .warning
+                alert.addButton(withTitle: "OK")
+                alert.beginSheetModal(for: window)
+            }
         }
     }
 
@@ -926,11 +937,15 @@ extension CodeMirrorEditor.Coordinator {
             #if DEBUG
             print("[CodeMirrorEditor] Image import failed: \(error.localizedDescription)")
             #endif
-            let alert = NSAlert()
-            alert.messageText = "Image Import Failed"
-            alert.informativeText = error.localizedDescription
-            alert.alertStyle = .warning
-            alert.runModal()
+            let window = webView?.window ?? NSApp.keyWindow
+            if let window {
+                let alert = NSAlert()
+                alert.messageText = "Image Import Failed"
+                alert.informativeText = error.localizedDescription
+                alert.alertStyle = .warning
+                alert.addButton(withTitle: "OK")
+                alert.beginSheetModal(for: window)
+            }
         }
     }
 

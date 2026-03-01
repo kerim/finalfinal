@@ -34,6 +34,14 @@ export interface Block {
   imageWidth?: number;
 }
 
+// Image metadata for setContentWithBlockIds (persists width/caption across reloads)
+export interface ImageBlockMeta {
+  id: string;
+  width?: number | null;
+  caption?: string | null;
+  alt?: string | null;
+}
+
 // Search match position
 export interface SearchMatch {
   from: number;
@@ -128,7 +136,11 @@ declare global {
       applyBlocks: (blocks: Block[]) => void;
       confirmBlockIds: (mapping: Record<string, string>) => void;
       syncBlockIds: (orderedIds: string[], zoomMode: boolean) => void;
-      setContentWithBlockIds: (markdown: string, blockIds: string[], options?: { scrollToStart?: boolean }) => void;
+      setContentWithBlockIds: (
+        markdown: string,
+        blockIds: string[],
+        options?: { scrollToStart?: boolean; imageMeta?: ImageBlockMeta[] }
+      ) => void;
       scrollToBlock: (blockId: string) => void;
       getBlockAtCursor: () => { blockId: string; offset: number } | null;
       hasBlockChanges: () => boolean;

@@ -171,7 +171,8 @@ struct ContentView: View {
 
                 Task {
                     await blockSyncService.setContentWithBlockIds(
-                        markdown: result.markdown, blockIds: result.blockIds)
+                        markdown: result.markdown, blockIds: result.blockIds,
+                        imageMeta: result.imageMeta)
                     editorState.isResettingContent = false
                     editorState.contentState = .idle
                 }
@@ -197,7 +198,8 @@ struct ContentView: View {
 
                 Task {
                     await blockSyncService.setContentWithBlockIds(
-                        markdown: result.markdown, blockIds: result.blockIds)
+                        markdown: result.markdown, blockIds: result.blockIds,
+                        imageMeta: result.imageMeta)
                     editorState.isResettingContent = false
                     editorState.contentState = .idle
                 }
@@ -278,7 +280,8 @@ struct ContentView: View {
                     // Push fresh content with real block IDs atomically
                     // (same pattern as bibliography — prevents temp ID race)
                     await blockSyncService.setContentWithBlockIds(
-                        markdown: combined, blockIds: result.blockIds)
+                        markdown: combined, blockIds: result.blockIds,
+                        imageMeta: result.imageMeta)
 
                     editorState.isResettingContent = false
                     editorState.contentState = .idle

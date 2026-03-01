@@ -37,6 +37,20 @@ import { dismissImageCaptionPopup } from './image-caption-popup';
 import { installLineHeightFix, invalidateHeadingMetricsCache } from './line-height-fix';
 import type { AnnotationType, FindOptions, FindResult, ParsedAnnotation, SearchState } from './types';
 
+// --- Pending drop position for image drops ---
+
+let pendingCMDropPos: number | null = null;
+
+export function setPendingCMDropPos(pos: number | null): void {
+  pendingCMDropPos = pos;
+}
+
+function consumePendingCMDropPos(): number | null {
+  const pos = pendingCMDropPos;
+  pendingCMDropPos = null;
+  return pos;
+}
+
 // --- Search helpers ---
 
 export function countMatches(view: EditorView, query: SearchQuery): number {
@@ -681,8 +695,16 @@ export function insertImage(opts: { src: string; alt?: string; caption?: string 
   const view = getEditorView();
   if (!view) return;
 
-  const { from } = view.state.selection.main;
+  const dropPos = consumePendingCMDropPos();
   const doc = view.state.doc;
+
+  // Determine insertion point: drop position or cursor
+  let targetPos: number;
+  if (dropPos !== null) {
+    targetPos = Math.min(dropPos, doc.length);
+  } else {
+    targetPos = view.state.selection.main.from;
+  }
 
   // Build the markdown to insert
   let markdown = `![${opts.alt || ''}](${opts.src})`;
@@ -692,8 +714,8 @@ export function insertImage(opts: { src: string; alt?: string; caption?: string 
     markdown = `<!-- caption: ${opts.caption} -->\n${markdown}`;
   }
 
-  // Check if we need blank lines before
-  const line = doc.lineAt(from);
+  // Check if we need blank lines before/after
+  const line = doc.lineAt(targetPos);
   const lineText = line.text;
   const needBlankBefore = line.number > 1 && lineText.trim() !== '';
   const needBlankAfter = line.number < doc.lines && doc.line(line.number + 1).text.trim() !== '';
@@ -709,10 +731,10 @@ export function insertImage(opts: { src: string; alt?: string; caption?: string 
     insert += '\n';
   }
 
-  const insertFrom = needBlankBefore ? from : line.from;
+  const insertFrom = needBlankBefore ? targetPos : line.from;
 
   view.dispatch({
-    changes: { from: insertFrom, to: from, insert },
+    changes: { from: insertFrom, to: targetPos, insert },
     selection: { anchor: insertFrom + insert.length },
   });
   view.focus();

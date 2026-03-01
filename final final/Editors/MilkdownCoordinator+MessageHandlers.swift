@@ -109,16 +109,26 @@ extension MilkdownEditor.Coordinator {
     func performBatchInitialize(content: String, theme: String, cursor: CursorPosition?) {
         guard let webView else { return }
 
-        // Prevent updateNSView from calling setContent() after initialize().
-        // Milkdown's async typeof check currently delays initialize() past
-        // updateNSView, but this makes the protection explicit.
+        // When isResettingContent is true, onWebViewReady will push content via
+        // setContentWithBlockIds() (which includes image metadata like width/caption).
+        // Skip content here to avoid a race where initialize() overwrites the metadata.
+        let effectiveContent = isResettingContentBinding.wrappedValue ? "" : content
+
+        // Always set lastPushedContent to the REAL content (not empty), so that
+        // shouldPushContent() doesn't trigger a redundant push from updateNSView.
         lastPushedContent = content
         lastPushTime = Date()
+
+        #if DEBUG
+        let resetting = isResettingContentBinding.wrappedValue
+        print("[batchInitialize] isResettingContent=\(resetting), "
+            + "content=\(content.count), effective=\(effectiveContent.count)")
+        #endif
 
         // Build options dictionary for JSON encoding
         // Using JSON instead of template literals handles ALL special characters safely
         var options: [String: Any] = [
-            "content": content,
+            "content": effectiveContent,
             "theme": theme
         ]
         if let pos = cursor {
@@ -163,7 +173,12 @@ extension MilkdownEditor.Coordinator {
                 print("[MilkdownEditor] Initialize successful")
                 #endif
             }
-            self?.cursorPositionToRestoreBinding.wrappedValue = nil
+            // Only clear cursor binding if we actually pushed content.
+            // When isResettingContent is true, content was skipped and cursor
+            // will be restored after setContentWithBlockIds() via restoreCursorPositionIfNeeded().
+            if !effectiveContent.isEmpty {
+                self?.cursorPositionToRestoreBinding.wrappedValue = nil
+            }
         }
     }
 
@@ -806,6 +821,15 @@ extension MilkdownEditor.Coordinator {
             #if DEBUG
             print("[MilkdownEditor] Image paste failed: \(error.localizedDescription)")
             #endif
+            let window = webView?.window ?? NSApp.keyWindow
+            if let window {
+                let alert = NSAlert()
+                alert.messageText = "Image Import Failed"
+                alert.informativeText = error.localizedDescription
+                alert.alertStyle = .warning
+                alert.addButton(withTitle: "OK")
+                alert.beginSheetModal(for: window)
+            }
         }
     }
 
@@ -835,11 +859,15 @@ extension MilkdownEditor.Coordinator {
             #if DEBUG
             print("[MilkdownEditor] Image import failed: \(error.localizedDescription)")
             #endif
-            let alert = NSAlert()
-            alert.messageText = "Image Import Failed"
-            alert.informativeText = error.localizedDescription
-            alert.alertStyle = .warning
-            alert.runModal()
+            let window = webView?.window ?? NSApp.keyWindow
+            if let window {
+                let alert = NSAlert()
+                alert.messageText = "Image Import Failed"
+                alert.informativeText = error.localizedDescription
+                alert.alertStyle = .warning
+                alert.addButton(withTitle: "OK")
+                alert.beginSheetModal(for: window)
+            }
         }
     }
 
