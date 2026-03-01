@@ -133,6 +133,8 @@ class EditorViewState {
 
     // MARK: - Scroll Request
     var scrollToOffset: Int?
+    /// Block-ID-based scroll for Milkdown (avoids character-offset mismatch with atom nodes)
+    var scrollToBlockId: String?
 
     // MARK: - Sidebar State (Phase 1.6)
     var sections: [SectionViewModel] = []
@@ -480,6 +482,7 @@ class EditorViewState {
         characterCount = 0
         currentSectionName = ""
         scrollToOffset = nil
+        scrollToBlockId = nil
     }
 
     // MARK: - Stats Update
@@ -494,6 +497,7 @@ class EditorViewState {
 
     func clearScrollRequest() {
         scrollToOffset = nil
+        scrollToBlockId = nil
     }
 
     func toggleEditorMode() {

@@ -360,6 +360,9 @@ final class AppearanceSettingsManager {
 
         if let headerColor = settings.headerColor {
             css.append("--editor-heading-text: \(headerColor.cssHex);")
+            #if DEBUG
+            print("[AppearanceSettings] Header color override: \(headerColor.cssHex)")
+            #endif
         }
 
         if let accentColor = settings.accentColor {

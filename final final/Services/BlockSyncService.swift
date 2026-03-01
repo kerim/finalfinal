@@ -127,7 +127,12 @@ class BlockSyncService {
     }
 
     /// Set content AND block IDs atomically (for initial load, zoom, rebuild)
-    func setContentWithBlockIds(markdown: String, blockIds: [String], scrollToStart: Bool = false) async {
+    func setContentWithBlockIds(
+        markdown: String,
+        blockIds: [String],
+        scrollToStart: Bool = false,
+        imageMeta: [ContentView.ImageBlockMeta] = []
+    ) async {
         guard let webView else { return }
 
         // Escape markdown for JS template literal
@@ -144,7 +149,29 @@ class BlockSyncService {
             .replacingOccurrences(of: "`", with: "\\`")
             .replacingOccurrences(of: "${", with: "\\${")
 
-        let options = scrollToStart ? ", {scrollToStart: true}" : ""
+        // Build options object
+        var optionParts: [String] = []
+        if scrollToStart {
+            optionParts.append("scrollToStart: true")
+        }
+        if !imageMeta.isEmpty {
+            let metaArray = imageMeta.map { meta -> [String: Any] in
+                var dict: [String: Any] = ["id": meta.id]
+                if let w = meta.width { dict["width"] = w }
+                if let c = meta.caption { dict["caption"] = c }
+                if let a = meta.alt { dict["alt"] = a }
+                return dict
+            }
+            if let metaData = try? JSONSerialization.data(withJSONObject: metaArray),
+               let metaJson = String(data: metaData, encoding: .utf8) {
+                let escapedMeta = metaJson
+                    .replacingOccurrences(of: "\\", with: "\\\\")
+                    .replacingOccurrences(of: "`", with: "\\`")
+                    .replacingOccurrences(of: "${", with: "\\${")
+                optionParts.append("imageMeta: JSON.parse(`\(escapedMeta)`)")
+            }
+        }
+        let options = optionParts.isEmpty ? "" : ", {\(optionParts.joined(separator: ", "))}"
         let js = "window.FinalFinal.setContentWithBlockIds(`\(escapedMarkdown)`, JSON.parse(`\(escapedIds)`)\(options))"
 
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in

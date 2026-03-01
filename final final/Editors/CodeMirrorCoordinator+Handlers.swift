@@ -894,7 +894,15 @@ extension CodeMirrorEditor.Coordinator {
 
             insertImageBlock(src: relativePath, alt: suggestedName ?? "")
         } catch {
+            #if DEBUG
             print("[CodeMirrorEditor] Image paste failed: \(error.localizedDescription)")
+            #endif
+            let alert = NSAlert()
+            alert.messageText = "Image Import Failed"
+            alert.informativeText = error.localizedDescription
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "OK")
+            alert.runModal()
         }
     }
 
