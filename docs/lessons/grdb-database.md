@@ -151,6 +151,32 @@ Additionally, move write-heavy operations off MainActor using `Task.detached(pri
 
 ---
 
+### WAL Checkpoint Mode Matters When Copying Databases
+
+**Problem:** "Save As..." failed at runtime with `SQLite error 6: database table is locked` when attempting `PRAGMA wal_checkpoint(TRUNCATE)`.
+
+**Root Cause:** `TRUNCATE` checkpoint requires exclusive database access — no other connections can hold read locks. But GRDB's `ValueObservation` (used for `observeOutlineBlocks()`, `observeAnnotations()`) keeps read connections continuously active while a project is open. The checkpoint cannot acquire exclusive access and fails.
+
+**Solution:** Use `PASSIVE` checkpoint instead:
+
+```swift
+try dm.projectDatabase?.dbWriter.write { db in
+    try db.execute(sql: "PRAGMA wal_checkpoint(PASSIVE)")
+}
+```
+
+`PASSIVE` checkpoints as much WAL as possible without waiting for exclusive access. Make the checkpoint non-fatal — `FileManager.copyItem` copies the entire `.ff` package including `-wal` and `-shm` files, so SQLite replays any remaining WAL data when the copy is opened.
+
+**Checkpoint modes:**
+- `PASSIVE` — Checkpoint what's possible, don't block. Safe with active readers.
+- `FULL` — Wait for readers to finish, then checkpoint. Blocks new writers.
+- `TRUNCATE` — Like FULL, then truncate WAL file. Requires exclusive access. **Fails with ValueObservation.**
+- `RESTART` — Like FULL, then restart WAL. Requires exclusive access.
+
+**General principle:** When copying a WAL-mode database that has active ValueObservation readers, use `PASSIVE` checkpoint and ensure the copy includes all three files (`.db`, `-wal`, `-shm`). SQLite is designed to recover from WAL data on open.
+
+---
+
 ## GRDB Configuration
 
 ### Never Use eraseDatabaseOnSchemaChange in Production
