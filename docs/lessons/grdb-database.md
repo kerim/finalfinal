@@ -157,13 +157,15 @@ Additionally, move write-heavy operations off MainActor using `Task.detached(pri
 
 **Root Cause:** `TRUNCATE` checkpoint requires exclusive database access — no other connections can hold read locks. But GRDB's `ValueObservation` (used for `observeOutlineBlocks()`, `observeAnnotations()`) keeps read connections continuously active while a project is open. The checkpoint cannot acquire exclusive access and fails.
 
-**Solution:** Use `PASSIVE` checkpoint instead:
+**Solution:** Use `PASSIVE` checkpoint with `writeWithoutTransaction` and GRDB's type-safe API:
 
 ```swift
-try dm.projectDatabase?.dbWriter.write { db in
-    try db.execute(sql: "PRAGMA wal_checkpoint(PASSIVE)")
+try dm.projectDatabase?.dbWriter.writeWithoutTransaction { db in
+    try db.checkpoint(.passive)
 }
 ```
+
+**Important:** Do NOT wrap the checkpoint in `write { }` (which opens `BEGIN IMMEDIATE`). The checkpoint's own lock acquisition contends with the wrapping transaction, producing SQLite error 6 (self-contention). Use `writeWithoutTransaction` instead.
 
 `PASSIVE` checkpoints as much WAL as possible without waiting for exclusive access. Make the checkpoint non-fatal — `FileManager.copyItem` copies the entire `.ff` package including `-wal` and `-shm` files, so SQLite replays any remaining WAL data when the copy is opened.
 
