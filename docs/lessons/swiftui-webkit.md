@@ -283,3 +283,42 @@ The toggle uses a two-phase notification pattern to ensure cursor is saved befor
 This prevents the race where the old editor is torn down before its cursor position can be read.
 
 **General principle:** When `NSViewRepresentable` lifecycle methods (`makeNSView`, `updateNSView`) interact with async JS calls, ensure shared state guards (like `lastPushedContent`) are set synchronously *before* the async call, not in its callback.
+
+### `initialize()` vs `setContentWithBlockIds()` Race (Image Metadata Loss)
+
+**Problem:** Image width and caption were lost when switching from CodeMirror back to Milkdown, even though the database correctly preserved image metadata via `ImageMeta` struct matching in `replaceBlocks()`.
+
+**Root Cause:** In `webView(_:didFinish:)`, two content-pushing paths start simultaneously:
+
+1. **`batchInitialize()`** → async `typeof window.FinalFinal` check → callback fires → `performBatchInitialize()` → queues `initialize({content, theme, cursor})` — replaces entire ProseMirror doc **without** image metadata
+2. **`onWebViewReady` callback** → `Task { setContentWithBlockIds(markdown, blockIds, {imageMeta}) }` — replaces doc **with** image width/caption
+
+Due to the async typeof check, the JS execution order was:
+1. `typeof window.FinalFinal` (from path A)
+2. `setContentWithBlockIds(...)` (from path B — Task body runs)
+3. `initialize(...)` (from path A — typeof callback fires, dispatches initialize)
+
+So `setContentWithBlockIds()` correctly applied image width, then `initialize()` overwrote the entire document without width. Width was lost.
+
+**Solution:** When `isResettingContent` is true (meaning `onWebViewReady` will push content via `setContentWithBlockIds()`), skip content in `performBatchInitialize()`:
+
+```swift
+let effectiveContent = isResettingContentBinding.wrappedValue ? "" : content
+
+// Always set lastPushedContent to REAL content to prevent updateNSView re-push
+lastPushedContent = content
+
+var options: [String: Any] = ["content": effectiveContent, "theme": theme]
+```
+
+JS `initialize()` also guards against empty content:
+
+```typescript
+if (options.content.length > 0) {
+    setContent(options.content);
+}
+```
+
+And cursor binding clearing is skipped when content was empty (cursor will be restored later by `restoreCursorPositionIfNeeded()` after `setContentWithBlockIds()` loads the real content).
+
+**General principle:** When multiple async paths converge on the same JS thread, the "last write wins" race depends on callback timing. Guard against overwrites by skipping redundant pushes when a more complete path (with metadata) is already in flight.
