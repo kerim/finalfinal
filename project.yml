@@ -114,6 +114,13 @@ targets:
             UTTypeTagSpecification:
               public.mime-type:
                 - application/x-final-final-section
+          - UTTypeIdentifier: org.textbundle.package
+            UTTypeDescription: TextBundle
+            UTTypeConformsTo:
+              - com.apple.package
+            UTTypeTagSpecification:
+              public.filename-extension:
+                - textbundle
 
   QuickLook Extension:
     type: app-extension

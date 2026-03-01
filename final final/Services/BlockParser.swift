@@ -402,7 +402,7 @@ enum BlockParser {
     }
 
     /// Assemble blocks into Pandoc-compatible markdown for export.
-    /// Uses `markdownForExport()` which includes caption comments and width attributes for image blocks.
+    /// Uses `markdownForExport()` which includes fig-alt and width attributes for image blocks.
     static func assembleMarkdownForExport(from blocks: [Block]) -> String {
         let sorted = blocks.sorted { a, b in
             let aKey = (a.sortOrder, a.blockType == .heading ? 0 : 1)
@@ -411,6 +411,21 @@ enum BlockParser {
         }
         let result = sorted
             .map { $0.markdownForExport() }
+            .joined(separator: "\n\n")
+
+        return result
+    }
+
+    /// Assemble blocks into standard markdown for export (no Pandoc attributes).
+    /// Uses `markdownForStandardExport()` which outputs plain markdown with captions as italic text.
+    static func assembleStandardMarkdownForExport(from blocks: [Block]) -> String {
+        let sorted = blocks.sorted { a, b in
+            let aKey = (a.sortOrder, a.blockType == .heading ? 0 : 1)
+            let bKey = (b.sortOrder, b.blockType == .heading ? 0 : 1)
+            return aKey < bKey
+        }
+        let result = sorted
+            .map { $0.markdownForStandardExport() }
             .joined(separator: "\n\n")
 
         return result

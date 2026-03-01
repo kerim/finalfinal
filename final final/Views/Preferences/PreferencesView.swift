@@ -77,6 +77,9 @@ struct PreferencesView: View {
         }
         .frame(width: 700, height: 550)
         .padding()
+        .onReceive(NotificationCenter.default.publisher(for: .showExportPreferences)) { _ in
+            selectedTab = .export
+        }
     }
 }
 

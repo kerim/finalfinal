@@ -17,7 +17,7 @@ How the app is built. Read these before modifying core systems.
 - [footnotes.md](architecture/footnotes.md) -- Footnote refs, Notes section, Milkdown/CodeMirror plugins, zoom-notes behavior, definition preservation
 - [toolbar-ui.md](architecture/toolbar-ui.md) -- Five formatting UI areas: Format menu, editor toolbar, selection toolbar, slash commands, status bar
 - [spellcheck.md](architecture/spellcheck.md) -- Dual-provider proofing (NSSpellChecker + LanguageTool), decoration position mapping, click interaction, preferences
-- [export.md](architecture/export.md) -- Pandoc export pipeline: citations (--citeproc for PDF, Lua filter for DOCX/ODT), non-Latin font detection (Unicode range scanning), bundled TinyTeX
+- [export.md](architecture/export.md) -- Export pipeline: Pandoc (DOCX/PDF/ODT) with citations, font detection, image conversion; non-Pandoc (Markdown with Images, TextBundle)
 - Quick Look Extension -- QLPreviewingController + MarkdownRenderer for Finder previews of .ff files (see `QuickLook Extension/`)
 
 ## Roadmap

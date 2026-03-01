@@ -78,6 +78,7 @@ struct FinalFinalApp: App {
             .onReceive(NotificationCenter.default.publisher(for: .closeProject)) { _ in
                 FileOperations.handleCloseProject()
             }
+            .background { OpenExportPreferencesListener() }
             .onChange(of: appViewState) { oldState, newState in
                 #if DEBUG
                 print("[FinalFinalApp] State changed: \(oldState) -> \(newState)")
@@ -218,6 +219,26 @@ struct FinalFinalApp: App {
             // Fall back to picker on error
             appViewState = .picker
         }
+    }
+}
+
+// MARK: - Open Export Preferences Helper
+
+/// Invisible view that opens the Settings window when .showExportPreferences is posted.
+/// Uses @Environment(\.openSettings) — the official SwiftUI API (macOS 14+).
+private struct OpenExportPreferencesListener: View {
+    @Environment(\.openSettings) private var openSettings
+
+    var body: some View {
+        Color.clear
+            .frame(width: 0, height: 0)
+            .onReceive(NotificationCenter.default.publisher(for: .showExportPreferences)) { _ in
+                openSettings()
+                // Ensure the Settings window comes to front (e.g. when main window is fullscreen)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    NSApp.activate()
+                }
+            }
     }
 }
 

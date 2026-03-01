@@ -6,6 +6,7 @@
 //  Uses async/await with Process for non-blocking execution.
 //
 
+import AppKit  // NSImage/NSBitmapImageRep for image conversion — no main thread required
 import Foundation
 import NaturalLanguage
 
@@ -53,6 +54,16 @@ actor ExportService {
     private let pandocLocator: PandocLocator
     private let zoteroChecker: ZoteroChecker
 
+    /// Image formats that xelatex can handle natively
+    private static let xelatexSupportedExtensions: Set<String> = ["png", "jpg", "jpeg", "bmp", "pdf"]
+
+    /// Matches markdown image syntax: ![alt](media/filename)
+    /// Anchored on `!\[` to avoid matching regular links
+    private static let imagePathPattern: NSRegularExpression = {
+        // swiftlint:disable:next force_try
+        try! NSRegularExpression(pattern: #"!\[[^\]]*\]\(media/([^)]+)\)"#)
+    }()
+
     init() {
         self.pandocLocator = PandocLocator()
         self.zoteroChecker = ZoteroChecker()
@@ -96,7 +107,8 @@ actor ExportService {
         content: String,
         to outputURL: URL,
         format: ExportFormat,
-        settings: ExportSettings
+        settings: ExportSettings,
+        projectURL: URL? = nil
     ) async throws -> ExportResult {
 
         // Validate content
@@ -145,6 +157,7 @@ actor ExportService {
         let tempDir = FileManager.default.temporaryDirectory
         let inputURL = tempDir.appendingPathComponent(UUID().uuidString + ".md")
         var tempBibURL: URL?
+        var tempMediaDir: URL?
 
         do {
             try processedContent.write(to: inputURL, atomically: true, encoding: .utf8)
@@ -157,10 +170,28 @@ actor ExportService {
             if let bibURL = tempBibURL {
                 try? FileManager.default.removeItem(at: bibURL)
             }
+            if let mediaDir = tempMediaDir {
+                try? FileManager.default.removeItem(at: mediaDir)
+            }
         }
 
         // Collect warnings
         var warnings: [String] = []
+
+        // For PDF export, convert unsupported images (WebP, HEIC, etc.) to PNG
+        var effectiveResourceURL = projectURL
+        if format == .pdf, let projURL = projectURL {
+            let prep = prepareImagesForPDF(content: processedContent, projectURL: projURL)
+            if prep.resourceDir != projURL {
+                // Conversion happened — use temp dir and rewritten content
+                processedContent = prep.content
+                effectiveResourceURL = prep.resourceDir
+                tempMediaDir = prep.resourceDir
+                warnings.append(contentsOf: prep.warnings)
+                // Re-write temp input file with updated image paths
+                try processedContent.write(to: inputURL, atomically: true, encoding: .utf8)
+            }
+        }
 
         // Build Pandoc arguments
         var arguments = [
@@ -169,6 +200,11 @@ actor ExportService {
             "--to", format.pandocFormat,
             "--output", outputURL.path
         ]
+
+        // Resource path for image resolution (media/ paths relative to .ff package)
+        if let url = effectiveResourceURL {
+            arguments.append(contentsOf: ["--resource-path", url.path])
+        }
 
         // PDF: engine + font variables
         if format == .pdf {
@@ -590,9 +626,9 @@ extension ExportService {
     private func mainFontArguments(for scripts: DetectedScripts) -> [String] {
         let mainFontMap: [(script: DetectedScripts, font: String)] = [
             (.devanagari, "Kohinoor Devanagari"),
-            (.thai,       "Thonburi"),
-            (.bengali,    "Bangla Sangam MN"),
-            (.tamil,      "Tamil Sangam MN"),
+            (.thai, "Thonburi"),
+            (.bengali, "Bangla Sangam MN"),
+            (.tamil, "Tamil Sangam MN")
         ]
         guard let match = mainFontMap.first(where: { scripts.contains($0.script) }) else {
             return []
@@ -626,5 +662,289 @@ extension ExportService {
         }
         // Default to Traditional Chinese
         return "Songti TC"
+    }
+}
+
+// MARK: - PDF Image Conversion
+
+extension ExportService {
+
+    /// For PDF export, convert unsupported images (WebP, HEIC, GIF, TIFF, SVG) to PNG.
+    /// Returns rewritten content, the resource directory for Pandoc, and any warnings.
+    /// If all images are already xelatex-compatible, returns content unchanged with the original projectURL.
+    private func prepareImagesForPDF(
+        content: String,
+        projectURL: URL
+    ) -> (content: String, resourceDir: URL, warnings: [String]) {
+        let nsContent = content as NSString
+        let fullRange = NSRange(location: 0, length: nsContent.length)
+        let matches = ExportService.imagePathPattern.matches(in: content, range: fullRange)
+
+        // Extract image filenames from markdown image syntax
+        var imageFilenames: [String] = []
+        for match in matches {
+            guard let range = Range(match.range(at: 1), in: content) else { continue }
+            let filename = String(content[range])
+            // Decode URL-encoded filenames for filesystem lookup
+            let decoded = filename.removingPercentEncoding ?? filename
+            imageFilenames.append(decoded)
+        }
+
+        guard !imageFilenames.isEmpty else {
+            return (content, projectURL, [])
+        }
+
+        // Check if any image needs conversion
+        let needsConversion = imageFilenames.contains { filename in
+            let ext = (filename as NSString).pathExtension.lowercased()
+            return !ExportService.xelatexSupportedExtensions.contains(ext)
+        }
+
+        guard needsConversion else {
+            return (content, projectURL, [])
+        }
+
+        // Create temp directory structure: <UUID>/media/
+        let fm = FileManager.default
+        let tempBase = fm.temporaryDirectory.appendingPathComponent("media-\(UUID().uuidString)")
+        let tempMedia = tempBase.appendingPathComponent("media")
+        do {
+            try fm.createDirectory(at: tempMedia, withIntermediateDirectories: true)
+        } catch {
+            return (content, projectURL, ["Failed to create temp directory for image conversion"])
+        }
+
+        let mediaURL = projectURL.appendingPathComponent("media")
+        var warnings: [String] = []
+        // Maps original filename → new filename (only for converted files)
+        var renames: [String: String] = [:]
+        // Track all output filenames to detect collisions
+        var outputFilenames: Set<String> = Set(imageFilenames.compactMap { filename in
+            let ext = (filename as NSString).pathExtension.lowercased()
+            return ExportService.xelatexSupportedExtensions.contains(ext) ? filename : nil
+        })
+
+        for filename in imageFilenames {
+            let ext = (filename as NSString).pathExtension.lowercased()
+            let sourceURL = mediaURL.appendingPathComponent(filename)
+
+            if ExportService.xelatexSupportedExtensions.contains(ext) {
+                // Supported format — symlink to avoid copying
+                let destURL = tempMedia.appendingPathComponent(filename)
+                // Create intermediate directories for filenames with subdirectories
+                let destDir = destURL.deletingLastPathComponent()
+                try? fm.createDirectory(at: destDir, withIntermediateDirectories: true)
+                try? fm.createSymbolicLink(at: destURL, withDestinationURL: sourceURL)
+            } else {
+                // Needs conversion to PNG
+                guard fm.fileExists(atPath: sourceURL.path) else {
+                    warnings.append("Image not found: \(filename)")
+                    continue
+                }
+
+                if ext == "svg" {
+                    warnings.append("SVG image converted to PNG — quality may vary: \(filename)")
+                }
+
+                // Determine output filename, handling collisions
+                let baseName = (filename as NSString).deletingPathExtension
+                var pngFilename = baseName + ".png"
+                if outputFilenames.contains(pngFilename) {
+                    pngFilename = baseName + "-converted.png"
+                }
+                outputFilenames.insert(pngFilename)
+
+                let destURL = tempMedia.appendingPathComponent(pngFilename)
+                let destDir = destURL.deletingLastPathComponent()
+                try? fm.createDirectory(at: destDir, withIntermediateDirectories: true)
+
+                // Convert using NSImage → PNG data
+                if let pngData = convertImageToPNG(at: sourceURL) {
+                    do {
+                        try pngData.write(to: destURL)
+                        renames[filename] = pngFilename
+                    } catch {
+                        warnings.append("Failed to write converted image: \(filename)")
+                    }
+                } else {
+                    warnings.append("Failed to convert image to PNG: \(filename)")
+                }
+            }
+        }
+
+        // Rewrite content: replace image paths for converted files
+        var rewrittenContent = content
+        for (oldFilename, newFilename) in renames {
+            // Escape for regex
+            let escapedOld = NSRegularExpression.escapedPattern(for: "media/" + oldFilename)
+            // Only replace within image syntax: ![...](media/old)
+            let pattern = #"(!\[[^\]]*\]\()"# + escapedOld
+            if let regex = try? NSRegularExpression(pattern: pattern) {
+                let range = NSRange(rewrittenContent.startIndex..., in: rewrittenContent)
+                rewrittenContent = regex.stringByReplacingMatches(
+                    in: rewrittenContent,
+                    range: range,
+                    withTemplate: "$1media/" + NSRegularExpression.escapedTemplate(for: newFilename)
+                )
+            }
+        }
+
+        return (rewrittenContent, tempBase, warnings)
+    }
+
+    /// Convert an image file to PNG data using NSImage.
+    /// NSImage handles WebP, HEIC, GIF, TIFF, SVG, and other macOS-supported formats.
+    /// NSImage data conversion does not require the main thread.
+    private func convertImageToPNG(at url: URL) -> Data? {
+        guard let image = NSImage(contentsOf: url) else { return nil }
+        guard let tiffData = image.tiffRepresentation,
+              let bitmap = NSBitmapImageRep(data: tiffData) else { return nil }
+        return bitmap.representation(using: .png, properties: [:])
+    }
+}
+
+// MARK: - Markdown & TextBundle Export
+
+extension ExportService {
+
+    /// Result of a markdown/TextBundle export operation
+    struct MarkdownExportResult: Sendable {
+        let outputURL: URL
+        let warnings: [String]
+    }
+
+    /// Export markdown with images in a sibling folder.
+    /// - Parameters:
+    ///   - content: Standard markdown content (already assembled)
+    ///   - imageFilenames: Image filenames from media/ to copy
+    ///   - projectURL: The .ff package URL containing media/
+    ///   - outputURL: Destination .md file URL
+    func exportMarkdownWithImages(
+        content: String,
+        imageFilenames: [String],
+        projectURL: URL?,
+        outputURL: URL
+    ) throws -> MarkdownExportResult {
+        var warnings: [String] = []
+
+        if imageFilenames.isEmpty {
+            // No images — just write the markdown file
+            try content.write(to: outputURL, atomically: true, encoding: .utf8)
+            return MarkdownExportResult(outputURL: outputURL, warnings: warnings)
+        }
+
+        // Create images folder: <name>_images/ sibling to the .md file
+        let baseName = outputURL.deletingPathExtension().lastPathComponent
+        let imagesFolder = outputURL.deletingLastPathComponent()
+            .appendingPathComponent("\(baseName)_images")
+
+        try FileManager.default.createDirectory(at: imagesFolder, withIntermediateDirectories: true)
+
+        // Copy images
+        let missing = copyImages(
+            filenames: imageFilenames,
+            from: projectURL,
+            to: imagesFolder
+        )
+        warnings.append(contentsOf: missing.map { "Image not found: \($0)" })
+
+        // Rewrite paths: media/X -> <name>_images/X
+        let rewritten = rewriteImagePaths(
+            in: content,
+            from: "media/",
+            to: "\(baseName)_images/"
+        )
+
+        try rewritten.write(to: outputURL, atomically: true, encoding: .utf8)
+        return MarkdownExportResult(outputURL: outputURL, warnings: warnings)
+    }
+
+    /// Export as TextBundle package.
+    /// - Parameters:
+    ///   - content: Standard markdown content (already assembled)
+    ///   - imageFilenames: Image filenames from media/ to copy
+    ///   - projectURL: The .ff package URL containing media/
+    ///   - outputURL: Destination .textbundle directory URL
+    func exportTextBundle(
+        content: String,
+        imageFilenames: [String],
+        projectURL: URL?,
+        outputURL: URL
+    ) throws -> MarkdownExportResult {
+        let fm = FileManager.default
+        var warnings: [String] = []
+
+        // Create .textbundle directory
+        try fm.createDirectory(at: outputURL, withIntermediateDirectories: true)
+
+        // Create assets/ subdirectory and copy images
+        if !imageFilenames.isEmpty {
+            let assetsURL = outputURL.appendingPathComponent("assets")
+            try fm.createDirectory(at: assetsURL, withIntermediateDirectories: true)
+
+            let missing = copyImages(
+                filenames: imageFilenames,
+                from: projectURL,
+                to: assetsURL
+            )
+            warnings.append(contentsOf: missing.map { "Image not found: \($0)" })
+        }
+
+        // Rewrite paths: media/X -> assets/X
+        let rewritten = rewriteImagePaths(in: content, from: "media/", to: "assets/")
+
+        // Write text.md
+        let textURL = outputURL.appendingPathComponent("text.md")
+        try rewritten.write(to: textURL, atomically: true, encoding: .utf8)
+
+        // Write info.json
+        let infoJSON = """
+            {
+                "version": 2,
+                "type": "net.daringfireball.markdown",
+                "creatorIdentifier": "com.kerim.final-final"
+            }
+            """
+        let infoURL = outputURL.appendingPathComponent("info.json")
+        try infoJSON.write(to: infoURL, atomically: true, encoding: .utf8)
+
+        return MarkdownExportResult(outputURL: outputURL, warnings: warnings)
+    }
+
+    // MARK: - Private Image Helpers
+
+    /// Copy image files from project media/ to destination folder.
+    /// Returns list of filenames that were not found.
+    private func copyImages(filenames: [String], from projectURL: URL?, to destinationFolder: URL) -> [String] {
+        guard let projectURL = projectURL else {
+            return filenames
+        }
+
+        let fm = FileManager.default
+        let mediaURL = projectURL.appendingPathComponent("media")
+        var missing: [String] = []
+
+        for filename in filenames {
+            let sourceURL = mediaURL.appendingPathComponent(filename)
+            let destURL = destinationFolder.appendingPathComponent(filename)
+
+            if fm.fileExists(atPath: sourceURL.path) {
+                try? fm.copyItem(at: sourceURL, to: destURL)
+            } else {
+                missing.append(filename)
+            }
+        }
+
+        return missing
+    }
+
+    /// Replace image path prefix in markdown content, scoped to image syntax only.
+    private func rewriteImagePaths(in content: String, from oldPrefix: String, to newPrefix: String) -> String {
+        let escaped = NSRegularExpression.escapedPattern(for: oldPrefix)
+        // Only match within ![...](...) image syntax to avoid corrupting regular links/prose
+        let pattern = #"(!\[[^\]]*\]\()"# + escaped
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return content }
+        let range = NSRange(content.startIndex..., in: content)
+        return regex.stringByReplacingMatches(in: content, range: range, withTemplate: "$1" + newPrefix)
     }
 }

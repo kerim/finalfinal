@@ -32,7 +32,12 @@ enum ExportFormat: String, CaseIterable, Identifiable, Sendable, Codable {
 
     /// Pandoc output format argument
     var pandocFormat: String {
-        rawValue
+        switch self {
+        case .word, .odt:
+            return rawValue + "+native_numbering"
+        case .pdf:
+            return rawValue
+        }
     }
 
     /// UTType identifier for save panel

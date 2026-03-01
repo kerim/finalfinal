@@ -15,6 +15,10 @@ extension Notification.Name {
     static let exportDocument = Notification.Name("exportDocument")
     /// Request to show export preferences
     static let showExportPreferences = Notification.Name("showExportPreferences")
+    /// Request to export markdown with images in a folder
+    static let exportMarkdownWithImages = Notification.Name("exportMarkdownWithImages")
+    /// Request to export as TextBundle
+    static let exportTextBundle = Notification.Name("exportTextBundle")
 }
 
 // MARK: - Export Operation Handlers
@@ -34,8 +38,9 @@ struct ExportOperations {
             return
         }
 
-        // Get project title for default filename
+        // Get project title and URL for default filename and image resolution
         let defaultName = DocumentManager.shared.projectTitle ?? "Untitled"
+        let projectURL = DocumentManager.shared.projectURL
 
         // Configure and trigger export
         Task {
@@ -43,7 +48,8 @@ struct ExportOperations {
             exportViewModel.showExportPanel(
                 content: content,
                 format: format,
-                defaultName: defaultName
+                defaultName: defaultName,
+                projectURL: projectURL
             )
         }
     }

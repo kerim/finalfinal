@@ -425,5 +425,4 @@ extension Notification.Name {
     static let saveProject = Notification.Name("saveProject")
     static let closeProject = Notification.Name("closeProject")
     static let importMarkdown = Notification.Name("importMarkdown")
-    static let exportMarkdown = Notification.Name("exportMarkdown")
 }

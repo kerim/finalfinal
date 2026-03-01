@@ -1,31 +1,42 @@
 # Export Architecture
 
-Pandoc-based export pipeline for DOCX, PDF, and ODT. Handles citations, non-Latin font detection, and bundled TinyTeX.
+Pandoc-based export pipeline for DOCX, PDF, and ODT. Non-Pandoc export for Markdown with Images and TextBundle. Handles citations, non-Latin font detection, image conversion, and bundled TinyTeX.
 
 ---
 
 ## ExportService Overview
 
-`ExportService` is a Swift actor that builds pandoc arguments, runs the conversion, and returns results with warnings.
+`ExportService` is a Swift actor that builds pandoc arguments, runs the conversion, and returns results with warnings. It also handles non-Pandoc exports (Markdown with Images, TextBundle).
 
-**Supported formats:**
-- **DOCX** — pandoc with Lua filter for Zotero field codes + reference document
-- **PDF** — pandoc with XeLaTeX engine, `--citeproc` for citations, auto-detected font variables
-- **ODT** — same pipeline as DOCX (Lua filter + reference doc)
+**Pandoc formats:**
+- **DOCX** — pandoc with Lua filter for Zotero field codes + reference document + `native_numbering`
+- **PDF** — pandoc with XeLaTeX engine, `--citeproc` for citations, auto-detected font variables, image conversion for unsupported formats
+- **ODT** — same pipeline as DOCX (Lua filter + reference doc + `native_numbering`)
 
-**Key file:** `final final/Services/ExportService.swift`
+**Non-Pandoc formats:**
+- **Markdown with Images** — standard markdown `.md` file + `<name>_images/` folder with copied image files
+- **TextBundle** — `.textbundle` package containing `text.md`, `info.json`, and `assets/` folder
+
+**Key files:**
+- `final final/Services/ExportService.swift` — export logic
+- `final final/Commands/FileCommands.swift` — Markdown/TextBundle export UI (save panels)
+- `final final/Commands/ExportCommands.swift` — Pandoc export UI (save panels)
 
 ---
 
-## Export Pipeline
+## Pandoc Export Pipeline
 
 ```
-Content (markdown)
+Content (markdown, Pandoc-flavored via markdownForExport())
     │
     ├── Strip annotations (if setting disabled)
     │
+    ├── PDF only: convert unsupported images (WebP, HEIC, GIF, TIFF, SVG) → PNG
+    │   └── Uses NSImage → NSBitmapImageRep → PNG (no main thread required)
+    │
     ├── Build pandoc arguments:
-    │   ├── --from markdown --to FORMAT --output PATH
+    │   ├── --from markdown --to FORMAT+native_numbering --output PATH
+    │   ├── --resource-path PROJECT_URL (for media/ image resolution)
     │   ├── PDF: --pdf-engine xelatex (bundled TinyTeX)
     │   ├── PDF: --pdf-engine-opt -output-driver=WRAPPER (spaces workaround)
     │   ├── PDF: font variables via Unicode script detection
@@ -34,6 +45,27 @@ Content (markdown)
     │   └── DOCX/ODT + citations: --lua-filter zotero.lua
     │
     └── Run pandoc → ExportResult (outputURL, warnings)
+```
+
+## Markdown / TextBundle Export Pipeline
+
+```
+Content (standard markdown via markdownForStandardExport())
+    │
+    ├── Blocks fetched from DB, bibliography filtered out
+    ├── Image filenames extracted from image blocks
+    │
+    ├── Markdown with Images:
+    │   ├── Save panel → <name>.md
+    │   ├── Copy images to <name>_images/ (sibling folder)
+    │   └── Rewrite paths: media/X → <name>_images/X
+    │
+    └── TextBundle:
+        ├── Save panel → <name>.textbundle
+        ├── Copy images to assets/ (inside bundle)
+        ├── Rewrite paths: media/X → assets/X
+        ├── Write text.md (rewritten content)
+        └── Write info.json (version 2, markdown type)
 ```
 
 ---
@@ -132,10 +164,60 @@ The bundled TinyTeX includes the `xecjk` package and its dependency `ctex` for C
 
 | Method | Purpose |
 |--------|---------|
-| `export(content:to:format:settings:)` | Main entry point |
+| `export(content:to:format:settings:projectURL:)` | Main Pandoc export entry point |
+| `exportMarkdownWithImages(content:imageFilenames:projectURL:outputURL:)` | Markdown + images folder export |
+| `exportTextBundle(content:imageFilenames:projectURL:outputURL:)` | TextBundle package export |
+| `prepareImagesForPDF(content:projectURL:)` | Convert unsupported images → PNG for xelatex |
+| `convertImageToPNG(at:)` | NSImage → PNG via NSBitmapImageRep |
 | `fontArguments(for:)` | Unicode script detection → pandoc font variables |
 | `disambiguateCJKFont(in:)` | NLLanguageRecognizer SC vs TC disambiguation |
 | `prepareBundledTinyTeX()` | Symlink + wrapper script for spaces workaround |
 | `fetchBibliographyJSON(for:)` | Zotero JSON-RPC → CSL-JSON for `--citeproc` |
 | `extractCitekeys(from:)` | Regex extraction of `@citekey` from markdown |
 | `stripAnnotations(from:)` | Remove `<!-- ::type:: -->` annotation comments |
+
+---
+
+## Image Handling
+
+### Two Markdown Renderers
+
+Image blocks have two export representations in `Block`:
+
+- **`markdownForExport()`** — Pandoc-flavored: uses `fig-alt` attribute to separate visible caption from alt text, includes `width=Npx` attribute. Caption goes in `![caption](src){fig-alt="alt" width=Npx}`.
+- **`markdownForStandardExport()`** — Standard markdown: alt text in `![alt](src)`, caption as italic paragraph below (`*caption*`).
+
+Corresponding assembly functions in `BlockParser`:
+- `assembleMarkdownForExport(from:)` — Pandoc pipeline
+- `assembleStandardMarkdownForExport(from:)` — Markdown/TextBundle pipeline
+
+### PDF Image Conversion
+
+xelatex only supports PNG, JPG, JPEG, BMP, and PDF images natively. For PDF export, `prepareImagesForPDF()` converts unsupported formats (WebP, HEIC, GIF, TIFF, SVG) to PNG:
+
+1. Scan markdown for `![...](media/filename)` references
+2. If any filename has an unsupported extension, create a temp directory
+3. Symlink supported images; convert unsupported ones via `NSImage` → `NSBitmapImageRep` → PNG
+4. Handle filename collisions (e.g., `photo.webp` → `photo.png` but `photo.png` already exists → `photo-converted.png`)
+5. Rewrite markdown content with new filenames
+6. Pass temp directory as `--resource-path` to pandoc
+7. Clean up temp directory after export
+
+### TextBundle Format
+
+Registered `org.textbundle.package` UTType in Info.plist and project.yml. The bundle structure follows the [TextBundle spec v2](https://textbundle.org):
+
+```
+document.textbundle/
+├── info.json          (version: 2, type: net.daringfireball.markdown)
+├── text.md            (markdown with paths rewritten to assets/)
+└── assets/
+    ├── image1.png
+    └── image2.jpg
+```
+
+---
+
+## Opening Settings Programmatically
+
+The "Export Preferences..." menu item uses `@Environment(\.openSettings)` (the official SwiftUI API, macOS 14+) via an `OpenExportPreferencesListener` view in `FinalFinalApp.swift`. This replaced the previous approach of calling the private `showSettingsWindow:` selector through `NSApp.sendAction`, which was unreliable. `NSApp.activate()` is called after a short delay to ensure the Settings window comes to front even when the main window is fullscreen. `PreferencesView` listens for the same `.showExportPreferences` notification to switch to the Export tab.
