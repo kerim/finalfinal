@@ -146,12 +146,6 @@ extension CodeMirrorEditor.Coordinator {
             if let content = contentResult as? String {
                 #if DEBUG
                 print("[CM-SAVE+NOTIFY] getContent returned length=\(content.count)")
-                print("[CM-SAVE+NOTIFY] Preview: \(String(content.prefix(300)))")
-                let lines = content.components(separatedBy: "\n")
-                for (i, line) in lines.enumerated() where line.hasPrefix("#") {
-                    let nextLine = i + 1 < lines.count ? lines[i + 1] : "(EOF)"
-                    print("[CM-SAVE+NOTIFY] Heading at line \(i): \"\(line.prefix(80))\" next: \"\(nextLine.prefix(40))\"")
-                }
                 #endif
                 // Update binding immediately to ensure content is preserved
                 self.lastPushedContent = content
@@ -469,11 +463,15 @@ extension CodeMirrorEditor.Coordinator {
     @MainActor
     func handleOpenCitationPicker(cmdStart: Int) async {
         guard let webView else {
+            #if DEBUG
             print("[CodeMirrorEditor] handleOpenCitationPicker: webView is nil")
+            #endif
             return
         }
 
+        #if DEBUG
         print("[CodeMirrorEditor] Opening CAYW picker, cmdStart: \(cmdStart)")
+        #endif
 
         // Pre-check: ping Zotero before opening the picker
         let isRunning = await ZoteroService.shared.ping()
@@ -493,14 +491,18 @@ extension CodeMirrorEditor.Coordinator {
             // Bring app back to foreground after Zotero picker closes
             NSApp.activate(ignoringOtherApps: true)
 
+            #if DEBUG
             print("[CodeMirrorEditor] CAYW returned citekeys: \(parsed.citekeys)")
+            #endif
 
             // Encode CSL items as JSON for web
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.sortedKeys]
             let itemsData = try encoder.encode(items)
             guard let itemsJSON = String(data: itemsData, encoding: .utf8) else {
+                #if DEBUG
                 print("[CodeMirrorEditor] Failed to encode CSL items")
+                #endif
                 sendCitationPickerCancelled(webView: webView)
                 return
             }
@@ -517,7 +519,9 @@ extension CodeMirrorEditor.Coordinator {
 
             guard let callbackJSON = try? JSONSerialization.data(withJSONObject: callbackData),
                   let callbackStr = String(data: callbackJSON, encoding: .utf8) else {
+                #if DEBUG
                 print("[CodeMirrorEditor] Failed to encode callback data")
+                #endif
                 sendCitationPickerCancelled(webView: webView)
                 return
             }
@@ -528,19 +532,25 @@ extension CodeMirrorEditor.Coordinator {
 
             let script = "window.FinalFinal.citationPickerCallback(JSON.parse(`\(escapedCallback)`), JSON.parse(`\(escapedItems)`))"
             webView.evaluateJavaScript(script) { _, error in
+                #if DEBUG
                 if let error {
                     print("[CodeMirrorEditor] citationPickerCallback error: \(error)")
                 } else {
                     print("[CodeMirrorEditor] citationPickerCallback succeeded")
                 }
+                #endif
             }
         } catch ZoteroError.userCancelled {
             NSApp.activate(ignoringOtherApps: true)
+            #if DEBUG
             print("[CodeMirrorEditor] CAYW cancelled by user")
+            #endif
             sendCitationPickerCancelled(webView: webView)
         } catch ZoteroError.notRunning {
             NSApp.activate(ignoringOtherApps: true)
+            #if DEBUG
             print("[CodeMirrorEditor] Zotero not running")
+            #endif
             showZoteroAlert(
                 title: "Zotero Connection Lost",
                 message: "Zotero is not running. Please open Zotero and try again."
@@ -548,7 +558,9 @@ extension CodeMirrorEditor.Coordinator {
             sendCitationPickerCancelled(webView: webView)
         } catch {
             NSApp.activate(ignoringOtherApps: true)
+            #if DEBUG
             print("[CodeMirrorEditor] CAYW error: \(error.localizedDescription)")
+            #endif
             showZoteroAlert(
                 title: "Citation Error",
                 message: error.localizedDescription
@@ -818,9 +830,11 @@ extension CodeMirrorEditor.Coordinator {
         // JS insertFootnote() sends postMessage({label}) which triggers .footnoteInsertedImmediate
         // via the footnoteInserted message handler — no need to post from completion handler
         webView.evaluateJavaScript("window.FinalFinal.insertFootnote()") { _, error in
+            #if DEBUG
             if let error {
                 print("[FootnoteSyncService] insertFootnote evaluateJavaScript error: \(error)")
             }
+            #endif
         }
     }
 
@@ -898,7 +912,9 @@ extension CodeMirrorEditor.Coordinator {
         guard panel.runModal() == .OK, let url = panel.url else { return }
 
         guard let mediaDir = MediaSchemeHandler.shared.mediaDirectoryURL else {
+            #if DEBUG
             print("[CodeMirrorEditor] No media directory — cannot import image")
+            #endif
             return
         }
 
@@ -907,7 +923,9 @@ extension CodeMirrorEditor.Coordinator {
             let alt = (url.lastPathComponent as NSString).deletingPathExtension
             insertImageBlock(src: relativePath, alt: alt)
         } catch {
+            #if DEBUG
             print("[CodeMirrorEditor] Image import failed: \(error.localizedDescription)")
+            #endif
             let alert = NSAlert()
             alert.messageText = "Image Import Failed"
             alert.informativeText = error.localizedDescription
@@ -950,9 +968,11 @@ extension CodeMirrorEditor.Coordinator {
         webView.evaluateJavaScript(
             "window.FinalFinal.insertImage({src: `\(escapedSrc)`, alt: `\(escapedAlt)`})"
         ) { _, error in
+            #if DEBUG
             if let error {
                 print("[CodeMirrorEditor] insertImage JS error: \(error)")
             }
+            #endif
         }
     }
 }

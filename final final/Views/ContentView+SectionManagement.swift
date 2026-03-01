@@ -34,7 +34,9 @@ extension ContentView {
             }
             editorState.scrollTo(offset: offset)
         } catch {
+            #if DEBUG
             print("[ContentView] Error computing scroll offset: \(error)")
+            #endif
         }
     }
 
@@ -66,7 +68,9 @@ extension ContentView {
                     )
                 }
             } catch {
+                #if DEBUG
                 print("[ContentView] Error saving section metadata: \(error.localizedDescription)")
+                #endif
             }
         }
     }
@@ -307,7 +311,9 @@ extension ContentView {
                     headingUpdates: headingUpdates
                 )
             } catch {
+                #if DEBUG
                 print("[ContentView] Error persisting reordered blocks: \(error)")
+                #endif
             }
         }
 
@@ -351,7 +357,9 @@ extension ContentView {
                 headingUpdates: headingUpdates
             )
         } catch {
+            #if DEBUG
             print("[ContentView] Error persisting reordered blocks: \(error)")
+            #endif
         }
     }
 
@@ -377,7 +385,9 @@ extension ContentView {
             }
             try db.applySectionChanges(sectionChanges, for: pid)
         } catch {
+            #if DEBUG
             print("[ContentView] Error persisting legacy sections: \(error)")
+            #endif
         }
     }
 

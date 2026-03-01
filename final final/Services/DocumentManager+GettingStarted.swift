@@ -63,7 +63,9 @@ extension DocumentManager {
 
         // Do NOT add to recent projects - Getting Started is ephemeral
 
+        #if DEBUG
         print("[DocumentManager] Opened Getting Started project")
+        #endif
         return project.id
     }
 

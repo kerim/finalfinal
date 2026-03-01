@@ -65,7 +65,9 @@ actor ZoteroChecker {
                 // Zotero running but Better BibTeX not installed or not at expected path
                 return .betterBibTeXMissing
             default:
+                #if DEBUG
                 print("[ZoteroChecker] Unexpected status code: \(httpResponse.statusCode)")
+                #endif
                 return .notRunning
             }
         } catch let error as URLError {
@@ -75,11 +77,15 @@ actor ZoteroChecker {
             case .cannotConnectToHost, .networkConnectionLost:
                 return .notRunning
             default:
+                #if DEBUG
                 print("[ZoteroChecker] URL error: \(error.code.rawValue) - \(error.localizedDescription)")
+                #endif
                 return .notRunning
             }
         } catch {
+            #if DEBUG
             print("[ZoteroChecker] Error: \(error.localizedDescription)")
+            #endif
             return .error(error.localizedDescription)
         }
     }
