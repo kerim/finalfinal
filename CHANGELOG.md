@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.62] - 2026-03-01
+
 ### Added
 
 - **Markdown with Images export** — exports `.md` file + `<name>_images/` folder with copied images
