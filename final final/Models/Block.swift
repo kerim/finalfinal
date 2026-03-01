@@ -326,26 +326,54 @@ struct Block: Codable, Identifiable, Equatable, Sendable, FetchableRecord, Mutab
     }
 
     /// Generate Pandoc-compatible markdown for export.
-    /// For image blocks, includes caption comment and width attribute from DB columns.
+    /// Uses `fig-alt` attribute to separate visible caption from accessibility alt text.
     /// For non-image blocks, returns `markdownFragment` unchanged.
     func markdownForExport() -> String {
         guard blockType == .image, let src = imageSrc else {
             return markdownFragment
         }
 
-        var result = ""
+        let alt = imageAlt ?? ""
+        let caption = imageCaption ?? ""
 
-        // Caption as HTML comment (Pandoc convention)
-        if let caption = imageCaption, !caption.isEmpty {
-            result += "<!-- caption: \(caption) -->\n\n"
+        // Visible text in ![...] is the caption (or alt as fallback)
+        let displayText: String
+        if !caption.isEmpty {
+            displayText = caption.replacingOccurrences(of: "]", with: "\\]")
+        } else {
+            displayText = alt.replacingOccurrences(of: "]", with: "\\]")
         }
 
-        // Image markdown with optional width attribute
-        let alt = imageAlt ?? ""
+        var result = "![\(displayText)](\(src))"
+
+        // Build {attributes} block if needed
+        var attrs: [String] = []
+        if !caption.isEmpty && !alt.isEmpty {
+            let escapedAlt = alt.replacingOccurrences(of: "\"", with: "\\\"")
+            attrs.append("fig-alt=\"\(escapedAlt)\"")
+        }
         if let width = imageWidth {
-            result += "![\(alt)](\(src)){width=\(width)px}"
-        } else {
-            result += "![\(alt)](\(src))"
+            attrs.append("width=\(width)px")
+        }
+        if !attrs.isEmpty {
+            result += "{\(attrs.joined(separator: " "))}"
+        }
+
+        return result
+    }
+
+    /// Generate standard markdown for export (no Pandoc-specific attributes).
+    /// Caption appears as italic paragraph below the image.
+    func markdownForStandardExport() -> String {
+        guard blockType == .image, let src = imageSrc else {
+            return markdownFragment
+        }
+
+        let alt = imageAlt ?? ""
+        var result = "![\(alt)](\(src))"
+
+        if let caption = imageCaption, !caption.isEmpty {
+            result += "\n\n*\(caption)*"
         }
 
         return result

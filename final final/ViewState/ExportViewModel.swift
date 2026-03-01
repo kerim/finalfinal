@@ -83,7 +83,7 @@ final class ExportViewModel {
     ///   - url: Destination URL
     ///   - format: Export format
     /// - Returns: ExportResult on success
-    func export(content: String, to url: URL, format: ExportFormat) async throws -> ExportResult {
+    func export(content: String, to url: URL, format: ExportFormat, projectURL: URL? = nil) async throws -> ExportResult {
         isExporting = true
         progressMessage = "Exporting to \(format.displayName)..."
         lastError = nil
@@ -99,7 +99,8 @@ final class ExportViewModel {
                 content: content,
                 to: url,
                 format: format,
-                settings: settings
+                settings: settings,
+                projectURL: projectURL
             )
 
             // Update cached Zotero status
@@ -117,7 +118,7 @@ final class ExportViewModel {
     ///   - content: Markdown content to export
     ///   - format: Export format
     ///   - defaultName: Default file name (without extension)
-    func showExportPanel(content: String, format: ExportFormat, defaultName: String) {
+    func showExportPanel(content: String, format: ExportFormat, defaultName: String, projectURL: URL? = nil) {
         // Check Pandoc first
         guard isPandocAvailable else {
             showPandocNotFoundAlert()
@@ -151,7 +152,7 @@ final class ExportViewModel {
                         }
                     }
 
-                    let result = try await self.export(content: content, to: url, format: format)
+                    let result = try await self.export(content: content, to: url, format: format, projectURL: projectURL)
 
                     // Show success with warnings
                     self.showExportSuccessAlert(result: result)

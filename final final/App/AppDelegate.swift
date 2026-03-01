@@ -118,16 +118,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
         }
 
-        // Handle show export preferences
-        NotificationCenter.default.addObserver(
-            forName: .showExportPreferences, object: nil, queue: .main
-        ) { _ in
-            Task { @MainActor in
-                // Open Settings window and switch to Export tab
-                NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
-            }
-        }
-
         // Capture main window for Cmd-W interception
         // Use async to allow SwiftUI to create the window first
         DispatchQueue.main.async { [weak self] in
