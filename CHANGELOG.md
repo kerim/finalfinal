@@ -6,6 +6,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **CodeMirror image paste/drop handlers** — images can now be pasted or dropped into CodeMirror editor
+- **Image metadata preservation** — `replaceBlocks`/`replaceBlocksInRange` now preserve image metadata through block operations
+- **Sheet-modal alerts for image import errors**
+
+### Fixed
+
+- **5 race conditions** — continuation guard (nil-before-resume for CheckedContinuation), atomic flush (remove redundant metadata pre-read), generation counters for debounce tasks, stale poll detection via contentGeneration counter, consolidation of 6 suppression flags into centralized contentState checks
+- **Image width/caption lost on editor switch** — `batchInitialize()` and `setContentWithBlockIds()` raced on the JS thread when switching CM→Milkdown; fix skips content in `performBatchInitialize()` when `isResettingContent` is true
+- **Image placement: sizing, drag-and-drop, and scrolling** — remembering image size, drag-and-drop, and scroll position for images
+- **`evaluateJavaScript` threading violation** — `TaskGroup.addTask` doesn't inherit `@MainActor` isolation, causing WKWebView call on cooperative pool; wrapped in `DispatchQueue.main.async`
+- **WAL checkpoint self-contention** — Save As used `write {}` which opened `BEGIN IMMEDIATE`, causing SQLite error 6; switched to `writeWithoutTransaction` + passive checkpoint
+- **Main Thread Checker violation** — same root cause as threading fix above
+
+### Changed
+
+- **Debug logging cleanup** — wrapped ~189 `print()` statements in `#if DEBUG` guards across 40 Swift files; removed verbose loop/iteration prints; cleaned up `console.log` in find-replace.ts
+- **Removed color header log spam**
+
 ## [0.2.63] - 2026-03-01
 
 ### Added
