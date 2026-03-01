@@ -201,6 +201,49 @@ requestAnimationFrame(() => {
 
 ---
 
+## TaskGroup.addTask Does NOT Inherit @MainActor Isolation
+
+**Problem:** Main Thread Checker violation: `[WKWebView evaluateJavaScript:completionHandler:]` called on a background thread from within `fetchContentFromWebView()`.
+
+**Root Cause:** The function used `withTaskGroup` + `group.addTask { }`. Unlike `Task { }` (which inherits the caller's actor isolation), `TaskGroup.addTask` always runs its closure on the cooperative thread pool, even when called from a `@MainActor` context.
+
+```swift
+// WRONG - addTask runs on cooperative pool, not main actor
+@MainActor func example() async {
+    await withTaskGroup(of: String?.self) { group in
+        group.addTask {
+            // This runs on a background thread!
+            webView.evaluateJavaScript(...) // Main Thread Checker violation
+        }
+    }
+}
+```
+
+**Failed fix:** Using `group.addTask { @MainActor in }` with the async `evaluateJavaScript` overload caused a **deadlock** during app startup. The `@MainActor` task needed the main actor, but the parent `withTaskGroup` was suspended on the main actor waiting for `group.next()`. While Swift's cooperative threading should handle this (the suspend releases the actor), in practice this stalled long enough during startup to prevent the window from appearing.
+
+**Working fix:** Use `DispatchQueue.main.async` inside `withCheckedContinuation` to dispatch the one main-thread call without requiring actor isolation on the task:
+
+```swift
+group.addTask {
+    await withCheckedContinuation { continuation in
+        DispatchQueue.main.async {
+            webView.evaluateJavaScript("...") { result, error in
+                continuation.resume(returning: result as? String)
+            }
+        }
+    }
+}
+```
+
+**Why this works:** `DispatchQueue.main.async` is non-blocking — it enqueues the work and returns immediately. The continuation bridges the callback result back to the async world. No actor isolation needed on the task itself.
+
+**Key distinction:**
+- `Task { }` — inherits caller's actor isolation (safe for @MainActor calls)
+- `TaskGroup.addTask { }` — always runs on cooperative pool (NOT safe for @MainActor calls)
+- `DispatchQueue.main.async { }` inside `withCheckedContinuation` — correct bridging pattern for main-thread API calls from non-isolated task group children
+
+---
+
 ## Editor Toggle Cursor Sync
 
 ### Two-Phase Toggle with `batchInitialize` Race Prevention

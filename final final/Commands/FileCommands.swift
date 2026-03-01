@@ -427,8 +427,8 @@ struct FileOperations {
                     // package including -wal and -shm files, so SQLite replays
                     // any remaining WAL data when the copy is opened.
                     do {
-                        try dm.projectDatabase?.dbWriter.write { db in
-                            try db.execute(sql: "PRAGMA wal_checkpoint(PASSIVE)")
+                        try dm.projectDatabase?.dbWriter.writeWithoutTransaction { db in
+                            try db.checkpoint(.passive)
                         }
                     } catch {
                         #if DEBUG

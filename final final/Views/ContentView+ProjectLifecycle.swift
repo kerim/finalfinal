@@ -476,11 +476,13 @@ extension ContentView {
         return await withTaskGroup(of: String?.self) { group in
             group.addTask {
                 await withCheckedContinuation { continuation in
-                    webView.evaluateJavaScript("window.FinalFinal.getContent()") { result, error in
-                        #if DEBUG
-                        if let error { print("[ContentView] fetchContentFromWebView JS error: \(error)") }
-                        #endif
-                        continuation.resume(returning: result as? String)
+                    DispatchQueue.main.async {
+                        webView.evaluateJavaScript("window.FinalFinal.getContent()") { result, error in
+                            #if DEBUG
+                            if let error { print("[ContentView] fetchContentFromWebView JS error: \(error)") }
+                            #endif
+                            continuation.resume(returning: result as? String)
+                        }
                     }
                 }
             }
