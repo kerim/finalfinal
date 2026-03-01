@@ -32,6 +32,12 @@ private struct HeadingMetadata {
     let isNotes: Bool
 }
 
+/// Preserved image metadata during block replacement
+private struct ImageMeta {
+    let imageCaption: String?
+    let imageWidth: Int?
+}
+
 // MARK: - ProjectDatabase Block Reorder/Replace
 
 extension ProjectDatabase {
@@ -59,6 +65,23 @@ extension ProjectDatabase {
                 )
             }
 
+            // Build image metadata lookup from existing blocks
+            var imageMetaBySrc: [String: ImageMeta] = [:]
+            for block in existingBlocks where block.blockType == .image {
+                if let src = block.imageSrc, !src.isEmpty {
+                    imageMetaBySrc[src] = ImageMeta(
+                        imageCaption: block.imageCaption,
+                        imageWidth: block.imageWidth
+                    )
+                }
+            }
+
+            #if DEBUG
+            if !imageMetaBySrc.isEmpty {
+                print("[replaceBlocks] Image metadata to preserve: \(imageMetaBySrc.mapValues { "width=\($0.imageWidth ?? -1)" })")
+            }
+            #endif
+
             try Block.filter(Block.Columns.projectId == projectId).deleteAll(db)
 
             for var block in blocks {
@@ -75,6 +98,30 @@ extension ProjectDatabase {
                     block.aggregateGoalType = meta.aggregateGoalType
                     if meta.isBibliography { block.isBibliography = true }
                     if meta.isNotes { block.isNotes = true }
+                }
+                // Preserve image metadata by imageSrc match
+                if block.blockType == .image, let src = block.imageSrc, !src.isEmpty {
+                    // Extract caption from markdown comment if present
+                    let frag = block.markdownFragment.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if let captionRange = frag.range(of: #"<!--\s*caption:\s*(.*?)\s*-->"#, options: .regularExpression) {
+                        let fullMatch = String(frag[captionRange])
+                        if let textRange = fullMatch.range(of: #"(?<=caption:\s).*?(?=\s*-->)"#, options: .regularExpression) {
+                            block.imageCaption = String(fullMatch[textRange])
+                        }
+                    }
+                    // Restore DB metadata (overwrites markdown caption if DB has one)
+                    if let meta = imageMetaBySrc[src] {
+                        if let width = meta.imageWidth {
+                            block.imageWidth = width
+                        }
+                        if let caption = meta.imageCaption {
+                            block.imageCaption = caption
+                        }
+                        imageMetaBySrc.removeValue(forKey: src)  // first-match-wins
+                    }
+                    #if DEBUG
+                    print("[replaceBlocks] Image block src=\(block.imageSrc ?? "nil") width=\(block.imageWidth ?? -1)")
+                    #endif
                 }
                 try block.insert(db)
             }
@@ -118,6 +165,17 @@ extension ProjectDatabase {
                 )
                 if idByTitle[block.textContent] == nil {
                     idByTitle[block.textContent] = block.id
+                }
+            }
+
+            // Build image metadata lookup
+            var imageMetaBySrc: [String: ImageMeta] = [:]
+            for block in existingBlocks where block.blockType == .image {
+                if let src = block.imageSrc, !src.isEmpty {
+                    imageMetaBySrc[src] = ImageMeta(
+                        imageCaption: block.imageCaption,
+                        imageWidth: block.imageWidth
+                    )
                 }
             }
 
@@ -166,6 +224,26 @@ extension ProjectDatabase {
                     block.aggregateGoalType = meta.aggregateGoalType
                     if meta.isBibliography { block.isBibliography = true }
                     if meta.isNotes { block.isNotes = true }
+                }
+
+                // 6. Preserve image metadata by imageSrc match
+                if block.blockType == .image, let src = block.imageSrc, !src.isEmpty {
+                    let frag = block.markdownFragment.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if let captionRange = frag.range(of: #"<!--\s*caption:\s*(.*?)\s*-->"#, options: .regularExpression) {
+                        let fullMatch = String(frag[captionRange])
+                        if let textRange = fullMatch.range(of: #"(?<=caption:\s).*?(?=\s*-->)"#, options: .regularExpression) {
+                            block.imageCaption = String(fullMatch[textRange])
+                        }
+                    }
+                    if let meta = imageMetaBySrc[src] {
+                        if let width = meta.imageWidth {
+                            block.imageWidth = width
+                        }
+                        if let caption = meta.imageCaption {
+                            block.imageCaption = caption
+                        }
+                        imageMetaBySrc.removeValue(forKey: src)
+                    }
                 }
 
                 try block.insert(db)

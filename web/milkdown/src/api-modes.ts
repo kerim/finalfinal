@@ -457,8 +457,11 @@ export function initialize(options: {
   // Apply theme first (doesn't require editor instance)
   setTheme(options.theme);
 
-  // Set content
-  setContent(options.content);
+  // Skip content push if empty — Swift may be deferring to setContentWithBlockIds()
+  // which includes image metadata (width, caption)
+  if (options.content.length > 0) {
+    setContent(options.content);
+  }
 
   // Restore cursor position if provided
   if (options.cursorPosition) {

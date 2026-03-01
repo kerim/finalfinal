@@ -40,6 +40,12 @@ extension ContentView {
                 .filter { $0.blockType == .image }
                 .map { ImageBlockMeta(id: $0.id, width: $0.imageWidth, caption: $0.imageCaption, alt: $0.imageAlt) }
 
+            #if DEBUG
+            if !imageMeta.isEmpty {
+                print("[fetchBlocksWithIds] imageMeta: \(imageMeta.map { "id=\($0.id.prefix(8)) width=\($0.width ?? -1)" })")
+            }
+            #endif
+
             return (markdown, ids, imageMeta)
         } catch {
             #if DEBUG
