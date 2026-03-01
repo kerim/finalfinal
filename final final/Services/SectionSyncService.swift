@@ -165,7 +165,9 @@ class SectionSyncService {
             let sections = try db.fetchSections(projectId: pid)
             return sections.map { SectionViewModel(from: $0) }
         } catch {
+            #if DEBUG
             print("[SectionSyncService] Error loading sections: \(error.localizedDescription)")
+            #endif
             return []
         }
     }
@@ -236,7 +238,9 @@ class SectionSyncService {
                 }
             }.value
         } catch {
+            #if DEBUG
             print("[SectionSyncService] Error: \(error)")
+            #endif
         }
 
         // Back on MainActor
@@ -357,7 +361,9 @@ class SectionSyncService {
                 return nil
             }.value
         } catch {
+            #if DEBUG
             print("[SectionSyncService] Error updating zoomed sections: \(error)")
+            #endif
             return
         }
 
@@ -431,7 +437,9 @@ class SectionSyncService {
             let notesMd = BlockParser.assembleMarkdown(from: notesBlocks)
             currentDefs = FootnoteSyncService.extractFootnoteDefinitions(from: notesMd)
         } catch {
+            #if DEBUG
             print("[SectionSyncService] Error reading notes blocks: \(error)")
+            #endif
             return
         }
 
@@ -478,7 +486,9 @@ class SectionSyncService {
                 }
             }
         } catch {
+            #if DEBUG
             print("[SectionSyncService] Error syncing mini notes back: \(error)")
+            #endif
         }
     }
 

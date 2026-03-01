@@ -177,7 +177,9 @@ extension ContentView {
                     markdown: withAnchors, sections: editorState.sections)
             }
         } catch {
+            #if DEBUG
             print("[ContentView] Error rebuilding content from blocks: \(error)")
+            #endif
         }
     }
 
@@ -267,7 +269,9 @@ extension ContentView {
             }
             try db.applySectionChanges(sectionChanges, for: pid)
         } catch {
+            #if DEBUG
             print("[ContentView] Error persisting enforced sections: \(error)")
+            #endif
         }
     }
 

@@ -313,7 +313,9 @@ final class SnapshotService {
         // Delete old snapshots
         if !snapshotsToDelete.isEmpty {
             try database.deleteSnapshots(ids: snapshotsToDelete)
+            #if DEBUG
             print("[SnapshotService] Pruned \(snapshotsToDelete.count) auto-backups")
+            #endif
         }
     }
 

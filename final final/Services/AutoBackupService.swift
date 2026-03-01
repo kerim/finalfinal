@@ -99,12 +99,16 @@ final class AutoBackupService {
     /// Create a backup if conditions are met
     private func createBackupIfNeeded(reason: String) async {
         guard hasUnsavedChanges else {
+            #if DEBUG
             print("[AutoBackupService] No unsaved changes, skipping backup on \(reason)")
+            #endif
             return
         }
 
         guard canCreateBackup() else {
+            #if DEBUG
             print("[AutoBackupService] Too soon since last backup, skipping on \(reason)")
+            #endif
             return
         }
 
@@ -120,7 +124,9 @@ final class AutoBackupService {
     /// Actually create the auto-backup
     private func createAutoBackup(reason: String) async {
         guard let service = snapshotService else {
+            #if DEBUG
             print("[AutoBackupService] No snapshot service configured")
+            #endif
             return
         }
 
@@ -128,12 +134,16 @@ final class AutoBackupService {
             let snapshot = try service.createAutoSnapshot()
             lastBackupTime = Date()
             hasUnsavedChanges = false
+            #if DEBUG
             print("[AutoBackupService] Created auto-backup on \(reason): \(snapshot.id)")
+            #endif
 
             // Prune old backups after creating new one
             try service.pruneAutoBackups()
         } catch {
+            #if DEBUG
             print("[AutoBackupService] Failed to create auto-backup: \(error)")
+            #endif
         }
     }
 
