@@ -26,6 +26,9 @@ struct MilkdownEditor: NSViewRepresentable {
     /// When true, setContent() will hide the WebView and use scrollToStart option.
     var isZoomingContent: Bool = false
 
+    /// Generation counter for stale poll detection
+    var contentGeneration: Int = 0
+
     /// CSS variables for theming - when this changes, updateNSView is called
     var themeCSS: String = ThemeManager.shared.cssVariables
 
@@ -144,10 +147,11 @@ struct MilkdownEditor: NSViewRepresentable {
     }
 
     func updateNSView(_ webView: WKWebView, context: Context) {
-        // Update content state, zoom flag, and callbacks for coordinator
+        // Update content state, zoom flag, generation, and callbacks for coordinator
         // IMPORTANT: isZoomingContent must be set BEFORE content check to avoid race condition
         context.coordinator.isZoomingContent = isZoomingContent
         context.coordinator.contentState = contentState
+        context.coordinator.contentGeneration = contentGeneration
         context.coordinator.onContentAcknowledged = onContentAcknowledged
 
         let effectiveFocusMode = focusModeEnabled && FocusModeSettingsManager.shared.enableParagraphHighlighting
@@ -233,6 +237,9 @@ struct MilkdownEditor: NSViewRepresentable {
         /// Used to control alphaValue hiding and scrollToStart option in setContent().
         /// This bypasses the race condition where contentState may be stale.
         var isZoomingContent: Bool = false
+
+        /// Generation counter for stale poll detection
+        var contentGeneration: Int = 0
 
         /// Callback invoked after content is confirmed set in WebView
         /// Used for acknowledgement-based synchronization during zoom transitions

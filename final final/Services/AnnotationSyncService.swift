@@ -13,12 +13,13 @@ import Foundation
 class AnnotationSyncService {
     private var debounceTask: Task<Void, Never>?
     private let debounceInterval: Duration = .milliseconds(500)
+    private var debounceGeneration: Int = 0
 
     private var projectDatabase: ProjectDatabase?
     private var contentId: String?
 
-    /// When true, suppresses sync operations
-    var isSyncSuppressed: Bool = false
+    /// Reference to editor state for checking content transitions
+    weak var editorState: EditorViewState?
 
     /// Content we last synced - prevents feedback loop from ValueObservation
     private var lastSyncedContent: String = ""
@@ -80,16 +81,20 @@ class AnnotationSyncService {
     /// Called when editor content changes
     /// Debounces and triggers sync after delay
     func contentChanged(_ markdown: String) {
-        // Skip if suppressed
-        guard !isSyncSuppressed else { return }
+        // Skip if content transition is in progress
+        guard !(editorState?.isBusy ?? false) else { return }
 
         // Idempotent check: skip if this is content we just synced
         guard markdown != lastSyncedContent else { return }
 
         debounceTask?.cancel()
+        debounceGeneration += 1
+        let myGeneration = debounceGeneration
         debounceTask = Task { [weak self] in
             try? await Task.sleep(for: self?.debounceInterval ?? .milliseconds(500))
             guard !Task.isCancelled, let self else { return }
+            // Double-check: if another contentChanged fired during sleep, skip
+            guard self.debounceGeneration == myGeneration else { return }
             await self.syncContent(markdown)
         }
     }

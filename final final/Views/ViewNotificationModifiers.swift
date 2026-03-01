@@ -302,9 +302,12 @@ extension View {
                         if let db = documentManager.projectDatabase,
                            let pid = documentManager.projectId {
                             editorState.blockReparseTask?.cancel()
+                            editorState.blockReparseGeneration += 1
+                            let myGeneration = editorState.blockReparseGeneration
                             editorState.blockReparseTask = Task {
                                 try? await Task.sleep(for: .milliseconds(1000))
                                 guard !Task.isCancelled else { return }
+                                guard editorState.blockReparseGeneration == myGeneration else { return }
                                 guard editorState.contentState == .idle,
                                       editorState.editorMode == .source,
                                       editorState.zoomedSectionId == nil else { return }
@@ -328,9 +331,13 @@ extension View {
                     } else if editorState.zoomedBlockRange != nil {
                         // Zoomed: scoped re-parse via flushCodeMirrorSyncIfNeeded()
                         editorState.blockReparseTask?.cancel()
+                        editorState.blockReparseGeneration += 1
+                        let myGeneration = editorState.blockReparseGeneration
                         editorState.blockReparseTask = Task {
                             try? await Task.sleep(for: .milliseconds(1000))
-                            guard !Task.isCancelled, editorState.contentState == .idle,
+                            guard !Task.isCancelled else { return }
+                            guard editorState.blockReparseGeneration == myGeneration else { return }
+                            guard editorState.contentState == .idle,
                                   editorState.editorMode == .source else { return }
                             editorState.flushContentToDatabase()
                         }

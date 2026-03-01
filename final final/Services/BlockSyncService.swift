@@ -26,8 +26,8 @@ class BlockSyncService {
         projectDatabase != nil && projectId != nil && webView != nil
     }
 
-    /// When true, suppresses sync operations (during drag operations, etc.)
-    var isSyncSuppressed: Bool = false
+    /// Reference to editor state for contentGeneration and contentState checks
+    weak var editorState: EditorViewState?
 
     /// Pending ID confirmations (temp ID -> permanent ID) to send back to editor
     private var pendingConfirmations: [String: String] = [:]
@@ -80,10 +80,6 @@ class BlockSyncService {
     func pushBlockIds(for range: (start: Double, end: Double?)? = nil) async {
         guard let database = projectDatabase, let projectId, let webView else { return }
 
-        // Suppress polling during push to prevent race conditions
-        isSyncSuppressed = true
-        defer { isSyncSuppressed = false }
-
         do {
             let blocks = try database.fetchBlocks(projectId: projectId)
             let filtered: [Block]
@@ -134,10 +130,6 @@ class BlockSyncService {
     func setContentWithBlockIds(markdown: String, blockIds: [String], scrollToStart: Bool = false) async {
         guard let webView else { return }
 
-        // Suppress polling during atomic set
-        isSyncSuppressed = true
-        defer { isSyncSuppressed = false }
-
         // Escape markdown for JS template literal
         let escapedMarkdown = markdown
             .replacingOccurrences(of: "\\", with: "\\\\")
@@ -181,16 +173,34 @@ class BlockSyncService {
         isPolling = true
         defer { isPolling = false }
 
-        guard !isSyncSuppressed, isConfigured, let webView, let database = projectDatabase, let projectId else {
+        guard editorState?.contentState == .idle, isConfigured, let webView, let database = projectDatabase, let projectId else {
             return
         }
+
+        let generationAtPoll = editorState?.contentGeneration ?? 0
 
         // Check if there are pending changes
         let hasChanges = await checkForChanges(webView: webView)
         guard hasChanges else { return }
 
+        // Discard if a state transition happened during the async JS call
+        guard editorState?.contentGeneration == generationAtPoll else {
+            #if DEBUG
+            print("[BlockSyncService] Discarded stale poll (generation changed)")
+            #endif
+            return
+        }
+
         // Get the changes
         guard let changes = await getBlockChanges(webView: webView) else { return }
+
+        // Discard if a state transition happened during getBlockChanges
+        guard editorState?.contentGeneration == generationAtPoll else {
+            #if DEBUG
+            print("[BlockSyncService] Discarded stale block changes (generation changed)")
+            #endif
+            return
+        }
 
         // Skip if no actual changes
         guard !changes.updates.isEmpty || !changes.inserts.isEmpty || !changes.deletes.isEmpty else {

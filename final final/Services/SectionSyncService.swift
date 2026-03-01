@@ -14,6 +14,7 @@ class SectionSyncService {
     private var debounceTask: Task<Void, Never>?
     private let debounceInterval: Duration = .milliseconds(500)
     private let reconciler = SectionReconciler()
+    private var debounceGeneration: Int = 0
 
     private var projectDatabase: ProjectDatabase?
     private var projectId: String?
@@ -23,9 +24,8 @@ class SectionSyncService {
         projectDatabase != nil && projectId != nil
     }
 
-    /// When true, suppresses sync operations
-    /// Set during drag operations to prevent race conditions
-    var isSyncSuppressed: Bool = false
+    /// Reference to editor state for checking content transitions
+    weak var editorState: EditorViewState?
 
     /// When true, content is a zoomed subset - skip full document save to database
     var isContentZoomed: Bool = false
@@ -128,16 +128,20 @@ class SectionSyncService {
     ///   - markdown: The markdown content to sync
     ///   - zoomedIds: Optional set of zoomed section IDs (pass when zoomed to avoid replacing full array)
     func contentChanged(_ markdown: String, zoomedIds: Set<String>? = nil) {
-        // Skip if suppressed (during drag operations)
-        guard !isSyncSuppressed else { return }
+        // Skip if content transition is in progress (drag, zoom, etc.)
+        guard !(editorState?.isBusy ?? false) else { return }
 
         // Idempotent check: skip if this is content we just synced
         guard markdown != lastSyncedContent else { return }
 
         debounceTask?.cancel()
+        debounceGeneration += 1
+        let myGeneration = debounceGeneration
         debounceTask = Task {
             try? await Task.sleep(for: debounceInterval)
             guard !Task.isCancelled else { return }
+            // Double-check: if another contentChanged fired during sleep, skip
+            guard self.debounceGeneration == myGeneration else { return }
             await syncContent(markdown, zoomedIds: zoomedIds)
         }
     }

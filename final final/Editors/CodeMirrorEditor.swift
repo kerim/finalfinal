@@ -26,6 +26,9 @@ struct CodeMirrorEditor: NSViewRepresentable {
     /// When true, setContent() will hide the WebView and use scrollToStart option.
     var isZoomingContent: Bool = false
 
+    /// Generation counter for stale poll detection
+    var contentGeneration: Int = 0
+
     /// CSS variables for theming - when this changes, updateNSView is called
     var themeCSS: String = ThemeManager.shared.cssVariables
 
@@ -133,10 +136,11 @@ struct CodeMirrorEditor: NSViewRepresentable {
     }
 
     func updateNSView(_ webView: WKWebView, context: Context) {
-        // Update content state and zoom flag for coordinator (suppresses polling during transitions)
+        // Update content state, zoom flag, and generation for coordinator (suppresses polling during transitions)
         // IMPORTANT: isZoomingContent must be set BEFORE content check to avoid race condition
         context.coordinator.isZoomingContent = isZoomingContent
         context.coordinator.contentState = contentState
+        context.coordinator.contentGeneration = contentGeneration
 
         let effectiveFocusMode = focusModeEnabled && FocusModeSettingsManager.shared.enableParagraphHighlighting
         if context.coordinator.lastFocusModeState != effectiveFocusMode {
@@ -215,6 +219,9 @@ struct CodeMirrorEditor: NSViewRepresentable {
         /// Used to control alphaValue hiding and scrollToStart option in setContent().
         /// This bypasses the race condition where contentState may be stale.
         var isZoomingContent: Bool = false
+
+        /// Generation counter for stale poll detection
+        var contentGeneration: Int = 0
 
         var isEditorReady = false
         var isCleanedUp = false

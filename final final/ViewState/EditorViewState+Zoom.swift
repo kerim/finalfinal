@@ -9,40 +9,32 @@ import SwiftUI
 
 extension EditorViewState {
 
+    /// Resume the acknowledgement continuation exactly once.
+    /// Nils the reference before calling resume() to prevent double-resume.
+    func resumeAckContinuationOnce() {
+        guard let continuation = contentAckContinuation else { return }
+        contentAckContinuation = nil  // Nil BEFORE resume — atomic guard on @MainActor
+        continuation.resume()
+    }
+
     /// Wait for content acknowledgement from the editor with timeout fallback
     /// Call this AFTER setting content to wait for WebView to confirm it was set
     /// Timeout of 1 second ensures contentState returns to .idle even if callback fails
     func waitForContentAcknowledgement() async {
-        isAcknowledged = false
-
-        // Race between acknowledgement and timeout
-        // Use a simple timeout approach with Task.sleep and cancellation
-        let timeoutTask = Task {
-            try? await Task.sleep(nanoseconds: 1_000_000_000)
-            // If we reach here without being cancelled, the acknowledgement timed out
-            // Resume the continuation to prevent deadlock (only if not already acknowledged)
-            guard !isAcknowledged else { return }
-            isAcknowledged = true
-            contentAckContinuation?.resume()
-            contentAckContinuation = nil
-        }
-
-        // Wait for acknowledgement (or timeout to resume it)
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             contentAckContinuation = continuation
+            // Timeout: if JS never acknowledges, resume after 1s to prevent deadlock
+            Task { [weak self] in
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                self?.resumeAckContinuationOnce()
+            }
         }
-
-        // Cancel timeout if acknowledgement came first
-        timeoutTask.cancel()
     }
 
     /// Called by the editor when content has been confirmed set
     /// Resumes the waiting continuation to allow zoom transition to complete
     func acknowledgeContent() {
-        guard !isAcknowledged else { return }
-        isAcknowledged = true
-        contentAckContinuation?.resume()
-        contentAckContinuation = nil
+        resumeAckContinuationOnce()
     }
 
     // MARK: - Subtree Filtering
@@ -73,13 +65,16 @@ extension EditorViewState {
     ///   - sectionId: The ID of the section to zoom into
     ///   - mode: Zoom mode (.full for all descendants, .shallow for direct pseudo-children only)
     func zoomToSection(_ sectionId: String, mode: ZoomMode = .full) async {
-        // Guard against re-entry during transitions
-        guard contentState == .idle else { return }
+        // Guard against re-entry during transitions (accept .zoomTransition if caller pre-set it)
+        guard contentState == .idle || contentState == .zoomTransition else { return }
 
         guard let db = projectDatabase, let pid = currentProjectId else { return }
 
-        // SET CONTENTSTATE FIRST - before flush to prevent observation race conditions
-        contentState = .zoomTransition
+        // Caller manages state if already in transition (pre-set by sidebar callbacks)
+        let callerManagedState = (contentState == .zoomTransition)
+        if !callerManagedState {
+            contentState = .zoomTransition
+        }
 
         // Flush any pending editor edits before zooming
         flushContentToDatabase()
@@ -222,14 +217,18 @@ extension EditorViewState {
             await waitForContentAcknowledgement()
 
             isZoomingContent = false
-            contentState = .idle
+            if !callerManagedState {
+                contentState = .idle
+            }
         } catch {
             print("[EditorViewState] Zoom error: \(error)")
             zoomedSectionIds = nil
             zoomedSectionId = nil
             zoomedBlockRange = nil
             isZoomingContent = false
-            contentState = .idle
+            if !callerManagedState {
+                contentState = .idle
+            }
         }
     }
 
@@ -354,24 +353,15 @@ extension EditorViewState {
         blockReparseTask = nil
 
         do {
-            // Preserve existing heading metadata
-            let existing = try db.fetchBlocks(projectId: pid)
-            var metadata: [String: SectionMetadata] = [:]
-            for block in existing where block.blockType == .heading {
-                metadata[block.textContent] = SectionMetadata(
-                    status: block.status,
-                    tags: block.tags?.isEmpty == false ? block.tags : nil,
-                    wordGoal: block.wordGoal
-                )
-            }
-
             // Strip mini #Notes marker before parsing (only present when zoomed)
             let contentToParse = SectionSyncService.stripZoomNotes(from: content).stripped
 
+            // Metadata preserved atomically by replaceBlocks/replaceBlocksInRange
+            // inside their write transactions (8 fields vs. the old pre-read's 3)
             let blocks = BlockParser.parse(
                 markdown: contentToParse,
                 projectId: pid,
-                existingSectionMetadata: metadata.isEmpty ? nil : metadata
+                existingSectionMetadata: nil
             )
 
             print("[FLUSH] Input length=\(contentToParse.count), parsed \(blocks.count) blocks")
