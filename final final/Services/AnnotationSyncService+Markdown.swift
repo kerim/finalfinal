@@ -75,7 +75,9 @@ extension AnnotationSyncService {
         }
 
         // No match found - return original
+        #if DEBUG
         print("[AnnotationSyncService] Warning: No annotation found near offset \(oldCharOffset) for replacement")
+        #endif
         return AnnotationReplaceResult(markdown: markdown, newCharOffset: oldCharOffset)
     }
 
@@ -155,7 +157,9 @@ extension AnnotationSyncService {
             return nsMarkdown.replacingCharacters(in: match.range, with: updatedText)
         }
 
+        #if DEBUG
         print("[AnnotationSyncService] Warning: No task annotation found near offset \(offset)")
+        #endif
         return markdown
     }
 }

@@ -281,18 +281,6 @@ final class ZoteroService {
                 throw ZoteroError.noResponse
             }
 
-            #if DEBUG
-            // Debug: Print raw JSON response (first item only) to diagnose date format
-            if let jsonObj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-               let result = jsonObj["result"] as? [[String: Any]],
-               let firstItem = result.first {
-                print("[ZoteroService] DEBUG - First item raw JSON:")
-                print("  id: \(firstItem["id"] ?? "nil")")
-                print("  issued: \(firstItem["issued"] ?? "nil")")
-                print("  citation-key: \(firstItem["citation-key"] ?? "nil")")
-            }
-            #endif
-
             // Decode JSON-RPC response
             let decoder = JSONDecoder()
             let rpcResponse = try decoder.decode(JSONRPCResponse.self, from: data)
@@ -302,16 +290,6 @@ final class ZoteroService {
             }
 
             let items = rpcResponse.result ?? []
-
-            #if DEBUG
-            // Debug: Check if dates decoded properly
-            if let firstItem = items.first {
-                print("[ZoteroService] DEBUG - First decoded item:")
-                print("  citekey: \(firstItem.citekey)")
-                print("  issued: \(String(describing: firstItem.issued))")
-                print("  year: \(firstItem.year)")
-            }
-            #endif
 
             // Cache results by citekey for later lookup
             for item in items {
@@ -367,12 +345,6 @@ final class ZoteroService {
                   httpResponse.statusCode == 200 else {
                 throw ZoteroError.noResponse
             }
-
-            #if DEBUG
-            if let rawString = String(data: data, encoding: .utf8) {
-                print("[ZoteroService] item.export raw response: \(rawString.prefix(500))")
-            }
-            #endif
 
             // item.export returns a JSON-RPC wrapper with CSL-JSON in result
             guard let jsonObj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {

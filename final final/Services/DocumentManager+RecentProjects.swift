@@ -58,7 +58,9 @@ extension DocumentManager {
 
             saveRecentProjects()
         } catch {
+            #if DEBUG
             print("[DocumentManager] Failed to create bookmark for \(url.path): \(error)")
+            #endif
         }
     }
 
@@ -86,12 +88,16 @@ extension DocumentManager {
             )
 
             if isStale {
+                #if DEBUG
                 print("[DocumentManager] Bookmark is stale, may need refresh")
+                #endif
             }
 
             return url
         } catch {
+            #if DEBUG
             print("[DocumentManager] Failed to resolve bookmark: \(error)")
+            #endif
             return nil
         }
     }
@@ -134,7 +140,9 @@ extension DocumentManager {
             )
             lastProjectBookmark = bookmarkData
         } catch {
+            #if DEBUG
             print("[DocumentManager] Failed to save last project bookmark: \(error)")
+            #endif
         }
     }
 
@@ -194,7 +202,9 @@ extension DocumentManager {
                 resolveBookmark(entry.bookmarkData) != nil
             }
         } catch {
+            #if DEBUG
             print("[DocumentManager] Failed to load recent projects: \(error)")
+            #endif
             recentProjects = []
         }
     }
@@ -204,7 +214,9 @@ extension DocumentManager {
             let data = try JSONEncoder().encode(recentProjects)
             UserDefaults.standard.set(data, forKey: recentProjectsKey)
         } catch {
+            #if DEBUG
             print("[DocumentManager] Failed to save recent projects: \(error)")
+            #endif
         }
     }
 }

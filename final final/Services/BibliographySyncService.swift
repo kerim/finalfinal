@@ -160,7 +160,9 @@ final class BibliographySyncService {
             do {
                 _ = try await zoteroService.fetchItemsForCitekeys(missingKeys)
             } catch {
+                #if DEBUG
                 print("[BibliographySyncService] Failed to fetch items: \(error)")
+                #endif
             }
         }
 
@@ -183,7 +185,9 @@ final class BibliographySyncService {
             // ValueObservation may be blocked by contentState guard during editing
             NotificationCenter.default.post(name: .bibliographySectionChanged, object: nil)
         } catch {
+            #if DEBUG
             print("[BibliographySyncService] Failed to update bibliography: \(error)")
+            #endif
         }
     }
 
@@ -366,7 +370,9 @@ final class BibliographySyncService {
             // Reset citekeys so future removals don't get skipped by the guard
             lastKnownCitekeys = []
         } catch {
+            #if DEBUG
             print("[BibliographySyncService] Error removing bibliography: \(error)")
+            #endif
         }
     }
 }

@@ -59,7 +59,9 @@ actor PandocLocator {
                 return status
             }
             // Custom path invalid - still try auto-detect
+            #if DEBUG
             print("[PandocLocator] Custom path invalid: \(custom)")
+            #endif
         }
 
         // Try each search path

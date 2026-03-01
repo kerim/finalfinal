@@ -179,7 +179,9 @@ final class DocumentManager {
         // Log any non-critical issues
         if !report.isHealthy {
             for issue in report.issues {
+                #if DEBUG
                 print("[DocumentManager] Warning: \(issue.description)")
+                #endif
             }
         }
 
@@ -212,7 +214,9 @@ final class DocumentManager {
         // Open spell check document for this project session
         SpellCheckService.shared.openDocument()
 
+        #if DEBUG
         print("[DocumentManager] Opened project: \(project.title) at \(url.path)")
+        #endif
         return project.id
     }
 
@@ -234,7 +238,9 @@ final class DocumentManager {
             project = try database.fetchProject()
         } catch {
             // Log but don't fail - we're force-opening
+            #if DEBUG
             print("[DocumentManager] Force-open: fetchProject error (continuing): \(error)")
+            #endif
             project = nil
         }
 
@@ -250,9 +256,13 @@ final class DocumentManager {
         if let project = project {
             addToRecentProjects(url: url, title: project.title)
             saveAsLastProject(url: url)
+            #if DEBUG
             print("[DocumentManager] Force-opened project: \(project.title) at \(url.path)")
+            #endif
         } else {
+            #if DEBUG
             print("[DocumentManager] Force-opened project (no record) at \(url.path)")
+            #endif
         }
 
         // Open spell check document for this project session
@@ -280,7 +290,9 @@ final class DocumentManager {
         // Clear media scheme handler
         MediaSchemeHandler.shared.mediaDirectoryURL = nil
 
+        #if DEBUG
         print("[DocumentManager] Project closed")
+        #endif
     }
 
     /// Mark the project as having unsaved changes

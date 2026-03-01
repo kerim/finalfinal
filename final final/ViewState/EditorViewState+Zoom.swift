@@ -172,10 +172,6 @@ extension EditorViewState {
                 userInfo: ["zoomed": true, "maxLabel": maxLabel]
             )
 
-            #if DEBUG
-            print("[Zoom] Content preview (\(zoomedContent.count) chars): \(String(zoomedContent.prefix(200)))")
-            #endif
-
             // Set zoomed state
             zoomedSectionId = sectionId
             isZoomingContent = true
@@ -221,7 +217,9 @@ extension EditorViewState {
                 contentState = .idle
             }
         } catch {
+            #if DEBUG
             print("[EditorViewState] Zoom error: \(error)")
+            #endif
             zoomedSectionIds = nil
             zoomedSectionId = nil
             zoomedBlockRange = nil
@@ -320,7 +318,9 @@ extension EditorViewState {
                 NotificationCenter.default.post(name: .didZoomOut, object: nil)
             }
         } catch {
+            #if DEBUG
             print("[EditorViewState] Zoom out error: \(error)")
+            #endif
             zoomedSectionId = nil
             zoomedSectionIds = nil
             zoomedBlockRange = nil
@@ -364,10 +364,9 @@ extension EditorViewState {
                 existingSectionMetadata: nil
             )
 
+            #if DEBUG
             print("[FLUSH] Input length=\(contentToParse.count), parsed \(blocks.count) blocks")
-            for (i, block) in blocks.enumerated() {
-                print("[FLUSH]   [\(i)] type=\(block.blockType) frag_len=\(block.markdownFragment.count) preview=\"\(String(block.markdownFragment.prefix(80)))\"")
-            }
+            #endif
 
             if let range = zoomedBlockRange {
                 // Zoomed: only replace blocks within the zoom range
@@ -413,7 +412,9 @@ extension EditorViewState {
                 try db.replaceBlocks(blocks, for: pid)
             }
         } catch {
+            #if DEBUG
             print("[EditorViewState] flushContentToDatabase error: \(error)")
+            #endif
         }
     }
 

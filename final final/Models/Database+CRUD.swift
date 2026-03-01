@@ -107,6 +107,8 @@ extension ProjectDatabase {
         }
         let nodes = OutlineParser.parse(markdown: markdown, projectId: projectId, existingBibTitle: existingBibTitle)
         try replaceOutlineNodes(nodes, for: projectId)
+        #if DEBUG
         print("[ProjectDatabase] Rebuilt outline cache: \(nodes.count) nodes")
+        #endif
     }
 }
