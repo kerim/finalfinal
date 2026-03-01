@@ -39,7 +39,7 @@ Fallback polling runs at 3s intervals for supplementary data only: `getPollData(
 
 **Block Sync (2s polling)**: `BlockSyncService` polls `hasBlockChanges()` -> `getBlockChanges()` at 2s intervals for structural content sync. Block change detection is debounced (100ms) in the JS plugin to batch rapid keystrokes.
 
-**Feedback Prevention**: `isSettingContent` flag prevents feedback loops when Swift pushes content to editor. `resetAndSnapshot(doc)` must be called after any `setContent()` to prevent false change waves. `isSyncSuppressed` on BlockSyncService gates polling during drag operations and block ID pushes. Push-based content uses grace period guards (150ms CodeMirror, 200ms Milkdown) to avoid overwriting recently pushed content.
+**Feedback Prevention**: `isSettingContent` flag prevents feedback loops when Swift pushes content to editor. `resetAndSnapshot(doc)` must be called after any `setContent()` to prevent false change waves. BlockSyncService checks `editorState.contentState == .idle` to gate polling during drag operations, zoom transitions, and other non-idle states. Push-based content uses grace period guards (150ms CodeMirror, 200ms Milkdown) to avoid overwriting recently pushed content.
 
 ---
 

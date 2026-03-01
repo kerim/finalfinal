@@ -63,6 +63,11 @@ class EditorViewState {
     /// Tracks content transitions to prevent race conditions
     var contentState: EditorContentState = .idle {
         didSet {
+            // Increment generation on every non-idle transition
+            if oldValue == .idle && contentState != .idle {
+                contentGeneration += 1
+            }
+
             contentStateWatchdog?.cancel()
             contentStateWatchdog = nil
 
@@ -77,8 +82,7 @@ class EditorViewState {
                             self.zoomedSectionIds = nil
                             self.zoomedSectionId = nil
                             self.zoomedBlockRange = nil
-                            self.contentAckContinuation?.resume()
-                            self.contentAckContinuation = nil
+                            self.resumeAckContinuationOnce()
                         }
                         self.contentState = .idle
                     }
@@ -102,6 +106,14 @@ class EditorViewState {
     /// IDs of sections included in the zoom (root + descendants)
     var zoomedSectionIds: Set<String>?
 
+    /// Incremented on every content state transition away from idle.
+    /// Polling captures this before JS calls and discards results if it changed.
+    var contentGeneration: Int = 0
+
+    /// Whether any content transition is in progress.
+    /// Services check this instead of maintaining their own suppression flags.
+    var isBusy: Bool { contentState != .idle }
+
     // MARK: - Content
     var content: String = ""
 
@@ -116,9 +128,6 @@ class EditorViewState {
     /// Continuation for waiting on content acknowledgement from WebView
     /// Used during zoom transitions to prevent race conditions
     var contentAckContinuation: CheckedContinuation<Void, Never>?
-
-    /// Flag to prevent double-resume of continuation (fatal error if both timeout and ack fire)
-    var isAcknowledged = false
 
     // MARK: - Scroll Request
     var scrollToOffset: Int?
@@ -190,6 +199,8 @@ class EditorViewState {
 
     /// Task for debounced block re-parse (source mode paste)
     var blockReparseTask: Task<Void, Never>?
+    /// Generation counter for blockReparseTask cooperative cancellation guard
+    var blockReparseGeneration: Int = 0
 
     /// Current persist task for cancellation on rapid successive reorders
     var currentPersistTask: Task<Void, Never>?
@@ -197,9 +208,6 @@ class EditorViewState {
     // MARK: - Database Observation
     private var observationTask: Task<Void, Never>?
     private var annotationObservationTask: Task<Void, Never>?
-
-    /// When true, ValueObservation updates are ignored (used during drag-drop reorder)
-    var isObservationSuppressed = false
 
     /// Callback invoked after sections are updated from database observation
     /// Used by ContentView to enforce hierarchy constraints after slash command changes
@@ -217,10 +225,7 @@ class EditorViewState {
                 for try await outlineBlocks in database.observeOutlineBlocks(for: projectId) {
                     guard !Task.isCancelled, let self else { break }
 
-                    // Skip updates when observation is suppressed (during drag-drop reorder)
-                    guard !self.isObservationSuppressed else { continue }
-
-                    // Skip updates during content transitions (zoom, hierarchy enforcement)
+                    // Skip updates during content transitions (drag, zoom, hierarchy enforcement, etc.)
                     guard contentState == .idle else { continue }
 
                     // Convert blocks to SectionViewModels
@@ -455,7 +460,6 @@ class EditorViewState {
 
         // Reset content state machine
         contentState = .idle
-        isObservationSuppressed = false
 
         // Reset project-specific settings
         isCitationLibraryPushed = false

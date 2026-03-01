@@ -31,7 +31,9 @@ extension ContentView {
 
         // Configure sync services with database
         sectionSyncService.configure(database: db, projectId: pid)
+        sectionSyncService.editorState = editorState
         annotationSyncService.configure(database: db, contentId: cid)
+        annotationSyncService.editorState = editorState
         bibliographySyncService.configure(database: db, projectId: pid)
         footnoteSyncService.configure(database: db, projectId: pid)
         autoBackupService.configure(database: db, projectId: pid)
@@ -47,13 +49,11 @@ extension ContentView {
 
             #if DEBUG
             print("[onSectionsUpdated] contentState=\(editorState.contentState), " +
-                "syncSuppressed=\(sectionSyncService.isSyncSuppressed), " +
                 "zoomed=\(editorState.zoomedSectionIds != nil), " +
                 "hasViolations=\(Self.hasHierarchyViolations(in: editorState.sections))")
             #endif
 
-            // Skip during drag operations (which handle hierarchy separately)
-            guard !sectionSyncService.isSyncSuppressed else { return }
+            // Skip during content transitions (drag, zoom, etc.)
             guard editorState.contentState == .idle else { return }
 
             // Skip hierarchy enforcement while zoomed to prevent feedback loop:

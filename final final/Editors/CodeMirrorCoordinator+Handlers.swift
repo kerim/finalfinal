@@ -727,10 +727,19 @@ extension CodeMirrorEditor.Coordinator {
         // Skip polling during content transitions (zoom, hierarchy enforcement, drag)
         guard contentState == .idle else { return }
 
+        let generationAtPoll = contentGeneration  // Capture BEFORE async call
+
         // Batched poll: stats + section title in a single JS call
         webView.evaluateJavaScript("window.FinalFinal.getPollData()") { [weak self] result, _ in
-            guard let self, !self.isCleanedUp,
-                  let jsonString = result as? String,
+            guard let self, !self.isCleanedUp else { return }
+            // Discard stale result if a state transition happened during the JS roundtrip
+            guard self.contentGeneration == generationAtPoll else {
+                #if DEBUG
+                print("[CodeMirrorPoll] Discarded stale result (gen \(generationAtPoll) != \(self.contentGeneration))")
+                #endif
+                return
+            }
+            guard let jsonString = result as? String,
                   let data = jsonString.data(using: .utf8),
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
 

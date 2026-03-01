@@ -16,14 +16,20 @@ enum EditorContentState {
     case bibliographyUpdate   // Auto-bibliography being regenerated
     case editorTransition     // Switching between Milkdown <-> CodeMirror
     case dragReorder          // During sidebar drag-drop reorder
+    case projectSwitch        // During project close/open transition
+    case annotationEdit       // During sidebar annotation text update
 }
 ```
 
-**Guards**: SectionSyncService, BlockSyncService, and ValueObservation skip updates when `contentState != .idle`, preventing feedback loops.
+**Guards**: All sync services check `editorState.isBusy` (computed as `contentState != .idle`) instead of maintaining separate suppression flags. ValueObservation also skips updates when `contentState != .idle`.
 
 **Cancellation Pattern**: `EditorViewState.currentPersistTask` stores the current persist task during drag-drop reorder. Rapid successive reorders cancel the previous persist task before starting a new one, preventing stale writes.
 
 **Watchdog**: A `didSet` observer on `contentState` starts a 5-second watchdog Task whenever the state enters a non-idle value. If the state hasn't returned to `.idle` within 5 seconds, the watchdog force-resets it and cleans up associated state (e.g., `isZoomingContent`, pending continuations). This prevents permanently blocked ValueObservation if a transition is interrupted.
+
+**Content Generation Counter**: `contentGeneration` (on `EditorViewState`) is incremented every time `contentState` transitions from `.idle` to a non-idle state. Editor polling captures this value before async JS calls and discards stale results if it changed during the roundtrip. This prevents stale poll data from overwriting content during transitions.
+
+**Debounce Generation Guards**: `SectionSyncService`, `AnnotationSyncService`, and `ViewNotificationModifiers` (block reparse) use generation counters alongside `Task.isCancelled` to prevent cooperative cancellation races. The debounce task captures the generation at creation time and skips execution if a newer debounce was started during the sleep.
 
 ---
 
@@ -86,7 +92,6 @@ func startObserving(database: ProjectDatabase, projectId: String) {
 
     observationTask = Task {
         for try await outlineBlocks in database.observeOutlineBlocks(for: projectId) {
-            guard !isObservationSuppressed else { continue }
             guard contentState == .idle else { continue }
 
             var viewModels = outlineBlocks.map { SectionViewModel(from: $0) }
@@ -119,7 +124,7 @@ func startObserving(database: ProjectDatabase, projectId: String) {
 - `wordCountForHeading(blockId:)` aggregates words including descendants (only computed when `aggregateGoal` is set)
 - `projectDatabase` and `currentProjectId` are stored on EditorViewState for use during zoom and reorder operations
 
-**Suppression**: `isObservationSuppressed` is set during drag-drop operations to prevent database updates from overwriting in-progress reordering.
+**Suppression**: During drag-drop reorder, `contentState = .dragReorder` prevents observation updates from overwriting in-progress reordering. All suppression is centralized through `contentState` — there are no separate boolean suppression flags on individual services.
 
 ---
 

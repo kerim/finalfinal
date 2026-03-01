@@ -238,8 +238,8 @@ extension ContentView {
 
     /// Handle annotation text update from sidebar editing
     func handleAnnotationTextUpdate(_ annotation: AnnotationViewModel, newText: String) {
-        // 1. Suppress sync to prevent feedback loop
-        annotationSyncService.isSyncSuppressed = true
+        // 1. Suppress sync via content state to prevent feedback loop
+        editorState.contentState = .annotationEdit
 
         // 2. Reconstruct markdown with new text
         let result = annotationSyncService.replaceAnnotationText(
@@ -275,7 +275,7 @@ extension ContentView {
         // 6. Re-enable sync after delay
         Task {
             try? await Task.sleep(for: .milliseconds(100))
-            annotationSyncService.isSyncSuppressed = false
+            editorState.contentState = .idle
         }
     }
 
@@ -302,6 +302,7 @@ extension ContentView {
                     isResettingContent: $editorState.isResettingContent,
                     contentState: editorState.contentState,
                     isZoomingContent: editorState.isZoomingContent,
+                    contentGeneration: editorState.contentGeneration,
                     themeCSS: currentThemeCSS,
                     onContentChange: { _ in
                         // Content change handling - could trigger outline parsing here
@@ -326,6 +327,7 @@ extension ContentView {
                         if let db = documentManager.projectDatabase,
                            let pid = documentManager.projectId {
                             blockSyncService.configure(database: db, projectId: pid, webView: webView)
+                            blockSyncService.editorState = editorState
                             // Prevent updateNSView race during initial content push
                             editorState.isResettingContent = true
                             // Atomic push: content + block IDs in one JS call (no temp ID warnings)
@@ -354,6 +356,7 @@ extension ContentView {
                     isResettingContent: $editorState.isResettingContent,
                     contentState: editorState.contentState,
                     isZoomingContent: editorState.isZoomingContent,
+                    contentGeneration: editorState.contentGeneration,
                     themeCSS: currentThemeCSS,
                     onContentChange: { newContent in
                         // Update sourceContent with raw content (including anchors)
@@ -385,7 +388,6 @@ extension ContentView {
 
     func handleZoomedFootnoteInsertion(label: String, projectId: String) {
         editorState.contentState = .bibliographyUpdate
-        blockSyncService.isSyncSuppressed = true
 
         // Flush current editor content to DB before modifying
         editorState.flushContentToDatabase()
@@ -425,7 +427,6 @@ extension ContentView {
         Task {
             guard let range = editorState.zoomedBlockRange else {
                 editorState.contentState = .idle
-                blockSyncService.isSyncSuppressed = false
                 return
             }
 
@@ -433,7 +434,6 @@ extension ContentView {
             await blockSyncService.pushBlockIds(for: range)
 
             editorState.contentState = .idle
-            // pushBlockIds defer clears isSyncSuppressed
 
             await Task.yield()
 

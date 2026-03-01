@@ -101,4 +101,6 @@ enum EditorContentState {
     case bibliographyUpdate
     case editorTransition  // During Milkdown ↔ CodeMirror switch
     case dragReorder       // During sidebar drag-drop reorder
+    case projectSwitch     // During project switch (prevents old content bleed)
+    case annotationEdit    // During sidebar annotation text edit (prevents feedback loop)
 }

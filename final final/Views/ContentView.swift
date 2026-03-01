@@ -158,13 +158,11 @@ struct ContentView: View {
                 // and the 100ms-delayed pushBlockIds() arrives too late — block-sync reports
                 // changes with temp IDs, Swift creates new blocks at maxSortOrder+1.
                 editorState.contentState = .bibliographyUpdate
-                blockSyncService.isSyncSuppressed = true
                 editorState.isResettingContent = true  // prevent updateNSView → setContent()
 
                 guard let result = fetchBlocksWithIds() else {
                     editorState.isResettingContent = false
                     editorState.contentState = .idle
-                    blockSyncService.isSyncSuppressed = false
                     return
                 }
 
@@ -176,7 +174,6 @@ struct ContentView: View {
                         markdown: result.markdown, blockIds: result.blockIds)
                     editorState.isResettingContent = false
                     editorState.contentState = .idle
-                    // setContentWithBlockIds' defer clears isSyncSuppressed
                 }
             }
             .onReceive(NotificationCenter.default.publisher(for: .notesSectionChanged)) { _ in
@@ -187,13 +184,11 @@ struct ContentView: View {
 
                 // Atomic content+IDs push (same pattern as bibliography)
                 editorState.contentState = .bibliographyUpdate  // Reuse same state
-                blockSyncService.isSyncSuppressed = true
                 editorState.isResettingContent = true
 
                 guard let result = fetchBlocksWithIds() else {
                     editorState.isResettingContent = false
                     editorState.contentState = .idle
-                    blockSyncService.isSyncSuppressed = false
                     return
                 }
 
@@ -235,9 +230,8 @@ struct ContentView: View {
                     return
                 }
 
-                // Set sync suppression BEFORE DB write
+                // Set content state BEFORE DB write to suppress sync
                 editorState.contentState = .bibliographyUpdate
-                blockSyncService.isSyncSuppressed = true
                 editorState.isResettingContent = true
 
                 // editorState.content is fresh (coordinator synced via getContent before posting)
@@ -278,7 +272,6 @@ struct ContentView: View {
                     guard let result = fetchBlocksWithIds() else {
                         editorState.isResettingContent = false
                         editorState.contentState = .idle
-                        blockSyncService.isSyncSuppressed = false
                         return
                     }
 
@@ -289,7 +282,6 @@ struct ContentView: View {
 
                     editorState.isResettingContent = false
                     editorState.contentState = .idle
-                    // setContentWithBlockIds' defer clears isSyncSuppressed
 
                     await Task.yield()
 
@@ -438,10 +430,12 @@ struct ContentView: View {
                 ZoomBreadcrumb(
                     zoomedSection: zoomedSection,
                     onZoomOut: {
-                        blockSyncService.isSyncSuppressed = true
+                        editorState.contentState = .zoomTransition
                         Task {
                             await editorState.zoomOut()
                             await blockSyncService.pushBlockIds()
+                            editorState.contentState = .idle
+                            NotificationCenter.default.post(name: .didZoomOut, object: nil)
                         }
                     }
                 )
@@ -467,32 +461,29 @@ struct ContentView: View {
                 },
                 onZoomToSection: { sectionId, mode in
                     findBarState.clearSearch()
-                    blockSyncService.isSyncSuppressed = true
+                    editorState.contentState = .zoomTransition
                     Task {
                         await editorState.zoomToSection(sectionId, mode: mode)
                         await blockSyncService.pushBlockIds(for: editorState.zoomedBlockRange)
-                        // pushBlockIds' defer clears isSyncSuppressed
+                        editorState.contentState = .idle
                     }
                 },
                 onZoomOut: {
                     findBarState.clearSearch()
-                    blockSyncService.isSyncSuppressed = true
+                    editorState.contentState = .zoomTransition
                     Task {
                         await editorState.zoomOut()
                         await blockSyncService.pushBlockIds()
-                        // pushBlockIds' defer clears isSyncSuppressed
+                        editorState.contentState = .idle
+                        NotificationCenter.default.post(name: .didZoomOut, object: nil)
                     }
                 },
                 onDragStarted: {
-                    editorState.isObservationSuppressed = true
-                    sectionSyncService.isSyncSuppressed = true
+                    editorState.contentState = .dragReorder
                     sectionSyncService.cancelPendingSync()
-                    blockSyncService.isSyncSuppressed = true
                 },
                 onDragEnded: {
-                    editorState.isObservationSuppressed = false
-                    sectionSyncService.isSyncSuppressed = false
-                    blockSyncService.isSyncSuppressed = false
+                    editorState.contentState = .idle
                 }
             )
         }

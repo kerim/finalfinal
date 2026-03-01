@@ -12,27 +12,33 @@ Patterns for zoom (section focus) functionality. Consult before modifying zoom-r
 
 **Root Cause:** `waitForContentAcknowledgement()` uses a continuation with timeout. If the timeout fires and then `acknowledgeContent()` is called (or vice versa), the continuation is resumed twice, causing a crash.
 
-**Solution:** Add an `isAcknowledged` flag to prevent double-resume:
+**Solution:** Nil-before-resume pattern via `resumeAckContinuationOnce()`. The helper nil-checks AND nils the reference before calling resume, making double-resume impossible:
 
 ```swift
-private var isAcknowledged = false
+func resumeAckContinuationOnce() {
+    guard let continuation = contentAckContinuation else { return }
+    contentAckContinuation = nil  // Nil BEFORE resume — atomic guard on @MainActor
+    continuation.resume()
+}
 
 func waitForContentAcknowledgement() async {
-    isAcknowledged = false
-    // ... in timeout handler:
-    guard !isAcknowledged else { return }
-    isAcknowledged = true
-    contentAckContinuation?.resume()
+    await withCheckedContinuation { continuation in
+        contentAckContinuation = continuation
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            self?.resumeAckContinuationOnce()
+        }
+    }
 }
 
 func acknowledgeContent() {
-    guard !isAcknowledged else { return }
-    isAcknowledged = true
-    contentAckContinuation?.resume()
+    resumeAckContinuationOnce()
 }
 ```
 
-**General principle:** When using `CheckedContinuation` with timeout races, guard against double-resume with a flag.
+**Why this works:** On `@MainActor`, code runs serially with no suspension points between the nil-check and the nil assignment. The first caller gets the continuation and nils it; the second caller sees nil and returns. The 5-second watchdog also calls `resumeAckContinuationOnce()`.
+
+**General principle:** When using `CheckedContinuation` with timeout races, guard against double-resume by nil-checking and nil-ing the reference before calling resume (nil-before-resume pattern).
 
 ---
 
