@@ -17,6 +17,7 @@ struct MilkdownEditor: NSViewRepresentable {
     @Binding var focusModeEnabled: Bool
     @Binding var cursorPositionToRestore: CursorPosition?
     @Binding var scrollToOffset: Int?
+    @Binding var scrollToBlockId: String?
     @Binding var isResettingContent: Bool
 
     /// Content state for suppressing polling during transitions (zoom, hierarchy enforcement)
@@ -181,6 +182,14 @@ struct MilkdownEditor: NSViewRepresentable {
                 self.scrollToOffset = nil
             }
         }
+
+        // Handle block-ID-based scroll requests (used for sections when images are present)
+        if let blockId = scrollToBlockId {
+            context.coordinator.scrollToBlock(blockId)
+            DispatchQueue.main.async {
+                self.scrollToBlockId = nil
+            }
+        }
     }
 
     func makeCoordinator() -> Coordinator {
@@ -188,6 +197,7 @@ struct MilkdownEditor: NSViewRepresentable {
             content: $content,
             cursorPositionToRestore: $cursorPositionToRestore,
             scrollToOffset: $scrollToOffset,
+            scrollToBlockId: $scrollToBlockId,
             isResettingContent: $isResettingContent,
             contentState: contentState,
             onContentChange: onContentChange,
@@ -214,6 +224,7 @@ struct MilkdownEditor: NSViewRepresentable {
         var contentBinding: Binding<String>
         var cursorPositionToRestoreBinding: Binding<CursorPosition?>
         var scrollToOffsetBinding: Binding<Int?>
+        var scrollToBlockIdBinding: Binding<String?>
         var isResettingContentBinding: Binding<Bool>
         let onContentChange: (String) -> Void
         let onStatsChange: (Int, Int) -> Void
@@ -291,6 +302,7 @@ struct MilkdownEditor: NSViewRepresentable {
             content: Binding<String>,
             cursorPositionToRestore: Binding<CursorPosition?>,
             scrollToOffset: Binding<Int?>,
+            scrollToBlockId: Binding<String?>,
             isResettingContent: Binding<Bool>,
             contentState: EditorContentState,
             onContentChange: @escaping (String) -> Void,
@@ -303,6 +315,7 @@ struct MilkdownEditor: NSViewRepresentable {
             self.contentBinding = content
             self.cursorPositionToRestoreBinding = cursorPositionToRestore
             self.scrollToOffsetBinding = scrollToOffset
+            self.scrollToBlockIdBinding = scrollToBlockId
             self.isResettingContentBinding = isResettingContent
             self.contentState = contentState
             self.onContentChange = onContentChange

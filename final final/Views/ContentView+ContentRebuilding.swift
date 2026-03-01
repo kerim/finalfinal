@@ -8,9 +8,17 @@
 import SwiftUI
 
 extension ContentView {
-    /// Fetch blocks from DB and return assembled markdown + ordered block IDs
+    /// Image metadata for passing to JS setContentWithBlockIds
+    struct ImageBlockMeta {
+        let id: String
+        let width: Int?
+        let caption: String?
+        let alt: String?
+    }
+
+    /// Fetch blocks from DB and return assembled markdown + ordered block IDs + image metadata
     /// Used for atomic content+ID pushes (bibliography rebuild, etc.)
-    func fetchBlocksWithIds() -> (markdown: String, blockIds: [String])? {
+    func fetchBlocksWithIds() -> (markdown: String, blockIds: [String], imageMeta: [ImageBlockMeta])? {
         guard let db = documentManager.projectDatabase,
               let pid = documentManager.projectId else { return nil }
 
@@ -26,7 +34,13 @@ extension ContentView {
             let sorted = allBlocks.sorted { $0.sortOrder < $1.sortOrder }
             let markdown = BlockParser.assembleMarkdown(from: sorted)
             let ids = sorted.map { $0.id }
-            return (markdown, ids)
+
+            // Collect image metadata for figure nodes (width/caption/alt persistence)
+            let imageMeta = sorted
+                .filter { $0.blockType == .image }
+                .map { ImageBlockMeta(id: $0.id, width: $0.imageWidth, caption: $0.imageCaption, alt: $0.imageAlt) }
+
+            return (markdown, ids, imageMeta)
         } catch {
             #if DEBUG
             print("[ContentView] Error fetching blocks with IDs: \(error)")
@@ -305,6 +319,7 @@ extension ContentView {
                     focusModeEnabled: $editorState.focusModeEnabled,
                     cursorPositionToRestore: $cursorPositionToRestore,
                     scrollToOffset: $editorState.scrollToOffset,
+                    scrollToBlockId: $editorState.scrollToBlockId,
                     isResettingContent: $editorState.isResettingContent,
                     contentState: editorState.contentState,
                     isZoomingContent: editorState.isZoomingContent,
@@ -340,7 +355,8 @@ extension ContentView {
                             Task {
                                 if let result = fetchBlocksWithIds() {
                                     await blockSyncService.setContentWithBlockIds(
-                                        markdown: result.markdown, blockIds: result.blockIds)
+                                        markdown: result.markdown, blockIds: result.blockIds,
+                                        imageMeta: result.imageMeta)
                                     // Always sync editorState.content to DB-assembled markdown.
                                     // Without this, updateNSView sees editorState.content (e.g. 1748 chars)
                                     // ≠ lastPushedContent (1747 chars) and re-pushes WITHOUT block IDs,

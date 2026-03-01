@@ -34,8 +34,9 @@ import {
   setZoomFootnoteState,
 } from './editor-state';
 import { clearSearch } from './find-replace';
+import { consumePendingDropPos } from './image-plugin';
 import { isSourceModeEnabled } from './source-mode-plugin';
-import type { Block } from './types';
+import type { Block, ImageBlockMeta } from './types';
 
 export function setContent(markdown: string, options?: { scrollToStart?: boolean }): void {
   // NOTE: Do NOT clear zoom mode here. setContent() is called from updateNSView
@@ -320,7 +321,7 @@ export function applyBlocks(blocks: Block[]): void {
 export function setContentWithBlockIds(
   markdown: string,
   blockIds: string[],
-  options?: { scrollToStart?: boolean }
+  options?: { scrollToStart?: boolean; imageMeta?: ImageBlockMeta[] }
 ): void {
   setBlockIdZoomMode(false); // Clear zoom mode when loading full content
   const editorInstance = getEditorInstance();
@@ -395,6 +396,28 @@ export function setContentWithBlockIds(
       if (blockIds.length > 0) {
         setBlockIdsForTopLevel(blockIds, view.state.doc);
       }
+
+      // Inject image metadata (width, caption, blockId) into figure nodes
+      // Same pattern as applyBlocks — matches figure nodes positionally with metadata
+      const imageMeta = options?.imageMeta;
+      if (imageMeta && imageMeta.length > 0) {
+        let figureIdx = 0;
+        let metaTr = view.state.tr;
+        view.state.doc.forEach((node, pos) => {
+          if (node.type.name === 'figure' && figureIdx < imageMeta.length) {
+            const meta = imageMeta[figureIdx];
+            metaTr = metaTr.setNodeMarkup(pos, undefined, {
+              ...node.attrs,
+              caption: meta.caption || '',
+              width: meta.width || null,
+              blockId: meta.id,
+            });
+            figureIdx++;
+          }
+        });
+        if (metaTr.steps.length > 0) view.dispatch(metaTr);
+      }
+
       resetAndSnapshot(view.state.doc);
     });
     if (parseSucceeded) {
@@ -425,9 +448,12 @@ export function scrollToBlock(blockId: string): void {
 
     if (targetPos === null) return;
 
-    // Scroll to the block
-    const selection = Selection.near(view.state.doc.resolve(targetPos + 1));
-    view.dispatch(view.state.tr.setSelection(selection).scrollIntoView());
+    // Scroll to position ~100px from top for visual consistency with scrollToOffset
+    const coords = view.coordsAtPos(targetPos + 1);
+    if (coords) {
+      const targetScrollY = coords.top + window.scrollY - 100;
+      window.scrollTo({ top: Math.max(0, targetScrollY), behavior: 'smooth' });
+    }
     view.focus();
   } catch (e) {
     console.error('[Milkdown] scrollToBlock failed:', e);
@@ -507,6 +533,13 @@ export function insertImage(opts: {
       return;
     }
 
+    // Remove any blob:/data: img tags that WebKit's native performDragOperation
+    // may have inserted into the DOM before JS events fired.
+    // This runs asynchronously (called from Swift via evaluateJavaScript),
+    // so any native insertions have completed and ProseMirror has processed them.
+    // Legitimate images use the projectmedia:// scheme, never blob:/data:.
+    document.querySelectorAll('img[src^="blob:"], img[src^="data:"]').forEach((el) => el.remove());
+
     const node = figureType.create({
       src: opts.src,
       alt: opts.alt,
@@ -515,14 +548,20 @@ export function insertImage(opts: {
       blockId: opts.blockId,
     });
 
-    // Insert after the current top-level block (depth 1), fallback to end of document
+    // Use pending drop position if available (from handleDrop), otherwise insert after cursor's block
     let insertPos: number;
-    try {
-      const { from } = view.state.selection;
-      const $from = view.state.doc.resolve(from);
-      insertPos = $from.after(1); // After current top-level block
-    } catch {
-      insertPos = view.state.doc.content.size; // Fallback: end of document
+    const dropPos = consumePendingDropPos();
+    if (dropPos !== null && dropPos >= 0 && dropPos <= view.state.doc.content.size) {
+      insertPos = dropPos;
+    } else {
+      // Fallback: after current selection's top-level block
+      try {
+        const { from } = view.state.selection;
+        const $from = view.state.doc.resolve(from);
+        insertPos = $from.after(1);
+      } catch {
+        insertPos = view.state.doc.content.size;
+      }
     }
     const tr = view.state.tr.insert(insertPos, node);
     view.dispatch(tr);

@@ -9,34 +9,46 @@ import SwiftUI
 
 extension ContentView {
     func scrollToSection(_ sectionId: String) {
-        // Compute character offset by assembling markdown up to the target block
-        guard let db = documentManager.projectDatabase,
-              let pid = documentManager.projectId else { return }
+        if editorState.editorMode == .wysiwyg {
+            // Milkdown: use block-ID-based scrolling (character offsets are wrong
+            // when atom nodes like figures are present — nodeSize=1 vs markdown length)
+            editorState.scrollToBlockId = sectionId
+        } else {
+            // CodeMirror: character offsets map correctly to positions
+            guard let db = documentManager.projectDatabase,
+                  let pid = documentManager.projectId else { return }
 
-        do {
-            let allBlocks = try db.fetchBlocks(projectId: pid)
-            // When zoomed, filter to only the blocks visible in the editor
-            let blocks: [Block]
-            if let zoomedIds = editorState.zoomedSectionIds {
-                blocks = filterBlocksForZoom(allBlocks, zoomedIds: zoomedIds,
-                                             zoomedBlockRange: editorState.zoomedBlockRange)
-            } else {
-                blocks = allBlocks
-            }
-            let sorted = blocks.sorted { $0.sortOrder < $1.sortOrder }
-            var offset = 0
-            for block in sorted {
-                if block.id == sectionId {
-                    break
+            do {
+                let allBlocks = try db.fetchBlocks(projectId: pid)
+                let blocks: [Block]
+                if let zoomedIds = editorState.zoomedSectionIds {
+                    blocks = filterBlocksForZoom(allBlocks, zoomedIds: zoomedIds,
+                                                 zoomedBlockRange: editorState.zoomedBlockRange)
+                } else {
+                    blocks = allBlocks
                 }
-                offset += block.markdownFragment.count
-                offset += 2  // Account for "\n\n" separator in assembleMarkdown
+                let sorted = blocks.sorted { $0.sortOrder < $1.sortOrder }
+                var offset = 0
+                for block in sorted {
+                    if block.id == sectionId {
+                        break
+                    }
+                    // In CodeMirror sourceContent, heading blocks are prefixed with
+                    // section anchors: <!-- @sid:UUID -->
+                    // These add characters not counted in markdownFragment
+                    if block.blockType == .heading {
+                        // "<!-- @sid:" (10) + id + " -->" (4) = 14 + id.count
+                        offset += 14 + block.id.count
+                    }
+                    offset += block.markdownFragment.count
+                    offset += 2  // Account for "\n\n" separator in assembleMarkdown
+                }
+                editorState.scrollTo(offset: offset)
+            } catch {
+                #if DEBUG
+                print("[ContentView] Error computing scroll offset: \(error)")
+                #endif
             }
-            editorState.scrollTo(offset: offset)
-        } catch {
-            #if DEBUG
-            print("[ContentView] Error computing scroll offset: \(error)")
-            #endif
         }
     }
 

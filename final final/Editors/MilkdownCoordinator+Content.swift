@@ -425,6 +425,13 @@ extension MilkdownEditor.Coordinator {
         webView.evaluateJavaScript("window.FinalFinal.scrollToOffset(\(offset))") { _, _ in }
     }
 
+    /// Scroll to a block by its ID (uses ProseMirror position lookup, avoids character offset issues with atom nodes)
+    func scrollToBlock(_ blockId: String) {
+        guard isEditorReady, let webView else { return }
+        let escaped = blockId.escapedForJSTemplateLiteral
+        webView.evaluateJavaScript("window.FinalFinal.scrollToBlock(`\(escaped)`)") { _, _ in }
+    }
+
     func getCursorPosition(completion: @escaping (CursorPosition) -> Void) {
         guard isEditorReady, let webView else {
             completion(.start)

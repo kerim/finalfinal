@@ -9,6 +9,7 @@ import type { EditorView, NodeView as ProsemirrorNodeView } from '@milkdown/kit/
 import { $node, $prose, $remark } from '@milkdown/kit/utils';
 import type { Root } from 'mdast';
 import { visit } from 'unist-util-visit';
+import { getBlockIdAtPos } from './block-id-plugin';
 import { isSourceModeEnabled } from './source-mode-plugin';
 
 // Remark plugin: convert standalone images with media/ URLs into figure nodes
@@ -236,6 +237,20 @@ class FigureNodeView implements ProsemirrorNodeView {
     });
   }
 
+  /** Resolve the block ID for this figure node.
+   * The node attr may be empty ('') when first inserted — BlockSyncService
+   * assigns the real ID asynchronously.  Fall back to the block-id-plugin
+   * position map which always has the confirmed ID after the first poll. */
+  private resolveBlockId(): string {
+    const id = this.node.attrs.blockId;
+    if (id) return id;
+    const pos = this.getPos();
+    if (pos !== undefined) {
+      return getBlockIdAtPos(pos) || '';
+    }
+    return '';
+  }
+
   private rewriteUrl(src: string): string {
     // media/file.png → projectmedia://file.png
     if (src.startsWith('media/')) {
@@ -270,9 +285,9 @@ class FigureNodeView implements ProsemirrorNodeView {
     this.dom.classList.remove('resizing');
 
     const newWidth = this.img.offsetWidth;
-    const blockId = this.node.attrs.blockId;
+    const blockId = this.resolveBlockId();
 
-    // Update ProseMirror node attrs
+    // Update ProseMirror node attrs (always — preserves width in the editor)
     const pos = this.getPos();
     if (pos !== undefined) {
       const tr = this.view.state.tr.setNodeMarkup(pos, undefined, {
@@ -282,12 +297,26 @@ class FigureNodeView implements ProsemirrorNodeView {
       this.view.dispatch(tr);
     }
 
-    // Send to Swift
-    if (blockId) {
+    // Send to Swift — retry if temp ID
+    if (blockId && !blockId.startsWith('temp-')) {
       window.webkit?.messageHandlers?.updateImageMeta?.postMessage({
         blockId,
         width: newWidth,
       });
+    } else {
+      // Temp or empty ID — retry after BlockSyncService confirms real ID (~2s poll)
+      const retryWidth = newWidth;
+      setTimeout(() => {
+        const currentPos = this.getPos();
+        if (currentPos === undefined) return;
+        const retryId = getBlockIdAtPos(currentPos);
+        if (retryId && !retryId.startsWith('temp-')) {
+          window.webkit?.messageHandlers?.updateImageMeta?.postMessage({
+            blockId: retryId,
+            width: retryWidth,
+          });
+        }
+      }, 3000);
     }
   };
 
@@ -295,7 +324,7 @@ class FigureNodeView implements ProsemirrorNodeView {
     const newCaption = this.captionEl?.textContent || '';
     if (newCaption === this.node.attrs.caption) return;
 
-    const blockId = this.node.attrs.blockId;
+    const blockId = this.resolveBlockId();
     const pos = this.getPos();
 
     // Update ProseMirror node attrs
@@ -307,12 +336,25 @@ class FigureNodeView implements ProsemirrorNodeView {
       this.view.dispatch(tr);
     }
 
-    // Send to Swift
-    if (blockId) {
+    // Send to Swift — retry if temp ID
+    if (blockId && !blockId.startsWith('temp-')) {
       window.webkit?.messageHandlers?.updateImageMeta?.postMessage({
         blockId,
         caption: newCaption,
       });
+    } else {
+      const retryCaption = newCaption;
+      setTimeout(() => {
+        const currentPos = this.getPos();
+        if (currentPos === undefined) return;
+        const retryId = getBlockIdAtPos(currentPos);
+        if (retryId && !retryId.startsWith('temp-')) {
+          window.webkit?.messageHandlers?.updateImageMeta?.postMessage({
+            blockId: retryId,
+            caption: retryCaption,
+          });
+        }
+      }, 3000);
     }
   };
 
@@ -342,13 +384,26 @@ class FigureNodeView implements ProsemirrorNodeView {
     // Update img element
     this.img.alt = newAlt;
 
-    // Send to Swift
-    const blockId = this.node.attrs.blockId;
-    if (blockId) {
+    // Send to Swift — retry if temp ID
+    const blockId = this.resolveBlockId();
+    if (blockId && !blockId.startsWith('temp-')) {
       window.webkit?.messageHandlers?.updateImageMeta?.postMessage({
         blockId,
         alt: newAlt,
       });
+    } else {
+      const retryAlt = newAlt;
+      setTimeout(() => {
+        const currentPos = this.getPos();
+        if (currentPos === undefined) return;
+        const retryId = getBlockIdAtPos(currentPos);
+        if (retryId && !retryId.startsWith('temp-')) {
+          window.webkit?.messageHandlers?.updateImageMeta?.postMessage({
+            blockId: retryId,
+            alt: retryAlt,
+          });
+        }
+      }, 3000);
     }
   }
 
@@ -423,6 +478,14 @@ const figureNodeViewPlugin = $prose(() => {
   });
 });
 
+// Module-level: pending drop position for async image insertion
+let pendingDropPos: number | null = null;
+export function consumePendingDropPos(): number | null {
+  const pos = pendingDropPos;
+  pendingDropPos = null;
+  return pos;
+}
+
 // Paste/drop interception plugin
 // Intercepts paste/drop containing image data, sends to Swift via pasteImage message
 const imagePasteDropPlugin = $prose(() => {
@@ -454,7 +517,7 @@ const imagePasteDropPlugin = $prose(() => {
         return false;
       },
 
-      handleDrop(_view: EditorView, event: DragEvent): boolean {
+      handleDrop(view: EditorView, event: DragEvent): boolean {
         const files = event.dataTransfer?.files;
         if (!files || files.length === 0) return false;
 
@@ -462,6 +525,24 @@ const imagePasteDropPlugin = $prose(() => {
         if (!imageFile) return false;
 
         event.preventDefault();
+        event.stopPropagation();
+
+        // Capture drop position before async processing
+        const coords = view.posAtCoords({ left: event.clientX, top: event.clientY });
+        if (coords) {
+          try {
+            const $pos = view.state.doc.resolve(coords.pos);
+            // $pos.after(1) requires depth >= 1; at doc boundary depth may be 0
+            pendingDropPos = $pos.depth >= 1 ? $pos.after(1) : view.state.doc.content.size;
+          } catch {
+            pendingDropPos = view.state.doc.content.size;
+          }
+        }
+        // Clear stale drop position after 10 seconds (covers failed imports)
+        setTimeout(() => {
+          pendingDropPos = null;
+        }, 10000);
+
         const reader = new FileReader();
         reader.onload = () => {
           const base64 = (reader.result as string).split(',')[1];
