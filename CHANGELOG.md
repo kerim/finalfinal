@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **Markdown with Images export** — exports `.md` file + `<name>_images/` folder with copied images
+- **TextBundle export** — exports `.textbundle` package (`text.md` + `assets/` + `info.json`) with standard markdown (no Pandoc attributes)
+- **DOCX/ODT heading numbering** — `native_numbering` Pandoc extension for Word/LibreOffice exports
+
+### Fixed
+
+- **Export Preferences menu** — replaced private `showSettingsWindow:` selector with `@Environment(\.openSettings)`; added `NSApp.activate()` for fullscreen focus; PreferencesView now switches to Export tab on notification
+- **PDF image handling** — unsupported formats (WebP, HEIC, GIF, TIFF, SVG) are now auto-converted to PNG for xelatex; Pandoc receives `--resource-path` for correct `media/` image resolution
+- **PDF image alt text** — uses `fig-alt` attribute instead of caption comments
+
+### Changed
+
+- Registered `org.textbundle.package` UTType
+
 ## [0.2.61] - 2026-03-01
 
 ### Added
