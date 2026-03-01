@@ -67,9 +67,7 @@ struct ProjectRepairService {
 
         do {
             try FileManager.default.copyItem(at: databaseURL, to: backupURL)
-            #if DEBUG
             print("[RepairService] Created backup at: \(backupURL.lastPathComponent)")
-            #endif
             return backupURL
         } catch {
             throw RepairError.backupFailed(error)
@@ -102,14 +100,10 @@ struct ProjectRepairService {
             do {
                 try repairIssue(issue, db: dbQueue)
                 repairedIssues.append(issue)
-                #if DEBUG
                 print("[RepairService] Repaired: \(issue.description)")
-                #endif
             } catch {
                 failedIssues.append(issue)
-                #if DEBUG
                 print("[RepairService] Failed to repair '\(issue.description)': \(error)")
-                #endif
             }
         }
 
@@ -124,9 +118,7 @@ struct ProjectRepairService {
     /// Delete the project package entirely (for recreate)
     func deletePackage() throws {
         try FileManager.default.removeItem(at: packageURL)
-        #if DEBUG
         print("[RepairService] Deleted package at: \(packageURL.path)")
-        #endif
     }
 
     // MARK: - Private Repair Methods
@@ -180,14 +172,10 @@ struct ProjectRepairService {
             let existingProjectId: String?
             if let sectionProjectId = try String.fetchOne(database, sql: "SELECT projectId FROM section LIMIT 1") {
                 existingProjectId = sectionProjectId
-                #if DEBUG
                 print("[RepairService] Found existing projectId from sections: \(sectionProjectId)")
-                #endif
             } else if let contentProjectId = try String.fetchOne(database, sql: "SELECT projectId FROM content LIMIT 1") {
                 existingProjectId = contentProjectId
-                #if DEBUG
                 print("[RepairService] Found existing projectId from content: \(contentProjectId)")
-                #endif
             } else {
                 existingProjectId = nil
             }
@@ -203,13 +191,9 @@ struct ProjectRepairService {
             )
 
             if existingProjectId != nil {
-                #if DEBUG
                 print("[RepairService] Recreated project record with existing ID: \(projectId)")
-                #endif
             } else {
-                #if DEBUG
                 print("[RepairService] Created new project record: \(projectId)")
-                #endif
             }
         }
     }

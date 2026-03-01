@@ -391,9 +391,12 @@ enum BlockParser {
             .map { $0.markdownFragment }
             .joined(separator: "\n\n")
 
-        #if DEBUG
         print("[ASSEMBLE] \(blocks.count) blocks -> result length=\(result.count)")
-        #endif
+        if blocks.count <= 5 {
+            for (i, block) in sorted.enumerated() {
+                print("[ASSEMBLE]   [\(i)] type=\(block.blockType) frag_len=\(block.markdownFragment.count)")
+            }
+        }
 
         return result
     }

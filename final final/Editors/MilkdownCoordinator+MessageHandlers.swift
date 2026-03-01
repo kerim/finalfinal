@@ -46,9 +46,7 @@ extension MilkdownEditor.Coordinator {
 
         // Only push if there are cached items
         if cachedJSON != "[]" {
-            #if DEBUG
             print("[MilkdownEditor] Pushing \(zotero.cachedItems.count) cached CSL items to editor")
-            #endif
             setCitationLibrary(cachedJSON)
         }
     }
@@ -137,6 +135,8 @@ extension MilkdownEditor.Coordinator {
 
         #if DEBUG
         print("[MilkdownEditor] Initialize with content length: \(content.count) chars")
+        let preview = String(content.prefix(200))
+        print("[MilkdownEditor] Content preview: \(preview)...")
         #endif
 
         // Pass JSON directly - JSON is valid JavaScript object literal syntax
@@ -381,9 +381,7 @@ extension MilkdownEditor.Coordinator {
     func handleCitationSearch(_ query: String) async {
         guard let webView else { return }
 
-        #if DEBUG
         print("[MilkdownEditor] Citation search: '\(query)'")
-        #endif
 
         // Split query into terms (BBT search only supports single-term reliably)
         let terms = query.trimmingCharacters(in: .whitespaces)
@@ -410,9 +408,7 @@ extension MilkdownEditor.Coordinator {
                 }
             }
 
-            #if DEBUG
             print("[MilkdownEditor] Search returned \(items.count) results (filter terms: \(filterTerms))")
-            #endif
 
             // Encode results as JSON
             let encoder = JSONEncoder()
@@ -425,27 +421,19 @@ extension MilkdownEditor.Coordinator {
 
             sendCitationSearchCallback(webView: webView, json: jsonString)
         } catch ZoteroError.notRunning {
-            #if DEBUG
             print("[MilkdownEditor] Citation search: Zotero not running")
-            #endif
             showZoteroAlertIfNeeded()
             sendCitationSearchCallback(webView: webView, json: "[]")
         } catch ZoteroError.networkError(_) {
-            #if DEBUG
             print("[MilkdownEditor] Citation search: network error")
-            #endif
             showZoteroAlertIfNeeded()
             sendCitationSearchCallback(webView: webView, json: "[]")
         } catch ZoteroError.noResponse {
-            #if DEBUG
             print("[MilkdownEditor] Citation search: no response")
-            #endif
             showZoteroAlertIfNeeded()
             sendCitationSearchCallback(webView: webView, json: "[]")
         } catch {
-            #if DEBUG
             print("[MilkdownEditor] Citation search error: \(error.localizedDescription)")
-            #endif
             sendCitationSearchCallback(webView: webView, json: "[]")
         }
     }
@@ -569,59 +557,45 @@ extension MilkdownEditor.Coordinator {
     @MainActor
     func handleResolveCitekeys(_ citekeys: [String]) async {
         guard let webView, isEditorReady else {
-            #if DEBUG
             print("[MilkdownEditor] handleResolveCitekeys: webView or editor not ready")
-            #endif
             return
         }
 
         guard !citekeys.isEmpty else { return }
 
-        #if DEBUG
         print("[MilkdownEditor] Resolving \(citekeys.count) citekeys: \(citekeys)")
-        #endif
 
         do {
             // Fetch CSL items from Zotero via BBT
             let items = try await ZoteroService.shared.fetchItemsForCitekeys(citekeys)
 
             guard !items.isEmpty else {
-                #if DEBUG
                 print("[MilkdownEditor] No items found for citekeys")
-                #endif
                 return
             }
 
-            #if DEBUG
             print("[MilkdownEditor] Resolved \(items.count) items")
-            #endif
 
             // Encode as JSON
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.sortedKeys]
             let data = try encoder.encode(items)
             guard let json = String(data: data, encoding: .utf8) else {
-                #if DEBUG
                 print("[MilkdownEditor] Failed to encode items as JSON")
-                #endif
                 return
             }
 
             // Push items to editor
             addCitationItems(json)
         } catch ZoteroError.notRunning {
-            #if DEBUG
             print("[MilkdownEditor] Zotero not running - cannot resolve citekeys")
-            #endif
             // Confirm with a real ping before alerting (isConnected defaults to false at launch)
             let actuallyDown = !(await ZoteroService.shared.ping())
             if actuallyDown {
                 showZoteroAlertIfNeeded()
             }
         } catch {
-            #if DEBUG
             print("[MilkdownEditor] Failed to resolve citekeys: \(error.localizedDescription)")
-            #endif
             showZoteroAlertIfNeeded()
         }
     }
@@ -653,46 +627,34 @@ extension MilkdownEditor.Coordinator {
     @MainActor
     func refreshAllCitations() async {
         guard isEditorReady, let webView else {
-            #if DEBUG
             print("[MilkdownEditor] refreshAllCitations: editor not ready")
-            #endif
             return
         }
 
-        #if DEBUG
         print("[MilkdownEditor] Refreshing all citations...")
-        #endif
 
         // Get all citekeys from the document
         webView.evaluateJavaScript("JSON.stringify(window.FinalFinal.getAllCitekeys())") { [weak self] result, error in
             guard let self else { return }
 
             if let error {
-                #if DEBUG
                 print("[MilkdownEditor] Failed to get citekeys: \(error.localizedDescription)")
-                #endif
                 return
             }
 
             guard let jsonString = result as? String,
                   let data = jsonString.data(using: .utf8),
                   let citekeys = try? JSONDecoder().decode([String].self, from: data) else {
-                #if DEBUG
                 print("[MilkdownEditor] Failed to decode citekeys")
-                #endif
                 return
             }
 
             guard !citekeys.isEmpty else {
-                #if DEBUG
                 print("[MilkdownEditor] No citations in document")
-                #endif
                 return
             }
 
-            #if DEBUG
             print("[MilkdownEditor] Found \(citekeys.count) citekeys to refresh: \(citekeys)")
-            #endif
 
             // Fetch all citekeys from Zotero
             Task { @MainActor in
@@ -779,9 +741,7 @@ extension MilkdownEditor.Coordinator {
     func handlePasteImage(_ body: [String: Any]) {
         guard let base64Data = body["data"] as? String,
               let data = Data(base64Encoded: base64Data) else {
-            #if DEBUG
             print("[MilkdownEditor] Invalid paste image data")
-            #endif
             return
         }
 
@@ -789,9 +749,7 @@ extension MilkdownEditor.Coordinator {
         let suggestedName = body["name"] as? String
 
         guard let mediaDir = MediaSchemeHandler.shared.mediaDirectoryURL else {
-            #if DEBUG
             print("[MilkdownEditor] No media directory — cannot paste image")
-            #endif
             return
         }
 
@@ -803,9 +761,7 @@ extension MilkdownEditor.Coordinator {
             // Create image block in database
             insertImageBlock(src: relativePath, alt: suggestedName ?? "")
         } catch {
-            #if DEBUG
             print("[MilkdownEditor] Image paste failed: \(error.localizedDescription)")
-            #endif
         }
     }
 
@@ -821,9 +777,7 @@ extension MilkdownEditor.Coordinator {
         guard panel.runModal() == .OK, let url = panel.url else { return }
 
         guard let mediaDir = MediaSchemeHandler.shared.mediaDirectoryURL else {
-            #if DEBUG
             print("[MilkdownEditor] No media directory — cannot import image")
-            #endif
             return
         }
 
@@ -832,9 +786,7 @@ extension MilkdownEditor.Coordinator {
             let alt = (url.lastPathComponent as NSString).deletingPathExtension
             insertImageBlock(src: relativePath, alt: alt)
         } catch {
-            #if DEBUG
             print("[MilkdownEditor] Image import failed: \(error.localizedDescription)")
-            #endif
             let alert = NSAlert()
             alert.messageText = "Image Import Failed"
             alert.informativeText = error.localizedDescription
@@ -847,9 +799,7 @@ extension MilkdownEditor.Coordinator {
     @MainActor
     func handleUpdateImageMeta(_ body: [String: Any]) {
         guard let blockId = body["blockId"] as? String else {
-            #if DEBUG
             print("[MilkdownEditor] updateImageMeta missing blockId")
-            #endif
             return
         }
 
@@ -864,9 +814,7 @@ extension MilkdownEditor.Coordinator {
                 imageWidth: body["width"] as? Int
             )
         } catch {
-            #if DEBUG
             print("[MilkdownEditor] Failed to update image meta: \(error)")
-            #endif
         }
     }
 
@@ -879,11 +827,9 @@ extension MilkdownEditor.Coordinator {
         webView?.evaluateJavaScript(
             "window.FinalFinal.insertImage && window.FinalFinal.insertImage({src: `\(src)`, alt: `\(escapedAlt)`, caption: '', width: null, blockId: ''})"
         ) { _, error in
-            #if DEBUG
             if let error {
                 print("[MilkdownEditor] insertImage JS error: \(error)")
             }
-            #endif
         }
     }
 }

@@ -32,9 +32,7 @@ struct FileCommands: Commands {
 
             // Close Project (Cmd-W) - closes project and shows picker
             Button("Close Project") {
-                #if DEBUG
                 print("[FileCommands] Posting .closeProject notification")
-                #endif
                 NotificationCenter.default.post(name: .closeProject, object: nil)
             }
             .keyboardShortcut("w", modifiers: .command)
@@ -148,9 +146,7 @@ struct RecentProjectsMenu: View {
                 try DocumentManager.shared.openRecentProject(entry)
                 NotificationCenter.default.post(name: .projectDidOpen, object: nil)
             } catch {
-                #if DEBUG
                 print("[FileCommands] Failed to open recent project: \(error)")
-                #endif
                 showErrorAlert(error)
             }
         }
@@ -214,9 +210,7 @@ struct FileOperations {
                     #endif
                     NotificationCenter.default.post(name: .projectDidCreate, object: nil)
                 } catch {
-                    #if DEBUG
                     print("[FileOperations] Failed to create project: \(error)")
-                    #endif
                     showErrorAlert("Could Not Create Project", error: error)
                 }
             }
@@ -245,25 +239,20 @@ struct FileOperations {
                     #endif
                     NotificationCenter.default.post(name: .projectDidOpen, object: nil)
                 } catch let error as IntegrityError {
+                    // Post notification for ContentView to show integrity alert
                     if let report = error.integrityReport {
-                        #if DEBUG
                         print("[FileOperations] Integrity error, posting notification for: \(url.path)")
-                        #endif
                         NotificationCenter.default.post(
                             name: .projectIntegrityError,
                             object: nil,
                             userInfo: ["report": report, "url": url]
                         )
                     } else {
-                        #if DEBUG
                         print("[FileOperations] IntegrityError with nil report: \(error)")
-                        #endif
                         showErrorAlert("Could Not Open Project", error: error)
                     }
                 } catch {
-                    #if DEBUG
                     print("[FileOperations] Failed to open project: \(error)")
-                    #endif
                     showErrorAlert("Could Not Open Project", error: error)
                 }
             }
@@ -271,9 +260,7 @@ struct FileOperations {
     }
 
     static func handleCloseProject() {
-        #if DEBUG
         print("[FileOperations] handleCloseProject() called")
-        #endif
         let dm = DocumentManager.shared
 
         // Check if this is the Getting Started project with modifications
@@ -290,9 +277,7 @@ struct FileOperations {
             case .alertFirstButtonReturn:
                 // Discard - just close
                 dm.closeProject()
-                #if DEBUG
                 print("[FileOperations] Posting .projectDidClose notification (Getting Started discard)")
-                #endif
                 NotificationCenter.default.post(name: .projectDidClose, object: nil)
             case .alertSecondButtonReturn:
                 // Create New Project - show save panel
@@ -319,16 +304,12 @@ struct FileOperations {
                 // Save then close
                 handleSaveProject()
                 dm.closeProject()
-                #if DEBUG
                 print("[FileOperations] Posting .projectDidClose notification (saved)")
-                #endif
                 NotificationCenter.default.post(name: .projectDidClose, object: nil)
             case .alertSecondButtonReturn:
                 // Close without saving
                 dm.closeProject()
-                #if DEBUG
                 print("[FileOperations] Posting .projectDidClose notification (no save)")
-                #endif
                 NotificationCenter.default.post(name: .projectDidClose, object: nil)
             default:
                 // Cancel - do nothing
@@ -336,9 +317,7 @@ struct FileOperations {
             }
         } else {
             dm.closeProject()
-            #if DEBUG
             print("[FileOperations] Posting .projectDidClose notification (no changes)")
-            #endif
             NotificationCenter.default.post(name: .projectDidClose, object: nil)
         }
     }
@@ -380,9 +359,7 @@ struct FileOperations {
         // Note: Content is auto-saved by SectionSyncService
         // This explicit save is for any pending changes
         DocumentManager.shared.markClean()
-        #if DEBUG
         print("[FileOperations] Project saved")
-        #endif
     }
 
     static func handleSaveProjectAs() {
@@ -390,15 +367,11 @@ struct FileOperations {
 
         // Guard: must have an open project that isn't Getting Started
         guard dm.hasOpenProject, let sourceURL = dm.projectURL else {
-            #if DEBUG
             print("[FileOperations] Save As: no project open")
-            #endif
             return
         }
         if dm.isGettingStartedProject {
-            #if DEBUG
             print("[FileOperations] Save As: cannot Save As from Getting Started")
-            #endif
             return
         }
 
@@ -427,13 +400,12 @@ struct FileOperations {
                     // package including -wal and -shm files, so SQLite replays
                     // any remaining WAL data when the copy is opened.
                     do {
-                        try dm.projectDatabase?.dbWriter.write { db in
-                            try db.execute(sql: "PRAGMA wal_checkpoint(PASSIVE)")
+                        try dm.projectDatabase?.dbWriter.writeWithoutTransaction { db in
+                            try db.checkpoint(.passive)
                         }
                     } catch {
-                        #if DEBUG
+                        // Non-fatal: copyItem includes WAL files, SQLite recovers on open
                         print("[FileOperations] Save As: WAL checkpoint warning: \(error)")
-                        #endif
                     }
 
                     let fm = FileManager.default
@@ -463,9 +435,7 @@ struct FileOperations {
                     print("[FileOperations] Save As completed: \(destURL.path)")
                     #endif
                 } catch {
-                    #if DEBUG
                     print("[FileOperations] Save As failed: \(error)")
-                    #endif
                     showErrorAlert("Could Not Save Project", error: error)
                 }
             }
@@ -516,17 +486,13 @@ struct FileOperations {
                                     userInfo: ["content": content]
                                 )
                             } catch {
-                                #if DEBUG
                                 print("[FileOperations] Failed to import: \(error)")
-                                #endif
                                 showErrorAlert("Could Not Import File", error: error)
                             }
                         }
                     }
                 } catch {
-                    #if DEBUG
                     print("[FileOperations] Failed to read file: \(error)")
-                    #endif
                     showErrorAlert("Could Not Read File", error: error)
                 }
             }

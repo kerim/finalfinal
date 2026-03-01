@@ -41,9 +41,7 @@ final class MediaSchemeHandler: NSObject, WKURLSchemeHandler, @unchecked Sendabl
         }
 
         guard let mediaDir = mediaDirectoryURL else {
-            #if DEBUG
             print("[MediaSchemeHandler] No media directory set (no project open)")
-            #endif
             urlSchemeTask.didFailWithError(SchemeError.noProjectOpen)
             return
         }
@@ -58,9 +56,7 @@ final class MediaSchemeHandler: NSObject, WKURLSchemeHandler, @unchecked Sendabl
             components.append(contentsOf: pathParts)
             filename = components.joined(separator: "/")
         } else {
-            #if DEBUG
             print("[MediaSchemeHandler] No filename in URL: \(url)")
-            #endif
             urlSchemeTask.didFailWithError(SchemeError.fileNotFound)
             return
         }
@@ -71,25 +67,19 @@ final class MediaSchemeHandler: NSObject, WKURLSchemeHandler, @unchecked Sendabl
         let resolvedPath = fileURL.standardizedFileURL.path
         let mediaDirPath = mediaDir.standardizedFileURL.path
         guard resolvedPath.hasPrefix(mediaDirPath) else {
-            #if DEBUG
             print("[MediaSchemeHandler] Path traversal attempt blocked: \(filename)")
-            #endif
             urlSchemeTask.didFailWithError(SchemeError.fileNotFound)
             return
         }
 
         guard FileManager.default.fileExists(atPath: fileURL.path) else {
-            #if DEBUG
             print("[MediaSchemeHandler] File not found: \(fileURL.path)")
-            #endif
             urlSchemeTask.didFailWithError(SchemeError.fileNotFound)
             return
         }
 
         guard let data = try? Data(contentsOf: fileURL) else {
-            #if DEBUG
             print("[MediaSchemeHandler] Failed to read: \(fileURL.path)")
-            #endif
             urlSchemeTask.didFailWithError(SchemeError.readError)
             return
         }

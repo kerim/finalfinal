@@ -289,9 +289,7 @@ struct ExportPreferencesPane: View {
         pasteboard.setString(PandocLocator.homebrewCommand, forType: .string)
 
         // Show feedback (could use a toast, but for now just print)
-        #if DEBUG
         print("[ExportPreferencesPane] Copied to clipboard: \(PandocLocator.homebrewCommand)")
-        #endif
     }
 }
 

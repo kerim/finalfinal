@@ -17,14 +17,20 @@ let currentMatchIndex = 0;
  * Searches directly within ProseMirror's document structure
  */
 export function findAllMatches(query: string, options: FindOptions): SearchMatch[] {
+  console.log('[Search] findAllMatches called with query:', JSON.stringify(query), 'options:', options);
+
   const editorInstance = getEditorInstance();
   if (!editorInstance || !query) {
+    console.log('[Search] Early return: editorInstance=', !!editorInstance, 'query=', !!query);
     return [];
   }
 
   const view = editorInstance.ctx.get(editorViewCtx);
   const doc = view.state.doc;
   const matches: SearchMatch[] = [];
+
+  console.log('[Search] Document size:', doc.content.size);
+  console.log('[Search] Document structure:', doc.toString().substring(0, 200));
 
   // Build regex from query
   let pattern: string;
@@ -45,13 +51,20 @@ export function findAllMatches(query: string, options: FindOptions): SearchMatch
     flags += 'i';
   }
 
+  console.log('[Search] Regex pattern:', pattern, 'flags:', flags);
+
   try {
     const regex = new RegExp(pattern, flags);
 
     // Walk through all text nodes in the document
+    let nodeCount = 0;
+    let textNodeCount = 0;
     doc.descendants((node, pos) => {
+      nodeCount++;
       if (node.isText && node.text) {
+        textNodeCount++;
         const text = node.text;
+        console.log(`[Search] Text node #${textNodeCount} at pos`, pos, ':', JSON.stringify(text.substring(0, 80)));
 
         let match: RegExpExecArray | null;
 
@@ -62,16 +75,32 @@ export function findAllMatches(query: string, options: FindOptions): SearchMatch
           const from = pos + match.index;
           const to = from + match[0].length;
 
+          console.log(
+            '[Search] Match found:',
+            JSON.stringify(match[0]),
+            'at from:',
+            from,
+            'to:',
+            to,
+            'docSize:',
+            doc.content.size
+          );
+
           // Validate positions are within document bounds
           if (from >= 0 && to <= doc.content.size) {
             matches.push({ from, to });
+            console.log('[Search] Match accepted');
+          } else {
+            console.log('[Search] Match REJECTED - out of bounds');
           }
         }
       }
       return true; // Continue traversal
     });
+
+    console.log('[Search] Visited', nodeCount, 'nodes,', textNodeCount, 'text nodes, found', matches.length, 'matches');
   } catch (e) {
-    console.error('[Search] Regex error:', e);
+    console.log('[Search] Regex error:', e);
     // Invalid regex, return empty
   }
 

@@ -133,9 +133,7 @@ extension VersionHistoryWindow {
         do {
             selectedSnapshotSections = try database.fetchSnapshotSections(snapshotId: snapshotId)
         } catch {
-            #if DEBUG
             print("[VersionHistoryWindow] Error loading snapshot sections: \(error)")
-            #endif
             selectedSnapshotSections = []
         }
     }

@@ -43,9 +43,8 @@ extension View {
                 if editorState.editorMode == .wysiwyg {
                     // Switching TO source mode - inject anchors
                     editorState.contentState = .editorTransition
-                    #if DEBUG
                     print("[SWITCH→CM] Starting. content length=\(editorState.content.count)")
-                    #endif
+                    print("[SWITCH→CM] Content preview: \(String(editorState.content.prefix(300)))")
 
                     // When zoomed, only inject anchors for zoomed sections
                     let sectionsToInject: [SectionViewModel]
@@ -60,9 +59,7 @@ extension View {
                     // approach) may not be in the blocks table yet, causing wrong offsets
                     // and anchor injection corruption.
                     editorState.flushContentToDatabase()
-                    #if DEBUG
                     print("[SWITCH→CM] After flush")
-                    #endif
 
                     // Compute offsets from blocks (same data that produced editorState.content)
                     var adjustedSections: [SectionViewModel] = []
@@ -78,9 +75,10 @@ extension View {
                             } else {
                                 fetchedBlocks = try db.fetchBlocks(projectId: pid)
                             }
-                            #if DEBUG
-                            print("[SWITCH→CM] Fetched \(fetchedBlocks.count) blocks")
-                            #endif
+                            print("[SWITCH→CM] Fetched \(fetchedBlocks.count) blocks:")
+                            for (i, block) in fetchedBlocks.enumerated() {
+                                print("[SWITCH→CM]   [\(i)] type=\(block.blockType) sort=\(block.sortOrder) frag_len=\(block.markdownFragment.count) preview=\"\(String(block.markdownFragment.prefix(80)))\"")
+                            }
                             let sorted = fetchedBlocks.sorted { a, b in
                                 let aKey = (a.sortOrder, a.blockType == .heading ? 0 : 1)
                                 let bKey = (b.sortOrder, b.blockType == .heading ? 0 : 1)
@@ -98,9 +96,10 @@ extension View {
                                     adjustedSections.append(section.withUpdates(startOffset: off))
                                 }
                             }
-                            #if DEBUG
                             print("[SWITCH→CM] Sections with offsets: \(adjustedSections.count)")
-                            #endif
+                            for s in adjustedSections {
+                                print("[SWITCH→CM]   id=\(s.id.prefix(8)) offset=\(s.startOffset) title=\"\(s.title)\"")
+                            }
                         } catch {
                             print("[SWITCH→CM] ERROR fetching blocks: \(error)")
                         }
@@ -110,9 +109,8 @@ extension View {
                         markdown: editorState.content,
                         sections: adjustedSections
                     )
-                    #if DEBUG
                     print("[SWITCH→CM] After anchors: length=\(withAnchors.count)")
-                    #endif
+                    print("[SWITCH→CM] Anchored preview: \(String(withAnchors.prefix(300)))")
                     // Also inject bibliography marker for source mode
                     let withBibMarker = sectionSyncService.injectBibliographyMarker(
                         markdown: withAnchors,
@@ -124,18 +122,15 @@ extension View {
                 } else {
                     // Switching FROM source mode TO WYSIWYG - set state BEFORE flush
                     editorState.contentState = .editorTransition
-                    #if DEBUG
                     print("[SWITCH→MW] Starting. sourceContent length=\(editorState.sourceContent.count)")
-                    #endif
                     editorState.flushContentToDatabase()
 
                     // Extract anchors and strip bibliography marker
                     let (cleaned, anchors) = sectionSyncService.extractSectionAnchors(
                         markdown: editorState.sourceContent
                     )
-                    #if DEBUG
                     print("[SWITCH→MW] After extract: cleaned length=\(cleaned.count), anchors=\(anchors.count)")
-                    #endif
+                    print("[SWITCH→MW] Cleaned preview: \(String(cleaned.prefix(300)))")
                     editorState.sourceAnchors = anchors
                     // Also strip bibliography marker since Milkdown shouldn't see it
                     editorState.content = SectionSyncService.stripBibliographyMarker(from: cleaned)

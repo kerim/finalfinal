@@ -542,9 +542,7 @@ extension ProjectDatabase {
     ) throws {
         try write { db in
             guard var block = try Block.fetchOne(db, key: id) else {
-                #if DEBUG
                 print("[Database+Blocks] Block not found for image meta update: \(id)")
-                #endif
                 return
             }
 

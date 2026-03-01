@@ -230,9 +230,7 @@ struct ProjectIntegrityChecker {
                 issues.append(contentsOf: sectionIssues)
             } catch {
                 // Section check failure is non-critical
-                #if DEBUG
                 print("[IntegrityChecker] Warning: Failed to check sections: \(error.localizedDescription)")
-                #endif
             }
         }
 

@@ -363,9 +363,7 @@ actor ExportService {
             }
         } onCancel: {
             // Task was cancelled - process will be terminated when it goes out of scope
-            #if DEBUG
             print("[ExportService] Export cancelled")
-            #endif
         }
     }
 }
@@ -528,9 +526,7 @@ extension ExportService {
             }
             return nil
         } catch {
-            #if DEBUG
             print("[ExportService] Failed to fetch bibliography JSON: \(error)")
-            #endif
             return nil
         }
     }
@@ -607,9 +603,7 @@ extension ExportService {
         var args = cjkFontArguments(for: scripts, content: content)
         args.append(contentsOf: mainFontArguments(for: scripts))
         if !args.isEmpty {
-            #if DEBUG
             print("[ExportService] Font arguments: \(args)")
-            #endif
         }
         return args
     }

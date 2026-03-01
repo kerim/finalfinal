@@ -76,9 +76,7 @@ class EditorViewState {
                     try? await Task.sleep(for: .seconds(5))
                     guard !Task.isCancelled, let self else { return }
                     if self.contentState != .idle {
-                        #if DEBUG
                         print("[EditorViewState] WATCHDOG: contentState stuck at \(self.contentState), resetting to .idle")
-                        #endif
                         if self.contentState == .zoomTransition {
                             self.isZoomingContent = false
                             self.zoomedSectionIds = nil
@@ -255,9 +253,7 @@ class EditorViewState {
                     self.onSectionsUpdated?()
                 }
             } catch {
-                #if DEBUG
                 print("[EditorViewState] Block observation error: \(error)")
-                #endif
             }
         }
     }
@@ -284,9 +280,7 @@ class EditorViewState {
             self.recalculateParentRelationships()
             self.onSectionsUpdated?()
         } catch {
-            #if DEBUG
             print("[EditorViewState] Section refresh error: \(error)")
-            #endif
         }
     }
 
@@ -312,9 +306,7 @@ class EditorViewState {
                     self.annotations = viewModels
                 }
             } catch {
-                #if DEBUG
                 print("[EditorViewState] Annotation observation error: \(error)")
-                #endif
             }
         }
     }

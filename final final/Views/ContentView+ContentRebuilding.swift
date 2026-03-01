@@ -28,9 +28,7 @@ extension ContentView {
             let ids = sorted.map { $0.id }
             return (markdown, ids)
         } catch {
-            #if DEBUG
             print("[ContentView] Error fetching blocks with IDs: \(error)")
-            #endif
             return nil
         }
     }
@@ -64,9 +62,7 @@ extension ContentView {
             // Update sourceContent for CodeMirror (when in source mode)
             updateSourceContentIfNeeded()
         } catch {
-            #if DEBUG
             print("[ContentView] Error rebuilding content from blocks: \(error)")
-            #endif
         }
     }
 
@@ -265,9 +261,7 @@ extension ContentView {
                     charOffset: result.newCharOffset
                 )
             } catch {
-                #if DEBUG
                 print("[ContentView] Error updating annotation: \(error.localizedDescription)")
-                #endif
             }
         }
 
