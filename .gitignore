@@ -28,6 +28,7 @@ temp/
 .claude/worktrees/
 .claude/settings.local.json
 .claude/debug/
+docs/plans/
 
 # IDE
 .idea/
