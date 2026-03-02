@@ -21,6 +21,9 @@ getBlockChanges()         // Get {updates, inserts, deletes} changeset
 syncBlockIds(ids)         // Align editor block order with DB IDs
 confirmBlockIds(mapping)  // Confirm temp->permanent ID mapping
 
+// --- Surgical updates ---
+updateHeadingLevels(changes)  // Surgical heading level update (no doc replacement)
+
 // --- Batched fallback poll (3s) ---
 getPollData()             // Returns JSON: {stats, sectionTitle}
 

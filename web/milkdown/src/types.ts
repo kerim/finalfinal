@@ -175,6 +175,8 @@ declare global {
       setZoomFootnoteState: (zoomed: boolean, maxLabel: number) => void;
       // Image API
       insertImage: (opts: { src: string; alt: string; caption: string; width: number | null; blockId: string }) => void;
+      // Surgical heading update API
+      updateHeadingLevels: (changes: Array<{ blockId: string; newLevel: number }>) => void;
       // Find/replace API
       find: (query: string, options?: FindOptions) => FindResult;
       findNext: () => FindResult | null;

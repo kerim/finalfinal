@@ -344,7 +344,9 @@ extension MilkdownEditor.Coordinator {
 
     func shouldPushContent(_ newContent: String) -> Bool {
         let timeSinceLastReceive = Date().timeIntervalSince(lastReceivedFromEditor)
-        if timeSinceLastReceive < 0.6 && newContent == lastPushedContent { return false }
+        if timeSinceLastReceive < 0.6 && newContent == lastPushedContent {
+            return false
+        }
         return newContent != lastPushedContent
     }
 

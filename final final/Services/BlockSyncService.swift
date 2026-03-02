@@ -135,6 +135,11 @@ class BlockSyncService {
     ) async {
         guard let webView else { return }
 
+        #if DEBUG
+        let firstH = markdown.components(separatedBy: "\n").first(where: { $0.hasPrefix("#") })?.prefix(60) ?? "(none)"
+        print("[SYNC-DIAG:BlockSync] setContentWithBlockIds: len=\(markdown.count) blocks=\(blockIds.count) firstH=\"\(firstH)\" scrollToStart=\(scrollToStart)")
+        #endif
+
         // Escape markdown for JS template literal
         let escapedMarkdown = markdown
             .replacingOccurrences(of: "\\", with: "\\\\")
@@ -192,6 +197,36 @@ class BlockSyncService {
         #endif
     }
 
+    /// Surgically update heading levels in the editor without replacing the document.
+    /// Returns the updated content string (via getContent()) or nil on failure.
+    func updateHeadingLevels(_ changes: [(blockId: String, newLevel: Int)]) async -> String? {
+        guard let webView else { return nil }
+
+        let changesArray = changes.map { ["blockId": $0.blockId, "newLevel": $0.newLevel] as [String: Any] }
+        guard let jsonData = try? JSONSerialization.data(withJSONObject: changesArray),
+              let jsonString = String(data: jsonData, encoding: .utf8) else { return nil }
+
+        // Single JS call: update headings then get canonical content
+        let script = """
+            (() => {
+                window.FinalFinal.updateHeadingLevels(\(jsonString));
+                return window.FinalFinal.getContent();
+            })()
+        """
+
+        let result = try? await webView.evaluateJavaScript(script)
+        guard let markdown = result as? String else { return nil }
+
+        // Sync lastPushedContent to prevent updateNSView from firing plain setContent()
+        NotificationCenter.default.post(
+            name: .blockSyncDidPushContent,
+            object: nil,
+            userInfo: ["markdown": markdown]
+        )
+
+        return markdown
+    }
+
     // MARK: - Polling
 
     /// Poll the editor for block changes and apply them to the database
@@ -201,6 +236,11 @@ class BlockSyncService {
         defer { isPolling = false }
 
         guard editorState?.contentState == .idle, isConfigured, let webView, let database = projectDatabase, let projectId else {
+            #if DEBUG
+            if editorState?.contentState != .idle {
+                print("[SYNC-DIAG:BlockPoll] SKIPPED: contentState=\(String(describing: editorState?.contentState))")
+            }
+            #endif
             return
         }
 
@@ -210,24 +250,18 @@ class BlockSyncService {
         let hasChanges = await checkForChanges(webView: webView)
         guard hasChanges else { return }
 
+        #if DEBUG
+        print("[SYNC-DIAG:BlockPoll] changes detected, fetching...")
+        #endif
+
         // Discard if a state transition happened during the async JS call
-        guard editorState?.contentGeneration == generationAtPoll else {
-            #if DEBUG
-            print("[BlockSyncService] Discarded stale poll (generation changed)")
-            #endif
-            return
-        }
+        guard editorState?.contentGeneration == generationAtPoll else { return }
 
         // Get the changes
         guard let changes = await getBlockChanges(webView: webView) else { return }
 
         // Discard if a state transition happened during getBlockChanges
-        guard editorState?.contentGeneration == generationAtPoll else {
-            #if DEBUG
-            print("[BlockSyncService] Discarded stale block changes (generation changed)")
-            #endif
-            return
-        }
+        guard editorState?.contentGeneration == generationAtPoll else { return }
 
         // Skip if no actual changes
         guard !changes.updates.isEmpty || !changes.inserts.isEmpty || !changes.deletes.isEmpty else {
@@ -235,8 +269,7 @@ class BlockSyncService {
         }
 
         #if DEBUG
-        print("[BlockSyncService] Processing changes: \(changes.updates.count) updates, " +
-            "\(changes.inserts.count) inserts, \(changes.deletes.count) deletes")
+        print("[SYNC-DIAG:BlockPoll] Processing: u=\(changes.updates.count) i=\(changes.inserts.count) d=\(changes.deletes.count)")
         #endif
 
         // Safety logging: warn on mass deletes that may indicate a stale snapshot bug
@@ -245,7 +278,7 @@ class BlockSyncService {
                 let blockCount = try database.fetchBlockCount(projectId: projectId)
                 let deleteCount = changes.deletes.count
                 if blockCount > 2 && deleteCount > blockCount / 2 {
-                    print("[BlockSyncService] WARNING: Mass delete detected " +
+                    print("[SYNC-DIAG:BlockPoll] WARNING: Mass delete detected " +
                         "(\(deleteCount)/\(blockCount) blocks). May indicate stale snapshot.")
                 }
             } catch { }
@@ -255,14 +288,21 @@ class BlockSyncService {
         do {
             try await applyChanges(changes, database: database, projectId: projectId)
 
+            #if DEBUG
+            print("[SYNC-DIAG:BlockPoll] Applied changes to DB successfully")
+            #endif
+
             // Send ID confirmations back to editor if there were inserts
             if !pendingConfirmations.isEmpty {
+                #if DEBUG
+                print("[SYNC-DIAG:BlockPoll] Confirming \(pendingConfirmations.count) IDs")
+                #endif
                 await confirmBlockIds(webView: webView, mapping: pendingConfirmations)
                 pendingConfirmations.removeAll()
             }
         } catch {
             #if DEBUG
-            print("[BlockSyncService] Error applying changes: \(error)")
+            print("[SYNC-DIAG:BlockPoll] Error applying changes: \(error)")
             #endif
         }
     }

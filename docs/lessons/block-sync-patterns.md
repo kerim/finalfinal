@@ -180,3 +180,45 @@ if trimmedBlock.range(of: "^<!--\\s*caption:", options: .regularExpression) != n
 Also add a `detectBlockType` case for combined caption+image blocks (classify as `.image`).
 
 **General principle:** When an upstream serializer emits logically-connected content as separate block-level nodes with blank lines between them, the block parser must recognize the pattern and keep the pieces together. The footnote continuation pattern (peek ahead for continuation lines) is reusable for any multi-line construct that remark-stringify splits apart.
+
+---
+
+## Surgical Updates Beat Full-Document Replacement
+
+**Problem:** Hierarchy enforcement (adjusting child heading levels when a parent heading changes level) caused content to disappear, reshuffle, and duplicate. The enforcement read ALL blocks from DB, assembled markdown via `BlockParser.assembleMarkdown()`, and replaced the entire editor document via `setContentWithBlockIds()`.
+
+**Root Cause:** DB markdown assembly (`markdownFragments.joined(separator: "\n\n")`) differs from ProseMirror serialization by small amounts (e.g., 58 chars in testing). When the assembled markdown replaces the editor document, the diff causes block-sync to detect spurious changes, leading to cascading data corruption.
+
+**Solution:** Instead of replacing the document, compute only what changed and apply it surgically:
+
+1. Save original heading levels before enforcement
+2. Run enforcement (modifies sections array)
+3. Diff: which headings actually changed level?
+4. **WYSIWYG mode**: Call `updateHeadingLevels([{blockId, newLevel}])` which uses ProseMirror's `setNodeMarkup()` to change only the `level` attribute — no document replacement, no content shift
+5. **Source mode fallback**: String replacement of heading prefixes (`### ` → `## `) with forward-cursor matching to handle duplicate titles
+
+**Key implementation details:**
+- `updateHeadingLevels()` pauses sync and content push timer (`setSyncPaused`, `setIsSettingContent`) during the operation
+- After surgery, `setCurrentContent(getMarkdown())` updates JS-side content cache
+- `resetAndSnapshot()` rebuilds the baseline so the next poll sees no false changes
+- `.blockSyncDidPushContent` notification syncs Swift-side `lastPushedContent` to prevent redundant `updateNSView` pushes
+
+**General principle:** When only a few attributes need to change, prefer surgical ProseMirror operations (`setNodeMarkup`, `setNodeType`) over full document replacement. The DB-to-editor round-trip introduces serialization discrepancies that accumulate into data corruption. Compute the minimal diff and apply it directly.
+
+---
+
+## Markdown Re-Parsing Loses Non-Markdown Attributes
+
+**Problem:** Image widths reverted to full width when switching editors or whenever `updateNSView` triggered a `setContent()` push.
+
+**Root Cause:** `setContent(markdown)` re-parses the markdown string into ProseMirror nodes. Markdown `![alt](src)` does NOT encode `width` or `blockId` — these are ProseMirror node attributes stored only in the editor's document tree. Re-parsing creates fresh figure nodes with `width: null` and `blockId: ''` (schema defaults).
+
+**Solution:** In `setContent()`, capture figure attributes before document replacement and restore them after:
+
+1. Before `tr.replace()`: Walk existing doc, save `{src, width, blockId}` for each figure node
+2. After `view.dispatch(tr)`: Walk new doc, restore attributes by positional matching with `src` verification
+3. Move `resetAndSnapshot()` to AFTER restoration so the sync baseline includes restored attributes
+
+This follows the same positional-matching-with-src-verification pattern used by `applyBlocks()` and `setContentWithBlockIds()` for their image metadata injection.
+
+**General principle:** Any node attribute that is not serialized to/from markdown will be lost on re-parse. When programmatically replacing document content, explicitly preserve and restore non-markdown attributes. Use positional matching with a content-based key (like `src`) to map old nodes to new nodes.

@@ -8,6 +8,7 @@ import { $prose } from '@milkdown/kit/utils';
 import { getAllBlockIds } from './block-id-plugin';
 import type { CitationAttrs } from './citation-plugin';
 import { serializeCitation } from './citation-plugin';
+import { syncLog } from './sync-debug';
 
 export const blockSyncPluginKey = new PluginKey<BlockSyncPluginState>('block-sync');
 
@@ -197,6 +198,15 @@ export function getBlockChanges(): BlockChanges {
     deletes: Array.from(currentState.pendingDeletes),
   };
 
+  if (changes.updates.length || changes.inserts.length || changes.deletes.length) {
+    syncLog(
+      'BlockSync:getChanges',
+      `u=${changes.updates.length} i=${changes.inserts.length} d=${changes.deletes.length}`,
+      changes.deletes.length > 0 ? `delIds=[${changes.deletes.map((d) => d.slice(0, 8)).join(',')}]` : '',
+      changes.inserts.length > 0 ? `insIds=[${changes.inserts.map((i) => i.tempId.slice(0, 13)).join(',')}]` : ''
+    );
+  }
+
   // Clear pending changes
   currentState.pendingUpdates.clear();
   currentState.pendingInserts.clear();
@@ -269,6 +279,10 @@ function detectChanges(
       state.pendingDeletes.add(id);
       // Remove from updates if pending
       state.pendingUpdates.delete(id);
+      syncLog(
+        'BlockSync:detect',
+        `DELETE id=${id.slice(0, 8)} type=${oldBlock.blockType} "${oldBlock.textContent.slice(0, 40)}"`
+      );
     } else if (
       oldBlock.textContent !== newBlock.textContent ||
       oldBlock.nodeSize !== newBlock.nodeSize ||
@@ -282,6 +296,15 @@ function detectChanges(
         markdownFragment: newBlock.markdownFragment,
         headingLevel: newBlock.headingLevel,
       });
+      const changes: string[] = [];
+      if (oldBlock.textContent !== newBlock.textContent) changes.push('text');
+      if (oldBlock.nodeSize !== newBlock.nodeSize) changes.push(`size:${oldBlock.nodeSize}→${newBlock.nodeSize}`);
+      if (oldBlock.headingLevel !== newBlock.headingLevel)
+        changes.push(`level:${oldBlock.headingLevel}→${newBlock.headingLevel}`);
+      syncLog(
+        'BlockSync:detect',
+        `UPDATE id=${id.slice(0, 8)} [${changes.join(',')}] "${newBlock.textContent.slice(0, 40)}"`
+      );
     }
   }
 
@@ -308,6 +331,10 @@ function detectChanges(
         headingLevel: newBlock.headingLevel,
         afterBlockId,
       });
+      syncLog(
+        'BlockSync:detect',
+        `INSERT tempId=${id.slice(0, 13)} type=${newBlock.blockType} L${newBlock.headingLevel ?? '-'} after=${afterBlockId?.slice(0, 8) ?? 'none'} "${newBlock.textContent.slice(0, 40)}"`
+      );
     }
   }
 }

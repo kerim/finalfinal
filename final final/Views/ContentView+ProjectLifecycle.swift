@@ -43,6 +43,9 @@ extension ContentView {
         // Inject sectionSyncService reference for zoom sourceContent updates
         editorState.sectionSyncService = sectionSyncService
 
+        // Inject blockSyncService for atomic content+blockID pushes (hierarchy enforcement)
+        editorState.blockSyncService = blockSyncService
+
         // Wire up hierarchy enforcement after sections are updated from database
         // This ensures slash commands that create new headings trigger rebalancing
         editorState.onSectionsUpdated = { [weak editorState, weak sectionSyncService, weak blockSyncService] in

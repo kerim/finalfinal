@@ -66,14 +66,6 @@ extension ContentView {
         return false
     }
 
-    /// Check and enforce hierarchy constraints only if violations exist
-    /// This prevents infinite loops from onChange -> enforceHierarchy -> onChange
-    func enforceHierarchyConstraintsIfNeeded() {
-        guard hasHierarchyViolations() else { return }
-        enforceHierarchyConstraints()
-        rebuildDocumentContent()
-    }
-
     /// Static version for use in closures - enforces hierarchy on provided sections array
     static func enforceHierarchyConstraintsStatic(
         sections: inout [SectionViewModel],
@@ -115,99 +107,138 @@ extension ContentView {
         }
     }
 
-    /// Static version for use in closures - rebuilds document content from DB blocks
-    /// Reads ALL blocks from database (which now has correct sort orders after persist)
-    /// and assembles markdown. Respects zoom state.
-    static func rebuildDocumentContentStatic(editorState: EditorViewState) {
-        #if DEBUG
-        print("[rebuildDocumentContentStatic] Called. zoomed=\(editorState.zoomedSectionIds != nil), sections=\(editorState.sections.count)")
-        #endif
-        guard let db = editorState.projectDatabase,
-              let pid = editorState.currentProjectId else { return }
-
-        do {
-            let allBlocks = try db.fetchBlocks(projectId: pid)
-
-            if let zoomedIds = editorState.zoomedSectionIds {
-                let filtered = filterBlocksForZoomStatic(allBlocks, zoomedIds: zoomedIds, zoomedBlockRange: editorState.zoomedBlockRange)
-                editorState.content = BlockParser.assembleMarkdown(from: filtered)
-            } else {
-                editorState.content = BlockParser.assembleMarkdown(from: allBlocks)
-            }
-
-            // Also update sourceContent when in source mode to prevent desync.
-            // Without this, CodeMirror still shows old text and re-sends it,
-            // creating duplicate blocks.
-            if editorState.editorMode == .source,
-               let syncService = editorState.sectionSyncService {
-                let sectionsForAnchors = editorState.sections
-                    .filter { !$0.isBibliography }
-                    .sorted { $0.sortOrder < $1.sortOrder }
-
-                // Compute offsets from blocks (same data that produced editorState.content)
-                let blocksForOffsets: [Block]
-                if let zoomedIds = editorState.zoomedSectionIds {
-                    blocksForOffsets = filterBlocksForZoomStatic(
-                        allBlocks, zoomedIds: zoomedIds,
-                        zoomedBlockRange: editorState.zoomedBlockRange)
-                } else {
-                    blocksForOffsets = allBlocks
-                }
-                let sortedBlocks = blocksForOffsets.sorted { a, b in
-                    let aKey = (a.sortOrder, a.blockType == .heading ? 0 : 1)
-                    let bKey = (b.sortOrder, b.blockType == .heading ? 0 : 1)
-                    return aKey < bKey
-                }
-                var blockOffset: [String: Int] = [:]
-                var bOffset = 0
-                for (i, block) in sortedBlocks.enumerated() {
-                    if i > 0 { bOffset += 2 }
-                    blockOffset[block.id] = bOffset
-                    bOffset += block.markdownFragment.count
-                }
-                var adjusted: [SectionViewModel] = []
-                for section in sectionsForAnchors {
-                    if let off = blockOffset[section.id] {
-                        adjusted.append(section.withUpdates(startOffset: off))
-                    }
-                }
-                let withAnchors = syncService.injectSectionAnchors(
-                    markdown: editorState.content, sections: adjusted)
-                editorState.sourceContent = syncService.injectBibliographyMarker(
-                    markdown: withAnchors, sections: editorState.sections)
-            }
-        } catch {
-            #if DEBUG
-            print("[ContentView] Error rebuilding content from blocks: \(error)")
-            #endif
-        }
-    }
-
-    /// Async hierarchy enforcement with completion-based state clearing
-    /// Uses contentState to block ValueObservation during enforcement, preventing race conditions.
-    /// Order: enforce constraints → persist to DB (all blocks) → rebuild from DB
+    /// Async hierarchy enforcement using surgical heading level updates.
+    /// Instead of reading all blocks from DB and replacing the entire editor document
+    /// (which causes content discrepancy and data loss), this computes the heading level
+    /// diff and applies it surgically via ProseMirror's setNodeMarkup.
     @MainActor
     static func enforceHierarchyAsync(
         editorState: EditorViewState,
         syncService: SectionSyncService
     ) async {
-        // Set state to block observation updates during enforcement
-        editorState.contentState = .hierarchyEnforcement
-        defer {
-            editorState.contentState = .idle
-        }
+        #if DEBUG
+        print("[SYNC-DIAG:Hierarchy] entry: \(editorState.sections.count) sections, contentState=\(editorState.contentState)")
+        #endif
 
-        // Enforce hierarchy constraints
-        enforceHierarchyConstraintsStatic(
-            sections: &editorState.sections,
-            syncService: syncService
+        editorState.contentState = .hierarchyEnforcement
+        defer { editorState.contentState = .idle }
+
+        // 1. Save original heading levels to compute diff
+        let originalLevels = Dictionary(
+            uniqueKeysWithValues: editorState.sections.map { ($0.id, $0.headerLevel) }
         )
 
-        // Persist FIRST (writes correct sort orders for all blocks including body)
+        // 2. Enforce hierarchy constraints (modifies sections array)
+        enforceHierarchyConstraintsStatic(
+            sections: &editorState.sections, syncService: syncService
+        )
+
+        // 3. Compute which headings actually changed level
+        var headingChanges: [(blockId: String, newLevel: Int)] = []
+        for section in editorState.sections {
+            if let oldLevel = originalLevels[section.id], oldLevel != section.headerLevel {
+                headingChanges.append((blockId: section.id, newLevel: section.headerLevel))
+            }
+        }
+
+        // 4. Persist changes to DB (sort orders + heading levels)
         await persistEnforcedSections(editorState: editorState)
 
-        // Then rebuild from DB (now has correct data including body blocks)
-        rebuildDocumentContentStatic(editorState: editorState)
+        // 5. If no heading levels changed, nothing to push to editor
+        guard !headingChanges.isEmpty else { return }
+
+        #if DEBUG
+        print("[SYNC-DIAG:Hierarchy] \(headingChanges.count) heading changes to push")
+        #endif
+
+        // 6. Push changes to editor
+        if editorState.editorMode == .source {
+            // SOURCE MODE FALLBACK: Milkdown WebView may not be active.
+            // Apply heading changes via string replacement on editorState.content.
+            applyHeadingChangesViaStringReplacement(
+                editorState: editorState,
+                headingChanges: headingChanges,
+                originalLevels: originalLevels,
+                syncService: syncService
+            )
+        } else {
+            // WYSIWYG MODE: Surgical ProseMirror update
+            guard let bss = editorState.blockSyncService else { return }
+            if let updatedContent = await bss.updateHeadingLevels(headingChanges) {
+                editorState.content = updatedContent
+            } else {
+                // Fallback if JS call fails (e.g., temp IDs not found)
+                #if DEBUG
+                print("[SYNC-DIAG:Hierarchy] updateHeadingLevels returned nil, falling back to string replacement")
+                #endif
+                applyHeadingChangesViaStringReplacement(
+                    editorState: editorState,
+                    headingChanges: headingChanges,
+                    originalLevels: originalLevels,
+                    syncService: syncService
+                )
+            }
+        }
+    }
+
+    /// Fallback: Apply heading level changes via string replacement on editorState.content.
+    /// Used in source mode (Milkdown unavailable) or when JS surgical update fails.
+    @MainActor
+    static func applyHeadingChangesViaStringReplacement(
+        editorState: EditorViewState,
+        headingChanges: [(blockId: String, newLevel: Int)],
+        originalLevels: [String: Int],
+        syncService: SectionSyncService
+    ) {
+        var content = editorState.content
+
+        // Build lookup of changed blockId → newLevel
+        let changeMap = Dictionary(uniqueKeysWithValues: headingChanges.map { ($0.blockId, $0.newLevel) })
+
+        // Process in forward document order with searchFrom cursor to handle duplicate titles
+        let changedSections = editorState.sections
+            .filter { changeMap[$0.id] != nil }
+            .sorted { $0.sortOrder < $1.sortOrder }
+
+        var searchFrom = content.startIndex
+        for section in changedSections {
+            guard let oldLevel = originalLevels[section.id] else { continue }
+            let oldPrefix = String(repeating: "#", count: oldLevel) + " "
+            let newPrefix = String(repeating: "#", count: section.headerLevel) + " "
+
+            let oldHeading = oldPrefix + section.title
+            let newHeading = newPrefix + section.title
+            if let range = content.range(of: oldHeading, range: searchFrom..<content.endIndex) {
+                content.replaceSubrange(range, with: newHeading)
+                // Advance searchFrom past the replacement
+                searchFrom = content.index(range.lowerBound, offsetBy: newHeading.count)
+            }
+        }
+
+        editorState.content = content
+
+        // Update sourceContent if in source mode
+        if editorState.editorMode == .source,
+           let sectionSync = editorState.sectionSyncService {
+            let sectionsForAnchors = editorState.sections
+                .filter { !$0.isBibliography }
+                .sorted { $0.sortOrder < $1.sortOrder }
+            var adjusted: [SectionViewModel] = []
+            var anchorSearchFrom = content.startIndex
+            for section in sectionsForAnchors {
+                let headingPrefix = String(repeating: "#", count: section.headerLevel) + " "
+                let headingLine = headingPrefix + section.title
+                if let range = content.range(of: headingLine, range: anchorSearchFrom..<content.endIndex) {
+                    let offset = content.distance(from: content.startIndex, to: range.lowerBound)
+                    adjusted.append(section.withUpdates(startOffset: offset))
+                    anchorSearchFrom = range.upperBound
+                }
+            }
+            let withAnchors = sectionSync.injectSectionAnchors(
+                markdown: content, sections: adjusted)
+            editorState.sourceContent = sectionSync.injectBibliographyMarker(
+                markdown: withAnchors, sections: editorState.sections)
+        }
     }
 
     /// Persist enforced sections directly to database (both block and legacy section tables)

@@ -723,7 +723,12 @@ extension MilkdownEditor.Coordinator {
     func handleContentPush(_ content: String) {
         guard !self.isCleanedUp, self.isEditorReady else { return }
         guard !self.isResettingContentBinding.wrappedValue else { return }
-        guard self.contentState == .idle else { return }
+        guard self.contentState == .idle else {
+            #if DEBUG
+            print("[SYNC-DIAG:ContentPush] REJECTED: contentState=\(self.contentState)")
+            #endif
+            return
+        }
 
         // Grace period: 200ms for push-based flow (reduced from 600ms polling)
         let timeSincePush = Date().timeIntervalSince(self.lastPushTime)
@@ -735,6 +740,10 @@ extension MilkdownEditor.Coordinator {
         let receivedFirstLine = content.components(separatedBy: "\n").first ?? ""
         if pushedFirstLine.hasPrefix("#") && receivedFirstLine.hasPrefix("<br") { return }
 
+        #if DEBUG
+        let firstHeading = content.components(separatedBy: "\n").first(where: { $0.hasPrefix("#") })?.prefix(60) ?? "(none)"
+        print("[SYNC-DIAG:ContentPush] ACCEPTED: len=\(content.count) firstH=\"\(firstHeading)\"")
+        #endif
         self.lastReceivedFromEditor = Date()
         self.lastPushedContent = content
         self.contentBinding.wrappedValue = content
@@ -756,10 +765,20 @@ extension MilkdownEditor.Coordinator {
         guard !isCleanedUp, isEditorReady, let webView else { return }
 
         // Skip polling during content reset (project switch)
-        guard !isResettingContentBinding.wrappedValue else { return }
+        guard !isResettingContentBinding.wrappedValue else {
+            #if DEBUG
+            print("[SYNC-DIAG:Poll] SKIPPED: isResettingContent=true")
+            #endif
+            return
+        }
 
         // Skip polling during content transitions (zoom, hierarchy enforcement)
-        guard contentState == .idle else { return }
+        guard contentState == .idle else {
+            #if DEBUG
+            print("[SYNC-DIAG:Poll] SKIPPED: contentState=\(contentState)")
+            #endif
+            return
+        }
 
         let generationAtPoll = contentGeneration  // Capture BEFORE async call
 

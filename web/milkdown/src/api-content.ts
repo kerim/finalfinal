@@ -36,9 +36,11 @@ import {
 import { clearSearch } from './find-replace';
 import { consumePendingDropPos } from './image-plugin';
 import { isSourceModeEnabled } from './source-mode-plugin';
+import { syncLog } from './sync-debug';
 import type { Block, ImageBlockMeta } from './types';
 
 export function setContent(markdown: string, options?: { scrollToStart?: boolean }): void {
+  syncLog('API:setContent', `entry len=${markdown.length} scrollToStart=${options?.scrollToStart ?? false}`);
   // NOTE: Do NOT clear zoom mode here. setContent() is called from updateNSView
   // during zoom, and clearing zoom mode causes temp IDs to be generated for mini-Notes
   // nodes before pushBlockIds re-enables it. Zoom mode is independently managed by:
@@ -109,6 +111,27 @@ export function setContent(markdown: string, options?: { scrollToStart?: boolean
         return;
       }
 
+      // Preserve figure attributes not encoded in markdown (width, blockId)
+      // Markdown ![alt](src) does NOT encode width or blockId — re-parsing loses them.
+      // Use positional matching with src verification (consistent with applyBlocks/setContentWithBlockIds pattern)
+      const savedFigures: Array<{ src: string; width: number | null; blockId: string }> = [];
+      view.state.doc.forEach((node) => {
+        if (node.type.name === 'figure') {
+          savedFigures.push({
+            src: node.attrs.src || '',
+            width: node.attrs.width,
+            blockId: node.attrs.blockId || '',
+          });
+        }
+      });
+
+      if (savedFigures.length > 0) {
+        syncLog(
+          'API:setContent',
+          `figures before replace: ${savedFigures.map((f) => `src=${f.src.split('/').pop()} w=${f.width}`).join(', ')}`
+        );
+      }
+
       const { from } = view.state.selection;
       const docSize = view.state.doc.content.size;
       let tr = view.state.tr.replace(0, docSize, new Slice(doc.content, 0, 0));
@@ -125,6 +148,35 @@ export function setContent(markdown: string, options?: { scrollToStart?: boolean
         }
       }
       view.dispatch(tr);
+
+      // Restore figure attributes by position with src verification
+      // (Matches applyBlocks/setContentWithBlockIds pattern — BEFORE resetAndSnapshot)
+      if (savedFigures.length > 0) {
+        let figureIdx = 0;
+        let metaTr = view.state.tr;
+        let restoredCount = 0;
+        view.state.doc.forEach((node, pos) => {
+          if (node.type.name === 'figure' && figureIdx < savedFigures.length) {
+            const saved = savedFigures[figureIdx];
+            // Only restore if src matches (same image at same position)
+            if (node.attrs.src === saved.src) {
+              const updates: Record<string, any> = { ...node.attrs };
+              if (saved.width != null) updates.width = saved.width;
+              if (saved.blockId) updates.blockId = saved.blockId;
+              if (updates.width !== node.attrs.width || updates.blockId !== node.attrs.blockId) {
+                metaTr = metaTr.setNodeMarkup(pos, undefined, updates);
+                restoredCount++;
+              }
+            }
+            figureIdx++;
+          }
+        });
+        if (metaTr.steps.length > 0) view.dispatch(metaTr);
+        syncLog('API:setContent', `figures after restore: ${restoredCount}/${savedFigures.length}`);
+      }
+
+      // resetAndSnapshot AFTER width restoration — captures the width-restored state
+      // so block-sync doesn't detect spurious UPDATE events
       resetAndSnapshot(view.state.doc);
 
       // Reset scroll position for zoom transitions
@@ -174,21 +226,30 @@ export function getContent(): string {
   if (!editorInstance) return getCurrentContent();
 
   const sourceEnabled = isSourceModeEnabled();
-  let markdown = getMarkdown()(editorInstance.ctx);
+  const rawMarkdown = getMarkdown()(editorInstance.ctx);
+  let markdown = rawMarkdown;
 
   // Unescape heading syntax that ProseMirror's serializer escapes in paragraphs.
-  // This happens when users paste markdown as plain text - Milkdown creates
-  // paragraph nodes and the serializer escapes # to prevent heading interpretation.
-  // Only matches \# followed by 1-5 more # chars and whitespace at line start.
+  const beforeHeadingUnescape = markdown;
   markdown = markdown.replace(/^\\(#{1,6}\s)/gm, '$1');
+  if (markdown !== beforeHeadingUnescape) {
+    syncLog('API:getContent', 'heading unescape applied');
+  }
 
   // Unescape footnote definition brackets escaped by ProseMirror's serializer.
-  // Definitions are text paragraphs in # Notes — restore [^N]: for correct parsing.
+  const beforeFootnoteUnescape = markdown;
   markdown = markdown.replace(/^\\(\[\^\d+\]:)/gm, '$1');
+  if (markdown !== beforeFootnoteUnescape) {
+    syncLog('API:getContent', 'footnote unescape applied');
+  }
 
   // Fix double ## prefixes in source mode: "## ## Heading" → "## Heading"
   if (sourceEnabled) {
+    const beforeDoubleFix = markdown;
     markdown = markdown.replace(/^(#{1,6}) \1 /gm, '$1 ');
+    if (markdown !== beforeDoubleFix) {
+      syncLog('API:getContent', 'double-## prefix fix applied');
+    }
   }
 
   const trimmed = markdown.trim();
@@ -248,6 +309,7 @@ export function resetForProjectSwitch(): void {
 }
 
 export function applyBlocks(blocks: Block[]): void {
+  syncLog('API:applyBlocks', `entry blocks=${blocks.length} syncPaused=true`);
   const editorInstance = getEditorInstance();
   if (!editorInstance) return;
 
@@ -323,6 +385,10 @@ export function setContentWithBlockIds(
   blockIds: string[],
   options?: { scrollToStart?: boolean; imageMeta?: ImageBlockMeta[] }
 ): void {
+  syncLog(
+    'API:setContentWithBlockIds',
+    `entry len=${markdown.length} blocks=${blockIds.length} scrollToStart=${options?.scrollToStart ?? false}`
+  );
   setBlockIdZoomMode(false); // Clear zoom mode when loading full content
   const editorInstance = getEditorInstance();
   if (!editorInstance) {
@@ -551,7 +617,9 @@ export function insertImage(opts: {
     // Use pending drop position if available (from handleDrop), otherwise insert after cursor's block
     let insertPos: number;
     const dropPos = consumePendingDropPos();
-    if (dropPos !== null && dropPos >= 0 && dropPos <= view.state.doc.content.size) {
+    const docSize = view.state.doc.content.size;
+    syncLog('API:insertImage', `dropPos=${dropPos} docSize=${docSize}`);
+    if (dropPos !== null && dropPos >= 0 && dropPos <= docSize) {
       insertPos = dropPos;
     } else {
       // Fallback: after current selection's top-level block
@@ -567,5 +635,63 @@ export function insertImage(opts: {
     view.dispatch(tr);
   } catch (e) {
     console.error('[Milkdown] insertImage failed:', e);
+  }
+}
+
+/**
+ * Surgically update heading levels in the editor without replacing the document.
+ * Called from Swift hierarchy enforcement to avoid the DB-to-editor round-trip
+ * that causes content discrepancy and data loss.
+ */
+export function updateHeadingLevels(changes: Array<{ blockId: string; newLevel: number }>): void {
+  const editorInstance = getEditorInstance();
+  if (!editorInstance || changes.length === 0) return;
+
+  syncLog('API:updateHeadingLevels', `${changes.length} changes`);
+  setSyncPaused(true);
+  setIsSettingContent(true);
+  try {
+    editorInstance.action((ctx) => {
+      const view = ctx.get(editorViewCtx);
+      const blockIds = getAllBlockIds(); // Map<pos, id>
+
+      // Invert: id → pos
+      const idToPos = new Map<string, number>();
+      for (const [pos, id] of blockIds) {
+        idToPos.set(id, pos);
+      }
+
+      let tr = view.state.tr;
+      let appliedCount = 0;
+      for (const change of changes) {
+        const pos = idToPos.get(change.blockId);
+        if (pos === undefined) {
+          syncLog('API:updateHeadingLevels', `WARN: blockId ${change.blockId.slice(0, 8)} not found`);
+          continue;
+        }
+        const node = tr.doc.nodeAt(pos);
+        if (!node || node.type.name !== 'heading') continue;
+        tr = tr.setNodeMarkup(pos, undefined, {
+          ...node.attrs,
+          level: change.newLevel,
+        });
+        appliedCount++;
+      }
+
+      if (tr.steps.length > 0) {
+        view.dispatch(tr);
+      }
+
+      // Update currentContent to match post-surgery state
+      // (prevents stale currentContent from causing issues with setContent unchanged check)
+      setCurrentContent(getMarkdown()(ctx));
+
+      resetAndSnapshot(view.state.doc);
+
+      syncLog('API:updateHeadingLevels', `applied ${appliedCount}/${changes.length} changes`);
+    });
+  } finally {
+    setIsSettingContent(false);
+    setSyncPaused(false);
   }
 }

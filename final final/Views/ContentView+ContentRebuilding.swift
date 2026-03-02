@@ -40,17 +40,8 @@ extension ContentView {
                 .filter { $0.blockType == .image }
                 .map { ImageBlockMeta(id: $0.id, width: $0.imageWidth, caption: $0.imageCaption, alt: $0.imageAlt) }
 
-            #if DEBUG
-            if !imageMeta.isEmpty {
-                print("[fetchBlocksWithIds] imageMeta: \(imageMeta.map { "id=\($0.id.prefix(8)) width=\($0.width ?? -1)" })")
-            }
-            #endif
-
             return (markdown, ids, imageMeta)
         } catch {
-            #if DEBUG
-            print("[ContentView] Error fetching blocks with IDs: \(error)")
-            #endif
             return nil
         }
     }
@@ -58,22 +49,15 @@ extension ContentView {
     /// Rebuild document content from block database
     /// For zoom state, fetches only the zoomed range; otherwise fetches all blocks
     func rebuildDocumentContent() {
-        #if DEBUG
-        print("[rebuildDocumentContent] Called. zoomed=\(editorState.zoomedSectionIds != nil), contentState=\(editorState.contentState)")
-        #endif
         // Guard against rebuilding during editor transition
-        guard editorState.contentState != .editorTransition else {
-            return
-        }
+        guard editorState.contentState != .editorTransition else { return }
         guard let db = documentManager.projectDatabase,
               let pid = documentManager.projectId else { return }
 
         do {
             let allBlocks: [Block]
             if let zoomedIds = editorState.zoomedSectionIds {
-                // When zoomed, only include blocks in the zoomed range
                 let blocks = try db.fetchBlocks(projectId: pid)
-                // Filter to blocks that fall within zoomed heading ranges
                 allBlocks = filterBlocksForZoom(blocks, zoomedIds: zoomedIds, zoomedBlockRange: editorState.zoomedBlockRange)
             } else {
                 allBlocks = try db.fetchBlocks(projectId: pid)
