@@ -45,6 +45,7 @@ import {
   setContent,
   setContentWithBlockIds,
   syncBlockIds,
+  updateHeadingLevels,
 } from './api-content';
 import {
   insertLinkAtCursor,
@@ -123,6 +124,7 @@ import {
 import { zoomNotesMarkerPlugin } from './zoom-notes-marker-plugin';
 import './styles.css';
 // Import types to ensure declare global is included in the bundle
+import { syncLog } from './sync-debug';
 import './types';
 
 async function initEditor() {
@@ -204,9 +206,13 @@ async function initEditor() {
       if (contentPushTimer) clearTimeout(contentPushTimer);
       contentPushTimer = setTimeout(() => {
         // Re-check guard: setContent() may have run during the 50ms window
-        if (getIsSettingContent()) return;
+        if (getIsSettingContent()) {
+          return;
+        }
         const md = editorInstance.action(getMarkdown());
         setCurrentContent(md);
+        const firstHeading = md.match(/^#{1,6}\s+.*/m)?.[0]?.slice(0, 60) || '(none)';
+        syncLog('ContentPush', `PUSHED: len=${md.length}, firstH="${firstHeading}"`);
         (window as any).webkit?.messageHandlers?.contentChanged?.postMessage(md);
       }, 50);
     }
@@ -339,6 +345,8 @@ window.FinalFinal = {
   hasBlockChanges,
   // Image API
   insertImage,
+  // Surgical heading update API
+  updateHeadingLevels,
   // Dual-appearance mode API (Phase C)
   setEditorMode,
   getEditorMode,

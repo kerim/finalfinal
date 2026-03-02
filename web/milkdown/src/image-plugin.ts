@@ -11,6 +11,7 @@ import type { Root } from 'mdast';
 import { visit } from 'unist-util-visit';
 import { getBlockIdAtPos } from './block-id-plugin';
 import { isSourceModeEnabled } from './source-mode-plugin';
+import { syncLog } from './sync-debug';
 
 // Remark plugin: convert standalone images with media/ URLs into figure nodes
 // In mdast, a standalone ![alt](src) line produces paragraph > image.
@@ -480,6 +481,11 @@ const figureNodeViewPlugin = $prose(() => {
 
 // Module-level: pending drop position for async image insertion
 let pendingDropPos: number | null = null;
+
+// Guard against macOS kDragIPCCompleted firing twice for a single drop.
+// The two events arrive within ~5ms; 200ms window safely catches them
+// without blocking legitimate successive drops by the user.
+let lastDropTime = 0;
 export function consumePendingDropPos(): number | null {
   const pos = pendingDropPos;
   pendingDropPos = null;
@@ -524,27 +530,42 @@ const imagePasteDropPlugin = $prose(() => {
         const imageFile = Array.from(files).find((f) => f.type.startsWith('image/'));
         if (!imageFile) return false;
 
+        const now = Date.now();
+        if (now - lastDropTime < 200) {
+          syncLog('ImageDrop', `DEDUP: ignoring duplicate drop (${now - lastDropTime}ms)`);
+          event.preventDefault();
+          return true;
+        }
+        lastDropTime = now;
+
         event.preventDefault();
         event.stopPropagation();
 
         // Capture drop position before async processing
         const coords = view.posAtCoords({ left: event.clientX, top: event.clientY });
+        const docSizeAtDrop = view.state.doc.content.size;
         if (coords) {
           try {
             const $pos = view.state.doc.resolve(coords.pos);
             // $pos.after(1) requires depth >= 1; at doc boundary depth may be 0
-            pendingDropPos = $pos.depth >= 1 ? $pos.after(1) : view.state.doc.content.size;
+            pendingDropPos = $pos.depth >= 1 ? $pos.after(1) : docSizeAtDrop;
           } catch {
-            pendingDropPos = view.state.doc.content.size;
+            pendingDropPos = docSizeAtDrop;
           }
         }
+        syncLog('ImageDrop', `captured dropPos=${pendingDropPos} docSize=${docSizeAtDrop}`);
         // Clear stale drop position after 10 seconds (covers failed imports)
         setTimeout(() => {
+          if (pendingDropPos !== null) {
+            syncLog('ImageDrop', `10s timeout clearing pendingDropPos=${pendingDropPos}`);
+          }
           pendingDropPos = null;
         }, 10000);
 
+        const dropCaptureTime = Date.now();
         const reader = new FileReader();
         reader.onload = () => {
+          syncLog('ImageDrop', `FileReader complete in ${Date.now() - dropCaptureTime}ms`);
           const base64 = (reader.result as string).split(',')[1];
           window.webkit?.messageHandlers?.pasteImage?.postMessage({
             data: base64,

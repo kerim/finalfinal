@@ -76,9 +76,6 @@ class EditorViewState {
                     try? await Task.sleep(for: .seconds(5))
                     guard !Task.isCancelled, let self else { return }
                     if self.contentState != .idle {
-                        #if DEBUG
-                        print("[EditorViewState] WATCHDOG: contentState stuck at \(self.contentState), resetting to .idle")
-                        #endif
                         if self.contentState == .zoomTransition {
                             self.isZoomingContent = false
                             self.zoomedSectionIds = nil
@@ -189,6 +186,10 @@ class EditorViewState {
     /// Used to inject section anchors when updating sourceContent during zoom
     weak var sectionSyncService: SectionSyncService?
 
+    /// Block sync service reference (injected by ContentView)
+    /// Used for atomic content+blockID pushes during hierarchy enforcement
+    weak var blockSyncService: BlockSyncService?
+
     /// Whether citation library has been pushed to the editor
     var isCitationLibraryPushed: Bool = false
 
@@ -287,7 +288,7 @@ class EditorViewState {
             self.onSectionsUpdated?()
         } catch {
             #if DEBUG
-            print("[EditorViewState] Section refresh error: \(error)")
+            print("[EditorViewState] refreshSections error: \(error)")
             #endif
         }
     }

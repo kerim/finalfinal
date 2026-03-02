@@ -172,6 +172,10 @@ struct MilkdownEditor: NSViewRepresentable {
         }
 
         if context.coordinator.shouldPushContent(content) {
+            #if DEBUG
+            let hasFigures = content.contains("![")
+            print("[SYNC-DIAG:UpdateNSView] PUSHING content len=\(content.count) hasFigures=\(hasFigures)")
+            #endif
             context.coordinator.setContent(content)
         }
 
