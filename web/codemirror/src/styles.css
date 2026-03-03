@@ -366,7 +366,7 @@ body {
   padding: 8px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
   min-width: 250px;
-  max-width: 400px;
+  max-width: min(400px, calc(100vw - 16px));
 }
 
 .cm-caption-edit-popup input[type="text"] {

@@ -9,6 +9,7 @@
  */
 
 import type { EditorView } from '@codemirror/view';
+import { positionPopup } from '../../shared/position-popup';
 
 // --- Constants ---
 
@@ -200,12 +201,11 @@ export function showImageCaptionPopup(
   const el = createPopup();
   const input = popupInput!;
 
-  // Position below the clicked caption element
-  el.style.left = `${rect.left}px`;
-  el.style.top = `${rect.bottom + 4}px`;
-
   input.value = currentCaption;
   el.style.display = 'block';
+
+  // Position below the clicked caption element
+  positionPopup(el, rect);
 
   input.focus();
   input.select();

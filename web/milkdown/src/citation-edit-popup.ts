@@ -5,6 +5,7 @@ import type { EditorView } from '@milkdown/kit/prose/view';
 import type { CitationAttrs } from './citation-types';
 import { serializeCitation } from './citation-types';
 import { getCiteprocEngine } from './citeproc-engine';
+import { positionPopup } from '../../shared/position-popup';
 
 // Parse edited citation text back to structured data
 function parseEditedCitation(text: string): {
@@ -112,6 +113,7 @@ function createEditPopup(): HTMLElement {
     padding: 8px;
     box-shadow: 0 4px 12px rgba(0,0,0,0.15);
     min-width: 280px;
+    max-width: min(400px, calc(100vw - 16px));
     display: none;
   `;
 
@@ -302,17 +304,14 @@ export function showCitationEditPopup(pos: number, view: EditorView, attrs: Cita
   // Get raw syntax
   const rawSyntax = attrs.rawSyntax || serializeCitation(attrs);
 
-  // Position popup below the citation
-  const coords = view.coordsAtPos(pos);
-  popup.style.left = `${coords.left}px`;
-  popup.style.top = `${coords.bottom + 4}px`;
-
-  // Populate and show
+  // Populate and show (set display before positioning so measurements are accurate)
   input.value = rawSyntax;
   popup.style.display = 'block';
-
-  // Update preview
   updateEditPreview();
+
+  // Position popup relative to the citation
+  const coords = view.coordsAtPos(pos);
+  positionPopup(popup, coords);
 
   // Focus and select all
   input.focus();
