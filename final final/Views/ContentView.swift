@@ -479,6 +479,7 @@ struct ContentView: View {
                     Task {
                         await editorState.zoomToSection(sectionId, mode: mode)
                         await blockSyncService.pushBlockIds(for: editorState.zoomedBlockRange)
+                        await annotationSyncService.syncNow(editorState.content)
                         editorState.contentState = .idle
                     }
                 },
