@@ -101,7 +101,7 @@ declare global {
       // Annotation API
       setAnnotationDisplayModes: (modes: Record<string, string>) => void;
       getAnnotations: () => Array<{ type: string; text: string; offset: number; completed?: boolean }>;
-      scrollToAnnotation: (offset: number) => void;
+      scrollToAnnotation: (index: number) => void;
       insertAnnotation: (type: string) => void;
       setHideCompletedTasks: (enabled: boolean) => void;
       // Highlight API

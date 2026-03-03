@@ -18,6 +18,7 @@ struct MilkdownEditor: NSViewRepresentable {
     @Binding var cursorPositionToRestore: CursorPosition?
     @Binding var scrollToOffset: Int?
     @Binding var scrollToBlockId: String?
+    @Binding var scrollToAnnotationIndex: Int?
     @Binding var isResettingContent: Bool
 
     /// Content state for suppressing polling during transitions (zoom, hierarchy enforcement)
@@ -202,6 +203,14 @@ struct MilkdownEditor: NSViewRepresentable {
             context.coordinator.scrollToBlock(blockId)
             DispatchQueue.main.async {
                 self.scrollToBlockId = nil
+            }
+        }
+
+        // Handle annotation-specific scroll requests (uses ordinal index, not charOffset)
+        if let index = scrollToAnnotationIndex {
+            context.coordinator.scrollToAnnotation(index: index)
+            DispatchQueue.main.async {
+                self.scrollToAnnotationIndex = nil
             }
         }
     }
