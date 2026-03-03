@@ -222,6 +222,11 @@ body {
 .figure-caption:empty::before {
   content: attr(placeholder);
   color: var(--editor-muted, #999);
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.figure-node:hover .figure-caption:empty::before {
   opacity: 0.6;
 }
 
