@@ -28,11 +28,7 @@ export interface PositionPopupOptions {
  * This function runs synchronously — no requestAnimationFrame — so
  * blur-commit handlers that check `display !== 'none'` are not affected.
  */
-export function positionPopup(
-  popup: HTMLElement,
-  anchor: AnchorCoords,
-  options?: PositionPopupOptions
-): void {
+export function positionPopup(popup: HTMLElement, anchor: AnchorCoords, options?: PositionPopupOptions): void {
   const gap = options?.gap ?? 4;
   const margin = options?.margin ?? 8;
 

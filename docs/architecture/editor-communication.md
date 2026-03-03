@@ -220,6 +220,20 @@ controller.add(context.coordinator, name: "openURL")
 
 ---
 
+## Popup Positioning
+
+**File:** `web/shared/position-popup.ts`
+
+Five popup types (annotation edit, citation edit, link preview, link edit, image caption) use a shared `positionPopup(popup, anchor, options?)` utility for viewport-aware positioning. The utility accepts any anchor with `{left, right, top, bottom}` — both `coordsAtPos()` (ProseMirror) and `getBoundingClientRect()` (DOM elements) return compatible objects.
+
+**Algorithm:** Default below-left of anchor. Flips above if bottom overflows (when space permits). Shifts left if right edge overflows. Clamps to viewport margins (8px default). Runs synchronously (no `requestAnimationFrame`) to avoid race conditions with blur-commit handlers.
+
+**Usage pattern:** Set `display: block/flex` *before* calling `positionPopup()` so `getBoundingClientRect()` returns accurate popup dimensions. The browser paints synchronously, so no visual flash occurs.
+
+**Not using this utility:** Selection toolbar (`selection-toolbar.ts`) has its own centering + arrow logic. Slash menus use `position: absolute` coordinates. Spellcheck popover uses native macOS menu positioning.
+
+---
+
 ## Image Preview Architecture
 
 Both editors render inline image previews for `![alt](media/filename.ext)` markdown syntax. Images are stored in a `media/` subdirectory inside the `.ff` project package and served via a custom URL scheme.

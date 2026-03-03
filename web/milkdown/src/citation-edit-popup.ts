@@ -2,10 +2,10 @@
 // In-app popup for editing citation attributes (citekeys, locators, prefix, suffix)
 
 import type { EditorView } from '@milkdown/kit/prose/view';
+import { positionPopup } from '../../shared/position-popup';
 import type { CitationAttrs } from './citation-types';
 import { serializeCitation } from './citation-types';
 import { getCiteprocEngine } from './citeproc-engine';
-import { positionPopup } from '../../shared/position-popup';
 
 // Parse edited citation text back to structured data
 function parseEditedCitation(text: string): {

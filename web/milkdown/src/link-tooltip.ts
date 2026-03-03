@@ -7,8 +7,8 @@ import type { Mark } from '@milkdown/kit/prose/model';
 import { Plugin, PluginKey } from '@milkdown/kit/prose/state';
 import type { EditorView } from '@milkdown/kit/prose/view';
 import { $prose } from '@milkdown/kit/utils';
-import { isSourceModeEnabled } from './source-mode-plugin';
 import { positionPopup } from '../../shared/position-popup';
+import { isSourceModeEnabled } from './source-mode-plugin';
 
 // --- Helpers ---
 
