@@ -161,8 +161,18 @@ struct MilkdownEditor: NSViewRepresentable {
             context.coordinator.setFocusMode(effectiveFocusMode)
         }
 
+        // Track reset state for transition detection
+        let wasResetting = context.coordinator.wasResettingContent
+        context.coordinator.wasResettingContent = isResettingContent
+
         // Skip content/theme pushes during project reset to prevent empty flash
         guard !isResettingContent else { return }
+
+        // If we just finished a content reset (e.g. after setContentWithBlockIds),
+        // restore cursor position that was preserved during batchInitialize
+        if wasResetting {
+            context.coordinator.restoreCursorPositionIfNeeded()
+        }
 
         // Theme FIRST — CSS variables must be set before content renders
         // (matches batchInitialize() order: setTheme → setContent)
@@ -301,6 +311,9 @@ struct MilkdownEditor: NSViewRepresentable {
 
         /// Last sent annotation display modes (to avoid redundant calls)
         var lastAnnotationDisplayModes: [AnnotationType: AnnotationDisplayMode] = [:]
+
+        /// Tracks previous isResettingContent state to detect reset→idle transition
+        var wasResettingContent = false
 
         init(
             content: Binding<String>,

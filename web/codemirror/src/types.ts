@@ -39,9 +39,11 @@ declare global {
       getCurrentSectionTitle: () => string | null;
       scrollToOffset: (offset: number) => void;
       setTheme: (cssVariables: string) => void;
-      getCursorPosition: () => { line: number; column: number };
+      getCursorPosition: () => { line: number; column: number; scrollFraction: number; cursorIsVisible: boolean; topLine: number };
       setCursorPosition: (pos: { line: number; column: number }) => void;
       scrollCursorToCenter: () => void;
+      scrollToFraction: (fraction: number) => void;
+      scrollToLine: (line: number) => void;
       insertAtCursor: (text: string) => void;
       insertBreak: () => void;
       focus: () => void;

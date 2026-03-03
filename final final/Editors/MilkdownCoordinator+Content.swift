@@ -265,7 +265,10 @@ extension MilkdownEditor.Coordinator {
                   let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let line = dict["line"] as? Int,
                   let column = dict["column"] as? Int else { return }
-            self?.onCursorPositionSaved(CursorPosition(line: line, column: column))
+            let scrollFraction = dict["scrollFraction"] as? Double ?? 0
+            let cursorIsVisible = dict["cursorIsVisible"] as? Bool ?? true
+            let topLine = dict["topLine"] as? Int ?? 1
+            self?.onCursorPositionSaved(CursorPosition(line: line, column: column, scrollFraction: scrollFraction, cursorIsVisible: cursorIsVisible, topLine: topLine))
         }
     }
 
@@ -331,8 +334,15 @@ extension MilkdownEditor.Coordinator {
                let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                let line = dict["line"] as? Int,
                let column = dict["column"] as? Int {
-                position = CursorPosition(line: line, column: column)
+                let scrollFraction = dict["scrollFraction"] as? Double ?? 0
+                let cursorIsVisible = dict["cursorIsVisible"] as? Bool ?? true
+                let topLine = dict["topLine"] as? Int ?? 1
+                position = CursorPosition(line: line, column: column, scrollFraction: scrollFraction, cursorIsVisible: cursorIsVisible, topLine: topLine)
             }
+
+            #if DEBUG
+            print("[Milkdown-SAVE] cursorIsVisible=\(position.cursorIsVisible), topLine=\(position.topLine), scrollFraction=\(position.scrollFraction)")
+            #endif
 
             NotificationCenter.default.post(
                 name: .didSaveCursorPosition,
@@ -448,7 +458,10 @@ extension MilkdownEditor.Coordinator {
                 completion(.start)
                 return
             }
-            completion(CursorPosition(line: line, column: column))
+            let scrollFraction = dict["scrollFraction"] as? Double ?? 0
+            let cursorIsVisible = dict["cursorIsVisible"] as? Bool ?? true
+            let topLine = dict["topLine"] as? Int ?? 1
+            completion(CursorPosition(line: line, column: column, scrollFraction: scrollFraction, cursorIsVisible: cursorIsVisible, topLine: topLine))
         }
     }
 

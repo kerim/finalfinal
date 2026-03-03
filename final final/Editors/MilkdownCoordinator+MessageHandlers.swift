@@ -119,6 +119,15 @@ extension MilkdownEditor.Coordinator {
         lastPushedContent = content
         lastPushTime = Date()
 
+        // Use cursorIsVisible to decide restore strategy:
+        // - Cursor NOT visible (scrolled away or never clicked) + has topLine → restore scroll position
+        // - Cursor IS visible → restore cursor + center on it
+        let useScrollRestore = cursor.map { !$0.cursorIsVisible && $0.topLine > 1 } ?? false
+
+        #if DEBUG
+        print("[Milkdown-batchInit] useScrollRestore=\(useScrollRestore), topLine=\(cursor?.topLine ?? 1)")
+        #endif
+
         #if DEBUG
         let resetting = isResettingContentBinding.wrappedValue
         print("[batchInitialize] isResettingContent=\(resetting), "
@@ -131,9 +140,10 @@ extension MilkdownEditor.Coordinator {
             "content": effectiveContent,
             "theme": theme
         ]
-        if let pos = cursor {
+        if let pos = cursor, !useScrollRestore {
             options["cursorPosition"] = ["line": pos.line, "column": pos.column]
         } else {
+            // Don't pass cursor — prevents setCursorPosition(1,0) + scrollCursorToCenter
             options["cursorPosition"] = NSNull()
         }
 
@@ -177,6 +187,11 @@ extension MilkdownEditor.Coordinator {
             // When isResettingContent is true, content was skipped and cursor
             // will be restored after setContentWithBlockIds() via restoreCursorPositionIfNeeded().
             if !effectiveContent.isEmpty {
+                // Restore scroll position when cursor is not visible (only if content was pushed)
+                if useScrollRestore, let topLine = cursor?.topLine, topLine > 1 {
+                    self?.scrollToLine(topLine)
+                }
+
                 self?.cursorPositionToRestoreBinding.wrappedValue = nil
             }
         }
@@ -190,21 +205,46 @@ extension MilkdownEditor.Coordinator {
 
     func restoreCursorPositionIfNeeded() {
         guard let position = cursorPositionToRestoreBinding.wrappedValue else { return }
-        // Small delay to ensure content is fully loaded
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
-            self?.setCursorPosition(position) {
-                // Scroll cursor to center after cursor is set
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
-                    self?.scrollCursorToCenter()
+        cursorPositionToRestoreBinding.wrappedValue = nil
+
+        let useScrollRestore = !position.cursorIsVisible && position.topLine > 1
+
+        #if DEBUG
+        print("[Milkdown-restore] useScrollRestore=\(useScrollRestore), topLine=\(position.topLine), scrollFraction=\(position.scrollFraction)")
+        #endif
+
+        if useScrollRestore {
+            // Cursor not visible — restore scroll position only
+            scrollToLine(position.topLine)
+        } else if position.line != 1 || position.column != 0 {
+            // Cursor was placed and is visible — set cursor and center on it
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+                self?.setCursorPosition(position) {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+                        self?.scrollCursorToCenter()
+                    }
                 }
             }
-            self?.cursorPositionToRestoreBinding.wrappedValue = nil
         }
+        // Default cursor at top with scrollFraction 0 — do nothing
     }
 
     func scrollCursorToCenter() {
         guard isEditorReady, let webView else { return }
         webView.evaluateJavaScript("window.FinalFinal.scrollCursorToCenter()") { _, _ in }
+    }
+
+    func scrollToFraction(_ fraction: Double) {
+        guard isEditorReady, let webView else { return }
+        guard fraction.isFinite else { return }
+        let clamped = max(0, min(1, fraction))
+        webView.evaluateJavaScript("window.FinalFinal.scrollToFraction(\(clamped))") { _, _ in }
+    }
+
+    func scrollToLine(_ line: Int) {
+        guard isEditorReady, let webView else { return }
+        guard line > 0 else { return }
+        webView.evaluateJavaScript("window.FinalFinal.scrollToLine(\(line))") { _, _ in }
     }
 
     // Handle JS messages from WKScriptMessageHandler
