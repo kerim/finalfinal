@@ -125,10 +125,6 @@ extension MilkdownEditor.Coordinator {
         let useScrollRestore = cursor.map { !$0.cursorIsVisible && $0.topLine > 1.0 } ?? false
 
         #if DEBUG
-        print("[Milkdown-batchInit] useScrollRestore=\(useScrollRestore), topLine=\(String(format: "%.2f", cursor?.topLine ?? 1.0))")
-        #endif
-
-        #if DEBUG
         let resetting = isResettingContentBinding.wrappedValue
         print("[batchInitialize] isResettingContent=\(resetting), "
             + "content=\(content.count), effective=\(effectiveContent.count)")
@@ -208,11 +204,6 @@ extension MilkdownEditor.Coordinator {
         cursorPositionToRestoreBinding.wrappedValue = nil
 
         let useScrollRestore = !position.cursorIsVisible && position.topLine > 1.0
-
-        #if DEBUG
-        let tl = String(format: "%.2f", position.topLine)
-        print("[Milkdown-restore] useScrollRestore=\(useScrollRestore), topLine=\(tl), scrollFraction=\(position.scrollFraction)")
-        #endif
 
         if useScrollRestore {
             // Cursor not visible — restore scroll position only
