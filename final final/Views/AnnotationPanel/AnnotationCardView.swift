@@ -29,7 +29,7 @@ struct AnnotationCardView: View {
                     // Edit mode: TextEditor for multi-line support
                     VStack(alignment: .leading, spacing: 4) {
                         TextEditor(text: $editText)
-                            .font(.system(size: 12))
+                            .font(.system(size: TypeScale.annotationBody))
                             .frame(minHeight: 60, maxHeight: 120)
                             .padding(4)
                             .background(themeManager.currentTheme.editorBackground.opacity(0.5))
@@ -55,14 +55,14 @@ struct AnnotationCardView: View {
                 } else {
                     // Display mode
                     Text(annotation.previewText)
-                        .font(.system(size: 12))
+                        .font(.system(size: TypeScale.annotationBody))
                         .foregroundColor(textColor)
                         .lineLimit(2)
                         .strikethrough(annotation.type == .task && annotation.isCompleted)
 
                     if annotation.hasHighlight {
                         Text("Has highlight")
-                            .font(.system(size: TypeScale.smallUI))
+                            .font(.system(size: TypeScale.annotationSmall))
                             .foregroundColor(themeManager.currentTheme.sidebarText.opacity(0.5))
                     }
                 }
@@ -118,7 +118,7 @@ struct AnnotationCardView: View {
             // Clickable checkbox for tasks
             Button(action: onToggleCompletion) {
                 Text(annotation.marker)
-                    .font(.system(size: 14))
+                    .font(.system(size: TypeScale.annotationMarker))
                     .foregroundColor(markerColor)
             }
             .buttonStyle(.plain)
@@ -126,7 +126,7 @@ struct AnnotationCardView: View {
         } else {
             // Static marker for comments/references
             Text(annotation.marker)
-                .font(.system(size: 14))
+                .font(.system(size: TypeScale.annotationMarker))
                 .foregroundColor(markerColor)
         }
     }
@@ -172,19 +172,19 @@ struct AnnotationGroupHeader: View {
         Button(action: onToggle) {
             HStack {
                 Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                    .font(.system(size: TypeScale.smallUI, weight: .semibold))
+                    .font(.system(size: TypeScale.annotationSmall, weight: .semibold))
                     .foregroundColor(themeManager.currentTheme.sidebarText.opacity(0.6))
                     .frame(width: 12)
 
                 Text(type.collapsedMarker)
-                    .font(.system(size: 12))
+                    .font(.system(size: TypeScale.annotationBody))
 
                 Text(type.displayName)
-                    .font(.system(size: 12, weight: .medium))
+                    .font(.system(size: TypeScale.annotationBody, weight: .medium))
                     .foregroundColor(themeManager.currentTheme.sidebarText)
 
                 Text("(\(count))")
-                    .font(.system(size: 11))
+                    .font(.system(size: TypeScale.annotationSmall))
                     .foregroundColor(themeManager.currentTheme.sidebarText.opacity(0.6))
 
                 Spacer()
