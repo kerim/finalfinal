@@ -8,6 +8,7 @@ import { Plugin, PluginKey } from '@milkdown/kit/prose/state';
 import type { EditorView } from '@milkdown/kit/prose/view';
 import { $prose } from '@milkdown/kit/utils';
 import { isSourceModeEnabled } from './source-mode-plugin';
+import { positionPopup } from '../../shared/position-popup';
 
 // --- Helpers ---
 
@@ -115,7 +116,7 @@ function createPreviewPopup(): HTMLElement {
     display: none;
     align-items: center;
     gap: 6px;
-    max-width: 400px;
+    max-width: min(400px, calc(100vw - 16px));
     font-size: 13px;
   `;
 
@@ -221,6 +222,7 @@ function createEditPopup(): HTMLElement {
     padding: 8px;
     box-shadow: 0 4px 12px rgba(0,0,0,0.15);
     min-width: 280px;
+    max-width: min(400px, calc(100vw - 16px));
     display: none;
   `;
 
@@ -298,10 +300,9 @@ function showPreview(view: EditorView, linkRange: LinkRange): void {
   const urlSpan = popup.querySelector('.ff-link-url') as HTMLElement;
   urlSpan.textContent = linkRange.href;
 
-  const coords = view.coordsAtPos(linkRange.from);
-  popup.style.left = `${coords.left}px`;
-  popup.style.top = `${coords.bottom + 4}px`;
   popup.style.display = 'flex';
+  const coords = view.coordsAtPos(linkRange.from);
+  positionPopup(popup, coords);
 }
 
 function hidePreview(): void {
@@ -318,13 +319,12 @@ function showEdit(view: EditorView, linkRange: LinkRange | null): void {
   const input = popup.querySelector('input') as HTMLInputElement;
 
   input.value = linkRange?.href || '';
+  popup.style.display = 'block';
 
   // Position below the link or cursor
   const pos = linkRange?.from ?? view.state.selection.from;
   const coords = view.coordsAtPos(pos);
-  popup.style.left = `${coords.left}px`;
-  popup.style.top = `${coords.bottom + 4}px`;
-  popup.style.display = 'block';
+  positionPopup(popup, coords);
 
   input.focus();
   input.select();
