@@ -6,6 +6,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.66] - 2026-03-03
+
+### Added
+
+- **Scroll sync between editors** — anchor-map interpolation system (`scroll-map.ts`) walks PM nodes and markdown lines in parallel with type-dispatch matching, replacing text-matching approach that drifted on duplicate text. Uses linear interpolation for sub-line precision with floating-point `topLine`. Cached by PM doc identity.
+- **Shared popup positioning utility** (`web/shared/position-popup.ts`) — viewport-aware positioning (flip above/below, horizontal clamping) extracted from annotation, citation, and link popups
+- **`updateHeadingLevels()` API** — new `window.FinalFinal` method for surgical heading-level changes without full-document DB round-trips
+
+### Fixed
+
+- **Image width/caption lost on heading change** — hierarchy enforcement did a full-document DB round-trip that discarded figure attributes (width, blockId); replaced with surgical ProseMirror `setNodeMarkup()` for WYSIWYG, string replacement for source mode
+- **Image width regression during `setContent()`** — figure attributes (width, blockId) now captured before markdown re-parse and restored after via positional matching with src verification
+
+### Changed
+
+- **Annotation panel font size increased** for readability
+- **CursorPosition.topLine** changed from `Int` to `Double` for fractional scroll positions
+- **Popup positioning consolidated** — annotation-edit, citation-edit, link-tooltip, and image-caption popups now use shared `positionPopup()` utility
+- **Diagnostic logging reduced** — ~71→~20 focused logs; added `sync-debug` module for conditional JS logging
+
 ## [0.2.64] - 2026-03-02
 
 ### Added
