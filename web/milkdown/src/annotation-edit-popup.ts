@@ -3,9 +3,9 @@
 // Singleton pattern modeled on citation-edit-popup.ts
 
 import type { EditorView } from '@milkdown/kit/prose/view';
+import { positionPopup } from '../../shared/position-popup';
 import type { AnnotationAttrs, AnnotationType } from './annotation-plugin';
 import { annotationMarkers, completedTaskMarker } from './annotation-plugin';
-import { positionPopup } from '../../shared/position-popup';
 
 // Annotation edit popup state (module-level singleton)
 let editPopup: HTMLElement | null = null;
