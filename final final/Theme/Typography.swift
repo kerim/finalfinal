@@ -30,6 +30,11 @@ enum TypeScale {
     // Small UI elements (tags, badges, indicators)
     static let smallUI: CGFloat = 11
 
+    // Annotation panel sizes (~20% larger than base UI)
+    static let annotationSmall: CGFloat = 13   // was 11
+    static let annotationBody: CGFloat = 14    // was 12
+    static let annotationMarker: CGFloat = 17  // was 14
+
     /// Returns the size for a given header level (1-6)
     static func heading(_ level: Int) -> CGFloat {
         switch level {

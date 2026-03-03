@@ -29,7 +29,7 @@ struct AnnotationFilterBar: View {
                 showDisplayModePopover = true
             } label: {
                 Image(systemName: isPanelOnlyMode ? "eye.slash" : "eye")
-                    .font(.system(size: TypeScale.smallUI))
+                    .font(.system(size: TypeScale.annotationSmall))
                     .foregroundColor(themeManager.currentTheme.sidebarText.opacity(0.7))
             }
             .buttonStyle(.plain)
@@ -55,7 +55,7 @@ struct AnnotationFilterBar: View {
         } label: {
             HStack(spacing: 2) {
                 Text(type.collapsedMarker)
-                    .font(.system(size: TypeScale.smallUI))
+                    .font(.system(size: TypeScale.annotationSmall))
             }
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
@@ -80,9 +80,9 @@ struct AnnotationFilterBar: View {
             Toggle(isOn: $isPanelOnlyMode) {
                 HStack(spacing: 6) {
                     Image(systemName: "eye.slash")
-                        .font(.system(size: TypeScale.smallUI))
+                        .font(.system(size: TypeScale.annotationSmall))
                     Text("Panel Only")
-                        .font(.system(size: TypeScale.caption))
+                        .font(.system(size: TypeScale.annotationBody))
                 }
             }
             .toggleStyle(.checkbox)
@@ -93,9 +93,9 @@ struct AnnotationFilterBar: View {
             Toggle(isOn: $hideCompletedTasks) {
                 HStack(spacing: 6) {
                     Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: TypeScale.smallUI))
+                        .font(.system(size: TypeScale.annotationSmall))
                     Text("Hide Completed")
-                        .font(.system(size: TypeScale.caption))
+                        .font(.system(size: TypeScale.annotationBody))
                 }
             }
             .toggleStyle(.checkbox)
@@ -119,9 +119,9 @@ struct AnnotationFilterBar: View {
     private func displayModeRow(for type: AnnotationType) -> some View {
         HStack {
             Text(type.collapsedMarker)
-                .font(.system(size: TypeScale.caption))
+                .font(.system(size: TypeScale.annotationBody))
             Text(type.displayName)
-                .font(.system(size: TypeScale.caption))
+                .font(.system(size: TypeScale.annotationBody))
                 .foregroundColor(themeManager.currentTheme.sidebarText)
 
             Spacer()

@@ -46,7 +46,7 @@ struct AnnotationPanel: View {
     private var panelHeader: some View {
         HStack {
             Text("Annotations")
-                .font(.system(size: 12, weight: .semibold))
+                .font(.system(size: TypeScale.annotationBody, weight: .semibold))
                 .foregroundStyle(themeManager.currentTheme.sidebarText)
 
             Spacer()
@@ -54,7 +54,7 @@ struct AnnotationPanel: View {
             // Task count badge
             if editorState.incompleteTaskCount > 0 {
                 Text("\(editorState.incompleteTaskCount)")
-                    .font(.system(size: TypeScale.smallUI, weight: .medium))
+                    .font(.system(size: TypeScale.annotationSmall, weight: .medium))
                     .foregroundStyle(.white)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
@@ -71,11 +71,11 @@ struct AnnotationPanel: View {
             Spacer()
 
             Text("No annotations")
-                .font(.system(size: 12))
+                .font(.system(size: TypeScale.annotationBody))
                 .foregroundColor(themeManager.currentTheme.sidebarText.opacity(0.5))
 
             Text("Use /task, /comment, or /reference\nto add annotations")
-                .font(.system(size: 11))
+                .font(.system(size: TypeScale.annotationSmall))
                 .foregroundColor(themeManager.currentTheme.sidebarText.opacity(0.4))
                 .multilineTextAlignment(.center)
 
