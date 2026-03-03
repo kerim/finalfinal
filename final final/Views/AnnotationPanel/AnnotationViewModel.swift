@@ -44,20 +44,6 @@ class AnnotationViewModel: Identifiable {
         return type.collapsedMarker
     }
 
-    /// Preview text for display (truncated)
-    var previewText: String {
-        let maxLength = 50
-        if text.count <= maxLength {
-            return text
-        }
-        return String(text.prefix(maxLength)) + "…"
-    }
-
-    /// Full text for tooltips or expanded view
-    var fullText: String {
-        text
-    }
-
     /// Convert back to Annotation model
     func toAnnotation(createdAt: Date, updatedAt: Date) -> Annotation {
         Annotation(

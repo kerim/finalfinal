@@ -13,8 +13,6 @@ struct AnnotationPanel: View {
     let onUpdateAnnotationText: ((AnnotationViewModel, String) -> Void)?
 
     @Environment(ThemeManager.self) private var themeManager
-    @State private var expandedTypes: Set<AnnotationType> = Set(AnnotationType.allCases)
-
     var body: some View {
         VStack(spacing: 0) {
             // Header
@@ -85,62 +83,25 @@ struct AnnotationPanel: View {
     }
 
     private var annotationList: some View {
-        ScrollView {
-            LazyVStack(spacing: 0, pinnedViews: [.sectionHeaders]) {
-                ForEach([AnnotationType.task, .comment, .reference], id: \.self) { type in
-                    annotationSection(for: type)
-                }
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func annotationSection(for type: AnnotationType) -> some View {
-        let annotations = annotationsForType(type)
-
-        if !annotations.isEmpty && editorState.annotationTypeFilters.contains(type) {
-            SwiftUI.Section {
-                if expandedTypes.contains(type) {
-                    ForEach(annotations) { annotation in
-                        AnnotationCardView(
-                            annotation: annotation,
-                            onTap: {
-                                onScrollToAnnotation(annotation.charOffset)
-                            },
-                            onToggleCompletion: {
-                                onToggleCompletion(annotation)
-                            },
-                            onUpdateText: onUpdateAnnotationText
-                        )
-
-                        if annotation.id != annotations.last?.id {
-                            Divider()
-                                .padding(.leading, 30)
-                        }
+        let annotations = editorState.displayAnnotations
+        return ScrollView {
+            LazyVStack(spacing: 0) {
+                ForEach(annotations) { annotation in
+                    AnnotationCardView(
+                        annotation: annotation,
+                        onTap: {
+                            onScrollToAnnotation(annotation.charOffset)
+                        },
+                        onToggleCompletion: {
+                            onToggleCompletion(annotation)
+                        },
+                        onUpdateText: onUpdateAnnotationText
+                    )
+                    if annotation.id != annotations.last?.id {
+                        Divider().padding(.leading, 30)
                     }
                 }
-            } header: {
-                AnnotationGroupHeader(
-                    type: type,
-                    count: annotations.count,
-                    isExpanded: expandedTypes.contains(type),
-                    onToggle: {
-                        toggleExpanded(type)
-                    }
-                )
             }
-        }
-    }
-
-    private func annotationsForType(_ type: AnnotationType) -> [AnnotationViewModel] {
-        editorState.displayAnnotations.filter { $0.type == type }
-    }
-
-    private func toggleExpanded(_ type: AnnotationType) {
-        if expandedTypes.contains(type) {
-            expandedTypes.remove(type)
-        } else {
-            expandedTypes.insert(type)
         }
     }
 }
@@ -148,7 +109,7 @@ struct AnnotationPanel: View {
 #Preview {
     let editorState = EditorViewState()
 
-    // Add sample annotations
+    // Add sample annotations in document order (mixed types)
     editorState.annotations = [
         AnnotationViewModel(from: Annotation(
             contentId: "test",
@@ -159,6 +120,12 @@ struct AnnotationPanel: View {
         )),
         AnnotationViewModel(from: Annotation(
             contentId: "test",
+            type: .comment,
+            text: "Revisit this phrasing later",
+            charOffset: 150
+        )),
+        AnnotationViewModel(from: Annotation(
+            contentId: "test",
             type: .task,
             text: "Fact-checked",
             isCompleted: true,
@@ -166,14 +133,8 @@ struct AnnotationPanel: View {
         )),
         AnnotationViewModel(from: Annotation(
             contentId: "test",
-            type: .comment,
-            text: "Revisit this phrasing later",
-            charOffset: 300
-        )),
-        AnnotationViewModel(from: Annotation(
-            contentId: "test",
             type: .reference,
-            text: "Smith et al. (2023) study on memory",
+            text: "Smith et al. (2023) study on memory consolidation during sleep found that participants showed a 15% improvement in recall when using spaced repetition techniques combined with adequate rest periods",
             charOffset: 400
         ))
     ]

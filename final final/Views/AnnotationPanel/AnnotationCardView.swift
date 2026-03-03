@@ -16,6 +16,9 @@ struct AnnotationCardView: View {
     @State private var isHovering = false
     @State private var isEditing = false
     @State private var editText = ""
+    @State private var isExpanded = false
+    @State private var isTruncated = false
+    @State private var constrainedTextHeight: CGFloat = 0
     @FocusState private var isTextEditorFocused: Bool
 
     var body: some View {
@@ -54,11 +57,45 @@ struct AnnotationCardView: View {
                     }
                 } else {
                     // Display mode
-                    Text(annotation.previewText)
+                    Text(annotation.text)
                         .font(.system(size: TypeScale.annotationBody))
                         .foregroundColor(textColor)
-                        .lineLimit(2)
+                        .lineLimit(isExpanded ? nil : 3)
                         .strikethrough(annotation.type == .task && annotation.isCompleted)
+                        .background(
+                            Text(annotation.text)
+                                .font(.system(size: TypeScale.annotationBody))
+                                .lineLimit(3)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .hidden()
+                                .onGeometryChange(for: CGFloat.self) { proxy in
+                                    proxy.size.height
+                                } action: { threeLineHeight in
+                                    constrainedTextHeight = threeLineHeight
+                                }
+                        )
+                        .background(
+                            Text(annotation.text)
+                                .font(.system(size: TypeScale.annotationBody))
+                                .lineLimit(nil)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .hidden()
+                                .onGeometryChange(for: CGFloat.self) { proxy in
+                                    proxy.size.height
+                                } action: { fullHeight in
+                                    isTruncated = constrainedTextHeight > 0
+                                        && fullHeight > constrainedTextHeight + 1
+                                }
+                        )
+
+                    if isTruncated {
+                        Button(isExpanded ? "less" : "more") {
+                            isExpanded.toggle()
+                        }
+                        .font(.system(size: TypeScale.annotationSmall))
+                        .foregroundColor(themeManager.currentTheme.sidebarText.opacity(0.5))
+                        .buttonStyle(.plain)
+                    }
 
                     if annotation.hasHighlight {
                         Text("Has highlight")
@@ -159,44 +196,6 @@ struct AnnotationCardView: View {
     }
 }
 
-/// Grouped section header for annotations panel
-struct AnnotationGroupHeader: View {
-    let type: AnnotationType
-    let count: Int
-    let isExpanded: Bool
-    let onToggle: () -> Void
-
-    @Environment(ThemeManager.self) private var themeManager
-
-    var body: some View {
-        Button(action: onToggle) {
-            HStack {
-                Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                    .font(.system(size: TypeScale.annotationSmall, weight: .semibold))
-                    .foregroundColor(themeManager.currentTheme.sidebarText.opacity(0.6))
-                    .frame(width: 12)
-
-                Text(type.collapsedMarker)
-                    .font(.system(size: TypeScale.annotationBody))
-
-                Text(type.displayName)
-                    .font(.system(size: TypeScale.annotationBody, weight: .medium))
-                    .foregroundColor(themeManager.currentTheme.sidebarText)
-
-                Text("(\(count))")
-                    .font(.system(size: TypeScale.annotationSmall))
-                    .foregroundColor(themeManager.currentTheme.sidebarText.opacity(0.6))
-
-                Spacer()
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 4)
-            .background(themeManager.currentTheme.sidebarBackground.opacity(0.5))
-        }
-        .buttonStyle(.plain)
-    }
-}
-
 #Preview {
     let taskAnnotation = AnnotationViewModel(from: Annotation(
         contentId: "test",
@@ -217,7 +216,7 @@ struct AnnotationGroupHeader: View {
     let comment = AnnotationViewModel(from: Annotation(
         contentId: "test",
         type: .comment,
-        text: "I'm not sure about this phrasing - revisit later",
+        text: "I'm not sure about this phrasing - revisit later. The argument needs more supporting evidence and the transition from the previous paragraph feels abrupt. Consider restructuring.",
         charOffset: 300,
         highlightStart: 280,
         highlightEnd: 300
@@ -226,18 +225,11 @@ struct AnnotationGroupHeader: View {
     let reference = AnnotationViewModel(from: Annotation(
         contentId: "test",
         type: .reference,
-        text: "Smith et al. (2023) found that participants showed a 15% improvement in recall when using spaced repetition techniques.",
+        text: "Smith et al. (2023) found that participants showed a 15% improvement in recall when using spaced repetition techniques combined with adequate rest periods between study sessions.",
         charOffset: 400
     ))
 
     VStack(spacing: 0) {
-        AnnotationGroupHeader(
-            type: .task,
-            count: 2,
-            isExpanded: true,
-            onToggle: {}
-        )
-
         AnnotationCardView(
             annotation: taskAnnotation,
             onTap: { print("Tapped task") },
@@ -245,7 +237,7 @@ struct AnnotationGroupHeader: View {
             onUpdateText: { annotation, newText in print("Update \(annotation.id): \(newText)") }
         )
 
-        Divider()
+        Divider().padding(.leading, 30)
 
         AnnotationCardView(
             annotation: completedTask,
@@ -254,12 +246,7 @@ struct AnnotationGroupHeader: View {
             onUpdateText: nil
         )
 
-        AnnotationGroupHeader(
-            type: .comment,
-            count: 1,
-            isExpanded: true,
-            onToggle: {}
-        )
+        Divider().padding(.leading, 30)
 
         AnnotationCardView(
             annotation: comment,
@@ -268,12 +255,7 @@ struct AnnotationGroupHeader: View {
             onUpdateText: { annotation, newText in print("Update \(annotation.id): \(newText)") }
         )
 
-        AnnotationGroupHeader(
-            type: .reference,
-            count: 1,
-            isExpanded: true,
-            onToggle: {}
-        )
+        Divider().padding(.leading, 30)
 
         AnnotationCardView(
             annotation: reference,
