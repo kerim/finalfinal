@@ -158,6 +158,24 @@ The receiver uses `sections.firstIndex(where: { $0.id == targetId })` to find th
 
 ---
 
+## SwiftUI Gesture Modifier Order
+
+### Double-Tap Must Be Attached Before Single-Tap
+
+When using both `.onTapGesture(count: 2)` and `.onTapGesture` (count: 1), SwiftUI requires the double-tap modifier to be attached **first** (inner modifier). If single-tap is attached first, it fires immediately and the double-tap never triggers.
+
+```swift
+// WRONG — single-tap always fires, double-tap never triggers
+.onTapGesture { handleSingleTap() }
+.onTapGesture(count: 2) { handleDoubleTap() }
+
+// RIGHT — double-tap gets priority
+.onTapGesture(count: 2) { handleDoubleTap() }
+.onTapGesture { handleSingleTap() }
+```
+
+---
+
 ## WKWebView Compositor Caching on Content Change
 
 **Problem:** When zooming into a long section (2000+ words), the WebView showed the **wrong content** (previous section or full document). Scrolling in any direction "fixed" the display.

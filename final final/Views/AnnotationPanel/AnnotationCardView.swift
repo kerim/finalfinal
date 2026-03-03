@@ -19,108 +19,148 @@ struct AnnotationCardView: View {
     @State private var isExpanded = false
     @State private var isTruncated = false
     @State private var constrainedTextHeight: CGFloat = 0
+    @State private var fullTextHeight: CGFloat = 0
+    @State private var isMoreHovered = false
     @FocusState private var isTextEditorFocused: Bool
 
     var body: some View {
-        HStack(alignment: .top, spacing: 8) {
-            // Type marker / checkbox
-            markerView
+        VStack(spacing: 0) {
+            // Card content — has card hover background
+            HStack(alignment: .top, spacing: 8) {
+                // Type marker / checkbox
+                markerView
 
-            // Content
-            VStack(alignment: .leading, spacing: 2) {
-                if isEditing {
-                    // Edit mode: TextEditor for multi-line support
-                    VStack(alignment: .leading, spacing: 4) {
-                        TextEditor(text: $editText)
+                // Content
+                VStack(alignment: .leading, spacing: 2) {
+                    if isEditing {
+                        // Edit mode: TextEditor for multi-line support
+                        VStack(alignment: .leading, spacing: 4) {
+                            TextEditor(text: $editText)
+                                .font(.system(size: TypeScale.annotationBody))
+                                .frame(minHeight: 60, maxHeight: 120)
+                                .padding(4)
+                                .background(themeManager.currentTheme.editorBackground.opacity(0.5))
+                                .cornerRadius(4)
+                                .focused($isTextEditorFocused)
+
+                            HStack {
+                                Button("Save") {
+                                    commitEdit()
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .controlSize(.small)
+                                .keyboardShortcut(.return, modifiers: .command)
+
+                                Button("Cancel") {
+                                    cancelEdit()
+                                }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                                .keyboardShortcut(.escape, modifiers: [])
+                            }
+                        }
+                    } else {
+                        // Display mode
+                        Text(annotation.text)
                             .font(.system(size: TypeScale.annotationBody))
-                            .frame(minHeight: 60, maxHeight: 120)
-                            .padding(4)
-                            .background(themeManager.currentTheme.editorBackground.opacity(0.5))
-                            .cornerRadius(4)
-                            .focused($isTextEditorFocused)
-
-                        HStack {
-                            Button("Save") {
-                                commitEdit()
+                            .foregroundColor(textColor)
+                            .lineLimit(isExpanded ? nil : 3)
+                            .strikethrough(annotation.type == .task && annotation.isCompleted)
+                            .onGeometryChange(for: CGFloat.self) { proxy in
+                                proxy.size.height
+                            } action: { height in
+                                constrainedTextHeight = height
+                                updateTruncationState()
                             }
-                            .buttonStyle(.borderedProminent)
-                            .controlSize(.small)
-                            .keyboardShortcut(.return, modifiers: .command)
+                            .background(
+                                Text(annotation.text)
+                                    .font(.system(size: TypeScale.annotationBody))
+                                    .lineLimit(nil)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                    .hidden()
+                                    .onGeometryChange(for: CGFloat.self) { proxy in
+                                        proxy.size.height
+                                    } action: { height in
+                                        fullTextHeight = height
+                                        updateTruncationState()
+                                    }
+                            )
 
-                            Button("Cancel") {
-                                cancelEdit()
-                            }
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
-                            .keyboardShortcut(.escape, modifiers: [])
+                        if annotation.hasHighlight {
+                            Text("Has highlight")
+                                .font(.system(size: TypeScale.annotationSmall))
+                                .foregroundColor(themeManager.currentTheme.sidebarText.opacity(0.5))
                         }
-                    }
-                } else {
-                    // Display mode
-                    Text(annotation.text)
-                        .font(.system(size: TypeScale.annotationBody))
-                        .foregroundColor(textColor)
-                        .lineLimit(isExpanded ? nil : 3)
-                        .strikethrough(annotation.type == .task && annotation.isCompleted)
-                        .background(
-                            Text(annotation.text)
-                                .font(.system(size: TypeScale.annotationBody))
-                                .lineLimit(3)
-                                .fixedSize(horizontal: false, vertical: true)
-                                .hidden()
-                                .onGeometryChange(for: CGFloat.self) { proxy in
-                                    proxy.size.height
-                                } action: { threeLineHeight in
-                                    constrainedTextHeight = threeLineHeight
-                                }
-                        )
-                        .background(
-                            Text(annotation.text)
-                                .font(.system(size: TypeScale.annotationBody))
-                                .lineLimit(nil)
-                                .fixedSize(horizontal: false, vertical: true)
-                                .hidden()
-                                .onGeometryChange(for: CGFloat.self) { proxy in
-                                    proxy.size.height
-                                } action: { fullHeight in
-                                    isTruncated = constrainedTextHeight > 0
-                                        && fullHeight > constrainedTextHeight + 1
-                                }
-                        )
-
-                    if isTruncated {
-                        Button(isExpanded ? "less" : "more") {
-                            isExpanded.toggle()
-                        }
-                        .font(.system(size: TypeScale.annotationSmall))
-                        .foregroundColor(themeManager.currentTheme.sidebarText.opacity(0.5))
-                        .buttonStyle(.plain)
-                    }
-
-                    if annotation.hasHighlight {
-                        Text("Has highlight")
-                            .font(.system(size: TypeScale.annotationSmall))
-                            .foregroundColor(themeManager.currentTheme.sidebarText.opacity(0.5))
                     }
                 }
+
+                Spacer()
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(backgroundColor)
+            .contentShape(Rectangle())
+            .onTapGesture(count: 2) {
+                startEditing()
+            }
+            .onTapGesture {
+                if !isEditing {
+                    onTap()
+                }
+            }
+            .onHover { hovering in
+                isHovering = hovering
             }
 
-            Spacer()
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(backgroundColor)
-        .contentShape(Rectangle())
-        .onTapGesture {
-            if !isEditing {
-                onTap()
+            // More/less row — separate from card hover, full-width hit target
+            if isTruncated || isExpanded {
+                moreButton
             }
         }
-        .onTapGesture(count: 2) {
-            startEditing()
+        .onChange(of: annotation.text) { _, _ in
+            isExpanded = false
         }
-        .onHover { hovering in
-            isHovering = hovering
+    }
+
+    // MARK: - More/Less Button
+
+    private var moreButton: some View {
+        Button {
+            withAnimation(.easeInOut(duration: 0.15)) {
+                isExpanded.toggle()
+            }
+        } label: {
+            HStack {
+                Spacer()
+                HStack(spacing: 3) {
+                    Text(isExpanded ? "less" : "more")
+                    Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 9, weight: .medium))
+                }
+                .font(.system(size: TypeScale.annotationSmall, weight: .medium))
+                .foregroundColor(themeManager.currentTheme.sidebarText.opacity(0.5))
+                Spacer()
+            }
+            .padding(.vertical, 4)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .background(isMoreHovered
+            ? themeManager.currentTheme.sidebarText.opacity(0.06)
+            : Color.clear)
+        .onHover { isMoreHovered = $0 }
+    }
+
+    // MARK: - Truncation Detection
+
+    private func updateTruncationState() {
+        // Don't re-evaluate when expanded — we already know it's truncatable
+        guard !isExpanded else { return }
+        let truncated = constrainedTextHeight > 0
+            && fullTextHeight > 0
+            && fullTextHeight > constrainedTextHeight + 1
+        if truncated != isTruncated {
+            isTruncated = truncated
         }
     }
 
