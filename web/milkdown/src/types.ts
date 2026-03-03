@@ -78,7 +78,13 @@ declare global {
       getCurrentSectionTitle: () => string | null;
       scrollToOffset: (offset: number) => void;
       setTheme: (cssVariables: string) => void;
-      getCursorPosition: () => { line: number; column: number; scrollFraction: number; cursorIsVisible: boolean; topLine: number };
+      getCursorPosition: () => {
+        line: number;
+        column: number;
+        scrollFraction: number;
+        cursorIsVisible: boolean /** Floating-point markdown line at viewport top. 6.6 = 60% through line 6 */;
+        topLine: number;
+      };
       setCursorPosition: (pos: { line: number; column: number }) => void;
       scrollCursorToCenter: () => void;
       scrollToFraction: (fraction: number) => void;

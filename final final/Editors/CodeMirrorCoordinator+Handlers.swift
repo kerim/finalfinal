@@ -110,7 +110,7 @@ extension CodeMirrorEditor.Coordinator {
                   let column = dict["column"] as? Int else { return }
             let scrollFraction = dict["scrollFraction"] as? Double ?? 0
             let cursorIsVisible = dict["cursorIsVisible"] as? Bool ?? true
-            let topLine = dict["topLine"] as? Int ?? 1
+            let topLine = dict["topLine"] as? Double ?? 1.0
             self?.onCursorPositionSaved(CursorPosition(line: line, column: column, scrollFraction: scrollFraction, cursorIsVisible: cursorIsVisible, topLine: topLine))
         }
     }
@@ -180,12 +180,13 @@ extension CodeMirrorEditor.Coordinator {
                let column = dict["column"] as? Int {
                 let scrollFraction = dict["scrollFraction"] as? Double ?? 0
                 let cursorIsVisible = dict["cursorIsVisible"] as? Bool ?? true
-                let topLine = dict["topLine"] as? Int ?? 1
+                let topLine = dict["topLine"] as? Double ?? 1.0
                 position = CursorPosition(line: line, column: column, scrollFraction: scrollFraction, cursorIsVisible: cursorIsVisible, topLine: topLine)
             }
 
             #if DEBUG
-            print("[CM-SAVE] cursorIsVisible=\(position.cursorIsVisible), topLine=\(position.topLine), scrollFraction=\(position.scrollFraction)")
+            let tl = String(format: "%.2f", position.topLine)
+            print("[CM-SAVE] cursorIsVisible=\(position.cursorIsVisible), topLine=\(tl), scrollFraction=\(position.scrollFraction)")
             #endif
 
             NotificationCenter.default.post(
@@ -237,10 +238,10 @@ extension CodeMirrorEditor.Coordinator {
         // Use cursorIsVisible to decide restore strategy:
         // - Cursor NOT visible (scrolled away or never clicked) + has topLine → restore scroll position
         // - Cursor IS visible → restore cursor + center on it
-        let useScrollRestore = cursor.map { !$0.cursorIsVisible && $0.topLine > 1 } ?? false
+        let useScrollRestore = cursor.map { !$0.cursorIsVisible && $0.topLine > 1.0 } ?? false
 
         #if DEBUG
-        print("[CM-batchInit] useScrollRestore=\(useScrollRestore), topLine=\(cursor?.topLine ?? 1)")
+        print("[CM-batchInit] useScrollRestore=\(useScrollRestore), topLine=\(String(format: "%.2f", cursor?.topLine ?? 1.0))")
         #endif
 
         let cursorJS: String
@@ -296,7 +297,7 @@ extension CodeMirrorEditor.Coordinator {
             }
 
             // Restore scroll position when cursor is not visible
-            if useScrollRestore, let topLine = cursor?.topLine, topLine > 1 {
+            if useScrollRestore, let topLine = cursor?.topLine, topLine > 1.0 {
                 self?.scrollToLine(topLine)
             }
 
@@ -314,10 +315,11 @@ extension CodeMirrorEditor.Coordinator {
         guard let position = cursorPositionToRestoreBinding.wrappedValue else { return }
         cursorPositionToRestoreBinding.wrappedValue = nil
 
-        let useScrollRestore = !position.cursorIsVisible && position.topLine > 1
+        let useScrollRestore = !position.cursorIsVisible && position.topLine > 1.0
 
         #if DEBUG
-        print("[CM-restore] useScrollRestore=\(useScrollRestore), topLine=\(position.topLine), scrollFraction=\(position.scrollFraction)")
+        let tl = String(format: "%.2f", position.topLine)
+        print("[CM-restore] useScrollRestore=\(useScrollRestore), topLine=\(tl), scrollFraction=\(position.scrollFraction)")
         #endif
 
         if useScrollRestore {
@@ -348,9 +350,9 @@ extension CodeMirrorEditor.Coordinator {
         webView.evaluateJavaScript("window.FinalFinal.scrollToFraction(\(clamped))") { _, _ in }
     }
 
-    func scrollToLine(_ line: Int) {
+    func scrollToLine(_ line: Double) {
         guard isEditorReady, let webView else { return }
-        guard line > 0 else { return }
+        guard line > 0, line.isFinite else { return }
         webView.evaluateJavaScript("window.FinalFinal.scrollToLine(\(line))") { _, _ in }
     }
 
@@ -729,7 +731,7 @@ extension CodeMirrorEditor.Coordinator {
             }
             let scrollFraction = dict["scrollFraction"] as? Double ?? 0
             let cursorIsVisible = dict["cursorIsVisible"] as? Bool ?? true
-            let topLine = dict["topLine"] as? Int ?? 1
+            let topLine = dict["topLine"] as? Double ?? 1.0
             completion(CursorPosition(line: line, column: column, scrollFraction: scrollFraction, cursorIsVisible: cursorIsVisible, topLine: topLine))
         }
     }

@@ -32,6 +32,10 @@ setFocusMode(enabled)    // Toggle paragraph dimming (WYSIWYG only)
 getStats()               // Returns {words, characters}
 scrollToOffset(n)        // Scroll to character offset
 setTheme(css)            // Apply theme CSS variables
+
+// --- Scroll sync (mode toggle) ---
+getCursorPosition()      // Returns {line, column, scrollFraction, cursorIsVisible, topLine}
+scrollToLine(float)      // Scroll to floating-point markdown line (e.g., 6.6)
 ```
 
 **Content Sync (push + fallback poll)**:
@@ -43,6 +47,40 @@ Fallback polling runs at 3s intervals for supplementary data only: `getPollData(
 **Block Sync (2s polling)**: `BlockSyncService` polls `hasBlockChanges()` -> `getBlockChanges()` at 2s intervals for structural content sync. Block change detection is debounced (100ms) in the JS plugin to batch rapid keystrokes.
 
 **Feedback Prevention**: `isSettingContent` flag prevents feedback loops when Swift pushes content to editor. `resetAndSnapshot(doc)` must be called after any `setContent()` to prevent false change waves. BlockSyncService checks `editorState.contentState == .idle` to gate polling during drag operations, zoom transitions, and other non-idle states. Push-based content uses grace period guards (150ms CodeMirror, 200ms Milkdown) to avoid overwriting recently pushed content.
+
+---
+
+## Scroll Position Sync (Mode Toggle)
+
+When the user toggles between Milkdown (WYSIWYG) and CodeMirror (Source) via Cmd+/, the scroll position is preserved using a floating-point `topLine` coordinate.
+
+**Coordinate System**: `topLine` is a 1-indexed float where the integer part is the markdown line number and the fractional part is the position within that line's rendered height. For example, `6.6` means "60% through line 6." This provides sub-line precision for blocks with varying rendered heights (images, code blocks, tables).
+
+**Save/Restore Flow**:
+1. Outgoing editor calls `getCursorPosition()` which returns `topLine` (float)
+2. Swift stores `topLine` in `CursorPosition` (as `Double`)
+3. If `cursorIsVisible == false && topLine > 1.0`, incoming editor calls `scrollToLine(topLine)` to restore scroll position
+4. If cursor is visible, cursor position is restored instead (scroll follows cursor)
+
+**Milkdown (WYSIWYG) — Anchor Map**:
+
+ProseMirror positions don't map 1:1 to markdown line numbers, so Milkdown uses an anchor map (`scroll-map.ts`) with linear interpolation:
+
+1. `buildAnchorMap(view, mdLines)` walks PM doc top-level nodes in parallel with markdown lines, building `{mdLine, pixelY}` anchor pairs
+2. Each PM node type is matched to its markdown lines via a type-dispatch table in `findNodeInMdLines()` (not generic text matching, which drifts on duplicate text)
+3. `saveScrollPosition()` finds the two anchors bracketing `window.scrollY` and interpolates a float mdLine
+4. `restoreScrollPosition()` finds the two anchors bracketing the target mdLine and interpolates a pixel position
+
+The anchor map is cached by PM doc identity (`===` reference check) and scroll position (within 50px), so it's not rebuilt on every 500ms poll cycle.
+
+**CodeMirror (Source) — Native Line API**:
+
+CodeMirror line numbers are 1:1 with markdown lines, so no anchor map is needed:
+
+- **Save**: `lineBlockAtHeight(scrollTop)` gives the top line; fractional offset = `(scrollTop - block.top) / block.height`
+- **Restore**: `doc.line(intLine)` + `lineBlockAt(from)` gives the block; `scrollTop = block.top + fraction * block.height`
+
+**Key files**: `web/milkdown/src/scroll-map.ts`, `web/milkdown/src/api-modes.ts` (getCursorPosition, scrollToLine), `web/codemirror/src/api.ts` (getCursorPosition, scrollToLine)
 
 ---
 

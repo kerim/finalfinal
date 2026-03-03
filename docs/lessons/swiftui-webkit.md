@@ -322,3 +322,15 @@ if (options.content.length > 0) {
 And cursor binding clearing is skipped when content was empty (cursor will be restored later by `restoreCursorPositionIfNeeded()` after `setContentWithBlockIds()` loads the real content).
 
 **General principle:** When multiple async paths converge on the same JS thread, the "last write wins" race depends on callback timing. Guard against overwrites by skipping redundant pushes when a more complete path (with metadata) is already in flight.
+
+### Scroll Position Sync: Why Text Matching Drifts
+
+**Problem:** V1 scroll sync used `pmPosToMdLine()` (text matching) and `mdLineToPmPos()` (reverse text matching) to convert between scroll position and markdown line numbers. This drifted — especially further down the document — because:
+
+1. Text matching scans from line 1 and always matches the first occurrence of duplicate text (e.g., repeated paragraph openings like "The" or "In this section")
+2. Block-counting fallback counts ALL PM blocks (including nested table cells, list items) vs non-empty markdown lines — these don't align 1:1
+3. Integer line numbers lack sub-line precision for blocks with different rendered heights (images vs text)
+
+**Solution:** Anchor map with type-dispatch matching (`scroll-map.ts`). Instead of searching for text, walk PM doc top-level nodes and markdown lines in parallel using a type-dispatch table that matches each node type by its markdown pattern (headings by `#` prefix, tables by `|`, code blocks by `` ``` ``, etc.). This avoids false matches from duplicate text content. Linear interpolation between anchor points provides sub-line precision via floating-point `topLine`.
+
+**General principle:** When mapping between two document representations (PM tree and markdown text), dispatch on structural type rather than matching text content. Text matching has O(n) false-positive risk that grows with document length.

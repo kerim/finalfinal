@@ -122,10 +122,10 @@ extension MilkdownEditor.Coordinator {
         // Use cursorIsVisible to decide restore strategy:
         // - Cursor NOT visible (scrolled away or never clicked) + has topLine → restore scroll position
         // - Cursor IS visible → restore cursor + center on it
-        let useScrollRestore = cursor.map { !$0.cursorIsVisible && $0.topLine > 1 } ?? false
+        let useScrollRestore = cursor.map { !$0.cursorIsVisible && $0.topLine > 1.0 } ?? false
 
         #if DEBUG
-        print("[Milkdown-batchInit] useScrollRestore=\(useScrollRestore), topLine=\(cursor?.topLine ?? 1)")
+        print("[Milkdown-batchInit] useScrollRestore=\(useScrollRestore), topLine=\(String(format: "%.2f", cursor?.topLine ?? 1.0))")
         #endif
 
         #if DEBUG
@@ -188,7 +188,7 @@ extension MilkdownEditor.Coordinator {
             // will be restored after setContentWithBlockIds() via restoreCursorPositionIfNeeded().
             if !effectiveContent.isEmpty {
                 // Restore scroll position when cursor is not visible (only if content was pushed)
-                if useScrollRestore, let topLine = cursor?.topLine, topLine > 1 {
+                if useScrollRestore, let topLine = cursor?.topLine, topLine > 1.0 {
                     self?.scrollToLine(topLine)
                 }
 
@@ -207,10 +207,11 @@ extension MilkdownEditor.Coordinator {
         guard let position = cursorPositionToRestoreBinding.wrappedValue else { return }
         cursorPositionToRestoreBinding.wrappedValue = nil
 
-        let useScrollRestore = !position.cursorIsVisible && position.topLine > 1
+        let useScrollRestore = !position.cursorIsVisible && position.topLine > 1.0
 
         #if DEBUG
-        print("[Milkdown-restore] useScrollRestore=\(useScrollRestore), topLine=\(position.topLine), scrollFraction=\(position.scrollFraction)")
+        let tl = String(format: "%.2f", position.topLine)
+        print("[Milkdown-restore] useScrollRestore=\(useScrollRestore), topLine=\(tl), scrollFraction=\(position.scrollFraction)")
         #endif
 
         if useScrollRestore {
@@ -241,9 +242,9 @@ extension MilkdownEditor.Coordinator {
         webView.evaluateJavaScript("window.FinalFinal.scrollToFraction(\(clamped))") { _, _ in }
     }
 
-    func scrollToLine(_ line: Int) {
+    func scrollToLine(_ line: Double) {
         guard isEditorReady, let webView else { return }
-        guard line > 0 else { return }
+        guard line > 0, line.isFinite else { return }
         webView.evaluateJavaScript("window.FinalFinal.scrollToLine(\(line))") { _, _ in }
     }
 
