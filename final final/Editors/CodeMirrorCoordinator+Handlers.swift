@@ -701,6 +701,11 @@ extension CodeMirrorEditor.Coordinator {
         webView.evaluateJavaScript("window.FinalFinal.scrollToOffset(\(offset))") { _, _ in }
     }
 
+    func scrollToAnnotation(index: Int) {
+        guard isEditorReady, let webView else { return }
+        webView.evaluateJavaScript("window.FinalFinal.scrollToAnnotation(\(index))") { _, _ in }
+    }
+
     func getCursorPosition(completion: @escaping (CursorPosition) -> Void) {
         guard isEditorReady, let webView else {
             completion(.start)

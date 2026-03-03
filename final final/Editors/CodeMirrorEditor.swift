@@ -17,6 +17,7 @@ struct CodeMirrorEditor: NSViewRepresentable {
     @Binding var focusModeEnabled: Bool
     @Binding var cursorPositionToRestore: CursorPosition?
     @Binding var scrollToOffset: Int?
+    @Binding var scrollToAnnotationIndex: Int?
     @Binding var isResettingContent: Bool
 
     /// Content state for suppressing polling during transitions (zoom, hierarchy enforcement, drag)
@@ -167,6 +168,14 @@ struct CodeMirrorEditor: NSViewRepresentable {
                 self.scrollToOffset = nil
             }
         }
+
+        // Handle annotation-specific scroll requests (uses ordinal index, not charOffset)
+        if let index = scrollToAnnotationIndex {
+            context.coordinator.scrollToAnnotation(index: index)
+            DispatchQueue.main.async {
+                self.scrollToAnnotationIndex = nil
+            }
+        }
     }
 
     func makeCoordinator() -> Coordinator {
@@ -174,6 +183,7 @@ struct CodeMirrorEditor: NSViewRepresentable {
             content: $content,
             cursorPositionToRestore: $cursorPositionToRestore,
             scrollToOffset: $scrollToOffset,
+            scrollToAnnotationIndex: $scrollToAnnotationIndex,
             isResettingContent: $isResettingContent,
             onContentChange: onContentChange,
             onStatsChange: onStatsChange,
@@ -198,6 +208,7 @@ struct CodeMirrorEditor: NSViewRepresentable {
         var contentBinding: Binding<String>
         var cursorPositionToRestoreBinding: Binding<CursorPosition?>
         var scrollToOffsetBinding: Binding<Int?>
+        var scrollToAnnotationIndexBinding: Binding<Int?>
         var isResettingContentBinding: Binding<Bool>
         let onContentChange: (String) -> Void
         let onStatsChange: (Int, Int) -> Void
@@ -266,6 +277,7 @@ struct CodeMirrorEditor: NSViewRepresentable {
             content: Binding<String>,
             cursorPositionToRestore: Binding<CursorPosition?>,
             scrollToOffset: Binding<Int?>,
+            scrollToAnnotationIndex: Binding<Int?>,
             isResettingContent: Binding<Bool>,
             onContentChange: @escaping (String) -> Void,
             onStatsChange: @escaping (Int, Int) -> Void,
@@ -276,6 +288,7 @@ struct CodeMirrorEditor: NSViewRepresentable {
             self.contentBinding = content
             self.cursorPositionToRestoreBinding = cursorPositionToRestore
             self.scrollToOffsetBinding = scrollToOffset
+            self.scrollToAnnotationIndexBinding = scrollToAnnotationIndex
             self.isResettingContentBinding = isResettingContent
             self.onContentChange = onContentChange
             self.onStatsChange = onStatsChange
