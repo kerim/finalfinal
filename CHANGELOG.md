@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.67] - 2026-03-04
+
+### Fixed
+
+- **Annotation click-to-scroll drift in CodeMirror** — CodeMirror used `charOffset` from raw markdown, but `sourceContent` has section anchors (~40-46 bytes each) injected before headings, causing cumulative position drift. Switched both editors to ordinal index matching: annotation's zero-based index is looked up via each editor's own `getAnnotations()` function.
+- **More/less button in annotation cards** — separate hover zone from card highlight, full-width clickable hit target instead of small centered pill, keep "less" button visible when expanded, correct SwiftUI gesture ordering (double-tap priority over single-tap), reset expansion state when annotation text changes.
+
+### Changed
+
+- **Annotation sidebar simplified** — rewritten `AnnotationCardView` and `AnnotationPanel` with reduced complexity (~70 lines net reduction); removed `AnnotationViewModel`.
+- **Image caption prompt hidden when not hovering** — Milkdown caption prompt only appears on mouse hover, reducing visual noise.
+- **Zoom into section** — section zoom now correctly loads in the editor (1-line fix enabling the feature).
+
 ## [0.2.66] - 2026-03-03
 
 ### Added
