@@ -493,15 +493,19 @@ export function getAnnotations(): ParsedAnnotation[] {
   return annotations;
 }
 
-export function scrollToAnnotation(offset: number): void {
+export function scrollToAnnotation(index: number): void {
   const view = getEditorView();
   if (!view) return;
-  const pos = Math.min(offset, view.state.doc.length);
-  view.dispatch({
-    selection: { anchor: pos },
-    effects: EditorView.scrollIntoView(pos, { y: 'center', yMargin: 100 }),
-  });
-  view.focus();
+
+  const annotations = getAnnotations();
+  if (index >= 0 && index < annotations.length) {
+    const pos = annotations[index].offset;
+    view.dispatch({
+      selection: { anchor: pos },
+      effects: EditorView.scrollIntoView(pos, { y: 'center', yMargin: 100 }),
+    });
+    view.focus();
+  }
 }
 
 export function insertAnnotation(type: string): void {

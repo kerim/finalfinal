@@ -236,6 +236,36 @@ This must happen **before** applying any styling (fonts, paragraph styles, color
 
 ---
 
+## Annotation Scroll: Ordinal Index over charOffset
+
+**Problem:** Clicking an annotation in the sidebar to scroll the editor to its position drifted in CodeMirror. Annotations near the middle of the document landed near the bottom of the screen, and annotations at the end scrolled off-screen entirely.
+
+**Root Cause:** `charOffset` is computed from raw markdown (`editorState.content`), but CodeMirror displays `sourceContent` which has section anchors (`<!-- @sid:UUID -->`, ~40-46 bytes each) injected before every heading. These injected bytes accumulate, causing the charOffset to point earlier in the document than the actual annotation position.
+
+**Solution:** Use ordinal index matching — pass the annotation's zero-based index (its position among all annotations in document order) to the editor, which then looks up the actual position via its own `getAnnotations()` function. Both editors now use the same mechanism:
+
+```typescript
+// JS: look up by ordinal index, not byte offset
+export function scrollToAnnotation(index: number): void {
+  const annotations = getAnnotations();
+  if (index >= 0 && index < annotations.length) {
+    const pos = annotations[index].offset;
+    // scroll to pos...
+  }
+}
+```
+
+```swift
+// Swift: same dispatch for both editors
+onScrollToAnnotation: { index, charOffset in
+    editorState.scrollToAnnotationIndex = index
+}
+```
+
+**General principle:** When editors display transformed content (injected anchors, block IDs, bibliography markers), byte offsets from the raw markdown will not match editor positions. Use ordinal index matching instead — count which occurrence of an element the user clicked, then let the editor find the Nth occurrence in its own document.
+
+---
+
 ## CSS Variables: `--editor-muted` Is for UI Chrome, Not User Content
 
 **Problem:** Image captions used `--editor-muted` (mapped to `editorTextSecondary`) for their text color. At reduced font sizes (0.85–0.9em), the contrast dropped below readable levels, especially in Low Contrast Night (`#777b84` on `#111113` ≈ 3.5:1 ratio, below WCAG AA).

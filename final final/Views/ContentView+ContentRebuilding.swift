@@ -215,12 +215,8 @@ extension ContentView {
             if editorState.isAnnotationPanelVisible {
                 AnnotationPanel(
                     editorState: editorState,
-                    onScrollToAnnotation: { index, charOffset in
-                        if editorState.editorMode == .wysiwyg {
-                            editorState.scrollToAnnotationIndex = index
-                        } else {
-                            editorState.scrollTo(offset: charOffset)
-                        }
+                    onScrollToAnnotation: { index, _ in
+                        editorState.scrollToAnnotationIndex = index
                     },
                     onToggleCompletion: { annotation in
                         toggleAnnotationCompletion(annotation)
@@ -370,6 +366,7 @@ extension ContentView {
                     focusModeEnabled: $editorState.focusModeEnabled,
                     cursorPositionToRestore: $cursorPositionToRestore,
                     scrollToOffset: $editorState.scrollToOffset,
+                    scrollToAnnotationIndex: $editorState.scrollToAnnotationIndex,
                     isResettingContent: $editorState.isResettingContent,
                     contentState: editorState.contentState,
                     isZoomingContent: editorState.isZoomingContent,

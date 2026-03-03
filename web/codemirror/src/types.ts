@@ -62,7 +62,7 @@ declare global {
       // Annotation API
       setAnnotationDisplayModes: (modes: Record<string, string>) => void;
       getAnnotations: () => ParsedAnnotation[];
-      scrollToAnnotation: (offset: number) => void;
+      scrollToAnnotation: (index: number) => void;
       insertAnnotation: (type: string) => void;
       // Highlight API
       toggleHighlight: () => boolean;
