@@ -271,7 +271,13 @@ export function setTheme(cssVariables: string): void {
   invalidateHeadingMetricsCache();
 }
 
-export function getCursorPosition(): { line: number; column: number; scrollFraction: number; cursorIsVisible: boolean; topLine: number } {
+export function getCursorPosition(): {
+  line: number;
+  column: number;
+  scrollFraction: number;
+  cursorIsVisible: boolean;
+  topLine: number;
+} {
   const view = getEditorView();
   if (!view) {
     return { line: 1, column: 0, scrollFraction: 0, cursorIsVisible: true, topLine: 1 };
@@ -287,13 +293,14 @@ export function getCursorPosition(): { line: number; column: number; scrollFract
     const cursorRect = view.coordsAtPos(pos);
     const scrollerRect = scroller.getBoundingClientRect();
     const cursorIsVisible =
-      cursorRect != null &&
-      cursorRect.top >= scrollerRect.top &&
-      cursorRect.bottom <= scrollerRect.bottom;
+      cursorRect != null && cursorRect.top >= scrollerRect.top && cursorRect.bottom <= scrollerRect.bottom;
 
     // CodeMirror line numbers = markdown line numbers (1:1)
+    // Float topLine with sub-line precision for smooth cross-editor scroll sync
     const topBlock = view.lineBlockAtHeight(scroller.scrollTop);
-    const topLine = view.state.doc.lineAt(topBlock.from).number;
+    const topLineInt = view.state.doc.lineAt(topBlock.from).number;
+    const fraction = topBlock.height > 0 ? (scroller.scrollTop - topBlock.top) / topBlock.height : 0;
+    const topLine = topLineInt + Math.min(fraction, 0.99);
 
     return {
       line: line.number, // CodeMirror lines are 1-indexed
@@ -384,10 +391,12 @@ export function scrollToLine(line: number): void {
       requestAnimationFrame(tryScroll);
       return;
     }
-    const safeLine = Math.max(1, Math.min(line, lineCount));
+    const intLine = Math.floor(line);
+    const fraction = Math.min(line - intLine, 0.99);
+    const safeLine = Math.max(1, Math.min(intLine, lineCount));
     const lineInfo = view.state.doc.line(safeLine);
     const block = view.lineBlockAt(lineInfo.from);
-    view.scrollDOM.scrollTop = block.top;
+    view.scrollDOM.scrollTop = block.top + fraction * block.height;
   };
   requestAnimationFrame(() => requestAnimationFrame(tryScroll));
 }

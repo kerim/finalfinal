@@ -267,7 +267,7 @@ extension MilkdownEditor.Coordinator {
                   let column = dict["column"] as? Int else { return }
             let scrollFraction = dict["scrollFraction"] as? Double ?? 0
             let cursorIsVisible = dict["cursorIsVisible"] as? Bool ?? true
-            let topLine = dict["topLine"] as? Int ?? 1
+            let topLine = dict["topLine"] as? Double ?? 1.0
             self?.onCursorPositionSaved(CursorPosition(line: line, column: column, scrollFraction: scrollFraction, cursorIsVisible: cursorIsVisible, topLine: topLine))
         }
     }
@@ -336,12 +336,13 @@ extension MilkdownEditor.Coordinator {
                let column = dict["column"] as? Int {
                 let scrollFraction = dict["scrollFraction"] as? Double ?? 0
                 let cursorIsVisible = dict["cursorIsVisible"] as? Bool ?? true
-                let topLine = dict["topLine"] as? Int ?? 1
+                let topLine = dict["topLine"] as? Double ?? 1.0
                 position = CursorPosition(line: line, column: column, scrollFraction: scrollFraction, cursorIsVisible: cursorIsVisible, topLine: topLine)
             }
 
             #if DEBUG
-            print("[Milkdown-SAVE] cursorIsVisible=\(position.cursorIsVisible), topLine=\(position.topLine), scrollFraction=\(position.scrollFraction)")
+            let tl = String(format: "%.2f", position.topLine)
+            print("[Milkdown-SAVE] cursorIsVisible=\(position.cursorIsVisible), topLine=\(tl), scrollFraction=\(position.scrollFraction)")
             #endif
 
             NotificationCenter.default.post(
@@ -460,7 +461,7 @@ extension MilkdownEditor.Coordinator {
             }
             let scrollFraction = dict["scrollFraction"] as? Double ?? 0
             let cursorIsVisible = dict["cursorIsVisible"] as? Bool ?? true
-            let topLine = dict["topLine"] as? Int ?? 1
+            let topLine = dict["topLine"] as? Double ?? 1.0
             completion(CursorPosition(line: line, column: column, scrollFraction: scrollFraction, cursorIsVisible: cursorIsVisible, topLine: topLine))
         }
     }

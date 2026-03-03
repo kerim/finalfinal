@@ -17,6 +17,7 @@ import {
   replaceCurrent as replaceCurrentImpl,
 } from './find-replace';
 import { setFocusModeEnabled } from './focus-mode-plugin';
+import { restoreScrollPosition, saveScrollPosition } from './scroll-map';
 import { sectionBreakNode } from './section-break-plugin';
 import { isSourceModeEnabled, setSourceModeEnabled } from './source-mode-plugin';
 import type { FindOptions, FindResult, SearchState } from './types';
@@ -220,93 +221,13 @@ function pmPosToMdLine(view: import('@milkdown/kit/prose/view').EditorView, pmPo
   return line;
 }
 
-/**
- * Map a 1-indexed markdown line number to a ProseMirror position.
- * Uses the same matching strategy as pmPosToMdLine for round-trip consistency.
- */
-function mdLineToPmPos(view: import('@milkdown/kit/prose/view').EditorView, targetLine: number, mdLines: string[]): number | null {
-  const targetIdx = targetLine - 1;
-  if (targetIdx < 0 || targetIdx >= mdLines.length) return null;
-
-  const targetText = stripMarkdownSyntax(mdLines[targetIdx]);
-
-  // Table detection: if target line is a table line, use ordinal counting
-  if (isTableLine(mdLines[targetIdx]) && !isTableSeparator(mdLines[targetIdx])) {
-    let tableOrdinal = 0;
-    for (let i = 0; i <= targetIdx; i++) {
-      if (isTableLine(mdLines[i]) && !isTableSeparator(mdLines[i])) {
-        if (i === 0 || !isTableLine(mdLines[i - 1])) {
-          tableOrdinal++;
-        }
-      }
-    }
-
-    let currentTableOrdinal = 0;
-    let foundPos: number | null = null;
-    view.state.doc.descendants((node, pos) => {
-      if (foundPos !== null) return false;
-      if (node.type.name === 'table') {
-        currentTableOrdinal++;
-        if (currentTableOrdinal === tableOrdinal) {
-          foundPos = pos;
-          return false;
-        }
-      }
-      return true;
-    });
-    return foundPos;
-  }
-
-  // Standard text matching
-  let foundPos: number | null = null;
-  view.state.doc.descendants((node, pos) => {
-    if (foundPos !== null) return false;
-    if (node.isBlock && node.textContent.trim() === targetText) {
-      foundPos = pos;
-      return false;
-    }
-    return true;
-  });
-  if (foundPos !== null) return foundPos;
-
-  // Fallback: block counting
-  let contentLineIndex = 0;
-  let inTableBlock = false;
-  for (let i = 0; i < targetLine; i++) {
-    const currentLine = mdLines[i];
-    if (isTableLine(currentLine)) {
-      if (!inTableBlock) {
-        contentLineIndex++;
-        inTableBlock = true;
-      }
-    } else {
-      inTableBlock = false;
-      if (currentLine.trim() !== '') {
-        contentLineIndex++;
-      }
-    }
-  }
-
-  let blockCount = 0;
-  view.state.doc.descendants((node, pos) => {
-    if (foundPos !== null) return false;
-    if (node.isBlock && node.type.name !== 'doc') {
-      blockCount++;
-      if (blockCount === contentLineIndex) {
-        foundPos = pos;
-        return false;
-      }
-      if (node.type.name === 'table') {
-        return false;
-      }
-    }
-    return true;
-  });
-
-  return foundPos;
-}
-
-export function getCursorPosition(): { line: number; column: number; scrollFraction: number; cursorIsVisible: boolean; topLine: number } {
+export function getCursorPosition(): {
+  line: number;
+  column: number;
+  scrollFraction: number;
+  cursorIsVisible: boolean;
+  topLine: number;
+} {
   const editorInstance = getEditorInstance();
   if (!editorInstance) {
     return { line: 1, column: 0, scrollFraction: 0, cursorIsVisible: true, topLine: 1 };
@@ -336,13 +257,10 @@ export function getCursorPosition(): { line: number; column: number; scrollFract
 
     // Check if cursor is currently visible in the viewport
     const coords = view.coordsAtPos(head);
-    const cursorIsVisible =
-      coords != null && coords.top >= 0 && coords.bottom <= window.innerHeight;
+    const cursorIsVisible = coords != null && coords.top >= 0 && coords.bottom <= window.innerHeight;
 
-    // Determine the markdown line at the viewport top
-    const editorRect = view.dom.getBoundingClientRect();
-    const topCoord = view.posAtCoords({ left: editorRect.left + 10, top: 1 });
-    const topLine = topCoord ? pmPosToMdLine(view, topCoord.pos, mdLines) : 1;
+    // Determine the markdown line at the viewport top (float with sub-line precision)
+    const topLine = saveScrollPosition(view, mdLines);
 
     return { line, column, scrollFraction, cursorIsVisible, topLine };
   } catch {
@@ -528,39 +446,12 @@ export function scrollToLine(line: number): void {
     const view = editorInstance.ctx.get(editorViewCtx);
     const markdown = editorInstance.action(getMarkdown());
     const mdLines = markdown.split('\n');
-    // Retry only if content not loaded yet
     if (mdLines.length <= 1 && attempts < 20) {
       attempts++;
       requestAnimationFrame(tryScroll);
       return;
     }
-    // Clamp to last line if topLine exceeds document length (stale from longer doc)
-    const safeLine = Math.max(1, Math.min(line, mdLines.length));
-    const pmPos = mdLineToPmPos(view, safeLine, mdLines);
-    if (pmPos !== null) {
-      // Use +1 offset following scrollToBlock pattern (api-content.ts)
-      const coords = view.coordsAtPos(pmPos + 1);
-      if (coords) {
-        // 100px offset matches scrollToBlock pattern for visual breathing room
-        const targetScrollY = coords.top + window.scrollY - 100;
-        window.scrollTo({ top: Math.max(0, targetScrollY), behavior: 'instant' });
-      } else {
-        // Off-screen: use PM's scrollIntoView to force rendering, then fine-tune
-        const tr = view.state.tr
-          .setSelection(Selection.near(view.state.doc.resolve(pmPos + 1)))
-          .scrollIntoView();
-        tr.setMeta('addToHistory', false);
-        view.dispatch(tr);
-        // After PM scrolls, the position is now rendered — read coords
-        requestAnimationFrame(() => {
-          const coords2 = view.coordsAtPos(pmPos + 1);
-          if (coords2) {
-            const targetScrollY = coords2.top + window.scrollY - 100;
-            window.scrollTo({ top: Math.max(0, targetScrollY), behavior: 'instant' });
-          }
-        });
-      }
-    }
+    restoreScrollPosition(view, mdLines, line);
   };
   requestAnimationFrame(() => requestAnimationFrame(tryScroll));
 }

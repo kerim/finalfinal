@@ -13,9 +13,9 @@ struct CursorPosition: Equatable {
     let column: Int
     let scrollFraction: Double
     let cursorIsVisible: Bool
-    let topLine: Int
+    let topLine: Double
 
-    init(line: Int, column: Int, scrollFraction: Double = 0, cursorIsVisible: Bool = true, topLine: Int = 1) {
+    init(line: Int, column: Int, scrollFraction: Double = 0, cursorIsVisible: Bool = true, topLine: Double = 1.0) {
         self.line = line
         self.column = column
         self.scrollFraction = scrollFraction
@@ -23,7 +23,7 @@ struct CursorPosition: Equatable {
         self.topLine = topLine
     }
 
-    static let start = CursorPosition(line: 1, column: 0, scrollFraction: 0, cursorIsVisible: true, topLine: 1)
+    static let start = CursorPosition(line: 1, column: 0, scrollFraction: 0, cursorIsVisible: true, topLine: 1.0)
 }
 
 /// Toast notification shown when entering focus mode, auto-dismisses after 3 seconds
