@@ -340,11 +340,6 @@ extension MilkdownEditor.Coordinator {
                 position = CursorPosition(line: line, column: column, scrollFraction: scrollFraction, cursorIsVisible: cursorIsVisible, topLine: topLine)
             }
 
-            #if DEBUG
-            let tl = String(format: "%.2f", position.topLine)
-            print("[Milkdown-SAVE] cursorIsVisible=\(position.cursorIsVisible), topLine=\(tl), scrollFraction=\(position.scrollFraction)")
-            #endif
-
             NotificationCenter.default.post(
                 name: .didSaveCursorPosition,
                 object: nil,

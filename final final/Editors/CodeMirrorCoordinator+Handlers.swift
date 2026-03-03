@@ -184,11 +184,6 @@ extension CodeMirrorEditor.Coordinator {
                 position = CursorPosition(line: line, column: column, scrollFraction: scrollFraction, cursorIsVisible: cursorIsVisible, topLine: topLine)
             }
 
-            #if DEBUG
-            let tl = String(format: "%.2f", position.topLine)
-            print("[CM-SAVE] cursorIsVisible=\(position.cursorIsVisible), topLine=\(tl), scrollFraction=\(position.scrollFraction)")
-            #endif
-
             NotificationCenter.default.post(
                 name: .didSaveCursorPosition,
                 object: nil,
@@ -239,10 +234,6 @@ extension CodeMirrorEditor.Coordinator {
         // - Cursor NOT visible (scrolled away or never clicked) + has topLine → restore scroll position
         // - Cursor IS visible → restore cursor + center on it
         let useScrollRestore = cursor.map { !$0.cursorIsVisible && $0.topLine > 1.0 } ?? false
-
-        #if DEBUG
-        print("[CM-batchInit] useScrollRestore=\(useScrollRestore), topLine=\(String(format: "%.2f", cursor?.topLine ?? 1.0))")
-        #endif
 
         let cursorJS: String
         if let pos = cursor, !useScrollRestore {
@@ -316,11 +307,6 @@ extension CodeMirrorEditor.Coordinator {
         cursorPositionToRestoreBinding.wrappedValue = nil
 
         let useScrollRestore = !position.cursorIsVisible && position.topLine > 1.0
-
-        #if DEBUG
-        let tl = String(format: "%.2f", position.topLine)
-        print("[CM-restore] useScrollRestore=\(useScrollRestore), topLine=\(tl), scrollFraction=\(position.scrollFraction)")
-        #endif
 
         if useScrollRestore {
             // Cursor not visible — restore scroll position only
