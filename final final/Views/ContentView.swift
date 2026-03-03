@@ -11,8 +11,19 @@ import SwiftUI
 struct CursorPosition: Equatable {
     let line: Int
     let column: Int
+    let scrollFraction: Double
+    let cursorIsVisible: Bool
+    let topLine: Int
 
-    static let start = CursorPosition(line: 1, column: 0)
+    init(line: Int, column: Int, scrollFraction: Double = 0, cursorIsVisible: Bool = true, topLine: Int = 1) {
+        self.line = line
+        self.column = column
+        self.scrollFraction = scrollFraction
+        self.cursorIsVisible = cursorIsVisible
+        self.topLine = topLine
+    }
+
+    static let start = CursorPosition(line: 1, column: 0, scrollFraction: 0, cursorIsVisible: true, topLine: 1)
 }
 
 /// Toast notification shown when entering focus mode, auto-dismisses after 3 seconds

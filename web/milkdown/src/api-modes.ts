@@ -111,10 +111,205 @@ export function setTheme(cssVariables: string): void {
     });
 }
 
-export function getCursorPosition(): { line: number; column: number } {
+/**
+ * Map a ProseMirror position to a 1-indexed markdown line number.
+ * Uses: text matching → table detection → block-counting fallback.
+ */
+function pmPosToMdLine(view: import('@milkdown/kit/prose/view').EditorView, pmPos: number, mdLines: string[]): number {
+  const $pos = view.state.doc.resolve(pmPos);
+  const parentNode = $pos.parent;
+  const parentText = parentNode.textContent;
+
+  let line = 1;
+  let matched = false;
+
+  // Check if position is in a table by looking at ancestor nodes
+  let inTable = false;
+  for (let d = $pos.depth; d > 0; d--) {
+    if ($pos.node(d).type.name === 'table') {
+      inTable = true;
+      break;
+    }
+  }
+
+  // SIMPLE TABLE HANDLING: When position is in a table, return the table's START line
+  if (inTable) {
+    let pmTableOrdinal = 0;
+    let foundTablePos = false;
+    view.state.doc.descendants((node, pos) => {
+      if (foundTablePos) return false;
+      if (node.type.name === 'table') {
+        pmTableOrdinal++;
+        if (pmPos > pos && pmPos < pos + node.nodeSize) {
+          foundTablePos = true;
+          return false;
+        }
+      }
+      return true;
+    });
+
+    // Find the pmTableOrdinal-th table in markdown
+    if (pmTableOrdinal > 0) {
+      let mdTableCount = 0;
+      for (let i = 0; i < mdLines.length; i++) {
+        if (isTableLine(mdLines[i]) && !isTableSeparator(mdLines[i])) {
+          if (i === 0 || !isTableLine(mdLines[i - 1])) {
+            mdTableCount++;
+            if (mdTableCount === pmTableOrdinal) {
+              line = i + 1;
+              matched = true;
+              break;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // Standard text matching (skip if already matched via table)
+  for (let i = 0; i < mdLines.length && !matched; i++) {
+    const stripped = stripMarkdownSyntax(mdLines[i]);
+
+    if (stripped === parentText) {
+      line = i + 1;
+      matched = true;
+      break;
+    }
+
+    // Partial match (for long lines)
+    if (stripped && parentText && parentText.startsWith(stripped) && stripped.length >= 10) {
+      line = i + 1;
+      matched = true;
+      break;
+    }
+
+    // Reverse partial match
+    if (stripped && parentText && stripped.startsWith(parentText) && parentText.length >= 10) {
+      line = i + 1;
+      matched = true;
+      break;
+    }
+  }
+
+  // Fallback: count blocks from document start
+  if (!matched) {
+    let blockCount = 0;
+    view.state.doc.descendants((node, pos) => {
+      if (pos >= pmPos) return false;
+      if (node.isBlock && node.type.name !== 'doc') {
+        blockCount++;
+      }
+      return true;
+    });
+
+    let contentLinesSeen = 0;
+    for (let i = 0; i < mdLines.length; i++) {
+      if (mdLines[i].trim() !== '') {
+        contentLinesSeen++;
+        if (contentLinesSeen === blockCount) {
+          line = i + 1;
+          break;
+        }
+      }
+    }
+    if (contentLinesSeen < blockCount) {
+      line = mdLines.length;
+    }
+  }
+
+  return line;
+}
+
+/**
+ * Map a 1-indexed markdown line number to a ProseMirror position.
+ * Uses the same matching strategy as pmPosToMdLine for round-trip consistency.
+ */
+function mdLineToPmPos(view: import('@milkdown/kit/prose/view').EditorView, targetLine: number, mdLines: string[]): number | null {
+  const targetIdx = targetLine - 1;
+  if (targetIdx < 0 || targetIdx >= mdLines.length) return null;
+
+  const targetText = stripMarkdownSyntax(mdLines[targetIdx]);
+
+  // Table detection: if target line is a table line, use ordinal counting
+  if (isTableLine(mdLines[targetIdx]) && !isTableSeparator(mdLines[targetIdx])) {
+    let tableOrdinal = 0;
+    for (let i = 0; i <= targetIdx; i++) {
+      if (isTableLine(mdLines[i]) && !isTableSeparator(mdLines[i])) {
+        if (i === 0 || !isTableLine(mdLines[i - 1])) {
+          tableOrdinal++;
+        }
+      }
+    }
+
+    let currentTableOrdinal = 0;
+    let foundPos: number | null = null;
+    view.state.doc.descendants((node, pos) => {
+      if (foundPos !== null) return false;
+      if (node.type.name === 'table') {
+        currentTableOrdinal++;
+        if (currentTableOrdinal === tableOrdinal) {
+          foundPos = pos;
+          return false;
+        }
+      }
+      return true;
+    });
+    return foundPos;
+  }
+
+  // Standard text matching
+  let foundPos: number | null = null;
+  view.state.doc.descendants((node, pos) => {
+    if (foundPos !== null) return false;
+    if (node.isBlock && node.textContent.trim() === targetText) {
+      foundPos = pos;
+      return false;
+    }
+    return true;
+  });
+  if (foundPos !== null) return foundPos;
+
+  // Fallback: block counting
+  let contentLineIndex = 0;
+  let inTableBlock = false;
+  for (let i = 0; i < targetLine; i++) {
+    const currentLine = mdLines[i];
+    if (isTableLine(currentLine)) {
+      if (!inTableBlock) {
+        contentLineIndex++;
+        inTableBlock = true;
+      }
+    } else {
+      inTableBlock = false;
+      if (currentLine.trim() !== '') {
+        contentLineIndex++;
+      }
+    }
+  }
+
+  let blockCount = 0;
+  view.state.doc.descendants((node, pos) => {
+    if (foundPos !== null) return false;
+    if (node.isBlock && node.type.name !== 'doc') {
+      blockCount++;
+      if (blockCount === contentLineIndex) {
+        foundPos = pos;
+        return false;
+      }
+      if (node.type.name === 'table') {
+        return false;
+      }
+    }
+    return true;
+  });
+
+  return foundPos;
+}
+
+export function getCursorPosition(): { line: number; column: number; scrollFraction: number; cursorIsVisible: boolean; topLine: number } {
   const editorInstance = getEditorInstance();
   if (!editorInstance) {
-    return { line: 1, column: 0 };
+    return { line: 1, column: 0, scrollFraction: 0, cursorIsVisible: true, topLine: 1 };
   }
 
   try {
@@ -122,110 +317,11 @@ export function getCursorPosition(): { line: number; column: number } {
     const { head } = view.state.selection;
     const markdown = editorInstance.action(getMarkdown());
     const mdLines = markdown.split('\n');
-    const $head = view.state.doc.resolve(head);
 
-    // Get parent node text for line matching
-    const parentNode = $head.parent;
-    const parentText = parentNode.textContent;
-
-    let line = 1;
-    let matched = false;
-
-    // Check if cursor is in a table by looking at ancestor nodes
-    let inTable = false;
-    for (let d = $head.depth; d > 0; d--) {
-      if ($head.node(d).type.name === 'table') {
-        inTable = true;
-        break;
-      }
-    }
-
-    // SIMPLE TABLE HANDLING: When cursor is in a table, return the table's START line
-    if (inTable) {
-      let pmTableOrdinal = 0;
-      let foundTablePos = false;
-      view.state.doc.descendants((node, pos) => {
-        if (foundTablePos) return false;
-        if (node.type.name === 'table') {
-          pmTableOrdinal++;
-          if (head > pos && head < pos + node.nodeSize) {
-            foundTablePos = true;
-            return false;
-          }
-        }
-        return true;
-      });
-
-      // Find the pmTableOrdinal-th table in markdown
-      if (pmTableOrdinal > 0) {
-        let mdTableCount = 0;
-        for (let i = 0; i < mdLines.length; i++) {
-          if (isTableLine(mdLines[i]) && !isTableSeparator(mdLines[i])) {
-            if (i === 0 || !isTableLine(mdLines[i - 1])) {
-              mdTableCount++;
-              if (mdTableCount === pmTableOrdinal) {
-                line = i + 1;
-                matched = true;
-                break;
-              }
-            }
-          }
-        }
-      }
-    }
-
-    // Standard text matching (skip if already matched via table)
-    for (let i = 0; i < mdLines.length && !matched; i++) {
-      const stripped = stripMarkdownSyntax(mdLines[i]);
-
-      if (stripped === parentText) {
-        line = i + 1;
-        matched = true;
-        break;
-      }
-
-      // Partial match (for long lines)
-      if (stripped && parentText && parentText.startsWith(stripped) && stripped.length >= 10) {
-        line = i + 1;
-        matched = true;
-        break;
-      }
-
-      // Reverse partial match
-      if (stripped && parentText && stripped.startsWith(parentText) && parentText.length >= 10) {
-        line = i + 1;
-        matched = true;
-        break;
-      }
-    }
-
-    // Fallback: count blocks from document start
-    if (!matched) {
-      let blockCount = 0;
-      view.state.doc.descendants((node, pos) => {
-        if (pos >= head) return false;
-        if (node.isBlock && node.type.name !== 'doc') {
-          blockCount++;
-        }
-        return true;
-      });
-
-      let contentLinesSeen = 0;
-      for (let i = 0; i < mdLines.length; i++) {
-        if (mdLines[i].trim() !== '') {
-          contentLinesSeen++;
-          if (contentLinesSeen === blockCount) {
-            line = i + 1;
-            break;
-          }
-        }
-      }
-      if (contentLinesSeen < blockCount) {
-        line = mdLines.length;
-      }
-    }
+    const line = pmPosToMdLine(view, head, mdLines);
 
     // Calculate column with inline markdown offset mapping
+    const $head = view.state.doc.resolve(head);
     const blockStart = $head.start($head.depth);
     const offsetInBlock = head - blockStart;
     const lineContent = mdLines[line - 1] || '';
@@ -235,13 +331,26 @@ export function getCursorPosition(): { line: number; column: number } {
     const afterSyntax = lineContent.slice(syntaxLength);
     const column = syntaxLength + textToMdOffset(afterSyntax, offsetInBlock);
 
-    return { line, column };
+    const maxScroll = document.documentElement.scrollHeight - window.innerHeight;
+    const scrollFraction = maxScroll > 0 ? Math.min(1, window.scrollY / maxScroll) : 0;
+
+    // Check if cursor is currently visible in the viewport
+    const coords = view.coordsAtPos(head);
+    const cursorIsVisible =
+      coords != null && coords.top >= 0 && coords.bottom <= window.innerHeight;
+
+    // Determine the markdown line at the viewport top
+    const editorRect = view.dom.getBoundingClientRect();
+    const topCoord = view.posAtCoords({ left: editorRect.left + 10, top: 1 });
+    const topLine = topCoord ? pmPosToMdLine(view, topCoord.pos, mdLines) : 1;
+
+    return { line, column, scrollFraction, cursorIsVisible, topLine };
   } catch {
-    return { line: 1, column: 0 };
+    return { line: 1, column: 0, scrollFraction: 0, cursorIsVisible: true, topLine: 1 };
   }
 }
 
-export function setCursorPosition(lineCol: { line: number; column: number; scrollFraction?: number }): void {
+export function setCursorPosition(lineCol: { line: number; column: number }): void {
   const editorInstance = getEditorInstance();
   if (!editorInstance) {
     return;
@@ -367,24 +476,6 @@ export function setCursorPosition(lineCol: { line: number; column: number; scrol
     const selection = Selection.near(view.state.doc.resolve(pmPos));
     view.dispatch(view.state.tr.setSelection(selection).scrollIntoView());
     view.focus();
-
-    // Restore scroll position if provided
-    if (lineCol.scrollFraction !== undefined) {
-      requestAnimationFrame(() => {
-        try {
-          const cursorCoords = view.coordsAtPos(pmPos);
-          const editorRect = view.dom.getBoundingClientRect();
-          if (cursorCoords && editorRect.height > 0) {
-            const targetTop = editorRect.height * lineCol.scrollFraction!;
-            const cursorInView = cursorCoords.top - editorRect.top;
-            const scrollAdjust = cursorInView - targetTop;
-            view.dom.scrollTop += scrollAdjust;
-          }
-        } catch {
-          // Scroll adjustment failed, ignore
-        }
-      });
-    }
   } catch {
     // Cursor positioning failed, ignore
   }
@@ -393,18 +484,85 @@ export function setCursorPosition(lineCol: { line: number; column: number; scrol
 export function scrollCursorToCenter(): void {
   const editorInstance = getEditorInstance();
   if (!editorInstance) return;
-  try {
-    const view = editorInstance.ctx.get(editorViewCtx);
-    const { head } = view.state.selection;
-    const coords = view.coordsAtPos(head);
-    if (coords) {
-      const viewportHeight = window.innerHeight;
-      const targetScrollY = coords.top + window.scrollY - viewportHeight / 2;
-      window.scrollTo({ top: Math.max(0, targetScrollY), behavior: 'instant' });
+  // Double-RAF ensures browser has completed layout and paint before
+  // calculating cursor coordinates (same pattern as paintComplete in zoom).
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      try {
+        const view = editorInstance.ctx.get(editorViewCtx);
+        const { head } = view.state.selection;
+        const coords = view.coordsAtPos(head);
+        if (coords) {
+          const viewportHeight = window.innerHeight;
+          const targetScrollY = coords.top + window.scrollY - viewportHeight / 2;
+          window.scrollTo({ top: Math.max(0, targetScrollY), behavior: 'instant' });
+        }
+      } catch {
+        // Scroll failed, ignore
+      }
+    });
+  });
+}
+
+export function scrollToFraction(fraction: number): void {
+  let attempts = 0;
+  const tryScroll = () => {
+    const maxScroll = document.documentElement.scrollHeight - window.innerHeight;
+    if (maxScroll <= 0 && attempts < 20) {
+      attempts++;
+      requestAnimationFrame(tryScroll);
+      return;
     }
-  } catch {
-    // Scroll failed, ignore
-  }
+    if (maxScroll > 0) {
+      window.scrollTo({ top: Math.max(0, fraction * maxScroll), behavior: 'instant' });
+    }
+  };
+  requestAnimationFrame(() => requestAnimationFrame(tryScroll));
+}
+
+export function scrollToLine(line: number): void {
+  const editorInstance = getEditorInstance();
+  if (!editorInstance) return;
+  let attempts = 0;
+  const tryScroll = () => {
+    const view = editorInstance.ctx.get(editorViewCtx);
+    const markdown = editorInstance.action(getMarkdown());
+    const mdLines = markdown.split('\n');
+    // Retry only if content not loaded yet
+    if (mdLines.length <= 1 && attempts < 20) {
+      attempts++;
+      requestAnimationFrame(tryScroll);
+      return;
+    }
+    // Clamp to last line if topLine exceeds document length (stale from longer doc)
+    const safeLine = Math.max(1, Math.min(line, mdLines.length));
+    const pmPos = mdLineToPmPos(view, safeLine, mdLines);
+    if (pmPos !== null) {
+      // Use +1 offset following scrollToBlock pattern (api-content.ts)
+      const coords = view.coordsAtPos(pmPos + 1);
+      if (coords) {
+        // 100px offset matches scrollToBlock pattern for visual breathing room
+        const targetScrollY = coords.top + window.scrollY - 100;
+        window.scrollTo({ top: Math.max(0, targetScrollY), behavior: 'instant' });
+      } else {
+        // Off-screen: use PM's scrollIntoView to force rendering, then fine-tune
+        const tr = view.state.tr
+          .setSelection(Selection.near(view.state.doc.resolve(pmPos + 1)))
+          .scrollIntoView();
+        tr.setMeta('addToHistory', false);
+        view.dispatch(tr);
+        // After PM scrolls, the position is now rendered — read coords
+        requestAnimationFrame(() => {
+          const coords2 = view.coordsAtPos(pmPos + 1);
+          if (coords2) {
+            const targetScrollY = coords2.top + window.scrollY - 100;
+            window.scrollTo({ top: Math.max(0, targetScrollY), behavior: 'instant' });
+          }
+        });
+      }
+    }
+  };
+  requestAnimationFrame(() => requestAnimationFrame(tryScroll));
 }
 
 export function insertAtCursor(text: string): void {

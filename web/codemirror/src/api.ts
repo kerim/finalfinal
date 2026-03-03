@@ -271,20 +271,39 @@ export function setTheme(cssVariables: string): void {
   invalidateHeadingMetricsCache();
 }
 
-export function getCursorPosition(): { line: number; column: number } {
+export function getCursorPosition(): { line: number; column: number; scrollFraction: number; cursorIsVisible: boolean; topLine: number } {
   const view = getEditorView();
   if (!view) {
-    return { line: 1, column: 0 };
+    return { line: 1, column: 0, scrollFraction: 0, cursorIsVisible: true, topLine: 1 };
   }
   try {
     const pos = view.state.selection.main.head;
     const line = view.state.doc.lineAt(pos);
+    const scroller = view.scrollDOM;
+    const maxScroll = scroller.scrollHeight - scroller.clientHeight;
+    const scrollFraction = maxScroll > 0 ? Math.min(1, scroller.scrollTop / maxScroll) : 0;
+
+    // Check if cursor is currently visible in the viewport
+    const cursorRect = view.coordsAtPos(pos);
+    const scrollerRect = scroller.getBoundingClientRect();
+    const cursorIsVisible =
+      cursorRect != null &&
+      cursorRect.top >= scrollerRect.top &&
+      cursorRect.bottom <= scrollerRect.bottom;
+
+    // CodeMirror line numbers = markdown line numbers (1:1)
+    const topBlock = view.lineBlockAtHeight(scroller.scrollTop);
+    const topLine = view.state.doc.lineAt(topBlock.from).number;
+
     return {
       line: line.number, // CodeMirror lines are 1-indexed
       column: pos - line.from,
+      scrollFraction,
+      cursorIsVisible,
+      topLine,
     };
   } catch (_e) {
-    return { line: 1, column: 0 };
+    return { line: 1, column: 0, scrollFraction: 0, cursorIsVisible: true, topLine: 1 };
   }
 }
 
@@ -317,17 +336,60 @@ export function setCursorPosition(lineCol: { line: number; column: number }): vo
 export function scrollCursorToCenter(): void {
   const view = getEditorView();
   if (!view) return;
-  try {
-    const pos = view.state.selection.main.head;
-    const coords = view.coordsAtPos(pos);
-    if (coords) {
-      const viewportHeight = window.innerHeight;
-      const targetScrollY = coords.top + window.scrollY - viewportHeight / 2;
-      window.scrollTo({ top: Math.max(0, targetScrollY), behavior: 'instant' });
+  // Double-RAF ensures browser has completed layout and paint before
+  // calculating cursor coordinates (same pattern as paintComplete in zoom).
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      try {
+        const pos = view.state.selection.main.head;
+        // Use CM's internal scroll API — CM uses .cm-scroller with overflow:auto,
+        // so window.scrollTo() operates on the wrong scroll container.
+        view.dispatch({
+          effects: EditorView.scrollIntoView(pos, { y: 'center' }),
+        });
+      } catch (_e) {
+        // Scroll failed
+      }
+    });
+  });
+}
+
+export function scrollToFraction(fraction: number): void {
+  const view = getEditorView();
+  if (!view) return;
+  let attempts = 0;
+  const tryScroll = () => {
+    const scroller = view.scrollDOM;
+    const maxScroll = scroller.scrollHeight - scroller.clientHeight;
+    if (maxScroll <= 0 && attempts < 20) {
+      attempts++;
+      requestAnimationFrame(tryScroll);
+      return;
     }
-  } catch (_e) {
-    // Scroll failed
-  }
+    if (maxScroll > 0) {
+      scroller.scrollTop = Math.max(0, fraction * maxScroll);
+    }
+  };
+  requestAnimationFrame(() => requestAnimationFrame(tryScroll));
+}
+
+export function scrollToLine(line: number): void {
+  const view = getEditorView();
+  if (!view) return;
+  let attempts = 0;
+  const tryScroll = () => {
+    const lineCount = view.state.doc.lines;
+    if (lineCount <= 1 && attempts < 20) {
+      attempts++;
+      requestAnimationFrame(tryScroll);
+      return;
+    }
+    const safeLine = Math.max(1, Math.min(line, lineCount));
+    const lineInfo = view.state.doc.line(safeLine);
+    const block = view.lineBlockAt(lineInfo.from);
+    view.scrollDOM.scrollTop = block.top;
+  };
+  requestAnimationFrame(() => requestAnimationFrame(tryScroll));
 }
 
 export function insertAtCursor(text: string): void {
