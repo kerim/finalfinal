@@ -8,7 +8,7 @@ import SwiftUI
 /// Main annotation panel view with filter bar and grouped annotation list
 struct AnnotationPanel: View {
     @Bindable var editorState: EditorViewState
-    let onScrollToAnnotation: (Int) -> Void
+    let onScrollToAnnotation: (Int, Int) -> Void  // (annotationIndex, charOffset)
     let onToggleCompletion: (AnnotationViewModel) -> Void
     let onUpdateAnnotationText: ((AnnotationViewModel, String) -> Void)?
 
@@ -90,7 +90,9 @@ struct AnnotationPanel: View {
                     AnnotationCardView(
                         annotation: annotation,
                         onTap: {
-                            onScrollToAnnotation(annotation.charOffset)
+                            if let index = editorState.annotations.firstIndex(where: { $0.id == annotation.id }) {
+                                onScrollToAnnotation(index, annotation.charOffset)
+                            }
                         },
                         onToggleCompletion: {
                             onToggleCompletion(annotation)
@@ -141,7 +143,7 @@ struct AnnotationPanel: View {
 
     return AnnotationPanel(
         editorState: editorState,
-        onScrollToAnnotation: { offset in print("Scroll to \(offset)") },
+        onScrollToAnnotation: { index, charOffset in print("Scroll to index \(index) offset \(charOffset)") },
         onToggleCompletion: { annotation in print("Toggle \(annotation.id)") },
         onUpdateAnnotationText: { annotation, newText in print("Update \(annotation.id): \(newText)") }
     )

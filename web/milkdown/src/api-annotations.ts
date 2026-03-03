@@ -67,8 +67,23 @@ export function getAnnotations(): Array<{ type: string; text: string; offset: nu
   return annotations;
 }
 
-export function scrollToAnnotation(offset: number): void {
-  scrollToOffset(offset);
+export function scrollToAnnotation(index: number): void {
+  const editorInstance = getEditorInstance();
+  if (!editorInstance) return;
+
+  const view = editorInstance.ctx.get(editorViewCtx);
+  const positions: number[] = [];
+
+  view.state.doc.descendants((node, pos) => {
+    if (node.type.name === 'annotation') {
+      positions.push(pos);
+    }
+    return true;
+  });
+
+  if (index >= 0 && index < positions.length) {
+    scrollToOffset(positions[index]);
+  }
 }
 
 export function insertAnnotation(type: string): void {

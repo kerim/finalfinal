@@ -433,6 +433,12 @@ extension MilkdownEditor.Coordinator {
         webView.evaluateJavaScript("window.FinalFinal.scrollToOffset(\(offset))") { _, _ in }
     }
 
+    /// Scroll to the nth annotation in the ProseMirror document (ordinal index matching)
+    func scrollToAnnotation(index: Int) {
+        guard isEditorReady, let webView else { return }
+        webView.evaluateJavaScript("window.FinalFinal.scrollToAnnotation(\(index))") { _, _ in }
+    }
+
     /// Scroll to a block by its ID (uses ProseMirror position lookup, avoids character offset issues with atom nodes)
     func scrollToBlock(_ blockId: String) {
         guard isEditorReady, let webView else { return }
