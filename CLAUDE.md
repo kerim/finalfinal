@@ -25,6 +25,26 @@ Web output goes to `final final/Resources/editor/` which Xcode bundles.
 
 **Note:** This project uses `xcodegen` to generate the Xcode project from `project.yml`. Always run `xcodegen generate` after moving or adding Swift files.
 
+## Xcode MCP Tools
+
+When Xcode is open, prefer Xcode MCP tools over `xcodebuild` in Bash.
+
+**`tabIdentifier` requirement:** Most tools need a `tabIdentifier`. Get it via `mcp__xcode__XcodeListWindows` first.
+
+| Task | Xcode MCP Tool | Fallback |
+|------|---------------|----------|
+| Build | `BuildProject` + `GetBuildLog` | `xcodebuild` via Bash |
+| Check errors | `XcodeListNavigatorIssues`, `XcodeRefreshCodeIssuesInFile` | Build log parsing |
+| Run tests | `RunAllTests`, `RunSomeTests`, `GetTestList` | `xcodebuild test` |
+| Preview UI | `RenderPreview` | Run app manually |
+| Apple docs | `DocumentationSearch` | Web search |
+| Run code snippet | `ExecuteSnippet` | Playground / test |
+| Swift file ops | `XcodeRead/Update/Write` | Filesystem Read/Edit/Write |
+
+**When NOT to use Xcode MCP file tools:** For `web/` directory files (TypeScript, CSS), non-project files, and CLAUDE.md itself — use regular filesystem tools.
+
+**When Xcode MCP is unavailable:** Fall back to `xcodebuild` commands as documented in Build Commands.
+
 ## Architecture
 
 **SQLite-first hybrid app:** SwiftUI shell + GRDB database + WKWebView editors (Milkdown WYSIWYG, CodeMirror source).
@@ -119,6 +139,14 @@ Set `webView.isInspectable = true` in development. Safari → Develop → [app n
 ```
 
 Both editors register this handler in `makeNSView()`. The Swift side (`#if DEBUG`) prints `[EditorName] JS DEBUG: ...` to Xcode console. See `docs/guides/webkit-debug-logging.md` for full details, helper patterns, and the canary technique.
+
+### Xcode Diagnostics (MCP)
+
+When Xcode is open, use MCP tools for faster diagnostics:
+
+- **`XcodeListNavigatorIssues`** — Check current errors/warnings without rebuilding
+- **`XcodeRefreshCodeIssuesInFile`** — Get per-file compiler diagnostics for a specific file
+- **`GetBuildLog`** — Post-build analysis with severity filtering (`error`, `warning`, `note`)
 
 ## Git Commits
 
