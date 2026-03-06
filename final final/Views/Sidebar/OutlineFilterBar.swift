@@ -8,6 +8,7 @@ import SwiftUI
 /// Filter bar for the outline sidebar
 /// Provides status filtering dropdown and word count display with document goal support
 struct OutlineFilterBar: View {
+    @Binding var selectedLevel: Int?
     @Binding var selectedFilter: SectionStatus?
     let filteredWordCount: Int
     @Binding var documentGoal: Int?
@@ -19,6 +20,45 @@ struct OutlineFilterBar: View {
 
     var body: some View {
         HStack {
+            // Header level filter
+            Menu {
+                Button {
+                    selectedLevel = nil
+                } label: {
+                    HStack {
+                        Text("All")
+                        if selectedLevel == nil {
+                            Image(systemName: "checkmark")
+                        }
+                    }
+                }
+
+                Divider()
+
+                ForEach(1...6, id: \.self) { level in
+                    Button {
+                        selectedLevel = level
+                    } label: {
+                        HStack {
+                            Text(String(repeating: "#", count: level))
+                            if selectedLevel == level {
+                                Image(systemName: "checkmark")
+                            }
+                        }
+                    }
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    Text(levelFilterLabel)
+                        .lineLimit(1)
+                }
+                .font(.system(size: 12, weight: .medium))
+            }
+            .menuStyle(.borderlessButton)
+            .tint(themeManager.currentTheme.accentColor)
+            .fixedSize()
+
+            // Status filter
             Menu {
                 Button {
                     selectedFilter = nil
@@ -81,6 +121,13 @@ struct OutlineFilterBar: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
+    }
+
+    private var levelFilterLabel: String {
+        guard let level = selectedLevel else {
+            return "#"
+        }
+        return String(repeating: "#", count: level)
     }
 
     private var filterLabel: String {
@@ -183,6 +230,7 @@ struct DocumentGoalPopover: View {
 }
 
 #Preview {
+    @Previewable @State var levelFilter: Int?
     @Previewable @State var filter: SectionStatus?
     @Previewable @State var goal: Int? = 5000
     @Previewable @State var goalType: GoalType = .approx
@@ -190,6 +238,7 @@ struct DocumentGoalPopover: View {
 
     VStack {
         OutlineFilterBar(
+            selectedLevel: $levelFilter,
             selectedFilter: $filter,
             filteredWordCount: 1234,
             documentGoal: $goal,

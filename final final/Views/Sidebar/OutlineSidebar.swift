@@ -12,6 +12,7 @@ import UniformTypeIdentifiers
 struct OutlineSidebar: View {
     @Binding var sections: [SectionViewModel]
     @Binding var statusFilter: SectionStatus?
+    @Binding var headerLevelFilter: Int?
     @Binding var zoomedSectionId: String?
     /// Zoomed section IDs from EditorViewState (includes root + descendants via document order)
     /// This is read-only because the sidebar never modifies the zoom state directly
@@ -56,6 +57,7 @@ struct OutlineSidebar: View {
     var body: some View {
         VStack(spacing: 0) {
             OutlineFilterBar(
+                selectedLevel: $headerLevelFilter,
                 selectedFilter: $statusFilter,
                 filteredWordCount: filteredWordCount,
                 documentGoal: $documentGoal,
@@ -82,6 +84,11 @@ struct OutlineSidebar: View {
         // Apply status filter
         if let filter = statusFilter {
             result = result.filter { $0.status == filter }
+        }
+
+        // Apply header level filter
+        if let maxLevel = headerLevelFilter {
+            result = result.filter { $0.headerLevel <= maxLevel }
         }
 
         // Apply zoom filter using zoomedSectionIds from EditorViewState
@@ -424,13 +431,14 @@ struct OutlineSidebar: View {
                 .font(.system(size: 40))
                 .foregroundColor(themeManager.currentTheme.sidebarText.opacity(0.3))
 
-            if statusFilter != nil {
+            if statusFilter != nil || headerLevelFilter != nil {
                 Text("No sections match the filter")
                     .font(.system(size: 13))
                     .foregroundColor(themeManager.currentTheme.sidebarText.opacity(0.6))
 
                 Button("Clear Filter") {
                     statusFilter = nil
+                    headerLevelFilter = nil
                 }
                 .buttonStyle(.borderless)
             } else if zoomedSectionId != nil {
@@ -492,6 +500,7 @@ struct OutlineSidebar: View {
         ))
     ]
     @Previewable @State var filter: SectionStatus?
+    @Previewable @State var levelFilter: Int?
     @Previewable @State var zoom: String?
     @Previewable @State var docGoal: Int? = 1000
     @Previewable @State var docGoalType: GoalType = .approx
@@ -500,6 +509,7 @@ struct OutlineSidebar: View {
     OutlineSidebar(
         sections: $sections,
         statusFilter: $filter,
+        headerLevelFilter: $levelFilter,
         zoomedSectionId: $zoom,
         zoomedSectionIds: nil,
         documentGoal: $docGoal,

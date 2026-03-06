@@ -138,6 +138,7 @@ class EditorViewState {
     // MARK: - Sidebar State (Phase 1.6)
     var sections: [SectionViewModel] = []
     var statusFilter: SectionStatus?
+    var headerLevelFilter: Int?
 
     // MARK: - Document Goal Settings
     var documentGoal: Int?
@@ -473,6 +474,10 @@ class EditorViewState {
 
         // Reset content state machine
         contentState = .idle
+
+        // Reset filters
+        statusFilter = nil
+        headerLevelFilter = nil
 
         // Reset project-specific settings
         isCitationLibraryPushed = false
