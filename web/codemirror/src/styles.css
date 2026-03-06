@@ -27,9 +27,11 @@ body {
 
 .cm-editor .cm-scroller {
   padding: 24px 48px;
-  max-width: var(--column-max-width);
-  min-width: var(--column-min-width);
+  max-width: calc(var(--column-max-width) + 96px);
+  min-width: calc(var(--column-min-width) + 96px);
   margin: 0 auto;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .cm-editor .cm-content {
