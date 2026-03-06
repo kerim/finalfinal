@@ -284,6 +284,26 @@ function initEditor() {
         }
       });
     })(),
+    // Debounced section change push to Swift (instant highlight on cursor move)
+    (() => {
+      let cmSectionTimer: ReturnType<typeof setTimeout> | null = null;
+      let lastTrackedTitle: string | null = null;
+      return EditorView.updateListener.of((update) => {
+        if (update.selectionSet || update.docChanged) {
+          if (cmSectionTimer) clearTimeout(cmSectionTimer);
+          cmSectionTimer = setTimeout(() => {
+            const newTitle = window.FinalFinal.getCurrentSectionTitle();
+            if (newTitle !== lastTrackedTitle) {
+              lastTrackedTitle = newTitle;
+              (window as any).webkit?.messageHandlers?.sectionChanged?.postMessage({
+                title: newTitle || '',
+                blockId: null, // CodeMirror has no block IDs
+              });
+            }
+          }, 150);
+        }
+      });
+    })(),
     // Section anchor plugin - hides <!-- @sid:UUID --> comments and handles clipboard
     anchorPlugin(),
     // Footnote decoration plugin - clickable [^N] refs and [^N]: defs

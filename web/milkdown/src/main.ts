@@ -202,10 +202,17 @@ async function initEditor() {
   const originalDispatch = view.dispatch.bind(view);
   let contentPushTimer: ReturnType<typeof setTimeout> | null = null;
 
+  // Section change tracking state (debounced push to Swift)
+  let sectionChangeTimer: ReturnType<typeof setTimeout> | null = null;
+  let lastTrackedTitle: string | null = null;
+  let lastTrackedBlockId: string | null = null;
+
   view.dispatch = (tr) => {
     originalDispatch(tr);
 
-    if (tr.docChanged && !getIsSettingContent()) {
+    if (getIsSettingContent()) return;
+
+    if (tr.docChanged) {
       if (contentPushTimer) clearTimeout(contentPushTimer);
       contentPushTimer = setTimeout(() => {
         // Re-check guard: setContent() may have run during the 50ms window
@@ -219,6 +226,22 @@ async function initEditor() {
         (window as any).webkit?.messageHandlers?.contentChanged?.postMessage(md);
       }, 50);
     }
+
+    // Check for section change on ANY transaction (cursor move or content change)
+    if (sectionChangeTimer) clearTimeout(sectionChangeTimer);
+    sectionChangeTimer = setTimeout(() => {
+      if (getIsSettingContent()) return;
+      const newTitle = window.FinalFinal.getCurrentSectionTitle();
+      const newBlockId = window.FinalFinal.getCurrentSectionBlockId();
+      if (newTitle !== lastTrackedTitle || newBlockId !== lastTrackedBlockId) {
+        lastTrackedTitle = newTitle;
+        lastTrackedBlockId = newBlockId;
+        (window as any).webkit?.messageHandlers?.sectionChanged?.postMessage({
+          title: newTitle || '',
+          blockId: newBlockId,
+        });
+      }
+    }, 150);
   };
 
   // Handle auto-correct: intercept replacement text input to prevent heading corruption

@@ -53,6 +53,7 @@ struct CodeMirrorEditor: NSViewRepresentable {
         if let preloaded = EditorPreloader.shared.claimCodeMirrorView() {
             let controller = preloaded.configuration.userContentController
             controller.add(context.coordinator, name: "contentChanged")
+            controller.add(context.coordinator, name: "sectionChanged")
             controller.add(context.coordinator, name: "errorHandler")
             controller.add(context.coordinator, name: "openCitationPicker")
             controller.add(context.coordinator, name: "paintComplete")
@@ -117,6 +118,7 @@ struct CodeMirrorEditor: NSViewRepresentable {
         )
         configuration.userContentController.addUserScript(errorScript)
         configuration.userContentController.add(context.coordinator, name: "contentChanged")
+        configuration.userContentController.add(context.coordinator, name: "sectionChanged")
         configuration.userContentController.add(context.coordinator, name: "errorHandler")
         configuration.userContentController.add(context.coordinator, name: "openCitationPicker")
         configuration.userContentController.add(context.coordinator, name: "paintComplete")

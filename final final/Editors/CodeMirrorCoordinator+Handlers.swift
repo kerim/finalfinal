@@ -344,6 +344,20 @@ extension CodeMirrorEditor.Coordinator {
 
     // Handle JS error messages and citation picker requests
     nonisolated func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        // Hot path: push-based section change from JS (instant sidebar highlight)
+        if message.name == "sectionChanged",
+           let data = message.body as? [String: Any] {
+            let title = (data["title"] as? String) ?? ""
+            let blockId = data["blockId"] as? String
+            Task { @MainActor in
+                guard self.contentState == .idle else { return }
+                guard !self.isResettingContentBinding.wrappedValue else { return }
+                self.onSectionChange(title)
+                self.onSectionIdChange?(blockId, title)
+            }
+            return
+        }
+
         // Hot path: push-based content change from JS (replaces polling as primary)
         if message.name == "contentChanged", let content = message.body as? String {
             Task { @MainActor in
