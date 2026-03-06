@@ -464,6 +464,7 @@ struct ContentView: View {
             OutlineSidebar(
                 sections: $editorState.sections,
                 statusFilter: $editorState.statusFilter,
+                headerLevelFilter: $editorState.headerLevelFilter,
                 zoomedSectionId: $editorState.zoomedSectionId,
                 zoomedSectionIds: editorState.zoomedSectionIds,
                 documentGoal: $editorState.documentGoal,
