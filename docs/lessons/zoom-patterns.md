@@ -253,6 +253,47 @@ for block in sorted where block.sortOrder > headingBlock.sortOrder {
 
 ---
 
+## Scroll-to-Section After Zoom-Out
+
+**Problem:** When exiting zoom, the document scrolled to the top instead of showing the previously zoomed section.
+
+**Root Cause (two issues):**
+1. `zoomOut()` sets content with `scrollToStart: true`, resetting scroll to position 0. No scroll-to-section call followed.
+2. `zoomedSectionId` is cleared to `nil` inside `zoomOut()` before the calling Task could use it for scrolling.
+
+**Solution:** Save `zoomedSectionId` before entering the async Task, then call `scrollToSection(savedId)` after zoom-out completes:
+
+```swift
+onZoomOut: {
+    let savedSectionId = editorState.zoomedSectionId  // Save before Task
+    editorState.contentState = .zoomTransition
+    Task {
+        await editorState.zoomOut()
+        // ... push block IDs, post notification ...
+        if let sectionId = savedSectionId {
+            scrollToSection(sectionId)
+        }
+    }
+}
+```
+
+**General principle:** When async operations clear state that callers need post-completion, capture the state synchronously before entering the async context.
+
+---
+
+## CodeMirror Content Acknowledgement
+
+**Problem:** CodeMirror had no `onContentAcknowledged` callback, relying on a 1-second timeout fallback for `waitForContentAcknowledgement()`. This caused a delay before scroll-to-section could run after zoom-out.
+
+**Solution:** Wire `onContentAcknowledged` through CodeMirrorEditor, mirroring MilkdownEditor's existing pattern:
+- Struct property → Coordinator property → `updateNSView` wiring
+- `handlePaintComplete()` calls and nils the callback (for zoom transitions)
+- `setContent()` completion calls and nils the callback (for non-zoom pushes)
+
+**General principle:** Both editors should have feature parity for coordination callbacks. When adding an acknowledgement or callback pattern to one editor, check if the other editor needs it too.
+
+---
+
 ## Dual Editor Mode Content Update
 
 **Problem:** After operations like drag-drop reorder, the CodeMirror editor (source mode) didn't update even though Milkdown (WYSIWYG) showed the correct content.
