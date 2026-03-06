@@ -444,12 +444,17 @@ struct ContentView: View {
                 ZoomBreadcrumb(
                     zoomedSection: zoomedSection,
                     onZoomOut: {
+                        let savedSectionId = editorState.zoomedSectionId
+                        findBarState.clearSearch()
                         editorState.contentState = .zoomTransition
                         Task {
                             await editorState.zoomOut()
                             await blockSyncService.pushBlockIds()
                             editorState.contentState = .idle
                             NotificationCenter.default.post(name: .didZoomOut, object: nil)
+                            if let sectionId = savedSectionId {
+                                scrollToSection(sectionId)
+                            }
                         }
                     }
                 )
@@ -484,6 +489,7 @@ struct ContentView: View {
                     }
                 },
                 onZoomOut: {
+                    let savedSectionId = editorState.zoomedSectionId
                     findBarState.clearSearch()
                     editorState.contentState = .zoomTransition
                     Task {
@@ -491,6 +497,9 @@ struct ContentView: View {
                         await blockSyncService.pushBlockIds()
                         editorState.contentState = .idle
                         NotificationCenter.default.post(name: .didZoomOut, object: nil)
+                        if let sectionId = savedSectionId {
+                            scrollToSection(sectionId)
+                        }
                     }
                 },
                 onDragStarted: {

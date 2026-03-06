@@ -630,6 +630,12 @@ extension CodeMirrorEditor.Coordinator {
     func handlePaintComplete() {
         // Show WebView now that paint is complete
         webView?.alphaValue = 1
+
+        // Call acknowledgement callback if registered (for zoom sync)
+        if let callback = onContentAcknowledged {
+            onContentAcknowledged = nil  // One-shot callback
+            callback()
+        }
     }
 
     // === Content push guard - prevent feedback loops ===
@@ -667,10 +673,16 @@ extension CodeMirrorEditor.Coordinator {
             webView.alphaValue = 0
         }
 
-        webView.evaluateJavaScript("window.FinalFinal.setContent(`\(escaped)`\(optionsArg))") { _, _ in
+        webView.evaluateJavaScript("window.FinalFinal.setContent(`\(escaped)`\(optionsArg))") { [weak self] _, _ in
             // For zoom transitions, DON'T show WebView here — wait for paintComplete message
             // The JS double-RAF + micro-scroll pattern will signal when paint is complete
-            // For non-zoom content changes, WebView is already visible (no hiding was done)
+            if !shouldScrollToStart {
+                // For non-zoom content changes, call acknowledgement immediately
+                if let callback = self?.onContentAcknowledged {
+                    self?.onContentAcknowledged = nil  // One-shot callback
+                    callback()
+                }
+            }
         }
     }
 

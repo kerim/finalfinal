@@ -390,6 +390,9 @@ extension ContentView {
                     onCursorPositionSaved: { position in
                         cursorPositionToRestore = position
                     },
+                    onContentAcknowledged: {
+                        editorState.acknowledgeContent()
+                    },
                     onWebViewReady: { webView in
                         findBarState.activeWebView = webView
                     }

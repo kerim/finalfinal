@@ -38,6 +38,10 @@ struct CodeMirrorEditor: NSViewRepresentable {
     let onSectionChange: (String) -> Void
     let onCursorPositionSaved: (CursorPosition) -> Void
 
+    /// Callback invoked when editor confirms content was set
+    /// Used for acknowledgement-based sync during zoom transitions
+    var onContentAcknowledged: (() -> Void)?
+
     /// Callback to provide the WebView reference (for find operations)
     var onWebViewReady: ((WKWebView) -> Void)?
 
@@ -142,6 +146,7 @@ struct CodeMirrorEditor: NSViewRepresentable {
         context.coordinator.isZoomingContent = isZoomingContent
         context.coordinator.contentState = contentState
         context.coordinator.contentGeneration = contentGeneration
+        context.coordinator.onContentAcknowledged = onContentAcknowledged
 
         let effectiveFocusMode = focusModeEnabled && FocusModeSettingsManager.shared.enableParagraphHighlighting
         if context.coordinator.lastFocusModeState != effectiveFocusMode {
@@ -269,6 +274,10 @@ struct CodeMirrorEditor: NSViewRepresentable {
 
         /// Pending cursor position that is being restored (set before JS call, cleared after)
         var pendingCursorRestore: CursorPosition?
+
+        /// Callback invoked after content is confirmed set in WebView
+        /// Used for acknowledgement-based synchronization during zoom transitions
+        var onContentAcknowledged: (() -> Void)?
 
         /// Callback to provide WebView reference
         var onWebViewReady: ((WKWebView) -> Void)?
