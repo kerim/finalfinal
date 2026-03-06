@@ -18,6 +18,7 @@ struct DraggableCardView: NSViewRepresentable {
     let section: SectionViewModel
     let allSections: [SectionViewModel]
     let isGhost: Bool
+    var isActive: Bool = false
     let onDragStarted: (Set<String>) -> Void
     let onDragEnded: () -> Void
     let onSingleClick: () -> Void
@@ -43,7 +44,8 @@ struct DraggableCardView: NSViewRepresentable {
             onSingleClick: {},  // Handled by DraggableNSView
             onDoubleClick: { _ in },  // Handled by DraggableNSView
             onSectionUpdated: onSectionUpdated,
-            isGhost: isGhost
+            isGhost: isGhost,
+            isActive: isActive
         )
         .environment(themeManager)
         .environment(GoalColorSettingsManager.shared)
@@ -75,9 +77,11 @@ struct DraggableCardView: NSViewRepresentable {
             onSingleClick: {},  // Handled by DraggableNSView
             onDoubleClick: { _ in },  // Handled by DraggableNSView
             onSectionUpdated: onSectionUpdated,
-            isGhost: isGhost
+            isGhost: isGhost,
+            isActive: isActive
         )
         .environment(themeManager)
+        .environment(GoalColorSettingsManager.shared)
 
         nsView.hostingView?.rootView = AnyView(cardView)
     }

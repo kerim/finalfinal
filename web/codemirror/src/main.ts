@@ -388,6 +388,7 @@ window.FinalFinal = {
     return JSON.stringify({
       stats: window.FinalFinal.getStats(),
       sectionTitle: window.FinalFinal.getCurrentSectionTitle(),
+      sectionBlockId: null,
     });
   },
 

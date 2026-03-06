@@ -39,6 +39,9 @@ struct MilkdownEditor: NSViewRepresentable {
     let onSectionChange: (String) -> Void
     let onCursorPositionSaved: (CursorPosition) -> Void
 
+    /// Callback for block-ID-based section tracking (blockId, title)
+    var onSectionIdChange: ((String?, String) -> Void)?
+
     /// Callback invoked when editor confirms content was set
     /// Used for acknowledgement-based sync during zoom transitions
     var onContentAcknowledged: (() -> Void)?
@@ -155,6 +158,7 @@ struct MilkdownEditor: NSViewRepresentable {
         context.coordinator.contentState = contentState
         context.coordinator.contentGeneration = contentGeneration
         context.coordinator.onContentAcknowledged = onContentAcknowledged
+        context.coordinator.onSectionIdChange = onSectionIdChange
 
         let effectiveFocusMode = focusModeEnabled && FocusModeSettingsManager.shared.enableParagraphHighlighting
         if context.coordinator.lastFocusModeState != effectiveFocusMode {
@@ -255,6 +259,9 @@ struct MilkdownEditor: NSViewRepresentable {
         let onStatsChange: (Int, Int) -> Void
         let onSectionChange: (String) -> Void
         let onCursorPositionSaved: (CursorPosition) -> Void
+
+        /// Callback for block-ID-based section tracking (blockId, title)
+        var onSectionIdChange: ((String?, String) -> Void)?
 
         var pollingTimer: Timer?
         var lastReceivedFromEditor: Date = .distantPast

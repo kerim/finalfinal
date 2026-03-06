@@ -26,6 +26,8 @@ struct OutlineSidebar: View {
     let onSectionReorder: ((SectionReorderRequest) -> Void)?
     /// Called when user requests zoom into a section (double-click)
     /// Parameters: sectionId, zoomMode
+    /// ID of the section the cursor is currently in (for active highlight)
+    var currentSectionId: String?
     var onZoomToSection: ((String, ZoomMode) -> Void)?
     /// Called when user requests zoom out (double-click on already zoomed section)
     var onZoomOut: (() -> Void)?
@@ -188,6 +190,7 @@ struct OutlineSidebar: View {
                             section: section,
                             allSections: filteredSections,
                             isGhost: draggingSubtreeIds.contains(section.id),
+                            isActive: section.id == currentSectionId,
                             onDragStarted: { draggedIds in
                                 // Track subtree IDs for ghost state
                                 draggingSubtreeIds = draggedIds
@@ -299,6 +302,14 @@ struct OutlineSidebar: View {
                         .padding(.bottom, 16)
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                         .animation(.easeInOut(duration: 0.3), value: showSubtreeDragHint)
+                }
+            }
+            .onChange(of: currentSectionId) { _, newId in
+                guard let newId, draggingSubtreeIds.isEmpty else { return }
+                if filteredSections.contains(where: { $0.id == newId }) {
+                    withAnimation(.easeInOut(duration: 0.3)) {
+                        proxy.scrollTo(newId, anchor: .center)
+                    }
                 }
             }
         }

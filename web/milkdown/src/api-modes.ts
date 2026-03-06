@@ -4,6 +4,7 @@ import { editorViewCtx, parserCtx } from '@milkdown/kit/core';
 import { Slice } from '@milkdown/kit/prose/model';
 import { Selection } from '@milkdown/kit/prose/state';
 import { getMarkdown } from '@milkdown/kit/utils';
+import { getBlockIdAtPos } from './block-id-plugin';
 import { getContent, setContent } from './api-content';
 import { mdToTextOffset, textToMdOffset } from './cursor-mapping';
 import { getEditorInstance } from './editor-state';
@@ -49,6 +50,32 @@ export function getCurrentSectionTitle(): string | null {
     });
 
     return lastHeadingText;
+  } catch {
+    return null;
+  }
+}
+
+export function getCurrentSectionBlockId(): string | null {
+  const editorInstance = getEditorInstance();
+  if (!editorInstance) return null;
+
+  try {
+    const view = editorInstance.ctx.get(editorViewCtx);
+    const { head } = view.state.selection;
+    let lastHeadingPos: number | null = null;
+
+    view.state.doc.nodesBetween(0, head, (node, pos) => {
+      if (node.type.name === 'heading') {
+        lastHeadingPos = pos;
+      }
+      return true;
+    });
+
+    if (lastHeadingPos !== null) {
+      const blockId = getBlockIdAtPos(lastHeadingPos);
+      return blockId ?? null;
+    }
+    return null;
   } catch {
     return null;
   }

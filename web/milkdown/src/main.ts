@@ -64,6 +64,7 @@ import {
   findNextApi,
   findPreviousApi,
   focus,
+  getCurrentSectionBlockId,
   getCurrentSectionTitle,
   getCursorPosition,
   getEditorMode,
@@ -306,6 +307,7 @@ window.FinalFinal = {
   setFocusMode,
   getStats,
   getCurrentSectionTitle,
+  getCurrentSectionBlockId,
   scrollToOffset,
   setTheme,
   getCursorPosition,
@@ -395,6 +397,7 @@ window.FinalFinal = {
     return JSON.stringify({
       stats: window.FinalFinal.getStats(),
       sectionTitle: window.FinalFinal.getCurrentSectionTitle(),
+      sectionBlockId: window.FinalFinal.getCurrentSectionBlockId(),
     });
   },
 
