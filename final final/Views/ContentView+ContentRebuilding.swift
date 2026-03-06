@@ -332,6 +332,9 @@ extension ContentView {
                     onCursorPositionSaved: { position in
                         cursorPositionToRestore = position
                     },
+                    onSectionIdChange: { blockId, title in
+                        editorState.currentSectionId = editorState.resolveSectionId(blockId: blockId, title: title)
+                    },
                     onContentAcknowledged: {
                         // Called when WebView confirms content was set
                         // Used for acknowledgement-based synchronization during zoom
@@ -393,6 +396,9 @@ extension ContentView {
                     },
                     onCursorPositionSaved: { position in
                         cursorPositionToRestore = position
+                    },
+                    onSectionIdChange: { blockId, title in
+                        editorState.currentSectionId = editorState.resolveSectionId(blockId: blockId, title: title)
                     },
                     onContentAcknowledged: {
                         editorState.acknowledgeContent()

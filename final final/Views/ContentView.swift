@@ -479,6 +479,7 @@ struct ContentView: View {
                 onSectionReorder: { request in
                     reorderSection(request)
                 },
+                currentSectionId: editorState.currentSectionId,
                 onZoomToSection: { sectionId, mode in
                     findBarState.clearSearch()
                     editorState.contentState = .zoomTransition

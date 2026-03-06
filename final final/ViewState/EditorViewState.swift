@@ -58,6 +58,7 @@ class EditorViewState {
     var wordCount: Int = 0
     var characterCount: Int = 0
     var currentSectionName: String = ""
+    var currentSectionId: String?
 
     // MARK: - Content State Machine
     /// Tracks content transitions to prevent race conditions
@@ -489,9 +490,21 @@ class EditorViewState {
         wordCount = 0
         characterCount = 0
         currentSectionName = ""
+        currentSectionId = nil
         scrollToOffset = nil
         scrollToBlockId = nil
         scrollToAnnotationIndex = nil
+    }
+
+    // MARK: - Active Section Tracking
+
+    /// Resolve the active section ID from a block ID (Milkdown) or title (CodeMirror fallback)
+    func resolveSectionId(blockId: String?, title: String) -> String? {
+        if let blockId, sections.contains(where: { $0.id == blockId }) {
+            return blockId
+        }
+        // Fallback: match by title (for CodeMirror or if blockId not found)
+        return sections.first { $0.title == title }?.id
     }
 
     // MARK: - Stats Update

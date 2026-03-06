@@ -834,7 +834,10 @@ extension MilkdownEditor.Coordinator {
                 self.onStatsChange(words, chars)
             }
 
-            self.onSectionChange((json["sectionTitle"] as? String) ?? "")
+            let sectionTitle = (json["sectionTitle"] as? String) ?? ""
+            let sectionBlockId = json["sectionBlockId"] as? String
+            self.onSectionChange(sectionTitle)
+            self.onSectionIdChange?(sectionBlockId, sectionTitle)
         }
     }
 

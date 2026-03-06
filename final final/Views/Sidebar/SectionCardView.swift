@@ -13,6 +13,7 @@ struct SectionCardView: View {
     let onDoubleClick: (ZoomMode) -> Void
     let onSectionUpdated: ((SectionViewModel) -> Void)?  // Called when word goal changes
     var isGhost: Bool = false  // When true, render at 30% opacity (drag source in subtree drag)
+    var isActive: Bool = false  // When true, show left accent bar (cursor is in this section)
 
     @Environment(ThemeManager.self) private var themeManager
     @Environment(GoalColorSettingsManager.self) private var goalManager
@@ -41,6 +42,7 @@ struct SectionCardView: View {
                 .foregroundColor(themeManager.currentTheme.sidebarText)
                 .lineLimit(2)
                 .italic(section.isPseudoSection)
+                .help(section.title)
 
             if section.isBibliography {
                 bibliographyMetadataRow
@@ -78,6 +80,14 @@ struct SectionCardView: View {
                     )
                     .padding(.horizontal, 4)
                     .padding(.vertical, 2)
+            }
+        }
+        .overlay(alignment: .leading) {
+            if isActive && !isGhost {
+                RoundedRectangle(cornerRadius: 1.5)
+                    .fill(themeManager.currentTheme.accentColor)
+                    .frame(width: 3)
+                    .padding(.vertical, 4)
             }
         }
     }
