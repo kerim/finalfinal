@@ -24,6 +24,7 @@ struct DraggableCardView: NSViewRepresentable {
     let onSingleClick: () -> Void
     let onDoubleClick: (ZoomMode) -> Void
     let onSectionUpdated: ((SectionViewModel) -> Void)?  // Called when word goal changes
+    var onHoverChanged: ((Bool) -> Void)?  // Bubbles hover from SectionCardView to OutlineSidebar
 
     @Environment(ThemeManager.self) private var themeManager
 
@@ -45,7 +46,8 @@ struct DraggableCardView: NSViewRepresentable {
             onDoubleClick: { _ in },  // Handled by DraggableNSView
             onSectionUpdated: onSectionUpdated,
             isGhost: isGhost,
-            isActive: isActive
+            isActive: isActive,
+            onHoverChanged: onHoverChanged
         )
         .environment(themeManager)
         .environment(GoalColorSettingsManager.shared)
@@ -78,7 +80,8 @@ struct DraggableCardView: NSViewRepresentable {
             onDoubleClick: { _ in },  // Handled by DraggableNSView
             onSectionUpdated: onSectionUpdated,
             isGhost: isGhost,
-            isActive: isActive
+            isActive: isActive,
+            onHoverChanged: onHoverChanged
         )
         .environment(themeManager)
         .environment(GoalColorSettingsManager.shared)

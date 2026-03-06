@@ -42,9 +42,12 @@ struct OutlineSidebar: View {
     @State private var lastDropLocation: CGPoint?  // Deduplicates simultaneous delegate fires
     @State private var sidebarWidth: CGFloat = 300  // Track actual width for zone calculations
     @State private var isDragging: Bool = false  // Track drag state for suppression
+    @State private var hoveredCardId: String?
+    @State private var cardFrames: [String: CGRect] = [:]  // Frames in scroll coordinate space for tooltip
 
     // Subtree drag state
     @State private var draggingSubtreeIds: Set<String> = []  // IDs being dragged (parent + children)
+    @State private var isMouseOverSidebar = false
     @State private var showSubtreeDragHint: Bool = false
     @State private var subtreeDragHintTask: Task<Void, Never>?  // Replaces Timer for proper lifecycle
     private let hasSeenSubtreeDragHintKey = "hasSeenSubtreeDragHint"
@@ -218,11 +221,22 @@ struct OutlineSidebar: View {
                                     onZoomToSection?(section.id, mode)
                                 }
                             },
-                            onSectionUpdated: onSectionUpdated
+                            onSectionUpdated: onSectionUpdated,
+                            onHoverChanged: { isHovering in
+                                hoveredCardId = isHovering ? section.id : nil
+                            }
                         )
                         .id(section.id)
-                        // Elevate z-index when showing indicator to prevent adjacent cards from rendering on top
-                        .zIndex(shouldShowIndicatorBefore(index: index) || shouldShowIndicatorAfter(index: index) ? 1 : 0)
+                        .onGeometryChange(for: CGRect.self) { proxy in
+                            proxy.frame(in: .named("sidebarScroll"))
+                        } action: { newFrame in
+                            cardFrames[section.id] = newFrame
+                        }
+                        // Elevate z-index for drop indicators
+                        .zIndex(
+                            shouldShowIndicatorBefore(index: index)
+                            || shouldShowIndicatorAfter(index: index) ? 1 : 0
+                        )
                         // Drop indicator BEFORE - overlay doesn't affect layout, preventing flickering
                         .overlay(alignment: .top) {
                             if shouldShowIndicatorBefore(index: index) {
@@ -290,10 +304,39 @@ struct OutlineSidebar: View {
                         ))
                 }
             }
+            .coordinateSpace(.named("sidebarScroll"))
             .onGeometryChange(for: CGFloat.self) { proxy in
                 proxy.size.width
             } action: { newWidth in
                 sidebarWidth = newWidth
+            }
+            // Tooltip overlay at ScrollView level (renders above all cards)
+            .overlay(alignment: .topLeading) {
+                if let hoveredId = hoveredCardId,
+                   !isDragging,
+                   let frame = cardFrames[hoveredId],
+                   let section = filteredSections.first(where: { $0.id == hoveredId }),
+                   TypeScale.sectionTitleIsTruncated(
+                       section.title,
+                       level: section.headerLevel,
+                       isItalic: section.isPseudoSection,
+                       availableWidth: sidebarWidth - 24
+                   ) {
+                    Text(section.title)
+                        .font(.system(size: TypeScale.smallUI))
+                        .foregroundColor(themeManager.currentTheme.tooltipText)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(
+                            RoundedRectangle(cornerRadius: 4)
+                                .fill(themeManager.currentTheme.tooltipBackground)
+                                .shadow(color: .black.opacity(0.2), radius: 4, y: 2)
+                        )
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: 280)
+                        .offset(x: frame.minX + 12, y: frame.maxY)
+                        .allowsHitTesting(false)
+                }
             }
             // Subtree drag hint overlay
             .overlay(alignment: .bottom) {
@@ -304,8 +347,9 @@ struct OutlineSidebar: View {
                         .animation(.easeInOut(duration: 0.3), value: showSubtreeDragHint)
                 }
             }
+            .onHover { isMouseOverSidebar = $0 }
             .onChange(of: currentSectionId) { _, newId in
-                guard let newId, draggingSubtreeIds.isEmpty else { return }
+                guard let newId, draggingSubtreeIds.isEmpty, !isMouseOverSidebar else { return }
                 if filteredSections.contains(where: { $0.id == newId }) {
                     withAnimation(.easeInOut(duration: 0.3)) {
                         proxy.scrollTo(newId, anchor: .center)

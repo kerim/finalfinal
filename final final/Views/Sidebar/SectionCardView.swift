@@ -14,6 +14,7 @@ struct SectionCardView: View {
     let onSectionUpdated: ((SectionViewModel) -> Void)?  // Called when word goal changes
     var isGhost: Bool = false  // When true, render at 30% opacity (drag source in subtree drag)
     var isActive: Bool = false  // When true, show left accent bar (cursor is in this section)
+    var onHoverChanged: ((Bool) -> Void)?  // Bubbles hover state to parent (bypasses PassthroughHostingView hit-test)
 
     @Environment(ThemeManager.self) private var themeManager
     @Environment(GoalColorSettingsManager.self) private var goalManager
@@ -42,7 +43,7 @@ struct SectionCardView: View {
                 .foregroundColor(themeManager.currentTheme.sidebarText)
                 .lineLimit(2)
                 .italic(section.isPseudoSection)
-                .help(section.title)
+                // Tooltip handled by OutlineSidebar overlay for instant display
 
             if section.isBibliography {
                 bibliographyMetadataRow
@@ -64,6 +65,7 @@ struct SectionCardView: View {
         }
         .onHover { hovering in
             isHovering = hovering
+            onHoverChanged?(hovering)
         }
         .onChange(of: section.status) { oldValue, newValue in
             guard oldValue != newValue else { return }
