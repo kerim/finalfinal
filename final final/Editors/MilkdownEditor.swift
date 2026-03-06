@@ -167,7 +167,9 @@ struct MilkdownEditor: NSViewRepresentable {
         context.coordinator.wasResettingContent = isResettingContent
 
         // Skip content/theme pushes during project reset to prevent empty flash
-        guard !isResettingContent else { return }
+        guard !isResettingContent else {
+            return
+        }
 
         // If we just finished a content reset (e.g. after setContentWithBlockIds),
         // restore cursor position that was preserved during batchInitialize

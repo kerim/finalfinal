@@ -455,6 +455,13 @@ class SectionSyncService {
 
         do {
             try db.write { dbConn in
+                // Preserve existing Notes heading block ID for scroll stability
+                let existingHeadingId = try Block
+                    .filter(Block.Columns.projectId == pid)
+                    .filter(Block.Columns.isNotes == true)
+                    .filter(Block.Columns.blockType == BlockType.heading.rawValue)
+                    .fetchOne(dbConn)?.id
+
                 try Block.filter(Block.Columns.projectId == pid)
                     .filter(Block.Columns.isNotes == true)
                     .deleteAll(dbConn)
@@ -467,6 +474,7 @@ class SectionSyncService {
                 let baseSortOrder = maxNonBibSort + 0.5
 
                 var heading = Block(
+                    id: existingHeadingId ?? UUID().uuidString,
                     projectId: pid, sortOrder: baseSortOrder,
                     blockType: .heading, textContent: "Notes",
                     markdownFragment: "# Notes", headingLevel: 1,

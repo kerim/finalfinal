@@ -92,7 +92,7 @@ class BlockSyncService {
             } else {
                 filtered = blocks
             }
-            let orderedIds = filtered.sorted { $0.sortOrder < $1.sortOrder }.map { $0.id }
+            let orderedIds = BlockParser.idsForProseMirrorAlignment(filtered.sorted { $0.sortOrder < $1.sortOrder })
 
             #if DEBUG
             if let range = range {

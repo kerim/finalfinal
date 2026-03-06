@@ -31,9 +31,13 @@ extension ContentView {
                 allBlocks = try db.fetchBlocks(projectId: pid)
             }
 
-            let sorted = allBlocks.sorted { $0.sortOrder < $1.sortOrder }
+            let sorted = allBlocks.sorted { a, b in
+                let aKey = (a.sortOrder, a.blockType == .heading ? 0 : 1)
+                let bKey = (b.sortOrder, b.blockType == .heading ? 0 : 1)
+                return aKey < bKey
+            }
             let markdown = BlockParser.assembleMarkdown(from: sorted)
-            let ids = sorted.map { $0.id }
+            let ids = BlockParser.idsForProseMirrorAlignment(sorted)
 
             // Collect image metadata for figure nodes (width/caption/alt persistence)
             let imageMeta = sorted

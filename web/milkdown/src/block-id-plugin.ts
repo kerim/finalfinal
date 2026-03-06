@@ -147,6 +147,12 @@ export function setBlockIdsForTopLevel(orderedIds: string[], doc: Node): void {
       index++;
     }
   });
+  if (index !== orderedIds.length) {
+    (window as any).webkit?.messageHandlers?.errorHandler?.postMessage({
+      type: 'debug',
+      message: `[setBlockIdsForTopLevel] PARITY MISMATCH: assigned ${index} of ${orderedIds.length} IDs`,
+    });
+  }
 }
 
 /**

@@ -415,6 +415,28 @@ enum BlockParser {
 
     /// Assemble blocks into standard markdown for export (no Pandoc attributes).
     /// Uses `markdownForStandardExport()` which outputs plain markdown with captions as italic text.
+    /// Collapse consecutive same-type list block IDs for ProseMirror alignment.
+    /// ProseMirror merges consecutive list items (separated by \n\n in assembleMarkdown)
+    /// into a single list node. This produces an ID array matching PM's top-level node count.
+    /// - Parameter blocks: Must be sorted by `sortOrder` ascending.
+    static func idsForProseMirrorAlignment(_ blocks: [Block]) -> [String] {
+        var ids: [String] = []
+        var prevListType: BlockType? = nil
+
+        for block in blocks {
+            let isListBlock = (block.blockType == .bulletList || block.blockType == .orderedList)
+
+            if isListBlock && block.blockType == prevListType {
+                continue  // PM merges this with previous list node
+            }
+
+            ids.append(block.id)
+            prevListType = isListBlock ? block.blockType : nil
+        }
+
+        return ids
+    }
+
     static func assembleStandardMarkdownForExport(from blocks: [Block]) -> String {
         let sorted = blocks.sorted { a, b in
             let aKey = (a.sortOrder, a.blockType == .heading ? 0 : 1)

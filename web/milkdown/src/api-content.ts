@@ -345,7 +345,9 @@ export function applyBlocks(blocks: Block[]): void {
       view.dispatch(tr);
       setCurrentContent(markdown);
 
-      // Clear stale temp IDs from assignBlockIds, set real IDs, rebuild snapshot
+      // Clear stale temp IDs from assignBlockIds, set real IDs, rebuild snapshot.
+      // NOTE: blockIds should already be collapsed for list merging on the Swift side
+      // (consecutive same-type list blocks map to a single PM list node).
       clearBlockIds();
       const blockIds = sortedBlocks.map((b) => b.id);
       setBlockIdsForTopLevel(blockIds, view.state.doc);
@@ -512,7 +514,9 @@ export function scrollToBlock(blockId: string): void {
       }
     }
 
-    if (targetPos === null) return;
+    if (targetPos === null) {
+      return;
+    }
 
     // Scroll to position ~100px from top for visual consistency with scrollToOffset
     const coords = view.coordsAtPos(targetPos + 1);
