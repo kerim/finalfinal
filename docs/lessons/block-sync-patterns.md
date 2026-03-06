@@ -222,3 +222,37 @@ Also add a `detectBlockType` case for combined caption+image blocks (classify as
 This follows the same positional-matching-with-src-verification pattern used by `applyBlocks()` and `setContentWithBlockIds()` for their image metadata injection.
 
 **General principle:** Any node attribute that is not serialized to/from markdown will be lost on re-parse. When programmatically replacing document content, explicitly preserve and restore non-markdown attributes. Use positional matching with a content-based key (like `src`) to map old nodes to new nodes.
+
+---
+
+## Collapse Consecutive List Block IDs for ProseMirror Alignment
+
+**Problem:** Clicking `# Notes` (or any section near the end of a document with lists) in the outline sidebar didn't scroll in Milkdown. Worked in CodeMirror and for earlier sections.
+
+**Root Cause:** Swift's `BlockParser.splitIntoRawBlocks` splits on blank lines, creating separate blocks per list item. `assembleMarkdown` rejoins with `\n\n`. When ProseMirror parses the result, consecutive same-type list items merge into a single `bullet_list` or `ordered_list` node.
+
+`setBlockIdsForTopLevel` assigns IDs sequentially — e.g., 108 DB blocks but only 97 PM nodes. The first 97 get IDs, the last 11 (including `# Notes` at the end) are dropped. `scrollToBlock` then fails because the block ID isn't in the map.
+
+**Solution:** `BlockParser.idsForProseMirrorAlignment(_:)` collapses consecutive same-type list block IDs before sending them to JS:
+
+```swift
+static func idsForProseMirrorAlignment(_ blocks: [Block]) -> [String] {
+    var ids: [String] = []
+    var prevListType: BlockType? = nil
+    for block in blocks {
+        let isListBlock = (block.blockType == .bulletList || block.blockType == .orderedList)
+        if isListBlock && block.blockType == prevListType {
+            continue  // PM merges this with previous list node
+        }
+        ids.append(block.id)
+        prevListType = isListBlock ? block.blockType : nil
+    }
+    return ids
+}
+```
+
+Used in `fetchBlocksWithIds()`, `pushBlockIds()`, and `setContentWithBlockIds()` — anywhere Swift sends block IDs to JS.
+
+**Known limitation:** Between an incremental block-sync UPDATE and the next `flushContentToDatabase()`, the DB may have duplicated list content (first block = all items, remaining blocks = stale individual items). This is benign because `flushContentToDatabase()` runs at all major transitions and the editor always has the canonical content.
+
+**General principle:** When the block parser creates more blocks than ProseMirror creates top-level nodes (due to node merging), the ID array must be collapsed to match PM's count. This affects list items (consecutive same-type lists merge) but not headings, paragraphs, figures, blockquotes, or code blocks (all 1:1 with PM).

@@ -315,6 +315,13 @@ final class FootnoteSyncService {
                     }
                 }
 
+                // Preserve existing Notes heading block ID for scroll stability
+                let existingHeadingId = try Block
+                    .filter(Block.Columns.projectId == projectId)
+                    .filter(Block.Columns.isNotes == true)
+                    .filter(Block.Columns.blockType == BlockType.heading.rawValue)
+                    .fetchOne(db)?.id
+
                 // 3. Delete all notes blocks + orphan cleanup
                 try Block.filter(Block.Columns.projectId == projectId)
                     .filter(Block.Columns.isNotes == true).deleteAll(db)
@@ -328,8 +335,9 @@ final class FootnoteSyncService {
                     .fetchOne(db)?.sortOrder ?? 0
                 let baseSortOrder = maxNonBibSortOrder + 0.5
 
-                // 5. Insert heading block
+                // 5. Insert heading block (reuse existing ID for scroll stability)
                 var headingBlock = Block(
+                    id: existingHeadingId ?? UUID().uuidString,
                     projectId: projectId,
                     sortOrder: baseSortOrder,
                     blockType: .heading,
@@ -476,6 +484,13 @@ final class FootnoteSyncService {
                 }
             }
 
+            // Preserve existing Notes heading block ID for scroll stability
+            let existingHeadingId = try Block
+                .filter(Block.Columns.projectId == projectId)
+                .filter(Block.Columns.isNotes == true)
+                .filter(Block.Columns.blockType == BlockType.heading.rawValue)
+                .fetchOne(db)?.id
+
             // Delete ALL existing notes blocks (handles duplicates)
             try Block
                 .filter(Block.Columns.projectId == projectId)
@@ -495,8 +510,9 @@ final class FootnoteSyncService {
 
             let baseSortOrder = maxNonBibSortOrder + 0.5
 
-            // 1. Insert heading block
+            // 1. Insert heading block (reuse existing ID for scroll stability)
             var headingBlock = Block(
+                id: existingHeadingId ?? UUID().uuidString,
                 projectId: projectId,
                 sortOrder: baseSortOrder,
                 blockType: .heading,
