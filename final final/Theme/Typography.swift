@@ -5,6 +5,7 @@
 //  Unified typography system for accessible, consistent text across SwiftUI and web editors.
 //
 
+import AppKit
 import SwiftUI
 
 // MARK: - Type Scale
@@ -89,6 +90,37 @@ extension Font {
     /// Monospace font with weight for UI elements like word counts
     static func uiMono(size: CGFloat = TypeScale.caption, weight: Font.Weight = .regular) -> Font {
         .system(size: max(size, TypeScale.minimum), weight: weight, design: .monospaced)
+    }
+}
+
+// MARK: - Text Measurement
+
+extension TypeScale {
+    /// NSFont matching Font.sectionTitle(level:) for text measurement
+    static func sectionTitleNSFont(level: Int, isItalic: Bool = false) -> NSFont {
+        let font: NSFont
+        switch level {
+        case 0, 1: font = .systemFont(ofSize: h1, weight: .light)
+        case 2:    font = .systemFont(ofSize: h2, weight: .regular)
+        case 3:    font = .systemFont(ofSize: h3, weight: .regular)
+        case 4:    font = .systemFont(ofSize: h4, weight: .medium)
+        case 5:    font = .systemFont(ofSize: h5, weight: .semibold)
+        default:   font = .systemFont(ofSize: h6, weight: .bold)
+        }
+        if isItalic {
+            return NSFontManager.shared.convert(font, toHaveTrait: .italicFontMask)
+        }
+        return font
+    }
+
+    /// Check if a section title would be truncated beyond .lineLimit(2)
+    static func sectionTitleIsTruncated(
+        _ title: String, level: Int, isItalic: Bool = false, availableWidth: CGFloat
+    ) -> Bool {
+        guard availableWidth > 0, !title.isEmpty else { return false }
+        let font = sectionTitleNSFont(level: level, isItalic: isItalic)
+        let textWidth = (title as NSString).size(withAttributes: [.font: font]).width
+        return textWidth > availableWidth
     }
 }
 

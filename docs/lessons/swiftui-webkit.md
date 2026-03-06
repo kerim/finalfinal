@@ -70,6 +70,40 @@ override func hitTest(_ point: NSPoint) -> NSView? {
 
 See `DraggableCardView.swift` (`PassthroughHostingView`) for a working example.
 
+### SwiftUI `.zIndex()` Does Not Control Draw Order of NSViewRepresentable
+
+**Problem:** Tooltips rendered as per-card `.overlay()` on `DraggableCardView` (an `NSViewRepresentable`) appeared behind the next card in a `LazyVStack`, despite setting `.zIndex(1)` on the hovered card.
+
+**Root Cause:** Each card is an `NSViewRepresentable` wrapping AppKit's `NSView` + `NSHostingView`. SwiftUI's `.zIndex()` modifier controls SwiftUI layer ordering, but doesn't fully override the draw order of AppKit-backed views. Later cards in a `LazyVStack` draw on top of earlier cards' SwiftUI overlays.
+
+**Solution:** Move the overlay from per-card to a **parent-level overlay** (e.g., on the `ScrollView`). This places the overlay above all cards in the view hierarchy. Use a named `.coordinateSpace` on the parent and `onGeometryChange` on each card to track frames, then position the overlay using the hovered card's frame.
+
+```swift
+ScrollView {
+    LazyVStack {
+        ForEach(items) { item in
+            NSViewRepresentableCard(item)
+                .onGeometryChange(for: CGRect.self) { proxy in
+                    proxy.frame(in: .named("scroll"))
+                } action: { frame in
+                    cardFrames[item.id] = frame
+                }
+        }
+    }
+}
+.coordinateSpace(.named("scroll"))
+.overlay(alignment: .topLeading) {
+    if let id = hoveredId, let frame = cardFrames[id] {
+        TooltipView()
+            .offset(x: frame.minX, y: frame.maxY)
+    }
+}
+```
+
+**Key detail:** Store frames for *all* visible cards in a dictionary, not just the hovered one. `onGeometryChange` only fires when geometry changes — it won't re-fire just because `hoveredId` changed. A dictionary ensures the frame is already available when hover state changes.
+
+**General principle:** When `NSViewRepresentable` views need overlays that must render above sibling views, hoist the overlay to a common ancestor rather than relying on `.zIndex()`.
+
 ---
 
 ## Performance
