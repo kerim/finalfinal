@@ -97,7 +97,32 @@ extension ProjectDatabase {
         }
     }
 
+    /// Fetch document-level annotations for a content (charOffset < 0)
+    func fetchDocumentAnnotations(contentId: String) throws -> [Annotation] {
+        try read { db in
+            try Annotation
+                .filter(Annotation.Columns.contentId == contentId)
+                .filter(Annotation.Columns.charOffset < 0)
+                .order(Annotation.Columns.createdAt)
+                .fetchAll(db)
+        }
+    }
+
     // MARK: - Insert/Update Operations
+
+    /// Insert a document-level annotation (not anchored to markdown)
+    func insertDocumentAnnotation(contentId: String, type: AnnotationType, text: String) throws -> Annotation {
+        var annotation = Annotation(
+            contentId: contentId,
+            type: type,
+            text: text,
+            charOffset: Annotation.documentLevelOffset
+        )
+        try write { db in
+            try annotation.insert(db)
+        }
+        return annotation
+    }
 
     /// Insert a new annotation
     func insertAnnotation(_ annotation: Annotation) throws {
@@ -234,12 +259,14 @@ extension ProjectDatabase {
         }
     }
 
-    /// Replace all annotations for a content (used for initial sync)
+    /// Replace inline annotations for a content (used for initial sync)
+    /// Preserves document-level annotations (charOffset < 0)
     func replaceAnnotations(_ annotations: [Annotation], for contentId: String) throws {
         try write { db in
-            // Delete existing annotations
+            // Delete only inline annotations (preserve document-level)
             try Annotation
                 .filter(Annotation.Columns.contentId == contentId)
+                .filter(Annotation.Columns.charOffset >= 0)
                 .deleteAll(db)
 
             // Insert new ones

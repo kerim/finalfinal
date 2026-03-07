@@ -351,6 +351,11 @@ struct ContentView: View {
                     scrollToSection(sectionId)
                 }
             }
+            .onReceive(NotificationCenter.default.publisher(for: .insertDocumentAnnotation)) { notification in
+                if let type = notification.userInfo?["type"] as? AnnotationType {
+                    createDocumentAnnotation(type: type)
+                }
+            }
             .integrityAlert(
                 report: $integrityReport,
                 onRepair: { report in

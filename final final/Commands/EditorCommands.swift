@@ -171,6 +171,30 @@ struct EditorCommands: Commands {
                 .keyboardShortcut("i", modifiers: [.command, .shift])
 
                 Divider()
+
+                Menu("Document Note") {
+                    Button("Task") {
+                        NotificationCenter.default.post(
+                            name: .insertDocumentAnnotation,
+                            object: nil,
+                            userInfo: ["type": AnnotationType.task]
+                        )
+                    }
+                    Button("Comment") {
+                        NotificationCenter.default.post(
+                            name: .insertDocumentAnnotation,
+                            object: nil,
+                            userInfo: ["type": AnnotationType.comment]
+                        )
+                    }
+                    Button("Reference") {
+                        NotificationCenter.default.post(
+                            name: .insertDocumentAnnotation,
+                            object: nil,
+                            userInfo: ["type": AnnotationType.reference]
+                        )
+                    }
+                }
             }
         }
     }
@@ -185,6 +209,7 @@ extension Notification.Name {
     static let openProofingPreferences = Notification.Name("openProofingPreferences")
     static let proofingConnectionStatusChanged = Notification.Name("proofingConnectionStatusChanged")
     static let insertSectionBreak = Notification.Name("insertSectionBreak")
+    static let insertDocumentAnnotation = Notification.Name("insertDocumentAnnotation")
 
     // Find commands
     static let showFindBar = Notification.Name("showFindBar")

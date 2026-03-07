@@ -75,6 +75,24 @@ CREATE TABLE section (
     -- ... (same as before, populated by persistReorderedBlocks_legacySections)
 );
 
+-- Annotations (task, comment, reference) stored as HTML comments in markdown
+-- v5 created original table, v8 migrated to annotation_v2 with block references
+CREATE TABLE annotation_v2 (
+    id TEXT PRIMARY KEY,
+    contentId TEXT NOT NULL REFERENCES content(id) ON DELETE CASCADE,
+    blockId TEXT,                -- Block containing this annotation (nullable)
+    type TEXT NOT NULL,         -- task, comment, reference
+    text TEXT NOT NULL,
+    isCompleted BOOLEAN DEFAULT FALSE,
+    charOffset INTEGER NOT NULL, -- Position in markdown (-1 = document-level)
+    highlightStart INTEGER,     -- Optional highlight span start
+    highlightEnd INTEGER,       -- Optional highlight span end
+    createdAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updatedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+-- charOffset = -1 denotes document-level annotations (not anchored to markdown).
+-- These are CRUD-only in the database and never parsed from/written to markdown.
+
 -- User preferences per project
 CREATE TABLE settings (
     key TEXT PRIMARY KEY,

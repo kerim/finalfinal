@@ -143,10 +143,11 @@ class AnnotationSyncService {
         // 1. Parse annotations from markdown
         let parsed = parseAnnotationsFromMarkdown(markdown)
 
-        // 2. Get current DB annotations
+        // 2. Get current DB annotations (exclude document-level — they have no markdown counterpart)
         let dbAnnotations: [Annotation]
         do {
-            dbAnnotations = try db.fetchAnnotations(contentId: cid)
+            let allAnnotations = try db.fetchAnnotations(contentId: cid)
+            dbAnnotations = allAnnotations.filter { !$0.isDocumentLevel }
         } catch {
             #if DEBUG
             print("[AnnotationSyncService] Error fetching annotations: \(error.localizedDescription)")
