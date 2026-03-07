@@ -60,21 +60,18 @@ struct FileCommands: Commands {
             Button("Version History...") {
                 NotificationCenter.default.post(name: .showVersionHistory, object: nil)
             }
-            .keyboardShortcut("v", modifiers: [.command, .option])
         }
 
         CommandGroup(replacing: .importExport) {
             Button("Import Markdown...") {
                 NotificationCenter.default.post(name: .importMarkdown, object: nil)
             }
-            .keyboardShortcut("i", modifiers: [.command, .shift])
 
             Menu("Export Markdown") {
                 Button("Markdown with Images...") {
                     NotificationCenter.default.post(name: .exportMarkdownWithImages, object: nil)
                 }
-                .keyboardShortcut("e", modifiers: [.command, .shift])
-
+    
                 Button("TextBundle...") {
                     NotificationCenter.default.post(name: .exportTextBundle, object: nil)
                 }
@@ -89,7 +86,6 @@ struct FileCommands: Commands {
                     userInfo: ["format": ExportFormat.word]
                 )
             }
-            .keyboardShortcut("e", modifiers: [.command, .option])
 
             Button("Export as PDF...") {
                 NotificationCenter.default.post(
@@ -98,7 +94,6 @@ struct FileCommands: Commands {
                     userInfo: ["format": ExportFormat.pdf]
                 )
             }
-            .keyboardShortcut("p", modifiers: [.command, .option])
 
             Button("Export as ODT...") {
                 NotificationCenter.default.post(

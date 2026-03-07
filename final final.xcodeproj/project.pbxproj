@@ -759,6 +759,7 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = 2E161EC228B8AE3510464111 /* Build configuration list for PBXNativeTarget "final final" */;
 			buildPhases = (
+				A8133880C98FB2F23DCDD5BC /* Clean stale QuickLook DerivedData */,
 				AC02281FB7B2A5BB611B1A29 /* Sources */,
 				3BC3CAED088CEF7AE191FA7D /* Resources */,
 				E9038C5955C3D5D57EF730DB /* Frameworks */,
@@ -885,6 +886,25 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
+		A8133880C98FB2F23DCDD5BC /* Clean stale QuickLook DerivedData */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Clean stale QuickLook DerivedData";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "# Remove old DerivedData directories that cause duplicate QL extension registrations.\n# Each xcodegen run creates a new project hash → new DerivedData dir → new .appex copy.\nfor dd in ~/Library/Developer/Xcode/DerivedData/final_final-*/; do\n  if [ \"$dd\" != \"${BUILD_DIR%Build/*}\" ]; then\n    rm -rf \"$dd\"\n  fi\ndone\n";
+		};
 		FEF6C6A737962720093F21D9 /* Stamp Git Info into Info.plist */ = {
 			isa = PBXShellScriptBuildPhase;
 			alwaysOutOfDate = 1;

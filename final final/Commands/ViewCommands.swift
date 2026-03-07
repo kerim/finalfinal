@@ -37,7 +37,6 @@ struct ViewCommands: Commands {
             Button("Refresh Citations") {
                 NotificationCenter.default.post(name: .refreshAllCitations, object: nil)
             }
-            .keyboardShortcut("r", modifiers: [.command, .shift])
 
             Divider()
 
@@ -46,7 +45,6 @@ struct ViewCommands: Commands {
                     Button(theme.name) {
                         ThemeManager.shared.setThemeAndClearOverrides(byId: theme.id)
                     }
-                    .keyboardShortcut(theme.keyboardShortcut)
                 }
             }
         }
