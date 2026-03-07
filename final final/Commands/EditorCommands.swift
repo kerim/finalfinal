@@ -20,7 +20,7 @@ struct EditorCommands: Commands {
             Button("Find and Replace...") {
                 NotificationCenter.default.post(name: .showFindBar, object: nil, userInfo: ["showReplace": true])
             }
-            .keyboardShortcut("h", modifiers: .command)
+            .keyboardShortcut("f", modifiers: [.command, .option])
 
             Button("Find Next") {
                 NotificationCenter.default.post(name: .findNext, object: nil)
@@ -46,14 +46,12 @@ struct EditorCommands: Commands {
                 set: { spellingEnabled = $0
                        NotificationCenter.default.post(name: .spellcheckTypeToggled, object: nil) }
             ))
-            .keyboardShortcut(";", modifiers: .command)
 
             Toggle("Check Grammar", isOn: Binding(
                 get: { grammarEnabled },
                 set: { grammarEnabled = $0
                        NotificationCenter.default.post(name: .spellcheckTypeToggled, object: nil) }
             ))
-            .keyboardShortcut(";", modifiers: [.command, .shift])
 
             Divider()
 
@@ -126,17 +124,14 @@ struct EditorCommands: Commands {
                 Button("Section Break") {
                     NotificationCenter.default.post(name: .insertSectionBreak, object: nil)
                 }
-                .keyboardShortcut(.return, modifiers: [.command, .shift])
 
                 Button("Highlight") {
                     NotificationCenter.default.post(name: .toggleHighlight, object: nil)
                 }
-                .keyboardShortcut("h", modifiers: [.command, .shift])
 
                 Button("Footnote") {
                     NotificationCenter.default.post(name: .insertFootnote, object: nil)
                 }
-                .keyboardShortcut("n", modifiers: [.command, .shift])
 
                 Button("Task") {
                     NotificationCenter.default.post(
@@ -145,7 +140,6 @@ struct EditorCommands: Commands {
                         userInfo: ["type": AnnotationType.task]
                     )
                 }
-                .keyboardShortcut("t", modifiers: [.command, .shift])
 
                 Button("Comment") {
                     NotificationCenter.default.post(
@@ -154,7 +148,6 @@ struct EditorCommands: Commands {
                         userInfo: ["type": AnnotationType.comment]
                     )
                 }
-                .keyboardShortcut("c", modifiers: [.command, .shift])
 
                 Button("Reference") {
                     NotificationCenter.default.post(
@@ -163,12 +156,10 @@ struct EditorCommands: Commands {
                         userInfo: ["type": AnnotationType.reference]
                     )
                 }
-                .keyboardShortcut("r", modifiers: [.command, .shift])
 
                 Button("Image...") {
                     NotificationCenter.default.post(name: .requestInsertImage, object: nil)
                 }
-                .keyboardShortcut("i", modifiers: [.command, .shift])
 
                 Divider()
 
