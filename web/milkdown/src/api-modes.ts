@@ -4,8 +4,8 @@ import { editorViewCtx, parserCtx } from '@milkdown/kit/core';
 import { Slice } from '@milkdown/kit/prose/model';
 import { Selection } from '@milkdown/kit/prose/state';
 import { getMarkdown } from '@milkdown/kit/utils';
-import { getBlockIdAtPos } from './block-id-plugin';
 import { getContent, setContent } from './api-content';
+import { getBlockIdAtPos } from './block-id-plugin';
 import { mdToTextOffset, textToMdOffset } from './cursor-mapping';
 import { getEditorInstance } from './editor-state';
 import {

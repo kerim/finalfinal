@@ -49,7 +49,7 @@ When Xcode is open, prefer Xcode MCP tools over `xcodebuild` in Bash.
 
 **SQLite-first hybrid app:** SwiftUI shell + GRDB database + WKWebView editors (Milkdown WYSIWYG, CodeMirror source).
 
-**Requirements:** macOS 14.0+ (uses @Observable macro)
+**Requirements:** macOS 26.0+ (uses @Observable macro)
 
 **Core principle:** Database is single source of truth. No file watching, no manifest sync.
 

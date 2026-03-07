@@ -7,6 +7,48 @@
 
 import SwiftUI
 
+// MARK: - Comparison Types
+
+/// Mode for comparing snapshot sections
+enum ComparisonMode: String, CaseIterable {
+    case vsCurrent = "vs Current"
+    case vsPrevious = "vs Previous"
+}
+
+/// Type of change detected for a section
+enum SectionChangeType {
+    case modified
+    case new
+}
+
+/// Compute section changes between displayed and comparison section sets
+func computeSectionChanges(
+    displayed: [SnapshotSectionViewModel],
+    comparison: [SnapshotSectionViewModel]
+) -> [String: SectionChangeType] {
+    let compMap = Dictionary(
+        comparison.compactMap { vm in
+            vm.originalSectionId.map { ($0, vm.markdownContent) }
+        },
+        uniquingKeysWith: { first, _ in first }
+    )
+    var changes: [String: SectionChangeType] = [:]
+    for section in displayed {
+        guard let origId = section.originalSectionId else {
+            changes[section.id] = .new
+            continue
+        }
+        if let compContent = compMap[origId] {
+            if compContent != section.markdownContent {
+                changes[section.id] = .modified
+            }
+        } else {
+            changes[section.id] = .new
+        }
+    }
+    return changes
+}
+
 /// View model for displaying snapshot sections in preview
 struct SnapshotSectionViewModel: Identifiable, Equatable {
     let id: String
@@ -15,6 +57,7 @@ struct SnapshotSectionViewModel: Identifiable, Equatable {
     let markdownContent: String
     let status: SectionStatus?
     let wordCount: Int
+    let originalSectionId: String?
 
     /// Initialize from SnapshotSection
     init(from section: SnapshotSection) {
@@ -24,9 +67,10 @@ struct SnapshotSectionViewModel: Identifiable, Equatable {
         self.markdownContent = section.markdownContent
         self.status = section.status
         self.wordCount = MarkdownUtils.wordCount(for: section.markdownContent)
+        self.originalSectionId = section.originalSectionId
     }
 
-    /// Initialize from SectionViewModel (current sections)
+    /// Initialize from SectionViewModel (current sections — their own ID is the original)
     init(from viewModel: SectionViewModel) {
         self.id = viewModel.id
         self.title = viewModel.title
@@ -34,11 +78,12 @@ struct SnapshotSectionViewModel: Identifiable, Equatable {
         self.markdownContent = viewModel.markdownContent
         self.status = viewModel.status
         self.wordCount = viewModel.wordCount
+        self.originalSectionId = viewModel.id
     }
 }
 
 /// Read-only document preview for middle and right columns
-struct DocumentPreviewView: View {
+struct DocumentPreviewView<TrailingHeader: View>: View {
     let title: String
     let sections: [SnapshotSectionViewModel]
     let highlightedSectionId: String?
@@ -49,10 +94,36 @@ struct DocumentPreviewView: View {
     /// Whether to show full content (vs truncated preview)
     var showFullContent: Bool = false
     var onRestoreSection: ((SnapshotSectionViewModel, SectionRestoreMode) -> Void)?
+    /// Section change types for highlighting
+    var changeTypes: [String: SectionChangeType] = [:]
+    /// Trailing content for the header area
+    let trailingHeader: TrailingHeader
 
     @Environment(ThemeManager.self) private var themeManager
     @State private var hoveredSectionId: String?
     @State private var scrollPosition: String?
+
+    init(
+        title: String,
+        sections: [SnapshotSectionViewModel],
+        highlightedSectionId: String?,
+        onSectionTap: ((SnapshotSectionViewModel) -> Void)?,
+        showRestoreButtons: Bool = false,
+        showFullContent: Bool = false,
+        onRestoreSection: ((SnapshotSectionViewModel, SectionRestoreMode) -> Void)? = nil,
+        changeTypes: [String: SectionChangeType] = [:],
+        @ViewBuilder trailingHeader: () -> TrailingHeader
+    ) {
+        self.title = title
+        self.sections = sections
+        self.highlightedSectionId = highlightedSectionId
+        self.onSectionTap = onSectionTap
+        self.showRestoreButtons = showRestoreButtons
+        self.showFullContent = showFullContent
+        self.onRestoreSection = onRestoreSection
+        self.changeTypes = changeTypes
+        self.trailingHeader = trailingHeader()
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -62,9 +133,10 @@ struct DocumentPreviewView: View {
                     .font(.headline)
                     .foregroundStyle(themeManager.currentTheme.editorTextSecondary)
                 Spacer()
+                trailingHeader
             }
             .padding(.horizontal)
-            .padding(.vertical, 8)
+            .padding(.vertical, 4)
             .background(themeManager.currentTheme.sidebarBackground.opacity(0.5))
 
             Divider()
@@ -80,6 +152,7 @@ struct DocumentPreviewView: View {
                                 isHovered: section.id == hoveredSectionId,
                                 showRestoreButtons: showRestoreButtons,
                                 showFullContent: showFullContent,
+                                changeType: changeTypes[section.id],
                                 onTap: {
                                     onSectionTap?(section)
                                 },
@@ -113,6 +186,29 @@ struct DocumentPreviewView: View {
     }
 }
 
+extension DocumentPreviewView where TrailingHeader == EmptyView {
+    init(
+        title: String,
+        sections: [SnapshotSectionViewModel],
+        highlightedSectionId: String?,
+        onSectionTap: ((SnapshotSectionViewModel) -> Void)?,
+        showRestoreButtons: Bool = false,
+        showFullContent: Bool = false,
+        onRestoreSection: ((SnapshotSectionViewModel, SectionRestoreMode) -> Void)? = nil,
+        changeTypes: [String: SectionChangeType] = [:]
+    ) {
+        self.title = title
+        self.sections = sections
+        self.highlightedSectionId = highlightedSectionId
+        self.onSectionTap = onSectionTap
+        self.showRestoreButtons = showRestoreButtons
+        self.showFullContent = showFullContent
+        self.onRestoreSection = onRestoreSection
+        self.changeTypes = changeTypes
+        self.trailingHeader = EmptyView()
+    }
+}
+
 /// Individual section row in the preview
 struct SectionPreviewRow: View {
     let section: SnapshotSectionViewModel
@@ -120,6 +216,7 @@ struct SectionPreviewRow: View {
     let isHovered: Bool
     let showRestoreButtons: Bool
     let showFullContent: Bool
+    let changeType: SectionChangeType?
     let onTap: () -> Void
     let onRestore: (SectionRestoreMode) -> Void
 
@@ -129,6 +226,7 @@ struct SectionPreviewRow: View {
         isHovered: Bool,
         showRestoreButtons: Bool,
         showFullContent: Bool = false,
+        changeType: SectionChangeType? = nil,
         onTap: @escaping () -> Void,
         onRestore: @escaping (SectionRestoreMode) -> Void
     ) {
@@ -137,6 +235,7 @@ struct SectionPreviewRow: View {
         self.isHovered = isHovered
         self.showRestoreButtons = showRestoreButtons
         self.showFullContent = showFullContent
+        self.changeType = changeType
         self.onTap = onTap
         self.onRestore = onRestore
     }
@@ -144,7 +243,16 @@ struct SectionPreviewRow: View {
     @Environment(ThemeManager.self) private var themeManager
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        HStack(spacing: 0) {
+            // Left border stripe for changed sections
+            if let change = changeType {
+                RoundedRectangle(cornerRadius: 1.5)
+                    .fill(change == .new ? Color.green : themeManager.currentTheme.accentColor)
+                    .frame(width: 3)
+                    .padding(.vertical, 2)
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
             // Header
             HStack {
                 // Header level indicator (flat display, no indent)
@@ -159,6 +267,20 @@ struct SectionPreviewRow: View {
                 Text(section.title)
                     .font(.headline)
                     .foregroundStyle(themeManager.currentTheme.editorText)
+
+                // Change badge
+                if let change = changeType {
+                    Text(change == .new ? "New" : "Modified")
+                        .font(.caption2)
+                        .fontWeight(.medium)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(
+                            Capsule()
+                                .fill(change == .new ? Color.green.opacity(0.2) : themeManager.currentTheme.accentColor.opacity(0.2))
+                        )
+                        .foregroundStyle(change == .new ? Color.green : themeManager.currentTheme.accentColor)
+                }
 
                 Spacer()
 
@@ -188,7 +310,9 @@ struct SectionPreviewRow: View {
                     .foregroundStyle(themeManager.currentTheme.editorTextSecondary)
                     .lineLimit(3)
             }
-        }
+            } // close VStack
+            .padding(.leading, changeType != nil ? 4 : 0)
+        } // close HStack
         .padding(.vertical, 8)
         .padding(.horizontal, 4)
         .background(
