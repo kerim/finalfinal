@@ -15,14 +15,42 @@
  * - atomicRanges for cursor skip over hidden caption lines
  */
 
-import { type EditorState, type Extension, RangeSetBuilder, StateField } from '@codemirror/state';
+import { type EditorState, type Extension, RangeSetBuilder, StateEffect, StateField } from '@codemirror/state';
 import { Decoration, type DecorationSet, EditorView, ViewPlugin, type ViewUpdate, WidgetType } from '@codemirror/view';
+import { getEditorView } from './editor-state';
 import {
   dismissImageCaptionPopup,
   isCommittingCaption,
   isImageCaptionPopupOpen,
   showImageCaptionPopup,
 } from './image-caption-popup';
+
+// --- Image metadata StateEffect/StateField ---
+
+const setImageMetaEffect = StateEffect.define<Array<{ src: string; width?: number | null }>>();
+
+const imageMetaField = StateField.define<Map<string, number>>({
+  create: () => new Map(),
+  update(value, tr) {
+    for (const effect of tr.effects) {
+      if (effect.is(setImageMetaEffect)) {
+        const next = new Map<string, number>();
+        for (const m of effect.value) {
+          if (m.width) next.set(m.src, m.width);
+        }
+        return next;
+      }
+    }
+    return value;
+  },
+});
+
+/** Push image metadata (widths by src) into the editor state */
+export function setImageMeta(meta: Array<{ src: string; width?: number | null }>): void {
+  const view = getEditorView();
+  if (!view) return;
+  view.dispatch({ effects: setImageMetaEffect.of(meta) });
+}
 
 // --- Constants ---
 
@@ -38,14 +66,16 @@ class ImagePreviewWidget extends WidgetType {
   private src: string;
   private alt: string;
   private caption: string;
+  private width: number | null;
   readonly imageLineNumber: number;
   readonly captionLineNumber: number | null;
 
-  constructor(src: string, alt: string, caption: string, imageLineNumber: number, captionLineNumber: number | null) {
+  constructor(src: string, alt: string, caption: string, imageLineNumber: number, captionLineNumber: number | null, width: number | null = null) {
     super();
     this.src = src;
     this.alt = alt;
     this.caption = caption;
+    this.width = width;
     this.imageLineNumber = imageLineNumber;
     this.captionLineNumber = captionLineNumber;
   }
@@ -55,6 +85,7 @@ class ImagePreviewWidget extends WidgetType {
       this.src === other.src &&
       this.alt === other.alt &&
       this.caption === other.caption &&
+      this.width === other.width &&
       this.imageLineNumber === other.imageLineNumber &&
       this.captionLineNumber === other.captionLineNumber
     );
@@ -70,15 +101,20 @@ class ImagePreviewWidget extends WidgetType {
     img.alt = this.alt;
     img.draggable = false;
 
+    // Apply explicit width before onload (cached images may not fire onload)
+    if (this.width) {
+      img.style.width = `${this.width}px`;
+    }
+
     // Notify CM6 to re-measure after image loads, apply orientation-aware sizing
     img.onload = () => {
-      // Orientation-aware sizing
-      if (img.naturalWidth >= img.naturalHeight) {
-        // Landscape: remove height cap, show at natural aspect ratio
-        img.style.maxHeight = '';
-      } else {
-        // Portrait: cap at 400px
-        img.style.maxHeight = '400px';
+      if (!this.width) {
+        // Orientation-aware sizing only when no explicit width
+        if (img.naturalWidth >= img.naturalHeight) {
+          img.style.maxHeight = '';
+        } else {
+          img.style.maxHeight = '400px';
+        }
       }
 
       const editorRoot = wrapper.closest('.cm-editor');
@@ -127,6 +163,7 @@ class ImagePreviewWidget extends WidgetType {
 
 function buildDecorations(state: EditorState): DecorationSet {
   const doc = state.doc;
+  const metaStore = state.field(imageMetaField);
   const decorations: { from: number; to: number; deco: Decoration }[] = [];
 
   // Iterate line-by-line to check for caption comments on preceding lines
@@ -137,6 +174,7 @@ function buildDecorations(state: EditorState): DecorationSet {
 
     const alt = imageMatch[1];
     const src = imageMatch[2];
+    const width = metaStore.get(src) ?? null;
 
     // Check preceding lines for caption comment, skipping blank lines
     // Database-loaded images have a blank line between caption and image:
@@ -175,7 +213,7 @@ function buildDecorations(state: EditorState): DecorationSet {
       from: line.to,
       to: line.to,
       deco: Decoration.widget({
-        widget: new ImagePreviewWidget(src, alt, caption, i, captionLineNumber),
+        widget: new ImagePreviewWidget(src, alt, caption, i, captionLineNumber, width),
         block: true,
         side: 1,
       }),
@@ -199,7 +237,7 @@ const imageDecorationField = StateField.define<DecorationSet>({
     return buildDecorations(state);
   },
   update(value, tr) {
-    if (tr.docChanged) {
+    if (tr.docChanged || tr.effects.some((e) => e.is(setImageMetaEffect))) {
       return buildDecorations(tr.state);
     }
     return value;
@@ -255,5 +293,5 @@ const imageCaptionClickPlugin = ViewPlugin.fromClass(
 // --- Plugin export ---
 
 export function imagePreviewPlugin(): Extension[] {
-  return [imageDecorationField, atomicImageRanges, imageCaptionClickPlugin];
+  return [imageMetaField, imageDecorationField, atomicImageRanges, imageCaptionClickPlugin];
 }

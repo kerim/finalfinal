@@ -14,6 +14,7 @@ extension ContentView {
         let width: Int?
         let caption: String?
         let alt: String?
+        let src: String?
     }
 
     /// Fetch blocks from DB and return assembled markdown + ordered block IDs + image metadata
@@ -42,7 +43,7 @@ extension ContentView {
             // Collect image metadata for figure nodes (width/caption/alt persistence)
             let imageMeta = sorted
                 .filter { $0.blockType == .image }
-                .map { ImageBlockMeta(id: $0.id, width: $0.imageWidth, caption: $0.imageCaption, alt: $0.imageAlt) }
+                .map { ImageBlockMeta(id: $0.id, width: $0.imageWidth, caption: $0.imageCaption, alt: $0.imageAlt, src: $0.imageSrc) }
 
             return (markdown, ids, imageMeta)
         } catch {
@@ -55,26 +56,21 @@ extension ContentView {
     func rebuildDocumentContent() {
         // Guard against rebuilding during editor transition
         guard editorState.contentState != .editorTransition else { return }
-        guard let db = documentManager.projectDatabase,
-              let pid = documentManager.projectId else { return }
+        guard let result = fetchBlocksWithIds() else { return }
 
-        do {
-            let allBlocks: [Block]
-            if let zoomedIds = editorState.zoomedSectionIds {
-                let blocks = try db.fetchBlocks(projectId: pid)
-                allBlocks = filterBlocksForZoom(blocks, zoomedIds: zoomedIds, zoomedBlockRange: editorState.zoomedBlockRange)
-            } else {
-                allBlocks = try db.fetchBlocks(projectId: pid)
-            }
+        editorState.isResettingContent = true
+        editorState.content = result.markdown
+        editorState.pendingImageMeta = result.imageMeta
 
-            editorState.content = BlockParser.assembleMarkdown(from: allBlocks)
+        // Update sourceContent for CodeMirror (when in source mode)
+        updateSourceContentIfNeeded()
 
-            // Update sourceContent for CodeMirror (when in source mode)
-            updateSourceContentIfNeeded()
-        } catch {
-            #if DEBUG
-            print("[ContentView] Error rebuilding content from blocks: \(error)")
-            #endif
+        Task {
+            await blockSyncService.setContentWithBlockIds(
+                markdown: result.markdown,
+                blockIds: result.blockIds,
+                imageMeta: result.imageMeta)
+            editorState.isResettingContent = false
         }
     }
 
@@ -398,6 +394,7 @@ extension ContentView {
                     scrollToOffset: $editorState.scrollToOffset,
                     scrollToAnnotationIndex: $editorState.scrollToAnnotationIndex,
                     isResettingContent: $editorState.isResettingContent,
+                    pendingImageMeta: $editorState.pendingImageMeta,
                     contentState: editorState.contentState,
                     isZoomingContent: editorState.isZoomingContent,
                     contentGeneration: editorState.contentGeneration,
@@ -428,6 +425,18 @@ extension ContentView {
                     },
                     onWebViewReady: { webView in
                         findBarState.activeWebView = webView
+                        // Push image metadata for width display in CodeMirror previews
+                        if let result = fetchBlocksWithIds() {
+                            let metaArray = result.imageMeta.compactMap { meta -> [String: Any]? in
+                                guard let w = meta.width, let s = meta.src else { return nil }
+                                return ["src": s, "width": w]
+                            }
+                            if !metaArray.isEmpty,
+                               let data = try? JSONSerialization.data(withJSONObject: metaArray),
+                               let json = String(data: data, encoding: .utf8) {
+                                webView.evaluateJavaScript("window.FinalFinal.setImageMeta(\(json))")
+                            }
+                        }
                     }
                 )
             }
@@ -501,6 +510,10 @@ extension ContentView {
 
         let combined = body + miniNotesSection
         editorState.content = combined
+        // Set pending image meta for CodeMirror (footnote insertion doesn't change figures)
+        if let result = fetchBlocksWithIds() {
+            editorState.pendingImageMeta = result.imageMeta
+        }
         updateSourceContentIfNeeded()
 
         // Push to editor via normal content path, then push block IDs for body only

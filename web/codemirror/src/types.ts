@@ -113,6 +113,7 @@ declare global {
       getSearchState: () => SearchState | null;
       // Image API
       insertImage: (opts: { src: string; alt?: string; caption?: string }) => void;
+      setImageMeta: (meta: Array<{ src: string; width?: number | null }>) => void;
       // Project switch reset
       resetForProjectSwitch: () => void;
       // Combined poll data

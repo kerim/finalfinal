@@ -137,6 +137,11 @@ extension EditorViewState {
             }
             #endif
 
+            let zoomedImageMeta = zoomedBlocks
+                .filter { $0.blockType == .image }
+                .map { ContentView.ImageBlockMeta(id: $0.id, width: $0.imageWidth, caption: $0.imageCaption, alt: $0.imageAlt, src: $0.imageSrc) }
+            let zoomedBlockIds = BlockParser.idsForProseMirrorAlignment(zoomedBlocks)
+
             var zoomedContent = BlockParser.assembleMarkdown(from: zoomedBlocks)
 
             // Append mini #Notes section if zoomed content contains footnote references
@@ -175,7 +180,15 @@ extension EditorViewState {
             // Set zoomed state
             zoomedSectionId = sectionId
             isZoomingContent = true
+
+            // Push content with block IDs and image metadata to preserve image widths
+            isResettingContent = true
+            await blockSyncService?.setContentWithBlockIds(
+                markdown: zoomedContent, blockIds: zoomedBlockIds,
+                scrollToStart: true, imageMeta: zoomedImageMeta)
             content = zoomedContent
+            pendingImageMeta = zoomedImageMeta
+            isResettingContent = false
 
             // Update sourceContent for CodeMirror
             if editorMode == .source, let syncService = sectionSyncService {
@@ -259,6 +272,11 @@ extension EditorViewState {
             let allBlocks = try db.fetchBlocks(projectId: pid)
             let mergedContent = BlockParser.assembleMarkdown(from: allBlocks)
 
+            let allImageMeta = allBlocks
+                .filter { $0.blockType == .image }
+                .map { ContentView.ImageBlockMeta(id: $0.id, width: $0.imageWidth, caption: $0.imageCaption, alt: $0.imageAlt, src: $0.imageSrc) }
+            let allBlockIds = BlockParser.idsForProseMirrorAlignment(allBlocks)
+
             // Clear zoom footnote state BEFORE pushing full document content
             NotificationCenter.default.post(
                 name: .setZoomFootnoteState,
@@ -267,7 +285,15 @@ extension EditorViewState {
             )
 
             isZoomingContent = true
+
+            // Push content with block IDs and image metadata to preserve image widths
+            isResettingContent = true
+            await blockSyncService?.setContentWithBlockIds(
+                markdown: mergedContent, blockIds: allBlockIds,
+                imageMeta: allImageMeta)
             content = mergedContent
+            pendingImageMeta = allImageMeta
+            isResettingContent = false
 
             // Update sourceContent for CodeMirror
             if editorMode == .source, let syncService = sectionSyncService {
