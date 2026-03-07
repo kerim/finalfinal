@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.72] - 2026-03-08
+
 ### Changed
 
 - **Keyboard shortcuts cleaned up** — removed conflicting and redundant keyboard shortcuts: spelling/grammar toggles (Cmd+;), insert shortcuts (section break, highlight, footnote, task, comment, reference, image), export shortcuts (Cmd+Option+E, Cmd+Option+P), version history (Cmd+Option+V), import (Cmd+Shift+I), refresh citations (Cmd+Shift+R), and per-theme shortcuts. Fixed Find and Replace shortcut from Cmd+H to Cmd+Option+F.
