@@ -52,8 +52,10 @@ echo -e "${GREEN}  Version incremented to $NEW_VERSION${NC}"
 echo ""
 
 # Step 1b: Clean stale QuickLook extension registrations (DerivedData leftovers)
-echo "  Cleaning stale QuickLook extension registrations..."
-pluginkit -r -i com.kerim.final-final.quicklook 2>/dev/null || true
+# Each xcodegen run creates a new project hash → new DerivedData dir → new .appex copy.
+# Safe: build.sh uses its own -derivedDataPath "$PROJECT_DIR/build", not these.
+echo "  Removing stale DerivedData directories..."
+rm -rf ~/Library/Developer/Xcode/DerivedData/final_final-*
 
 # Step 2: Build the app
 echo -e "${YELLOW}Step 2: Building the app...${NC}"
