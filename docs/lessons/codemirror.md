@@ -364,7 +364,7 @@ The version counter pattern is needed because CM6 `ViewPlugin.update()` has no e
 }
 ```
 
-In `toDOM()`, keep only: `wrapper.className = 'cm-image-preview'`, `img.draggable = false` (not CSS-settable), and the dynamic `onload` handler that adjusts `img.style.maxHeight` based on orientation.
+In `toDOM()`, keep only: `wrapper.className = 'cm-image-preview'`, `img.draggable = false` (not CSS-settable), explicit width application (when `this.width` is set), and the `onload` handler that clears `max-height` for images without explicit width and triggers `requestMeasure()`.
 
 **Bonus fix:** The error handler's `--text-secondary` typo was automatically fixed by using the CSS class `.cm-image-preview-error` with the correct `--editor-text-secondary` fallback.
 

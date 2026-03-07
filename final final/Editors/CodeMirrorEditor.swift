@@ -169,13 +169,14 @@ struct CodeMirrorEditor: NSViewRepresentable {
         }
 
         // Push pending image metadata for width display in previews
-        if let meta = pendingImageMeta {
+        // Guard behind isEditorReady to avoid losing metadata when JS runtime hasn't initialized yet
+        if let meta = pendingImageMeta, context.coordinator.isEditorReady {
             DispatchQueue.main.async {
                 self.pendingImageMeta = nil
             }
-            let metaArray = meta.compactMap { m -> [String: Any]? in
-                guard let w = m.width, let s = m.src else { return nil }
-                return ["src": s, "width": w]
+            let metaArray = meta.compactMap { item -> [String: Any]? in
+                guard let width = item.width, let src = item.src else { return nil }
+                return ["src": src, "width": width]
             }
             if !metaArray.isEmpty,
                let data = try? JSONSerialization.data(withJSONObject: metaArray),
@@ -183,6 +184,11 @@ struct CodeMirrorEditor: NSViewRepresentable {
                 webView.evaluateJavaScript("window.FinalFinal.setImageMeta(\(json))")
             }
         }
+        #if DEBUG
+        if pendingImageMeta != nil, !context.coordinator.isEditorReady {
+            print("[CodeMirrorEditor] Deferring pendingImageMeta push (isEditorReady=false)")
+        }
+        #endif
 
         if context.coordinator.lastThemeCss != themeCSS {
             context.coordinator.lastThemeCss = themeCSS

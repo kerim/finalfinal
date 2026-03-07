@@ -14,6 +14,7 @@ Both editors use the same bridge pattern:
 setContent(markdown)                   // Load content into editor
 getContent()                           // Get current markdown
 setContentWithBlockIds(md, ids, opts)  // Atomic content + block ID push
+setImageMeta([{src, width}])           // Push image widths for preview sizing (CM only)
 
 // --- Block sync (2s polling) ---
 hasBlockChanges()         // Check for pending changes (returns boolean)
@@ -250,10 +251,14 @@ Uses `StateField.define<DecorationSet>()` (not `ViewPlugin`) because image previ
 
 **Data flow:**
 1. `buildDecorations(state: EditorState)` scans document text for `IMAGE_REGEX` matches
-2. For each match, creates an `ImagePreviewWidget` positioned at line end (`line.to`)
-3. Widget's `toDOM()` creates a `<div class="cm-image-preview">` with `<img>` inside
-4. `img.src` rewrites `media/...` to `projectmedia://...` for the custom scheme handler
-5. `img.onload` triggers `EditorView.requestMeasure()` via DOM traversal (`wrapper.closest('.cm-editor')` + `EditorView.findFromDOM()`)
+2. For each match, looks up explicit width from `imageMetaField` (a `StateField<Map<string, number>>` keyed by `media/` src path)
+3. Creates an `ImagePreviewWidget` positioned at line end (`line.to`), passing the width
+4. Widget's `toDOM()` creates a `<div class="cm-image-preview">` with `<img>` inside
+5. If explicit width exists, applies `img.style.width` and `maxHeight: 'none'`; otherwise CSS `max-width: 100%` + `height: auto` renders at full container width (matching Milkdown)
+6. `img.src` rewrites `media/...` to `projectmedia://...` for the custom scheme handler
+7. `img.onload` triggers `EditorView.requestMeasure()` via DOM traversal (`wrapper.closest('.cm-editor')` + `EditorView.findFromDOM()`)
+
+**Image metadata bridge:** Swift pushes image widths to CodeMirror via `window.FinalFinal.setImageMeta([{src, width}])`. This dispatches a `StateEffect` that updates `imageMetaField`, triggering decoration rebuild. Metadata is pushed on project load, zoom in/out, and content rebuilds via `CodeMirrorEditor.updateNSView()` (reads `pendingImageMeta` binding from `EditorViewState`).
 
 **Key constraint:** `StateField` only has access to `EditorState` (not `EditorView`), so the widget cannot hold a `view` reference. Instead it finds the view from the DOM when needed.
 
