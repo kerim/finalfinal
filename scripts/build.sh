@@ -17,6 +17,7 @@ PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 PROJECT_YML="$PROJECT_DIR/project.yml"
 PACKAGE_JSON="$PROJECT_DIR/web/package.json"
 APP_NAME="FINAL|FINAL"
+SIGN_IDENTITY="Developer ID Application"
 
 echo -e "${GREEN}========================================${NC}"
 echo -e "${GREEN}  Build: $APP_NAME${NC}"
@@ -69,10 +70,10 @@ echo "  Generating Xcode project..."
 xcodegen generate
 
 echo "  Building macOS app..."
-xcodebuild -scheme "final final" -destination 'platform=macOS' -derivedDataPath "$PROJECT_DIR/build" build
+xcodebuild -scheme "final final" -configuration Release -destination 'platform=macOS' -derivedDataPath "$PROJECT_DIR/build" build
 
 # Verify build succeeded
-BUILD_PATH="$PROJECT_DIR/build/Build/Products/Debug/$APP_NAME.app"
+BUILD_PATH="$PROJECT_DIR/build/Build/Products/Release/$APP_NAME.app"
 if [ ! -d "$BUILD_PATH" ]; then
     echo -e "${RED}Error: Build failed - app not found at $BUILD_PATH${NC}"
     exit 1
@@ -95,10 +96,10 @@ cp -R "$BUILD_PATH" "/Applications/"
 echo -e "${GREEN}  Installed to /Applications${NC}"
 echo ""
 
-# Step 4: Ad-hoc sign for distribution (allows right-click -> Open on other Macs)
+# Step 4: Developer ID sign for distribution (Gatekeeper-compatible)
 # Sign inside-out: extension first (with sandbox entitlement), then main app.
 # WARNING: Never use --deep here — it strips entitlements from nested components.
-echo -e "${YELLOW}Step 4: Ad-hoc signing for distribution...${NC}"
+echo -e "${YELLOW}Step 4: Developer ID signing for distribution...${NC}"
 
 APPEX_PATH="/Applications/$APP_NAME.app/Contents/PlugIns/QuickLook Extension.appex"
 QL_ENTITLEMENTS="$PROJECT_DIR/QuickLook Extension/QuickLook Extension.entitlements"
@@ -109,7 +110,7 @@ FRAMEWORKS_DIR="/Applications/$APP_NAME.app/Contents/Frameworks"
 if [ -d "$FRAMEWORKS_DIR" ]; then
     echo "  Signing embedded frameworks..."
     for framework in "$FRAMEWORKS_DIR"/*.framework; do
-        [ -d "$framework" ] && codesign --force --sign - "$framework"
+        [ -d "$framework" ] && codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$framework"
     done
 fi
 
@@ -120,10 +121,10 @@ if [ ! -d "$APPEX_PATH" ]; then
 fi
 
 echo "  Signing QuickLook extension (sandboxed)..."
-codesign --force --sign - --entitlements "$QL_ENTITLEMENTS" "$APPEX_PATH"
+codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" --entitlements "$QL_ENTITLEMENTS" "$APPEX_PATH"
 
 echo "  Signing main app..."
-codesign --force --sign - --entitlements "$APP_ENTITLEMENTS" "/Applications/$APP_NAME.app"
+codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" --entitlements "$APP_ENTITLEMENTS" "/Applications/$APP_NAME.app"
 
 # Verify the signature is valid
 echo "  Verifying code signature..."
@@ -132,13 +133,27 @@ if ! codesign --verify --deep --strict "/Applications/$APP_NAME.app" 2>&1; then
     exit 1
 fi
 
-echo -e "${GREEN}  Ad-hoc signed and verified${NC}"
+echo -e "${GREEN}  Developer ID signed and verified${NC}"
 echo ""
 
 # Step 4b: Register QuickLook extension
 echo -e "${YELLOW}Step 4b: Registering QuickLook extension...${NC}"
 pluginkit -a "$APPEX_PATH"
 echo -e "${GREEN}  QuickLook extension registered${NC}"
+echo ""
+
+# Step 4c: Notarize and staple
+echo -e "${YELLOW}Step 4c: Notarizing...${NC}"
+
+NOTARIZE_ZIP="$PROJECT_DIR/build/notarize-tmp.zip"
+ditto -c -k --sequesterRsrc --keepParent "/Applications/$APP_NAME.app" "$NOTARIZE_ZIP"
+xcrun notarytool submit "$NOTARIZE_ZIP" --keychain-profile "final-final-notary" --wait
+rm -f "$NOTARIZE_ZIP"
+
+echo "  Stapling notarization ticket..."
+xcrun stapler staple "/Applications/$APP_NAME.app"
+
+echo -e "${GREEN}  Notarized and stapled${NC}"
 echo ""
 
 # Step 5: Create versioned zip in build/
