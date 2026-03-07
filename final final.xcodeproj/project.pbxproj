@@ -824,8 +824,16 @@
 				BuildIndependentTargetsInParallel = YES;
 				LastUpgradeCheck = 1500;
 				TargetAttributes = {
+					4A3B93CDDB27C36925E7EC59 = {
+						DevelopmentTeam = HBHZWD24V7;
+						ProvisioningStyle = Manual;
+					};
 					BD340BCA01ABBD8642AA6DA9 = {
 						TestTargetID = 4A3B93CDDB27C36925E7EC59;
+					};
+					D529D3B3388A2FCF4CDD62EF = {
+						DevelopmentTeam = HBHZWD24V7;
+						ProvisioningStyle = Manual;
 					};
 				};
 			};
@@ -1233,8 +1241,12 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = "final final/final final.entitlements";
+				CODE_SIGN_IDENTITY = "Developer ID Application";
+				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 0.2.71;
+				CURRENT_PROJECT_VERSION = 0.2.72;
+				DEVELOPMENT_TEAM = HBHZWD24V7;
+				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "final final/Info.plist";
 				INFOPLIST_GENERATION_MODE = GeneratedFile;
@@ -1256,8 +1268,12 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = "QuickLook Extension/QuickLook Extension.entitlements";
+				CODE_SIGN_IDENTITY = "Developer ID Application";
+				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 0.2.71;
+				CURRENT_PROJECT_VERSION = 0.2.72;
+				DEVELOPMENT_TEAM = HBHZWD24V7;
+				ENABLE_HARDENED_RUNTIME = YES;
 				INFOPLIST_FILE = "QuickLook Extension/Info.plist";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -1283,8 +1299,12 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = "final final/final final.entitlements";
+				CODE_SIGN_IDENTITY = "Developer ID Application";
+				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 0.2.71;
+				CURRENT_PROJECT_VERSION = 0.2.72;
+				DEVELOPMENT_TEAM = HBHZWD24V7;
+				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "final final/Info.plist";
 				INFOPLIST_GENERATION_MODE = GeneratedFile;
@@ -1306,8 +1326,12 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = "QuickLook Extension/QuickLook Extension.entitlements";
+				CODE_SIGN_IDENTITY = "Developer ID Application";
+				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 0.2.71;
+				CURRENT_PROJECT_VERSION = 0.2.72;
+				DEVELOPMENT_TEAM = HBHZWD24V7;
+				ENABLE_HARDENED_RUNTIME = YES;
 				INFOPLIST_FILE = "QuickLook Extension/Info.plist";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
