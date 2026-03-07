@@ -14,6 +14,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 
 - **Pre-build script for stale DerivedData cleanup** — added xcodegen pre-build phase to remove old DerivedData directories, preventing duplicate QuickLook extension registrations during Xcode builds
+- **Developer ID signing and notarization** — added `CODE_SIGN_IDENTITY`, `DEVELOPMENT_TEAM`, and hardened runtime to both targets in `project.yml`; build script now uses Developer ID signing with timestamp, notarization via `notarytool`, and stapling before zip creation; README updated to remove Gatekeeper workaround instructions
+
 ## [0.2.71] - 2026-03-07
 
 ### Fixed
