@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.69] - 2026-03-07
+
+### Added
+
+- **Document-level annotations** — annotations not anchored to markdown text (charOffset = -1), stored in the database only. Includes CRUD operations, menu commands (Edit > Add Document Note), and a collapsible "Document Notes" section in the annotation panel.
+- **Annotation panel section headers** — centered headers for "Document Notes" and "Inline Notes" sections
+- **Version history comparison mode** — picker to compare snapshots against current version or previous snapshot, with section-level change highlighting
+- **Snapshot deduplication** — auto-backups use SHA256 content hash to skip duplicate snapshots
+
+### Fixed
+
+- **Version history window restoration** — fixed window not restoring on launch using `defaultLaunchBehavior` and AppDelegate cleanup; use `dismissWindow(id:)` instead of `dismiss()` for standalone Window scene
+- **Version history loading flash** — prioritize loading state in view body to avoid flash of wrong content
+- **Version history stale data** — fetch sections from database instead of potentially stale editorState
+
 ## [0.2.68] - 2026-03-07
 
 ### Added
