@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **Heading level filter** — `###` filter button in outline sidebar to toggle visibility of sub-subsection cards
+- **Section highlight on hover** — hovering a sidebar card highlights the corresponding section in the editor; optimized with `highlightSection()`/`clearHighlight()` API to avoid repeated `evaluateJavaScript` overhead
+- **Hover tooltip on card titles** — instant tooltip showing full section title when text is truncated, using NSFont measurement for truncation detection
+
+### Fixed
+
+- **#Notes scroll failure in Milkdown** — Swift's BlockParser creates separate blocks per list item, but ProseMirror merges consecutive same-type list items into single nodes, causing block ID count mismatch. Added `idsForProseMirrorAlignment()` to collapse consecutive same-type list block IDs before sending to JS.
+- **Scroll to zoomed section on exit zoom** — saved `zoomedSectionId` before async `zoomOut` clears it, then scrolls after zoom-out completes; wired `onContentAcknowledged` through CodeMirrorEditor
+- **CodeMirror horizontal overflow** — fixed width issues causing horizontal scrollbar in source editor
+- **Tooltip z-index rendering behind next card** — moved tooltip from per-card overlay to ScrollView-level overlay to fix NSViewRepresentable z-order issue where cards drew on top of previous cards' SwiftUI overlays
+
 ## [0.2.67] - 2026-03-04
 
 ### Fixed
