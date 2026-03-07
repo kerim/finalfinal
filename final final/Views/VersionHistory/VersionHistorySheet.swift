@@ -26,6 +26,8 @@ struct VersionHistorySheet: View {
     @State private var showNamedOnly = false
     @State var isLoading = true
     @State var errorMessage: String?
+    @State var comparisonMode: ComparisonMode = .vsCurrent
+    @State var previousSnapshotSections: [SnapshotSection] = []
 
     /// For section restore confirmation
     @State var pendingRestoreSection: SnapshotSection?
@@ -48,6 +50,18 @@ struct VersionHistorySheet: View {
     private var selectedSnapshot: Snapshot? {
         guard let id = selectedSnapshotId else { return nil }
         return snapshots.first { $0.id == id }
+    }
+
+    private var backupChangeTypes: [String: SectionChangeType] {
+        let displayed = selectedSnapshotSections.map { SnapshotSectionViewModel(from: $0) }
+        let comparison: [SnapshotSectionViewModel]
+        switch comparisonMode {
+        case .vsCurrent:
+            comparison = currentSections.map { SnapshotSectionViewModel(from: $0) }
+        case .vsPrevious:
+            comparison = previousSnapshotSections.map { SnapshotSectionViewModel(from: $0) }
+        }
+        return computeSectionChanges(displayed: displayed, comparison: comparison)
     }
 
     var body: some View {
@@ -162,8 +176,17 @@ struct VersionHistorySheet: View {
                     showFullContent: true,
                     onRestoreSection: { section, mode in
                         handleRestoreRequest(section: section, mode: mode)
+                    },
+                    changeTypes: backupChangeTypes
+                ) {
+                    Picker("Compare", selection: $comparisonMode) {
+                        ForEach(ComparisonMode.allCases, id: \.self) { mode in
+                            Text(mode.rawValue).tag(mode)
+                        }
                     }
-                )
+                    .pickerStyle(.segmented)
+                    .frame(width: 160)
+                }
                 .frame(minWidth: 250)
             } else {
                 placeholderView

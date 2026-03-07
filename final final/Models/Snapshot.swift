@@ -17,6 +17,7 @@ struct Snapshot: Codable, Identifiable, Equatable, Sendable, FetchableRecord, Mu
     var createdAt: Date
     var isAutomatic: Bool       // true for auto-backups, false for manual saves
     var previewMarkdown: String // Full content.markdown at time of snapshot
+    var contentHash: String     // SHA256 hash of previewMarkdown for deduplication
 
     static let databaseTableName = "snapshot"
 
@@ -26,7 +27,8 @@ struct Snapshot: Codable, Identifiable, Equatable, Sendable, FetchableRecord, Mu
         name: String? = nil,
         createdAt: Date = Date(),
         isAutomatic: Bool = true,
-        previewMarkdown: String
+        previewMarkdown: String,
+        contentHash: String = ""
     ) {
         self.id = id
         self.projectId = projectId
@@ -34,6 +36,7 @@ struct Snapshot: Codable, Identifiable, Equatable, Sendable, FetchableRecord, Mu
         self.createdAt = createdAt
         self.isAutomatic = isAutomatic
         self.previewMarkdown = previewMarkdown
+        self.contentHash = contentHash
     }
 
     // MARK: - Database Columns
@@ -45,6 +48,7 @@ struct Snapshot: Codable, Identifiable, Equatable, Sendable, FetchableRecord, Mu
         case createdAt
         case isAutomatic
         case previewMarkdown
+        case contentHash
     }
 
     // MARK: - Computed Properties

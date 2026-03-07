@@ -19,6 +19,8 @@ struct VersionHistoryWindow: View {
     @State var showNamedOnly = false
     @State var isLoading = true
     @State var errorMessage: String?
+    @State var comparisonMode: ComparisonMode = .vsCurrent
+    @State var previousSnapshotSections: [SnapshotSection] = []
 
     /// For section restore confirmation
     @State var pendingRestoreSection: SnapshotSection?
@@ -51,6 +53,19 @@ struct VersionHistoryWindow: View {
         coordinator.database != nil && coordinator.projectId != nil && !projectClosed
     }
 
+    /// Compute change types for the backup column based on comparison mode
+    private var backupChangeTypes: [String: SectionChangeType] {
+        let displayed = selectedSnapshotSections.map { SnapshotSectionViewModel(from: $0) }
+        let comparison: [SnapshotSectionViewModel]
+        switch comparisonMode {
+        case .vsCurrent:
+            comparison = coordinator.currentSections.map { SnapshotSectionViewModel(from: $0) }
+        case .vsPrevious:
+            comparison = previousSnapshotSections.map { SnapshotSectionViewModel(from: $0) }
+        }
+        return computeSectionChanges(displayed: displayed, comparison: comparison)
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             // Header
@@ -76,7 +91,10 @@ struct VersionHistoryWindow: View {
         .frame(minWidth: 900, minHeight: 600)
         .background(themeManager.currentTheme.editorBackground)
         .task(id: coordinator.projectId) {
-            guard coordinator.projectId != nil else { return }
+            guard coordinator.projectId != nil else {
+                isLoading = false
+                return
+            }
             await loadSnapshots()
         }
         .onReceive(NotificationCenter.default.publisher(for: .projectDidClose)) { _ in
@@ -114,11 +132,6 @@ struct VersionHistoryWindow: View {
 
     private var headerView: some View {
         HStack {
-            Text("Version History")
-                .font(.headline)
-
-            Spacer()
-
             // Filter toggle
             Picker("Filter", selection: $showNamedOnly) {
                 Text("All versions").tag(false)
@@ -126,6 +139,21 @@ struct VersionHistoryWindow: View {
             }
             .pickerStyle(.segmented)
             .frame(width: 200)
+
+            // Comparison mode picker (only when snapshot selected)
+            if selectedSnapshot != nil {
+                Spacer().frame(width: 32)
+
+                Picker("Compare", selection: $comparisonMode) {
+                    ForEach(ComparisonMode.allCases, id: \.self) { mode in
+                        Text(mode.rawValue).tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 160)
+            }
+
+            Spacer()
 
             // Restore All button (only when snapshot selected and project open)
             if selectedSnapshot != nil && !projectClosed {
@@ -135,6 +163,8 @@ struct VersionHistoryWindow: View {
                     Label("Restore All", systemImage: "arrow.uturn.backward.circle")
                 }
                 .buttonStyle(.borderedProminent)
+
+                Divider().frame(height: 16)
             }
 
             Button("Close") {
@@ -142,7 +172,8 @@ struct VersionHistoryWindow: View {
             }
             .keyboardShortcut(.escape, modifiers: [])
         }
-        .padding()
+        .padding(.horizontal)
+        .padding(.vertical, 4)
     }
 
     // MARK: - Main Content
@@ -193,7 +224,8 @@ struct VersionHistoryWindow: View {
                         showFullContent: true,
                         onRestoreSection: { section, mode in
                             handleRestoreRequest(section: section, mode: mode)
-                        }
+                        },
+                        changeTypes: backupChangeTypes
                     )
                     .frame(width: documentWidth)
                 } else {
