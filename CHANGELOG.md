@@ -6,8 +6,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-## [0.2.69] - 2026-03-07
-
 ### Added
 
 - **Document-level annotations** — annotations not anchored to markdown text (charOffset = -1), stored in the database only. Includes CRUD operations, menu commands (Edit > Add Document Note), and a collapsible "Document Notes" section in the annotation panel.
