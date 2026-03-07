@@ -202,6 +202,9 @@ class EditorViewState {
     /// Used for atomic content+blockID pushes during hierarchy enforcement
     weak var blockSyncService: BlockSyncService?
 
+    /// Pending image metadata for CodeMirror to pick up during zoom/rebuild transitions
+    var pendingImageMeta: [ContentView.ImageBlockMeta]?
+
     /// Whether citation library has been pushed to the editor
     var isCitationLibraryPushed: Bool = false
 

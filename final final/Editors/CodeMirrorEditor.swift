@@ -19,6 +19,7 @@ struct CodeMirrorEditor: NSViewRepresentable {
     @Binding var scrollToOffset: Int?
     @Binding var scrollToAnnotationIndex: Int?
     @Binding var isResettingContent: Bool
+    @Binding var pendingImageMeta: [ContentView.ImageBlockMeta]?
 
     /// Content state for suppressing polling during transitions (zoom, hierarchy enforcement, drag)
     var contentState: EditorContentState = .idle
@@ -165,6 +166,22 @@ struct CodeMirrorEditor: NSViewRepresentable {
 
         if context.coordinator.shouldPushContent(content) {
             context.coordinator.setContent(content)
+        }
+
+        // Push pending image metadata for width display in previews
+        if let meta = pendingImageMeta {
+            DispatchQueue.main.async {
+                self.pendingImageMeta = nil
+            }
+            let metaArray = meta.compactMap { m -> [String: Any]? in
+                guard let w = m.width, let s = m.src else { return nil }
+                return ["src": s, "width": w]
+            }
+            if !metaArray.isEmpty,
+               let data = try? JSONSerialization.data(withJSONObject: metaArray),
+               let json = String(data: data, encoding: .utf8) {
+                webView.evaluateJavaScript("window.FinalFinal.setImageMeta(\(json))")
+            }
         }
 
         if context.coordinator.lastThemeCss != themeCSS {

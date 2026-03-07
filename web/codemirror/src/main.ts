@@ -73,7 +73,7 @@ import {
 import { focusModePlugin, isFocusModeEnabled } from './focus-mode-plugin';
 import { footnoteDecorationPlugin } from './footnote-decoration-plugin';
 import { customHighlightStyle, headingDecorationPlugin, syntaxHighlighting } from './heading-plugin';
-import { imagePreviewPlugin } from './image-preview-plugin';
+import { imagePreviewPlugin, setImageMeta } from './image-preview-plugin';
 import { installLineHeightFix } from './line-height-fix';
 import { scrollStabilizer } from './scroll-stabilizer';
 import { selectionToolbarPlugin } from './selection-toolbar-plugin';
@@ -388,6 +388,7 @@ window.FinalFinal = {
 
   // Image API
   insertImage,
+  setImageMeta,
 
   // Spellcheck API
   setSpellcheckResults,
