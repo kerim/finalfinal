@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Keyboard shortcuts cleaned up** — removed conflicting and redundant keyboard shortcuts: spelling/grammar toggles (Cmd+;), insert shortcuts (section break, highlight, footnote, task, comment, reference, image), export shortcuts (Cmd+Option+E, Cmd+Option+P), version history (Cmd+Option+V), import (Cmd+Shift+I), refresh citations (Cmd+Shift+R), and per-theme shortcuts. Fixed Find and Replace shortcut from Cmd+H to Cmd+Option+F.
+- **Build script stale DerivedData cleanup** — replaced `pluginkit -r` with direct removal of stale `DerivedData/final_final-*` directories to fix duplicate QuickLook extension registrations caused by xcodegen project hash changes
+
+### Added
+
+- **Pre-build script for stale DerivedData cleanup** — added xcodegen pre-build phase to remove old DerivedData directories, preventing duplicate QuickLook extension registrations during Xcode builds
 ## [0.2.71] - 2026-03-07
 
 ### Fixed
