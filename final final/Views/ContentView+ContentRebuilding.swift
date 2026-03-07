@@ -428,8 +428,8 @@ extension ContentView {
                         // Push image metadata for width display in CodeMirror previews
                         if let result = fetchBlocksWithIds() {
                             let metaArray = result.imageMeta.compactMap { meta -> [String: Any]? in
-                                guard let w = meta.width, let s = meta.src else { return nil }
-                                return ["src": s, "width": w]
+                                guard let width = meta.width, let src = meta.src else { return nil }
+                                return ["src": src, "width": width]
                             }
                             if !metaArray.isEmpty,
                                let data = try? JSONSerialization.data(withJSONObject: metaArray),

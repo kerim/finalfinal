@@ -10,7 +10,7 @@
  * - Caption comment hiding via Decoration.replace()
  * - Click-to-edit captions via popup
  * - "Add caption" placeholder on hover for captionless images
- * - Orientation-aware sizing (landscape uncapped, portrait max 400px)
+ * - Images display at full width (max-width: 100%), matching Milkdown
  * - Centered images
  * - atomicRanges for cursor skip over hidden caption lines
  */
@@ -70,7 +70,14 @@ class ImagePreviewWidget extends WidgetType {
   readonly imageLineNumber: number;
   readonly captionLineNumber: number | null;
 
-  constructor(src: string, alt: string, caption: string, imageLineNumber: number, captionLineNumber: number | null, width: number | null = null) {
+  constructor(
+    src: string,
+    alt: string,
+    caption: string,
+    imageLineNumber: number,
+    captionLineNumber: number | null,
+    width: number | null = null
+  ) {
     super();
     this.src = src;
     this.alt = alt;
@@ -104,17 +111,13 @@ class ImagePreviewWidget extends WidgetType {
     // Apply explicit width before onload (cached images may not fire onload)
     if (this.width) {
       img.style.width = `${this.width}px`;
+      img.style.maxHeight = 'none';
     }
 
     // Notify CM6 to re-measure after image loads, apply orientation-aware sizing
     img.onload = () => {
       if (!this.width) {
-        // Orientation-aware sizing only when no explicit width
-        if (img.naturalWidth >= img.naturalHeight) {
-          img.style.maxHeight = '';
-        } else {
-          img.style.maxHeight = '400px';
-        }
+        img.style.maxHeight = '';
       }
 
       const editorRoot = wrapper.closest('.cm-editor');
