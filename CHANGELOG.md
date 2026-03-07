@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Portrait images rendering smaller in CodeMirror than Milkdown** — removed orientation-based max-height logic that capped portrait images at 400px; images without explicit width now render at full container width in both editors. Added image metadata bridge from Swift to CodeMirror for width/height awareness.
+
 ## [0.2.70] - 2026-03-07
 
 ### Added
