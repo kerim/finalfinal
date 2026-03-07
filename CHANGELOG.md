@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.68] - 2026-03-07
+
 ### Added
 
 - **Heading level filter** — `###` filter button in outline sidebar to toggle visibility of sub-subsection cards
