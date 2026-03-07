@@ -50,6 +50,17 @@ targets:
         buildPhase: resources
       - path: final final/Resources/getting-started.md
         buildPhase: resources
+    preBuildScripts:
+      - name: "Clean stale QuickLook DerivedData"
+        basedOnDependencyAnalysis: false
+        script: |
+          # Remove old DerivedData directories that cause duplicate QL extension registrations.
+          # Each xcodegen run creates a new project hash → new DerivedData dir → new .appex copy.
+          for dd in ~/Library/Developer/Xcode/DerivedData/final_final-*/; do
+            if [ "$dd" != "${BUILD_DIR%Build/*}" ]; then
+              rm -rf "$dd"
+            fi
+          done
     postBuildScripts:
       - name: Stamp Git Info into Info.plist
         basedOnDependencyAnalysis: false
