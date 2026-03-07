@@ -131,20 +131,15 @@ final class AutoBackupService {
         }
 
         do {
-            if let snapshot = try service.createAutoSnapshot() {
-                #if DEBUG
-                print("[AutoBackupService] Created auto-backup on \(reason): \(snapshot.id)")
-                #endif
-                // Prune old backups after creating new one
-                try service.pruneAutoBackups()
-            } else {
-                #if DEBUG
-                print("[AutoBackupService] Skipped auto-backup on \(reason): content unchanged")
-                #endif
-            }
-            // Update state regardless — content is genuinely unchanged or saved
+            let snapshot = try service.createAutoSnapshot()
             lastBackupTime = Date()
             hasUnsavedChanges = false
+            #if DEBUG
+            print("[AutoBackupService] Created auto-backup on \(reason): \(snapshot.id)")
+            #endif
+
+            // Prune old backups after creating new one
+            try service.pruneAutoBackups()
         } catch {
             #if DEBUG
             print("[AutoBackupService] Failed to create auto-backup: \(error)")

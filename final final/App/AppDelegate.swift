@@ -129,18 +129,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // Capture main window for Cmd-W interception
         // Use async to allow SwiftUI to create the window first
         DispatchQueue.main.async { [weak self] in
-            // Close any version-history windows that macOS restored from saved state,
-            // and mark them non-restorable to prevent future restoration.
-            // SwiftUI assigns identifiers like "version-history-1" based on the Window id.
-            for window in NSApp.windows where window.identifier?.rawValue.hasPrefix("version-history") == true {
-                #if DEBUG
-                print("[AppDelegate] Closing restored version-history window: id=\(window.identifier?.rawValue ?? "nil")")
-                #endif
-                window.isRestorable = false  // must be set before close
-                window.close()
-            }
-
-            // Now capture the main window (after closing restored secondary windows)
             if let window = NSApp.windows.first {
                 self?.mainWindow = window
                 window.delegate = self

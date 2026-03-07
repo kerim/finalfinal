@@ -2,7 +2,7 @@ name: final final
 options:
   bundleIdPrefix: com.kerim
   deploymentTarget:
-    macOS: "26.0"
+    macOS: "14.0"
   xcodeVersion: "15.0"
   generateEmptyDirectories: true
 
@@ -71,7 +71,7 @@ targets:
         INFOPLIST_GENERATION_MODE: GeneratedFile
         GENERATE_INFOPLIST_FILE: YES
         SWIFT_VERSION: "5.9"
-        MACOSX_DEPLOYMENT_TARGET: "26.0"
+        MACOSX_DEPLOYMENT_TARGET: "14.0"
         CODE_SIGN_ENTITLEMENTS: final final/final final.entitlements
     dependencies:
       - package: GRDB
@@ -85,7 +85,7 @@ targets:
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         CFBundleDisplayName: FINAL|FINAL
         CFBundleName: FINAL|FINAL
-        LSMinimumSystemVersion: "26.0"
+        LSMinimumSystemVersion: "14.0"
         NSPrincipalClass: NSApplication
         NSHighResolutionCapable: true
         CFBundleURLTypes:
@@ -135,7 +135,7 @@ targets:
         PRODUCT_NAME: QuickLook Extension
         PRODUCT_MODULE_NAME: QuickLook_Extension
         SWIFT_VERSION: "5.9"
-        MACOSX_DEPLOYMENT_TARGET: "26.0"
+        MACOSX_DEPLOYMENT_TARGET: "14.0"
         MARKETING_VERSION: "1"
         CURRENT_PROJECT_VERSION: "0.2.68"
         CODE_SIGN_ENTITLEMENTS: QuickLook Extension/QuickLook Extension.entitlements

@@ -31,6 +31,11 @@ extension AnnotationSyncService {
         newText: String,
         isCompleted: Bool
     ) -> AnnotationReplaceResult {
+        // Document-level annotations have no markdown counterpart
+        guard oldCharOffset >= 0 else {
+            return AnnotationReplaceResult(markdown: markdown, newCharOffset: oldCharOffset)
+        }
+
         // Normalize and sanitize the new text
         let normalizedText = normalizeAnnotationText(newText)
 
@@ -110,6 +115,9 @@ extension AnnotationSyncService {
     /// Returns the updated markdown
     /// Uses bucket matching (offset / 50) for tolerance to small edits
     func updateTaskCompletion(in markdown: String, at offset: Int, isCompleted: Bool) -> String {
+        // Document-level annotations have no markdown counterpart
+        guard offset >= 0 else { return markdown }
+
         let nsMarkdown = markdown as NSString
         let fullRange = NSRange(location: 0, length: nsMarkdown.length)
         let targetBucket = offset / 50

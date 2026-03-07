@@ -136,16 +136,10 @@ struct ContentView: View {
                     // Prepare coordinator with current state before opening window
                     if let db = documentManager.projectDatabase,
                        let pid = documentManager.projectId {
-                        let sections: [SectionViewModel]
-                        if let dbSections = try? db.fetchSections(projectId: pid) {
-                            sections = dbSections.map { SectionViewModel(from: $0) }
-                        } else {
-                            sections = editorState.sections
-                        }
                         versionHistoryCoordinator.prepareForOpen(
                             database: db,
                             projectId: pid,
-                            sections: sections
+                            sections: editorState.sections
                         )
                         openWindow(id: "version-history")
                     }
@@ -355,6 +349,11 @@ struct ContentView: View {
             .onReceive(NotificationCenter.default.publisher(for: .scrollToSection)) { notification in
                 if let sectionId = notification.userInfo?["sectionId"] as? String {
                     scrollToSection(sectionId)
+                }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .insertDocumentAnnotation)) { notification in
+                if let type = notification.userInfo?["type"] as? AnnotationType {
+                    createDocumentAnnotation(type: type)
                 }
             }
             .integrityAlert(

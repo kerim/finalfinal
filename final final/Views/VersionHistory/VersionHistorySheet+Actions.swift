@@ -122,19 +122,11 @@ extension VersionHistorySheet {
     func loadSnapshotSections(snapshotId: String) async {
         do {
             selectedSnapshotSections = try database.fetchSnapshotSections(snapshotId: snapshotId)
-
-            // Load previous snapshot's sections for "vs Previous" comparison
-            if let prevSnapshot = try database.fetchPreviousSnapshot(before: snapshotId, projectId: projectId) {
-                previousSnapshotSections = try database.fetchSnapshotSections(snapshotId: prevSnapshot.id)
-            } else {
-                previousSnapshotSections = []
-            }
         } catch {
             #if DEBUG
             print("[VersionHistorySheet] Error loading snapshot sections: \(error)")
             #endif
             selectedSnapshotSections = []
-            previousSnapshotSections = []
         }
     }
 

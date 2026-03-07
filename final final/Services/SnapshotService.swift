@@ -6,7 +6,6 @@
 //
 
 import Foundation
-import CryptoKit
 
 /// Service for managing version snapshots (create, restore, prune)
 @MainActor
@@ -24,45 +23,30 @@ final class SnapshotService {
 
     /// Create a manual (named) snapshot of the current project state
     /// - Parameter name: User-provided name for the version
-    /// - Returns: The created snapshot (always creates, never skipped)
+    /// - Returns: The created snapshot
     @discardableResult
     func createManualSnapshot(name: String) throws -> Snapshot {
         guard let content = try database.fetchContent(for: projectId) else {
             throw SnapshotError.noContent
         }
         let sections = try database.fetchSections(projectId: projectId)
-        let hash = Self.computeHash(content.markdown)
 
         return try database.createSnapshot(
             projectId: projectId,
             name: name,
             isAutomatic: false,
             content: content,
-            sections: sections,
-            contentHash: hash
+            sections: sections
         )
     }
 
     /// Create an automatic backup snapshot
-    /// - Returns: The created snapshot, or nil if content is identical to the latest snapshot
+    /// - Returns: The created snapshot
     @discardableResult
-    func createAutoSnapshot() throws -> Snapshot? {
+    func createAutoSnapshot() throws -> Snapshot {
         guard let content = try database.fetchContent(for: projectId) else {
             throw SnapshotError.noContent
         }
-
-        let hash = Self.computeHash(content.markdown)
-
-        // Skip if content hasn't changed since last snapshot
-        if let latestHash = try database.fetchLatestSnapshotHash(projectId: projectId),
-           !latestHash.isEmpty,
-           latestHash == hash {
-            #if DEBUG
-            print("[SnapshotService] Skipping auto-snapshot: content unchanged")
-            #endif
-            return nil
-        }
-
         let sections = try database.fetchSections(projectId: projectId)
 
         return try database.createSnapshot(
@@ -70,18 +54,8 @@ final class SnapshotService {
             name: nil,
             isAutomatic: true,
             content: content,
-            sections: sections,
-            contentHash: hash
+            sections: sections
         )
-    }
-
-    // MARK: - Hash Computation
-
-    /// Compute SHA256 hash of content for deduplication
-    static func computeHash(_ content: String) -> String {
-        let data = Data(content.utf8)
-        let digest = SHA256.hash(data: data)
-        return digest.map { String(format: "%02x", $0) }.joined()
     }
 
     // MARK: - Fetch Snapshots

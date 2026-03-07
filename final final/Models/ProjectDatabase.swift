@@ -325,13 +325,6 @@ final class ProjectDatabase: Sendable {
             }
         }
 
-        // Deduplication: content hash for snapshot dedup
-        migrator.registerMigration("v14_snapshot_contentHash") { db in
-            try db.alter(table: "snapshot") { t in
-                t.add(column: "contentHash", .text).notNull().defaults(to: "")
-            }
-        }
-
         try migrator.migrate(dbWriter)
     }
 

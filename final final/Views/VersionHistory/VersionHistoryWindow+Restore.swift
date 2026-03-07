@@ -128,24 +128,15 @@ extension VersionHistoryWindow {
     }
 
     func loadSnapshotSections(snapshotId: String) async {
-        guard let database = coordinator.database,
-              let projectId = coordinator.projectId else { return }
+        guard let database = coordinator.database else { return }
 
         do {
             selectedSnapshotSections = try database.fetchSnapshotSections(snapshotId: snapshotId)
-
-            // Load previous snapshot's sections for "vs Previous" comparison
-            if let prevSnapshot = try database.fetchPreviousSnapshot(before: snapshotId, projectId: projectId) {
-                previousSnapshotSections = try database.fetchSnapshotSections(snapshotId: prevSnapshot.id)
-            } else {
-                previousSnapshotSections = []
-            }
         } catch {
             #if DEBUG
             print("[VersionHistoryWindow] Error loading snapshot sections: \(error)")
             #endif
             selectedSnapshotSections = []
-            previousSnapshotSections = []
         }
     }
 
@@ -183,7 +174,7 @@ extension VersionHistoryWindow {
             NotificationCenter.default.post(name: .projectDidOpen, object: nil, userInfo: ["isRestore": true])
 
             // Close window after successful restore
-            dismissWindow(id: "version-history")
+            dismiss()
         } catch {
             errorMessage = "Restore failed: \(error.localizedDescription)"
         }
@@ -211,7 +202,7 @@ extension VersionHistoryWindow {
             NotificationCenter.default.post(name: .projectDidOpen, object: nil, userInfo: ["isRestore": true])
 
             // Close window after successful restore
-            dismissWindow(id: "version-history")
+            dismiss()
         } catch {
             errorMessage = "Restore failed: \(error.localizedDescription)"
         }

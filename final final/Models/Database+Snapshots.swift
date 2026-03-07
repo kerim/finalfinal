@@ -64,30 +64,6 @@ extension ProjectDatabase {
         }
     }
 
-    /// Fetch the content hash of the most recent snapshot for a project
-    func fetchLatestSnapshotHash(projectId: String) throws -> String? {
-        try read { db in
-            try Snapshot
-                .filter(Snapshot.Columns.projectId == projectId)
-                .order(Snapshot.Columns.createdAt.desc)
-                .select(Snapshot.Columns.contentHash)
-                .asRequest(of: String.self)
-                .fetchOne(db)
-        }
-    }
-
-    /// Fetch the snapshot immediately before a given snapshot (by creation date)
-    func fetchPreviousSnapshot(before snapshotId: String, projectId: String) throws -> Snapshot? {
-        try read { db in
-            guard let snapshot = try Snapshot.fetchOne(db, key: snapshotId) else { return nil }
-            return try Snapshot
-                .filter(Snapshot.Columns.projectId == projectId)
-                .filter(Snapshot.Columns.createdAt < snapshot.createdAt)
-                .order(Snapshot.Columns.createdAt.desc)
-                .fetchOne(db)
-        }
-    }
-
     /// Count snapshots for a project
     func countSnapshots(projectId: String) throws -> Int {
         try read { db in
@@ -124,8 +100,7 @@ extension ProjectDatabase {
         name: String?,
         isAutomatic: Bool,
         content: Content,
-        sections: [Section],
-        contentHash: String = ""
+        sections: [Section]
     ) throws -> Snapshot {
         try write { db in
             // Create the snapshot
@@ -133,8 +108,7 @@ extension ProjectDatabase {
                 projectId: projectId,
                 name: name,
                 isAutomatic: isAutomatic,
-                previewMarkdown: content.markdown,
-                contentHash: contentHash
+                previewMarkdown: content.markdown
             )
             try snapshot.insert(db)
 

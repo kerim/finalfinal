@@ -107,7 +107,6 @@ struct FinalFinalApp: App {
                 .environment(versionHistoryCoordinator)
         }
         .defaultSize(width: 1200, height: 800)
-        .defaultLaunchBehavior(.suppressed)
     }
 
     /// Simple loading view while determining initial state

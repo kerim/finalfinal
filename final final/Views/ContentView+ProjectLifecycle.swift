@@ -363,15 +363,10 @@ extension ContentView {
                 print("[ContentView] Created manual snapshot: \(snapshot.displayName)")
                 #endif
             } else {
-                if let snapshot = try service.createAutoSnapshot() {
-                    #if DEBUG
-                    print("[ContentView] Created auto snapshot: \(snapshot.id)")
-                    #endif
-                } else {
-                    #if DEBUG
-                    print("[ContentView] Auto snapshot skipped: content unchanged")
-                    #endif
-                }
+                let snapshot = try service.createAutoSnapshot()
+                #if DEBUG
+                print("[ContentView] Created auto snapshot: \(snapshot.id)")
+                #endif
             }
         } catch {
             #if DEBUG
