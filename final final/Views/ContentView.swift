@@ -136,10 +136,16 @@ struct ContentView: View {
                     // Prepare coordinator with current state before opening window
                     if let db = documentManager.projectDatabase,
                        let pid = documentManager.projectId {
+                        let sections: [SectionViewModel]
+                        if let dbSections = try? db.fetchSections(projectId: pid) {
+                            sections = dbSections.map { SectionViewModel(from: $0) }
+                        } else {
+                            sections = editorState.sections
+                        }
                         versionHistoryCoordinator.prepareForOpen(
                             database: db,
                             projectId: pid,
-                            sections: editorState.sections
+                            sections: sections
                         )
                         openWindow(id: "version-history")
                     }
