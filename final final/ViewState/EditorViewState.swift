@@ -167,6 +167,14 @@ class EditorViewState {
     /// Type filters - which annotation types are visible in the panel
     var annotationTypeFilters: Set<AnnotationType> = Set(AnnotationType.allCases)
 
+    /// Whether the Document Notes section is collapsed in the annotation panel
+    var isDocumentNotesCollapsed: Bool = UserDefaults.standard.bool(forKey: "isDocumentNotesCollapsed") {
+        didSet { UserDefaults.standard.set(isDocumentNotesCollapsed, forKey: "isDocumentNotesCollapsed") }
+    }
+
+    /// ID of a newly created document annotation that should auto-enter edit mode (session-only)
+    var pendingEditAnnotationId: String?
+
     /// Whether the annotation panel is visible
     var isAnnotationPanelVisible: Bool = true
 
@@ -391,9 +399,28 @@ class EditorViewState {
 
     // MARK: - Annotation Filtering
 
-    /// Annotations to display in panel (filtered by type and completion status)
+    /// Document-level annotations (not anchored to markdown)
+    var documentAnnotations: [AnnotationViewModel] {
+        annotations.filter { $0.isDocumentLevel }
+    }
+
+    /// Document-level annotations filtered by type and completion status
+    var displayDocumentAnnotations: [AnnotationViewModel] {
+        documentAnnotations.filter { annotation in
+            guard annotationTypeFilters.contains(annotation.type) else { return false }
+            if hideCompletedTasks && annotation.type == .task && annotation.isCompleted {
+                return false
+            }
+            return true
+        }
+    }
+
+    /// Inline annotations to display in panel (filtered by type and completion status)
     var displayAnnotations: [AnnotationViewModel] {
         annotations.filter { annotation in
+            // Exclude document-level (shown separately)
+            guard !annotation.isDocumentLevel else { return false }
+
             // Must match type filter
             guard annotationTypeFilters.contains(annotation.type) else { return false }
 
@@ -494,6 +521,7 @@ class EditorViewState {
         scrollToOffset = nil
         scrollToBlockId = nil
         scrollToAnnotationIndex = nil
+        pendingEditAnnotationId = nil
     }
 
     // MARK: - Active Section Tracking

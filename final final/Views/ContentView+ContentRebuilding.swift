@@ -227,6 +227,12 @@ extension ContentView {
                     },
                     onUpdateAnnotationText: { annotation, newText in
                         handleAnnotationTextUpdate(annotation, newText: newText)
+                    },
+                    onCreateDocumentAnnotation: { type in
+                        createDocumentAnnotation(type: type)
+                    },
+                    onDeleteDocumentAnnotation: { id in
+                        deleteDocumentAnnotation(id: id)
                     }
                 )
             }
@@ -237,6 +243,14 @@ extension ContentView {
     func toggleAnnotationCompletion(_ annotation: AnnotationViewModel) {
         // Toggle local state
         annotation.isCompleted.toggle()
+
+        // Document-level: DB-only update (no markdown to modify)
+        if annotation.isDocumentLevel {
+            if let db = documentManager.projectDatabase {
+                try? db.updateAnnotationCompletion(id: annotation.id, isCompleted: annotation.isCompleted)
+            }
+            return
+        }
 
         // Update markdown content
         editorState.content = annotationSyncService.updateTaskCompletion(
@@ -250,6 +264,15 @@ extension ContentView {
 
     /// Handle annotation text update from sidebar editing
     func handleAnnotationTextUpdate(_ annotation: AnnotationViewModel, newText: String) {
+        // Document-level: DB-only update (no markdown to modify)
+        if annotation.isDocumentLevel {
+            if let db = documentManager.projectDatabase {
+                try? db.updateAnnotationText(id: annotation.id, text: newText)
+            }
+            annotation.text = newText
+            return
+        }
+
         // 1. Suppress sync via content state to prevent feedback loop
         editorState.contentState = .annotationEdit
 
@@ -408,6 +431,36 @@ extension ContentView {
                     }
                 )
             }
+        }
+    }
+
+    // MARK: - Document-Level Annotations
+
+    /// Create a document-level annotation (not anchored to markdown)
+    func createDocumentAnnotation(type: AnnotationType) {
+        guard let db = documentManager.projectDatabase,
+              let cid = documentManager.contentId else { return }
+
+        do {
+            let annotation = try db.insertDocumentAnnotation(contentId: cid, type: type, text: "")
+            editorState.pendingEditAnnotationId = annotation.id
+            editorState.isDocumentNotesCollapsed = false
+        } catch {
+            #if DEBUG
+            print("[ContentView] Error creating document annotation: \(error.localizedDescription)")
+            #endif
+        }
+    }
+
+    /// Delete a document-level annotation (DB-only, no markdown rewrite)
+    func deleteDocumentAnnotation(id: String) {
+        guard let db = documentManager.projectDatabase else { return }
+        do {
+            try db.deleteAnnotation(id: id)
+        } catch {
+            #if DEBUG
+            print("[ContentView] Error deleting document annotation: \(error.localizedDescription)")
+            #endif
         }
     }
 

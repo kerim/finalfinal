@@ -31,6 +31,9 @@ class AnnotationViewModel: Identifiable {
         self.highlightEnd = annotation.highlightEnd
     }
 
+    /// Whether this annotation applies to the document as a whole
+    var isDocumentLevel: Bool { charOffset < 0 }
+
     /// Whether this annotation has an associated highlight span
     var hasHighlight: Bool {
         highlightStart != nil && highlightEnd != nil

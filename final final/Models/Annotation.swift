@@ -109,6 +109,14 @@ struct Annotation: Codable, Identifiable, Equatable, Sendable, FetchableRecord, 
         case updatedAt
     }
 
+    // MARK: - Document-Level Annotations
+
+    /// Sentinel charOffset value for document-level annotations (not anchored to markdown)
+    static let documentLevelOffset = -1
+
+    /// Whether this annotation applies to the document as a whole (not tied to a specific position)
+    var isDocumentLevel: Bool { charOffset < 0 }
+
     // MARK: - Computed Properties
 
     /// Check if this annotation has a highlight span

@@ -11,6 +11,9 @@ struct AnnotationCardView: View {
     let onTap: () -> Void
     let onToggleCompletion: () -> Void
     let onUpdateText: ((AnnotationViewModel, String) -> Void)?
+    var onDelete: (() -> Void)?
+    var pendingEditId: String?
+    var onAutoEditStarted: (() -> Void)?
 
     @Environment(ThemeManager.self) private var themeManager
     @State private var isHovering = false
@@ -95,6 +98,17 @@ struct AnnotationCardView: View {
                 }
 
                 Spacer()
+
+                // Delete button for document-level annotations (visible on hover)
+                if let onDelete, isHovering {
+                    Button(action: onDelete) {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 9, weight: .medium))
+                            .foregroundColor(themeManager.currentTheme.sidebarText.opacity(0.4))
+                    }
+                    .buttonStyle(.plain)
+                    .help("Delete annotation")
+                }
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
@@ -119,6 +133,18 @@ struct AnnotationCardView: View {
         }
         .onChange(of: annotation.text) { _, _ in
             isExpanded = false
+        }
+        .onChange(of: isEditing) { _, editing in
+            if editing {
+                isTextEditorFocused = true
+            }
+        }
+        .task(id: pendingEditId) {
+            guard let pendingEditId, annotation.id == pendingEditId else { return }
+            try? await Task.sleep(for: .milliseconds(50))
+            guard !Task.isCancelled else { return }
+            startEditing()
+            onAutoEditStarted?()
         }
     }
 
@@ -256,6 +282,7 @@ struct AnnotationCardView: View {
     let comment = AnnotationViewModel(from: Annotation(
         contentId: "test",
         type: .comment,
+        // swiftlint:disable:next line_length
         text: "I'm not sure about this phrasing - revisit later. The argument needs more supporting evidence and the transition from the previous paragraph feels abrupt. Consider restructuring.",
         charOffset: 300,
         highlightStart: 280,
@@ -265,6 +292,7 @@ struct AnnotationCardView: View {
     let reference = AnnotationViewModel(from: Annotation(
         contentId: "test",
         type: .reference,
+        // swiftlint:disable:next line_length
         text: "Smith et al. (2023) found that participants showed a 15% improvement in recall when using spaced repetition techniques combined with adequate rest periods between study sessions.",
         charOffset: 400
     ))
