@@ -16,14 +16,11 @@ FINAL|FINAL was built for academics, but it should be just as useful for longfor
 # Installation
 
 1. Download the latest zip from [GitHub Releases](https://github.com/kerim/finalfinal/releases/latest)
-2. Unzip to extract `final final.app`
+2. Unzip to extract `FINAL|FINAL.app`
 3. Move the app to `/Applications` (optional)
-4. **First launch:** Right-click → Open (not double-click) to bypass Gatekeeper, or run:
-   ```bash
-   xattr -cr "final final.app"
-   ```
+4. Double-click to open
 
-The app isn't notarized, so macOS will warn about an unidentified developer.
+The app is signed and notarized with a Developer ID certificate, so macOS will allow it to open without any workarounds.
 
 # Alpha Software
 
