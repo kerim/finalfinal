@@ -9,7 +9,7 @@ import SwiftUI
 
 /// Standalone window for version history
 struct VersionHistoryWindow: View {
-    @Environment(\.dismiss) var dismiss
+    @Environment(\.dismissWindow) var dismissWindow
     @Environment(ThemeManager.self) var themeManager
     @Environment(VersionHistoryCoordinator.self) var coordinator
 
@@ -58,13 +58,13 @@ struct VersionHistoryWindow: View {
             Divider()
 
             // Main content
-            if projectClosed {
+            if isLoading {
+                ProgressView("Loading version history...")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if projectClosed {
                 projectClosedView
             } else if !hasValidState {
                 invalidStateView
-            } else if isLoading {
-                ProgressView("Loading version history...")
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if let error = errorMessage {
                 errorView(error)
             } else if snapshots.isEmpty {
@@ -75,7 +75,8 @@ struct VersionHistoryWindow: View {
         }
         .frame(minWidth: 900, minHeight: 600)
         .background(themeManager.currentTheme.editorBackground)
-        .task {
+        .task(id: coordinator.projectId) {
+            guard coordinator.projectId != nil else { return }
             await loadSnapshots()
         }
         .onReceive(NotificationCenter.default.publisher(for: .projectDidClose)) { _ in
@@ -137,7 +138,7 @@ struct VersionHistoryWindow: View {
             }
 
             Button("Close") {
-                dismiss()
+                dismissWindow(id: "version-history")
             }
             .keyboardShortcut(.escape, modifiers: [])
         }
@@ -228,7 +229,7 @@ struct VersionHistoryWindow: View {
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 300)
             Button("Close Window") {
-                dismiss()
+                dismissWindow(id: "version-history")
             }
             Spacer()
         }
@@ -249,7 +250,7 @@ struct VersionHistoryWindow: View {
             Text("Open a project and try again.")
                 .foregroundStyle(themeManager.currentTheme.editorTextSecondary)
             Button("Close") {
-                dismiss()
+                dismissWindow(id: "version-history")
             }
             Spacer()
         }

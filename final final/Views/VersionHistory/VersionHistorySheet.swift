@@ -144,7 +144,8 @@ struct VersionHistorySheet: View {
                 title: "Current",
                 sections: currentSections.map { SnapshotSectionViewModel(from: $0) },
                 highlightedSectionId: nil,
-                onSectionTap: nil
+                onSectionTap: nil,
+                showFullContent: true
             )
             .frame(minWidth: 250)
 
@@ -158,6 +159,7 @@ struct VersionHistorySheet: View {
                         handleSectionTap(section)
                     },
                     showRestoreButtons: true,
+                    showFullContent: true,
                     onRestoreSection: { section, mode in
                         handleRestoreRequest(section: section, mode: mode)
                     }

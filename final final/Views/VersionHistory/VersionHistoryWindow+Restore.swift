@@ -174,7 +174,7 @@ extension VersionHistoryWindow {
             NotificationCenter.default.post(name: .projectDidOpen, object: nil, userInfo: ["isRestore": true])
 
             // Close window after successful restore
-            dismiss()
+            dismissWindow(id: "version-history")
         } catch {
             errorMessage = "Restore failed: \(error.localizedDescription)"
         }
@@ -202,7 +202,7 @@ extension VersionHistoryWindow {
             NotificationCenter.default.post(name: .projectDidOpen, object: nil, userInfo: ["isRestore": true])
 
             // Close window after successful restore
-            dismiss()
+            dismissWindow(id: "version-history")
         } catch {
             errorMessage = "Restore failed: \(error.localizedDescription)"
         }
