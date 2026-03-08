@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.73] - 2026-03-08
+
 ### Fixed
 
 - **Image sizing regression in CodeMirror** — non-resized images now display at the same size as Milkdown (fixed CSS `max-height` override that removed inline style instead of overriding the stylesheet rule); resized image widths are now preserved when switching editors (Cmd+/) and when reopening documents (fixed initialization ordering so image metadata is pushed before content)
