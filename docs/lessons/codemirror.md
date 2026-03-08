@@ -372,6 +372,22 @@ In `toDOM()`, keep only: `wrapper.className = 'cm-image-preview'`, `img.draggabl
 
 ---
 
+## CSS `maxHeight = ''` Removes Inline Style, Does Not Override CSS Rule
+
+**Problem:** CodeMirror images without explicit width were capped at 300px height, while Milkdown showed them at full size. The `onload` handler was supposed to remove the height cap for images without stored widths.
+
+**Root Cause:** The CSS rule `.cm-image-preview img { max-height: 300px }` provides a default cap during loading. The `onload` handler set `img.style.maxHeight = ''` (empty string) intending to remove the cap. However, setting an inline style to `''` removes the inline `style` attribute entirely, which causes the CSS rule to take effect again. The inline style never actually overrode the CSS — it just removed itself.
+
+**Fix:** Use `img.style.maxHeight = 'none'` instead. `'none'` is a valid CSS value that explicitly overrides the stylesheet rule, telling the browser "no max-height constraint."
+
+**Key distinction:**
+- `element.style.prop = ''` → removes the inline style → CSS rule applies
+- `element.style.prop = 'none'` → sets inline `max-height: none` → overrides CSS rule
+
+**General principle:** When you need to override a CSS stylesheet rule from JavaScript, set the property to a valid CSS value (like `'none'`, `'auto'`, `'initial'`) rather than an empty string. Empty string removal is only useful when you want the CSS rule to reassert itself.
+
+---
+
 ## Caption Comment Lookup Must Skip Blank Lines
 
 **Problem:** Image captions were never found at runtime. Diagnostic logging showed "Built 0 replace + 3 widget decorations" — three images found, zero captions matched.

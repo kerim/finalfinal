@@ -260,6 +260,8 @@ Uses `StateField.define<DecorationSet>()` (not `ViewPlugin`) because image previ
 
 **Image metadata bridge:** Swift pushes image widths to CodeMirror via `window.FinalFinal.setImageMeta([{src, width}])`. This dispatches a `StateEffect` that updates `imageMetaField`, triggering decoration rebuild. Metadata is pushed on project load, zoom in/out, and content rebuilds via `CodeMirrorEditor.updateNSView()` (reads `pendingImageMeta` binding from `EditorViewState`).
 
+**Initialization ordering:** In `CodeMirrorCoordinator+Handlers.swift`, `onWebViewReady` (which pushes `setImageMeta`) must be called BEFORE `batchInitialize` (which pushes `setContent`). WKWebView guarantees FIFO ordering for `evaluateJavaScript` calls from the same thread, so this ensures `imageMetaField` is populated when `buildDecorations()` first runs during content load. If `batchInitialize` runs first, images render without width data and the `onload` handler fires before metadata arrives.
+
 **Key constraint:** `StateField` only has access to `EditorState` (not `EditorView`), so the widget cannot hold a `view` reference. Instead it finds the view from the DOM when needed.
 
 **Caption handling:**
