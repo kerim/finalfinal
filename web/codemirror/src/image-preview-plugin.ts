@@ -117,7 +117,7 @@ class ImagePreviewWidget extends WidgetType {
     // Notify CM6 to re-measure after image loads, apply orientation-aware sizing
     img.onload = () => {
       if (!this.width) {
-        img.style.maxHeight = '';
+        img.style.maxHeight = 'none';
       }
 
       const editorRoot = wrapper.closest('.cm-editor');

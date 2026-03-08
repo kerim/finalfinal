@@ -206,19 +206,17 @@ extension CodeMirrorEditor.Coordinator {
         #endif
 
         isEditorReady = true
-        batchInitialize()
+        onWebViewReady?(webView)    // Push image meta first (FIFO guarantees execution order)
+        batchInitialize()            // Then push content (decorations build with metadata present)
         startPolling()
-
-        // Notify parent that WebView is ready (for find operations)
-        onWebViewReady?(webView)
     }
 
     /// Called when using a preloaded WebView (navigation already finished)
     func handlePreloadedView() {
         isEditorReady = true
-        batchInitialize()
+        if let webView { onWebViewReady?(webView) }    // Push image meta first
+        batchInitialize()                                // Then push content
         startPolling()
-        if let webView { onWebViewReady?(webView) }
     }
 
     /// Batch initialization - sends all setup data in a single JS call
