@@ -27,11 +27,36 @@ final class SnapshotService {
     /// - Returns: The created snapshot (always creates, never skipped)
     @discardableResult
     func createManualSnapshot(name: String) throws -> Snapshot {
+        // Assemble fresh markdown from blocks (source of truth, avoids stale content.markdown)
+        let blocks = try database.fetchBlocks(projectId: projectId)
+        let assembledMarkdown = BlockParser.assembleMarkdown(from: blocks)
+
+        // Save to content table to keep it in sync
+        try database.saveContent(markdown: assembledMarkdown, for: projectId)
+
+        // Re-fetch Content record (needed for createSnapshot's content: parameter)
         guard let content = try database.fetchContent(for: projectId) else {
             throw SnapshotError.noContent
         }
-        let sections = try database.fetchSections(projectId: projectId)
-        let hash = Self.computeHash(content.markdown)
+
+        let hash = Self.computeHash(assembledMarkdown)
+
+        // Parse sections from assembled markdown
+        let headers = SectionSyncService.parseHeaders(from: assembledMarkdown)
+        let sections = headers.map { header in
+            Section(
+                projectId: projectId,
+                sortOrder: header.position,
+                headerLevel: header.level,
+                title: header.title,
+                markdownContent: header.markdownContent,
+                wordCount: header.wordCount,
+                startOffset: header.startOffset
+            )
+        }
+        #if DEBUG
+        print("[SnapshotService] createManualSnapshot: parsed \(sections.count) sections from \(blocks.count) blocks")
+        #endif
 
         return try database.createSnapshot(
             projectId: projectId,
@@ -47,11 +72,11 @@ final class SnapshotService {
     /// - Returns: The created snapshot, or nil if content is identical to the latest snapshot
     @discardableResult
     func createAutoSnapshot() throws -> Snapshot? {
-        guard let content = try database.fetchContent(for: projectId) else {
-            throw SnapshotError.noContent
-        }
+        // Assemble fresh markdown from blocks (source of truth, avoids stale content.markdown)
+        let blocks = try database.fetchBlocks(projectId: projectId)
+        let assembledMarkdown = BlockParser.assembleMarkdown(from: blocks)
 
-        let hash = Self.computeHash(content.markdown)
+        let hash = Self.computeHash(assembledMarkdown)
 
         // Skip if content hasn't changed since last snapshot
         if let latestHash = try database.fetchLatestSnapshotHash(projectId: projectId),
@@ -63,7 +88,30 @@ final class SnapshotService {
             return nil
         }
 
-        let sections = try database.fetchSections(projectId: projectId)
+        // Save to content table to keep it in sync
+        try database.saveContent(markdown: assembledMarkdown, for: projectId)
+
+        // Re-fetch Content record (needed for createSnapshot's content: parameter)
+        guard let content = try database.fetchContent(for: projectId) else {
+            throw SnapshotError.noContent
+        }
+
+        // Parse sections from assembled markdown
+        let headers = SectionSyncService.parseHeaders(from: assembledMarkdown)
+        let sections = headers.map { header in
+            Section(
+                projectId: projectId,
+                sortOrder: header.position,
+                headerLevel: header.level,
+                title: header.title,
+                markdownContent: header.markdownContent,
+                wordCount: header.wordCount,
+                startOffset: header.startOffset
+            )
+        }
+        #if DEBUG
+        print("[SnapshotService] createAutoSnapshot: parsed \(sections.count) sections from \(blocks.count) blocks")
+        #endif
 
         return try database.createSnapshot(
             projectId: projectId,

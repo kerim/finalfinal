@@ -37,6 +37,7 @@ final class VersionHistoryCoordinator {
     /// Called when the window is closed
     func close() {
         self.isActive = false
+        self.projectId = nil
     }
 
     /// Clear all captured state

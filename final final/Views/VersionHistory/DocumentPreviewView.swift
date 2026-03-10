@@ -126,6 +126,11 @@ struct DocumentPreviewView<TrailingHeader: View>: View {
     }
 
     var body: some View {
+        let _ = {
+            #if DEBUG
+            print("[DocumentPreviewView] '\(title)' rendering with \(sections.count) sections")
+            #endif
+        }()
         VStack(alignment: .leading, spacing: 0) {
             // Column header
             HStack {
@@ -243,16 +248,7 @@ struct SectionPreviewRow: View {
     @Environment(ThemeManager.self) private var themeManager
 
     var body: some View {
-        HStack(spacing: 0) {
-            // Left border stripe for changed sections
-            if let change = changeType {
-                RoundedRectangle(cornerRadius: 1.5)
-                    .fill(change == .new ? Color.green : themeManager.currentTheme.accentColor)
-                    .frame(width: 3)
-                    .padding(.vertical, 2)
-            }
-
-            VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 8) {
             // Header
             HStack {
                 // Header level indicator (flat display, no indent)
@@ -310,15 +306,22 @@ struct SectionPreviewRow: View {
                     .foregroundStyle(themeManager.currentTheme.editorTextSecondary)
                     .lineLimit(3)
             }
-            } // close VStack
-            .padding(.leading, changeType != nil ? 4 : 0)
-        } // close HStack
+        }
         .padding(.vertical, 8)
         .padding(.horizontal, 4)
+        .padding(.leading, changeType != nil ? 4 : 0)
         .background(
             RoundedRectangle(cornerRadius: 4)
                 .fill(backgroundColor)
         )
+        .overlay(alignment: .leading) {
+            if let change = changeType {
+                RoundedRectangle(cornerRadius: 1.5)
+                    .fill(change == .new ? Color.green : themeManager.currentTheme.accentColor)
+                    .frame(width: 3)
+                    .padding(.vertical, 2)
+            }
+        }
         .contentShape(Rectangle())
         .onTapGesture {
             onTap()
