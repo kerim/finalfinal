@@ -145,13 +145,13 @@ struct DocumentPreviewView<TrailingHeader: View>: View {
             HStack {
                 Text(title)
                     .font(.headline)
-                    .foregroundStyle(themeManager.currentTheme.editorTextSecondary)
+                    .foregroundStyle(themeManager.currentTheme.sidebarText)
                 Spacer()
                 trailingHeader
             }
             .padding(.horizontal)
             .padding(.vertical, 4)
-            .background(themeManager.currentTheme.sidebarBackground.opacity(0.5))
+            .background(themeManager.currentTheme.sidebarBackground)
 
             Divider()
 
@@ -357,7 +357,7 @@ struct SectionPreviewRow: View {
             return themeManager.currentTheme.accentColor.opacity(0.2)
         }
         if isHovered {
-            return themeManager.currentTheme.sidebarBackground.opacity(0.5)
+            return themeManager.currentTheme.editorText.opacity(0.08)
         }
         return .clear
     }
