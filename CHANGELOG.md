@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.74] - 2026-03-10
+
 ### Fixed
 
 - **Version history empty after block migration** — `sectionSyncService.contentChanged()` was removed during the block-based architecture migration, leaving the section table empty. Re-added the call in the content change handler. Also added `syncNow()` on project load and before snapshot creation to ensure sections are always fresh.
