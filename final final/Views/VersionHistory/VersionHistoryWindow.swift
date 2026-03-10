@@ -174,6 +174,7 @@ struct VersionHistoryWindow: View {
         }
         .padding(.horizontal)
         .padding(.vertical, 4)
+        .background(themeManager.currentTheme.sidebarBackground)
     }
 
     // MARK: - Main Content

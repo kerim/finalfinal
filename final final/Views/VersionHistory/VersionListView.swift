@@ -64,6 +64,11 @@ struct VersionListView: View {
                             SnapshotRowView(snapshot: snapshot, theme: themeManager.currentTheme)
                                 .tag(snapshot.id)
                                 .id(snapshot.id)
+                                .listRowBackground(
+                                    selectedSnapshotId == snapshot.id
+                                        ? themeManager.currentTheme.sidebarSelectedBackground
+                                        : themeManager.currentTheme.sidebarBackground
+                                )
                         }
                     }
                 }
