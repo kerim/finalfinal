@@ -41,21 +41,10 @@ final class SnapshotService {
 
         let hash = Self.computeHash(assembledMarkdown)
 
-        // Parse sections from assembled markdown
-        let headers = SectionSyncService.parseHeaders(from: assembledMarkdown)
-        let sections = headers.map { header in
-            Section(
-                projectId: projectId,
-                sortOrder: header.position,
-                headerLevel: header.level,
-                title: header.title,
-                markdownContent: header.markdownContent,
-                wordCount: header.wordCount,
-                startOffset: header.startOffset
-            )
-        }
+        // Use actual sections from database (preserves real IDs for comparison tracking)
+        let sections = try database.fetchSections(projectId: projectId)
         #if DEBUG
-        print("[SnapshotService] createManualSnapshot: parsed \(sections.count) sections from \(blocks.count) blocks")
+        print("[SnapshotService] createManualSnapshot: \(sections.count) sections from database, \(blocks.count) blocks")
         #endif
 
         return try database.createSnapshot(
@@ -96,21 +85,10 @@ final class SnapshotService {
             throw SnapshotError.noContent
         }
 
-        // Parse sections from assembled markdown
-        let headers = SectionSyncService.parseHeaders(from: assembledMarkdown)
-        let sections = headers.map { header in
-            Section(
-                projectId: projectId,
-                sortOrder: header.position,
-                headerLevel: header.level,
-                title: header.title,
-                markdownContent: header.markdownContent,
-                wordCount: header.wordCount,
-                startOffset: header.startOffset
-            )
-        }
+        // Use actual sections from database (preserves real IDs for comparison tracking)
+        let sections = try database.fetchSections(projectId: projectId)
         #if DEBUG
-        print("[SnapshotService] createAutoSnapshot: parsed \(sections.count) sections from \(blocks.count) blocks")
+        print("[SnapshotService] createAutoSnapshot: \(sections.count) sections from database, \(blocks.count) blocks")
         #endif
 
         return try database.createSnapshot(

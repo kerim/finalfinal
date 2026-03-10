@@ -297,7 +297,8 @@ extension View {
             .onChange(of: editorState.content) { _, newValue in
                 guard editorState.contentState == .idle else { return }
                 // BlockSyncService handles content -> block DB sync via polling
-                // SectionSyncService contentChanged still needed for legacy section sync during transition
+                // SectionSyncService syncs the section table (used by version history snapshots)
+                sectionSyncService.contentChanged(newValue, zoomedIds: editorState.zoomedSectionIds)
                 annotationSyncService.contentChanged(newValue)
 
                 // When in source mode, re-parse blocks (BlockSyncService only works with Milkdown)

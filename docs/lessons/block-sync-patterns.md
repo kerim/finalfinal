@@ -256,3 +256,25 @@ Used in `fetchBlocksWithIds()`, `pushBlockIds()`, and `setContentWithBlockIds()`
 **Known limitation:** Between an incremental block-sync UPDATE and the next `flushContentToDatabase()`, the DB may have duplicated list content (first block = all items, remaining blocks = stale individual items). This is benign because `flushContentToDatabase()` runs at all major transitions and the editor always has the canonical content.
 
 **General principle:** When the block parser creates more blocks than ProseMirror creates top-level nodes (due to node merging), the ID array must be collapsed to match PM's count. This affects list items (consecutive same-type lists merge) but not headings, paragraphs, figures, blockquotes, or code blocks (all 1:1 with PM).
+
+---
+
+## `loadSections()` vs `parseAndGetSections()` — Stable IDs vs Ephemeral IDs
+
+**Problem:** Version history showed every section as "New" after the block migration. The comparison logic was correct, but the input sections had random UUIDs that never matched snapshot section IDs.
+
+**Root Cause:** `SectionSyncService` has two ways to get sections:
+
+1. **`parseAndGetSections(from:)`** — Parses markdown headers and creates new `Section` objects with **random UUIDs every time**. Suitable for sidebar display (where identity doesn't matter — sections are re-rendered each parse).
+
+2. **`loadSections()`** — Fetches sections from the database with **stable, persistent IDs**. These IDs are what get saved into `snapshotSection.originalSectionId` when creating snapshots.
+
+Using `parseAndGetSections` for version history comparison meant random IDs were compared against stable snapshot IDs → no matches → everything "New".
+
+**Rule:** Any operation that depends on **section identity** (version history, restore, diffing) must use `loadSections()`. Only use `parseAndGetSections()` for display-only purposes where sections are treated as anonymous content blocks.
+
+**Corollary — sync before read:** Call `syncNow()` before `loadSections()` to ensure the section table reflects the latest editor content. The section table is populated by debounced `contentChanged()` calls, which may not have fired yet.
+
+**Corollary — snapshot creation:** `SnapshotService` must also use `database.fetchSections()` (not parse from markdown) so that `snapshotSection.originalSectionId` matches the real section IDs. Both `createManualSnapshot()` and `createAutoSnapshot()` follow this pattern.
+
+**General principle:** When a system has both "create fresh ephemeral objects" and "load persistent objects" APIs, be deliberate about which one you use. Identity-dependent operations (comparison, restoration, linking) require persistent objects. Display-only operations can use either.

@@ -178,6 +178,9 @@ extension VersionHistoryWindow {
             }
             return sections
         } catch {
+            #if DEBUG
+            print("[VersionHistory] fetchOrParseSnapshotSections ERROR for snapshot \(snapshotId): \(error)")
+            #endif
             return []
         }
     }

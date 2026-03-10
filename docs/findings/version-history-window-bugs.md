@@ -54,3 +54,49 @@ Multiple issues with the standalone version history window, discovered after ini
 **Symptom:** Auto-backup created identical snapshots even when content hadn't changed, bloating the snapshot list.
 
 **Fix:** Added `contentHash` (SHA256) column to the `snapshot` table. `SnapshotService.createAutoSnapshot()` now computes the hash and compares against the latest snapshot's hash, returning `nil` if unchanged. Manual snapshots always create regardless of hash match. Return type changed from `Snapshot` to `Snapshot?`.
+
+---
+
+## Bug 6: All Sections Marked "New" — Random UUIDs in Current Sections
+
+**Symptom:** Opening version history marked every section as "New" regardless of actual changes. This was a regression from the block-based architecture migration.
+
+**Root cause (three independent bugs):**
+
+### 6a: `parseAndGetSections()` creates random UUIDs (PRIMARY)
+
+`ContentView`'s `onShowHistory` handler called `sectionSyncService.parseAndGetSections(from:)` which creates **new `Section` objects with random UUIDs every time** (SectionSyncService.swift). These random IDs became `originalSectionId` in the comparison, so they never matched any snapshot section's `originalSectionId`. The `computeSectionChanges` function then marked everything as "New".
+
+**Fix:** Replaced `parseAndGetSections()` with `syncNow()` + `loadSections()` which fetches real sections from the database with stable IDs. Wrapped in `Task {}` since both methods are async. Added guard against project change during await. For zoomed mode, assembles full content from blocks before syncing.
+
+### 6b: Section table empty during editing
+
+`ViewNotificationModifiers`'s `.onChange(of: editorState.content)` handler never called `sectionSyncService.contentChanged()` — the call had been removed during the block migration. Without this, the section table was never populated during editing, so `loadSections()` would return empty results.
+
+**Fix:** Re-added `sectionSyncService.contentChanged(newValue, zoomedIds: editorState.zoomedSectionIds)` in the content change handler.
+
+### 6c: Silent error swallowing + nil originalSectionId fallback
+
+`fetchOrParseSnapshotSections` had a `catch { return [] }` that silently swallowed ALL errors. If `fetchSnapshotSections` threw (e.g., GRDB decode failure), the error was hidden. Additionally, old snapshots (pre-fix) genuinely have no `snapshotSection` rows, so the fallback parsed sections from `previewMarkdown` with `originalSectionId: nil`. The `computeSectionChanges` function marked any section with nil `originalSectionId` as "New".
+
+**Fix (two-part):**
+1. Added `#if DEBUG` error logging in the catch block to surface decode failures.
+2. Added title+headerLevel fallback matching in `computeSectionChanges`: when `originalSectionId` is nil or not found, falls back to matching by compound key `"title|headerLevel"` to reduce false "New" badges on old snapshots.
+
+### 6d: Snapshots used stale content and parsed (not DB) sections
+
+`SnapshotService.createManualSnapshot()` and `createAutoSnapshot()` read from the `content` table which could be stale (block sync writes to blocks, not content). They also didn't ensure sections were synced before creating snapshots.
+
+**Fix:**
+- Both snapshot methods now assemble fresh markdown from blocks via `BlockParser.assembleMarkdown(from:)` and save it to the content table before creating the snapshot.
+- Both methods use `database.fetchSections()` to get real sections with stable IDs.
+- `ContentView+ProjectLifecycle.handleSaveVersion()` calls `syncNow()` before snapshot creation.
+- `configureForCurrentProject()` calls `syncNow()` after loading content to populate the section table.
+
+### 6e: Coordinator state leak between projects
+
+`VersionHistoryCoordinator.close()` didn't clear `projectId`, so stale state from a previous project could leak into the next session.
+
+**Fix:** Added `self.projectId = nil` in `close()`.
+
+**Key architectural lesson:** `parseAndGetSections()` (SectionSyncService) creates ephemeral sections with random UUIDs — suitable for sidebar display but **never** for identity-dependent operations like version history comparison. Always use `loadSections()` for stable IDs.
