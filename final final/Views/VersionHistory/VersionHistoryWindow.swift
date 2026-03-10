@@ -180,7 +180,7 @@ struct VersionHistoryWindow: View {
 
     private var mainContentView: some View {
         GeometryReader { geometry in
-            let _ = {
+            let _ = { // swiftlint:disable:this redundant_discardable_let
                 #if DEBUG
                 print("[VersionHistory] mainContentView: current=\(coordinator.currentSections.count), backup=\(selectedSnapshotSections.count)")
                 #endif

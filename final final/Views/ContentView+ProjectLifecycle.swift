@@ -167,6 +167,11 @@ extension ContentView {
             #endif
         }
 
+        // Populate section table from loaded content so version history has fresh data
+        if !editorState.content.isEmpty {
+            await sectionSyncService.syncNow(editorState.content)
+        }
+
         // Connect to Zotero (just verify it's available - search is on-demand)
         Task {
             await connectToZotero()
@@ -352,6 +357,9 @@ extension ContentView {
             #endif
             return
         }
+
+        // Ensure sections are synced before snapshot (debounce may not have fired yet)
+        await sectionSyncService.syncNow(editorState.content)
 
         let name = saveVersionName.isEmpty ? nil : saveVersionName
         let service = SnapshotService(database: db, projectId: pid)

@@ -26,19 +26,28 @@ func computeSectionChanges(
     displayed: [SnapshotSectionViewModel],
     comparison: [SnapshotSectionViewModel]
 ) -> [String: SectionChangeType] {
-    let compMap = Dictionary(
+    // Primary: match by originalSectionId
+    let compMapById = Dictionary(
         comparison.compactMap { vm in
             vm.originalSectionId.map { ($0, vm.markdownContent) }
         },
         uniquingKeysWith: { first, _ in first }
     )
+    // Fallback: match by (title, headerLevel) for old snapshots without originalSectionId
+    let compMapByTitle = Dictionary(
+        comparison.map { ("\($0.title)|\($0.headerLevel)", $0.markdownContent) },
+        uniquingKeysWith: { first, _ in first }
+    )
+
     var changes: [String: SectionChangeType] = [:]
     for section in displayed {
-        guard let origId = section.originalSectionId else {
-            changes[section.id] = .new
-            continue
-        }
-        if let compContent = compMap[origId] {
+        if let origId = section.originalSectionId, let compContent = compMapById[origId] {
+            // Matched by ID
+            if compContent != section.markdownContent {
+                changes[section.id] = .modified
+            }
+        } else if let compContent = compMapByTitle["\(section.title)|\(section.headerLevel)"] {
+            // Fallback: matched by title+level (for old snapshots or decode failures)
             if compContent != section.markdownContent {
                 changes[section.id] = .modified
             }
@@ -126,7 +135,7 @@ struct DocumentPreviewView<TrailingHeader: View>: View {
     }
 
     var body: some View {
-        let _ = {
+        let _ = { // swiftlint:disable:this redundant_discardable_let
             #if DEBUG
             print("[DocumentPreviewView] '\(title)' rendering with \(sections.count) sections")
             #endif
