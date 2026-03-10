@@ -136,12 +136,27 @@ struct ContentView: View {
                     // Prepare coordinator with current state before opening window
                     if let db = documentManager.projectDatabase,
                        let pid = documentManager.projectId {
+                        // Parse sections from full content, not editorState.sections
+                        // (which only has header-only content from block fragments)
                         let sections: [SectionViewModel]
-                        if let dbSections = try? db.fetchSections(projectId: pid) {
-                            sections = dbSections.map { SectionViewModel(from: $0) }
+                        if editorState.zoomedSectionId != nil {
+                            // Zoomed: editor content is partial, assemble from blocks
+                            if let blocks = try? db.fetchBlocks(projectId: pid) {
+                                let fullMarkdown = BlockParser.assembleMarkdown(from: blocks)
+                                sections = sectionSyncService.parseAndGetSections(from: fullMarkdown)
+                            } else {
+                                sections = []
+                            }
                         } else {
-                            sections = editorState.sections
+                            // Normal: parse from live editor content (full document)
+                            sections = sectionSyncService.parseAndGetSections(from: editorState.content)
                         }
+                        #if DEBUG
+                        print("[VersionHistory] prepareForOpen: \(sections.count) sections, projectId=\(pid)")
+                        if let first = sections.first {
+                            print("[VersionHistory]   first section: '\(first.title)' content=\(first.markdownContent.count) chars")
+                        }
+                        #endif
                         versionHistoryCoordinator.prepareForOpen(
                             database: db,
                             projectId: pid,

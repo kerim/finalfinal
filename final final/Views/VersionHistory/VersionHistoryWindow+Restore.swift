@@ -116,6 +116,10 @@ extension VersionHistoryWindow {
 
         do {
             snapshots = try database.fetchSnapshots(projectId: projectId)
+            #if DEBUG
+            print("[VersionHistory] loadSnapshots: \(snapshots.count) snapshots found")
+            print("[VersionHistory] coordinator.currentSections: \(coordinator.currentSections.count)")
+            #endif
             if let firstSnapshot = snapshots.first {
                 selectedSnapshotId = firstSnapshot.id
                 await loadSnapshotSections(snapshotId: firstSnapshot.id)
@@ -132,11 +136,14 @@ extension VersionHistoryWindow {
               let projectId = coordinator.projectId else { return }
 
         do {
-            selectedSnapshotSections = try database.fetchSnapshotSections(snapshotId: snapshotId)
+            selectedSnapshotSections = fetchOrParseSnapshotSections(snapshotId: snapshotId, database: database)
+            #if DEBUG
+            print("[VersionHistory] loadSnapshotSections: \(selectedSnapshotSections.count) sections for snapshot \(snapshotId)")
+            #endif
 
             // Load previous snapshot's sections for "vs Previous" comparison
             if let prevSnapshot = try database.fetchPreviousSnapshot(before: snapshotId, projectId: projectId) {
-                previousSnapshotSections = try database.fetchSnapshotSections(snapshotId: prevSnapshot.id)
+                previousSnapshotSections = fetchOrParseSnapshotSections(snapshotId: prevSnapshot.id, database: database)
             } else {
                 previousSnapshotSections = []
             }
@@ -146,6 +153,32 @@ extension VersionHistoryWindow {
             #endif
             selectedSnapshotSections = []
             previousSnapshotSections = []
+        }
+    }
+
+    /// Fetch snapshot sections with fallback to parsing from previewMarkdown
+    private func fetchOrParseSnapshotSections(snapshotId: String, database: ProjectDatabase) -> [SnapshotSection] {
+        do {
+            var sections = try database.fetchSnapshotSections(snapshotId: snapshotId)
+            if sections.isEmpty, let snapshot = try database.fetchSnapshot(id: snapshotId) {
+                let headers = SectionSyncService.parseHeaders(from: snapshot.previewMarkdown)
+                sections = headers.map { header in
+                    SnapshotSection(
+                        snapshotId: snapshotId,
+                        originalSectionId: nil,
+                        title: header.title,
+                        markdownContent: header.markdownContent,
+                        headerLevel: header.level,
+                        sortOrder: header.position
+                    )
+                }
+                #if DEBUG
+                print("[VersionHistory] fetchOrParseSnapshotSections: fallback parsed \(sections.count) sections from previewMarkdown")
+                #endif
+            }
+            return sections
+        } catch {
+            return []
         }
     }
 

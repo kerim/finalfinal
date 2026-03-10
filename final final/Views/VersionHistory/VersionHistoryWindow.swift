@@ -180,6 +180,11 @@ struct VersionHistoryWindow: View {
 
     private var mainContentView: some View {
         GeometryReader { geometry in
+            let _ = {
+                #if DEBUG
+                print("[VersionHistory] mainContentView: current=\(coordinator.currentSections.count), backup=\(selectedSnapshotSections.count)")
+                #endif
+            }()
             let versionListWidth = min(geometry.size.width * 0.15, 200)
             let remainingWidth = geometry.size.width - versionListWidth
             let documentWidth = remainingWidth / 2
