@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Version history empty after block migration** — `sectionSyncService.contentChanged()` was removed during the block-based architecture migration, leaving the section table empty. Re-added the call in the content change handler. Also added `syncNow()` on project load and before snapshot creation to ensure sections are always fresh.
+- **Snapshots using stale content** — `SnapshotService` now assembles fresh markdown from blocks (the source of truth) instead of reading the potentially stale `content.markdown` field, for both manual and auto snapshots
+- **Version history showing all sections as New** — `parseAndGetSections()` created random UUIDs for current sections, so they never matched snapshot section IDs. Replaced with `syncNow()` + `loadSections()` which fetches real DB sections with stable IDs. Also added title+headerLevel fallback matching for old snapshots that lack `snapshotSection` rows.
+- **Old snapshots showing no sections** — added `fetchOrParseSnapshotSections()` fallback that parses sections from `previewMarkdown` when the `snapshotSection` table has no rows for a given snapshot
+- **Version history contrast in High Contrast Day theme** — toolbar uses dark `sidebarBackground` instead of `.preferredColorScheme`; explicit `.listRowBackground` for sidebar selection highlight; column headers use full `sidebarBackground` + `sidebarText`; section hover uses universal `editorText.opacity(0.08)`
+- **Coordinator stale project after window close** — `VersionHistoryCoordinator.close()` now clears `projectId` to prevent stale state on reopen
+
 ## [0.2.73] - 2026-03-08
 
 ### Fixed
