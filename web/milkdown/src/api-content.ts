@@ -645,12 +645,34 @@ export function insertImage(opts: {
       return;
     }
 
-    // Remove any blob:/data: img tags that WebKit's native performDragOperation
-    // may have inserted into the DOM before JS events fired.
-    // This runs asynchronously (called from Swift via evaluateJavaScript),
-    // so any native insertions have completed and ProseMirror has processed them.
+    // Remove ghost inline images from ProseMirror state (not just DOM).
+    // WebKit's native performDragOperation can insert <img> elements before
+    // JS events fire; ProseMirror incorporates them as inline image nodes.
     // Legitimate images use the projectmedia:// scheme, never blob:/data:.
-    document.querySelectorAll('img[src^="blob:"], img[src^="data:"]').forEach((el) => el.remove());
+    const imageType = view.state.schema.nodes.image;
+    let tr = view.state.tr;
+    if (imageType) {
+      const removals: { from: number; to: number }[] = [];
+      view.state.doc.descendants((node, pos) => {
+        if (node.type === imageType) {
+          const src = (node.attrs.src as string) || '';
+          if (src.startsWith('blob:') || src.startsWith('data:')) {
+            removals.push({ from: pos, to: pos + node.nodeSize });
+          }
+        }
+      });
+      if (removals.length > 0) {
+        syncLog('API:insertImage', `removing ${removals.length} ghost image(s)`);
+        // Delete in reverse order to preserve earlier positions
+        for (let i = removals.length - 1; i >= 0; i--) {
+          tr = tr.delete(removals[i].from, removals[i].to);
+        }
+      }
+    }
+    // DOM cleanup as belt-and-suspenders
+    for (const el of document.querySelectorAll('img[src^="blob:"], img[src^="data:"]')) {
+      el.remove();
+    }
 
     const node = figureType.create({
       src: opts.src,
@@ -661,9 +683,10 @@ export function insertImage(opts: {
     });
 
     // Use pending drop position if available (from handleDrop), otherwise insert after cursor's block
+    // Compute against tr.doc (which may have had ghost images removed)
     let insertPos: number;
     const dropPos = consumePendingDropPos();
-    const docSize = view.state.doc.content.size;
+    const docSize = tr.doc.content.size;
     syncLog('API:insertImage', `dropPos=${dropPos} docSize=${docSize}`);
     if (dropPos !== null && dropPos >= 0 && dropPos <= docSize) {
       insertPos = dropPos;
@@ -671,13 +694,13 @@ export function insertImage(opts: {
       // Fallback: after current selection's top-level block
       try {
         const { from } = view.state.selection;
-        const $from = view.state.doc.resolve(from);
+        const $from = tr.doc.resolve(Math.min(from, docSize));
         insertPos = $from.after(1);
       } catch {
-        insertPos = view.state.doc.content.size;
+        insertPos = tr.doc.content.size;
       }
     }
-    const tr = view.state.tr.insert(insertPos, node);
+    tr = tr.insert(insertPos, node);
     view.dispatch(tr);
   } catch (e) {
     console.error('[Milkdown] insertImage failed:', e);
