@@ -135,6 +135,13 @@ enum MarkdownUtils {
         return result
     }
 
+    /// Check if text is a ghost image reference from WebKit's native drop race condition.
+    /// These look like `![Screenshot...](blob:...)` or `![...](data:...)` — never valid
+    /// persisted image sources (legitimate images use the `projectmedia://` scheme).
+    static func isGhostImageMarkdown(_ text: String) -> Bool {
+        text.hasPrefix("![") && (text.contains("](blob:") || text.contains("](data:"))
+    }
+
     /// Count words in markdown content, excluding syntax symbols
     static func wordCount(for content: String) -> Int {
         let text = stripMarkdownSyntax(from: content)
