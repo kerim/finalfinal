@@ -441,7 +441,7 @@ export const blockSyncPlugin = $prose(() => {
             detectChanges(resolvedOld, resolvedNew, currentState);
           }
           pendingOldSnapshot = null;
-          pendingIdRemap = new Map();
+          pendingIdRemap.clear();
           detectTimer = null;
         }, 100);
 
@@ -462,7 +462,7 @@ export function resetBlockSyncState(): void {
     detectTimer = null;
     pendingOldSnapshot = null;
   }
-  pendingIdRemap = new Map();
+  pendingIdRemap.clear();
   if (currentState) {
     currentState.pendingUpdates.clear();
     currentState.pendingInserts.clear();
@@ -523,7 +523,7 @@ export function resetAndSnapshot(doc: Node): void {
     detectTimer = null;
     pendingOldSnapshot = null;
   }
-  pendingIdRemap = new Map();
+  pendingIdRemap.clear();
   currentState.pendingUpdates.clear();
   currentState.pendingInserts.clear();
   currentState.pendingDeletes.clear();
@@ -540,7 +540,7 @@ export function destroyBlockSyncState(): void {
     detectTimer = null;
     pendingOldSnapshot = null;
   }
-  pendingIdRemap = new Map();
+  pendingIdRemap.clear();
   if (currentState) {
     currentState.pendingUpdates.clear();
     currentState.pendingInserts.clear();
