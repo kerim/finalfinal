@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- Image block duplication regression (reverted debounce, shared timer, dedup guards)
+
+### Changed
+- Lazy markdown serialization in block-sync-plugin
+- Focus mode cached DecorationSet
+- Batch word counts DB method
+- Code simplification (insertTrimmed reuse, BlockType enum, sumWords helper)
+
 ## [0.2.75] - 2026-03-12
 
 ### Fixed
