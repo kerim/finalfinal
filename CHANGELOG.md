@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.77] - 2026-03-12
+
 ### Fixed
 - **Dragged images creating ghost sidebar sections** — WebKit's `performDragOperation` race condition inserts `<img src="blob:...">` before JS events fire, causing ProseMirror to incorporate ghost inline image nodes that serialize as spurious headings. Fix: `insertImage()` now removes ghost nodes and inserts figure node in a single ProseMirror transaction; three Swift parsers (SectionSyncService, OutlineParser, Database+Blocks) reject headings whose title is a blob/data image reference.
 
