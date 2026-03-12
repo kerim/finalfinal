@@ -19,17 +19,13 @@ final class EditorSchemeHandler: NSObject, WKURLSchemeHandler {
         }
 
         guard let fileURL = bundleURL(for: url) else {
-            #if DEBUG
-            print("[EditorSchemeHandler] File not found: \(url)")
-            #endif
+            DebugLog.log(.scheme, "[EditorSchemeHandler] File not found: \(url)")
             urlSchemeTask.didFailWithError(SchemeError.fileNotFound)
             return
         }
 
         guard let data = try? Data(contentsOf: fileURL) else {
-            #if DEBUG
-            print("[EditorSchemeHandler] Failed to read: \(fileURL)")
-            #endif
+            DebugLog.log(.scheme, "[EditorSchemeHandler] Failed to read: \(fileURL)")
             urlSchemeTask.didFailWithError(SchemeError.readError)
             return
         }
@@ -47,9 +43,7 @@ final class EditorSchemeHandler: NSObject, WKURLSchemeHandler {
         urlSchemeTask.didReceive(data)
         urlSchemeTask.didFinish()
 
-        #if DEBUG
-        print("[EditorSchemeHandler] Served: \(url.path) (\(mimeType), \(data.count) bytes)")
-        #endif
+        DebugLog.log(.scheme, "[EditorSchemeHandler] Served: \(url.path) (\(mimeType), \(data.count) bytes)")
     }
 
     func webView(_ webView: WKWebView, stop urlSchemeTask: WKURLSchemeTask) {}

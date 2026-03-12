@@ -43,9 +43,7 @@ final class SnapshotService {
 
         // Use actual sections from database (preserves real IDs for comparison tracking)
         let sections = try database.fetchSections(projectId: projectId)
-        #if DEBUG
-        print("[SnapshotService] createManualSnapshot: \(sections.count) sections from database, \(blocks.count) blocks")
-        #endif
+        DebugLog.log(.backup, "[SnapshotService] createManualSnapshot: \(sections.count) sections from database, \(blocks.count) blocks")
 
         return try database.createSnapshot(
             projectId: projectId,
@@ -71,9 +69,7 @@ final class SnapshotService {
         if let latestHash = try database.fetchLatestSnapshotHash(projectId: projectId),
            !latestHash.isEmpty,
            latestHash == hash {
-            #if DEBUG
-            print("[SnapshotService] Skipping auto-snapshot: content unchanged")
-            #endif
+            DebugLog.log(.backup, "[SnapshotService] Skipping auto-snapshot: content unchanged")
             return nil
         }
 
@@ -87,9 +83,7 @@ final class SnapshotService {
 
         // Use actual sections from database (preserves real IDs for comparison tracking)
         let sections = try database.fetchSections(projectId: projectId)
-        #if DEBUG
-        print("[SnapshotService] createAutoSnapshot: \(sections.count) sections from database, \(blocks.count) blocks")
-        #endif
+        DebugLog.log(.backup, "[SnapshotService] createAutoSnapshot: \(sections.count) sections from database, \(blocks.count) blocks")
 
         return try database.createSnapshot(
             projectId: projectId,
@@ -365,9 +359,7 @@ final class SnapshotService {
         // Delete old snapshots
         if !snapshotsToDelete.isEmpty {
             try database.deleteSnapshots(ids: snapshotsToDelete)
-            #if DEBUG
-            print("[SnapshotService] Pruned \(snapshotsToDelete.count) auto-backups")
-            #endif
+            DebugLog.log(.backup, "[SnapshotService] Pruned \(snapshotsToDelete.count) auto-backups")
         }
     }
 

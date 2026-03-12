@@ -189,7 +189,7 @@ extension MilkdownEditor.Coordinator {
         // via the footnoteInserted message handler — no need to post from completion handler
         webView.evaluateJavaScript("window.FinalFinal.insertFootnote()") { _, error in
             if let error {
-                print("[FootnoteSyncService] insertFootnote evaluateJavaScript error: \(error)")
+                DebugLog.log(.editor, "[FootnoteSyncService] insertFootnote evaluateJavaScript error: \(error)")
             }
         }
     }
@@ -304,9 +304,7 @@ extension MilkdownEditor.Coordinator {
             }
 
             if let content = contentResult as? String {
-                #if DEBUG
-                print("[SAVE+NOTIFY] getContent returned length=\(content.count)")
-                #endif
+                DebugLog.log(.editor, "[SAVE+NOTIFY] getContent returned length=\(content.count)")
                 self.lastPushedContent = content
                 self.contentBinding.wrappedValue = content
             }
@@ -366,9 +364,7 @@ extension MilkdownEditor.Coordinator {
         // JSONEncoder handles strings directly (unlike JSONSerialization which needs Array/Dict)
         guard let jsonData = try? JSONEncoder().encode(markdown),
               let jsonString = String(data: jsonData, encoding: .utf8) else {
-            #if DEBUG
-            print("[MilkdownEditor] setContent: Failed to encode markdown as JSON")
-            #endif
+            DebugLog.log(.editor, "[MilkdownEditor] setContent: Failed to encode markdown as JSON")
             return
         }
 

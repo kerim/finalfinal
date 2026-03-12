@@ -399,9 +399,7 @@ enum BlockParser {
             .filter { !isEmptyFragment($0) }
             .joined(separator: "\n\n")
 
-        #if DEBUG
-        print("[ASSEMBLE] \(blocks.count) blocks -> result length=\(result.count)")
-        #endif
+        DebugLog.log(.sync, "[ASSEMBLE] \(blocks.count) blocks -> result length=\(result.count)")
 
         return result
     }

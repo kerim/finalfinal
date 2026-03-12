@@ -217,18 +217,14 @@ final class AppearanceSettingsManager {
     func update(_ newSettings: AppearanceSettings) {
         settings = newSettings
         saveSettings()
-        #if DEBUG
-        print("[AppearanceSettings] Updated settings, hasOverrides: \(settings.hasOverrides)")
-        #endif
+        DebugLog.log(.theme, "[AppearanceSettings] Updated settings, hasOverrides: \(settings.hasOverrides)")
     }
 
     /// Clear all overrides, returning to theme defaults
     func resetToDefaults() {
         settings = .defaults
         saveSettings()
-        #if DEBUG
-        print("[AppearanceSettings] Reset to defaults")
-        #endif
+        DebugLog.log(.theme, "[AppearanceSettings] Reset to defaults")
     }
 
     /// Clear a specific setting
@@ -381,18 +377,14 @@ final class AppearanceSettingsManager {
         let preset = AppearancePreset(name: name, themeId: themeId, settings: settings)
         savedPresets.append(preset)
         savePresets()
-        #if DEBUG
-        print("[AppearanceSettings] Saved preset: \(name)")
-        #endif
+        DebugLog.log(.theme, "[AppearanceSettings] Saved preset: \(name)")
     }
 
     /// Restore a preset (returns the theme ID to switch to)
     func restorePreset(_ preset: AppearancePreset) -> String {
         settings = preset.settings
         saveSettings()
-        #if DEBUG
-        print("[AppearanceSettings] Restored preset: \(preset.name)")
-        #endif
+        DebugLog.log(.theme, "[AppearanceSettings] Restored preset: \(preset.name)")
         return preset.themeId
     }
 
@@ -402,27 +394,21 @@ final class AppearanceSettingsManager {
         let updated = AppearancePreset(id: preset.id, name: preset.name, themeId: themeId, settings: settings)
         savedPresets[index] = updated
         savePresets()
-        #if DEBUG
-        print("[AppearanceSettings] Updated preset: \(preset.name)")
-        #endif
+        DebugLog.log(.theme, "[AppearanceSettings] Updated preset: \(preset.name)")
     }
 
     /// Delete a preset
     func deletePreset(_ preset: AppearancePreset) {
         savedPresets.removeAll { $0.id == preset.id }
         savePresets()
-        #if DEBUG
-        print("[AppearanceSettings] Deleted preset: \(preset.name)")
-        #endif
+        DebugLog.log(.theme, "[AppearanceSettings] Deleted preset: \(preset.name)")
     }
 
     // MARK: - Persistence
 
     private func loadSettings() {
         guard let database = AppDelegate.shared?.database else {
-            #if DEBUG
-            print("[AppearanceSettings] Database not available, using defaults")
-            #endif
+            DebugLog.log(.theme, "[AppearanceSettings] Database not available, using defaults")
             return
         }
 
@@ -430,22 +416,16 @@ final class AppearanceSettingsManager {
             if let json = try database.getSetting(key: settingsKey),
                let data = json.data(using: .utf8) {
                 settings = try JSONDecoder().decode(AppearanceSettings.self, from: data)
-                #if DEBUG
-                print("[AppearanceSettings] Loaded settings, hasOverrides: \(settings.hasOverrides)")
-                #endif
+                DebugLog.log(.theme, "[AppearanceSettings] Loaded settings, hasOverrides: \(settings.hasOverrides)")
             }
         } catch {
-            #if DEBUG
-            print("[AppearanceSettings] Failed to load settings: \(error)")
-            #endif
+            DebugLog.log(.theme, "[AppearanceSettings] Failed to load settings: \(error)")
         }
     }
 
     private func saveSettings() {
         guard let database = AppDelegate.shared?.database else {
-            #if DEBUG
-            print("[AppearanceSettings] Database not available, cannot save")
-            #endif
+            DebugLog.log(.theme, "[AppearanceSettings] Database not available, cannot save")
             return
         }
 
@@ -455,9 +435,7 @@ final class AppearanceSettingsManager {
                 try database.setSetting(key: settingsKey, value: json)
             }
         } catch {
-            #if DEBUG
-            print("[AppearanceSettings] Failed to save settings: \(error)")
-            #endif
+            DebugLog.log(.theme, "[AppearanceSettings] Failed to save settings: \(error)")
         }
     }
 
@@ -468,14 +446,10 @@ final class AppearanceSettingsManager {
             if let json = try database.getSetting(key: presetsKey),
                let data = json.data(using: .utf8) {
                 savedPresets = try JSONDecoder().decode([AppearancePreset].self, from: data)
-                #if DEBUG
-                print("[AppearanceSettings] Loaded \(savedPresets.count) presets")
-                #endif
+                DebugLog.log(.theme, "[AppearanceSettings] Loaded \(savedPresets.count) presets")
             }
         } catch {
-            #if DEBUG
-            print("[AppearanceSettings] Failed to load presets: \(error)")
-            #endif
+            DebugLog.log(.theme, "[AppearanceSettings] Failed to load presets: \(error)")
         }
     }
 
@@ -488,9 +462,7 @@ final class AppearanceSettingsManager {
                 try database.setSetting(key: presetsKey, value: json)
             }
         } catch {
-            #if DEBUG
-            print("[AppearanceSettings] Failed to save presets: \(error)")
-            #endif
+            DebugLog.log(.theme, "[AppearanceSettings] Failed to save presets: \(error)")
         }
     }
 }

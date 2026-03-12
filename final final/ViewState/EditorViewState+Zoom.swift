@@ -128,14 +128,11 @@ extension EditorViewState {
                 (endSortOrder == nil || block.sortOrder < endSortOrder!)
             }
 
-            #if DEBUG
-            print("[Zoom] Heading: id=\(headingBlock.id), sort=\(headingBlock.sortOrder), " +
-                "level=\(headingLevel), fragment=\"\(String(headingBlock.markdownFragment.prefix(80)))\"")
-            print("[Zoom] endSortOrder=\(String(describing: endSortOrder)), zoomedBlocks=\(zoomedBlocks.count)")
+            DebugLog.log(.zoom, "[Zoom] Heading: id=\(headingBlock.id), sort=\(headingBlock.sortOrder), level=\(headingLevel), fragment=\"\(String(headingBlock.markdownFragment.prefix(80)))\"")
+            DebugLog.log(.zoom, "[Zoom] endSortOrder=\(String(describing: endSortOrder)), zoomedBlocks=\(zoomedBlocks.count)")
             if let first = zoomedBlocks.first {
-                print("[Zoom] First block: id=\(first.id), sort=\(first.sortOrder), type=\(first.blockType)")
+                DebugLog.log(.zoom, "[Zoom] First block: id=\(first.id), sort=\(first.sortOrder), type=\(first.blockType)")
             }
-            #endif
 
             let zoomedImageMeta = zoomedBlocks
                 .filter { $0.blockType == .image }
@@ -232,9 +229,7 @@ extension EditorViewState {
                 contentState = .idle
             }
         } catch {
-            #if DEBUG
-            print("[EditorViewState] Zoom error: \(error)")
-            #endif
+            DebugLog.log(.zoom, "[EditorViewState] Zoom error: \(error)")
             zoomedSectionIds = nil
             zoomedSectionId = nil
             zoomedBlockRange = nil
@@ -348,9 +343,7 @@ extension EditorViewState {
                 NotificationCenter.default.post(name: .didZoomOut, object: nil)
             }
         } catch {
-            #if DEBUG
-            print("[EditorViewState] Zoom out error: \(error)")
-            #endif
+            DebugLog.log(.zoom, "[EditorViewState] Zoom out error: \(error)")
             zoomedSectionId = nil
             zoomedSectionIds = nil
             zoomedBlockRange = nil
@@ -394,9 +387,7 @@ extension EditorViewState {
                 existingSectionMetadata: nil
             )
 
-            #if DEBUG
-            print("[FLUSH] Input length=\(contentToParse.count), parsed \(blocks.count) blocks")
-            #endif
+            DebugLog.log(.zoom, "[FLUSH] Input length=\(contentToParse.count), parsed \(blocks.count) blocks")
 
             if let range = zoomedBlockRange {
                 // Zoomed: only replace blocks within the zoom range
@@ -442,9 +433,7 @@ extension EditorViewState {
                 try db.replaceBlocks(blocks, for: pid)
             }
         } catch {
-            #if DEBUG
-            print("[EditorViewState] flushContentToDatabase error: \(error)")
-            #endif
+            DebugLog.log(.zoom, "[EditorViewState] flushContentToDatabase error: \(error)")
         }
     }
 

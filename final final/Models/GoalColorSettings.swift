@@ -148,9 +148,7 @@ final class GoalColorSettingsManager {
 
     private func loadSettings() {
         guard let database = AppDelegate.shared?.database else {
-            #if DEBUG
-            print("[GoalColorSettings] Database not available, using defaults")
-            #endif
+            DebugLog.log(.theme, "[GoalColorSettings] Database not available, using defaults")
             return
         }
 
@@ -158,22 +156,16 @@ final class GoalColorSettingsManager {
             if let json = try database.getSetting(key: settingsKey),
                let data = json.data(using: .utf8) {
                 settings = try JSONDecoder().decode(GoalColorSettings.self, from: data)
-                #if DEBUG
-                print("[GoalColorSettings] Loaded settings")
-                #endif
+                DebugLog.log(.theme, "[GoalColorSettings] Loaded settings")
             }
         } catch {
-            #if DEBUG
-            print("[GoalColorSettings] Failed to load settings: \(error)")
-            #endif
+            DebugLog.log(.theme, "[GoalColorSettings] Failed to load settings: \(error)")
         }
     }
 
     private func saveSettings() {
         guard let database = AppDelegate.shared?.database else {
-            #if DEBUG
-            print("[GoalColorSettings] Database not available, cannot save")
-            #endif
+            DebugLog.log(.theme, "[GoalColorSettings] Database not available, cannot save")
             return
         }
 
@@ -183,9 +175,7 @@ final class GoalColorSettingsManager {
                 try database.setSetting(key: settingsKey, value: json)
             }
         } catch {
-            #if DEBUG
-            print("[GoalColorSettings] Failed to save settings: \(error)")
-            #endif
+            DebugLog.log(.theme, "[GoalColorSettings] Failed to save settings: \(error)")
         }
     }
 }

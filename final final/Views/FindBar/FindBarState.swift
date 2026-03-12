@@ -172,9 +172,7 @@ final class FindBarState {
 
         webView.evaluateJavaScript(script) { [weak self] result, error in
             if let error = error {
-                #if DEBUG
-                print("[FindBarState] find error: \(error)")
-                #endif
+                DebugLog.log(.editor, "[FindBarState] find error: \(error)")
                 return
             }
 
@@ -204,9 +202,7 @@ final class FindBarState {
 
         webView.evaluateJavaScript(script) { [weak self] result, error in
             if let error = error {
-                #if DEBUG
-                print("[FindBarState] findNext error: \(error)")
-                #endif
+                DebugLog.log(.editor, "[FindBarState] findNext error: \(error)")
                 return
             }
 
@@ -236,9 +232,7 @@ final class FindBarState {
 
         webView.evaluateJavaScript(script) { [weak self] result, error in
             if let error = error {
-                #if DEBUG
-                print("[FindBarState] findPrevious error: \(error)")
-                #endif
+                DebugLog.log(.editor, "[FindBarState] findPrevious error: \(error)")
                 return
             }
 
@@ -289,9 +283,7 @@ final class FindBarState {
 
             webView.evaluateJavaScript(script) { [weak self] result, error in
                 if let error = error {
-                    #if DEBUG
-                    print("[FindBarState] replaceCurrent error: \(error)")
-                    #endif
+                    DebugLog.log(.editor, "[FindBarState] replaceCurrent error: \(error)")
                     return
                 }
 

@@ -28,6 +28,8 @@ How the app is built. Read these before modifying core systems.
 
 How-to documents for development tasks.
 
+- [debug-logging.md](guides/debug-logging.md) -- DebugLog category system: available categories, enabling/disabling, JS bridge routing, usage guide
+- [webkit-debug-logging.md](guides/webkit-debug-logging.md) -- JS → Xcode console via errorHandler bridge, type routing, canary pattern
 - [running-tests.md](guides/running-tests.md) -- Unit and UI test commands, prerequisites, practical workflow
 - [testing-architecture.md](guides/testing-architecture.md) -- Test targets, fixture system, test mode detection, known issues
 - [hooks.md](guides/hooks.md) -- Git hooks and Claude Code hooks configuration

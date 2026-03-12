@@ -136,9 +136,7 @@ struct DocumentPreviewView<TrailingHeader: View>: View {
 
     var body: some View {
         let _ = { // swiftlint:disable:this redundant_discardable_let
-            #if DEBUG
-            print("[DocumentPreviewView] '\(title)' rendering with \(sections.count) sections")
-            #endif
+            DebugLog.log(.lifecycle, "[DocumentPreviewView] '\(title)' rendering with \(sections.count) sections")
         }()
         VStack(alignment: .leading, spacing: 0) {
             // Column header

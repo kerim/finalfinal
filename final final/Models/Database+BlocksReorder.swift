@@ -76,11 +76,9 @@ extension ProjectDatabase {
                 }
             }
 
-            #if DEBUG
             if !imageMetaBySrc.isEmpty {
-                print("[replaceBlocks] Image metadata to preserve: \(imageMetaBySrc.mapValues { "width=\($0.imageWidth ?? -1)" })")
+                DebugLog.log(.data, "[replaceBlocks] Image metadata to preserve: \(imageMetaBySrc.mapValues { "width=\($0.imageWidth ?? -1)" })")
             }
-            #endif
 
             try Block.filter(Block.Columns.projectId == projectId).deleteAll(db)
 
@@ -119,9 +117,7 @@ extension ProjectDatabase {
                         }
                         imageMetaBySrc.removeValue(forKey: src)  // first-match-wins
                     }
-                    #if DEBUG
-                    print("[replaceBlocks] Image block src=\(block.imageSrc ?? "nil") width=\(block.imageWidth ?? -1)")
-                    #endif
+                    DebugLog.log(.data, "[replaceBlocks] Image block src=\(block.imageSrc ?? "nil") width=\(block.imageWidth ?? -1)")
                 }
                 try block.insert(db)
             }

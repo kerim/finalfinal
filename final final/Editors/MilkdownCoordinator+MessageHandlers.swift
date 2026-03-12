@@ -46,9 +46,7 @@ extension MilkdownEditor.Coordinator {
 
         // Only push if there are cached items
         if cachedJSON != "[]" {
-            #if DEBUG
-            print("[MilkdownEditor] Pushing \(zotero.cachedItems.count) cached CSL items to editor")
-            #endif
+            DebugLog.log(.zotero, "[MilkdownEditor] Pushing \(zotero.cachedItems.count) cached CSL items to editor")
             setCitationLibrary(cachedJSON)
         }
     }
@@ -74,27 +72,21 @@ extension MilkdownEditor.Coordinator {
         let theme = ThemeManager.shared.cssVariables
         let cursor = cursorPositionToRestoreBinding.wrappedValue
 
-        #if DEBUG
-        print("[MilkdownEditor] batchInitialize: content length=\(content.count)")
-        #endif
+        DebugLog.log(.editor, "[MilkdownEditor] batchInitialize: content length=\(content.count)")
 
         // First check if window.FinalFinal exists
         webView.evaluateJavaScript("typeof window.FinalFinal") { [weak self] result, error in
             guard let self else { return }
 
-            #if DEBUG
             if let error {
-                print("[MilkdownEditor] FinalFinal check failed: \(error.localizedDescription)")
+                DebugLog.log(.editor, "[MilkdownEditor] FinalFinal check failed: \(error.localizedDescription)")
             } else {
-                print("[MilkdownEditor] FinalFinal type: \(result ?? "nil")")
+                DebugLog.log(.editor, "[MilkdownEditor] FinalFinal type: \(result ?? "nil")")
             }
-            #endif
 
             // If FinalFinal doesn't exist yet, schedule retry
             if result as? String != "object" {
-                #if DEBUG
-                print("[MilkdownEditor] FinalFinal not ready, scheduling retry in 100ms")
-                #endif
+                DebugLog.log(.editor, "[MilkdownEditor] FinalFinal not ready, scheduling retry in 100ms")
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                     self.batchInitialize()
                 }
@@ -124,11 +116,7 @@ extension MilkdownEditor.Coordinator {
         // - Cursor IS visible → restore cursor + center on it
         let useScrollRestore = cursor.map { !$0.cursorIsVisible && $0.topLine > 1.0 } ?? false
 
-        #if DEBUG
-        let resetting = isResettingContentBinding.wrappedValue
-        print("[batchInitialize] isResettingContent=\(resetting), "
-            + "content=\(content.count), effective=\(effectiveContent.count)")
-        #endif
+        DebugLog.log(.editor, "[batchInitialize] isResettingContent=\(isResettingContentBinding.wrappedValue), content=\(content.count), effective=\(effectiveContent.count)")
 
         // Build options dictionary for JSON encoding
         // Using JSON instead of template literals handles ALL special characters safely
@@ -145,39 +133,31 @@ extension MilkdownEditor.Coordinator {
 
         guard let jsonData = try? JSONSerialization.data(withJSONObject: options),
               let jsonString = String(data: jsonData, encoding: .utf8) else {
-            #if DEBUG
-            print("[MilkdownEditor] Failed to encode options as JSON")
-            #endif
+            DebugLog.log(.editor, "[MilkdownEditor] Failed to encode options as JSON")
             return
         }
 
-        #if DEBUG
-        print("[MilkdownEditor] Initialize with content length: \(content.count) chars")
-        #endif
+        DebugLog.log(.editor, "[MilkdownEditor] Initialize with content length: \(content.count) chars")
 
         // Pass JSON directly - JSON is valid JavaScript object literal syntax
         let script = "window.FinalFinal.initialize(\(jsonString))"
 
         webView.evaluateJavaScript(script) { [weak self] _, error in
             if let error {
-                #if DEBUG
-                print("[MilkdownEditor] Initialize error: \(error.localizedDescription)")
+                DebugLog.log(.editor, "[MilkdownEditor] Initialize error: \(error.localizedDescription)")
                 // Check if it's a parsing error by trying to set empty content
                 webView.evaluateJavaScript("window.FinalFinal.setContent('')") { _, err2 in
                     if let err2 {
-                        print("[MilkdownEditor] Even empty setContent failed: \(err2.localizedDescription)")
+                        DebugLog.log(.editor, "[MilkdownEditor] Even empty setContent failed: \(err2.localizedDescription)")
                     } else {
-                        print("[MilkdownEditor] Empty setContent worked - content may have parse issue")
+                        DebugLog.log(.editor, "[MilkdownEditor] Empty setContent worked - content may have parse issue")
                     }
                 }
-                #endif
                 // DEFENSIVE: If initialization failed, mark editor as NOT ready
                 // so polling won't try to read from broken editor
                 self?.isEditorReady = false
             } else {
-                #if DEBUG
-                print("[MilkdownEditor] Initialize successful")
-                #endif
+                DebugLog.log(.editor, "[MilkdownEditor] Initialize successful")
             }
             // Only clear cursor binding if we actually pushed content.
             // When isResettingContent is true, content was skipped and cursor
@@ -263,13 +243,23 @@ extension MilkdownEditor.Coordinator {
             return
         }
 
-        #if DEBUG
+        // DebugLog handles #if DEBUG gating internally
         if message.name == "errorHandler", let body = message.body as? [String: Any] {
             let msgType = body["type"] as? String ?? "unknown"
-            let errorMsg = body["message"] as? String ?? "unknown"
-            print("[MilkdownEditor] JS \(msgType.uppercased()): \(errorMsg)")
+            let msg = body["message"] as? String ?? "unknown"
+            let prefix = "[MilkdownEditor]"
+
+            switch msgType {
+            case "sync-diag":
+                DebugLog.log(.sync, "\(prefix) JS SYNC-DIAG: \(msg)")
+            case "debug", "slash-diag":
+                DebugLog.log(.editor, "\(prefix) JS \(msgType.uppercased()): \(msg)")
+            case "plugin-error", "unhandledrejection", "error":
+                DebugLog.log(.editor, "\(prefix) JS ERROR: \(msg)")
+            default:
+                DebugLog.log(.editor, "\(prefix) JS \(msgType.uppercased()): \(msg)")
+            }
         }
-        #endif
 
         // Handle citation search requests from web editor (legacy)
         if message.name == "searchCitations", let query = message.body as? String {
@@ -442,9 +432,7 @@ extension MilkdownEditor.Coordinator {
     func handleCitationSearch(_ query: String) async {
         guard let webView else { return }
 
-        #if DEBUG
-        print("[MilkdownEditor] Citation search: '\(query)'")
-        #endif
+        DebugLog.log(.zotero, "[MilkdownEditor] Citation search: '\(query)'")
 
         // Split query into terms (BBT search only supports single-term reliably)
         let terms = query.trimmingCharacters(in: .whitespaces)
@@ -471,9 +459,7 @@ extension MilkdownEditor.Coordinator {
                 }
             }
 
-            #if DEBUG
-            print("[MilkdownEditor] Search returned \(items.count) results (filter terms: \(filterTerms))")
-            #endif
+            DebugLog.log(.zotero, "[MilkdownEditor] Search returned \(items.count) results (filter terms: \(filterTerms))")
 
             // Encode results as JSON
             let encoder = JSONEncoder()
@@ -486,27 +472,19 @@ extension MilkdownEditor.Coordinator {
 
             sendCitationSearchCallback(webView: webView, json: jsonString)
         } catch ZoteroError.notRunning {
-            #if DEBUG
-            print("[MilkdownEditor] Citation search: Zotero not running")
-            #endif
+            DebugLog.log(.zotero, "[MilkdownEditor] Citation search: Zotero not running")
             showZoteroAlertIfNeeded()
             sendCitationSearchCallback(webView: webView, json: "[]")
         } catch ZoteroError.networkError(_) {
-            #if DEBUG
-            print("[MilkdownEditor] Citation search: network error")
-            #endif
+            DebugLog.log(.zotero, "[MilkdownEditor] Citation search: network error")
             showZoteroAlertIfNeeded()
             sendCitationSearchCallback(webView: webView, json: "[]")
         } catch ZoteroError.noResponse {
-            #if DEBUG
-            print("[MilkdownEditor] Citation search: no response")
-            #endif
+            DebugLog.log(.zotero, "[MilkdownEditor] Citation search: no response")
             showZoteroAlertIfNeeded()
             sendCitationSearchCallback(webView: webView, json: "[]")
         } catch {
-            #if DEBUG
-            print("[MilkdownEditor] Citation search error: \(error.localizedDescription)")
-            #endif
+            DebugLog.log(.zotero, "[MilkdownEditor] Citation search error: \(error.localizedDescription)")
             sendCitationSearchCallback(webView: webView, json: "[]")
         }
     }
@@ -630,59 +608,45 @@ extension MilkdownEditor.Coordinator {
     @MainActor
     func handleResolveCitekeys(_ citekeys: [String]) async {
         guard let webView, isEditorReady else {
-            #if DEBUG
-            print("[MilkdownEditor] handleResolveCitekeys: webView or editor not ready")
-            #endif
+            DebugLog.log(.zotero, "[MilkdownEditor] handleResolveCitekeys: webView or editor not ready")
             return
         }
 
         guard !citekeys.isEmpty else { return }
 
-        #if DEBUG
-        print("[MilkdownEditor] Resolving \(citekeys.count) citekeys: \(citekeys)")
-        #endif
+        DebugLog.log(.zotero, "[MilkdownEditor] Resolving \(citekeys.count) citekeys: \(citekeys)")
 
         do {
             // Fetch CSL items from Zotero via BBT
             let items = try await ZoteroService.shared.fetchItemsForCitekeys(citekeys)
 
             guard !items.isEmpty else {
-                #if DEBUG
-                print("[MilkdownEditor] No items found for citekeys")
-                #endif
+                DebugLog.log(.zotero, "[MilkdownEditor] No items found for citekeys")
                 return
             }
 
-            #if DEBUG
-            print("[MilkdownEditor] Resolved \(items.count) items")
-            #endif
+            DebugLog.log(.zotero, "[MilkdownEditor] Resolved \(items.count) items")
 
             // Encode as JSON
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.sortedKeys]
             let data = try encoder.encode(items)
             guard let json = String(data: data, encoding: .utf8) else {
-                #if DEBUG
-                print("[MilkdownEditor] Failed to encode items as JSON")
-                #endif
+                DebugLog.log(.zotero, "[MilkdownEditor] Failed to encode items as JSON")
                 return
             }
 
             // Push items to editor
             addCitationItems(json)
         } catch ZoteroError.notRunning {
-            #if DEBUG
-            print("[MilkdownEditor] Zotero not running - cannot resolve citekeys")
-            #endif
+            DebugLog.log(.zotero, "[MilkdownEditor] Zotero not running - cannot resolve citekeys")
             // Confirm with a real ping before alerting (isConnected defaults to false at launch)
             let actuallyDown = !(await ZoteroService.shared.ping())
             if actuallyDown {
                 showZoteroAlertIfNeeded()
             }
         } catch {
-            #if DEBUG
-            print("[MilkdownEditor] Failed to resolve citekeys: \(error.localizedDescription)")
-            #endif
+            DebugLog.log(.zotero, "[MilkdownEditor] Failed to resolve citekeys: \(error.localizedDescription)")
             showZoteroAlertIfNeeded()
         }
     }
@@ -714,46 +678,34 @@ extension MilkdownEditor.Coordinator {
     @MainActor
     func refreshAllCitations() async {
         guard isEditorReady, let webView else {
-            #if DEBUG
-            print("[MilkdownEditor] refreshAllCitations: editor not ready")
-            #endif
+            DebugLog.log(.zotero, "[MilkdownEditor] refreshAllCitations: editor not ready")
             return
         }
 
-        #if DEBUG
-        print("[MilkdownEditor] Refreshing all citations...")
-        #endif
+        DebugLog.log(.zotero, "[MilkdownEditor] Refreshing all citations...")
 
         // Get all citekeys from the document
         webView.evaluateJavaScript("JSON.stringify(window.FinalFinal.getAllCitekeys())") { [weak self] result, error in
             guard let self else { return }
 
             if let error {
-                #if DEBUG
-                print("[MilkdownEditor] Failed to get citekeys: \(error.localizedDescription)")
-                #endif
+                DebugLog.log(.zotero, "[MilkdownEditor] Failed to get citekeys: \(error.localizedDescription)")
                 return
             }
 
             guard let jsonString = result as? String,
                   let data = jsonString.data(using: .utf8),
                   let citekeys = try? JSONDecoder().decode([String].self, from: data) else {
-                #if DEBUG
-                print("[MilkdownEditor] Failed to decode citekeys")
-                #endif
+                DebugLog.log(.zotero, "[MilkdownEditor] Failed to decode citekeys")
                 return
             }
 
             guard !citekeys.isEmpty else {
-                #if DEBUG
-                print("[MilkdownEditor] No citations in document")
-                #endif
+                DebugLog.log(.zotero, "[MilkdownEditor] No citations in document")
                 return
             }
 
-            #if DEBUG
-            print("[MilkdownEditor] Found \(citekeys.count) citekeys to refresh: \(citekeys)")
-            #endif
+            DebugLog.log(.zotero, "[MilkdownEditor] Found \(citekeys.count) citekeys to refresh: \(citekeys)")
 
             // Fetch all citekeys from Zotero
             Task { @MainActor in
@@ -770,9 +722,7 @@ extension MilkdownEditor.Coordinator {
         guard !self.isCleanedUp, self.isEditorReady else { return }
         guard !self.isResettingContentBinding.wrappedValue else { return }
         guard self.contentState == .idle else {
-            #if DEBUG
-            print("[SYNC-DIAG:ContentPush] REJECTED: contentState=\(self.contentState)")
-            #endif
+            DebugLog.log(.sync, "[SYNC-DIAG:ContentPush] REJECTED: contentState=\(self.contentState)")
             return
         }
 
@@ -786,10 +736,7 @@ extension MilkdownEditor.Coordinator {
         let receivedFirstLine = content.components(separatedBy: "\n").first ?? ""
         if pushedFirstLine.hasPrefix("#") && receivedFirstLine.hasPrefix("<br") { return }
 
-        #if DEBUG
-        let firstHeading = content.components(separatedBy: "\n").first(where: { $0.hasPrefix("#") })?.prefix(60) ?? "(none)"
-        print("[SYNC-DIAG:ContentPush] ACCEPTED: len=\(content.count) firstH=\"\(firstHeading)\"")
-        #endif
+        DebugLog.log(.sync, "[SYNC-DIAG:ContentPush] ACCEPTED: len=\(content.count) firstH=\"\(content.components(separatedBy: "\n").first(where: { $0.hasPrefix("#") })?.prefix(60) ?? "(none)")\"")
         self.lastReceivedFromEditor = Date()
         self.lastPushedContent = content
         self.contentBinding.wrappedValue = content
@@ -812,17 +759,13 @@ extension MilkdownEditor.Coordinator {
 
         // Skip polling during content reset (project switch)
         guard !isResettingContentBinding.wrappedValue else {
-            #if DEBUG
-            print("[SYNC-DIAG:Poll] SKIPPED: isResettingContent=true")
-            #endif
+            DebugLog.log(.sync, "[SYNC-DIAG:Poll] SKIPPED: isResettingContent=true")
             return
         }
 
         // Skip polling during content transitions (zoom, hierarchy enforcement)
         guard contentState == .idle else {
-            #if DEBUG
-            print("[SYNC-DIAG:Poll] SKIPPED: contentState=\(contentState)")
-            #endif
+            DebugLog.log(.sync, "[SYNC-DIAG:Poll] SKIPPED: contentState=\(contentState)")
             return
         }
 
@@ -833,9 +776,7 @@ extension MilkdownEditor.Coordinator {
             guard let self, !self.isCleanedUp else { return }
             // Discard stale result if a state transition happened during the JS roundtrip
             guard self.contentGeneration == generationAtPoll else {
-                #if DEBUG
-                print("[MilkdownPoll] Discarded stale result (gen \(generationAtPoll) != \(self.contentGeneration))")
-                #endif
+                DebugLog.log(.sync, "[MilkdownPoll] Discarded stale result (gen \(generationAtPoll) != \(self.contentGeneration))")
                 return
             }
             guard let jsonString = result as? String,
@@ -862,9 +803,7 @@ extension MilkdownEditor.Coordinator {
     func handlePasteImage(_ body: [String: Any]) {
         guard let base64Data = body["data"] as? String,
               let data = Data(base64Encoded: base64Data) else {
-            #if DEBUG
-            print("[MilkdownEditor] Invalid paste image data")
-            #endif
+            DebugLog.log(.editor, "[MilkdownEditor] Invalid paste image data")
             return
         }
 
@@ -872,9 +811,7 @@ extension MilkdownEditor.Coordinator {
         let suggestedName = body["name"] as? String
 
         guard let mediaDir = MediaSchemeHandler.shared.mediaDirectoryURL else {
-            #if DEBUG
-            print("[MilkdownEditor] No media directory — cannot paste image")
-            #endif
+            DebugLog.log(.editor, "[MilkdownEditor] No media directory — cannot paste image")
             return
         }
 
@@ -886,9 +823,7 @@ extension MilkdownEditor.Coordinator {
             // Create image block in database
             insertImageBlock(src: relativePath, alt: suggestedName ?? "")
         } catch {
-            #if DEBUG
-            print("[MilkdownEditor] Image paste failed: \(error.localizedDescription)")
-            #endif
+            DebugLog.log(.editor, "[MilkdownEditor] Image paste failed: \(error.localizedDescription)")
             let window = webView?.window ?? NSApp.keyWindow
             if let window {
                 let alert = NSAlert()
@@ -913,9 +848,7 @@ extension MilkdownEditor.Coordinator {
         guard panel.runModal() == .OK, let url = panel.url else { return }
 
         guard let mediaDir = MediaSchemeHandler.shared.mediaDirectoryURL else {
-            #if DEBUG
-            print("[MilkdownEditor] No media directory — cannot import image")
-            #endif
+            DebugLog.log(.editor, "[MilkdownEditor] No media directory — cannot import image")
             return
         }
 
@@ -924,9 +857,7 @@ extension MilkdownEditor.Coordinator {
             let alt = (url.lastPathComponent as NSString).deletingPathExtension
             insertImageBlock(src: relativePath, alt: alt)
         } catch {
-            #if DEBUG
-            print("[MilkdownEditor] Image import failed: \(error.localizedDescription)")
-            #endif
+            DebugLog.log(.editor, "[MilkdownEditor] Image import failed: \(error.localizedDescription)")
             let window = webView?.window ?? NSApp.keyWindow
             if let window {
                 let alert = NSAlert()
@@ -943,9 +874,7 @@ extension MilkdownEditor.Coordinator {
     @MainActor
     func handleUpdateImageMeta(_ body: [String: Any]) {
         guard let blockId = body["blockId"] as? String else {
-            #if DEBUG
-            print("[MilkdownEditor] updateImageMeta missing blockId")
-            #endif
+            DebugLog.log(.editor, "[MilkdownEditor] updateImageMeta missing blockId")
             return
         }
 
@@ -960,9 +889,7 @@ extension MilkdownEditor.Coordinator {
                 imageWidth: body["width"] as? Int
             )
         } catch {
-            #if DEBUG
-            print("[MilkdownEditor] Failed to update image meta: \(error)")
-            #endif
+            DebugLog.log(.editor, "[MilkdownEditor] Failed to update image meta: \(error)")
         }
     }
 
@@ -975,11 +902,9 @@ extension MilkdownEditor.Coordinator {
         webView?.evaluateJavaScript(
             "window.FinalFinal.insertImage && window.FinalFinal.insertImage({src: `\(src)`, alt: `\(escapedAlt)`, caption: '', width: null, blockId: ''})"
         ) { _, error in
-            #if DEBUG
             if let error {
-                print("[MilkdownEditor] insertImage JS error: \(error)")
+                DebugLog.log(.editor, "[MilkdownEditor] insertImage JS error: \(error)")
             }
-            #endif
         }
     }
 }

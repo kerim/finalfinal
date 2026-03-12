@@ -58,9 +58,7 @@ extension DocumentManager {
 
             saveRecentProjects()
         } catch {
-            #if DEBUG
-            print("[DocumentManager] Failed to create bookmark for \(url.path): \(error)")
-            #endif
+            DebugLog.log(.lifecycle, "[DocumentManager] Failed to create bookmark for \(url.path): \(error)")
         }
     }
 
@@ -88,16 +86,12 @@ extension DocumentManager {
             )
 
             if isStale {
-                #if DEBUG
-                print("[DocumentManager] Bookmark is stale, may need refresh")
-                #endif
+                DebugLog.log(.lifecycle, "[DocumentManager] Bookmark is stale, may need refresh")
             }
 
             return url
         } catch {
-            #if DEBUG
-            print("[DocumentManager] Failed to resolve bookmark: \(error)")
-            #endif
+            DebugLog.log(.lifecycle, "[DocumentManager] Failed to resolve bookmark: \(error)")
             return nil
         }
     }
@@ -140,9 +134,7 @@ extension DocumentManager {
             )
             lastProjectBookmark = bookmarkData
         } catch {
-            #if DEBUG
-            print("[DocumentManager] Failed to save last project bookmark: \(error)")
-            #endif
+            DebugLog.log(.lifecycle, "[DocumentManager] Failed to save last project bookmark: \(error)")
         }
     }
 
@@ -202,9 +194,7 @@ extension DocumentManager {
                 resolveBookmark(entry.bookmarkData) != nil
             }
         } catch {
-            #if DEBUG
-            print("[DocumentManager] Failed to load recent projects: \(error)")
-            #endif
+            DebugLog.log(.lifecycle, "[DocumentManager] Failed to load recent projects: \(error)")
             recentProjects = []
         }
     }
@@ -214,9 +204,7 @@ extension DocumentManager {
             let data = try JSONEncoder().encode(recentProjects)
             UserDefaults.standard.set(data, forKey: recentProjectsKey)
         } catch {
-            #if DEBUG
-            print("[DocumentManager] Failed to save recent projects: \(error)")
-            #endif
+            DebugLog.log(.lifecycle, "[DocumentManager] Failed to save recent projects: \(error)")
         }
     }
 }

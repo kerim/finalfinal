@@ -158,13 +158,10 @@ struct ContentView: View {
                             // Use real DB sections with stable IDs (not parseAndGetSections which creates random UUIDs)
                             let sections = await sectionSyncService.loadSections()
 
-                            #if DEBUG
-                            print("[VersionHistory] prepareForOpen: \(sections.count) sections, projectId=\(pid)")
+                            DebugLog.log(.lifecycle, "[VersionHistory] prepareForOpen: \(sections.count) sections, projectId=\(pid)")
                             if let first = sections.first {
-                                let charCount = first.markdownContent.count
-                                print("[VersionHistory]   first section: '\(first.title)' id=\(first.id) content=\(charCount) chars")
+                                DebugLog.log(.lifecycle, "[VersionHistory]   first section: '\(first.title)' id=\(first.id) content=\(first.markdownContent.count) chars")
                             }
-                            #endif
                             versionHistoryCoordinator.prepareForOpen(
                                 database: db,
                                 projectId: pid,
@@ -176,9 +173,7 @@ struct ContentView: View {
                 }
             )
             .onReceive(NotificationCenter.default.publisher(for: .bibliographySectionChanged)) { _ in
-                #if DEBUG
-                print("[CV:bibNotif] contentState=\(editorState.contentState) suppress=\(suppressNextBibliographyRebuild) pendingBib=\(pendingBibliographyRebuild) content.isEmpty=\(editorState.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)")
-                #endif
+                DebugLog.log(.bib, "[CV:bibNotif] contentState=\(editorState.contentState) suppress=\(suppressNextBibliographyRebuild) pendingBib=\(pendingBibliographyRebuild) content.isEmpty=\(editorState.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)")
                 // Bibliography section was updated in the database - rebuild editor content
                 // Skip if zoomed into a section (bibliography update only affects full document view)
                 guard editorState.zoomedSectionId == nil else { return }
@@ -194,9 +189,7 @@ struct ContentView: View {
                 guard !editorState.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
                 guard !suppressNextBibliographyRebuild else {
                     suppressNextBibliographyRebuild = false
-                    #if DEBUG
-                    print("[ContentView] bibliographySectionChanged suppressed (post-project-switch)")
-                    #endif
+                    DebugLog.log(.bib, "[ContentView] bibliographySectionChanged suppressed (post-project-switch)")
                     return
                 }
 
@@ -209,19 +202,13 @@ struct ContentView: View {
 
                 Task {
                     // Force-flush pending JS changes to DB before reading blocks
-                    #if DEBUG
                     if let db = documentManager.projectDatabase, let pid = documentManager.projectId {
-                        let blockCount = try? db.fetchBlockCount(projectId: pid)
-                        print("[CV:bibRebuild] BEFORE poll: \(blockCount ?? -1) blocks in DB")
+                        DebugLog.log(.bib, "[CV:bibRebuild] BEFORE poll: \((try? db.fetchBlockCount(projectId: pid)) ?? -1) blocks in DB")
                     }
-                    #endif
                     await blockSyncService.pollBlockChangesNow()
-                    #if DEBUG
                     if let db = documentManager.projectDatabase, let pid = documentManager.projectId {
-                        let blockCount = try? db.fetchBlockCount(projectId: pid)
-                        print("[CV:bibRebuild] AFTER poll: \(blockCount ?? -1) blocks in DB")
+                        DebugLog.log(.bib, "[CV:bibRebuild] AFTER poll: \((try? db.fetchBlockCount(projectId: pid)) ?? -1) blocks in DB")
                     }
-                    #endif
 
                     guard let result = fetchBlocksWithIds() else {
                         editorState.isResettingContent = false
@@ -275,9 +262,7 @@ struct ContentView: View {
                 }
             }
             .onChange(of: editorState.contentState) { oldValue, newValue in
-                #if DEBUG
-                print("[CV:stateChange] \(oldValue)→\(newValue) pendingBib=\(pendingBibliographyRebuild) pendingNotes=\(pendingNotesRebuild)")
-                #endif
+                DebugLog.log(.bib, "[CV:stateChange] \(oldValue)→\(newValue) pendingBib=\(pendingBibliographyRebuild) pendingNotes=\(pendingNotesRebuild)")
                 guard newValue == .idle else { return }
                 // Process ONE pending item per idle transition (if/else if chain).
                 // Each rebuild sets contentState to non-idle; the next idle transition

@@ -41,9 +41,7 @@ final class ThemeManager {
         currentTheme = theme
         saveThemeToDatabase()
         updateAppAppearance(for: theme)
-        #if DEBUG
-        print("[ThemeManager] Theme changed to: \(theme.name)")
-        #endif
+        DebugLog.log(.theme, "[ThemeManager] Theme changed to: \(theme.name)")
     }
 
     func setTheme(byId id: String) {
@@ -88,9 +86,7 @@ final class ThemeManager {
 
     private func loadThemeFromDatabase() {
         guard let database = AppDelegate.shared?.database else {
-            #if DEBUG
-            print("[ThemeManager] Database not available, using default theme")
-            #endif
+            DebugLog.log(.theme, "[ThemeManager] Database not available, using default theme")
             return
         }
 
@@ -102,51 +98,35 @@ final class ThemeManager {
                 if let theme = AppColorScheme.all.first(where: { $0.id == themeId }) {
                     currentTheme = theme
                     updateAppAppearance(for: theme)
-                    #if DEBUG
-                    print("[ThemeManager] Loaded theme: \(theme.name)")
-                    #endif
+                    DebugLog.log(.theme, "[ThemeManager] Loaded theme: \(theme.name)")
 
                     // If we migrated, save the new ID
                     if savedId != themeId {
-                        #if DEBUG
-                        print("[ThemeManager] Migrated theme from '\(savedId)' to '\(themeId)'")
-                        #endif
+                        DebugLog.log(.theme, "[ThemeManager] Migrated theme from '\(savedId)' to '\(themeId)'")
                         try database.setSetting(key: settingsKey, value: themeId)
                     }
                 } else {
-                    #if DEBUG
-                    print("[ThemeManager] Unknown theme ID '\(savedId)', using default")
-                    #endif
+                    DebugLog.log(.theme, "[ThemeManager] Unknown theme ID '\(savedId)', using default")
                 }
             } else {
-                #if DEBUG
-                print("[ThemeManager] No saved theme, using default")
-                #endif
+                DebugLog.log(.theme, "[ThemeManager] No saved theme, using default")
             }
         } catch {
-            #if DEBUG
-            print("[ThemeManager] Failed to load theme: \(error)")
-            #endif
+            DebugLog.log(.theme, "[ThemeManager] Failed to load theme: \(error)")
         }
     }
 
     private func saveThemeToDatabase() {
         guard let database = AppDelegate.shared?.database else {
-            #if DEBUG
-            print("[ThemeManager] Database not available, cannot save theme")
-            #endif
+            DebugLog.log(.theme, "[ThemeManager] Database not available, cannot save theme")
             return
         }
 
         do {
             try database.setSetting(key: settingsKey, value: currentTheme.id)
-            #if DEBUG
-            print("[ThemeManager] Saved theme: \(currentTheme.name)")
-            #endif
+            DebugLog.log(.theme, "[ThemeManager] Saved theme: \(currentTheme.name)")
         } catch {
-            #if DEBUG
-            print("[ThemeManager] Failed to save theme: \(error)")
-            #endif
+            DebugLog.log(.theme, "[ThemeManager] Failed to save theme: \(error)")
         }
     }
 }

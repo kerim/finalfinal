@@ -67,9 +67,7 @@ struct ProjectRepairService {
 
         do {
             try FileManager.default.copyItem(at: databaseURL, to: backupURL)
-            #if DEBUG
-            print("[RepairService] Created backup at: \(backupURL.lastPathComponent)")
-            #endif
+            DebugLog.log(.data, "[RepairService] Created backup at: \(backupURL.lastPathComponent)")
             return backupURL
         } catch {
             throw RepairError.backupFailed(error)
@@ -102,14 +100,10 @@ struct ProjectRepairService {
             do {
                 try repairIssue(issue, db: dbQueue)
                 repairedIssues.append(issue)
-                #if DEBUG
-                print("[RepairService] Repaired: \(issue.description)")
-                #endif
+                DebugLog.log(.data, "[RepairService] Repaired: \(issue.description)")
             } catch {
                 failedIssues.append(issue)
-                #if DEBUG
-                print("[RepairService] Failed to repair '\(issue.description)': \(error)")
-                #endif
+                DebugLog.log(.data, "[RepairService] Failed to repair '\(issue.description)': \(error)")
             }
         }
 
@@ -124,9 +118,7 @@ struct ProjectRepairService {
     /// Delete the project package entirely (for recreate)
     func deletePackage() throws {
         try FileManager.default.removeItem(at: packageURL)
-        #if DEBUG
-        print("[RepairService] Deleted package at: \(packageURL.path)")
-        #endif
+        DebugLog.log(.data, "[RepairService] Deleted package at: \(packageURL.path)")
     }
 
     // MARK: - Private Repair Methods
@@ -180,14 +172,10 @@ struct ProjectRepairService {
             let existingProjectId: String?
             if let sectionProjectId = try String.fetchOne(database, sql: "SELECT projectId FROM section LIMIT 1") {
                 existingProjectId = sectionProjectId
-                #if DEBUG
-                print("[RepairService] Found existing projectId from sections: \(sectionProjectId)")
-                #endif
+                DebugLog.log(.data, "[RepairService] Found existing projectId from sections: \(sectionProjectId)")
             } else if let contentProjectId = try String.fetchOne(database, sql: "SELECT projectId FROM content LIMIT 1") {
                 existingProjectId = contentProjectId
-                #if DEBUG
-                print("[RepairService] Found existing projectId from content: \(contentProjectId)")
-                #endif
+                DebugLog.log(.data, "[RepairService] Found existing projectId from content: \(contentProjectId)")
             } else {
                 existingProjectId = nil
             }
@@ -203,13 +191,9 @@ struct ProjectRepairService {
             )
 
             if existingProjectId != nil {
-                #if DEBUG
-                print("[RepairService] Recreated project record with existing ID: \(projectId)")
-                #endif
+                DebugLog.log(.data, "[RepairService] Recreated project record with existing ID: \(projectId)")
             } else {
-                #if DEBUG
-                print("[RepairService] Created new project record: \(projectId)")
-                #endif
+                DebugLog.log(.data, "[RepairService] Created new project record: \(projectId)")
             }
         }
     }

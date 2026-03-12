@@ -110,12 +110,10 @@ class BlockSyncService {
             }
             let orderedIds = BlockParser.idsForProseMirrorAlignment(filtered.sorted { $0.sortOrder < $1.sortOrder })
 
-            #if DEBUG
             if let range = range {
-                print("[BlockSyncService] pushBlockIds filtered: \(orderedIds.count) blocks " +
+                DebugLog.log(.sync, "[BlockSyncService] pushBlockIds filtered: \(orderedIds.count) blocks " +
                     "(range start=\(range.start), end=\(String(describing: range.end)))")
             }
-            #endif
 
             guard let jsonData = try? JSONSerialization.data(withJSONObject: orderedIds),
                   let jsonString = String(data: jsonData, encoding: .utf8) else { return }
@@ -132,13 +130,9 @@ class BlockSyncService {
                 }
             }
 
-            #if DEBUG
-            print("[BlockSyncService] Pushed \(orderedIds.count) block IDs to editor")
-            #endif
+            DebugLog.log(.sync, "[BlockSyncService] Pushed \(orderedIds.count) block IDs to editor")
         } catch {
-            #if DEBUG
-            print("[BlockSyncService] pushBlockIds failed: \(error)")
-            #endif
+            DebugLog.log(.sync, "[BlockSyncService] pushBlockIds failed: \(error)")
         }
     }
 
@@ -152,10 +146,7 @@ class BlockSyncService {
     ) async {
         guard let webView else { return }
 
-        #if DEBUG
-        let firstH = markdown.components(separatedBy: "\n").first(where: { $0.hasPrefix("#") })?.prefix(60) ?? "(none)"
-        print("[SYNC-DIAG:BlockSync] setContentWithBlockIds: len=\(markdown.count) blocks=\(blockIds.count) firstH=\"\(firstH)\" scrollToStart=\(scrollToStart) cursorBoundary=\(String(describing: cursorBoundary))")
-        #endif
+        DebugLog.log(.sync, "[SYNC-DIAG:BlockSync] setContentWithBlockIds: len=\(markdown.count) blocks=\(blockIds.count) firstH=\"\(markdown.components(separatedBy: "\n").first(where: { $0.hasPrefix("#") })?.prefix(60) ?? "(none)")\" scrollToStart=\(scrollToStart) cursorBoundary=\(String(describing: cursorBoundary))")
 
         // Escape markdown for JS template literal
         let escapedMarkdown = markdown
@@ -212,9 +203,7 @@ class BlockSyncService {
             userInfo: ["markdown": markdown]
         )
 
-        #if DEBUG
-        print("[BlockSyncService] Set content with \(blockIds.count) block IDs atomically")
-        #endif
+        DebugLog.log(.sync, "[BlockSyncService] Set content with \(blockIds.count) block IDs atomically")
     }
 
     /// Surgically update heading levels in the editor without replacing the document.
@@ -252,9 +241,7 @@ class BlockSyncService {
     /// Poll the editor for block changes and apply them to the database
     private func pollBlockChanges(force: Bool = false) async {
         guard !isPolling else {
-            #if DEBUG
-            if force { print("[SYNC-DIAG:BlockPoll] BLOCKED: force poll skipped (already polling)") }
-            #endif
+            if force { DebugLog.log(.blockPoll, "[SYNC-DIAG:BlockPoll] BLOCKED: force poll skipped (already polling)") }
             return
         }
         isPolling = true
@@ -262,9 +249,7 @@ class BlockSyncService {
 
         if !force {
             guard editorState?.contentState == .idle else {
-                #if DEBUG
-                print("[SYNC-DIAG:BlockPoll] SKIPPED: contentState=\(String(describing: editorState?.contentState))")
-                #endif
+                DebugLog.log(.blockPoll, "[SYNC-DIAG:BlockPoll] SKIPPED: contentState=\(String(describing: editorState?.contentState))")
                 return
             }
         }
@@ -277,9 +262,7 @@ class BlockSyncService {
         let hasChanges = await checkForChanges(webView: webView)
         guard hasChanges else { return }
 
-        #if DEBUG
-        print("[SYNC-DIAG:BlockPoll] changes detected, fetching... (force=\(force))")
-        #endif
+        DebugLog.log(.blockPoll, "[SYNC-DIAG:BlockPoll] changes detected, fetching... (force=\(force))")
 
         // In force mode, skip generation check — caller explicitly needs flush
         if !force {
@@ -299,12 +282,10 @@ class BlockSyncService {
             return
         }
 
-        #if DEBUG
-        print("[SYNC-DIAG:BlockPoll] Processing: u=\(changes.updates.count) i=\(changes.inserts.count) d=\(changes.deletes.count) force=\(force)")
+        DebugLog.log(.blockPoll, "[SYNC-DIAG:BlockPoll] Processing: u=\(changes.updates.count) i=\(changes.inserts.count) d=\(changes.deletes.count) force=\(force)")
         if !changes.deletes.isEmpty {
-            print("[SYNC-DIAG:BlockPoll] Deleting IDs: \(changes.deletes.prefix(5))")
+            DebugLog.log(.blockPoll, "[SYNC-DIAG:BlockPoll] Deleting IDs: \(changes.deletes.prefix(5))")
         }
-        #endif
 
         // Safety logging: warn on mass deletes that may indicate a stale snapshot bug
         if !changes.deletes.isEmpty {
@@ -312,7 +293,7 @@ class BlockSyncService {
                 let blockCount = try database.fetchBlockCount(projectId: projectId)
                 let deleteCount = changes.deletes.count
                 if blockCount > 2 && deleteCount > blockCount / 2 {
-                    print("[SYNC-DIAG:BlockPoll] WARNING: Mass delete detected " +
+                    DebugLog.always("[SYNC-DIAG:BlockPoll] WARNING: Mass delete detected " +
                         "(\(deleteCount)/\(blockCount) blocks). May indicate stale snapshot.")
                 }
                 // Safety net: reject change sets that would delete ALL blocks with no inserts.
@@ -320,14 +301,12 @@ class BlockSyncService {
                 // Note: "Select All → Delete" is a theoretical false positive, but ProseMirror
                 // always retains at least one empty paragraph node, so inserts would be non-empty.
                 if blockCount > 2 && deleteCount == blockCount && changes.inserts.isEmpty {
-                    print("[SYNC-DIAG:BlockPoll] REJECTED: Mass delete of ALL \(blockCount) blocks " +
+                    DebugLog.always("[SYNC-DIAG:BlockPoll] REJECTED: Mass delete of ALL \(blockCount) blocks " +
                         "with no inserts (updates=\(changes.updates.count)). Stale snapshot likely.")
                     return
                 }
             } catch {
-                #if DEBUG
-                print("[SYNC-DIAG:BlockPoll] fetchBlockCount failed: \(error)")
-                #endif
+                DebugLog.log(.blockPoll, "[SYNC-DIAG:BlockPoll] fetchBlockCount failed: \(error)")
             }
         }
 
@@ -335,9 +314,7 @@ class BlockSyncService {
         var resolvedChanges = changes
         resolvedChanges.updates = changes.updates.map { update in
             if update.id.hasPrefix("temp-"), let permanentId = confirmedTempIds[update.id] {
-                #if DEBUG
-                print("[SYNC-DIAG:BlockPoll] Resolved stale temp ID: \(update.id.prefix(13)) → \(permanentId.prefix(8))")
-                #endif
+                DebugLog.log(.blockPoll, "[SYNC-DIAG:BlockPoll] Resolved stale temp ID: \(update.id.prefix(13)) → \(permanentId.prefix(8))")
                 return BlockUpdate(id: permanentId, textContent: update.textContent,
                                    markdownFragment: update.markdownFragment, headingLevel: update.headingLevel)
             }
@@ -362,22 +339,16 @@ class BlockSyncService {
                 confirmedTempIds[tempId] = permanentId
             }
 
-            #if DEBUG
-            print("[SYNC-DIAG:BlockPoll] Applied changes to DB successfully")
-            #endif
+            DebugLog.log(.blockPoll, "[SYNC-DIAG:BlockPoll] Applied changes to DB successfully")
 
             // Send ID confirmations back to editor if there were inserts
             if !pendingConfirmations.isEmpty {
-                #if DEBUG
-                print("[SYNC-DIAG:BlockPoll] Confirming \(pendingConfirmations.count) IDs")
-                #endif
+                DebugLog.log(.blockPoll, "[SYNC-DIAG:BlockPoll] Confirming \(pendingConfirmations.count) IDs")
                 await confirmBlockIds(webView: webView, mapping: pendingConfirmations)
                 pendingConfirmations.removeAll()
             }
         } catch {
-            #if DEBUG
-            print("[SYNC-DIAG:BlockPoll] Error applying changes: \(error)")
-            #endif
+            DebugLog.log(.blockPoll, "[SYNC-DIAG:BlockPoll] Error applying changes: \(error)")
         }
     }
 
@@ -408,9 +379,7 @@ class BlockSyncService {
                     let changes = try JSONDecoder().decode(BlockChanges.self, from: data)
                     continuation.resume(returning: changes)
                 } catch {
-                    #if DEBUG
-                    print("[BlockSyncService] Failed to decode block changes: \(error)")
-                    #endif
+                    DebugLog.log(.sync, "[BlockSyncService] Failed to decode block changes: \(error)")
                     continuation.resume(returning: nil)
                 }
             }
@@ -465,9 +434,7 @@ class BlockSyncService {
 
         try database.replaceBlocks(blocks, for: projectId)
 
-        #if DEBUG
-        print("[BlockSyncService] Parsed and stored \(blocks.count) blocks")
-        #endif
+        DebugLog.log(.sync, "[BlockSyncService] Parsed and stored \(blocks.count) blocks")
     }
 
     /// Assemble markdown from blocks in the database

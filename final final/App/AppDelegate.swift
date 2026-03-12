@@ -32,14 +32,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             let savedStatePath = NSHomeDirectory()
                 + "/Library/Saved Application State/com.kerim.final-final.savedState"
             let exists = FileManager.default.fileExists(atPath: savedStatePath)
-            #if DEBUG
-            print("[AppDelegate] Test mode: saved state at \(savedStatePath) exists=\(exists)")
-            #endif
+            DebugLog.log(.lifecycle, "[AppDelegate] Test mode: saved state at \(savedStatePath) exists=\(exists)")
             if exists {
                 try? FileManager.default.removeItem(atPath: savedStatePath)
-                #if DEBUG
-                print("[AppDelegate] Test mode: removed saved application state")
-                #endif
+                DebugLog.log(.lifecycle, "[AppDelegate] Test mode: removed saved application state")
             }
         }
 
@@ -51,9 +47,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppDelegate.shared = self
 
-        #if DEBUG
-        print("[FINAL|FINAL] Build: \(GitInfo.branch) (\(GitInfo.commit))")
-        #endif
+        DebugLog.log(.lifecycle, "[FINAL|FINAL] Build: \(GitInfo.branch) (\(GitInfo.commit))")
 
         // Disable window tabbing - removes "Show Tab Bar" and "Show All Tabs" from View menu
         // This app doesn't use a tabbed interface
@@ -65,18 +59,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         do {
             database = try AppDatabase.makeDefault()
-            #if DEBUG
-            print("[AppDelegate] Database initialized successfully")
-            #endif
+            DebugLog.log(.lifecycle, "[AppDelegate] Database initialized successfully")
 
             // Load theme and appearance settings now that database is ready
             ThemeManager.shared.loadThemeIfNeeded()
             AppearanceSettingsManager.shared.loadIfNeeded()
             GoalColorSettingsManager.shared.loadIfNeeded()
         } catch {
-            #if DEBUG
-            print("[AppDelegate] Failed to initialize database: \(error)")
-            #endif
+            DebugLog.log(.lifecycle, "[AppDelegate] Failed to initialize database: \(error)")
         }
 
         // Check for updates on launch (silent -- only alerts if update available)
@@ -133,9 +123,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             // and mark them non-restorable to prevent future restoration.
             // SwiftUI assigns identifiers like "version-history-1" based on the Window id.
             for window in NSApp.windows where window.identifier?.rawValue.hasPrefix("version-history") == true {
-                #if DEBUG
-                print("[AppDelegate] Closing restored version-history window: id=\(window.identifier?.rawValue ?? "nil")")
-                #endif
+                DebugLog.log(.lifecycle, "[AppDelegate] Closing restored version-history window: id=\(window.identifier?.rawValue ?? "nil")")
                 window.isRestorable = false  // must be set before close
                 window.close()
             }
@@ -144,9 +132,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if let window = NSApp.windows.first {
                 self?.mainWindow = window
                 window.delegate = self
-                #if DEBUG
-                print("[AppDelegate] Set window delegate for Cmd-W interception")
-                #endif
+                DebugLog.log(.lifecycle, "[AppDelegate] Set window delegate for Cmd-W interception")
 
                 // If macOS restored the window to fullscreen (Saved Application State),
                 // ensure we switch to that Space immediately
@@ -164,9 +150,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if TestMode.isUITesting {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
                 if NSApp.windows.isEmpty {
-                    #if DEBUG
-                    print("[AppDelegate] Test mode: 0 windows after 0.5s, re-activating via LaunchServices")
-                    #endif
+                    DebugLog.log(.lifecycle, "[AppDelegate] Test mode: 0 windows after 0.5s, re-activating via LaunchServices")
                     let config = NSWorkspace.OpenConfiguration()
                     config.activates = true
                     NSWorkspace.shared.openApplication(
@@ -174,9 +158,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                         configuration: config
                     ) { _, error in
                         if let error = error {
-                            #if DEBUG
-                            print("[AppDelegate] LaunchServices re-activation failed: \(error)")
-                            #endif
+                            DebugLog.log(.lifecycle, "[AppDelegate] LaunchServices re-activation failed: \(error)")
                         }
                     }
 
@@ -226,9 +208,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        #if DEBUG
-        print("[AppDelegate] Application terminating")
-        #endif
+        DebugLog.log(.lifecycle, "[AppDelegate] Application terminating")
 
         // Flush pending content to prevent data loss on quit.
         // Synchronous — GRDB writes complete before process exits.
@@ -246,9 +226,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // MARK: - NSWindowDelegate
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
-        #if DEBUG
-        print("[AppDelegate] windowShouldClose called (Cmd-W intercepted)")
-        #endif
+        DebugLog.log(.lifecycle, "[AppDelegate] windowShouldClose called (Cmd-W intercepted)")
 
         // Call project close handler
         // This handles unsaved changes dialogs, Getting Started prompts, etc.

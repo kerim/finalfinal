@@ -80,9 +80,7 @@ struct FinalFinalApp: App {
             }
             .background { OpenExportPreferencesListener() }
             .onChange(of: appViewState) { oldState, newState in
-                #if DEBUG
-                print("[FinalFinalApp] State changed: \(oldState) -> \(newState)")
-                #endif
+                DebugLog.log(.lifecycle, "[FinalFinalApp] State changed: \(oldState) -> \(newState)")
             }
         }
         .commands {
@@ -136,9 +134,7 @@ struct FinalFinalApp: App {
                     try documentManager.openProject(at: url)
                     appViewState = .editor
                 } catch {
-                    #if DEBUG
-                    print("[TestMode] Failed to open fixture: \(error)")
-                    #endif
+                    DebugLog.log(.lifecycle, "[TestMode] Failed to open fixture: \(error)")
                     appViewState = .picker
                 }
             } else {
@@ -161,9 +157,7 @@ struct FinalFinalApp: App {
                 return
             }
         } catch {
-            #if DEBUG
-            print("[FinalFinalApp] Failed to restore last project: \(error)")
-            #endif
+            DebugLog.log(.lifecycle, "[FinalFinalApp] Failed to restore last project: \(error)")
         }
 
         // Show project picker
@@ -180,23 +174,17 @@ struct FinalFinalApp: App {
         } else {
             appViewState = .editor
         }
-        #if DEBUG
-        print("[FinalFinalApp] Project opened, state: \(appViewState)")
-        #endif
+        DebugLog.log(.lifecycle, "[FinalFinalApp] Project opened, state: \(appViewState)")
     }
 
     /// Handle project closed notification - show picker
     @MainActor
     private func handleProjectClosed() {
-        #if DEBUG
-        print("[FinalFinalApp] handleProjectClosed() called, hasOpenProject: \(documentManager.hasOpenProject)")
-        #endif
+        DebugLog.log(.lifecycle, "[FinalFinalApp] handleProjectClosed() called, hasOpenProject: \(documentManager.hasOpenProject)")
         // Only update state if no project is open
         // (avoids race conditions when switching projects)
         guard !documentManager.hasOpenProject else {
-            #if DEBUG
-            print("[FinalFinalApp] handleProjectClosed() - skipping because hasOpenProject=true")
-            #endif
+            DebugLog.log(.lifecycle, "[FinalFinalApp] handleProjectClosed() - skipping because hasOpenProject=true")
             return
         }
         appViewState = .picker
@@ -214,9 +202,7 @@ struct FinalFinalApp: App {
             try documentManager.openGettingStarted()
             appViewState = .gettingStarted
         } catch {
-            #if DEBUG
-            print("[FinalFinalApp] Failed to open Getting Started: \(error)")
-            #endif
+            DebugLog.log(.lifecycle, "[FinalFinalApp] Failed to open Getting Started: \(error)")
             // Fall back to picker on error
             appViewState = .picker
         }

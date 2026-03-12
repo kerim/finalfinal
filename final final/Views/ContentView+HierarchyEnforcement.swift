@@ -116,9 +116,7 @@ extension ContentView {
         editorState: EditorViewState,
         syncService: SectionSyncService
     ) async {
-        #if DEBUG
-        print("[SYNC-DIAG:Hierarchy] entry: \(editorState.sections.count) sections, contentState=\(editorState.contentState)")
-        #endif
+        DebugLog.log(.sync, "[SYNC-DIAG:Hierarchy] entry: \(editorState.sections.count) sections, contentState=\(editorState.contentState)")
 
         editorState.contentState = .hierarchyEnforcement
         defer { editorState.contentState = .idle }
@@ -147,9 +145,7 @@ extension ContentView {
         // 5. If no heading levels changed, nothing to push to editor
         guard !headingChanges.isEmpty else { return }
 
-        #if DEBUG
-        print("[SYNC-DIAG:Hierarchy] \(headingChanges.count) heading changes to push")
-        #endif
+        DebugLog.log(.sync, "[SYNC-DIAG:Hierarchy] \(headingChanges.count) heading changes to push")
 
         // 6. Push changes to editor
         if editorState.editorMode == .source {
@@ -168,9 +164,7 @@ extension ContentView {
                 editorState.content = updatedContent
             } else {
                 // Fallback if JS call fails (e.g., temp IDs not found)
-                #if DEBUG
-                print("[SYNC-DIAG:Hierarchy] updateHeadingLevels returned nil, falling back to string replacement")
-                #endif
+                DebugLog.log(.sync, "[SYNC-DIAG:Hierarchy] updateHeadingLevels returned nil, falling back to string replacement")
                 applyHeadingChangesViaStringReplacement(
                     editorState: editorState,
                     headingChanges: headingChanges,
@@ -300,9 +294,7 @@ extension ContentView {
             }
             try db.applySectionChanges(sectionChanges, for: pid)
         } catch {
-            #if DEBUG
-            print("[ContentView] Error persisting enforced sections: \(error)")
-            #endif
+            DebugLog.log(.sync, "[ContentView] Error persisting enforced sections: \(error)")
         }
     }
 

@@ -117,9 +117,7 @@ class AnnotationSyncService {
         do {
             return try db.fetchAnnotations(contentId: cid)
         } catch {
-            #if DEBUG
-            print("[AnnotationSyncService] Error loading annotations: \(error.localizedDescription)")
-            #endif
+            DebugLog.log(.editor, "[AnnotationSyncService] Error loading annotations: \(error.localizedDescription)")
             return []
         }
     }
@@ -134,9 +132,7 @@ class AnnotationSyncService {
     /// Core sync method using position-based reconciliation
     private func syncContent(_ markdown: String) async {
         guard let db = projectDatabase, let cid = contentId else {
-            #if DEBUG
-            print("[AnnotationSyncService] syncContent skipped - database not configured")
-            #endif
+            DebugLog.log(.editor, "[AnnotationSyncService] syncContent skipped - database not configured")
             return
         }
 
@@ -149,9 +145,7 @@ class AnnotationSyncService {
             let allAnnotations = try db.fetchAnnotations(contentId: cid)
             dbAnnotations = allAnnotations.filter { !$0.isDocumentLevel }
         } catch {
-            #if DEBUG
-            print("[AnnotationSyncService] Error fetching annotations: \(error.localizedDescription)")
-            #endif
+            DebugLog.log(.editor, "[AnnotationSyncService] Error fetching annotations: \(error.localizedDescription)")
             return
         }
 
@@ -163,9 +157,7 @@ class AnnotationSyncService {
             do {
                 try db.applyAnnotationChanges(changes, for: cid)
             } catch {
-                #if DEBUG
-                print("[AnnotationSyncService] Error applying changes: \(error.localizedDescription)")
-                #endif
+                DebugLog.log(.editor, "[AnnotationSyncService] Error applying changes: \(error.localizedDescription)")
             }
         }
 

@@ -108,12 +108,21 @@ Increment BUILD with every build. Update in `web/package.json` and `project.yml`
 
 ## Debugging
 
+### DebugLog Category System
+
+All Swift logging uses `DebugLog.log(.category, "message")` — a category-gated system in `final final/Utilities/DebugLog.swift`. By default only `.lifecycle` and `.zotero` are enabled. Enable more categories by editing `DebugLog.enabled` and rebuilding. See `docs/guides/debug-logging.md` for the full category list, JS bridge routing, and usage guide.
+
+**Key rules:**
+- Use `DebugLog.log(.category, ...)` for all new logging — never bare `print()`
+- Use `DebugLog.always(...)` only for mass-delete safety guards (data loss prevention)
+- `@autoclosure` avoids string interpolation cost when category is disabled
+
 ### Two-Attempt Rule
 
 After 2 failed fix attempts, STOP. Add diagnostic logging before trying again.
 
 1. First attempt fails → Reassess, try different approach
-2. Second attempt fails → Add logging to trace actual execution
+2. Second attempt fails → Add `DebugLog.log()` calls to trace actual execution (enable the relevant category)
 3. Analyze logs → Find verified root cause
 4. Then fix
 
@@ -123,13 +132,13 @@ Set `webView.isInspectable = true` in development. Safari → Develop → [app n
 
 **Limitation:** Web Inspector context is erased when switching between Milkdown and CodeMirror (WebView reloads). For debugging editor switches, use:
 
-1. **Swift-side logging:** Add `print()` statements in `MilkdownEditor.swift` / `CodeMirrorEditor.swift` to log values returned from `evaluateJavaScript`
+1. **Swift-side logging:** Add `DebugLog.log(.editor, ...)` calls in `MilkdownEditor.swift` / `CodeMirrorEditor.swift` to log values returned from `evaluateJavaScript`
 2. **Persistent debug state:** Use `window.__MILKDOWN_DEBUG__` or similar to store values, then query via `getDebugState()` before the switch
-3. **Xcode console:** All Swift `print()` output appears in Xcode's debug console and persists across editor switches
+3. **Xcode console:** All `DebugLog` output appears in Xcode's debug console and persists across editor switches
 
 ### JS → Xcode Debug Logging (errorHandler bridge)
 
-`console.log()` in WKWebView is **not** bridged to Xcode. Use the `errorHandler` message handler instead — it prints to Xcode console in debug builds without requiring Safari Web Inspector:
+`console.log()` in WKWebView is **not** bridged to Xcode. Use the `errorHandler` message handler instead — it routes JS messages through `DebugLog` categories in debug builds:
 
 ```typescript
 (window as any).webkit?.messageHandlers?.errorHandler?.postMessage({
@@ -138,7 +147,7 @@ Set `webView.isInspectable = true` in development. Safari → Develop → [app n
 });
 ```
 
-Both editors register this handler in `makeNSView()`. The Swift side (`#if DEBUG`) prints `[EditorName] JS DEBUG: ...` to Xcode console. See `docs/guides/webkit-debug-logging.md` for full details, helper patterns, and the canary technique.
+Both editors register this handler in `makeNSView()`. The Swift side routes by `type` field: `sync-diag` → `.sync` category, all others → `.editor` category. Enable the relevant category to see output. See `docs/guides/webkit-debug-logging.md` for full details, helper patterns, and the canary technique.
 
 ### Xcode Diagnostics (MCP)
 

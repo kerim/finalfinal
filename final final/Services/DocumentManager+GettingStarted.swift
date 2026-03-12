@@ -63,9 +63,7 @@ extension DocumentManager {
 
         // Do NOT add to recent projects - Getting Started is ephemeral
 
-        #if DEBUG
-        print("[DocumentManager] Opened Getting Started project")
-        #endif
+        DebugLog.log(.lifecycle, "[DocumentManager] Opened Getting Started project")
         return project.id
     }
 
@@ -80,9 +78,7 @@ extension DocumentManager {
         guard isGettingStartedProject else { return }
         gettingStartedLoadedHash = markdown.hashValue
         gettingStartedUserEdited = false
-        #if DEBUG
-        print("[DocumentManager] Recorded Getting Started loaded hash")
-        #endif
+        DebugLog.log(.lifecycle, "[DocumentManager] Recorded Getting Started loaded hash")
     }
 
     /// Check if content differs from what was loaded (true user edit)
@@ -93,9 +89,7 @@ extension DocumentManager {
 
         if currentMarkdown.hashValue != loadedHash {
             gettingStartedUserEdited = true
-            #if DEBUG
-            print("[DocumentManager] User edited Getting Started content")
-            #endif
+            DebugLog.log(.lifecycle, "[DocumentManager] User edited Getting Started content")
         }
     }
 

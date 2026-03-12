@@ -116,10 +116,8 @@ extension VersionHistoryWindow {
 
         do {
             snapshots = try database.fetchSnapshots(projectId: projectId)
-            #if DEBUG
-            print("[VersionHistory] loadSnapshots: \(snapshots.count) snapshots found")
-            print("[VersionHistory] coordinator.currentSections: \(coordinator.currentSections.count)")
-            #endif
+            DebugLog.log(.lifecycle, "[VersionHistory] loadSnapshots: \(snapshots.count) snapshots found")
+            DebugLog.log(.lifecycle, "[VersionHistory] coordinator.currentSections: \(coordinator.currentSections.count)")
             if let firstSnapshot = snapshots.first {
                 selectedSnapshotId = firstSnapshot.id
                 await loadSnapshotSections(snapshotId: firstSnapshot.id)
@@ -137,9 +135,7 @@ extension VersionHistoryWindow {
 
         do {
             selectedSnapshotSections = fetchOrParseSnapshotSections(snapshotId: snapshotId, database: database)
-            #if DEBUG
-            print("[VersionHistory] loadSnapshotSections: \(selectedSnapshotSections.count) sections for snapshot \(snapshotId)")
-            #endif
+            DebugLog.log(.lifecycle, "[VersionHistory] loadSnapshotSections: \(selectedSnapshotSections.count) sections for snapshot \(snapshotId)")
 
             // Load previous snapshot's sections for "vs Previous" comparison
             if let prevSnapshot = try database.fetchPreviousSnapshot(before: snapshotId, projectId: projectId) {
@@ -148,9 +144,7 @@ extension VersionHistoryWindow {
                 previousSnapshotSections = []
             }
         } catch {
-            #if DEBUG
-            print("[VersionHistoryWindow] Error loading snapshot sections: \(error)")
-            #endif
+            DebugLog.log(.lifecycle, "[VersionHistoryWindow] Error loading snapshot sections: \(error)")
             selectedSnapshotSections = []
             previousSnapshotSections = []
         }
@@ -172,15 +166,11 @@ extension VersionHistoryWindow {
                         sortOrder: header.position
                     )
                 }
-                #if DEBUG
-                print("[VersionHistory] fetchOrParseSnapshotSections: fallback parsed \(sections.count) sections from previewMarkdown")
-                #endif
+                DebugLog.log(.lifecycle, "[VersionHistory] fetchOrParseSnapshotSections: fallback parsed \(sections.count) sections from previewMarkdown")
             }
             return sections
         } catch {
-            #if DEBUG
-            print("[VersionHistory] fetchOrParseSnapshotSections ERROR for snapshot \(snapshotId): \(error)")
-            #endif
+            DebugLog.log(.lifecycle, "[VersionHistory] fetchOrParseSnapshotSections ERROR for snapshot \(snapshotId): \(error)")
             return []
         }
     }

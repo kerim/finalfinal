@@ -40,9 +40,7 @@ final class ProjectStore {
 
             startObserving()
             isLoading = false
-            #if DEBUG
-            print("[ProjectStore] Opened project: \(project?.title ?? "unknown")")
-            #endif
+            DebugLog.log(.lifecycle, "[ProjectStore] Opened project: \(project?.title ?? "unknown")")
         } catch {
             self.error = error
             isLoading = false
@@ -67,9 +65,7 @@ final class ProjectStore {
             outlineNodes = []
             startObserving()
             isLoading = false
-            #if DEBUG
-            print("[ProjectStore] Created project: \(title)")
-            #endif
+            DebugLog.log(.lifecycle, "[ProjectStore] Created project: \(title)")
         } catch {
             self.error = error
             isLoading = false
@@ -86,9 +82,7 @@ final class ProjectStore {
         content = nil
         outlineNodes = []
         error = nil
-        #if DEBUG
-        print("[ProjectStore] Closed project")
-        #endif
+        DebugLog.log(.lifecycle, "[ProjectStore] Closed project")
     }
 
     // MARK: - Content Operations

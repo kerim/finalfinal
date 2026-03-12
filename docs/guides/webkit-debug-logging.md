@@ -21,18 +21,27 @@ Both editors register a `WKScriptMessageHandler` named `"errorHandler"`:
 controller.add(context.coordinator, name: "errorHandler")
 ```
 
-The coordinator prints messages to Xcode console (debug builds only):
+The coordinator routes messages through `DebugLog` categories (debug builds only):
 
 ```swift
 // In CodeMirrorCoordinator+Handlers.swift / MilkdownCoordinator+MessageHandlers.swift
-#if DEBUG
 if message.name == "errorHandler", let body = message.body as? [String: Any] {
     let msgType = body["type"] as? String ?? "unknown"
-    let errorMsg = body["message"] as? String ?? "unknown"
-    print("[CodeMirrorEditor] JS \(msgType.uppercased()): \(errorMsg)")
+    let msg = body["message"] as? String ?? "unknown"
+    switch msgType {
+    case "sync-diag":
+        DebugLog.log(.sync, "[CodeMirrorEditor] JS SYNC-DIAG: \(msg)")
+    case "debug", "slash-diag":
+        DebugLog.log(.editor, "[CodeMirrorEditor] JS \(msgType.uppercased()): \(msg)")
+    case "plugin-error", "unhandledrejection", "error":
+        DebugLog.log(.editor, "[CodeMirrorEditor] JS ERROR: \(msg)")
+    default:
+        DebugLog.log(.editor, "[CodeMirrorEditor] JS \(msgType.uppercased()): \(msg)")
+    }
 }
-#endif
 ```
+
+Enable `.sync` to see sync diagnostics, or `.editor` to see JS errors and debug messages. See [debug-logging.md](debug-logging.md) for the full category system.
 
 ## Usage in JavaScript/TypeScript
 
@@ -71,11 +80,14 @@ See `slash-completions.ts:slashLog()` for a working example.
 
 ### Type field conventions
 
-| `type` value | Used for |
-|---|---|
-| `debug` | General diagnostics |
-| `error` | JS errors, catch blocks |
-| `slash-diag` | Slash command diagnostics |
+| `type` value | Used for | Swift `DebugLog` category |
+|---|---|---|
+| `sync-diag` | Block sync diagnostics | `.sync` |
+| `debug` | General diagnostics | `.editor` |
+| `error` | JS errors, catch blocks | `.editor` |
+| `slash-diag` | Slash command diagnostics | `.editor` |
+| `plugin-error` | CodeMirror exception sink | `.editor` |
+| `unhandledrejection` | Unhandled promise rejections | `.editor` |
 
 The Swift side uppercases the type in the log prefix, e.g. `[CodeMirrorEditor] JS DEBUG: ...`.
 
@@ -117,4 +129,4 @@ The "0 replace" immediately showed that no captions were being found, pointing t
 
 ## When to Remove Diagnostic Logs
 
-Keep diagnostic logs until the user has verified the fix works in production. Then remove them to avoid console noise (see `docs/lessons/swiftui-webkit.md` — "Console Print Statements Cause UI Freezes" for why).
+With the `DebugLog` category system, diagnostic logs can remain in the codebase permanently — they only print when their category is enabled. No need to remove them after debugging; they serve as documentation and can be re-enabled for future investigations.

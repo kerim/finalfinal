@@ -130,9 +130,7 @@ extension VersionHistorySheet {
                 previousSnapshotSections = []
             }
         } catch {
-            #if DEBUG
-            print("[VersionHistorySheet] Error loading snapshot sections: \(error)")
-            #endif
+            DebugLog.log(.lifecycle, "[VersionHistorySheet] Error loading snapshot sections: \(error)")
             selectedSnapshotSections = []
             previousSnapshotSections = []
         }
