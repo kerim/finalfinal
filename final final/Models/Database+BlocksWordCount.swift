@@ -104,6 +104,18 @@ extension ProjectDatabase {
             // Build a sorted array of heading sortOrders for boundary lookup
             let headingSortOrders = allHeadings.map { $0.sortOrder }
 
+            // Sum word counts for blocks in [startSortOrder, endSortOrder)
+            func sumWords(from startSortOrder: Double, until endSortOrder: Double?) -> Int {
+                var total = 0
+                for row in allBlocks {
+                    let rowSortOrder: Double = row["sortOrder"]
+                    if rowSortOrder < startSortOrder { continue }
+                    if let limit = endSortOrder, rowSortOrder >= limit { break }
+                    total += row["wordCount"] as Int
+                }
+                return total
+            }
+
             var result: [String: HeadingWordCounts] = [:]
 
             for heading in headingBlocks {
@@ -112,14 +124,7 @@ extension ProjectDatabase {
                 // Section-only: from this heading to the next heading of ANY level
                 let nextAnyIdx = headingSortOrders.firstIndex(where: { $0 > headingSortOrder })
                 let nextAnySortOrder = nextAnyIdx.map { headingSortOrders[$0] }
-
-                var sectionOnly = 0
-                for row in allBlocks {
-                    let rowSortOrder: Double = row["sortOrder"]
-                    if rowSortOrder < headingSortOrder { continue }
-                    if let limit = nextAnySortOrder, rowSortOrder >= limit { break }
-                    sectionOnly += row["wordCount"] as Int
-                }
+                let sectionOnly = sumWords(from: headingSortOrder, until: nextAnySortOrder)
 
                 // Aggregate: from this heading to next heading at same or higher level
                 var aggregate = sectionOnly  // Default if not needed
@@ -127,14 +132,7 @@ extension ProjectDatabase {
                     let nextSameOrHigherSO = allHeadings
                         .first(where: { $0.sortOrder > headingSortOrder && ($0.headingLevel ?? 99) <= headingLevel })
                         .map { $0.sortOrder }
-
-                    aggregate = 0
-                    for row in allBlocks {
-                        let rowSortOrder: Double = row["sortOrder"]
-                        if rowSortOrder < headingSortOrder { continue }
-                        if let limit = nextSameOrHigherSO, rowSortOrder >= limit { break }
-                        aggregate += row["wordCount"] as Int
-                    }
+                    aggregate = sumWords(from: headingSortOrder, until: nextSameOrHigherSO)
                 }
 
                 result[heading.id] = HeadingWordCounts(sectionOnly: sectionOnly, aggregate: aggregate)

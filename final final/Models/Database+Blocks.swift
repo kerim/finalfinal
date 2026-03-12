@@ -415,11 +415,10 @@ extension ProjectDatabase {
                 }
 
                 // Within-batch dedup: skip duplicate image inserts in the same sync cycle
-                if insert.blockType == "image" {
-                    let fragment = insert.markdownFragment.trimmingCharacters(in: .whitespacesAndNewlines)
-                    if let existingId = insertedImageFragments[fragment] {
+                if blockType == .image {
+                    if let existingId = insertedImageFragments[insertTrimmed] {
                         idMapping[insert.tempId] = existingId
-                        DebugLog.log(.data, "[Blocks] Skipped duplicate image insert: \(fragment.prefix(40))")
+                        DebugLog.log(.data, "[Blocks] Skipped duplicate image insert: \(insertTrimmed.prefix(40))")
                         continue
                     }
                 }
@@ -441,17 +440,16 @@ extension ProjectDatabase {
                 block.recalculateWordCount()
 
                 // Mark footnote definitions as isNotes (safety net for editor-created blocks)
-                let fragTrimmed = insert.markdownFragment.trimmingCharacters(in: .whitespacesAndNewlines)
-                if fragTrimmed.range(of: #"^\[\^\d+\]:\s*"#, options: .regularExpression) != nil {
+                if insertTrimmed.range(of: #"^\[\^\d+\]:\s*"#, options: .regularExpression) != nil {
                     block.isNotes = true
                 }
 
                 // Auto-populate image metadata from markdown for image blocks
                 if blockType == .image {
-                    if let imageMatch = fragTrimmed.range(
+                    if let imageMatch = insertTrimmed.range(
                         of: #"!\[([^\]]*)\]\(([^)]+)\)"#, options: .regularExpression
                     ) {
-                        let matchStr = String(fragTrimmed[imageMatch])
+                        let matchStr = String(insertTrimmed[imageMatch])
                         if let altRange = matchStr.range(of: #"(?<=!\[)[^\]]*(?=\])"#, options: .regularExpression),
                            let srcRange = matchStr.range(of: #"(?<=\()[^)]+(?=\))"#, options: .regularExpression) {
                             block.imageAlt = String(matchStr[altRange])
@@ -463,9 +461,8 @@ extension ProjectDatabase {
                 try block.insert(db)
 
                 // Record image fragment for within-batch dedup
-                if insert.blockType == "image" {
-                    let fragment = insert.markdownFragment.trimmingCharacters(in: .whitespacesAndNewlines)
-                    insertedImageFragments[fragment] = permanentId
+                if blockType == .image {
+                    insertedImageFragments[insertTrimmed] = permanentId
                 }
 
                 // Record the mapping from temp ID to permanent ID
@@ -586,15 +583,11 @@ extension ProjectDatabase {
             }
 
             if !idsToDelete.isEmpty {
-                for id in idsToDelete {
-                    try Block.deleteOne(db, key: id)
-                }
+                try Block.deleteAll(db, keys: idsToDelete)
                 DebugLog.always("[Blocks] Removed \(idsToDelete.count) duplicate image blocks from project \(projectId.prefix(8))")
-            }
-
-            // Log per-block details at .data level to avoid console spam
-            for id in idsToDelete {
-                DebugLog.log(.data, "[Blocks] Deleted duplicate image block: \(id.prefix(8))")
+                for id in idsToDelete {
+                    DebugLog.log(.data, "[Blocks] Deleted duplicate image block: \(id.prefix(8))")
+                }
             }
         }
     }
