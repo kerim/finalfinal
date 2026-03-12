@@ -58,6 +58,21 @@ export function setContentHasBeenSet(value: boolean): void {
   contentHasBeenSet = value;
 }
 
+// Content push timer management — shared so api-content.ts can clear stale timers
+// when Swift programmatically replaces document content (prevents race conditions)
+let contentPushTimer: ReturnType<typeof setTimeout> | null = null;
+
+export function setContentPushTimer(timer: ReturnType<typeof setTimeout>): void {
+  contentPushTimer = timer;
+}
+
+export function clearContentPushTimer(): void {
+  if (contentPushTimer) {
+    clearTimeout(contentPushTimer);
+    contentPushTimer = null;
+  }
+}
+
 // Track zoom mode state for footnote insertion
 let isZoomMode = false;
 let documentFootnoteCount = 0;

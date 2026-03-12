@@ -254,16 +254,16 @@ class EditorViewState {
                     // Convert blocks to SectionViewModels
                     var viewModels = outlineBlocks.map { SectionViewModel(from: $0) }
 
-                    // Section-only word counts (own content, not children)
-                    for i in viewModels.indices {
-                        let vm = viewModels[i]
-                        if let wc = try? database.sectionOnlyWordCount(blockId: vm.id) {
-                            viewModels[i].wordCount = wc
-                        }
-                        // Aggregate word count (only computed when aggregate goal exists)
-                        if viewModels[i].aggregateGoal != nil {
-                            if let awc = try? database.wordCountForHeading(blockId: vm.id) {
-                                viewModels[i].aggregateWordCount = awc
+                    // Batch word counts in a single DB read (replaces N+1 individual queries)
+                    let blockIds = viewModels.map { $0.id }
+                    let needsAggregate = Set(viewModels.filter { $0.aggregateGoal != nil }.map { $0.id })
+                    if let counts = try? database.batchWordCounts(blockIds: blockIds, needsAggregate: needsAggregate) {
+                        for i in viewModels.indices {
+                            if let wc = counts[viewModels[i].id] {
+                                viewModels[i].wordCount = wc.sectionOnly
+                                if viewModels[i].aggregateGoal != nil {
+                                    viewModels[i].aggregateWordCount = wc.aggregate
+                                }
                             }
                         }
                     }
@@ -291,14 +291,17 @@ class EditorViewState {
         do {
             let outlineBlocks = try db.fetchOutlineBlocks(projectId: pid)
             var viewModels = outlineBlocks.map { SectionViewModel(from: $0) }
-            for i in viewModels.indices {
-                if let wc = try? db.sectionOnlyWordCount(blockId: viewModels[i].id) {
-                    viewModels[i].wordCount = wc
-                }
-                // Aggregate word count (only computed when aggregate goal exists)
-                if viewModels[i].aggregateGoal != nil {
-                    if let awc = try? db.wordCountForHeading(blockId: viewModels[i].id) {
-                        viewModels[i].aggregateWordCount = awc
+
+            // Batch word counts in a single DB read (replaces N+1 individual queries)
+            let blockIds = viewModels.map { $0.id }
+            let needsAggregate = Set(viewModels.filter { $0.aggregateGoal != nil }.map { $0.id })
+            if let counts = try? db.batchWordCounts(blockIds: blockIds, needsAggregate: needsAggregate) {
+                for i in viewModels.indices {
+                    if let wc = counts[viewModels[i].id] {
+                        viewModels[i].wordCount = wc.sectionOnly
+                        if viewModels[i].aggregateGoal != nil {
+                            viewModels[i].aggregateWordCount = wc.aggregate
+                        }
                     }
                 }
             }
