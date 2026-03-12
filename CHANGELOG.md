@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Bibliography corruption from block ID proximity theft** — `assignBlockIds()` used greedy proximity matching in document order, so new paragraphs near the bibliography boundary could steal a bibliography entry's ID before the real entry claimed it. Refactored to two-phase matching: Phase 1 claims exact-position matches, Phase 2 collects all proximity candidates globally and assigns closest-first. Added `isBibliography` guard in `applyBlockChangesFromEditor` to reject editor-sync updates to machine-generated bibliography blocks. Supporting fixes: split bibliography into per-entry blocks, filter empty fragments in `assembleMarkdown`, reorder inserts before updates, cursor clamping at bibliography boundary, force-flush JS changes before DB reads, queue bibliography/notes notifications when contentState is non-idle.
+
+### Changed
+
+- **DebugLog category system replaces ~336 print() calls** — added `DebugLog.swift` with 14 toggleable categories (sync, editor, scheme, lifecycle, zotero, etc.). Only `.lifecycle` and `.zotero` enabled by default. Migrated all `#if DEBUG`/`print()`/`#endif` blocks to `DebugLog.log(.category, ...)` one-liners across 59 files. JS `errorHandler` bridge now routes by message type (`sync-diag` → `.sync`, others → `.editor`). Mass-delete safety guards use `DebugLog.always()` (prints in all builds). 11 previously unguarded error-path prints are now debug-only. Net reduction: ~460 lines removed.
+- **Minor cleanup** — replaced `pendingIdRemap = new Map()` with `.clear()` at 4 sites; removed wasteful full-row `fetchOutlineBlocks` query in DEBUG block (only needed `.count`)
+
+### Added
+
+- **BlockParser alignment tests** — test coverage for `idsForProseMirrorAlignment()` list-item collapsing
+
 ## [0.2.74] - 2026-03-10
 
 ### Fixed
