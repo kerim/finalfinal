@@ -174,6 +174,8 @@ function nodeToMarkdownFragment(node: Node): string {
     }
     case 'horizontal_rule':
       return '---';
+    case 'section_break':
+      return '<!-- ::break:: -->';
     case 'figure':
       return `![${node.attrs.alt || ''}](${node.attrs.src || ''})`;
     case 'table':
@@ -289,22 +291,38 @@ function detectChanges(
       oldBlock.markdownFragment !== newBlock.markdownFragment ||
       oldBlock.headingLevel !== newBlock.headingLevel
     ) {
-      // Block was updated — use pre-computed markdownFragment from snapshot
-      state.pendingUpdates.set(id, {
-        id,
-        textContent: newBlock.textContent,
-        markdownFragment: newBlock.markdownFragment,
-        headingLevel: newBlock.headingLevel,
-      });
-      const changes: string[] = [];
-      if (oldBlock.textContent !== newBlock.textContent) changes.push('text');
-      if (oldBlock.nodeSize !== newBlock.nodeSize) changes.push(`size:${oldBlock.nodeSize}→${newBlock.nodeSize}`);
-      if (oldBlock.headingLevel !== newBlock.headingLevel)
-        changes.push(`level:${oldBlock.headingLevel}→${newBlock.headingLevel}`);
-      syncLog(
-        'BlockSync:detect',
-        `UPDATE id=${id.slice(0, 8)} [${changes.join(',')}] "${newBlock.textContent.slice(0, 40)}"`
-      );
+      // If this block is already pending as an insert, update the insert's content
+      // instead of adding a separate update (prevents INSERT+UPDATE overlap → orphan blocks)
+      if (state.pendingInserts.has(id)) {
+        const existing = state.pendingInserts.get(id)!;
+        state.pendingInserts.set(id, {
+          ...existing,
+          textContent: newBlock.textContent,
+          markdownFragment: newBlock.markdownFragment,
+          headingLevel: newBlock.headingLevel,
+        });
+        syncLog(
+          'BlockSync:detect',
+          `UPDATE-merged-into-INSERT id=${id.slice(0, 13)} "${newBlock.textContent.slice(0, 40)}"`
+        );
+      } else {
+        // Block was updated — use pre-computed markdownFragment from snapshot
+        state.pendingUpdates.set(id, {
+          id,
+          textContent: newBlock.textContent,
+          markdownFragment: newBlock.markdownFragment,
+          headingLevel: newBlock.headingLevel,
+        });
+        const changes: string[] = [];
+        if (oldBlock.textContent !== newBlock.textContent) changes.push('text');
+        if (oldBlock.nodeSize !== newBlock.nodeSize) changes.push(`size:${oldBlock.nodeSize}→${newBlock.nodeSize}`);
+        if (oldBlock.headingLevel !== newBlock.headingLevel)
+          changes.push(`level:${oldBlock.headingLevel}→${newBlock.headingLevel}`);
+        syncLog(
+          'BlockSync:detect',
+          `UPDATE id=${id.slice(0, 8)} [${changes.join(',')}] "${newBlock.textContent.slice(0, 40)}"`
+        );
+      }
     }
   }
 
@@ -342,6 +360,32 @@ function detectChanges(
 // Debounce state for detectChanges() — keeps snapshotBlocks() synchronous
 let detectTimer: ReturnType<typeof setTimeout> | null = null;
 let pendingOldSnapshot: Map<string, BlockSnapshot> | null = null;
+
+// Accumulates temp→permanent ID remappings that arrive mid-debounce.
+// Applied to closure-captured snapshots in the setTimeout callback
+// before calling detectChanges(), preventing stale temp IDs from
+// generating spurious INSERT/UPDATE pairs.
+let pendingIdRemap: Map<string, string> = new Map();
+
+/**
+ * Re-key a snapshot map using accumulated ID remappings.
+ * Must be applied to BOTH capturedOld AND newSnapshot — applying only to one
+ * would cause the permanent-ID block to fail the `id.startsWith('temp-')` guard
+ * in insert detection, silently losing the insert.
+ */
+function remapSnapshot(snapshot: Map<string, BlockSnapshot>, remap: Map<string, string>): Map<string, BlockSnapshot> {
+  if (remap.size === 0) return snapshot;
+  const result = new Map<string, BlockSnapshot>();
+  for (const [id, block] of snapshot) {
+    const newId = remap.get(id);
+    if (newId) {
+      result.set(newId, { ...block, id: newId });
+    } else {
+      result.set(id, block);
+    }
+  }
+  return result;
+}
 
 // Wrap ProseMirror plugin with $prose for Milkdown compatibility
 export const blockSyncPlugin = $prose(() => {
@@ -391,9 +435,13 @@ export const blockSyncPlugin = $prose(() => {
 
         detectTimer = setTimeout(() => {
           if (currentState) {
-            detectChanges(capturedOld, newSnapshot, currentState);
+            // Re-key captured snapshots with any confirmations that arrived mid-debounce
+            const resolvedOld = remapSnapshot(capturedOld, pendingIdRemap);
+            const resolvedNew = remapSnapshot(newSnapshot, pendingIdRemap);
+            detectChanges(resolvedOld, resolvedNew, currentState);
           }
           pendingOldSnapshot = null;
+          pendingIdRemap = new Map();
           detectTimer = null;
         }, 100);
 
@@ -414,6 +462,7 @@ export function resetBlockSyncState(): void {
     detectTimer = null;
     pendingOldSnapshot = null;
   }
+  pendingIdRemap = new Map();
   if (currentState) {
     currentState.pendingUpdates.clear();
     currentState.pendingInserts.clear();
@@ -440,6 +489,10 @@ export function updateSnapshotIds(mapping: Map<string, string>): void {
     }
   }
   currentState.lastSnapshot = updated;
+  // Accumulate for detectTimer — re-keys closure-captured snapshots mid-debounce
+  for (const [oldId, newId] of mapping) {
+    pendingIdRemap.set(oldId, newId);
+  }
   // Re-key any pending changes that reference old temp IDs
   for (const [oldId, newId] of mapping) {
     if (currentState.pendingUpdates.has(oldId)) {
@@ -470,6 +523,7 @@ export function resetAndSnapshot(doc: Node): void {
     detectTimer = null;
     pendingOldSnapshot = null;
   }
+  pendingIdRemap = new Map();
   currentState.pendingUpdates.clear();
   currentState.pendingInserts.clear();
   currentState.pendingDeletes.clear();
@@ -486,6 +540,7 @@ export function destroyBlockSyncState(): void {
     detectTimer = null;
     pendingOldSnapshot = null;
   }
+  pendingIdRemap = new Map();
   if (currentState) {
     currentState.pendingUpdates.clear();
     currentState.pendingInserts.clear();

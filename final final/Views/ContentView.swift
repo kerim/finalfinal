@@ -92,6 +92,12 @@ struct ContentView: View {
     /// here and processed when contentState returns to .idle.
     @State var pendingFootnoteLabel: String?
 
+    /// Queued bibliography/notes rebuild flags.
+    /// If a rebuild notification arrives while contentState != .idle, store the flag
+    /// and process it when contentState returns to .idle.
+    @State var pendingBibliographyRebuild = false
+    @State var pendingNotesRebuild = false
+
     /// Callback when project is closed (to return to picker)
     var onProjectClosed: (() -> Void)?
 
@@ -170,11 +176,17 @@ struct ContentView: View {
                 }
             )
             .onReceive(NotificationCenter.default.publisher(for: .bibliographySectionChanged)) { _ in
+                #if DEBUG
+                print("[CV:bibNotif] contentState=\(editorState.contentState) suppress=\(suppressNextBibliographyRebuild) pendingBib=\(pendingBibliographyRebuild) content.isEmpty=\(editorState.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)")
+                #endif
                 // Bibliography section was updated in the database - rebuild editor content
                 // Skip if zoomed into a section (bibliography update only affects full document view)
                 guard editorState.zoomedSectionId == nil else { return }
                 // Skip during any content transition (including editor switch)
-                guard editorState.contentState == .idle else { return }
+                guard editorState.contentState == .idle else {
+                    pendingBibliographyRebuild = true
+                    return
+                }
                 // Skip the first bibliography notification after a project switch
                 // (it fires from the old project's debounced citekey check)
                 // Skip rebuild when editor content is empty - no citations exist,
@@ -195,19 +207,36 @@ struct ContentView: View {
                 editorState.contentState = .bibliographyUpdate
                 editorState.isResettingContent = true  // prevent updateNSView → setContent()
 
-                guard let result = fetchBlocksWithIds() else {
-                    editorState.isResettingContent = false
-                    editorState.contentState = .idle
-                    return
-                }
-
-                editorState.content = result.markdown  // sidebar sync (won't trigger WKWebView push)
-                updateSourceContentIfNeeded()
-
                 Task {
+                    // Force-flush pending JS changes to DB before reading blocks
+                    #if DEBUG
+                    if let db = documentManager.projectDatabase, let pid = documentManager.projectId {
+                        let blockCount = try? db.fetchBlockCount(projectId: pid)
+                        print("[CV:bibRebuild] BEFORE poll: \(blockCount ?? -1) blocks in DB")
+                    }
+                    #endif
+                    await blockSyncService.pollBlockChangesNow()
+                    #if DEBUG
+                    if let db = documentManager.projectDatabase, let pid = documentManager.projectId {
+                        let blockCount = try? db.fetchBlockCount(projectId: pid)
+                        let headingCount = try? db.fetchOutlineBlocks(projectId: pid).count
+                        print("[CV:bibRebuild] AFTER poll: \(blockCount ?? -1) blocks, \(headingCount ?? -1) headings in DB")
+                    }
+                    #endif
+
+                    guard let result = fetchBlocksWithIds() else {
+                        editorState.isResettingContent = false
+                        editorState.contentState = .idle
+                        return
+                    }
+
+                    editorState.content = result.markdown  // sidebar sync (won't trigger WKWebView push)
+                    updateSourceContentIfNeeded()
+
                     await blockSyncService.setContentWithBlockIds(
                         markdown: result.markdown, blockIds: result.blockIds,
-                        imageMeta: result.imageMeta)
+                        imageMeta: result.imageMeta,
+                        cursorBoundary: result.bibBoundaryIndex)
                     editorState.isResettingContent = false
                     editorState.contentState = .idle
                 }
@@ -215,39 +244,69 @@ struct ContentView: View {
             .onReceive(NotificationCenter.default.publisher(for: .notesSectionChanged)) { _ in
                 // Notes section was updated in the database - rebuild editor content
                 guard editorState.zoomedSectionId == nil else { return }
-                guard editorState.contentState == .idle else { return }
+                guard editorState.contentState == .idle else {
+                    pendingNotesRebuild = true
+                    return
+                }
                 guard !editorState.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
 
                 // Atomic content+IDs push (same pattern as bibliography)
                 editorState.contentState = .bibliographyUpdate  // Reuse same state
                 editorState.isResettingContent = true
 
-                guard let result = fetchBlocksWithIds() else {
-                    editorState.isResettingContent = false
-                    editorState.contentState = .idle
-                    return
-                }
-
-                editorState.content = result.markdown
-                updateSourceContentIfNeeded()
-
                 Task {
+                    // Force-flush pending JS changes to DB before reading blocks
+                    await blockSyncService.pollBlockChangesNow()
+
+                    guard let result = fetchBlocksWithIds() else {
+                        editorState.isResettingContent = false
+                        editorState.contentState = .idle
+                        return
+                    }
+
+                    editorState.content = result.markdown
+                    updateSourceContentIfNeeded()
+
                     await blockSyncService.setContentWithBlockIds(
                         markdown: result.markdown, blockIds: result.blockIds,
-                        imageMeta: result.imageMeta)
+                        imageMeta: result.imageMeta,
+                        cursorBoundary: result.bibBoundaryIndex)
                     editorState.isResettingContent = false
                     editorState.contentState = .idle
                 }
             }
-            .onChange(of: editorState.contentState) { _, newValue in
-                // Process queued footnote label when contentState returns to idle
-                if newValue == .idle, let pending = pendingFootnoteLabel {
+            .onChange(of: editorState.contentState) { oldValue, newValue in
+                #if DEBUG
+                print("[CV:stateChange] \(oldValue)→\(newValue) pendingBib=\(pendingBibliographyRebuild) pendingNotes=\(pendingNotesRebuild)")
+                #endif
+                guard newValue == .idle else { return }
+                // Process ONE pending item per idle transition (if/else if chain).
+                // Each rebuild sets contentState to non-idle; the next idle transition
+                // picks up the next pending item.
+                // Defer re-posts using DispatchQueue.main.async to give SwiftUI one
+                // runloop frame to render refreshSections() results from
+                // withContentStateRecovery (which fires on the same idle transition).
+                // Without this, the synchronous notification immediately sets
+                // contentState back to non-idle, and the sidebar never renders.
+                if pendingBibliographyRebuild {
+                    pendingBibliographyRebuild = false
+                    DispatchQueue.main.async {
+                        NotificationCenter.default.post(name: .bibliographySectionChanged, object: nil)
+                    }
+                } else if pendingNotesRebuild {
+                    pendingNotesRebuild = false
+                    DispatchQueue.main.async {
+                        NotificationCenter.default.post(name: .notesSectionChanged, object: nil)
+                    }
+                } else if let pending = pendingFootnoteLabel {
                     pendingFootnoteLabel = nil
-                    NotificationCenter.default.post(
-                        name: .footnoteInsertedImmediate,
-                        object: nil,
-                        userInfo: ["label": pending]
-                    )
+                    DispatchQueue.main.async {
+                        NotificationCenter.default.post(
+                            name: .footnoteInsertedImmediate,
+                            object: nil,
+                            userInfo: ["label": pending]
+                        )
+                    }
                 }
             }
             .onReceive(NotificationCenter.default.publisher(for: .footnoteInsertedImmediate)) { notification in
@@ -304,6 +363,9 @@ struct ContentView: View {
                 updateSourceContentIfNeeded()
 
                 Task {
+                    // Force-flush pending JS changes to DB before reading blocks
+                    await blockSyncService.pollBlockChangesNow()
+
                     // Get block IDs from DB (count matches because slash commands
                     // don't add/remove blocks — they only replace text within one block)
                     guard let result = fetchBlocksWithIds() else {
@@ -316,7 +378,8 @@ struct ContentView: View {
                     // (same pattern as bibliography — prevents temp ID race)
                     await blockSyncService.setContentWithBlockIds(
                         markdown: combined, blockIds: result.blockIds,
-                        imageMeta: result.imageMeta)
+                        imageMeta: result.imageMeta,
+                        cursorBoundary: result.bibBoundaryIndex)
 
                     editorState.isResettingContent = false
                     editorState.contentState = .idle

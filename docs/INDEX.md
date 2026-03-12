@@ -41,7 +41,7 @@ Patterns and pitfalls discovered during development. Consult before writing rela
 - [swiftui-webkit.md](lessons/swiftui-webkit.md) -- AppDelegate pattern, event handling, print() performance, data flow IDs, compositor caching
 - [grdb-database.md](lessons/grdb-database.md) -- ValueObservation races, dual content properties, DatabasePool vs DatabaseQueue, eraseDatabaseOnSchemaChange danger
 - [zoom-patterns.md](lessons/zoom-patterns.md) -- Async coordination, state protection, database-as-truth, bibliography sync, dual editor mode
-- [block-sync-patterns.md](lessons/block-sync-patterns.md) -- Pseudo-section document-order ownership, sidebar zoom ID sharing
+- [block-sync-patterns.md](lessons/block-sync-patterns.md) -- Pseudo-section document-order ownership, sidebar zoom ID sharing, two-phase proximity matching, bibliography write protection, JS flush before DB read
 - [misc-patterns.md](lessons/misc-patterns.md) -- JavaScript shift-key, cursor offset mapping, push-based WKWebView sync, Vite emptyOutDir, XeTeX path spaces, CJK script detection, AttributedString block separation
 
 ## Findings
@@ -66,6 +66,7 @@ Bug investigation reports with root cause analysis and solutions.
 - [typing-latency-optimization.md](findings/typing-latency-optimization.md) -- Push-based content sync, DatabasePool+WAL, off-main-thread DB writes, block sync debouncing, focus mode single-pass, spellcheck decoration mapping
 - [project-switch-content-loss.md](findings/project-switch-content-loss.md) -- Silent data loss on project switch: BlockSyncService 2s poll killed before flush, fix adds content flushing at all lifecycle boundaries
 - [version-history-window-bugs.md](findings/version-history-window-bugs.md) -- Window restoration on launch, dismiss vs dismissWindow, loading state priority, stale sections, auto-snapshot deduplication
+- [bibliography-id-theft-corruption.md](findings/bibliography-id-theft-corruption.md) -- Block ID greedy matching steals bibliography IDs near boundary; fix: two-phase closest-first matching + isBibliography write guard
 
 ## Deferred
 

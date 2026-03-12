@@ -86,9 +86,11 @@ extension View {
                                 let bKey = (b.sortOrder, b.blockType == .heading ? 0 : 1)
                                 return aKey < bKey
                             }
+                            // MUST stay in sync with BlockParser.assembleMarkdown filtering
+                            let nonEmpty = sorted.filter { !BlockParser.isEmptyFragment($0.markdownFragment) }
                             var blockOffset: [String: Int] = [:]
                             var offset = 0
-                            for (i, block) in sorted.enumerated() {
+                            for (i, block) in nonEmpty.enumerated() {
                                 if i > 0 { offset += 2 }
                                 blockOffset[block.id] = offset
                                 offset += block.markdownFragment.count

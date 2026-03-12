@@ -46,6 +46,18 @@ export function setPendingSlashRedo(value: boolean): void {
   pendingSlashRedo = value;
 }
 
+// Gate: prevents contentPushTimer from firing before Swift has called setContent/setContentWithBlockIds.
+// Implicit contract: Swift MUST call setContent() or setContentWithBlockIds() before the editor
+// becomes interactive. All current code paths do this (EditorPreloader → claim → loadContent).
+let contentHasBeenSet = false;
+
+export function getContentHasBeenSet(): boolean {
+  return contentHasBeenSet;
+}
+export function setContentHasBeenSet(value: boolean): void {
+  contentHasBeenSet = value;
+}
+
 // Track zoom mode state for footnote insertion
 let isZoomMode = false;
 let documentFootnoteCount = 0;
