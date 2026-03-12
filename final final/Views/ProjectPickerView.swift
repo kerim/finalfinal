@@ -100,9 +100,7 @@ struct ProjectPickerView: View {
                 try documentManager.openRecentProject(entry)
                 onProjectOpened()
             } catch {
-                #if DEBUG
-                print("[ProjectPickerView] Failed to open recent project: \(error)")
-                #endif
+                DebugLog.log(.lifecycle, "[ProjectPickerView] Failed to open recent project: \(error)")
                 showErrorAlert(error)
             }
         }
@@ -128,9 +126,7 @@ struct ProjectPickerView: View {
                     try documentManager.newProject(at: url, title: title)
                     onProjectOpened()
                 } catch {
-                    #if DEBUG
-                    print("[ProjectPickerView] Failed to create project: \(error)")
-                    #endif
+                    DebugLog.log(.lifecycle, "[ProjectPickerView] Failed to create project: \(error)")
                     showErrorAlert(error)
                 }
             }
@@ -156,9 +152,7 @@ struct ProjectPickerView: View {
                     try documentManager.openProject(at: url)
                     onProjectOpened()
                 } catch {
-                    #if DEBUG
-                    print("[ProjectPickerView] Failed to open project: \(error)")
-                    #endif
+                    DebugLog.log(.lifecycle, "[ProjectPickerView] Failed to open project: \(error)")
                     showErrorAlert(error)
                 }
             }

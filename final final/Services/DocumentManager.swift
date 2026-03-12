@@ -179,9 +179,7 @@ final class DocumentManager {
         // Log any non-critical issues
         if !report.isHealthy {
             for issue in report.issues {
-                #if DEBUG
-                print("[DocumentManager] Warning: \(issue.description)")
-                #endif
+                DebugLog.log(.lifecycle, "[DocumentManager] Warning: \(issue.description)")
             }
         }
 
@@ -214,9 +212,7 @@ final class DocumentManager {
         // Open spell check document for this project session
         SpellCheckService.shared.openDocument()
 
-        #if DEBUG
-        print("[DocumentManager] Opened project: \(project.title) at \(url.path)")
-        #endif
+        DebugLog.log(.lifecycle, "[DocumentManager] Opened project: \(project.title) at \(url.path)")
         return project.id
     }
 
@@ -238,9 +234,7 @@ final class DocumentManager {
             project = try database.fetchProject()
         } catch {
             // Log but don't fail - we're force-opening
-            #if DEBUG
-            print("[DocumentManager] Force-open: fetchProject error (continuing): \(error)")
-            #endif
+            DebugLog.log(.lifecycle, "[DocumentManager] Force-open: fetchProject error (continuing): \(error)")
             project = nil
         }
 
@@ -256,13 +250,9 @@ final class DocumentManager {
         if let project = project {
             addToRecentProjects(url: url, title: project.title)
             saveAsLastProject(url: url)
-            #if DEBUG
-            print("[DocumentManager] Force-opened project: \(project.title) at \(url.path)")
-            #endif
+            DebugLog.log(.lifecycle, "[DocumentManager] Force-opened project: \(project.title) at \(url.path)")
         } else {
-            #if DEBUG
-            print("[DocumentManager] Force-opened project (no record) at \(url.path)")
-            #endif
+            DebugLog.log(.lifecycle, "[DocumentManager] Force-opened project (no record) at \(url.path)")
         }
 
         // Open spell check document for this project session
@@ -290,9 +280,7 @@ final class DocumentManager {
         // Clear media scheme handler
         MediaSchemeHandler.shared.mediaDirectoryURL = nil
 
-        #if DEBUG
-        print("[DocumentManager] Project closed")
-        #endif
+        DebugLog.log(.lifecycle, "[DocumentManager] Project closed")
     }
 
     /// Mark the project as having unsaved changes

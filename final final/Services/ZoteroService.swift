@@ -419,7 +419,7 @@ final class ZoteroService {
             let data = try encoder.encode(items)
             return String(data: data, encoding: .utf8) ?? "[]"
         } catch {
-            print("[ZoteroService] Failed to encode CSL-JSON: \(error)")
+            DebugLog.log(.zotero, "[ZoteroService] Failed to encode CSL-JSON: \(error)")
             return "[]"
         }
     }
@@ -440,7 +440,7 @@ final class ZoteroService {
             let data = try encoder.encode(items)
             return String(data: data, encoding: .utf8) ?? "[]"
         } catch {
-            print("[ZoteroService] Failed to encode cached items: \(error)")
+            DebugLog.log(.zotero, "[ZoteroService] Failed to encode cached items: \(error)")
             return "[]"
         }
     }

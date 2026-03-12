@@ -47,9 +47,7 @@ extension ContentView {
 
             let bibBoundaryIndex = BlockParser.firstBibliographyNodeIndex(sorted)
 
-            #if DEBUG
-            print("[fetchBlocksWithIds] bibBoundaryIndex=\(String(describing: bibBoundaryIndex)) blockCount=\(sorted.count) idCount=\(ids.count)")
-            #endif
+            DebugLog.log(.bib, "[fetchBlocksWithIds] bibBoundaryIndex=\(String(describing: bibBoundaryIndex)) blockCount=\(sorted.count) idCount=\(ids.count)")
 
             return (markdown, ids, imageMeta, bibBoundaryIndex)
         } catch {
@@ -301,9 +299,7 @@ extension ContentView {
                     charOffset: result.newCharOffset
                 )
             } catch {
-                #if DEBUG
-                print("[ContentView] Error updating annotation: \(error.localizedDescription)")
-                #endif
+                DebugLog.log(.bib, "[ContentView] Error updating annotation: \(error.localizedDescription)")
             }
         }
 
@@ -465,9 +461,7 @@ extension ContentView {
             editorState.pendingEditAnnotationId = annotation.id
             editorState.isDocumentNotesCollapsed = false
         } catch {
-            #if DEBUG
-            print("[ContentView] Error creating document annotation: \(error.localizedDescription)")
-            #endif
+            DebugLog.log(.bib, "[ContentView] Error creating document annotation: \(error.localizedDescription)")
         }
     }
 
@@ -477,9 +471,7 @@ extension ContentView {
         do {
             try db.deleteAnnotation(id: id)
         } catch {
-            #if DEBUG
-            print("[ContentView] Error deleting document annotation: \(error.localizedDescription)")
-            #endif
+            DebugLog.log(.bib, "[ContentView] Error deleting document annotation: \(error.localizedDescription)")
         }
     }
 

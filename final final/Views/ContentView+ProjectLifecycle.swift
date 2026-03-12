@@ -18,9 +18,7 @@ extension ContentView {
 
         // No project open - this shouldn't happen as FinalFinalApp handles launch state
         // but if it does, just wait for a project to be opened
-        #if DEBUG
-        print("[ContentView] No project open at initialization")
-        #endif
+        DebugLog.log(.lifecycle, "[ContentView] No project open at initialization")
     }
 
     /// Configure UI for the currently open project
@@ -52,11 +50,7 @@ extension ContentView {
             guard let editorState = editorState,
                   let sectionSyncService = sectionSyncService else { return }
 
-            #if DEBUG
-            print("[onSectionsUpdated] contentState=\(editorState.contentState), " +
-                "zoomed=\(editorState.zoomedSectionIds != nil), " +
-                "hasViolations=\(Self.hasHierarchyViolations(in: editorState.sections))")
-            #endif
+            DebugLog.log(.outline, "[onSectionsUpdated] contentState=\(editorState.contentState), zoomed=\(editorState.zoomedSectionIds != nil), hasViolations=\(Self.hasHierarchyViolations(in: editorState.sections))")
 
             // Skip during content transitions (drag, zoom, etc.)
             guard editorState.contentState == .idle else { return }
@@ -84,16 +78,12 @@ extension ContentView {
             if !existingBlocks.isEmpty {
                 let sortOrders = existingBlocks.map { $0.sortOrder }
                 if Set(sortOrders).count < sortOrders.count {
-                    #if DEBUG
-                    print("[ContentView] Duplicate sortOrders detected (\(sortOrders.count) blocks, \(Set(sortOrders).count) unique). Normalizing...")
-                    #endif
+                    DebugLog.log(.lifecycle, "[ContentView] Duplicate sortOrders detected (\(sortOrders.count) blocks, \(Set(sortOrders).count) unique). Normalizing...")
                     try db.normalizeSortOrders(projectId: pid)
                 }
             }
         } catch {
-            #if DEBUG
-            print("[ContentView] Error checking/normalizing sort orders: \(error)")
-            #endif
+            DebugLog.log(.lifecycle, "[ContentView] Error checking/normalizing sort orders: \(error)")
         }
 
         // Start reactive observation (now uses blocks internally)
@@ -119,9 +109,7 @@ extension ContentView {
             if !existingBlocks.isEmpty {
                 // Blocks exist - assemble markdown from blocks
                 editorState.content = BlockParser.assembleMarkdown(from: existingBlocks)
-                #if DEBUG
-                print("[LOAD] Assembled \(existingBlocks.count) blocks -> content length=\(editorState.content.count)")
-                #endif
+                DebugLog.log(.lifecycle, "[LOAD] Assembled \(existingBlocks.count) blocks -> content length=\(editorState.content.count)")
                 updateSourceContentIfNeeded()
             } else {
                 // No blocks yet - load from legacy content table and parse into blocks
@@ -162,9 +150,7 @@ extension ContentView {
                 documentManager.recordGettingStartedLoadedContent(editorState.content)
             }
         } catch {
-            #if DEBUG
-            print("[ContentView] Failed to load content: \(error.localizedDescription)")
-            #endif
+            DebugLog.log(.lifecycle, "[ContentView] Failed to load content: \(error.localizedDescription)")
         }
 
         // Populate section table from loaded content so version history has fresh data
@@ -186,13 +172,9 @@ extension ContentView {
 
         do {
             try await zotero.connect()
-            #if DEBUG
-            print("[ContentView] Zotero/BBT is available for citation search")
-            #endif
+            DebugLog.log(.zotero, "[ContentView] Zotero/BBT is available for citation search")
         } catch {
-            #if DEBUG
-            print("[ContentView] Zotero connection failed: \(error.localizedDescription)")
-            #endif
+            DebugLog.log(.zotero, "[ContentView] Zotero connection failed: \(error.localizedDescription)")
             // Silent failure - Zotero is optional dependency
         }
     }
@@ -266,9 +248,7 @@ extension ContentView {
             Task {
                 try? await Task.sleep(for: .seconds(3))
                 if editorState.isResettingContent {
-                    #if DEBUG
-                    print("[handleProjectOpened] WATCHDOG: isResettingContent stuck, forcing clear")
-                    #endif
+                    DebugLog.log(.lifecycle, "[handleProjectOpened] WATCHDOG: isResettingContent stuck, forcing clear")
                     editorState.isResettingContent = false
                 }
             }
@@ -340,9 +320,7 @@ extension ContentView {
                     // No need to call onProjectOpened - we're replacing the current project
                     await self.handleProjectOpened()
                 } catch {
-                    #if DEBUG
-                    print("[ContentView] Failed to create project from Getting Started: \(error)")
-                    #endif
+                    DebugLog.log(.lifecycle, "[ContentView] Failed to create project from Getting Started: \(error)")
                 }
             }
         }
@@ -354,9 +332,7 @@ extension ContentView {
     func handleSaveVersion() async {
         guard let db = documentManager.projectDatabase,
               let pid = documentManager.projectId else {
-            #if DEBUG
-            print("[ContentView] Cannot save version: no project open")
-            #endif
+            DebugLog.log(.lifecycle, "[ContentView] Cannot save version: no project open")
             return
         }
 
@@ -369,24 +345,16 @@ extension ContentView {
         do {
             if let versionName = name {
                 let snapshot = try service.createManualSnapshot(name: versionName)
-                #if DEBUG
-                print("[ContentView] Created manual snapshot: \(snapshot.displayName)")
-                #endif
+                DebugLog.log(.lifecycle, "[ContentView] Created manual snapshot: \(snapshot.displayName)")
             } else {
                 if let snapshot = try service.createAutoSnapshot() {
-                    #if DEBUG
-                    print("[ContentView] Created auto snapshot: \(snapshot.id)")
-                    #endif
+                    DebugLog.log(.lifecycle, "[ContentView] Created auto snapshot: \(snapshot.id)")
                 } else {
-                    #if DEBUG
-                    print("[ContentView] Auto snapshot skipped: content unchanged")
-                    #endif
+                    DebugLog.log(.lifecycle, "[ContentView] Auto snapshot skipped: content unchanged")
                 }
             }
         } catch {
-            #if DEBUG
-            print("[ContentView] Failed to create snapshot: \(error)")
-            #endif
+            DebugLog.log(.lifecycle, "[ContentView] Failed to create snapshot: \(error)")
         }
 
         saveVersionName = ""
@@ -407,20 +375,14 @@ extension ContentView {
             // Loop to repair all issues (some repairs reveal new issues)
             while currentReport.canAutoRepair && repairAttempts < maxRepairAttempts {
                 repairAttempts += 1
-                #if DEBUG
-                print("[ContentView] Repair attempt \(repairAttempts) for \(currentReport.issues.count) issue(s)")
-                #endif
+                DebugLog.log(.lifecycle, "[ContentView] Repair attempt \(repairAttempts) for \(currentReport.issues.count) issue(s)")
 
                 let result = try documentManager.repairProject(report: currentReport)
-                #if DEBUG
-                print("[ContentView] Repair result: \(result.message)")
-                #endif
+                DebugLog.log(.lifecycle, "[ContentView] Repair result: \(result.message)")
 
                 guard result.success else {
                     // Repair failed - keep showing the alert with failure info
-                    #if DEBUG
-                    print("[ContentView] Repair failed for issues: \(result.failedIssues.map { $0.description })")
-                    #endif
+                    DebugLog.log(.lifecycle, "[ContentView] Repair failed for issues: \(result.failedIssues.map { $0.description })")
                     return
                 }
 
@@ -440,9 +402,7 @@ extension ContentView {
                 integrityReport = nil
             } else if !currentReport.hasCriticalIssues {
                 // Non-critical, non-repairable issues remain - force open with warning
-                #if DEBUG
-                print("[ContentView] Opening with non-critical issues: \(currentReport.issues.map { $0.description })")
-                #endif
+                DebugLog.log(.lifecycle, "[ContentView] Opening with non-critical issues: \(currentReport.issues.map { $0.description })")
                 try documentManager.forceOpenProject(at: url)
                 await configureForCurrentProject()
                 pendingProjectURL = nil
@@ -452,9 +412,7 @@ extension ContentView {
                 integrityReport = currentReport
             }
         } catch {
-            #if DEBUG
-            print("[ContentView] Repair failed: \(error.localizedDescription)")
-            #endif
+            DebugLog.log(.lifecycle, "[ContentView] Repair failed: \(error.localizedDescription)")
             // Keep alert showing so user can cancel
         }
     }
@@ -463,17 +421,13 @@ extension ContentView {
     func handleOpenAnyway(report: IntegrityReport) async {
         guard let url = pendingProjectURL else { return }
 
-        #if DEBUG
-        print("[ContentView] Opening project despite integrity issues (user chose unsafe)")
-        #endif
+        DebugLog.log(.lifecycle, "[ContentView] Opening project despite integrity issues (user chose unsafe)")
 
         do {
             try documentManager.forceOpenProject(at: url)
             await configureForCurrentProject()
         } catch {
-            #if DEBUG
-            print("[ContentView] Failed to force-open project: \(error.localizedDescription)")
-            #endif
+            DebugLog.log(.lifecycle, "[ContentView] Failed to force-open project: \(error.localizedDescription)")
         }
 
         pendingProjectURL = nil
@@ -497,9 +451,7 @@ extension ContentView {
                 await withCheckedContinuation { continuation in
                     DispatchQueue.main.async {
                         webView.evaluateJavaScript("window.FinalFinal.getContent()") { result, error in
-                            #if DEBUG
-                            if let error { print("[ContentView] fetchContentFromWebView JS error: \(error)") }
-                            #endif
+                            if let error { DebugLog.log(.lifecycle, "[ContentView] fetchContentFromWebView JS error: \(error)") }
                             continuation.resume(returning: result as? String)
                         }
                     }
@@ -533,8 +485,6 @@ extension ContentView {
         // 4. Flush annotation positions
         await annotationSyncService.syncNow(editorState.content)
 
-        #if DEBUG
-        print("[ContentView] flushAllPendingContent completed")
-        #endif
+        DebugLog.log(.lifecycle, "[ContentView] flushAllPendingContent completed")
     }
 }

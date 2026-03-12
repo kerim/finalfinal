@@ -32,9 +32,7 @@ struct FileCommands: Commands {
 
             // Close Project (Cmd-W) - closes project and shows picker
             Button("Close Project") {
-                #if DEBUG
-                print("[FileCommands] Posting .closeProject notification")
-                #endif
+                DebugLog.log(.fileOps, "[FileCommands] Posting .closeProject notification")
                 NotificationCenter.default.post(name: .closeProject, object: nil)
             }
             .keyboardShortcut("w", modifiers: .command)
@@ -71,7 +69,7 @@ struct FileCommands: Commands {
                 Button("Markdown with Images...") {
                     NotificationCenter.default.post(name: .exportMarkdownWithImages, object: nil)
                 }
-    
+
                 Button("TextBundle...") {
                     NotificationCenter.default.post(name: .exportTextBundle, object: nil)
                 }
@@ -143,9 +141,7 @@ struct RecentProjectsMenu: View {
                 try DocumentManager.shared.openRecentProject(entry)
                 NotificationCenter.default.post(name: .projectDidOpen, object: nil)
             } catch {
-                #if DEBUG
-                print("[FileCommands] Failed to open recent project: \(error)")
-                #endif
+                DebugLog.log(.fileOps, "[FileCommands] Failed to open recent project: \(error)")
                 showErrorAlert(error)
             }
         }
@@ -204,14 +200,10 @@ struct FileOperations {
                 do {
                     let title = url.deletingPathExtension().lastPathComponent
                     try DocumentManager.shared.newProject(at: url, title: title)
-                    #if DEBUG
-                    print("[FileOperations] Project created, hasOpenProject: \(DocumentManager.shared.hasOpenProject)")
-                    #endif
+                    DebugLog.log(.fileOps, "[FileOperations] Project created, hasOpenProject: \(DocumentManager.shared.hasOpenProject)")
                     NotificationCenter.default.post(name: .projectDidCreate, object: nil)
                 } catch {
-                    #if DEBUG
-                    print("[FileOperations] Failed to create project: \(error)")
-                    #endif
+                    DebugLog.log(.fileOps, "[FileOperations] Failed to create project: \(error)")
                     showErrorAlert("Could Not Create Project", error: error)
                 }
             }
@@ -235,30 +227,22 @@ struct FileOperations {
             Task { @MainActor in
                 do {
                     try DocumentManager.shared.openProject(at: url)
-                    #if DEBUG
-                    print("[FileOperations] Project opened, hasOpenProject: \(DocumentManager.shared.hasOpenProject)")
-                    #endif
+                    DebugLog.log(.fileOps, "[FileOperations] Project opened, hasOpenProject: \(DocumentManager.shared.hasOpenProject)")
                     NotificationCenter.default.post(name: .projectDidOpen, object: nil)
                 } catch let error as IntegrityError {
                     if let report = error.integrityReport {
-                        #if DEBUG
-                        print("[FileOperations] Integrity error, posting notification for: \(url.path)")
-                        #endif
+                        DebugLog.log(.fileOps, "[FileOperations] Integrity error, posting notification for: \(url.path)")
                         NotificationCenter.default.post(
                             name: .projectIntegrityError,
                             object: nil,
                             userInfo: ["report": report, "url": url]
                         )
                     } else {
-                        #if DEBUG
-                        print("[FileOperations] IntegrityError with nil report: \(error)")
-                        #endif
+                        DebugLog.log(.fileOps, "[FileOperations] IntegrityError with nil report: \(error)")
                         showErrorAlert("Could Not Open Project", error: error)
                     }
                 } catch {
-                    #if DEBUG
-                    print("[FileOperations] Failed to open project: \(error)")
-                    #endif
+                    DebugLog.log(.fileOps, "[FileOperations] Failed to open project: \(error)")
                     showErrorAlert("Could Not Open Project", error: error)
                 }
             }
@@ -266,9 +250,7 @@ struct FileOperations {
     }
 
     static func handleCloseProject() {
-        #if DEBUG
-        print("[FileOperations] handleCloseProject() called")
-        #endif
+        DebugLog.log(.fileOps, "[FileOperations] handleCloseProject() called")
         let dm = DocumentManager.shared
 
         // Check if this is the Getting Started project with modifications
@@ -285,9 +267,7 @@ struct FileOperations {
             case .alertFirstButtonReturn:
                 // Discard - just close
                 dm.closeProject()
-                #if DEBUG
-                print("[FileOperations] Posting .projectDidClose notification (Getting Started discard)")
-                #endif
+                DebugLog.log(.fileOps, "[FileOperations] Posting .projectDidClose notification (Getting Started discard)")
                 NotificationCenter.default.post(name: .projectDidClose, object: nil)
             case .alertSecondButtonReturn:
                 // Create New Project - show save panel
@@ -314,16 +294,12 @@ struct FileOperations {
                 // Save then close
                 handleSaveProject()
                 dm.closeProject()
-                #if DEBUG
-                print("[FileOperations] Posting .projectDidClose notification (saved)")
-                #endif
+                DebugLog.log(.fileOps, "[FileOperations] Posting .projectDidClose notification (saved)")
                 NotificationCenter.default.post(name: .projectDidClose, object: nil)
             case .alertSecondButtonReturn:
                 // Close without saving
                 dm.closeProject()
-                #if DEBUG
-                print("[FileOperations] Posting .projectDidClose notification (no save)")
-                #endif
+                DebugLog.log(.fileOps, "[FileOperations] Posting .projectDidClose notification (no save)")
                 NotificationCenter.default.post(name: .projectDidClose, object: nil)
             default:
                 // Cancel - do nothing
@@ -331,9 +307,7 @@ struct FileOperations {
             }
         } else {
             dm.closeProject()
-            #if DEBUG
-            print("[FileOperations] Posting .projectDidClose notification (no changes)")
-            #endif
+            DebugLog.log(.fileOps, "[FileOperations] Posting .projectDidClose notification (no changes)")
             NotificationCenter.default.post(name: .projectDidClose, object: nil)
         }
     }
@@ -365,7 +339,7 @@ struct FileOperations {
                     // Notify that a new project was created
                     NotificationCenter.default.post(name: .projectDidCreate, object: nil)
                 } catch {
-                    print("[FileOperations] Failed to create project from Getting Started: \(error)")
+                    DebugLog.log(.fileOps, "[FileOperations] Failed to create project from Getting Started: \(error)")
                 }
             }
         }
@@ -375,9 +349,7 @@ struct FileOperations {
         // Note: Content is auto-saved by SectionSyncService
         // This explicit save is for any pending changes
         DocumentManager.shared.markClean()
-        #if DEBUG
-        print("[FileOperations] Project saved")
-        #endif
+        DebugLog.log(.fileOps, "[FileOperations] Project saved")
     }
 
     static func handleSaveProjectAs() {
@@ -385,15 +357,11 @@ struct FileOperations {
 
         // Guard: must have an open project that isn't Getting Started
         guard dm.hasOpenProject, let sourceURL = dm.projectURL else {
-            #if DEBUG
-            print("[FileOperations] Save As: no project open")
-            #endif
+            DebugLog.log(.fileOps, "[FileOperations] Save As: no project open")
             return
         }
         if dm.isGettingStartedProject {
-            #if DEBUG
-            print("[FileOperations] Save As: cannot Save As from Getting Started")
-            #endif
+            DebugLog.log(.fileOps, "[FileOperations] Save As: cannot Save As from Getting Started")
             return
         }
 
@@ -426,9 +394,7 @@ struct FileOperations {
                             try db.checkpoint(.passive)
                         }
                     } catch {
-                        #if DEBUG
-                        print("[FileOperations] Save As: WAL checkpoint warning: \(error)")
-                        #endif
+                        DebugLog.log(.fileOps, "[FileOperations] Save As: WAL checkpoint warning: \(error)")
                     }
 
                     let fm = FileManager.default
@@ -454,13 +420,9 @@ struct FileOperations {
 
                     NotificationCenter.default.post(name: .projectDidOpen, object: nil)
 
-                    #if DEBUG
-                    print("[FileOperations] Save As completed: \(destURL.path)")
-                    #endif
+                    DebugLog.log(.fileOps, "[FileOperations] Save As completed: \(destURL.path)")
                 } catch {
-                    #if DEBUG
-                    print("[FileOperations] Save As failed: \(error)")
-                    #endif
+                    DebugLog.log(.fileOps, "[FileOperations] Save As failed: \(error)")
                     showErrorAlert("Could Not Save Project", error: error)
                 }
             }
@@ -511,17 +473,13 @@ struct FileOperations {
                                     userInfo: ["content": content]
                                 )
                             } catch {
-                                #if DEBUG
-                                print("[FileOperations] Failed to import: \(error)")
-                                #endif
+                                DebugLog.log(.fileOps, "[FileOperations] Failed to import: \(error)")
                                 showErrorAlert("Could Not Import File", error: error)
                             }
                         }
                     }
                 } catch {
-                    #if DEBUG
-                    print("[FileOperations] Failed to read file: \(error)")
-                    #endif
+                    DebugLog.log(.fileOps, "[FileOperations] Failed to read file: \(error)")
                     showErrorAlert("Could Not Read File", error: error)
                 }
             }

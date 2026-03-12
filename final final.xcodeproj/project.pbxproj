@@ -17,6 +17,7 @@
 		0ABF543A354D8FA782C316FB /* RadixScales+Custom.swift in Sources */ = {isa = PBXBuildFile; fileRef = F37D8109D489C3EF73C167C0 /* RadixScales+Custom.swift */; };
 		0C67A14B44BDA954C666F7FD /* ZoteroChecker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2070D9DD040736953F1CAA08 /* ZoteroChecker.swift */; };
 		0ED46619B703DCB8610330F3 /* Section.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC27954DE76B2ADD62BBFF00 /* Section.swift */; };
+		12BA40CF66378D505D841D27 /* DebugLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B2D7B12CDE1D0FA0F28C73C /* DebugLog.swift */; };
 		135D44FB4D2BB6A12ABB783F /* OutlineSidebar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75B3D65D281D81B769D7DF96 /* OutlineSidebar.swift */; };
 		15E9D15B0AF02828BFF55BCF /* LanguageToolProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A530A55D9265E47C5CF4EB3 /* LanguageToolProvider.swift */; };
 		175134B0E1A82073C2CB4D0F /* GoalPreferencesPane.swift in Sources */ = {isa = PBXBuildFile; fileRef = B09119DC4E9BBDC1E741006B /* GoalPreferencesPane.swift */; };
@@ -215,6 +216,7 @@
 		13133CB5518EA086A3120EDE /* Database+CRUD.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Database+CRUD.swift"; sourceTree = "<group>"; };
 		19D9D6FF0D1C77C27B991957 /* SQLiteReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SQLiteReader.swift; sourceTree = "<group>"; };
 		1ABF169E4CCADE457BF4C7B7 /* MarkdownRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownRenderer.swift; sourceTree = "<group>"; };
+		1B2D7B12CDE1D0FA0F28C73C /* DebugLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugLog.swift; sourceTree = "<group>"; };
 		1C9A6AA1550623CEDFA4ACB8 /* RadixScales.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RadixScales.swift; sourceTree = "<group>"; };
 		1EC960E239AB6BAACD5BC0A3 /* EditorPreloader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorPreloader.swift; sourceTree = "<group>"; };
 		2070D9DD040736953F1CAA08 /* ZoteroChecker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZoteroChecker.swift; sourceTree = "<group>"; };
@@ -523,6 +525,7 @@
 		77A6E60C9E45905B8D2CA237 /* Utilities */ = {
 			isa = PBXGroup;
 			children = (
+				1B2D7B12CDE1D0FA0F28C73C /* DebugLog.swift */,
 				DE4DE8D59CFC464F6E7D5123 /* FullScreenManager.swift */,
 			);
 			path = Utilities;
@@ -1011,6 +1014,7 @@
 				762C4F8744B0DB84218E14EF /* Database+Sections.swift in Sources */,
 				4D671DBFA718AA3F2C24DFE3 /* Database+Snapshots.swift in Sources */,
 				45869BA1A8791DA0E428B1BD /* Database.swift in Sources */,
+				12BA40CF66378D505D841D27 /* DebugLog.swift in Sources */,
 				49989C588EFAF924B6BF9400 /* Document.swift in Sources */,
 				51055D83C24D331379EBD419 /* DocumentManager+GettingStarted.swift in Sources */,
 				8F63B2FC4CF2B275394DBB02 /* DocumentManager+RecentProjects.swift in Sources */,

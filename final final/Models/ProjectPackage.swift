@@ -22,9 +22,7 @@ struct ProjectPackage: Sendable {
         // Remove existing package if present (NSSavePanel doesn't delete
         // directory-based packages when user clicks "Replace")
         if fm.fileExists(atPath: packageURL.path) {
-            #if DEBUG
-            print("[ProjectPackage] Replacing existing package at: \(packageURL.path)")
-            #endif
+            DebugLog.log(.fileOps, "[ProjectPackage] Replacing existing package at: \(packageURL.path)")
             try fm.removeItem(at: packageURL)
         }
 
@@ -39,9 +37,7 @@ struct ProjectPackage: Sendable {
         let mediaURL = packageURL.appendingPathComponent("media")
         try fm.createDirectory(at: mediaURL, withIntermediateDirectories: true)
 
-        #if DEBUG
-        print("[ProjectPackage] Created package at: \(packageURL.path)")
-        #endif
+        DebugLog.log(.fileOps, "[ProjectPackage] Created package at: \(packageURL.path)")
         return ProjectPackage(packageURL: packageURL)
     }
 

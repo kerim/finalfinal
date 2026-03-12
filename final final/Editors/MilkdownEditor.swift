@@ -77,16 +77,14 @@ struct MilkdownEditor: NSViewRepresentable {
 
             #if DEBUG
             preloaded.isInspectable = true
-            print("[MilkdownEditor] Using preloaded WebView")
             #endif
+            DebugLog.log(.sync, "[MilkdownEditor] Using preloaded WebView")
 
             return preloaded
         }
 
         // Fallback: create new WebView (preload wasn't ready)
-        #if DEBUG
-        print("[MilkdownEditor] Creating new WebView (preload not ready)")
-        #endif
+        DebugLog.log(.sync, "[MilkdownEditor] Creating new WebView (preload not ready)")
 
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = sharedDataStore  // Persist localStorage across editor toggles
@@ -191,10 +189,7 @@ struct MilkdownEditor: NSViewRepresentable {
         }
 
         if context.coordinator.shouldPushContent(content) {
-            #if DEBUG
-            let hasFigures = content.contains("![")
-            print("[SYNC-DIAG:UpdateNSView] PUSHING content len=\(content.count) hasFigures=\(hasFigures)")
-            #endif
+            DebugLog.log(.sync, "[SYNC-DIAG:UpdateNSView] PUSHING content len=\(content.count) hasFigures=\(content.contains("!["))")
             context.coordinator.setContent(content)
         }
 

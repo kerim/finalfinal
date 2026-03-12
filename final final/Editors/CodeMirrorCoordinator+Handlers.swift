@@ -147,9 +147,7 @@ extension CodeMirrorEditor.Coordinator {
             }
 
             if let content = contentResult as? String {
-                #if DEBUG
-                print("[CM-SAVE+NOTIFY] getContent returned length=\(content.count)")
-                #endif
+                DebugLog.log(.sync, "[CM-SAVE+NOTIFY] getContent returned length=\(content.count)")
                 // Update binding immediately to ensure content is preserved
                 self.lastPushedContent = content
                 self.contentBinding.wrappedValue = content
@@ -193,17 +191,15 @@ extension CodeMirrorEditor.Coordinator {
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        #if DEBUG
-        print("[CodeMirrorEditor] WebView finished loading")
+        DebugLog.log(.editor, "[CodeMirrorEditor] WebView finished loading")
 
         webView.evaluateJavaScript("typeof window.__CODEMIRROR_SCRIPT_STARTED__") { result, _ in
-            print("[CodeMirrorEditor] JS script check: \(result ?? "nil")")
+            DebugLog.log(.editor, "[CodeMirrorEditor] JS script check: \(result ?? "nil")")
         }
 
         webView.evaluateJavaScript("typeof window.FinalFinal") { result, _ in
-            print("[CodeMirrorEditor] window.FinalFinal type: \(result ?? "nil")")
+            DebugLog.log(.editor, "[CodeMirrorEditor] window.FinalFinal type: \(result ?? "nil")")
         }
-        #endif
 
         isEditorReady = true
         onWebViewReady?(webView)    // Push image meta first (FIFO guarantees execution order)
@@ -246,9 +242,7 @@ extension CodeMirrorEditor.Coordinator {
         // and setContent() overwrites the cursor that initialize() just set.
         lastPushedContent = content
         lastPushTime = Date()
-        #if DEBUG
-        print("[DIAG-F2] batchInitialize: setting lastPushedContent preemptively (len=\(content.count))")
-        #endif
+        DebugLog.log(.sync, "[DIAG-F2] batchInitialize: setting lastPushedContent preemptively (len=\(content.count))")
 
         let escapedContent = content.escapedForJSTemplateLiteral
 
@@ -265,22 +259,20 @@ extension CodeMirrorEditor.Coordinator {
 
         webView.evaluateJavaScript(script) { [weak self] _, error in
             if let error {
-                #if DEBUG
                 let nsError = error as NSError
-                print("[CodeMirrorEditor] Initialize error: \(nsError.localizedDescription)")
+                DebugLog.log(.editor, "[CodeMirrorEditor] Initialize error: \(nsError.localizedDescription)")
                 if let message = nsError.userInfo["WKJavaScriptExceptionMessage"] {
-                    print("[CodeMirrorEditor] JS Exception: \(message)")
+                    DebugLog.log(.editor, "[CodeMirrorEditor] JS Exception: \(message)")
                 }
                 if let line = nsError.userInfo["WKJavaScriptExceptionLineNumber"] {
-                    print("[CodeMirrorEditor] JS Line: \(line)")
+                    DebugLog.log(.editor, "[CodeMirrorEditor] JS Line: \(line)")
                 }
                 if let column = nsError.userInfo["WKJavaScriptExceptionColumnNumber"] {
-                    print("[CodeMirrorEditor] JS Column: \(column)")
+                    DebugLog.log(.editor, "[CodeMirrorEditor] JS Column: \(column)")
                 }
                 if let sourceURL = nsError.userInfo["WKJavaScriptExceptionSourceURL"] {
-                    print("[CodeMirrorEditor] JS Source: \(sourceURL)")
+                    DebugLog.log(.editor, "[CodeMirrorEditor] JS Source: \(sourceURL)")
                 }
-                #endif
                 // Reset so updateNSView can retry content push
                 self?.lastPushedContent = ""
             }
@@ -364,13 +356,23 @@ extension CodeMirrorEditor.Coordinator {
             return
         }
 
-        #if DEBUG
+        // DebugLog handles #if DEBUG gating internally
         if message.name == "errorHandler", let body = message.body as? [String: Any] {
             let msgType = body["type"] as? String ?? "unknown"
-            let errorMsg = body["message"] as? String ?? "unknown"
-            print("[CodeMirrorEditor] JS \(msgType.uppercased()): \(errorMsg)")
+            let msg = body["message"] as? String ?? "unknown"
+            let prefix = "[CodeMirrorEditor]"
+
+            switch msgType {
+            case "sync-diag":
+                DebugLog.log(.sync, "\(prefix) JS SYNC-DIAG: \(msg)")
+            case "debug", "slash-diag":
+                DebugLog.log(.editor, "\(prefix) JS \(msgType.uppercased()): \(msg)")
+            case "plugin-error", "unhandledrejection", "error":
+                DebugLog.log(.editor, "\(prefix) JS ERROR: \(msg)")
+            default:
+                DebugLog.log(.editor, "\(prefix) JS \(msgType.uppercased()): \(msg)")
+            }
         }
-        #endif
 
         // Handle CAYW citation picker request from web editor
         if message.name == "openCitationPicker", let cmdStart = message.body as? Int {
@@ -514,15 +516,11 @@ extension CodeMirrorEditor.Coordinator {
     @MainActor
     func handleOpenCitationPicker(cmdStart: Int) async {
         guard let webView else {
-            #if DEBUG
-            print("[CodeMirrorEditor] handleOpenCitationPicker: webView is nil")
-            #endif
+            DebugLog.log(.zotero, "[CodeMirrorEditor] handleOpenCitationPicker: webView is nil")
             return
         }
 
-        #if DEBUG
-        print("[CodeMirrorEditor] Opening CAYW picker, cmdStart: \(cmdStart)")
-        #endif
+        DebugLog.log(.zotero, "[CodeMirrorEditor] Opening CAYW picker, cmdStart: \(cmdStart)")
 
         // Pre-check: ping Zotero before opening the picker
         let isRunning = await ZoteroService.shared.ping()
@@ -542,18 +540,14 @@ extension CodeMirrorEditor.Coordinator {
             // Bring app back to foreground after Zotero picker closes
             NSApp.activate(ignoringOtherApps: true)
 
-            #if DEBUG
-            print("[CodeMirrorEditor] CAYW returned citekeys: \(parsed.citekeys)")
-            #endif
+            DebugLog.log(.zotero, "[CodeMirrorEditor] CAYW returned citekeys: \(parsed.citekeys)")
 
             // Encode CSL items as JSON for web
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.sortedKeys]
             let itemsData = try encoder.encode(items)
             guard let itemsJSON = String(data: itemsData, encoding: .utf8) else {
-                #if DEBUG
-                print("[CodeMirrorEditor] Failed to encode CSL items")
-                #endif
+                DebugLog.log(.zotero, "[CodeMirrorEditor] Failed to encode CSL items")
                 sendCitationPickerCancelled(webView: webView)
                 return
             }
@@ -570,9 +564,7 @@ extension CodeMirrorEditor.Coordinator {
 
             guard let callbackJSON = try? JSONSerialization.data(withJSONObject: callbackData),
                   let callbackStr = String(data: callbackJSON, encoding: .utf8) else {
-                #if DEBUG
-                print("[CodeMirrorEditor] Failed to encode callback data")
-                #endif
+                DebugLog.log(.zotero, "[CodeMirrorEditor] Failed to encode callback data")
                 sendCitationPickerCancelled(webView: webView)
                 return
             }
@@ -583,25 +575,19 @@ extension CodeMirrorEditor.Coordinator {
 
             let script = "window.FinalFinal.citationPickerCallback(JSON.parse(`\(escapedCallback)`), JSON.parse(`\(escapedItems)`))"
             webView.evaluateJavaScript(script) { _, error in
-                #if DEBUG
                 if let error {
-                    print("[CodeMirrorEditor] citationPickerCallback error: \(error)")
+                    DebugLog.log(.zotero, "[CodeMirrorEditor] citationPickerCallback error: \(error)")
                 } else {
-                    print("[CodeMirrorEditor] citationPickerCallback succeeded")
+                    DebugLog.log(.zotero, "[CodeMirrorEditor] citationPickerCallback succeeded")
                 }
-                #endif
             }
         } catch ZoteroError.userCancelled {
             NSApp.activate(ignoringOtherApps: true)
-            #if DEBUG
-            print("[CodeMirrorEditor] CAYW cancelled by user")
-            #endif
+            DebugLog.log(.zotero, "[CodeMirrorEditor] CAYW cancelled by user")
             sendCitationPickerCancelled(webView: webView)
         } catch ZoteroError.notRunning {
             NSApp.activate(ignoringOtherApps: true)
-            #if DEBUG
-            print("[CodeMirrorEditor] Zotero not running")
-            #endif
+            DebugLog.log(.zotero, "[CodeMirrorEditor] Zotero not running")
             showZoteroAlert(
                 title: "Zotero Connection Lost",
                 message: "Zotero is not running. Please open Zotero and try again."
@@ -609,9 +595,7 @@ extension CodeMirrorEditor.Coordinator {
             sendCitationPickerCancelled(webView: webView)
         } catch {
             NSApp.activate(ignoringOtherApps: true)
-            #if DEBUG
-            print("[CodeMirrorEditor] CAYW error: \(error.localizedDescription)")
-            #endif
+            DebugLog.log(.zotero, "[CodeMirrorEditor] CAYW error: \(error.localizedDescription)")
             showZoteroAlert(
                 title: "Citation Error",
                 message: error.localizedDescription
@@ -661,9 +645,7 @@ extension CodeMirrorEditor.Coordinator {
     func setContent(_ markdown: String) {
         guard isEditorReady, let webView else { return }
 
-        #if DEBUG
-        print("[DIAG-F2] Swift setContent called (len=\(markdown.count))")
-        #endif
+        DebugLog.log(.sync, "[DIAG-F2] Swift setContent called (len=\(markdown.count))")
         lastPushedContent = markdown
         lastPushTime = Date()  // Record push time to prevent poll feedback
         // Note: Escapes all $ (not just ${) for CodeMirror content
@@ -817,9 +799,7 @@ extension CodeMirrorEditor.Coordinator {
             guard let self, !self.isCleanedUp else { return }
             // Discard stale result if a state transition happened during the JS roundtrip
             guard self.contentGeneration == generationAtPoll else {
-                #if DEBUG
-                print("[CodeMirrorPoll] Discarded stale result (gen \(generationAtPoll) != \(self.contentGeneration))")
-                #endif
+                DebugLog.log(.sync, "[CodeMirrorPoll] Discarded stale result (gen \(generationAtPoll) != \(self.contentGeneration))")
                 return
             }
             guard let jsonString = result as? String,
@@ -904,11 +884,9 @@ extension CodeMirrorEditor.Coordinator {
         // JS insertFootnote() sends postMessage({label}) which triggers .footnoteInsertedImmediate
         // via the footnoteInserted message handler — no need to post from completion handler
         webView.evaluateJavaScript("window.FinalFinal.insertFootnote()") { _, error in
-            #if DEBUG
             if let error {
-                print("[FootnoteSyncService] insertFootnote evaluateJavaScript error: \(error)")
+                DebugLog.log(.editor, "[FootnoteSyncService] insertFootnote evaluateJavaScript error: \(error)")
             }
-            #endif
         }
     }
 
@@ -949,7 +927,7 @@ extension CodeMirrorEditor.Coordinator {
     func handlePasteImage(_ body: [String: Any]) {
         guard let base64Data = body["data"] as? String,
               let data = Data(base64Encoded: base64Data) else {
-            print("[CodeMirrorEditor] Invalid paste image data")
+            DebugLog.log(.editor, "[CodeMirrorEditor] Invalid paste image data")
             return
         }
 
@@ -957,7 +935,7 @@ extension CodeMirrorEditor.Coordinator {
         let suggestedName = body["name"] as? String
 
         guard let mediaDir = MediaSchemeHandler.shared.mediaDirectoryURL else {
-            print("[CodeMirrorEditor] No media directory — cannot paste image")
+            DebugLog.log(.editor, "[CodeMirrorEditor] No media directory — cannot paste image")
             return
         }
 
@@ -968,9 +946,7 @@ extension CodeMirrorEditor.Coordinator {
 
             insertImageBlock(src: relativePath, alt: suggestedName ?? "")
         } catch {
-            #if DEBUG
-            print("[CodeMirrorEditor] Image paste failed: \(error.localizedDescription)")
-            #endif
+            DebugLog.log(.editor, "[CodeMirrorEditor] Image paste failed: \(error.localizedDescription)")
             let window = webView?.window ?? NSApp.keyWindow
             if let window {
                 let alert = NSAlert()
@@ -997,9 +973,7 @@ extension CodeMirrorEditor.Coordinator {
         guard panel.runModal() == .OK, let url = panel.url else { return }
 
         guard let mediaDir = MediaSchemeHandler.shared.mediaDirectoryURL else {
-            #if DEBUG
-            print("[CodeMirrorEditor] No media directory — cannot import image")
-            #endif
+            DebugLog.log(.editor, "[CodeMirrorEditor] No media directory — cannot import image")
             return
         }
 
@@ -1008,9 +982,7 @@ extension CodeMirrorEditor.Coordinator {
             let alt = (url.lastPathComponent as NSString).deletingPathExtension
             insertImageBlock(src: relativePath, alt: alt)
         } catch {
-            #if DEBUG
-            print("[CodeMirrorEditor] Image import failed: \(error.localizedDescription)")
-            #endif
+            DebugLog.log(.editor, "[CodeMirrorEditor] Image import failed: \(error.localizedDescription)")
             let window = webView?.window ?? NSApp.keyWindow
             if let window {
                 let alert = NSAlert()
@@ -1027,7 +999,7 @@ extension CodeMirrorEditor.Coordinator {
     @MainActor
     func handleUpdateImageMeta(_ body: [String: Any]) {
         guard let blockId = body["blockId"] as? String else {
-            print("[CodeMirrorEditor] updateImageMeta missing blockId")
+            DebugLog.log(.editor, "[CodeMirrorEditor] updateImageMeta missing blockId")
             return
         }
 
@@ -1042,7 +1014,7 @@ extension CodeMirrorEditor.Coordinator {
                 imageWidth: body["width"] as? Int
             )
         } catch {
-            print("[CodeMirrorEditor] Failed to update image meta: \(error)")
+            DebugLog.log(.editor, "[CodeMirrorEditor] Failed to update image meta: \(error)")
         }
     }
 
@@ -1057,11 +1029,9 @@ extension CodeMirrorEditor.Coordinator {
         webView.evaluateJavaScript(
             "window.FinalFinal.insertImage({src: `\(escapedSrc)`, alt: `\(escapedAlt)`})"
         ) { _, error in
-            #if DEBUG
             if let error {
-                print("[CodeMirrorEditor] insertImage JS error: \(error)")
+                DebugLog.log(.editor, "[CodeMirrorEditor] insertImage JS error: \(error)")
             }
-            #endif
         }
     }
 }

@@ -72,16 +72,14 @@ struct CodeMirrorEditor: NSViewRepresentable {
 
             #if DEBUG
             preloaded.isInspectable = true
-            print("[CodeMirrorEditor] Using preloaded WebView")
             #endif
+            DebugLog.log(.editor, "[CodeMirrorEditor] Using preloaded WebView")
 
             return preloaded
         }
 
         // Fallback: create fresh WebView (preload wasn't ready)
-        #if DEBUG
-        print("[CodeMirrorEditor] Creating new WebView (preload not ready)")
-        #endif
+        DebugLog.log(.editor, "[CodeMirrorEditor] Creating new WebView (preload not ready)")
 
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = sharedDataStore  // Persist localStorage across editor toggles
@@ -184,11 +182,9 @@ struct CodeMirrorEditor: NSViewRepresentable {
                 webView.evaluateJavaScript("window.FinalFinal.setImageMeta(\(json))")
             }
         }
-        #if DEBUG
         if pendingImageMeta != nil, !context.coordinator.isEditorReady {
-            print("[CodeMirrorEditor] Deferring pendingImageMeta push (isEditorReady=false)")
+            DebugLog.log(.editor, "[CodeMirrorEditor] Deferring pendingImageMeta push (isEditorReady=false)")
         }
-        #endif
 
         if context.coordinator.lastThemeCss != themeCSS {
             context.coordinator.lastThemeCss = themeCSS

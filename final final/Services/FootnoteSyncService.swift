@@ -174,9 +174,7 @@ final class FootnoteSyncService {
             guard !notesBlocks.isEmpty else { return nil }
             return BlockParser.assembleMarkdown(from: notesBlocks)
         } catch {
-            #if DEBUG
-            print("[FootnoteSyncService] Error building notes markdown: \(error)")
-            #endif
+            DebugLog.log(.editor, "[FootnoteSyncService] Error building notes markdown: \(error)")
             return nil
         }
     }
@@ -389,9 +387,7 @@ final class FootnoteSyncService {
             lastKnownRefs = (1...computedTotalCount).map { String($0) }
             lastRenumberedHash = lastKnownRefs.joined(separator: ",").hashValue
         } catch {
-            #if DEBUG
-            print("[FootnoteSyncService] Immediate insertion failed: \(error)")
-            #endif
+            DebugLog.log(.editor, "[FootnoteSyncService] Immediate insertion failed: \(error)")
         }
     }
 
@@ -450,9 +446,7 @@ final class FootnoteSyncService {
             )
             NotificationCenter.default.post(name: .notesSectionChanged, object: nil)
         } catch {
-            #if DEBUG
-            print("[FootnoteSyncService] Failed to update notes section: \(error)")
-            #endif
+            DebugLog.log(.editor, "[FootnoteSyncService] Failed to update notes section: \(error)")
         }
 
         // Push definitions to editor for tooltip display
@@ -630,9 +624,7 @@ final class FootnoteSyncService {
             lastRenumberedHash = 0
             lastKnownRefs = []
         } catch {
-            #if DEBUG
-            print("[FootnoteSyncService] Error removing notes section: \(error)")
-            #endif
+            DebugLog.log(.editor, "[FootnoteSyncService] Error removing notes section: \(error)")
         }
     }
 }

@@ -19,9 +19,7 @@ extension ZoteroService {
             throw ZoteroError.notRunning
         }
 
-        #if DEBUG
-        print("[ZoteroService] Editing citation with citekeys: \(citekeys)")
-        #endif
+        DebugLog.log(.zotero, "[ZoteroService] Editing citation with citekeys: \(citekeys)")
 
         // Build zotero://select URL to select items in Zotero's library pane
         // Format: zotero://select/items/@citekey1,@citekey2
@@ -32,9 +30,7 @@ extension ZoteroService {
             throw ZoteroError.invalidResponse("Invalid Zotero select URL")
         }
 
-        #if DEBUG
-        print("[ZoteroService] Opening \(selectURLString)")
-        #endif
+        DebugLog.log(.zotero, "[ZoteroService] Opening \(selectURLString)")
 
         // Open Zotero with items selected
         NSWorkspace.shared.open(selectURL)
@@ -61,9 +57,7 @@ extension ZoteroService {
             throw ZoteroError.invalidResponse("Invalid CAYW URL")
         }
 
-        #if DEBUG
-        print("[ZoteroService] Fetching current selection via CAYW...")
-        #endif
+        DebugLog.log(.zotero, "[ZoteroService] Fetching current selection via CAYW...")
 
         do {
             let (data, response) = try await URLSession.shared.data(from: url)
@@ -76,9 +70,7 @@ extension ZoteroService {
             let responseText = String(data: data, encoding: .utf8) ?? ""
             let trimmed = responseText.trimmingCharacters(in: .whitespacesAndNewlines)
 
-            #if DEBUG
-            print("[ZoteroService] CAYW selected response: '\(trimmed)'")
-            #endif
+            DebugLog.log(.zotero, "[ZoteroService] CAYW selected response: '\(trimmed)'")
 
             // Empty response means no selection
             if trimmed.isEmpty {
@@ -90,16 +82,12 @@ extension ZoteroService {
                 throw ZoteroError.invalidResponse("Failed to parse CAYW response: \(trimmed)")
             }
 
-            #if DEBUG
-            print("[ZoteroService] Parsed citekeys from selection: \(parsed.citekeys)")
-            #endif
+            DebugLog.log(.zotero, "[ZoteroService] Parsed citekeys from selection: \(parsed.citekeys)")
 
             // Fetch CSL items for the citekeys
             let items = try await fetchItemsForCitekeys(parsed.citekeys)
 
-            #if DEBUG
-            print("[ZoteroService] Fetched \(items.count) CSL items")
-            #endif
+            DebugLog.log(.zotero, "[ZoteroService] Fetched \(items.count) CSL items")
 
             return (parsed, items)
         } catch let error as ZoteroError {
@@ -119,9 +107,7 @@ extension ZoteroService {
             throw ZoteroError.invalidResponse("Invalid CAYW URL")
         }
 
-        #if DEBUG
-        print("[ZoteroService] Opening CAYW picker...")
-        #endif
+        DebugLog.log(.zotero, "[ZoteroService] Opening CAYW picker...")
 
         do {
             // This call blocks until user selects references and closes Zotero's picker
@@ -135,9 +121,7 @@ extension ZoteroService {
             let responseText = String(data: data, encoding: .utf8) ?? ""
             let trimmed = responseText.trimmingCharacters(in: .whitespacesAndNewlines)
 
-            #if DEBUG
-            print("[ZoteroService] CAYW response: '\(trimmed)'")
-            #endif
+            DebugLog.log(.zotero, "[ZoteroService] CAYW response: '\(trimmed)'")
 
             // Empty response means user cancelled
             if trimmed.isEmpty {
@@ -149,16 +133,12 @@ extension ZoteroService {
                 throw ZoteroError.invalidResponse("Failed to parse CAYW response: \(trimmed)")
             }
 
-            #if DEBUG
-            print("[ZoteroService] Parsed citekeys: \(parsed.citekeys)")
-            #endif
+            DebugLog.log(.zotero, "[ZoteroService] Parsed citekeys: \(parsed.citekeys)")
 
             // Fetch CSL items for the citekeys
             let items = try await fetchItemsForCitekeys(parsed.citekeys)
 
-            #if DEBUG
-            print("[ZoteroService] Fetched \(items.count) CSL items")
-            #endif
+            DebugLog.log(.zotero, "[ZoteroService] Fetched \(items.count) CSL items")
 
             isConnected = true
             connectionError = nil

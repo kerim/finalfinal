@@ -99,16 +99,12 @@ final class AutoBackupService {
     /// Create a backup if conditions are met
     private func createBackupIfNeeded(reason: String) async {
         guard hasUnsavedChanges else {
-            #if DEBUG
-            print("[AutoBackupService] No unsaved changes, skipping backup on \(reason)")
-            #endif
+            DebugLog.log(.backup, "[AutoBackupService] No unsaved changes, skipping backup on \(reason)")
             return
         }
 
         guard canCreateBackup() else {
-            #if DEBUG
-            print("[AutoBackupService] Too soon since last backup, skipping on \(reason)")
-            #endif
+            DebugLog.log(.backup, "[AutoBackupService] Too soon since last backup, skipping on \(reason)")
             return
         }
 
@@ -124,31 +120,23 @@ final class AutoBackupService {
     /// Actually create the auto-backup
     private func createAutoBackup(reason: String) async {
         guard let service = snapshotService else {
-            #if DEBUG
-            print("[AutoBackupService] No snapshot service configured")
-            #endif
+            DebugLog.log(.backup, "[AutoBackupService] No snapshot service configured")
             return
         }
 
         do {
             if let snapshot = try service.createAutoSnapshot() {
-                #if DEBUG
-                print("[AutoBackupService] Created auto-backup on \(reason): \(snapshot.id)")
-                #endif
+                DebugLog.log(.backup, "[AutoBackupService] Created auto-backup on \(reason): \(snapshot.id)")
                 // Prune old backups after creating new one
                 try service.pruneAutoBackups()
             } else {
-                #if DEBUG
-                print("[AutoBackupService] Skipped auto-backup on \(reason): content unchanged")
-                #endif
+                DebugLog.log(.backup, "[AutoBackupService] Skipped auto-backup on \(reason): content unchanged")
             }
             // Update state regardless — content is genuinely unchanged or saved
             lastBackupTime = Date()
             hasUnsavedChanges = false
         } catch {
-            #if DEBUG
-            print("[AutoBackupService] Failed to create auto-backup: \(error)")
-            #endif
+            DebugLog.log(.backup, "[AutoBackupService] Failed to create auto-backup: \(error)")
         }
     }
 

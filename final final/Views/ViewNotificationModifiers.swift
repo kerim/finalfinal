@@ -43,9 +43,7 @@ extension View {
                 if editorState.editorMode == .wysiwyg {
                     // Switching TO source mode - inject anchors
                     editorState.contentState = .editorTransition
-                    #if DEBUG
-                    print("[SWITCH→CM] Starting. content length=\(editorState.content.count)")
-                    #endif
+                    DebugLog.log(.editor, "[SWITCH→CM] Starting. content length=\(editorState.content.count)")
 
                     // When zoomed, only inject anchors for zoomed sections
                     let sectionsToInject: [SectionViewModel]
@@ -60,9 +58,7 @@ extension View {
                     // approach) may not be in the blocks table yet, causing wrong offsets
                     // and anchor injection corruption.
                     editorState.flushContentToDatabase()
-                    #if DEBUG
-                    print("[SWITCH→CM] After flush")
-                    #endif
+                    DebugLog.log(.editor, "[SWITCH→CM] After flush")
 
                     // Compute offsets from blocks (same data that produced editorState.content)
                     var adjustedSections: [SectionViewModel] = []
@@ -78,9 +74,7 @@ extension View {
                             } else {
                                 fetchedBlocks = try db.fetchBlocks(projectId: pid)
                             }
-                            #if DEBUG
-                            print("[SWITCH→CM] Fetched \(fetchedBlocks.count) blocks")
-                            #endif
+                            DebugLog.log(.editor, "[SWITCH→CM] Fetched \(fetchedBlocks.count) blocks")
                             let sorted = fetchedBlocks.sorted { a, b in
                                 let aKey = (a.sortOrder, a.blockType == .heading ? 0 : 1)
                                 let bKey = (b.sortOrder, b.blockType == .heading ? 0 : 1)
@@ -100,11 +94,9 @@ extension View {
                                     adjustedSections.append(section.withUpdates(startOffset: off))
                                 }
                             }
-                            #if DEBUG
-                            print("[SWITCH→CM] Sections with offsets: \(adjustedSections.count)")
-                            #endif
+                            DebugLog.log(.editor, "[SWITCH→CM] Sections with offsets: \(adjustedSections.count)")
                         } catch {
-                            print("[SWITCH→CM] ERROR fetching blocks: \(error)")
+                            DebugLog.log(.editor, "[SWITCH→CM] ERROR fetching blocks: \(error)")
                         }
                     }
 
@@ -112,9 +104,7 @@ extension View {
                         markdown: editorState.content,
                         sections: adjustedSections
                     )
-                    #if DEBUG
-                    print("[SWITCH→CM] After anchors: length=\(withAnchors.count)")
-                    #endif
+                    DebugLog.log(.editor, "[SWITCH→CM] After anchors: length=\(withAnchors.count)")
                     // Also inject bibliography marker for source mode
                     let withBibMarker = sectionSyncService.injectBibliographyMarker(
                         markdown: withAnchors,
@@ -126,18 +116,14 @@ extension View {
                 } else {
                     // Switching FROM source mode TO WYSIWYG - set state BEFORE flush
                     editorState.contentState = .editorTransition
-                    #if DEBUG
-                    print("[SWITCH→MW] Starting. sourceContent length=\(editorState.sourceContent.count)")
-                    #endif
+                    DebugLog.log(.editor, "[SWITCH→MW] Starting. sourceContent length=\(editorState.sourceContent.count)")
                     editorState.flushContentToDatabase()
 
                     // Extract anchors and strip bibliography marker
                     let (cleaned, anchors) = sectionSyncService.extractSectionAnchors(
                         markdown: editorState.sourceContent
                     )
-                    #if DEBUG
-                    print("[SWITCH→MW] After extract: cleaned length=\(cleaned.count), anchors=\(anchors.count)")
-                    #endif
+                    DebugLog.log(.editor, "[SWITCH→MW] After extract: cleaned length=\(cleaned.count), anchors=\(anchors.count)")
                     editorState.sourceAnchors = anchors
                     // Also strip bibliography marker since Milkdown shouldn't see it
                     editorState.content = SectionSyncService.stripBibliographyMarker(from: cleaned)
@@ -442,7 +428,7 @@ extension View {
                 excludeBibliography: editorState.excludeBibliography
             )
         } catch {
-            print("[ContentView] Error saving document goal settings: \(error.localizedDescription)")
+            DebugLog.log(.lifecycle, "[ContentView] Error saving document goal settings: \(error.localizedDescription)")
         }
     }
 

@@ -247,9 +247,7 @@ class EditorViewState {
 
                     // Skip updates during content transitions (drag, zoom, hierarchy enforcement, etc.)
                     guard contentState == .idle else {
-                        #if DEBUG
-                        print("[EditorViewState:observe] SKIPPED: contentState=\(contentState), blocks=\(outlineBlocks.count)")
-                        #endif
+                        DebugLog.log(.outline, "[EditorViewState:observe] SKIPPED: contentState=\(contentState), blocks=\(outlineBlocks.count)")
                         continue
                     }
 
@@ -278,9 +276,7 @@ class EditorViewState {
                     self.onSectionsUpdated?()
                 }
             } catch {
-                #if DEBUG
-                print("[EditorViewState] Block observation error: \(error)")
-                #endif
+                DebugLog.log(.outline, "[EditorViewState] Block observation error: \(error)")
             }
         }
     }
@@ -289,9 +285,7 @@ class EditorViewState {
     /// Called when ValueObservation may have been dropped during non-idle contentState.
     func refreshSections() {
         guard let db = projectDatabase, let pid = currentProjectId else {
-            #if DEBUG
-            print("[EditorViewState:refresh] BAIL: no db/pid")
-            #endif
+            DebugLog.log(.outline, "[EditorViewState:refresh] BAIL: no db/pid")
             return
         }
         do {
@@ -308,16 +302,12 @@ class EditorViewState {
                     }
                 }
             }
-            #if DEBUG
-            print("[EditorViewState:refresh] \(viewModels.count) sections (contentState=\(contentState))")
-            #endif
+            DebugLog.log(.outline, "[EditorViewState:refresh] \(viewModels.count) sections (contentState=\(contentState))")
             self.sections = viewModels
             self.recalculateParentRelationships()
             self.onSectionsUpdated?()
         } catch {
-            #if DEBUG
-            print("[EditorViewState] refreshSections error: \(error)")
-            #endif
+            DebugLog.log(.outline, "[EditorViewState] refreshSections error: \(error)")
         }
     }
 
@@ -343,9 +333,7 @@ class EditorViewState {
                     self.annotations = viewModels
                 }
             } catch {
-                #if DEBUG
-                print("[EditorViewState] Annotation observation error: \(error)")
-                #endif
+                DebugLog.log(.outline, "[EditorViewState] Annotation observation error: \(error)")
             }
         }
     }
