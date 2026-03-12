@@ -373,6 +373,10 @@ extension ProjectDatabase {
                 try Block.deleteOne(db, key: id)
             }
 
+            // Track image fragments inserted within this batch to prevent duplicates
+            // (catches the race condition where multiple inserts of the same image arrive in one sync cycle)
+            var insertedImageFragments: [String: String] = [:]  // fragment -> permanentId
+
             // Process inserts BEFORE updates — so idMapping is populated when
             // a temp-ID update arrives for a block that was also inserted
             for insert in changes.inserts {
@@ -408,6 +412,16 @@ extension ProjectDatabase {
                 } else {
                     blockType = BlockType(rawValue: insert.blockType) ?? .paragraph
                     effectiveHeadingLevel = insert.headingLevel
+                }
+
+                // Within-batch dedup: skip duplicate image inserts in the same sync cycle
+                if insert.blockType == "image" {
+                    let fragment = insert.markdownFragment.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if let existingId = insertedImageFragments[fragment] {
+                        idMapping[insert.tempId] = existingId
+                        DebugLog.log(.data, "[Blocks] Skipped duplicate image insert: \(fragment.prefix(40))")
+                        continue
+                    }
                 }
 
                 let permanentId = UUID().uuidString
@@ -447,6 +461,12 @@ extension ProjectDatabase {
                 }
 
                 try block.insert(db)
+
+                // Record image fragment for within-batch dedup
+                if insert.blockType == "image" {
+                    let fragment = insert.markdownFragment.trimmingCharacters(in: .whitespacesAndNewlines)
+                    insertedImageFragments[fragment] = permanentId
+                }
 
                 // Record the mapping from temp ID to permanent ID
                 idMapping[insert.tempId] = permanentId
@@ -536,6 +556,47 @@ extension ProjectDatabase {
         }
 
         return idMapping
+    }
+
+    // MARK: - Image Deduplication
+
+    /// Remove adjacent duplicate image blocks (same markdownFragment in consecutive sort order positions).
+    /// Keeps the first occurrence, deletes the rest. Only affects blocks that are consecutive by array index
+    /// when sorted by sortOrder — legitimately repeated images with distant sort orders are preserved.
+    func deduplicateAdjacentImageBlocks(projectId: String) throws {
+        try write { db in
+            let imageBlocks = try Block
+                .filter(Block.Columns.projectId == projectId)
+                .filter(Block.Columns.blockType == BlockType.image.rawValue)
+                .order(Block.Columns.sortOrder)
+                .fetchAll(db)
+
+            guard imageBlocks.count > 1 else { return }
+
+            var idsToDelete: [String] = []
+            var previousFragment: String?
+
+            for block in imageBlocks {
+                let fragment = block.markdownFragment.trimmingCharacters(in: .whitespacesAndNewlines)
+                if fragment == previousFragment {
+                    idsToDelete.append(block.id)
+                } else {
+                    previousFragment = fragment
+                }
+            }
+
+            if !idsToDelete.isEmpty {
+                for id in idsToDelete {
+                    try Block.deleteOne(db, key: id)
+                }
+                DebugLog.always("[Blocks] Removed \(idsToDelete.count) duplicate image blocks from project \(projectId.prefix(8))")
+            }
+
+            // Log per-block details at .data level to avoid console spam
+            for id in idsToDelete {
+                DebugLog.log(.data, "[Blocks] Deleted duplicate image block: \(id.prefix(8))")
+            }
+        }
     }
 
     // MARK: - Image Metadata

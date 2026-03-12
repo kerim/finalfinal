@@ -69,6 +69,7 @@ Bug investigation reports with root cause analysis and solutions.
 - [project-switch-content-loss.md](findings/project-switch-content-loss.md) -- Silent data loss on project switch: BlockSyncService 2s poll killed before flush, fix adds content flushing at all lifecycle boundaries
 - [version-history-window-bugs.md](findings/version-history-window-bugs.md) -- Window restoration on launch, dismiss vs dismissWindow, loading state priority, stale sections, auto-snapshot deduplication
 - [bibliography-id-theft-corruption.md](findings/bibliography-id-theft-corruption.md) -- Block ID greedy matching steals bibliography IDs near boundary; fix: two-phase closest-first matching + isBibliography write guard
+- [image-block-duplication.md](findings/image-block-duplication.md) -- 300ms content push debounce race causes cascading image block inserts; fix: shared timer clearing + adjacent dedup + batch dedup guard
 
 ## Deferred
 

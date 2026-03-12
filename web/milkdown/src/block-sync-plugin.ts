@@ -64,9 +64,17 @@ interface BlockSnapshot {
   blockType: string;
   textContent: string;
   nodeSize: number; // Detect atom node add/remove (citations)
-  markdownFragment: string; // Detect attr-only changes (citation edits)
   headingLevel?: number;
   node: Node; // Store node reference for markdown serialization
+  _cachedMarkdown: string | null; // Lazily computed markdown fragment
+}
+
+/** Get or compute the markdown fragment for a snapshot (lazy + cached) */
+function getMarkdownFragment(snapshot: BlockSnapshot): string {
+  if (snapshot._cachedMarkdown === null) {
+    snapshot._cachedMarkdown = nodeToMarkdownFragment(snapshot.node);
+  }
+  return snapshot._cachedMarkdown;
 }
 
 // Current state for external access
@@ -254,9 +262,9 @@ function snapshotBlocks(doc: Node): Map<string, BlockSnapshot> {
           blockType: effectiveType,
           textContent: node.textContent,
           nodeSize: node.nodeSize,
-          markdownFragment: nodeToMarkdownFragment(node),
           headingLevel: effectiveLevel,
           node,
+          _cachedMarkdown: null, // Lazily computed only when needed
         });
       }
     }
@@ -285,11 +293,13 @@ function detectChanges(
         'BlockSync:detect',
         `DELETE id=${id.slice(0, 8)} type=${oldBlock.blockType} "${oldBlock.textContent.slice(0, 40)}"`
       );
+    } else if (oldBlock.node === newBlock.node) {
+      // Fast path: same ProseMirror node reference — nothing changed
     } else if (
       oldBlock.textContent !== newBlock.textContent ||
       oldBlock.nodeSize !== newBlock.nodeSize ||
-      oldBlock.markdownFragment !== newBlock.markdownFragment ||
-      oldBlock.headingLevel !== newBlock.headingLevel
+      oldBlock.headingLevel !== newBlock.headingLevel ||
+      getMarkdownFragment(oldBlock) !== getMarkdownFragment(newBlock)
     ) {
       // If this block is already pending as an insert, update the insert's content
       // instead of adding a separate update (prevents INSERT+UPDATE overlap → orphan blocks)
@@ -298,7 +308,7 @@ function detectChanges(
         state.pendingInserts.set(id, {
           ...existing,
           textContent: newBlock.textContent,
-          markdownFragment: newBlock.markdownFragment,
+          markdownFragment: getMarkdownFragment(newBlock),
           headingLevel: newBlock.headingLevel,
         });
         syncLog(
@@ -306,11 +316,11 @@ function detectChanges(
           `UPDATE-merged-into-INSERT id=${id.slice(0, 13)} "${newBlock.textContent.slice(0, 40)}"`
         );
       } else {
-        // Block was updated — use pre-computed markdownFragment from snapshot
+        // Block was updated — lazily compute markdownFragment only for changed blocks
         state.pendingUpdates.set(id, {
           id,
           textContent: newBlock.textContent,
-          markdownFragment: newBlock.markdownFragment,
+          markdownFragment: getMarkdownFragment(newBlock),
           headingLevel: newBlock.headingLevel,
         });
         const changes: string[] = [];
@@ -345,7 +355,7 @@ function detectChanges(
         tempId: id,
         blockType: newBlock.blockType,
         textContent: newBlock.textContent,
-        markdownFragment: newBlock.markdownFragment,
+        markdownFragment: getMarkdownFragment(newBlock),
         headingLevel: newBlock.headingLevel,
         afterBlockId,
       });
@@ -365,7 +375,7 @@ let pendingOldSnapshot: Map<string, BlockSnapshot> | null = null;
 // Applied to closure-captured snapshots in the setTimeout callback
 // before calling detectChanges(), preventing stale temp IDs from
 // generating spurious INSERT/UPDATE pairs.
-let pendingIdRemap: Map<string, string> = new Map();
+const pendingIdRemap: Map<string, string> = new Map();
 
 /**
  * Re-key a snapshot map using accumulated ID remappings.

@@ -86,6 +86,13 @@ extension ContentView {
             DebugLog.log(.lifecycle, "[ContentView] Error checking/normalizing sort orders: \(error)")
         }
 
+        // Clean up duplicate adjacent image blocks (from content push race condition)
+        do {
+            try db.deduplicateAdjacentImageBlocks(projectId: pid)
+        } catch {
+            DebugLog.log(.lifecycle, "[ContentView] Error deduplicating image blocks: \(error)")
+        }
+
         // Start reactive observation (now uses blocks internally)
         editorState.startObserving(database: db, projectId: pid)
         editorState.startObservingAnnotations(database: db, contentId: cid)

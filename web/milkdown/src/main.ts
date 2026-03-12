@@ -92,10 +92,12 @@ import { openCAYWPicker } from './cayw';
 import { citationPlugin } from './citation-plugin';
 import { restoreCitationLibrary } from './citation-search';
 import {
+  clearContentPushTimer,
   getContentHasBeenSet,
   getCurrentContent,
   getEditorInstance,
   getIsSettingContent,
+  setContentPushTimer,
   setCurrentContent,
   setEditorInstance,
   setZoomFootnoteState,
@@ -201,8 +203,6 @@ async function initEditor() {
   const editorInstance = getEditorInstance()!;
   const view = editorInstance.ctx.get(editorViewCtx);
   const originalDispatch = view.dispatch.bind(view);
-  let contentPushTimer: ReturnType<typeof setTimeout> | null = null;
-
   // Section change tracking state (debounced push to Swift)
   let sectionChangeTimer: ReturnType<typeof setTimeout> | null = null;
   let lastTrackedTitle: string | null = null;
@@ -214,8 +214,8 @@ async function initEditor() {
     if (getIsSettingContent()) return;
 
     if (tr.docChanged) {
-      if (contentPushTimer) clearTimeout(contentPushTimer);
-      contentPushTimer = setTimeout(() => {
+      clearContentPushTimer();
+      setContentPushTimer(setTimeout(() => {
         // Re-check guard: setContent() may have run during the 50ms window
         if (getIsSettingContent()) {
           return;
@@ -230,7 +230,7 @@ async function initEditor() {
         const firstHeading = md.match(/^#{1,6}\s+.*/m)?.[0]?.slice(0, 60) || '(none)';
         syncLog('ContentPush', `PUSHED: len=${md.length}, firstH="${firstHeading}"`);
         (window as any).webkit?.messageHandlers?.contentChanged?.postMessage(md);
-      }, 50);
+      }, 50));
     }
 
     // Check for section change on ANY transaction (cursor move or content change)

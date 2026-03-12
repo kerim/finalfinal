@@ -56,21 +56,28 @@ Typing felt sluggish, especially in longer documents. Profiling revealed multipl
 - `BlockSyncService.swift` — `applyChanges()` dispatches DB write via `Task.detached`
 - `FootnoteSyncService.swift` — `nonisolated` annotations for detached task compatibility
 
-### 4. Block Sync Debouncing
+### 4. Block Sync Debouncing + Lazy Markdown Serialization
 
 **Before:** `detectChanges()` ran synchronously on every ProseMirror transaction, including a redundant `nodeToMarkdownFragment()` call per updated block. Block polling at 300ms.
 
-**After:** `detectChanges()` debounced with 100ms timer. Preserves the oldest un-processed snapshot across debounce resets so rapid keystrokes A→B→C diff A→C (not B→C, which would lose inserts from A). Uses pre-computed `markdownFragment` from snapshot instead of re-serializing. Block polling interval increased to 2s.
+**After:** `detectChanges()` debounced with 100ms timer. Preserves the oldest un-processed snapshot across debounce resets so rapid keystrokes A→B→C diff A→C (not B→C, which would lose inserts from A). Block polling interval increased to 2s.
+
+**Lazy markdown (slowdown branch):** `BlockSnapshot.markdownFragment` replaced with `_cachedMarkdown: string | null` + `getMarkdownFragment()` accessor. `nodeToMarkdownFragment()` is only called when a block actually changes — unchanged blocks never pay the serialization cost. Also added a fast-path: if `oldBlock.node === newBlock.node` (same ProseMirror node reference), skip all comparison entirely.
 
 **Files:**
-- `web/milkdown/src/block-sync-plugin.ts` — debounce timer + `pendingOldSnapshot` preservation
+- `web/milkdown/src/block-sync-plugin.ts` — debounce timer + `pendingOldSnapshot` preservation + lazy markdown + node reference fast path
 - `BlockSyncService.swift` — polling interval 0.3s→2s
 
-### 5. Focus Mode Single-Pass
+### 5. Focus Mode Cached DecorationSet
 
-**Before:** Two `doc.descendants()` walks per transaction — one to find the cursor block, another to build decorations.
+**Before:** Full `doc.descendants()` walk on every transaction (cursor move or doc change) to rebuild all dimming decorations from scratch.
 
-**After:** Single pass combines cursor detection and dimming. If cursor is in the current block, skip; otherwise, add dimmed decoration.
+**After (typing-delay branch):** Single-pass combining cursor detection and dimming.
+
+**After (slowdown branch):** Replaced `props.decorations()` function (stateless, rebuilds every time) with `state` field (`init`/`apply`). The plugin state caches the `DecorationSet` and the cursor's textblock position. On `apply`:
+- If cursor stayed in the same textblock and doc didn't change → return cached state (no work)
+- If doc changed but cursor is in the same textblock → `DecorationSet.map(tr.mapping)` (O(log n))
+- If cursor moved to a different textblock → full rebuild
 
 **Files:** `web/milkdown/src/focus-mode-plugin.ts`
 
@@ -92,8 +99,26 @@ Added `.removeDuplicates()` to block observation stream to suppress redundant UI
 
 **Files:** `Database+BlocksObservation.swift`
 
-### 8. Drop Zone Level Calculation
+### 8. Batch Word Count Queries
+
+**Before:** `EditorViewState` computed word counts with N+1 individual DB queries per observation update — one `sectionOnlyWordCount()` call per heading, plus `wordCountForHeading()` for any heading with an aggregate goal.
+
+**After:** Single `batchWordCounts(blockIds:needsAggregate:)` method fetches all heading blocks and all project blocks in two queries, then computes section-only and aggregate counts in-memory. Applied in both the `ValueObservation` callback and the synchronous `refreshSectionsFromDatabase()` path.
+
+**Files:**
+- `Database+BlocksWordCount.swift` — `batchWordCounts()` method
+- `EditorViewState.swift` — replaced N+1 loops with single batch call
+
+### 9. Drop Zone Level Calculation
 
 Refactored `calculateZoneLevel()` to offer 2-3 valid level options relative to the predecessor (predecessor-1, same, predecessor+1) instead of dividing the sidebar width across all levels H1-HN. This is a correctness fix bundled with the branch, not a latency change.
 
 **Files:** `OutlineSidebar+Models.swift`
+
+---
+
+## Regression: Content Push Debounce (300ms) Caused Image Block Duplication
+
+During the slowdown branch, the content push debounce was experimentally increased from 50ms to 300ms. This caused a catastrophic image duplication bug — see [image-block-duplication.md](image-block-duplication.md) for the full root cause analysis.
+
+**Fix:** Debounce reverted to 50ms. Additionally, a structural fix was added: the `contentPushTimer` was moved from a local variable in `initEditor()` to shared state in `editor-state.ts`, allowing `api-content.ts` to clear stale timers when Swift programmatically replaces document content. This makes it safe to increase the debounce in the future without re-introducing the race condition.
