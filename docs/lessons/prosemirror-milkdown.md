@@ -266,3 +266,45 @@ apply(tr, value, _oldState, newState) {
 ```
 
 **General principle:** In ProseMirror plugin `apply()`, keep state updates synchronous but debounce expensive side effects. When debouncing diffs, always compare against the oldest un-processed state, not the most recent, or intermediate changes are lost.
+
+---
+
+## DOM Cleanup ≠ State Cleanup (WebKit Native Drop Race)
+
+**Problem:** Images dragged into the editor created ghost `#####` sidebar sections titled `!Screenshot 202...`. DOM cleanup removed the visible `<img>` elements but the sections persisted.
+
+**Root Cause:** WebKit's `performDragOperation` fires before JS events and inserts a native `<img src="blob:...">` into the DOM. ProseMirror's mutation observer incorporates this as a CommonMark `image` node in its state. The `insertImage()` function cleaned up the DOM elements (`document.querySelectorAll('img[src^="blob:"]').forEach(el => el.remove())`) but ProseMirror's internal state still contained the inline `image` node — inside whatever block was at the cursor, often a heading.
+
+**Solution:** Clean up ProseMirror state via a transaction, not just the DOM:
+
+```typescript
+// Wrong — ProseMirror state still has the ghost node
+document.querySelectorAll('img[src^="blob:"]').forEach(el => el.remove());
+
+// Right — remove from ProseMirror state
+const imageType = view.state.schema.nodes.image;
+let tr = view.state.tr;
+const removals: { from: number; to: number }[] = [];
+view.state.doc.descendants((node, pos) => {
+  if (node.type === imageType) {
+    const src = node.attrs.src || '';
+    if (src.startsWith('blob:') || src.startsWith('data:')) {
+      removals.push({ from: pos, to: pos + node.nodeSize });
+    }
+  }
+});
+for (let i = removals.length - 1; i >= 0; i--) {
+  tr = tr.delete(removals[i].from, removals[i].to);
+}
+// Then insert figure node into the same transaction
+tr = tr.insert(insertPos, figureNode);
+view.dispatch(tr);
+```
+
+**Key details:**
+- The `image` node type is from Milkdown's CommonMark plugin (inline), distinct from the custom `figure` node type (block). WebKit's native drop produces the former.
+- Delete in reverse position order to preserve earlier positions.
+- Compute insert position against `tr.doc` (post-deletion), not `view.state.doc`.
+- Keep DOM cleanup as belt-and-suspenders.
+
+**General principle:** When WebKit's native behavior inserts content that ProseMirror incorporates via mutation observer, you must clean up through ProseMirror transactions. DOM removal alone leaves ProseMirror's state diverged from the DOM, causing ghost content on next serialization.
