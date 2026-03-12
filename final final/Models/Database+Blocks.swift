@@ -487,20 +487,15 @@ extension ProjectDatabase {
                         block.markdownFragment = markdownFragment
                         // Detect block type changes from content (e.g., paragraph → heading from paste)
                         let trimmed = markdownFragment.trimmingCharacters(in: .whitespacesAndNewlines)
-                        if let match = trimmed.range(of: "^(#{1,6})\\s+", options: .regularExpression) {
-                            let afterHashes = String(trimmed[match.upperBound...])
-                            // Skip ghost image headers from WebKit native drop race condition
-                            if afterHashes.hasPrefix("![") && (afterHashes.contains("](blob:") || afterHashes.contains("](data:")) {
-                                // Don't reclassify as heading — leave block type unchanged
-                            } else {
-                                let hashes = trimmed[match].filter { $0 == "#" }
-                                block.blockType = .heading
-                                block.headingLevel = hashes.count
-                                // Strip heading prefix from textContent for sidebar display
-                                if let textContent = update.textContent, textContent.hasPrefix("#") {
-                                    block.textContent = BlockParser.extractTextContent(from: trimmed, blockType: .heading)
-                                    block.wordCount = MarkdownUtils.wordCount(for: block.textContent)
-                                }
+                        if let match = trimmed.range(of: "^(#{1,6})\\s+", options: .regularExpression),
+                           !MarkdownUtils.isGhostImageMarkdown(String(trimmed[match.upperBound...])) {
+                            let hashes = trimmed[match].filter { $0 == "#" }
+                            block.blockType = .heading
+                            block.headingLevel = hashes.count
+                            // Strip heading prefix from textContent for sidebar display
+                            if let textContent = update.textContent, textContent.hasPrefix("#") {
+                                block.textContent = BlockParser.extractTextContent(from: trimmed, blockType: .heading)
+                                block.wordCount = MarkdownUtils.wordCount(for: block.textContent)
                             }
                         } else if block.blockType == .heading {
                             // Was heading but no longer has heading syntax

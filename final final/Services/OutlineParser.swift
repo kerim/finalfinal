@@ -178,9 +178,7 @@ struct OutlineParser {
         guard !title.isEmpty else { return nil }
 
         // Reject ghost image headers from WebKit native drop race condition
-        if title.hasPrefix("![") && (title.contains("](blob:") || title.contains("](data:")) {
-            return nil
-        }
+        if MarkdownUtils.isGhostImageMarkdown(title) { return nil }
 
         return ParsedHeader(
             level: level,
