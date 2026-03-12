@@ -19,7 +19,7 @@ extension ContentView {
 
     /// Fetch blocks from DB and return assembled markdown + ordered block IDs + image metadata
     /// Used for atomic content+ID pushes (bibliography rebuild, etc.)
-    func fetchBlocksWithIds() -> (markdown: String, blockIds: [String], imageMeta: [ImageBlockMeta])? {
+    func fetchBlocksWithIds() -> (markdown: String, blockIds: [String], imageMeta: [ImageBlockMeta], bibBoundaryIndex: Int?)? {
         guard let db = documentManager.projectDatabase,
               let pid = documentManager.projectId else { return nil }
 
@@ -45,7 +45,13 @@ extension ContentView {
                 .filter { $0.blockType == .image }
                 .map { ImageBlockMeta(id: $0.id, width: $0.imageWidth, caption: $0.imageCaption, alt: $0.imageAlt, src: $0.imageSrc) }
 
-            return (markdown, ids, imageMeta)
+            let bibBoundaryIndex = BlockParser.firstBibliographyNodeIndex(sorted)
+
+            #if DEBUG
+            print("[fetchBlocksWithIds] bibBoundaryIndex=\(String(describing: bibBoundaryIndex)) blockCount=\(sorted.count) idCount=\(ids.count)")
+            #endif
+
+            return (markdown, ids, imageMeta, bibBoundaryIndex)
         } catch {
             return nil
         }
@@ -69,7 +75,8 @@ extension ContentView {
             await blockSyncService.setContentWithBlockIds(
                 markdown: result.markdown,
                 blockIds: result.blockIds,
-                imageMeta: result.imageMeta)
+                imageMeta: result.imageMeta,
+                cursorBoundary: result.bibBoundaryIndex)
             editorState.isResettingContent = false
         }
     }
@@ -164,9 +171,11 @@ extension ContentView {
                 }
 
                 // Build block-ID → Character offset map
+                // MUST stay in sync with BlockParser.assembleMarkdown filtering
+                let nonEmpty = sorted.filter { !BlockParser.isEmptyFragment($0.markdownFragment) }
                 var blockOffset: [String: Int] = [:]
                 var offset = 0
-                for (i, block) in sorted.enumerated() {
+                for (i, block) in nonEmpty.enumerated() {
                     if i > 0 { offset += 2 }  // "\n\n" separator
                     blockOffset[block.id] = offset
                     offset += block.markdownFragment.count
@@ -373,7 +382,8 @@ extension ContentView {
                                 if let result = fetchBlocksWithIds() {
                                     await blockSyncService.setContentWithBlockIds(
                                         markdown: result.markdown, blockIds: result.blockIds,
-                                        imageMeta: result.imageMeta)
+                                        imageMeta: result.imageMeta,
+                                        cursorBoundary: result.bibBoundaryIndex)
                                     // Always sync editorState.content to DB-assembled markdown.
                                     // Without this, updateNSView sees editorState.content (e.g. 1748 chars)
                                     // ≠ lastPushedContent (1747 chars) and re-pushes WITHOUT block IDs,

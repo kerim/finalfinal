@@ -237,6 +237,8 @@ extension ContentView {
         await configureForCurrentProject()
 
         suppressNextBibliographyRebuild = true
+        pendingBibliographyRebuild = false
+        pendingNotesRebuild = false
 
         // Reconfigure BlockSyncService with new DB (weak WebView ref still valid)
         if editorState.editorMode == .wysiwyg,

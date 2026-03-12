@@ -27,6 +27,7 @@ import { resetCAYWState } from './cayw';
 import {
   getCurrentContent,
   getEditorInstance,
+  setContentHasBeenSet,
   setCurrentContent,
   setIsSettingContent,
   setPendingSlashRedo,
@@ -39,8 +40,22 @@ import { isSourceModeEnabled } from './source-mode-plugin';
 import { syncLog } from './sync-debug';
 import type { Block, ImageBlockMeta } from './types';
 
+/** Re-snapshot in the next animation frame, then unpause sync.
+ *  Ensures normalization transactions are absorbed before change detection resumes. */
+function deferredSnapshotAndUnpause(): void {
+  requestAnimationFrame(() => {
+    const inst = getEditorInstance();
+    if (inst) {
+      const v = inst.ctx.get(editorViewCtx);
+      resetAndSnapshot(v.state.doc);
+    }
+    setSyncPaused(false);
+  });
+}
+
 export function setContent(markdown: string, options?: { scrollToStart?: boolean }): void {
   syncLog('API:setContent', `entry len=${markdown.length} scrollToStart=${options?.scrollToStart ?? false}`);
+
   // NOTE: Do NOT clear zoom mode here. setContent() is called from updateNSView
   // during zoom, and clearing zoom mode causes temp IDs to be generated for mini-Notes
   // nodes before pushBlockIds re-enables it. Zoom mode is independently managed by:
@@ -52,6 +67,8 @@ export function setContent(markdown: string, options?: { scrollToStart?: boolean
     setCurrentContent(markdown);
     return;
   }
+
+  setContentHasBeenSet(true);
 
   // Handle empty content FIRST - ensure doc has valid empty paragraph, not section_break
   // This must run BEFORE the currentContent === markdown check because:
@@ -76,11 +93,10 @@ export function setContent(markdown: string, options?: { scrollToStart?: boolean
         const emptyDoc = view.state.schema.nodes.doc.create(null, emptyParagraph);
         const tr = view.state.tr.replaceWith(0, view.state.doc.content.size, emptyDoc.content);
         view.dispatch(tr.setSelection(Selection.atStart(tr.doc)));
-        resetAndSnapshot(view.state.doc);
         setCurrentContent(markdown);
       } finally {
         setIsSettingContent(false);
-        setSyncPaused(false);
+        deferredSnapshotAndUnpause();
       }
     });
     return;
@@ -175,10 +191,6 @@ export function setContent(markdown: string, options?: { scrollToStart?: boolean
         syncLog('API:setContent', `figures after restore: ${restoredCount}/${savedFigures.length}`);
       }
 
-      // resetAndSnapshot AFTER width restoration — captures the width-restored state
-      // so block-sync doesn't detect spurious UPDATE events
-      resetAndSnapshot(view.state.doc);
-
       // Reset scroll position for zoom transitions
       // Swift handles hiding/showing the WKWebView at compositor level
       if (options?.scrollToStart) {
@@ -217,7 +229,8 @@ export function setContent(markdown: string, options?: { scrollToStart?: boolean
     setCurrentContent(markdown);
   } finally {
     setIsSettingContent(false);
-    setSyncPaused(false);
+    // Delay snapshot + unpause to RAF so normalization transactions are absorbed
+    deferredSnapshotAndUnpause();
   }
 }
 
@@ -274,6 +287,7 @@ export function resetForProjectSwitch(): void {
   resetBlockIdState();
   destroyBlockSyncState();
   setCurrentContent('');
+  setContentHasBeenSet(false);
   setIsSettingContent(false);
   setPendingSlashUndo(false);
   setPendingSlashRedo(false);
@@ -317,11 +331,12 @@ export function applyBlocks(blocks: Block[]): void {
     const view = editorInstance.ctx.get(editorViewCtx);
     const parser = editorInstance.ctx.get(parserCtx);
 
-    // Sort blocks by sortOrder
+    // Sort blocks by sortOrder, then filter empty fragments (stay in sync with Swift BlockParser)
     const sortedBlocks = [...blocks].sort((a, b) => a.sortOrder - b.sortOrder);
+    const nonEmptyBlocks = sortedBlocks.filter((b) => b.markdownFragment.trim().length > 0);
 
-    // Assemble markdown from blocks
-    const markdown = sortedBlocks.map((b) => b.markdownFragment).join('\n\n');
+    // Assemble markdown from non-empty blocks
+    const markdown = nonEmptyBlocks.map((b) => b.markdownFragment).join('\n\n');
 
     // Parse and replace document content
     setSyncPaused(true);
@@ -349,11 +364,12 @@ export function applyBlocks(blocks: Block[]): void {
       // NOTE: blockIds should already be collapsed for list merging on the Swift side
       // (consecutive same-type list blocks map to a single PM list node).
       clearBlockIds();
-      const blockIds = sortedBlocks.map((b) => b.id);
+      const blockIds = nonEmptyBlocks.map((b) => b.id);
       setBlockIdsForTopLevel(blockIds, view.state.doc);
 
       // Inject image metadata (caption, width) from block data into figure nodes
-      const figureBlocks = sortedBlocks.filter((b) => b.blockType === 'image');
+      // MUST use nonEmptyBlocks to keep positional figure matching aligned
+      const figureBlocks = nonEmptyBlocks.filter((b) => b.blockType === 'image');
       if (figureBlocks.length > 0) {
         let figureIdx = 0;
         let metaTr = view.state.tr;
@@ -371,11 +387,10 @@ export function applyBlocks(blocks: Block[]): void {
         });
         if (metaTr.steps.length > 0) view.dispatch(metaTr);
       }
-
-      resetAndSnapshot(view.state.doc);
     } finally {
       setIsSettingContent(false);
-      setSyncPaused(false);
+      // Delay snapshot + unpause to RAF so normalization transactions are absorbed
+      deferredSnapshotAndUnpause();
     }
   } catch (e) {
     console.error('[Milkdown] applyBlocks failed:', e);
@@ -385,13 +400,14 @@ export function applyBlocks(blocks: Block[]): void {
 export function setContentWithBlockIds(
   markdown: string,
   blockIds: string[],
-  options?: { scrollToStart?: boolean; imageMeta?: ImageBlockMeta[] }
+  options?: { scrollToStart?: boolean; imageMeta?: ImageBlockMeta[]; cursorBoundary?: number }
 ): void {
   syncLog(
     'API:setContentWithBlockIds',
     `entry len=${markdown.length} blocks=${blockIds.length} scrollToStart=${options?.scrollToStart ?? false}`
   );
   setBlockIdZoomMode(false); // Clear zoom mode when loading full content
+  setContentHasBeenSet(true);
   const editorInstance = getEditorInstance();
   if (!editorInstance) {
     setCurrentContent(markdown);
@@ -410,12 +426,11 @@ export function setContentWithBlockIds(
         const tr = view.state.tr.replaceWith(0, view.state.doc.content.size, emptyDoc.content);
         view.dispatch(tr.setSelection(Selection.atStart(tr.doc)));
         clearBlockIds();
-        resetAndSnapshot(view.state.doc);
       });
       setCurrentContent(markdown);
     } finally {
       setIsSettingContent(false);
-      setSyncPaused(false);
+      deferredSnapshotAndUnpause();
     }
     return;
   }
@@ -449,7 +464,30 @@ export function setContentWithBlockIds(
       if (options?.scrollToStart) {
         tr = tr.setSelection(Selection.atStart(tr.doc));
       } else {
-        const safeFrom = Math.min(from, Math.max(0, doc.content.size - 1));
+        let safeFrom = Math.min(from, Math.max(0, doc.content.size - 1));
+
+        // Clamp cursor before bibliography section to prevent typing into bib paragraphs.
+        // cursorBoundary is the node index of the first bibliography block.
+        const boundary = options?.cursorBoundary ?? -1;
+        let bibPos = doc.content.size;
+        if (boundary >= 0) {
+          let nodeIdx = 0;
+          doc.forEach((_node, pos) => {
+            if (nodeIdx === boundary) {
+              bibPos = pos;
+            }
+            nodeIdx++;
+          });
+          if (safeFrom >= bibPos) {
+            safeFrom = Math.max(0, bibPos - 1);
+          }
+        }
+
+        syncLog(
+          'API:setContentWithBlockIds',
+          `cursor: from=${from} safeFrom=${safeFrom} boundary=${boundary} bibPos=${bibPos} docSize=${doc.content.size}`
+        );
+
         try {
           tr = tr.setSelection(Selection.near(tr.doc.resolve(safeFrom)));
         } catch {
@@ -485,15 +523,14 @@ export function setContentWithBlockIds(
         });
         if (metaTr.steps.length > 0) view.dispatch(metaTr);
       }
-
-      resetAndSnapshot(view.state.doc);
     });
     if (parseSucceeded) {
       setCurrentContent(markdown);
     }
   } finally {
     setIsSettingContent(false);
-    setSyncPaused(false);
+    // Delay snapshot + unpause to RAF so normalization transactions are absorbed
+    deferredSnapshotAndUnpause();
   }
 }
 
@@ -690,12 +727,11 @@ export function updateHeadingLevels(changes: Array<{ blockId: string; newLevel: 
       // (prevents stale currentContent from causing issues with setContent unchanged check)
       setCurrentContent(getMarkdown()(ctx));
 
-      resetAndSnapshot(view.state.doc);
-
       syncLog('API:updateHeadingLevels', `applied ${appliedCount}/${changes.length} changes`);
     });
   } finally {
     setIsSettingContent(false);
-    setSyncPaused(false);
+    // Delay snapshot + unpause to RAF so normalization transactions are absorbed
+    deferredSnapshotAndUnpause();
   }
 }

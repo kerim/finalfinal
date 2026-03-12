@@ -11,6 +11,12 @@ import Foundation
 /// Parser that converts markdown into Block structures
 enum BlockParser {
 
+    /// Whether a markdown fragment is effectively empty (no visible content).
+    /// Used to filter blocks that produce no ProseMirror node (e.g., section_break with empty fragment).
+    static func isEmptyFragment(_ fragment: String) -> Bool {
+        fragment.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     /// Parse markdown content into an array of blocks
     /// - Parameters:
     ///   - markdown: The markdown content to parse
@@ -387,8 +393,10 @@ enum BlockParser {
             let bKey = (b.sortOrder, b.blockType == .heading ? 0 : 1)
             return aKey < bKey
         }
+        // MUST filter empty fragments — they produce no ProseMirror node
         let result = sorted
             .map { $0.markdownFragment }
+            .filter { !isEmptyFragment($0) }
             .joined(separator: "\n\n")
 
         #if DEBUG
@@ -406,8 +414,10 @@ enum BlockParser {
             let bKey = (b.sortOrder, b.blockType == .heading ? 0 : 1)
             return aKey < bKey
         }
+        // MUST stay in sync with BlockParser.assembleMarkdown filtering
         let result = sorted
             .map { $0.markdownForExport() }
+            .filter { !isEmptyFragment($0) }
             .joined(separator: "\n\n")
 
         return result
@@ -415,6 +425,31 @@ enum BlockParser {
 
     /// Assemble blocks into standard markdown for export (no Pandoc attributes).
     /// Uses `markdownForStandardExport()` which outputs plain markdown with captions as italic text.
+    /// Returns the node index (in ProseMirror alignment order) of the first bibliography block,
+    /// or nil if no bibliography blocks exist.
+    /// MUST stay in sync with idsForProseMirrorAlignment list-merging logic.
+    static func firstBibliographyNodeIndex(_ blocks: [Block]) -> Int? {
+        var nodeIndex = 0
+        var prevListType: BlockType? = nil
+
+        for block in blocks {
+            if isEmptyFragment(block.markdownFragment) { continue }
+
+            let isListBlock = (block.blockType == .bulletList || block.blockType == .orderedList)
+
+            if isListBlock && block.blockType == prevListType {
+                // Merged into previous list node — same index
+                if block.isBibliography { return nodeIndex - 1 }
+                continue
+            }
+
+            if block.isBibliography { return nodeIndex }
+            nodeIndex += 1
+            prevListType = isListBlock ? block.blockType : nil
+        }
+        return nil
+    }
+
     /// Collapse consecutive same-type list block IDs for ProseMirror alignment.
     /// ProseMirror merges consecutive list items (separated by \n\n in assembleMarkdown)
     /// into a single list node. This produces an ID array matching PM's top-level node count.
@@ -424,6 +459,9 @@ enum BlockParser {
         var prevListType: BlockType? = nil
 
         for block in blocks {
+            // MUST stay in sync with BlockParser.assembleMarkdown filtering
+            if isEmptyFragment(block.markdownFragment) { continue }
+
             let isListBlock = (block.blockType == .bulletList || block.blockType == .orderedList)
 
             if isListBlock && block.blockType == prevListType {
@@ -443,8 +481,10 @@ enum BlockParser {
             let bKey = (b.sortOrder, b.blockType == .heading ? 0 : 1)
             return aKey < bKey
         }
+        // MUST stay in sync with BlockParser.assembleMarkdown filtering
         let result = sorted
             .map { $0.markdownForStandardExport() }
+            .filter { !isEmptyFragment($0) }
             .joined(separator: "\n\n")
 
         return result

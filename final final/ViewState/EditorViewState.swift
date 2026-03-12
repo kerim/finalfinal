@@ -246,7 +246,12 @@ class EditorViewState {
                     guard !Task.isCancelled, let self else { break }
 
                     // Skip updates during content transitions (drag, zoom, hierarchy enforcement, etc.)
-                    guard contentState == .idle else { continue }
+                    guard contentState == .idle else {
+                        #if DEBUG
+                        print("[EditorViewState:observe] SKIPPED: contentState=\(contentState), blocks=\(outlineBlocks.count)")
+                        #endif
+                        continue
+                    }
 
                     // Convert blocks to SectionViewModels
                     var viewModels = outlineBlocks.map { SectionViewModel(from: $0) }
@@ -283,7 +288,12 @@ class EditorViewState {
     /// Re-fetch outline blocks from database and update sections.
     /// Called when ValueObservation may have been dropped during non-idle contentState.
     func refreshSections() {
-        guard let db = projectDatabase, let pid = currentProjectId else { return }
+        guard let db = projectDatabase, let pid = currentProjectId else {
+            #if DEBUG
+            print("[EditorViewState:refresh] BAIL: no db/pid")
+            #endif
+            return
+        }
         do {
             let outlineBlocks = try db.fetchOutlineBlocks(projectId: pid)
             var viewModels = outlineBlocks.map { SectionViewModel(from: $0) }
@@ -298,6 +308,9 @@ class EditorViewState {
                     }
                 }
             }
+            #if DEBUG
+            print("[EditorViewState:refresh] \(viewModels.count) sections (contentState=\(contentState))")
+            #endif
             self.sections = viewModels
             self.recalculateParentRelationships()
             self.onSectionsUpdated?()

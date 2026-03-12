@@ -92,6 +92,7 @@ import { openCAYWPicker } from './cayw';
 import { citationPlugin } from './citation-plugin';
 import { restoreCitationLibrary } from './citation-search';
 import {
+  getContentHasBeenSet,
   getCurrentContent,
   getEditorInstance,
   getIsSettingContent,
@@ -217,6 +218,11 @@ async function initEditor() {
       contentPushTimer = setTimeout(() => {
         // Re-check guard: setContent() may have run during the 50ms window
         if (getIsSettingContent()) {
+          return;
+        }
+        // Block push before Swift has called setContent/setContentWithBlockIds —
+        // prevents stale initialization content from overwriting real content
+        if (!getContentHasBeenSet()) {
           return;
         }
         const md = editorInstance.action(getMarkdown());

@@ -33,8 +33,8 @@ final class BibliographySyncService {
     /// Debounce timer for bibliography updates
     private var debounceTask: Task<Void, Never>?
 
-    /// Debounce interval (2 seconds for bibliography, longer than section sync)
-    private let debounceInterval: TimeInterval = 2.0
+    /// Debounce interval (1 second for bibliography, longer than section sync's 500ms)
+    private let debounceInterval: TimeInterval = 1.0
 
     // MARK: - Configuration
 
@@ -101,8 +101,8 @@ final class BibliographySyncService {
         debounceTask = Task { [weak self] in
             guard !Task.isCancelled else { return }
 
-            // Wait for debounce interval
-            try? await Task.sleep(nanoseconds: UInt64(2_000_000_000))
+            // Wait for debounce interval (derived from property to prevent drift)
+            try? await Task.sleep(for: .seconds(debounceInterval))
 
             guard !Task.isCancelled else { return }
             await self?.performBibliographyUpdate(citekeys: currentCitekeys, projectId: projectId)
@@ -330,25 +330,37 @@ final class BibliographySyncService {
                 .filter(Block.Columns.isBibliography == true)
                 .deleteAll(db)
 
-            // Get max sort order from blocks
             let maxSortOrder = try Block
                 .filter(Block.Columns.projectId == projectId)
                 .order(Block.Columns.sortOrder.desc)
                 .fetchOne(db)?.sortOrder ?? 0
 
-            // Create bibliography block (single block with full content)
-            var block = Block(
-                projectId: projectId,
-                sortOrder: maxSortOrder + 1,
-                blockType: .heading,
-                textContent: headerName,
-                markdownFragment: content,
-                headingLevel: 1,
-                status: .final_,
-                wordCount: MarkdownUtils.wordCount(for: content),
-                isBibliography: true
-            )
-            try block.insert(db)
+            // Split "# Bibliography\n\nEntry1\n\nEntry2\n\n" into individual fragments
+            // so each DB block maps 1:1 with a ProseMirror top-level node.
+            // This prevents block-sync from seeing temp-ID paragraphs as spurious INSERTs.
+            let rawBlocks = content
+                .components(separatedBy: "\n\n")
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+
+            for (index, fragment) in rawBlocks.enumerated() {
+                let isHeading = fragment.hasPrefix("#")
+                let textContent = isHeading
+                    ? headerName
+                    : BlockParser.extractTextContent(from: fragment, blockType: .paragraph)
+                var block = Block(
+                    projectId: projectId,
+                    sortOrder: maxSortOrder + Double(index) + 1.0,
+                    blockType: isHeading ? .heading : .paragraph,
+                    textContent: textContent,
+                    markdownFragment: fragment,
+                    headingLevel: isHeading ? 1 : nil,
+                    status: isHeading ? .final_ : nil,
+                    wordCount: MarkdownUtils.wordCount(for: textContent),
+                    isBibliography: true
+                )
+                try block.insert(db)
+            }
         }
     }
 

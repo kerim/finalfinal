@@ -198,9 +198,11 @@ extension EditorViewState {
                     let bKey = (b.sortOrder, b.blockType == .heading ? 0 : 1)
                     return aKey < bKey
                 }
+                // MUST stay in sync with BlockParser.assembleMarkdown filtering
+                let nonEmptyBlocks = sortedBlocks.filter { !BlockParser.isEmptyFragment($0.markdownFragment) }
                 var blockOffset: [String: Int] = [:]
                 var offset = 0
-                for (i, block) in sortedBlocks.enumerated() {
+                for (i, block) in nonEmptyBlocks.enumerated() {
                     if i > 0 { offset += 2 }
                     blockOffset[block.id] = offset
                     offset += block.markdownFragment.count
@@ -303,9 +305,11 @@ extension EditorViewState {
                     let bKey = (b.sortOrder, b.blockType == .heading ? 0 : 1)
                     return aKey < bKey
                 }
+                // MUST stay in sync with BlockParser.assembleMarkdown filtering
+                let nonEmptyBlocks = sortedBlocks.filter { !BlockParser.isEmptyFragment($0.markdownFragment) }
                 var blockOffset: [String: Int] = [:]
                 var offset = 0
-                for (i, block) in sortedBlocks.enumerated() {
+                for (i, block) in nonEmptyBlocks.enumerated() {
                     if i > 0 { offset += 2 }
                     blockOffset[block.id] = offset
                     offset += block.markdownFragment.count

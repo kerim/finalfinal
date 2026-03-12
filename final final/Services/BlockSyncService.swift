@@ -32,6 +32,11 @@ class BlockSyncService {
     /// Pending ID confirmations (temp ID -> permanent ID) to send back to editor
     private var pendingConfirmations: [String: String] = [:]
 
+    /// Cumulative temp→permanent ID mapping across all poll cycles.
+    /// Used to resolve stale temp IDs that arrive after confirmation
+    /// (race between JS debounce and Swift confirmBlockIds).
+    private var confirmedTempIds: [String: String] = [:]
+
     // MARK: - Public API
 
     /// Configure the service for a specific project
@@ -39,12 +44,14 @@ class BlockSyncService {
         self.projectDatabase = database
         self.projectId = projectId
         self.webView = webView
+        self.confirmedTempIds.removeAll()
     }
 
     /// Reconfigure database references for project switch (WebView stays the same)
     func reconfigure(database: ProjectDatabase, projectId: String) {
         self.projectDatabase = database
         self.projectId = projectId
+        self.confirmedTempIds.removeAll()
     }
 
     /// Start polling for block changes
@@ -67,6 +74,15 @@ class BlockSyncService {
     /// Cancel any pending sync operations
     func cancelPendingSync() {
         pendingConfirmations.removeAll()
+        confirmedTempIds.removeAll()
+    }
+
+    /// Force an immediate poll of block changes (bypasses the 2s timer).
+    /// Call before reading blocks from DB when fresh editor content is needed.
+    /// Uses force mode to bypass contentState/generation guards, since callers
+    /// explicitly need the flush to succeed regardless of current state.
+    func pollBlockChangesNow() async {
+        await pollBlockChanges(force: true)
     }
 
     /// Reentrancy guard for polling
@@ -131,13 +147,14 @@ class BlockSyncService {
         markdown: String,
         blockIds: [String],
         scrollToStart: Bool = false,
-        imageMeta: [ContentView.ImageBlockMeta] = []
+        imageMeta: [ContentView.ImageBlockMeta] = [],
+        cursorBoundary: Int? = nil
     ) async {
         guard let webView else { return }
 
         #if DEBUG
         let firstH = markdown.components(separatedBy: "\n").first(where: { $0.hasPrefix("#") })?.prefix(60) ?? "(none)"
-        print("[SYNC-DIAG:BlockSync] setContentWithBlockIds: len=\(markdown.count) blocks=\(blockIds.count) firstH=\"\(firstH)\" scrollToStart=\(scrollToStart)")
+        print("[SYNC-DIAG:BlockSync] setContentWithBlockIds: len=\(markdown.count) blocks=\(blockIds.count) firstH=\"\(firstH)\" scrollToStart=\(scrollToStart) cursorBoundary=\(String(describing: cursorBoundary))")
         #endif
 
         // Escape markdown for JS template literal
@@ -175,6 +192,9 @@ class BlockSyncService {
                     .replacingOccurrences(of: "${", with: "\\${")
                 optionParts.append("imageMeta: JSON.parse(`\(escapedMeta)`)")
             }
+        }
+        if let boundary = cursorBoundary {
+            optionParts.append("cursorBoundary: \(boundary)")
         }
         let options = optionParts.isEmpty ? "" : ", {\(optionParts.joined(separator: ", "))}"
         let js = "window.FinalFinal.setContentWithBlockIds(`\(escapedMarkdown)`, JSON.parse(`\(escapedIds)`)\(options))"
@@ -230,19 +250,26 @@ class BlockSyncService {
     // MARK: - Polling
 
     /// Poll the editor for block changes and apply them to the database
-    private func pollBlockChanges() async {
-        guard !isPolling else { return }
-        isPolling = true
-        defer { isPolling = false }
-
-        guard editorState?.contentState == .idle, isConfigured, let webView, let database = projectDatabase, let projectId else {
+    private func pollBlockChanges(force: Bool = false) async {
+        guard !isPolling else {
             #if DEBUG
-            if editorState?.contentState != .idle {
-                print("[SYNC-DIAG:BlockPoll] SKIPPED: contentState=\(String(describing: editorState?.contentState))")
-            }
+            if force { print("[SYNC-DIAG:BlockPoll] BLOCKED: force poll skipped (already polling)") }
             #endif
             return
         }
+        isPolling = true
+        defer { isPolling = false }
+
+        if !force {
+            guard editorState?.contentState == .idle else {
+                #if DEBUG
+                print("[SYNC-DIAG:BlockPoll] SKIPPED: contentState=\(String(describing: editorState?.contentState))")
+                #endif
+                return
+            }
+        }
+
+        guard isConfigured, let webView, let database = projectDatabase, let projectId else { return }
 
         let generationAtPoll = editorState?.contentGeneration ?? 0
 
@@ -251,17 +278,21 @@ class BlockSyncService {
         guard hasChanges else { return }
 
         #if DEBUG
-        print("[SYNC-DIAG:BlockPoll] changes detected, fetching...")
+        print("[SYNC-DIAG:BlockPoll] changes detected, fetching... (force=\(force))")
         #endif
 
-        // Discard if a state transition happened during the async JS call
-        guard editorState?.contentGeneration == generationAtPoll else { return }
+        // In force mode, skip generation check — caller explicitly needs flush
+        if !force {
+            guard editorState?.contentGeneration == generationAtPoll else { return }
+        }
 
         // Get the changes
         guard let changes = await getBlockChanges(webView: webView) else { return }
 
-        // Discard if a state transition happened during getBlockChanges
-        guard editorState?.contentGeneration == generationAtPoll else { return }
+        // In force mode, skip generation check — caller explicitly needs flush
+        if !force {
+            guard editorState?.contentGeneration == generationAtPoll else { return }
+        }
 
         // Skip if no actual changes
         guard !changes.updates.isEmpty || !changes.inserts.isEmpty || !changes.deletes.isEmpty else {
@@ -269,7 +300,10 @@ class BlockSyncService {
         }
 
         #if DEBUG
-        print("[SYNC-DIAG:BlockPoll] Processing: u=\(changes.updates.count) i=\(changes.inserts.count) d=\(changes.deletes.count)")
+        print("[SYNC-DIAG:BlockPoll] Processing: u=\(changes.updates.count) i=\(changes.inserts.count) d=\(changes.deletes.count) force=\(force)")
+        if !changes.deletes.isEmpty {
+            print("[SYNC-DIAG:BlockPoll] Deleting IDs: \(changes.deletes.prefix(5))")
+        }
         #endif
 
         // Safety logging: warn on mass deletes that may indicate a stale snapshot bug
@@ -281,12 +315,52 @@ class BlockSyncService {
                     print("[SYNC-DIAG:BlockPoll] WARNING: Mass delete detected " +
                         "(\(deleteCount)/\(blockCount) blocks). May indicate stale snapshot.")
                 }
-            } catch { }
+                // Safety net: reject change sets that would delete ALL blocks with no inserts.
+                // This is the signature of stale initialization content overwriting real content.
+                // Note: "Select All → Delete" is a theoretical false positive, but ProseMirror
+                // always retains at least one empty paragraph node, so inserts would be non-empty.
+                if blockCount > 2 && deleteCount == blockCount && changes.inserts.isEmpty {
+                    print("[SYNC-DIAG:BlockPoll] REJECTED: Mass delete of ALL \(blockCount) blocks " +
+                        "with no inserts (updates=\(changes.updates.count)). Stale snapshot likely.")
+                    return
+                }
+            } catch {
+                #if DEBUG
+                print("[SYNC-DIAG:BlockPoll] fetchBlockCount failed: \(error)")
+                #endif
+            }
+        }
+
+        // Resolve stale temp IDs using cumulative confirmation mapping (defense-in-depth)
+        var resolvedChanges = changes
+        resolvedChanges.updates = changes.updates.map { update in
+            if update.id.hasPrefix("temp-"), let permanentId = confirmedTempIds[update.id] {
+                #if DEBUG
+                print("[SYNC-DIAG:BlockPoll] Resolved stale temp ID: \(update.id.prefix(13)) → \(permanentId.prefix(8))")
+                #endif
+                return BlockUpdate(id: permanentId, textContent: update.textContent,
+                                   markdownFragment: update.markdownFragment, headingLevel: update.headingLevel)
+            }
+            return update
+        }
+        resolvedChanges.inserts = changes.inserts.map { insert in
+            if let afterId = insert.afterBlockId, afterId.hasPrefix("temp-"),
+               let permanentId = confirmedTempIds[afterId] {
+                return BlockInsert(tempId: insert.tempId, blockType: insert.blockType,
+                                   textContent: insert.textContent, markdownFragment: insert.markdownFragment,
+                                   headingLevel: insert.headingLevel, afterBlockId: permanentId)
+            }
+            return insert
         }
 
         // Apply changes to database
         do {
-            try await applyChanges(changes, database: database, projectId: projectId)
+            try await applyChanges(resolvedChanges, database: database, projectId: projectId)
+
+            // Merge new mappings into cumulative tracker
+            for (tempId, permanentId) in pendingConfirmations {
+                confirmedTempIds[tempId] = permanentId
+            }
 
             #if DEBUG
             print("[SYNC-DIAG:BlockPoll] Applied changes to DB successfully")

@@ -373,82 +373,8 @@ extension ProjectDatabase {
                 try Block.deleteOne(db, key: id)
             }
 
-            // Process updates
-            for update in changes.updates {
-                if var block = try Block.fetchOne(db, key: update.id) {
-                    // Block found - apply updates
-                    if let textContent = update.textContent {
-                        block.textContent = textContent
-                        block.wordCount = MarkdownUtils.wordCount(for: textContent)
-                    }
-                    if let markdownFragment = update.markdownFragment {
-                        block.markdownFragment = markdownFragment
-                        // Detect block type changes from content (e.g., paragraph → heading from paste)
-                        let trimmed = markdownFragment.trimmingCharacters(in: .whitespacesAndNewlines)
-                        if let match = trimmed.range(of: "^(#{1,6})\\s+", options: .regularExpression) {
-                            let hashes = trimmed[match].filter { $0 == "#" }
-                            block.blockType = .heading
-                            block.headingLevel = hashes.count
-                            // Strip heading prefix from textContent for sidebar display
-                            if let textContent = update.textContent, textContent.hasPrefix("#") {
-                                block.textContent = BlockParser.extractTextContent(from: trimmed, blockType: .heading)
-                                block.wordCount = MarkdownUtils.wordCount(for: block.textContent)
-                            }
-                        } else if block.blockType == .heading {
-                            // Was heading but no longer has heading syntax
-                            block.blockType = .paragraph
-                            block.headingLevel = nil
-                        }
-                    }
-                    if let headingLevel = update.headingLevel {
-                        block.headingLevel = headingLevel
-                    }
-
-                    block.updatedAt = Date()
-                    try block.update(db)
-                } else if update.id.hasPrefix("temp-") {
-                    // Temp ID not found in DB — create new block (handles first-edit-in-new-project)
-                    let trimmed = (update.markdownFragment ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-                    let blockType: BlockType
-                    let detectedLevel: Int?
-                    var textContent = update.textContent ?? ""
-
-                    if let match = trimmed.range(of: "^(#{1,6})\\s+", options: .regularExpression) {
-                        blockType = .heading
-                        detectedLevel = trimmed[match].filter({ $0 == "#" }).count
-                        textContent = BlockParser.extractTextContent(from: trimmed, blockType: .heading)
-                    } else {
-                        blockType = update.headingLevel != nil ? .heading : .paragraph
-                        detectedLevel = update.headingLevel
-                    }
-
-                    let permanentId = UUID().uuidString
-
-                    var block = Block(
-                        id: permanentId,
-                        projectId: projectId,
-                        sortOrder: nextSortOrder,
-                        blockType: blockType,
-                        textContent: textContent,
-                        markdownFragment: update.markdownFragment ?? ""
-                    )
-                    if let hl = detectedLevel { block.headingLevel = hl }
-                    block.recalculateWordCount()
-                    try block.insert(db)
-                    idMapping[update.id] = permanentId
-                    nextSortOrder += 1.0
-
-                    #if DEBUG
-                    print("[Database+Blocks] Created block from temp update: \(update.id) → \(permanentId)")
-                    #endif
-                } else {
-                    #if DEBUG
-                    print("[Database+Blocks] Warning: Block not found for update: \(update.id)")
-                    #endif
-                }
-            }
-
-            // Process inserts
+            // Process inserts BEFORE updates — so idMapping is populated when
+            // a temp-ID update arrives for a block that was also inserted
             for insert in changes.inserts {
                 // Calculate sort order based on afterBlockId
                 var sortOrder: Double
@@ -524,6 +450,94 @@ extension ProjectDatabase {
 
                 // Record the mapping from temp ID to permanent ID
                 idMapping[insert.tempId] = permanentId
+            }
+
+            // Process updates (after inserts so idMapping is available for temp-ID lookups)
+            for update in changes.updates {
+                if var block = try Block.fetchOne(db, key: update.id) {
+                    // Safety net: never overwrite bibliography blocks via editor sync
+                    // Bibliography content is machine-generated by BibliographySyncService
+                    if block.isBibliography {
+                        #if DEBUG
+                        print("[Database+Blocks] Rejecting update to bibliography block: \(update.id.prefix(8))")
+                        #endif
+                        continue
+                    }
+                    // Block found - apply updates
+                    if let textContent = update.textContent {
+                        block.textContent = textContent
+                        block.wordCount = MarkdownUtils.wordCount(for: textContent)
+                    }
+                    if let markdownFragment = update.markdownFragment {
+                        block.markdownFragment = markdownFragment
+                        // Detect block type changes from content (e.g., paragraph → heading from paste)
+                        let trimmed = markdownFragment.trimmingCharacters(in: .whitespacesAndNewlines)
+                        if let match = trimmed.range(of: "^(#{1,6})\\s+", options: .regularExpression) {
+                            let hashes = trimmed[match].filter { $0 == "#" }
+                            block.blockType = .heading
+                            block.headingLevel = hashes.count
+                            // Strip heading prefix from textContent for sidebar display
+                            if let textContent = update.textContent, textContent.hasPrefix("#") {
+                                block.textContent = BlockParser.extractTextContent(from: trimmed, blockType: .heading)
+                                block.wordCount = MarkdownUtils.wordCount(for: block.textContent)
+                            }
+                        } else if block.blockType == .heading {
+                            // Was heading but no longer has heading syntax
+                            block.blockType = .paragraph
+                            block.headingLevel = nil
+                        }
+                    }
+                    if let headingLevel = update.headingLevel {
+                        block.headingLevel = headingLevel
+                    }
+
+                    block.updatedAt = Date()
+                    try block.update(db)
+                } else if update.id.hasPrefix("temp-") {
+                    // Check if this temp ID was already inserted (and assigned a permanent ID)
+                    if let permanentId = idMapping[update.id],
+                       var existingBlock = try Block.fetchOne(db, key: permanentId) {
+                        // Update the already-inserted block with newer content
+                        if let textContent = update.textContent {
+                            existingBlock.textContent = textContent
+                            existingBlock.wordCount = MarkdownUtils.wordCount(for: textContent)
+                        }
+                        if let markdownFragment = update.markdownFragment {
+                            existingBlock.markdownFragment = markdownFragment
+                        }
+                        if let headingLevel = update.headingLevel {
+                            existingBlock.headingLevel = headingLevel
+                        }
+                        existingBlock.updatedAt = Date()
+                        try existingBlock.update(db)
+                        #if DEBUG
+                        print("[Database+Blocks] Merged temp update into insert: \(update.id) → \(permanentId)")
+                        #endif
+                    } else if var existingBlock = try Block.fetchOne(db, key: update.id) {
+                        // Block exists with temp ID (defensive)
+                        if let textContent = update.textContent {
+                            existingBlock.textContent = textContent
+                            existingBlock.wordCount = MarkdownUtils.wordCount(for: textContent)
+                        }
+                        if let markdownFragment = update.markdownFragment {
+                            existingBlock.markdownFragment = markdownFragment
+                        }
+                        if let headingLevel = update.headingLevel {
+                            existingBlock.headingLevel = headingLevel
+                        }
+                        existingBlock.updatedAt = Date()
+                        try existingBlock.update(db)
+                    } else {
+                        // Stale temp ID — block was already confirmed to a permanent ID
+                        // in a previous poll cycle. Drop the update safely.
+                        // This fires only if both Fix 1 (JS remap) and Fix 2 (Swift resolution) failed.
+                        print("[Database+Blocks] Dropping stale temp update: \(update.id) (no matching block)")
+                    }
+                } else {
+                    #if DEBUG
+                    print("[Database+Blocks] Warning: Block not found for update: \(update.id)")
+                    #endif
+                }
             }
         }
 

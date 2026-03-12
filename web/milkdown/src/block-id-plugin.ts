@@ -6,6 +6,7 @@ import type { Node } from '@milkdown/kit/prose/model';
 import { Plugin, PluginKey } from '@milkdown/kit/prose/state';
 import { Decoration, DecorationSet } from '@milkdown/kit/prose/view';
 import { $prose } from '@milkdown/kit/utils';
+import { syncLog } from './sync-debug';
 
 export const blockIdPluginKey = new PluginKey<BlockIdPluginState>('block-id');
 
@@ -50,6 +51,7 @@ interface BlockIdPluginState {
 // Track block ID assignments for external access
 // Note: These are cleared when the editor is destroyed via resetBlockIdState()
 let currentBlockIds: Map<number, string> = new Map();
+let currentBlockTypes: Map<number, string> = new Map();
 const pendingConfirmations: Map<string, string> = new Map();
 
 // Zoom mode flag: when true, assignBlockIds skips unmatched nodes
@@ -65,6 +67,7 @@ export function setBlockIdZoomMode(enabled: boolean): void {
  */
 export function resetBlockIdState(): void {
   currentBlockIds.clear();
+  currentBlockTypes.clear();
   pendingConfirmations.clear();
 }
 
@@ -125,6 +128,7 @@ export function applyPendingConfirmations(): Map<string, string> {
  */
 export function clearBlockIds(): void {
   currentBlockIds.clear();
+  currentBlockTypes.clear();
 }
 
 /**
@@ -144,10 +148,12 @@ export function setBlockIdsForTopLevel(orderedIds: string[], doc: Node): void {
   doc.forEach((node, offset) => {
     if (isBlockType(node) && index < orderedIds.length) {
       currentBlockIds.set(offset, orderedIds[index]);
+      currentBlockTypes.set(offset, node.type.name);
       index++;
     }
   });
   if (index !== orderedIds.length) {
+    syncLog('BlockId', `PARITY MISMATCH: assigned ${index} of ${orderedIds.length} IDs — LIKELY CAUSE OF CORRUPTION`);
     (window as any).webkit?.messageHandlers?.errorHandler?.postMessage({
       type: 'debug',
       message: `[setBlockIdsForTopLevel] PARITY MISMATCH: assigned ${index} of ${orderedIds.length} IDs`,
@@ -157,90 +163,138 @@ export function setBlockIdsForTopLevel(orderedIds: string[], doc: Node): void {
 
 /**
  * Scan document and assign IDs to blocks that don't have them.
- * Uses content-based matching to track blocks across position shifts.
+ * Uses type-aware matching to prevent cross-type ID theft
+ * (e.g., a new paragraph stealing a heading's ID by proximity).
  */
-function assignBlockIds(doc: Node, existingIds: Map<number, string>): Map<number, string> {
+function assignBlockIds(
+  doc: Node,
+  existingIds: Map<number, string>,
+  existingTypes: Map<number, string>
+): [Map<number, string>, Map<number, string>] {
   const newIds = new Map<number, string>();
-  // Track which old IDs have been claimed to prevent duplicates
+  const newTypes = new Map<number, string>();
   const claimedIds = new Set<string>();
 
-  // Build a map of existing blocks by content hash for matching
-  const _existingByContent = new Map<string, { pos: number; id: string }[]>();
-  for (const [_pos, _id] of existingIds) {
-    // We need the old document's node content, but we don't have it
-    // So we'll use position-based matching with content verification
-  }
+  // Count current blocks to detect structural changes (insertion/deletion)
+  let blockCount = 0;
+  doc.forEach((node) => {
+    if (isBlockType(node)) blockCount++;
+  });
+  const structureChanged = blockCount !== existingIds.size;
 
-  // Use doc.forEach() for top-level only traversal, matching BlockParser behavior
+  // Collect deferred blocks that need proximity matching
+  const deferred: Array<{ offset: number; nodeType: string }> = [];
+
+  // Phase 1: exact-position matches
   doc.forEach((node, offset) => {
     if (isBlockType(node)) {
-      // Check if this position already has an ID
       const existingId = existingIds.get(offset);
-      if (existingId && !claimedIds.has(existingId)) {
-        // Check if this temp ID has been confirmed
+      // When structure changed, only allow exact-position match if type matches
+      const typeMatches = !structureChanged || existingTypes.get(offset) === node.type.name;
+
+      if (existingId && !claimedIds.has(existingId) && typeMatches) {
+        // Exact-position match (same type, or type conversion with same structure)
         const confirmedId = pendingConfirmations.get(existingId);
         if (confirmedId) {
           newIds.set(offset, confirmedId);
+          newTypes.set(offset, node.type.name);
           claimedIds.add(confirmedId);
           pendingConfirmations.delete(existingId);
         } else {
           newIds.set(offset, existingId);
+          newTypes.set(offset, node.type.name);
           claimedIds.add(existingId);
         }
       } else {
-        // Position doesn't have an ID - try to find by proximity
-        // This handles position shifts from edits elsewhere in the document
-        let found = false;
-
-        // Look for unclaimed IDs at nearby positions with same block type
-        // Use a sliding window approach - closer positions are preferred
-        const candidates: { pos: number; id: string; distance: number }[] = [];
-
-        for (const [oldPos, id] of existingIds) {
-          if (claimedIds.has(id)) continue;
-
-          const distance = Math.abs(oldPos - offset);
-          // Allow larger position shifts for blocks (up to 500 chars)
-          // This accommodates edits in earlier parts of the document
-          if (distance < 500) {
-            candidates.push({ pos: oldPos, id, distance });
-          }
-        }
-
-        // Sort by distance and pick the closest
-        candidates.sort((a, b) => a.distance - b.distance);
-
-        if (candidates.length > 0) {
-          const best = candidates[0];
-          // Check if this temp ID has been confirmed
-          const confirmedId = pendingConfirmations.get(best.id);
-          if (confirmedId) {
-            newIds.set(offset, confirmedId);
-            claimedIds.add(confirmedId);
-            pendingConfirmations.delete(best.id);
-          } else {
-            newIds.set(offset, best.id);
-            claimedIds.add(best.id);
-          }
-          found = true;
-        }
-
-        if (!found) {
-          if (blockIdZoomMode) {
-            // In zoom mode, don't generate temp IDs for unmatched nodes
-            // (mini-Notes nodes would get temp IDs and cause spurious DB inserts)
-            return;
-          }
-          // New block - assign temporary ID
-          const newId = TEMP_ID_PREFIX + generateBlockId();
-          newIds.set(offset, newId);
-          claimedIds.add(newId);
-        }
+        // Defer to Phase 2
+        deferred.push({ offset, nodeType: node.type.name });
       }
     }
   });
 
-  return newIds;
+  // Phase 2: proximity matching
+  if (structureChanged && deferred.length > 0) {
+    // Closest-first global matching: collect ALL candidate pairs, sort by distance,
+    // then assign greedily. This prevents a new paragraph at pos 30 from stealing
+    // a bibliography entry's ID at pos 44 when the real entry is at pos 46 (distance=2).
+    const pairs: Array<{ newOffset: number; oldPos: number; id: string; distance: number; nodeType: string }> = [];
+    for (const d of deferred) {
+      for (const [oldPos, id] of existingIds) {
+        if (claimedIds.has(id)) continue;
+        if (existingTypes.get(oldPos) !== d.nodeType) continue;
+        const distance = Math.abs(oldPos - d.offset);
+        if (distance < 500) {
+          pairs.push({ newOffset: d.offset, oldPos, id, distance, nodeType: d.nodeType });
+        }
+      }
+    }
+    // Sort by distance ascending, tiebreak by oldPos (stable ordering)
+    pairs.sort((a, b) => a.distance - b.distance || a.oldPos - b.oldPos);
+
+    // Greedy assign from sorted pairs
+    const assignedNew = new Set<number>();
+    for (const p of pairs) {
+      if (claimedIds.has(p.id) || assignedNew.has(p.newOffset)) continue;
+      const confirmedId = pendingConfirmations.get(p.id);
+      const finalId = confirmedId || p.id;
+      if (confirmedId) pendingConfirmations.delete(p.id);
+      newIds.set(p.newOffset, finalId);
+      newTypes.set(p.newOffset, p.nodeType);
+      claimedIds.add(finalId);
+      assignedNew.add(p.newOffset);
+    }
+
+    // Remaining deferred blocks get temp IDs (unless zoom mode)
+    for (const d of deferred) {
+      if (assignedNew.has(d.offset)) continue;
+      if (blockIdZoomMode) continue;
+      const newId = TEMP_ID_PREFIX + generateBlockId();
+      newIds.set(d.offset, newId);
+      newTypes.set(d.offset, d.nodeType);
+      claimedIds.add(newId);
+    }
+  } else {
+    // Structure unchanged or no deferred blocks: per-block proximity matching (original behavior)
+    for (const d of deferred) {
+      let found = false;
+      const candidates: { pos: number; id: string; distance: number }[] = [];
+      for (const [oldPos, id] of existingIds) {
+        if (claimedIds.has(id)) continue;
+        const distance = Math.abs(oldPos - d.offset);
+        if (distance < 500) {
+          candidates.push({ pos: oldPos, id, distance });
+        }
+      }
+
+      const sameType = candidates.filter((c) => existingTypes.get(c.pos) === d.nodeType);
+      const best = sameType.length > 0 ? sameType.sort((a, b) => a.distance - b.distance)[0] : null;
+
+      if (best) {
+        const confirmedId = pendingConfirmations.get(best.id);
+        if (confirmedId) {
+          newIds.set(d.offset, confirmedId);
+          newTypes.set(d.offset, d.nodeType);
+          claimedIds.add(confirmedId);
+          pendingConfirmations.delete(best.id);
+        } else {
+          newIds.set(d.offset, best.id);
+          newTypes.set(d.offset, d.nodeType);
+          claimedIds.add(best.id);
+        }
+        found = true;
+      }
+
+      if (!found) {
+        if (blockIdZoomMode) continue;
+        const newId = TEMP_ID_PREFIX + generateBlockId();
+        newIds.set(d.offset, newId);
+        newTypes.set(d.offset, d.nodeType);
+        claimedIds.add(newId);
+      }
+    }
+  }
+
+  return [newIds, newTypes];
 }
 
 // Wrap ProseMirror plugin with $prose for Milkdown compatibility
@@ -250,8 +304,9 @@ export const blockIdPlugin = $prose(() => {
 
     state: {
       init(_, state) {
-        const blockIds = assignBlockIds(state.doc, new Map());
+        const [blockIds, blockTypes] = assignBlockIds(state.doc, new Map(), new Map());
         currentBlockIds = blockIds;
+        currentBlockTypes = blockTypes;
         return { blockIds, pendingConfirmations: new Map() };
       },
 
@@ -264,8 +319,9 @@ export const blockIdPlugin = $prose(() => {
         // syncBlockIds() updates currentBlockIds directly without dispatching a
         // transaction, so value.blockIds can hold stale temp IDs that would
         // overwrite the confirmed UUIDs and trigger mass deletes.
-        const blockIds = assignBlockIds(newState.doc, currentBlockIds);
+        const [blockIds, blockTypes] = assignBlockIds(newState.doc, currentBlockIds, currentBlockTypes);
         currentBlockIds = blockIds;
+        currentBlockTypes = blockTypes;
 
         return {
           blockIds: currentBlockIds,

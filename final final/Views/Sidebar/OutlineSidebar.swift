@@ -211,6 +211,10 @@ struct OutlineSidebar: View {
                                 onScrollToSection(section.id)
                             },
                             onDoubleClick: { receivedMode in
+                                // Prevent zoom on managed sections — zoom filters these out,
+                                // producing empty content that destroys them on flush
+                                guard !section.isBibliography && !section.isNotes else { return }
+
                                 if zoomedSectionId == section.id {
                                     // Zoom out if already zoomed to this section
                                     onZoomOut?()
