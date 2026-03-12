@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.75] - 2026-03-12
+
 ### Fixed
 
 - **Bibliography corruption from block ID proximity theft** — `assignBlockIds()` used greedy proximity matching in document order, so new paragraphs near the bibliography boundary could steal a bibliography entry's ID before the real entry claimed it. Refactored to two-phase matching: Phase 1 claims exact-position matches, Phase 2 collects all proximity candidates globally and assigns closest-first. Added `isBibliography` guard in `applyBlockChangesFromEditor` to reject editor-sync updates to machine-generated bibliography blocks. Supporting fixes: split bibliography into per-entry blocks, filter empty fragments in `assembleMarkdown`, reorder inserts before updates, cursor clamping at bibliography boundary, force-flush JS changes before DB reads, queue bibliography/notes notifications when contentState is non-idle.
