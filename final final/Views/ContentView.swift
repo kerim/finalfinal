@@ -219,8 +219,7 @@ struct ContentView: View {
                     #if DEBUG
                     if let db = documentManager.projectDatabase, let pid = documentManager.projectId {
                         let blockCount = try? db.fetchBlockCount(projectId: pid)
-                        let headingCount = try? db.fetchOutlineBlocks(projectId: pid).count
-                        print("[CV:bibRebuild] AFTER poll: \(blockCount ?? -1) blocks, \(headingCount ?? -1) headings in DB")
+                        print("[CV:bibRebuild] AFTER poll: \(blockCount ?? -1) blocks in DB")
                     }
                     #endif
 
