@@ -462,25 +462,27 @@ extension ExportService {
 
 extension ExportService {
 
-    /// Detect Pandoc citations in content
+    /// Detect Pandoc citations in content (skips code blocks and inline code)
     /// Matches any bracketed text containing @ followed by a citekey
     /// Pattern from citation-plugin.ts: \[([^\]]*@[\w:.-][^\]]*)\]
     private func hasPandocCitations(in content: String) -> Bool {
-        content.range(
+        let stripped = MarkdownUtils.stripCodeContent(from: content)
+        return stripped.range(
             of: #"\[[^\]]*@[\w:.-]+[^\]]*\]"#,
             options: .regularExpression
         ) != nil
     }
 
-    /// Extract citekeys from markdown content.
+    /// Extract citekeys from markdown content (skips code blocks and inline code).
     /// Duplicates BibliographySyncService.extractCitekeys regex to avoid @MainActor isolation.
     private func extractCitekeys(from content: String) -> [String] {
+        let stripped = MarkdownUtils.stripCodeContent(from: content)
         let pattern = #"(?:\[|; )@([^\],;\s]+)"#
         guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
-        let range = NSRange(content.startIndex..., in: content)
-        return regex.matches(in: content, range: range).compactMap { match in
-            guard let r = Range(match.range(at: 1), in: content) else { return nil }
-            return String(content[r])
+        let range = NSRange(stripped.startIndex..., in: stripped)
+        return regex.matches(in: stripped, range: range).compactMap { match in
+            guard let r = Range(match.range(at: 1), in: stripped) else { return nil }
+            return String(stripped[r])
         }
     }
 

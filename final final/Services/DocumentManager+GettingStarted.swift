@@ -9,16 +9,7 @@ import Foundation
 
 extension DocumentManager {
 
-    /// Load Getting Started content from bundled markdown
-    func loadGettingStartedContent() -> String {
-        guard let url = Bundle.main.url(forResource: "getting-started", withExtension: "md"),
-              let content = try? String(contentsOf: url, encoding: .utf8) else {
-            return "# Welcome to FINAL|FINAL\n\nCreate a new project to get started."
-        }
-        return content
-    }
-
-    /// Open the Getting Started project (creates fresh each time)
+    /// Open the Getting Started project (copies bundled .ff template fresh each time)
     /// - Returns: The project ID
     @discardableResult
     func openGettingStarted() throws -> String {
@@ -32,19 +23,19 @@ extension DocumentManager {
             try? fm.removeItem(at: gettingStartedDirectory)
         }
 
-        // Create directory
+        // Create parent directory
         try fm.createDirectory(at: gettingStartedDirectory, withIntermediateDirectories: true)
 
-        // Load bundled content
-        let content = loadGettingStartedContent()
+        // Copy bundled .ff template to temp
+        guard let bundledURL = Bundle.main.url(forResource: "getting-started", withExtension: "ff") else {
+            throw DocumentError.failedToCreateProject
+        }
+        try fm.copyItem(at: bundledURL, to: gettingStartedPath)
 
-        // Create the package
-        let package = try ProjectPackage.create(at: gettingStartedPath, title: "Getting Started")
+        // Open the copied package
+        let package = try ProjectPackage.open(at: gettingStartedPath)
+        let database = try ProjectDatabase(package: package)
 
-        // Create database with initial content
-        let database = try ProjectDatabase.create(package: package, title: "Getting Started", initialContent: content)
-
-        // Fetch the created project ID
         guard let project = try database.fetchProject() else {
             throw DocumentError.failedToCreateProject
         }
@@ -60,6 +51,9 @@ extension DocumentManager {
 
         // Wire media scheme handler
         MediaSchemeHandler.shared.mediaDirectoryURL = package.mediaURL
+
+        // Load embedded citations (renders without Zotero)
+        loadEmbeddedCitations(from: package)
 
         // Do NOT add to recent projects - Getting Started is ephemeral
 

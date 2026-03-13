@@ -445,6 +445,11 @@ final class ZoteroService {
         }
     }
 
+    /// Load a pre-resolved CSL item into the cache (for embedded citations)
+    func loadItem(_ item: CSLItem) {
+        itemsByKey[item.citekey] = item
+    }
+
     /// Clear cached data
     func clearCache() {
         itemsByKey = [:]

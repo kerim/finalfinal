@@ -203,6 +203,9 @@ final class DocumentManager {
         // Wire media scheme handler
         MediaSchemeHandler.shared.mediaDirectoryURL = package.mediaURL
 
+        // Load embedded citations if available (renders without Zotero)
+        loadEmbeddedCitations(from: package)
+
         // Add to recent projects
         addToRecentProjects(url: url, title: project.title)
 
@@ -279,6 +282,9 @@ final class DocumentManager {
 
         // Clear media scheme handler
         MediaSchemeHandler.shared.mediaDirectoryURL = nil
+
+        // Clear citation cache to prevent stale items leaking between projects
+        ZoteroService.shared.clearCache()
 
         DebugLog.log(.lifecycle, "[DocumentManager] Project closed")
     }
@@ -377,6 +383,25 @@ final class DocumentManager {
         guard let db = projectDatabase else { return nil }
         guard let project = try db.fetchProject() else { return nil }
         return (project.documentGoal, project.documentGoalType, project.excludeBibliography)
+    }
+
+    // MARK: - Embedded Citations
+
+    /// Load pre-embedded CSL-JSON citation data from a project's references directory.
+    /// Enables citation rendering without Zotero running.
+    func loadEmbeddedCitations(from package: ProjectPackage) {
+        let citationsURL = package.referencesURL.appendingPathComponent("citations.json")
+        guard FileManager.default.fileExists(atPath: citationsURL.path) else { return }
+        do {
+            let data = try Data(contentsOf: citationsURL)
+            let items = try JSONDecoder().decode([CSLItem].self, from: data)
+            for item in items {
+                ZoteroService.shared.loadItem(item)
+            }
+            DebugLog.log(.zotero, "[Citations] Loaded \(items.count) embedded citation items")
+        } catch {
+            DebugLog.log(.zotero, "[Citations] Failed to decode citations.json: \(error)")
+        }
     }
 
     // MARK: - Errors
