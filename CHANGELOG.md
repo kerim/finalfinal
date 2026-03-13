@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- **Getting Started is now a full .ff package** — replaced plain markdown template with a bundled .ff package containing a SQLite database, 27 screenshots, and embedded CSL-JSON citations. Getting Started now copies the bundled package on each open; images render via `projectmedia://` and citations resolve without Zotero.
+
+### Fixed
+- **Citekey extraction skips code blocks** — citation scanning now ignores citekeys inside code blocks and inline code
+
 ## [0.2.77] - 2026-03-12
 
 ### Fixed
