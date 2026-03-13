@@ -61,13 +61,14 @@ final class BibliographySyncService {
         }
     }()
 
-    /// Extract citekeys from markdown content
+    /// Extract citekeys from markdown content (skips code blocks and inline code)
     static func extractCitekeys(from markdown: String) -> [String] {
-        let range = NSRange(markdown.startIndex..., in: markdown)
-        let matches = citationPattern.matches(in: markdown, range: range)
+        let stripped = MarkdownUtils.stripCodeContent(from: markdown)
+        let range = NSRange(stripped.startIndex..., in: stripped)
+        let matches = citationPattern.matches(in: stripped, range: range)
         return matches.compactMap { match in
-            guard let range = Range(match.range(at: 1), in: markdown) else { return nil }
-            return String(markdown[range])
+            guard let range = Range(match.range(at: 1), in: stripped) else { return nil }
+            return String(stripped[range])
         }
     }
 

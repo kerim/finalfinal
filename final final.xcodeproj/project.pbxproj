@@ -22,6 +22,7 @@
 		15E9D15B0AF02828BFF55BCF /* LanguageToolProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A530A55D9265E47C5CF4EB3 /* LanguageToolProvider.swift */; };
 		175134B0E1A82073C2CB4D0F /* GoalPreferencesPane.swift in Sources */ = {isa = PBXBuildFile; fileRef = B09119DC4E9BBDC1E741006B /* GoalPreferencesPane.swift */; };
 		1CB5D59D6B0C2C767547192A /* Database+BlocksWordCount.swift in Sources */ = {isa = PBXBuildFile; fileRef = DDC88DC217831BA18037CB1B /* Database+BlocksWordCount.swift */; };
+		1DD44825761501030369C6BA /* getting-started.ff in Resources */ = {isa = PBXBuildFile; fileRef = A2042D583D77D16E5A1E7A43 /* getting-started.ff */; };
 		20AFD8B3E9B9181745AD26B8 /* FinalFinalTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E843650744C2F13D1618667 /* FinalFinalTests.swift */; };
 		21E9D0A73D4F1709F165CC1E /* BuiltInProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = DDC98D54901B8744835E5EF4 /* BuiltInProvider.swift */; };
 		230D53A0B012FF234621652E /* BlockSyncService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4BE2C3C3ABC2BC1990C2AC24 /* BlockSyncService.swift */; };
@@ -41,7 +42,6 @@
 		3C01E547EFAD7C50604AEB10 /* VersionListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E99D04B51EB859A1BD1A73BB /* VersionListView.swift */; };
 		3D1B4B7C84B95B0C08F3555D /* VersionHistorySheet+Actions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 403B8E649101EE81EC675619 /* VersionHistorySheet+Actions.swift */; };
 		3F3CDE3F335D3DF046014F49 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 540DB80C2488D249796ABEAA /* Assets.xcassets */; };
-		40232071CF86A652D542B783 /* getting-started.md in Resources */ = {isa = PBXBuildFile; fileRef = 5AC92738325B26E686EFFCF3 /* getting-started.md */; };
 		45869BA1A8791DA0E428B1BD /* Database.swift in Sources */ = {isa = PBXBuildFile; fileRef = E9A8D79672E775EA73854D93 /* Database.swift */; };
 		462CD674C023169FE6A7C21F /* VersionHistoryWindow+Restore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C8498B4341C08418634FB2AC /* VersionHistoryWindow+Restore.swift */; };
 		47DBF3857C5C06C046A299AD /* OutlineParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A1E8A83A78A7909AA1289DB /* OutlineParser.swift */; };
@@ -259,7 +259,6 @@
 		598FADB0570E0F5DB6C94550 /* EditorToolbar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorToolbar.swift; sourceTree = "<group>"; };
 		5A1E8A83A78A7909AA1289DB /* OutlineParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutlineParser.swift; sourceTree = "<group>"; };
 		5A8A74453B2CB08623CDE2B4 /* HelpCommands.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HelpCommands.swift; sourceTree = "<group>"; };
-		5AC92738325B26E686EFFCF3 /* getting-started.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "getting-started.md"; sourceTree = "<group>"; };
 		5BE4605C3214124AFB7C06FB /* SectionSyncService+Parsing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SectionSyncService+Parsing.swift"; sourceTree = "<group>"; };
 		5F9E113796E1D22FF7D8AB97 /* SectionSyncService+Anchors.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SectionSyncService+Anchors.swift"; sourceTree = "<group>"; };
 		5FD87E27CB1257814D589880 /* Database+Sections.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Database+Sections.swift"; sourceTree = "<group>"; };
@@ -304,6 +303,7 @@
 		9B422289970724FBD8F8FFDC /* FileCommands.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileCommands.swift; sourceTree = "<group>"; };
 		A0EE6A723C923D316B9CE89C /* BlockParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockParser.swift; sourceTree = "<group>"; };
 		A12F8033BDC1E3ED37C83195 /* ProjectIntegrityChecker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectIntegrityChecker.swift; sourceTree = "<group>"; };
+		A2042D583D77D16E5A1E7A43 /* getting-started.ff */ = {isa = PBXFileReference; lastKnownFileType = folder; name = "getting-started.ff"; path = "final final/Resources/getting-started.ff"; sourceTree = SOURCE_ROOT; };
 		A253238E869E099DD21CF7DE /* GoalColorSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoalColorSettings.swift; sourceTree = "<group>"; };
 		A4E5381EEA5442B073C96943 /* ChevronButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChevronButton.swift; sourceTree = "<group>"; };
 		A97DAA603C9EB29DE79FB8EB /* PreferencesView+Actions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "PreferencesView+Actions.swift"; sourceTree = "<group>"; };
@@ -513,6 +513,7 @@
 				80D86FAB5657E30D2DC86655 /* editor */,
 				8C997BC2679C3F7349B8B7E8 /* Export */,
 				6D1C9C394433400E8BE7F59C /* Fixtures */,
+				A2042D583D77D16E5A1E7A43 /* getting-started.ff */,
 				76CC075151A2E6342FFE523E /* TinyTeX */,
 				887202FB500BDC677B0C41F3 /* final final */,
 				96FDF83C9E576F31361DF979 /* final finalTests */,
@@ -581,6 +582,13 @@
 				3F528C948E209CDF817C3EC8 /* ViewState */,
 			);
 			path = "final final";
+			sourceTree = "<group>";
+		};
+		897DF43C87D41FD1A0CCF1C9 /* editor */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			path = editor;
 			sourceTree = "<group>";
 		};
 		8A579DFDA89ED4D43AE65852 /* Components */ = {
@@ -682,7 +690,7 @@
 		A0A538514A7F8AF439E6E08D /* Resources */ = {
 			isa = PBXGroup;
 			children = (
-				5AC92738325B26E686EFFCF3 /* getting-started.md */,
+				897DF43C87D41FD1A0CCF1C9 /* editor */,
 			);
 			path = Resources;
 			sourceTree = "<group>";
@@ -877,7 +885,7 @@
 				91DF49BFF5C5AD124AE4A15E /* Export in Resources */,
 				8FC2C94655683E0A57EE671F /* TinyTeX in Resources */,
 				B17C6E9C011435B07C9EFF38 /* editor in Resources */,
-				40232071CF86A652D542B783 /* getting-started.md in Resources */,
+				1DD44825761501030369C6BA /* getting-started.ff in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

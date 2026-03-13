@@ -173,8 +173,9 @@ The bundled TinyTeX includes the `xecjk` package and its dependency `ctex` for C
 | `disambiguateCJKFont(in:)` | NLLanguageRecognizer SC vs TC disambiguation |
 | `prepareBundledTinyTeX()` | Symlink + wrapper script for spaces workaround |
 | `fetchBibliographyJSON(for:)` | Zotero JSON-RPC → CSL-JSON for `--citeproc` |
-| `extractCitekeys(from:)` | Regex extraction of `@citekey` from markdown |
+| `extractCitekeys(from:)` | Regex extraction of `@citekey` from markdown (strips code first) |
 | `stripAnnotations(from:)` | Remove `<!-- ::type:: -->` annotation comments |
+| `MarkdownUtils.stripCodeContent(from:)` | Remove fenced code blocks and inline code before citekey extraction |
 
 ---
 

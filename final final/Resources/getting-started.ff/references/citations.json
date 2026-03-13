@@ -1,0 +1,134 @@
+[
+  {
+    "id": "barclayOutcastsEmpireJapans2017",
+    "author": [
+      {
+        "family": "Barclay",
+        "given": "Paul D"
+      }
+    ],
+    "citation-key": "barclayOutcastsEmpireJapans2017",
+    "ISBN": "978-0-520-29621-3",
+    "issued": {
+      "date-parts": [
+        [
+          "2017",
+          11,
+          2
+        ]
+      ]
+    },
+    "note": "Read_Status: Done\nRead_Status_Date: 2025-04-30T08:05:19.652Z",
+    "number-of-pages": "322",
+    "publisher": "University of California Press",
+    "title": "Outcasts of Empire: Japan's Rule on Taiwan's \"Savage Border,\" 1874-1945",
+    "type": "book"
+  },
+  {
+    "id": "friedmanCollaborationEthnographyHow2013",
+    "abstract": "What happens when a commitment to collaborative ethnographic filmmaking\nruns up against a community\u2019s ambivalence toward its own history? This\nwork provides an ethnohistorical account of the making of the film Please\nDon\u2019t Beat Me, Sir!, exploring how colonial-era \u201cpolice ethnographies\u201d and\ncontemporary communal politics shape the collaborative endeavor. The film\nwas made in collaboration with Budhan Theatre, an activist theater troupe\nfrom the Chhara community in the Indian city of Ahmedabad, Gujarat. The\nChhara are one of more than 198 communities labeled as \u201cCriminal Tribes\u201d\nby the British, a colonial legacy that still informs their interactions\nwith the police. Inspired by the work of Jean Rouch, the film makes use of\nexperimental ethnographic and cinematic techniques. These participation\nframeworks allowed the members of Budhan Theatre and their families to\nshape the structure and content of the film itself, a process sometimes at\nodds with the film\u2019s ethnographic intent.",
+    "author": [
+      {
+        "family": "Friedman",
+        "given": "P Kerim"
+      }
+    ],
+    "citation-key": "friedmanCollaborationEthnographyHow2013",
+    "container-title": "Crit. Anthropol.",
+    "DOI": "10.1177/0308275X13499385",
+    "ISSN": "0308-275X",
+    "issue": "4",
+    "issued": {
+      "date-parts": [
+        [
+          "2013",
+          12,
+          1
+        ]
+      ]
+    },
+    "note": "Read_Status: Done\nRead_Status_Date: 2025-04-30T08:05:19.656Z",
+    "page": "390\u2013411",
+    "title": "Collaboration against ethnography: How colonial history shaped the making of an ethnographic film",
+    "type": "article-journal",
+    "URL": "http://coa.sagepub.com/content/33/4/390.abstract",
+    "volume": "33"
+  },
+  {
+    "id": "friedmanDefiningEthnographicFilm2020",
+    "abstract": "What is an ethnographic film? An overview of previous attempts to answer\nthat question is provided in the first section of this chapter. These are\ngrouped according to the normative goals by which each approach has sought\nto frame the issue. Four such normative \u201cframes\u201d are identified:\nethnographic film as record, ethnographic film as text, ethnographic film\nas sense impression, and ethnographic film as relational practice. The\nsecond section seeks to move beyond such normative approaches by looking\nat how ethnographic films are actually used in practice (e.g. in the\nprogramming of ethnographic film festivals). Drawing on Wittgenstein\u2019s\n\u201cfamily of resemblances\u201d approach to definitions, four descriptive\nattributes, or \u201cdimensions,\u201d of ethnographic film are proposed. They are:\ndisciplinary dialog, anthropological subjects, ethnographic styles, and\nmethodological norms. Because Wittgenstein\u2019s approach does not rank such\nattributes hierarchically or require any film to contain elements of all\nfour attributes, the result is a multidimensional approach which allows\nfor greater flexibility in defining the genre while still delineating what\nmakes a film ethnographic.",
+    "accessed": {
+      "date-parts": [
+        [
+          "2020",
+          1,
+          12
+        ]
+      ]
+    },
+    "author": [
+      {
+        "family": "Friedman",
+        "given": "P Kerim"
+      }
+    ],
+    "citation-key": "friedmanDefiningEthnographicFilm2020",
+    "container-title": "The Routledge International Handbook of Ethnographic Film and Video",
+    "DOI": "10.4324/9780429196997",
+    "editor": [
+      {
+        "family": "Vannini",
+        "given": "Phillip"
+      }
+    ],
+    "ISBN": "978-0-429-19699-7",
+    "issued": {
+      "date-parts": [
+        [
+          "2020",
+          4,
+          16
+        ]
+      ]
+    },
+    "note": "Read_Status: Done\nRead_Status_Date: 2025-04-30T08:05:19.657Z",
+    "publisher": "Routledge",
+    "title": "Defining Ethnographic Film",
+    "type": "chapter",
+    "URL": "https://www.taylorfrancis.com/books/9780429196997"
+  },
+  {
+    "id": "friedmanEnteringMountainsRule2010",
+    "author": [
+      {
+        "family": "Friedman",
+        "given": "P Kerim"
+      }
+    ],
+    "citation-key": "friedmanEnteringMountainsRule2010",
+    "container-title": "Becoming Taiwan, from Colonialism to Democracy",
+    "editor": [
+      {
+        "family": "Heylen",
+        "given": "Ann"
+      },
+      {
+        "family": "Sommers",
+        "given": "Scott"
+      }
+    ],
+    "issued": {
+      "date-parts": [
+        [
+          "2010"
+        ]
+      ]
+    },
+    "note": "Read_Status: Done\nRead_Status_Date: 2025-04-30T08:05:19.640Z",
+    "page": "19\u201332",
+    "publisher": "Harrassowitz-Verlag",
+    "publisher-place": "Wiesbaden",
+    "title": "Entering the Mountains to Rule the Aborigines: Taiwanese Aborigine Education and the Colonial Encounter",
+    "type": "chapter"
+  }
+]

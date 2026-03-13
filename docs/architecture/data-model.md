@@ -13,8 +13,9 @@ Each project is a macOS package (folder appearing as file):
 ```
 MyBook.ff/
 +-- content.sqlite        # SQLite database (GRDB)
-+-- references/           # Reference files (Phase 6+)
-    +-- (user-organized folders)
++-- media/                # Images and attachments
++-- references/           # Reference files
+    +-- citations.json    # Optional: embedded CSL-JSON for offline citation rendering
 ```
 
 **Benefits:**

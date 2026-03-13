@@ -166,9 +166,10 @@ final class ExportViewModel {
 
     // MARK: - Citation Detection
 
-    /// Detect Pandoc citations in content (e.g., [@Smith2020])
+    /// Detect Pandoc citations in content (skips code blocks and inline code)
     private func hasPandocCitations(in content: String) -> Bool {
-        content.range(
+        let stripped = MarkdownUtils.stripCodeContent(from: content)
+        return stripped.range(
             of: #"\[[^\]]*@[\w:.-]+[^\]]*\]"#,
             options: .regularExpression
         ) != nil

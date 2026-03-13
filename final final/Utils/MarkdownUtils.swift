@@ -9,6 +9,30 @@
 import Foundation
 
 enum MarkdownUtils {
+    /// Remove fenced code blocks and inline code from markdown.
+    /// Used before citekey extraction to prevent false positives from examples.
+    static func stripCodeContent(from markdown: String) -> String {
+        var result = markdown
+        // Remove fenced code blocks (``` and ~~~)
+        result = result.replacingOccurrences(
+            of: #"```[\s\S]*?```"#,
+            with: "",
+            options: .regularExpression
+        )
+        result = result.replacingOccurrences(
+            of: #"~~~[\s\S]*?~~~"#,
+            with: "",
+            options: .regularExpression
+        )
+        // Remove inline code (`...`)
+        result = result.replacingOccurrences(
+            of: #"`[^`]+`"#,
+            with: "",
+            options: .regularExpression
+        )
+        return result
+    }
+
     /// Strip markdown syntax from content to get plain text
     /// Used for accurate word counting that excludes formatting symbols
     static func stripMarkdownSyntax(from content: String) -> String {

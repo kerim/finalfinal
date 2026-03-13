@@ -39,6 +39,7 @@ targets:
           - "Resources/Export"
           - "Resources/editor"
           - "Resources/TinyTeX"
+          - "Resources/getting-started.ff"
       - path: final final/Resources/Export
         type: folder
         buildPhase: resources
@@ -48,7 +49,8 @@ targets:
       - path: final final/Resources/TinyTeX
         type: folder
         buildPhase: resources
-      - path: final final/Resources/getting-started.md
+      - path: final final/Resources/getting-started.ff
+        type: folder
         buildPhase: resources
     preBuildScripts:
       - name: "Clean stale QuickLook DerivedData"
