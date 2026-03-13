@@ -49,6 +49,16 @@
             "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/protect-backups-git.sh"
           }
         ]
+      },
+      {
+        "matcher": "mcp__xcode__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/hook_allow_mcp.js",
+            "timeout": 10
+          }
+        ]
       }
     ]
   },
