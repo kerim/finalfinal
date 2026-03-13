@@ -584,13 +584,6 @@
 			path = "final final";
 			sourceTree = "<group>";
 		};
-		897DF43C87D41FD1A0CCF1C9 /* editor */ = {
-			isa = PBXGroup;
-			children = (
-			);
-			path = editor;
-			sourceTree = "<group>";
-		};
 		8A579DFDA89ED4D43AE65852 /* Components */ = {
 			isa = PBXGroup;
 			children = (
@@ -690,7 +683,6 @@
 		A0A538514A7F8AF439E6E08D /* Resources */ = {
 			isa = PBXGroup;
 			children = (
-				897DF43C87D41FD1A0CCF1C9 /* editor */,
 			);
 			path = Resources;
 			sourceTree = "<group>";
@@ -1260,7 +1252,7 @@
 				CODE_SIGN_IDENTITY = "Developer ID Application";
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 0.2.77;
+				CURRENT_PROJECT_VERSION = 0.2.78;
 				DEVELOPMENT_TEAM = HBHZWD24V7;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -1287,7 +1279,7 @@
 				CODE_SIGN_IDENTITY = "Developer ID Application";
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 0.2.77;
+				CURRENT_PROJECT_VERSION = 0.2.78;
 				DEVELOPMENT_TEAM = HBHZWD24V7;
 				ENABLE_HARDENED_RUNTIME = YES;
 				INFOPLIST_FILE = "QuickLook Extension/Info.plist";
@@ -1318,7 +1310,7 @@
 				CODE_SIGN_IDENTITY = "Developer ID Application";
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 0.2.77;
+				CURRENT_PROJECT_VERSION = 0.2.78;
 				DEVELOPMENT_TEAM = HBHZWD24V7;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -1345,7 +1337,7 @@
 				CODE_SIGN_IDENTITY = "Developer ID Application";
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 0.2.77;
+				CURRENT_PROJECT_VERSION = 0.2.78;
 				DEVELOPMENT_TEAM = HBHZWD24V7;
 				ENABLE_HARDENED_RUNTIME = YES;
 				INFOPLIST_FILE = "QuickLook Extension/Info.plist";
