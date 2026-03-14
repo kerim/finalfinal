@@ -202,6 +202,9 @@ class EditorViewState {
     /// Used for atomic content+blockID pushes during hierarchy enforcement
     weak var blockSyncService: BlockSyncService?
 
+    /// Annotation sync service reference (injected by ContentView)
+    weak var annotationSyncService: AnnotationSyncService?
+
     /// Pending image metadata for CodeMirror to pick up during zoom/rebuild transitions
     var pendingImageMeta: [ContentView.ImageBlockMeta]?
 

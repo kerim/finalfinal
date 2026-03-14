@@ -20,6 +20,30 @@ class BlockSyncService {
     private var projectDatabase: ProjectDatabase?
     private var projectId: String?
     private weak var webView: WKWebView?
+    /// Fetch content from the active WebView with a timeout.
+    /// Returns nil if WebView is unavailable, JS call fails, or timeout elapses.
+    func fetchContentFromWebView(timeout: Duration = .seconds(2)) async -> String? {
+        guard let webView else { return nil }
+        do {
+            return try await withThrowingTaskGroup(of: String?.self) { group in
+                group.addTask {
+                    let result = try await webView.evaluateJavaScript(
+                        "window.FinalFinal.getContent()"
+                    )
+                    return result as? String
+                }
+                group.addTask {
+                    try await Task.sleep(for: timeout)
+                    return nil
+                }
+                let first = try await group.next() ?? nil
+                group.cancelAll()
+                return first
+            }
+        } catch {
+            return nil
+        }
+    }
 
     /// Whether the service is properly configured
     var isConfigured: Bool {
@@ -124,11 +148,9 @@ class BlockSyncService {
                 .replacingOccurrences(of: "${", with: "\\${")
 
             let zoomMode = range != nil ? "true" : "false"
-            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-                webView.evaluateJavaScript("window.FinalFinal.syncBlockIds(JSON.parse(`\(escaped)`), \(zoomMode))") { _, _ in
-                    continuation.resume()
-                }
-            }
+            _ = try? await webView.evaluateJavaScript(
+                "window.FinalFinal.syncBlockIds(JSON.parse(`\(escaped)`), \(zoomMode)); true"
+            )
 
             DebugLog.log(.sync, "[BlockSyncService] Pushed \(orderedIds.count) block IDs to editor")
         } catch {
@@ -190,11 +212,7 @@ class BlockSyncService {
         let options = optionParts.isEmpty ? "" : ", {\(optionParts.joined(separator: ", "))}"
         let js = "window.FinalFinal.setContentWithBlockIds(`\(escapedMarkdown)`, JSON.parse(`\(escapedIds)`)\(options))"
 
-        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            webView.evaluateJavaScript(js) { _, _ in
-                continuation.resume()
-            }
-        }
+        _ = try? await webView.evaluateJavaScript("\(js); true")
 
         // Notify coordinator so it updates lastPushedContent (prevents redundant updateNSView push)
         NotificationCenter.default.post(
@@ -238,7 +256,7 @@ class BlockSyncService {
 
     // MARK: - Polling
 
-    /// Poll the editor for block changes and apply them to the database
+    /// Poll the editor for block changes with a 5-second timeout to prevent permanent hangs.
     private func pollBlockChanges(force: Bool = false) async {
         guard !isPolling else {
             if force { DebugLog.log(.blockPoll, "[SYNC-DIAG:BlockPoll] BLOCKED: force poll skipped (already polling)") }
@@ -247,6 +265,26 @@ class BlockSyncService {
         isPolling = true
         defer { isPolling = false }
 
+        do {
+            try await withThrowingTaskGroup(of: Void.self) { group in
+                group.addTask { [weak self] in
+                    guard let self else { return }
+                    await self.doPollBlockChanges(force: force)
+                }
+                group.addTask {
+                    try await Task.sleep(for: .seconds(5))
+                    throw CancellationError()
+                }
+                _ = try await group.next()
+                group.cancelAll()
+            }
+        } catch {
+            DebugLog.log(.sync, "[BlockSync] Poll timed out or error: \(error)")
+        }
+    }
+
+    /// Inner poll body — contains the actual polling logic.
+    private func doPollBlockChanges(force: Bool = false) async {
         if !force {
             guard editorState?.contentState == .idle else {
                 DebugLog.log(.blockPoll, "[SYNC-DIAG:BlockPoll] SKIPPED: contentState=\(String(describing: editorState?.contentState))")
@@ -297,9 +335,6 @@ class BlockSyncService {
                         "(\(deleteCount)/\(blockCount) blocks). May indicate stale snapshot.")
                 }
                 // Safety net: reject change sets that would delete ALL blocks with no inserts.
-                // This is the signature of stale initialization content overwriting real content.
-                // Note: "Select All → Delete" is a theoretical false positive, but ProseMirror
-                // always retains at least one empty paragraph node, so inserts would be non-empty.
                 if blockCount > 2 && deleteCount == blockCount && changes.inserts.isEmpty {
                     DebugLog.always("[SYNC-DIAG:BlockPoll] REJECTED: Mass delete of ALL \(blockCount) blocks " +
                         "with no inserts (updates=\(changes.updates.count)). Stale snapshot likely.")
@@ -354,35 +389,23 @@ class BlockSyncService {
 
     /// Check if the editor has pending block changes
     private func checkForChanges(webView: WKWebView) async -> Bool {
-        await withCheckedContinuation { continuation in
-            webView.evaluateJavaScript("window.FinalFinal.hasBlockChanges()") { result, _ in
-                if let hasChanges = result as? Bool {
-                    continuation.resume(returning: hasChanges)
-                } else {
-                    continuation.resume(returning: false)
-                }
-            }
-        }
+        let result = try? await webView.evaluateJavaScript("window.FinalFinal.hasBlockChanges()")
+        return result as? Bool ?? false
     }
 
     /// Get block changes from the editor
     private func getBlockChanges(webView: WKWebView) async -> BlockChanges? {
-        await withCheckedContinuation { continuation in
-            webView.evaluateJavaScript("JSON.stringify(window.FinalFinal.getBlockChanges())") { result, error in
-                guard let jsonString = result as? String,
-                      let data = jsonString.data(using: .utf8) else {
-                    continuation.resume(returning: nil)
-                    return
-                }
-
-                do {
-                    let changes = try JSONDecoder().decode(BlockChanges.self, from: data)
-                    continuation.resume(returning: changes)
-                } catch {
-                    DebugLog.log(.sync, "[BlockSyncService] Failed to decode block changes: \(error)")
-                    continuation.resume(returning: nil)
-                }
-            }
+        guard let jsonString = try? await webView.evaluateJavaScript(
+            "JSON.stringify(window.FinalFinal.getBlockChanges())"
+        ) as? String,
+              let data = jsonString.data(using: .utf8) else {
+            return nil
+        }
+        do {
+            return try JSONDecoder().decode(BlockChanges.self, from: data)
+        } catch {
+            DebugLog.log(.sync, "[BlockSyncService] Failed to decode block changes: \(error)")
+            return nil
         }
     }
 
@@ -410,11 +433,9 @@ class BlockSyncService {
             .replacingOccurrences(of: "`", with: "\\`")
             .replacingOccurrences(of: "${", with: "\\${")
 
-        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            webView.evaluateJavaScript("window.FinalFinal.confirmBlockIds(JSON.parse(`\(escaped)`))") { _, _ in
-                continuation.resume()
-            }
-        }
+        _ = try? await webView.evaluateJavaScript(
+            "window.FinalFinal.confirmBlockIds(JSON.parse(`\(escaped)`)); true"
+        )
     }
 
     // MARK: - Initial Parse
