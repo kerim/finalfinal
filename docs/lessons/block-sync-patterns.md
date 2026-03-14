@@ -332,6 +332,41 @@ for update in changes.updates {
 
 ---
 
+## Use Native Async evaluateJavaScript, Not withCheckedContinuation
+
+**Problem:** `BlockSyncService` wrapped `webView.evaluateJavaScript()` in `withCheckedContinuation` for 5 separate call sites. If the WebView was unresponsive or dead, the continuation would never resume — permanently hanging the caller.
+
+**Root Cause:** The completion-handler-based `evaluateJavaScript(_:completionHandler:)` API requires manual bridging to async/await via `withCheckedContinuation`. If the WebView is deallocated or crashes, the completion handler may never fire.
+
+**Solution:** Use the native `async throws` overload of `evaluateJavaScript()` (available since iOS 15/macOS 12), wrapped in `try? await` for fire-and-forget calls:
+
+```swift
+// Before (hangs if WebView dies):
+await withCheckedContinuation { continuation in
+    webView.evaluateJavaScript("window.FinalFinal.syncBlockIds(...)") { _, _ in
+        continuation.resume()
+    }
+}
+
+// After (returns immediately if WebView throws):
+_ = try? await webView.evaluateJavaScript(
+    "window.FinalFinal.syncBlockIds(...); true"
+)
+```
+
+For calls that return values, use the result directly:
+
+```swift
+let result = try? await webView.evaluateJavaScript("window.FinalFinal.hasBlockChanges()")
+return result as? Bool ?? false
+```
+
+**Poll timeout:** The `pollBlockChanges` method wraps its body in a `withThrowingTaskGroup` racing against `Task.sleep(for: .seconds(5))`. If the poll body (which calls `checkForChanges`, `getBlockChanges`, `confirmBlockIds`) doesn't complete within 5s, the timeout task throws `CancellationError`, cancelling the poll body.
+
+**General principle:** Prefer native async APIs over `withCheckedContinuation` wrappers. When bridging is unavoidable, always add a timeout to prevent permanent hangs. The `withThrowingTaskGroup` racing pattern is a clean way to add timeouts to any async operation.
+
+---
+
 ## Flush Pending JS Changes Before Reading DB
 
 **Problem:** Bibliography rebuild reads all blocks from DB and pushes them to the editor. But the editor may have unsaved JS changes (pending in the block-sync debounce timer). The handler reads stale DB state, and when those JS changes eventually flush, they create ghost blocks.

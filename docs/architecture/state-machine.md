@@ -29,7 +29,9 @@ enum EditorContentState {
 
 **Content Generation Counter**: `contentGeneration` (on `EditorViewState`) is incremented every time `contentState` transitions from `.idle` to a non-idle state. Editor polling captures this value before async JS calls and discards stale results if it changed during the roundtrip. This prevents stale poll data from overwriting content during transitions.
 
-**Debounce Generation Guards**: `SectionSyncService`, `AnnotationSyncService`, and `ViewNotificationModifiers` (block reparse) use generation counters alongside `Task.isCancelled` to prevent cooperative cancellation races. The debounce task captures the generation at creation time and skips execution if a newer debounce was started during the sleep.
+**Debounce Generation Guards**: `SectionSyncService`, `AnnotationSyncService`, and `ViewNotificationModifiers` (block reparse) use generation counters alongside `Task.isCancelled` to prevent cooperative cancellation races. The debounce task captures the generation at creation time and skips execution if a newer debounce was started during the sleep. `cancelPendingSync()` on both services increments the generation counter in addition to cancelling the task, ensuring any in-flight debounce that captured a stale generation is invalidated.
+
+**App Termination Flush**: `applicationShouldTerminate` returns `.terminateLater` and fetches fresh content from the WebView (with 2s timeout) before calling `flushAllSync()` — a comprehensive synchronous flush that writes blocks, section metadata, and annotation positions to the database inline on `@MainActor`. `applicationWillTerminate` serves as a safety net for force-quit, calling `flushAllSync()` again (idempotent). Project close (`performProjectClose`) also uses `flushAllSync()` instead of `flushContentToDatabase()` alone.
 
 ---
 

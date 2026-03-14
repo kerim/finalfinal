@@ -207,15 +207,49 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard let editorState = editorState, !editorState.content.isEmpty else {
+            return .terminateNow
+        }
+
+        Task { @MainActor in
+            // Fetch fresh content from the active WebView with 2s timeout
+            if let webView = editorState.blockSyncService?.activeWebView {
+                do {
+                    let freshContent: String? = try await withThrowingTaskGroup(of: String?.self) { group in
+                        group.addTask {
+                            let result = try await webView.evaluateJavaScript(
+                                "window.FinalFinal.getContent()"
+                            )
+                            return result as? String
+                        }
+                        group.addTask {
+                            try await Task.sleep(for: .seconds(2))
+                            return nil
+                        }
+                        let first = try await group.next() ?? nil
+                        group.cancelAll()
+                        return first
+                    }
+                    if let content = freshContent, !content.isEmpty {
+                        editorState.content = content
+                    }
+                } catch {
+                    DebugLog.log(.lifecycle, "[AppDelegate] JS content fetch failed: \(error)")
+                }
+            }
+
+            editorState.flushAllSync()
+            self.removeEscapeKeyMonitor()
+            NSApp.reply(toApplicationShouldTerminate: true)
+        }
+
+        return .terminateLater
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         DebugLog.log(.lifecycle, "[AppDelegate] Application terminating")
-
-        // Flush pending content to prevent data loss on quit.
-        // Synchronous — GRDB writes complete before process exits.
-        // Handles both zoomed (range replace) and non-zoomed (full replace) cases.
-        editorState?.flushContentToDatabase()
-
-        // Remove Esc key monitor
+        editorState?.flushAllSync()
         removeEscapeKeyMonitor()
     }
 

@@ -45,7 +45,7 @@ Primary content sync is push-based: both editors push content to Swift via `wind
 
 Fallback polling runs at 3s intervals for supplementary data only: `getPollData()` returns a batched JSON with `{stats, sectionTitle}` in a single JS call. Content is no longer polled — the push path handles it.
 
-**Block Sync (2s polling)**: `BlockSyncService` polls `hasBlockChanges()` -> `getBlockChanges()` at 2s intervals for structural content sync. Block change detection is debounced (100ms) in the JS plugin to batch rapid keystrokes.
+**Block Sync (2s polling)**: `BlockSyncService` polls `hasBlockChanges()` -> `getBlockChanges()` at 2s intervals for structural content sync. Block change detection is debounced (100ms) in the JS plugin to batch rapid keystrokes. All JS calls use `try? await webView.evaluateJavaScript()` (native async/await) instead of `withCheckedContinuation` wrappers. The poll cycle has a 5-second timeout (`withThrowingTaskGroup` racing the poll body against `Task.sleep`) to prevent permanent hangs if the WebView is unresponsive.
 
 **Feedback Prevention**: `isSettingContent` flag prevents feedback loops when Swift pushes content to editor. `resetAndSnapshot(doc)` must be called after any `setContent()` to prevent false change waves. BlockSyncService checks `editorState.contentState == .idle` to gate polling during drag operations, zoom transitions, and other non-idle states. Push-based content uses grace period guards (150ms CodeMirror, 200ms Milkdown) to avoid overwriting recently pushed content.
 
@@ -114,7 +114,9 @@ Responsible for legacy section sync, anchor injection/extraction, and bibliograp
 **Key Methods**:
 - `contentChanged(_ markdown:)` -- Debounced entry point (500ms)
 - `syncContent(_ markdown:)` -- Parses headers, reconciles with database (DB work dispatched off main thread via `Task.detached`)
+- `syncNowSync(_ markdown:)` -- Synchronous section sync for app termination / project close. Mirrors `syncContent()` but runs inline on `@MainActor`. Skips when zoomed (content is a subset).
 - `parseHeaders(from markdown:)` -- `nonisolated static` method, extracts section boundaries (callable from detached tasks)
+- `cancelPendingSync()` -- Cancels debounce task AND increments `debounceGeneration` to invalidate any in-flight debounce that captured a stale generation
 
 **Reconciliation**: Uses `SectionReconciler` (a `Sendable` struct) to compute minimal database changes (insert, update, delete) by comparing parsed headers against existing sections. All DB reads/writes run off the main thread; only `lastSyncedContent` tracking and UI notifications happen back on MainActor.
 

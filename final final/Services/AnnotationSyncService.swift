@@ -76,6 +76,7 @@ class AnnotationSyncService {
     func cancelPendingSync() {
         debounceTask?.cancel()
         debounceTask = nil
+        debounceGeneration += 1
     }
 
     /// Called when editor content changes
@@ -108,6 +109,34 @@ class AnnotationSyncService {
     func syncNow(_ markdown: String) async {
         debounceTask?.cancel()
         await syncContent(markdown)
+    }
+
+    /// Synchronous annotation sync for app termination / project close.
+    func syncNowSync(_ markdown: String) {
+        debounceTask?.cancel()
+        debounceTask = nil
+        debounceGeneration += 1
+        guard let db = projectDatabase, let cid = contentId else { return }
+        do {
+            let parsed = parseAnnotationsFromMarkdown(markdown)
+
+            let allAnnotations = try db.fetchAnnotations(contentId: cid)
+            let dbAnnotations = allAnnotations.filter { !$0.isDocumentLevel }
+
+            let changes = reconcile(
+                parsed: parsed,
+                dbAnnotations: dbAnnotations,
+                contentId: cid
+            )
+
+            if !changes.isEmpty {
+                try db.applyAnnotationChanges(changes, for: cid)
+            }
+        } catch {
+            DebugLog.log(.sync, "[AnnotationSyncService] syncNowSync error: \(error)")
+        }
+
+        lastSyncedContent = markdown
     }
 
     /// Load annotations from database
