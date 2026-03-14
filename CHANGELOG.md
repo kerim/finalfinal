@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.79] - 2026-03-14
+
 ### Added
 
 - **Finder file-open** — double-clicking a `.ff` file in Finder now opens it in the app. Handles both cold launch (stashes URL for `determineInitialState()`) and hot open (flushes current project first). Includes duplicate Apple Event detection and integrity error UI.
