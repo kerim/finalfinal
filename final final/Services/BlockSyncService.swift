@@ -20,7 +20,30 @@ class BlockSyncService {
     private var projectDatabase: ProjectDatabase?
     private var projectId: String?
     private weak var webView: WKWebView?
-    var activeWebView: WKWebView? { webView }
+    /// Fetch content from the active WebView with a timeout.
+    /// Returns nil if WebView is unavailable, JS call fails, or timeout elapses.
+    func fetchContentFromWebView(timeout: Duration = .seconds(2)) async -> String? {
+        guard let webView else { return nil }
+        do {
+            return try await withThrowingTaskGroup(of: String?.self) { group in
+                group.addTask {
+                    let result = try await webView.evaluateJavaScript(
+                        "window.FinalFinal.getContent()"
+                    )
+                    return result as? String
+                }
+                group.addTask {
+                    try await Task.sleep(for: timeout)
+                    return nil
+                }
+                let first = try await group.next() ?? nil
+                group.cancelAll()
+                return first
+            }
+        } catch {
+            return nil
+        }
+    }
 
     /// Whether the service is properly configured
     var isConfigured: Bool {

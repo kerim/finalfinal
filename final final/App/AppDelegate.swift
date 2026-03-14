@@ -24,6 +24,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// NSEvent monitor for Esc key to exit focus mode (works even when WKWebView has focus)
     private var escapeKeyMonitor: Any?
 
+    /// Whether applicationShouldTerminate already flushed content (prevents redundant flush in applicationWillTerminate)
+    private var didFlushForQuit = false
+
     func applicationWillFinishLaunching(_ notification: Notification) {
         // In test mode, clean saved application state from the CORRECT path.
         // The test runner can't do this because its NSHomeDirectory() is containerized
@@ -214,32 +217,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         Task { @MainActor in
             // Fetch fresh content from the active WebView with 2s timeout
-            if let webView = editorState.blockSyncService?.activeWebView {
-                do {
-                    let freshContent: String? = try await withThrowingTaskGroup(of: String?.self) { group in
-                        group.addTask {
-                            let result = try await webView.evaluateJavaScript(
-                                "window.FinalFinal.getContent()"
-                            )
-                            return result as? String
-                        }
-                        group.addTask {
-                            try await Task.sleep(for: .seconds(2))
-                            return nil
-                        }
-                        let first = try await group.next() ?? nil
-                        group.cancelAll()
-                        return first
-                    }
-                    if let content = freshContent, !content.isEmpty {
-                        editorState.content = content
-                    }
-                } catch {
-                    DebugLog.log(.lifecycle, "[AppDelegate] JS content fetch failed: \(error)")
-                }
+            if let freshContent = await editorState.blockSyncService?.fetchContentFromWebView(),
+               !freshContent.isEmpty {
+                editorState.content = freshContent
             }
 
             editorState.flushAllSync()
+            self.didFlushForQuit = true
             self.removeEscapeKeyMonitor()
             NSApp.reply(toApplicationShouldTerminate: true)
         }
@@ -249,7 +233,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         DebugLog.log(.lifecycle, "[AppDelegate] Application terminating")
-        editorState?.flushAllSync()
+        // Only flush if applicationShouldTerminate didn't already (safety net for force-quit)
+        if !didFlushForQuit {
+            editorState?.flushAllSync()
+        }
         removeEscapeKeyMonitor()
     }
 

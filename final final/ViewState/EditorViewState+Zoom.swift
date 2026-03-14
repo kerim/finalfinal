@@ -365,7 +365,11 @@ extension EditorViewState {
     func flushAllSync() {
         flushContentToDatabase()
         sectionSyncService?.syncNowSync(content)
-        annotationSyncService?.syncNowSync(content)
+        // Skip annotation sync when zoomed: content is a subset, and the reconciler
+        // would delete annotations from sections outside the zoom range.
+        if zoomedSectionId == nil {
+            annotationSyncService?.syncNowSync(content)
+        }
     }
 
     // MARK: - CodeMirror Flush
@@ -388,16 +392,17 @@ extension EditorViewState {
         blockReparseTask = nil
 
         do {
-            // Sync mini-Notes back to Notes section before stripping (prevents footnote loss on quit-while-zoomed)
+            // Strip zoom notes once and reuse for both mini-Notes sync and content parsing.
+            // stripZoomNotes returns content unchanged when no marker is present.
+            let stripResult = SectionSyncService.stripZoomNotes(from: content)
+
             if zoomedBlockRange != nil {
-                let preStripResult = SectionSyncService.stripZoomNotes(from: content)
-                if let miniNotes = preStripResult.miniNotes, !miniNotes.isEmpty {
+                if let miniNotes = stripResult.miniNotes, !miniNotes.isEmpty {
                     sectionSyncService?.syncMiniNotesBackPublic(miniNotes, projectId: pid)
                 }
             }
 
-            // Strip mini #Notes marker before parsing (only present when zoomed)
-            let contentToParse = SectionSyncService.stripZoomNotes(from: content).stripped
+            let contentToParse = stripResult.stripped
 
             // Metadata preserved atomically by replaceBlocks/replaceBlocksInRange
             // inside their write transactions (8 fields vs. the old pre-read's 3)

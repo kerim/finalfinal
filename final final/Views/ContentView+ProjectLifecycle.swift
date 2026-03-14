@@ -490,8 +490,10 @@ extension ContentView {
         // 3. Flush section metadata (immediate write, bypasses 500ms debounce)
         await sectionSyncService.syncNow(editorState.content)
 
-        // 4. Flush annotation positions
-        await annotationSyncService.syncNow(editorState.content)
+        // 4. Flush annotation positions (skip when zoomed — content is a subset)
+        if editorState.zoomedSectionId == nil {
+            await annotationSyncService.syncNow(editorState.content)
+        }
 
         DebugLog.log(.lifecycle, "[ContentView] flushAllPendingContent completed")
     }
