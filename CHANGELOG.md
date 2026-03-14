@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **Finder file-open** — double-clicking a `.ff` file in Finder now opens it in the app. Handles both cold launch (stashes URL for `determineInitialState()`) and hot open (flushes current project first). Includes duplicate Apple Event detection and integrity error UI.
+
+### Fixed
+
+- **Data loss on quit, close, and zoom** — replaced `withCheckedContinuation` with native async `evaluateJavaScript` in BlockSyncService (5 call sites); added 5s poll timeout to prevent permanent hangs; `applicationShouldTerminate` now fetches fresh JS content (2s timeout) before flushing blocks, sections, and annotations synchronously
+- **Annotation data loss during zoom** — guarded annotation sync in `flushAllSync()` and `flushAllPendingContent()` to prevent deleting annotations outside the zoomed section's range
+- **Redundant flush on quit** — `didFlushForQuit` flag prevents `applicationWillTerminate` from re-flushing after `applicationShouldTerminate` already saved
+- **Project open validates before closing** — `openProject()` and `forceOpenProject()` now validate the new project's database integrity before closing the current one, preserving the user's work if the new file is corrupt
+- **Re-entrant open guard** — `hasCompletedInitialOpen` prevents macOS state restoration and SwiftUI `.task` re-fires from triggering duplicate project opens during launch
+
 ## [0.2.78] - 2026-03-13
 
 ### Changed
