@@ -43,6 +43,7 @@ extension ContentView {
 
         // Inject blockSyncService for atomic content+blockID pushes (hierarchy enforcement)
         editorState.blockSyncService = blockSyncService
+        editorState.annotationSyncService = annotationSyncService
 
         // Wire up hierarchy enforcement after sections are updated from database
         // This ensures slash commands that create new headings trigger rebalancing
@@ -279,7 +280,7 @@ extension ContentView {
     func performProjectClose() {
         // Flush pending content synchronously before closing.
         // editorState.content is current (JS 50ms debounce has fired by button click time).
-        editorState.flushContentToDatabase()
+        editorState.flushAllSync()
 
         // Create auto-backup before closing if there are unsaved changes (not for Getting Started)
         if !documentManager.isGettingStartedProject {

@@ -361,6 +361,13 @@ extension EditorViewState {
         }
     }
 
+    /// Comprehensive synchronous flush: blocks + section metadata + annotation positions.
+    func flushAllSync() {
+        flushContentToDatabase()
+        sectionSyncService?.syncNowSync(content)
+        annotationSyncService?.syncNowSync(content)
+    }
+
     // MARK: - CodeMirror Flush
 
     /// Immediately persist editor content to the block database (no debounce).
@@ -371,11 +378,24 @@ extension EditorViewState {
         guard !content.isEmpty else { return }
         guard let db = projectDatabase, let pid = currentProjectId else { return }
 
+        if zoomedSectionId != nil && zoomedBlockRange == nil {
+            DebugLog.log(.zoom, "[FLUSH] SKIP: zoom in-flight, no block range yet")
+            return
+        }
+
         // Cancel any pending debounced re-parse
         blockReparseTask?.cancel()
         blockReparseTask = nil
 
         do {
+            // Sync mini-Notes back to Notes section before stripping (prevents footnote loss on quit-while-zoomed)
+            if zoomedBlockRange != nil {
+                let preStripResult = SectionSyncService.stripZoomNotes(from: content)
+                if let miniNotes = preStripResult.miniNotes, !miniNotes.isEmpty {
+                    sectionSyncService?.syncMiniNotesBackPublic(miniNotes, projectId: pid)
+                }
+            }
+
             // Strip mini #Notes marker before parsing (only present when zoomed)
             let contentToParse = SectionSyncService.stripZoomNotes(from: content).stripped
 
