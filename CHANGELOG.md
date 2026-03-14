@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Lowered deployment target from macOS 26.0 to 15.0 (Sequoia)** — no macOS 26-specific APIs were in use; this makes the app available to far more users
+
 ## [0.2.79] - 2026-03-14
 
 ### Added
