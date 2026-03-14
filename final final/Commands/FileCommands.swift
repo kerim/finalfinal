@@ -136,6 +136,11 @@ struct RecentProjectsMenu: View {
     }
 
     private func openRecentProject(_ entry: DocumentManager.RecentProjectEntry) {
+        // Guard against macOS state restoration replaying menu actions during launch
+        guard DocumentManager.shared.hasCompletedInitialOpen else {
+            DebugLog.log(.lifecycle, "[RecentProjectsMenu] Ignoring state-restoration replay during launch")
+            return
+        }
         Task { @MainActor in
             do {
                 try DocumentManager.shared.openRecentProject(entry)

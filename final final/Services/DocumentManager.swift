@@ -61,6 +61,12 @@ final class DocumentManager {
     /// UserDefaults key for last seen app version (for Getting Started)
     private let lastSeenVersionKey = "com.kerim.final-final.lastSeenVersion"
 
+    // MARK: - Launch State
+
+    /// Whether the initial app-launch project open has completed.
+    /// Used to prevent re-entrant opens from state restoration or SwiftUI `.task` re-fires.
+    var hasCompletedInitialOpen = false
+
     // MARK: - Getting Started State
 
     /// Whether the currently open project is the Getting Started guide
@@ -165,10 +171,13 @@ final class DocumentManager {
     /// - Throws: IntegrityError if critical integrity issues are found
     @discardableResult
     func openProject(at url: URL) throws -> String {
-        // Close any existing project first
-        closeProject()
+        // Skip if this exact project is already open
+        if projectURL?.resolvingSymlinksInPath() == url.resolvingSymlinksInPath() {
+            DebugLog.log(.lifecycle, "[DocumentManager] Project already open, skipping: \(url.lastPathComponent)")
+            return projectId ?? ""
+        }
 
-        // Integrity check BEFORE opening database
+        // VALIDATE FIRST — before touching current project
         let checker = ProjectIntegrityChecker(packageURL: url)
         let report = try checker.validate()
 
@@ -183,16 +192,18 @@ final class DocumentManager {
             }
         }
 
-        // Validate and open the package
+        // Open and validate the new project before closing the old one
         let package = try ProjectPackage.open(at: url)
         let database = try ProjectDatabase(package: package)
 
-        // Fetch the project
         guard let project = try database.fetchProject() else {
             throw DocumentError.noProjectInDatabase
         }
 
-        // Set current state
+        // All validation passed — NOW close the old project
+        closeProject()
+
+        // Set new state (cannot fail from here)
         self.projectDatabase = database
         self.projectURL = url
         self.projectId = project.id
@@ -225,9 +236,7 @@ final class DocumentManager {
     /// - Throws: Package or database errors (but NOT missing project record)
     @discardableResult
     func forceOpenProject(at url: URL) throws -> String? {
-        // Close any existing project first
-        closeProject()
-
+        // Validate the new project BEFORE closing the current one
         let package = try ProjectPackage.open(at: url)
         let database = try ProjectDatabase(package: package)
 
@@ -240,6 +249,9 @@ final class DocumentManager {
             DebugLog.log(.lifecycle, "[DocumentManager] Force-open: fetchProject error (continuing): \(error)")
             project = nil
         }
+
+        // Package and database opened successfully — NOW close the old project
+        closeProject()
 
         self.projectDatabase = database
         self.projectURL = url

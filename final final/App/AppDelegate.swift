@@ -24,6 +24,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// NSEvent monitor for Esc key to exit focus mode (works even when WKWebView has focus)
     private var escapeKeyMonitor: Any?
 
+    /// URL passed by Finder double-click; consumed by determineInitialState()
+    var finderOpenURL: URL?
+
     func applicationWillFinishLaunching(_ notification: Notification) {
         // In test mode, clean saved application state from the CORRECT path.
         // The test runner can't do this because its NSHomeDirectory() is containerized
@@ -221,6 +224,83 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         false
+    }
+
+    // MARK: - Finder File Open
+
+    func application(_ application: NSApplication, open urls: [URL]) {
+        DebugLog.always("[FINDER-OPEN] application(_:open:) called with \(urls.count) URLs")
+        guard let url = urls.first, url.pathExtension == "ff" else {
+            DebugLog.always("[FINDER-OPEN] Rejected: no .ff URL in \(urls)")
+            return
+        }
+        DebugLog.always("[FINDER-OPEN] URL: \(url.path)")
+        DebugLog.always("[FINDER-OPEN] hasOpenProject=\(DocumentManager.shared.hasOpenProject)")
+
+        // If app is still launching (no project open yet), stash URL for
+        // determineInitialState() to consume — avoids race where
+        // restoreLastProject() overwrites Finder intent.
+        if !DocumentManager.shared.hasOpenProject {
+            DebugLog.always("[FINDER-OPEN] Stashing URL for launch (no project open yet)")
+            finderOpenURL = url
+            return
+        }
+
+        // App already running — flush pending editor content, then open
+        DebugLog.always("[FINDER-OPEN] App running with project, flushing and opening")
+        editorState?.flushContentToDatabase()
+        openProjectFromFinder(at: url)
+    }
+
+    func application(_ sender: NSApplication, openFile filename: String) -> Bool {
+        let url = URL(fileURLWithPath: filename)
+        guard url.pathExtension == "ff" else { return false }
+        DebugLog.always("[FINDER-OPEN] application(_:openFile:) called: \(filename)")
+        application(sender, open: [url])
+        return true
+    }
+
+    /// Open a .ff project from Finder, with error handling matching FileOperations.handleOpenProject()
+    private func openProjectFromFinder(at url: URL) {
+        let currentURL = DocumentManager.shared.projectURL?.resolvingSymlinksInPath()
+        let incomingURL = url.resolvingSymlinksInPath()
+        DebugLog.always("[FINDER-OPEN] openProjectFromFinder: current=\(currentURL?.path ?? "nil") incoming=\(incomingURL.path)")
+
+        // Skip if this project is already open (duplicate Apple Events)
+        guard currentURL != incomingURL else {
+            DebugLog.always("[FINDER-OPEN] BLOCKED: same project already open")
+            return
+        }
+
+        do {
+            try DocumentManager.shared.openProject(at: url)
+            DebugLog.always("[FINDER-OPEN] openProject succeeded, posting .projectDidOpen")
+            NotificationCenter.default.post(name: .projectDidOpen, object: nil)
+        } catch let error as IntegrityError {
+            // openProject() validates before closing, so current project is preserved.
+            // Show integrity error UI without posting projectDidClose.
+            if let report = error.integrityReport {
+                NotificationCenter.default.post(
+                    name: .projectIntegrityError, object: nil,
+                    userInfo: ["report": report, "url": url]
+                )
+            } else {
+                showFinderOpenError(error)
+            }
+        } catch {
+            // Current project preserved — just show the error
+            DebugLog.log(.lifecycle, "[AppDelegate] Failed to open from Finder: \(error)")
+            showFinderOpenError(error)
+        }
+    }
+
+    private func showFinderOpenError(_ error: Error) {
+        let alert = NSAlert()
+        alert.messageText = "Could Not Open Project"
+        alert.informativeText = error.localizedDescription
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
     }
 
     // MARK: - NSWindowDelegate

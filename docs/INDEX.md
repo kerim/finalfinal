@@ -70,6 +70,7 @@ Bug investigation reports with root cause analysis and solutions.
 - [version-history-window-bugs.md](findings/version-history-window-bugs.md) -- Window restoration on launch, dismiss vs dismissWindow, loading state priority, stale sections, auto-snapshot deduplication
 - [bibliography-id-theft-corruption.md](findings/bibliography-id-theft-corruption.md) -- Block ID greedy matching steals bibliography IDs near boundary; fix: two-phase closest-first matching + isBibliography write guard
 - [image-block-duplication.md](findings/image-block-duplication.md) -- 300ms content push debounce race causes cascading image block inserts; fix: shared timer clearing + adjacent dedup + batch dedup guard
+- [finder-open-url-encoding.md](findings/finder-open-url-encoding.md) -- False alarm: iTerm copy-paste inserted %0A%20%20 in osascript path; also documents validate-before-close, launch guard, and Finder stash patterns
 
 ## Deferred
 
