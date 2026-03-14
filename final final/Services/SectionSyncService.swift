@@ -161,9 +161,7 @@ class SectionSyncService {
     /// Synchronous section sync for app termination / project close.
     /// Mirrors syncContent() logic but runs inline on @MainActor.
     func syncNowSync(_ markdown: String) {
-        debounceTask?.cancel()
-        debounceTask = nil
-        debounceGeneration += 1
+        cancelPendingSync()
 
         // When zoomed, content is a subset — skip full reconciliation
         // (zoomed sections are already handled by flushContentToDatabase's range replace)

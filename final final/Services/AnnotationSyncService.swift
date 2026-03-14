@@ -113,9 +113,7 @@ class AnnotationSyncService {
 
     /// Synchronous annotation sync for app termination / project close.
     func syncNowSync(_ markdown: String) {
-        debounceTask?.cancel()
-        debounceTask = nil
-        debounceGeneration += 1
+        cancelPendingSync()
         guard let db = projectDatabase, let cid = contentId else { return }
         do {
             let parsed = parseAnnotationsFromMarkdown(markdown)
