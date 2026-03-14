@@ -223,6 +223,44 @@ if !callerManagedState {
 
 ---
 
+## Zoom Flush Safety
+
+### Guard Against Mid-Transition Flushes
+
+**Problem:** If `flushContentToDatabase()` runs during a zoom transition (after `zoomedSectionId` is set but before `zoomedBlockRange` is computed), it attempts a range-based replace with no range — corrupting the database.
+
+**Solution:** Skip the flush if zoom is in-flight:
+
+```swift
+if zoomedSectionId != nil && zoomedBlockRange == nil {
+    DebugLog.log(.zoom, "[FLUSH] SKIP: zoom in-flight, no block range yet")
+    return
+}
+```
+
+### Sync Mini-Notes Before Stripping
+
+**Problem:** Quitting while zoomed with edited footnotes (mini-Notes section) lost the footnote edits because `flushContentToDatabase()` stripped the mini-Notes marker before syncing definitions back to the Notes section.
+
+**Solution:** Before stripping, sync mini-Notes definitions back to the DB:
+
+```swift
+if zoomedBlockRange != nil {
+    let preStripResult = SectionSyncService.stripZoomNotes(from: content)
+    if let miniNotes = preStripResult.miniNotes, !miniNotes.isEmpty {
+        sectionSyncService?.syncMiniNotesBackPublic(miniNotes, projectId: pid)
+    }
+}
+// Then strip as before
+let contentToParse = SectionSyncService.stripZoomNotes(from: content).stripped
+```
+
+`stripZoomNotes` is called twice when zoomed — acceptable (pure string operation, no side effects).
+
+**General principle:** When a flush operation strips transient content markers, ensure any data embedded in those markers is persisted before the strip.
+
+---
+
 ## Mode-Aware Block Range Calculation
 
 ### Shallow Zoom Must Narrow Editor Content, Not Just Sidebar

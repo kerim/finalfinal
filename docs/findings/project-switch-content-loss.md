@@ -37,7 +37,7 @@ Added content flushing at three lifecycle boundaries:
 Stop block polling first (prevents poll timer from firing during async suspension points), then flush all pending content to the OLD project's database before switching.
 
 - `fetchContentFromWebView()` -- fetches latest content directly from WebView JS with a 2s timeout, bypassing the 50ms JS debounce
-- `flushAllPendingContent()` -- updates `editorState.content` from WebView, calls `flushContentToDatabase()` (full block re-parse + write), flushes section metadata via `syncNow()`, flushes annotation positions
+- `flushAllPendingContent()` -- updates `editorState.content` from WebView, calls `flushContentToDatabase()` (full block re-parse + write), flushes section metadata via `syncNow()`, flushes annotation positions (skipped when zoomed to prevent deleting annotations outside zoom range)
 
 ### 2. `performProjectClose()` -- synchronous flush
 
