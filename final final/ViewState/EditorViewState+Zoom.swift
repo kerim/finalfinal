@@ -361,6 +361,17 @@ extension EditorViewState {
         }
     }
 
+    /// Comprehensive synchronous flush: blocks + section metadata + annotation positions.
+    func flushAllSync() {
+        flushContentToDatabase()
+        sectionSyncService?.syncNowSync(content)
+        // Skip annotation sync when zoomed: content is a subset, and the reconciler
+        // would delete annotations from sections outside the zoom range.
+        if zoomedSectionId == nil {
+            annotationSyncService?.syncNowSync(content)
+        }
+    }
+
     // MARK: - CodeMirror Flush
 
     /// Immediately persist editor content to the block database (no debounce).
@@ -371,13 +382,27 @@ extension EditorViewState {
         guard !content.isEmpty else { return }
         guard let db = projectDatabase, let pid = currentProjectId else { return }
 
+        if zoomedSectionId != nil && zoomedBlockRange == nil {
+            DebugLog.log(.zoom, "[FLUSH] SKIP: zoom in-flight, no block range yet")
+            return
+        }
+
         // Cancel any pending debounced re-parse
         blockReparseTask?.cancel()
         blockReparseTask = nil
 
         do {
-            // Strip mini #Notes marker before parsing (only present when zoomed)
-            let contentToParse = SectionSyncService.stripZoomNotes(from: content).stripped
+            // Strip zoom notes once and reuse for both mini-Notes sync and content parsing.
+            // stripZoomNotes returns content unchanged when no marker is present.
+            let stripResult = SectionSyncService.stripZoomNotes(from: content)
+
+            if zoomedBlockRange != nil {
+                if let miniNotes = stripResult.miniNotes, !miniNotes.isEmpty {
+                    sectionSyncService?.syncMiniNotesBackPublic(miniNotes, projectId: pid)
+                }
+            }
+
+            let contentToParse = stripResult.stripped
 
             // Metadata preserved atomically by replaceBlocks/replaceBlocksInRange
             // inside their write transactions (8 fields vs. the old pre-read's 3)

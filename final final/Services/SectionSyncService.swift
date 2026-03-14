@@ -76,6 +76,7 @@ class SectionSyncService {
     func cancelPendingSync() {
         debounceTask?.cancel()
         debounceTask = nil
+        debounceGeneration += 1
     }
 
     /// Rebuild document markdown from sections in their current order
@@ -155,6 +156,49 @@ class SectionSyncService {
     func syncNow(_ markdown: String) async {
         debounceTask?.cancel()
         await syncContent(markdown)
+    }
+
+    /// Synchronous section sync for app termination / project close.
+    /// Mirrors syncContent() logic but runs inline on @MainActor.
+    func syncNowSync(_ markdown: String) {
+        cancelPendingSync()
+
+        // When zoomed, content is a subset — skip full reconciliation
+        // (zoomed sections are already handled by flushContentToDatabase's range replace)
+        guard !isContentZoomed else { return }
+
+        guard let db = projectDatabase, let pid = projectId else { return }
+        let fallbackBibTitle = ExportSettingsManager.shared.bibliographyHeaderName
+
+        do {
+            let dbSections = try db.fetchSections(projectId: pid)
+
+            let existingBibTitle = dbSections.first(where: { $0.isBibliography })?.title
+            let existingNotesTitle = dbSections.first(where: { $0.isNotes })?.title
+            let headers = SectionSyncService.parseHeaders(
+                from: markdown,
+                existingBibTitle: existingBibTitle,
+                existingNotesTitle: existingNotesTitle,
+                fallbackBibTitle: fallbackBibTitle
+            )
+            guard !headers.isEmpty else { return }
+
+            let changes = reconciler.reconcile(
+                headers: headers,
+                dbSections: dbSections,
+                projectId: pid
+            )
+
+            if !changes.isEmpty {
+                try db.applySectionChanges(changes, for: pid)
+            }
+
+            try db.saveContent(markdown: markdown, for: pid)
+        } catch {
+            DebugLog.log(.sync, "[SectionSyncService] syncNowSync error: \(error)")
+        }
+
+        lastSyncedContent = markdown
     }
 
     /// Load sections from database as view models

@@ -24,6 +24,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// NSEvent monitor for Esc key to exit focus mode (works even when WKWebView has focus)
     private var escapeKeyMonitor: Any?
 
+    /// Whether applicationShouldTerminate already flushed content (prevents redundant flush in applicationWillTerminate)
+    private var didFlushForQuit = false
+
     /// URL passed by Finder double-click; consumed by determineInitialState()
     var finderOpenURL: URL?
 
@@ -210,15 +213,33 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard let editorState = editorState, !editorState.content.isEmpty else {
+            return .terminateNow
+        }
+
+        Task { @MainActor in
+            // Fetch fresh content from the active WebView with 2s timeout
+            if let freshContent = await editorState.blockSyncService?.fetchContentFromWebView(),
+               !freshContent.isEmpty {
+                editorState.content = freshContent
+            }
+
+            editorState.flushAllSync()
+            self.didFlushForQuit = true
+            self.removeEscapeKeyMonitor()
+            NSApp.reply(toApplicationShouldTerminate: true)
+        }
+
+        return .terminateLater
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         DebugLog.log(.lifecycle, "[AppDelegate] Application terminating")
-
-        // Flush pending content to prevent data loss on quit.
-        // Synchronous — GRDB writes complete before process exits.
-        // Handles both zoomed (range replace) and non-zoomed (full replace) cases.
-        editorState?.flushContentToDatabase()
-
-        // Remove Esc key monitor
+        // Only flush if applicationShouldTerminate didn't already (safety net for force-quit)
+        if !didFlushForQuit {
+            editorState?.flushAllSync()
+        }
         removeEscapeKeyMonitor()
     }
 
