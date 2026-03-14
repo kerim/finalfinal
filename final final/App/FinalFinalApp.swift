@@ -125,6 +125,9 @@ struct FinalFinalApp: App {
     /// Determine the initial app state on launch
     @MainActor
     private func determineInitialState() async {
+        guard !documentManager.hasCompletedInitialOpen else { return }
+        defer { documentManager.hasCompletedInitialOpen = true }
+
         // Test mode: skip normal flow, open fixture directly
         if TestMode.isUITesting {
             TestMode.clearTestState()
@@ -141,6 +144,22 @@ struct FinalFinalApp: App {
                 appViewState = .picker
             }
             return
+        }
+
+        // Check if Finder launched us with a specific file
+        if let url = AppDelegate.shared?.finderOpenURL {
+            AppDelegate.shared?.finderOpenURL = nil
+            do {
+                try documentManager.openProject(at: url)
+                appViewState = .editor
+                return
+            } catch {
+                DebugLog.log(.lifecycle, "[FinalFinalApp] Failed to open Finder URL: \(error)")
+                // Fall through to normal flow (picker).
+                // Cannot show NSAlert here — runModal() deadlocks inside .task async context.
+                // User will see the picker and can try opening the file from there,
+                // which goes through FileOperations with proper error handling.
+            }
         }
 
         // Check if Getting Started should be shown (first launch or version update)

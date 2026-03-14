@@ -138,6 +138,7 @@
 		CB678DCC05EA528F1C7CF6CF /* NativeToolbarButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1679600B9A0C29D5BB56601 /* NativeToolbarButton.swift */; };
 		CE292E2BCF5617C406CA10FB /* AutoBackupService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B7205FC48760A149A8B0BF8 /* AutoBackupService.swift */; };
 		CF04276E36EF967427B630C8 /* UpdateChecker.swift in Sources */ = {isa = PBXBuildFile; fileRef = F64B2180C529F611804A094B /* UpdateChecker.swift */; };
+		CF270F44F78860ADAC06380C /* DocumentManagerOpenTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E679B9B7CE23B991E60A9CE /* DocumentManagerOpenTests.swift */; };
 		D0208FE27BA4FBD4AADFD905 /* SectionCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 92AF8BACE222B0C414BF2E8C /* SectionCardView.swift */; };
 		D1576467EE827142AA4F49BE /* ProjectStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = D567C1445BFF0160D8410001 /* ProjectStore.swift */; };
 		D30B35EAC392DBFD98D4C432 /* IntegrityAlertView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 64284CE23032DBF7F70EFE87 /* IntegrityAlertView.swift */; };
@@ -225,6 +226,7 @@
 		2AAD6FB6258FBF011A89ECFC /* ColorScheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ColorScheme.swift; sourceTree = "<group>"; };
 		2B5F7125EA08999A0102FA11 /* BlockParserAlignmentTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockParserAlignmentTests.swift; sourceTree = "<group>"; };
 		2B7205FC48760A149A8B0BF8 /* AutoBackupService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutoBackupService.swift; sourceTree = "<group>"; };
+		2E679B9B7CE23B991E60A9CE /* DocumentManagerOpenTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocumentManagerOpenTests.swift; sourceTree = "<group>"; };
 		2FED51A67AC5513383E13195 /* PreviewViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreviewViewController.swift; sourceTree = "<group>"; };
 		31937040D58CFFD751C3C45D /* OutlineSidebar+DropDelegates.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "OutlineSidebar+DropDelegates.swift"; sourceTree = "<group>"; };
 		31C89F3A4269349290CD8F03 /* EditorViewState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorViewState.swift; sourceTree = "<group>"; };
@@ -659,6 +661,7 @@
 			isa = PBXGroup;
 			children = (
 				2B5F7125EA08999A0102FA11 /* BlockParserAlignmentTests.swift */,
+				2E679B9B7CE23B991E60A9CE /* DocumentManagerOpenTests.swift */,
 				4DB38C1663B804694C7D3D31 /* EditorBridgeTests.swift */,
 				0E843650744C2F13D1618667 /* FinalFinalTests.swift */,
 				9A6B768093BB98E0220CDC6C /* FixtureGeneratorTests.swift */,
@@ -956,6 +959,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				9D1A72AD8B1BB69AC3EFADE3 /* BlockParserAlignmentTests.swift in Sources */,
+				CF270F44F78860ADAC06380C /* DocumentManagerOpenTests.swift in Sources */,
 				873F99F4E522EE5DD90C8AB2 /* EditorBridgeTests.swift in Sources */,
 				71CD51886DBBD5690DD34F8E /* EditorTestHelper.swift in Sources */,
 				20AFD8B3E9B9181745AD26B8 /* FinalFinalTests.swift in Sources */,
