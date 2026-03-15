@@ -90,8 +90,9 @@
 			- Xcode project must be generated: `xcodegen generate`
 			- The app must build successfully before tests can run
 		- Sandbox note
-			- When running via Claude Code, `xcodebuild` requires sandbox disabled (`dangerouslyDisableSandbox: true`) because SPM package resolution needs network access
-			- After the first successful build (packages cached), subsequent builds may work in sandbox
+			- Use Xcode MCP tools (`RunAllTests`) instead of `xcodebuild test` — MCP runs inside Xcode's process, bypassing all sandbox restrictions
+			- If MCP is unavailable (Xcode not open), ask the user to launch Xcode and retry
+			- Do not use `dangerouslyDisableSandbox` — the sandbox blocks Keychain access and XPC services that `xcodebuild` needs
 	- Known Issues and Troubleshooting
 		- XCUITest 0-windows bug
 			- Symptom: `testAppLaunches` fails with "App should show picker or editor after launch"; `app.windows.count` is 0
@@ -113,9 +114,9 @@
 			- Root cause: the committed fixture at `final finalTests/Fixtures/test-fixture.ff` is missing or not included in the UI test bundle
 			- Fix: regenerate the fixture (see "Regenerating the fixture" above), then ensure `project.yml` includes `final finalTests/Fixtures` in the `final finalUITests` target sources
 		- SPM resolution failure during build
-			- Symptom: build fails with "fatalError" or "cannot open file ... for diagnostics emission (Operation not permitted)"
-			- Root cause: sandbox blocks network access to package registries
-			- Fix: run `xcodebuild` with sandbox disabled for the initial build; subsequent builds use cached packages
+			- Symptom: build fails with "sandbox-exec: sandbox_apply: Operation not permitted" or "fatalError"
+			- Root cause: Claude Code's sandbox conflicts with SPM's internal sandbox-exec and blocks Keychain/XPC access
+			- Fix: use Xcode MCP tools (`BuildProject`) instead; if MCP unavailable, ask user to launch Xcode
 		- App already running from previous test
 			- Symptom: test connects to a stale app instance with wrong state
 			- Root cause: XCUITest's `launch()` calls `terminate()` first, but if the app is hung, termination may not complete

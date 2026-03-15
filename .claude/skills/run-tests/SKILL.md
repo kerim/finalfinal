@@ -7,7 +7,7 @@ description: Run and interpret tests for the "final final" macOS app. Use when a
 
 ## Commands
 
-All commands use the Xcode scheme `"final final"` targeting macOS. Sandbox must be disabled (`dangerouslyDisableSandbox: true`) because xcodebuild needs SPM cache access.
+All commands use the Xcode scheme `"final final"` targeting macOS. Use Xcode MCP tools (`RunAllTests`, `BuildProject`) instead of `xcodebuild` — they bypass sandbox restrictions. If MCP is unavailable, ask the user to launch Xcode.
 
 | What | Command |
 |------|---------|
@@ -52,7 +52,7 @@ or `** TEST FAILED **` if any test failed.
 |---------|-------|-----|
 | "0 windows" / no window found | Test mode environment variable not set | Check that `FF_UI_TESTING` is set in the test scheme |
 | Fixture not found | Test fixture missing or not committed | Run `FixtureGeneratorTests` first, or verify fixture is committed to the repo |
-| SPM resolution failure | Sandbox blocking network/cache access | Retry with `dangerouslyDisableSandbox: true` |
+| SPM resolution failure | Sandbox blocking SPM/Keychain/XPC | Use Xcode MCP tools; if unavailable, ask user to launch Xcode |
 | EditorBridge timeout | WKWebView didn't load | Rebuild web editors: `cd web && pnpm build` |
 | "Cannot find X in scope" | Xcode project out of sync with file system | Run `xcodegen generate` first |
 

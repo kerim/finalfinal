@@ -9,6 +9,9 @@
 		- Xcode project must be current
 			- `xcodegen generate`
 			- Only needed after moving or adding Swift files
+		- Sandbox note (Claude Code)
+			- Use Xcode MCP tools (`RunAllTests`) instead of `xcodebuild test` — sandbox blocks XPC services needed by test infrastructure
+			- If MCP is unavailable, ask the user to launch Xcode and retry
 	- Unit Tests (`final finalTests`)
 		- When to run
 			- After changing `OutlineParser.swift`, `ProjectRepairService.swift`, `ProjectIntegrityChecker.swift`, or anything in the editor bridge
