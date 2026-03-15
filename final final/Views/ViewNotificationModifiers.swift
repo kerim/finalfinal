@@ -140,8 +140,13 @@ extension View {
                 }
             }
             .onReceive(NotificationCenter.default.publisher(for: .didSaveCursorPosition)) { notification in
-                // Guard against rapid Cmd+/ -- if already transitioning, ignore
-                guard editorState.contentState == .idle else { return }
+                // Block toggle only during states that would cause data corruption
+                switch editorState.contentState {
+                case .projectSwitch, .zoomTransition:
+                    return  // Content is being replaced — toggle could flush stale data
+                default:
+                    break  // Allow toggle during .idle, .editorTransition, .bibliographyUpdate, .annotationEdit, .dragReorder, .hierarchyEnforcement
+                }
                 // Handle cursor position restoration during mode switch
                 if let position = notification.userInfo?["position"] as? CursorPosition {
                     cursorRestore.wrappedValue = position

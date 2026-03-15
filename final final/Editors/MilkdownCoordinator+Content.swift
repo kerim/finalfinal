@@ -296,6 +296,14 @@ extension MilkdownEditor.Coordinator {
             return
         }
 
+        // Skip content capture during Milkdown initialization (source→WYSIWYG transition).
+        // Milkdown may return corrupted content (missing # from headers) during this window.
+        // Still save cursor and fire the toggle notification so the toggle proceeds.
+        if contentState == .editorTransition {
+            saveCursorAndNotify()
+            return
+        }
+
         // CONTENT SYNC: Fetch and save content BEFORE cursor to prevent content loss during toggle
         webView.evaluateJavaScript("window.FinalFinal.getContent()") { [weak self] contentResult, _ in
             guard let self, !self.isCleanedUp else {
