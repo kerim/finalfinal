@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Editor mode toggle (Cmd+/) dropping keystrokes** — the 1.5s `.editorTransition` contentState window (which suppresses Milkdown polls during initialization) was also blocking toggle requests, silently dropping ~2/3 of Cmd+/ keystrokes. Decoupled toggle protection from polling suppression; added 0.5s timestamp-based debounce; routed all toggle entry points through `requestEditorModeToggle()`
+
 ## [0.2.80] - 2026-03-15
 
 ### Changed
