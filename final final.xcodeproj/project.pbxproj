@@ -920,7 +920,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "# Remove old DerivedData directories that cause duplicate QL extension registrations.\n# Each xcodegen run creates a new project hash → new DerivedData dir → new .appex copy.\nfor dd in ~/Library/Developer/Xcode/DerivedData/final_final-*/; do\n  if [ \"$dd\" != \"${BUILD_DIR%Build/*}\" ]; then\n    rm -rf \"$dd\"\n  fi\ndone\n";
+			shellScript = "# Remove old DerivedData directories that cause duplicate QL extension registrations.\n# Each xcodegen run creates a new project hash → new DerivedData dir → new .appex copy.\nfor dd in ~/Library/Developer/Xcode/DerivedData/final_final-*/; do\n  if [ \"$dd\" != \"${BUILD_DIR%Build/*}\" ]; then\n    rm -rf \"$dd\" 2>/dev/null || true\n  fi\ndone\n";
 		};
 		FEF6C6A737962720093F21D9 /* Stamp Git Info into Info.plist */ = {
 			isa = PBXShellScriptBuildPhase;
@@ -1256,7 +1256,7 @@
 				CODE_SIGN_IDENTITY = "Developer ID Application";
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 0.2.80;
+				CURRENT_PROJECT_VERSION = 0.2.82;
 				DEVELOPMENT_TEAM = HBHZWD24V7;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -1283,7 +1283,7 @@
 				CODE_SIGN_IDENTITY = "Developer ID Application";
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 0.2.80;
+				CURRENT_PROJECT_VERSION = 0.2.82;
 				DEVELOPMENT_TEAM = HBHZWD24V7;
 				ENABLE_HARDENED_RUNTIME = YES;
 				INFOPLIST_FILE = "QuickLook Extension/Info.plist";
@@ -1314,7 +1314,7 @@
 				CODE_SIGN_IDENTITY = "Developer ID Application";
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 0.2.80;
+				CURRENT_PROJECT_VERSION = 0.2.82;
 				DEVELOPMENT_TEAM = HBHZWD24V7;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -1341,7 +1341,7 @@
 				CODE_SIGN_IDENTITY = "Developer ID Application";
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 0.2.80;
+				CURRENT_PROJECT_VERSION = 0.2.82;
 				DEVELOPMENT_TEAM = HBHZWD24V7;
 				ENABLE_HARDENED_RUNTIME = YES;
 				INFOPLIST_FILE = "QuickLook Extension/Info.plist";
