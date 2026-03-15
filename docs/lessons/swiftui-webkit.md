@@ -326,13 +326,16 @@ func batchInitialize() {
 
 ### Two-Phase Toggle Flow
 
-The toggle uses a two-phase notification pattern to ensure cursor is saved before the editor switch:
+The toggle uses a two-phase notification pattern with a decoupled debounce to ensure cursor is saved before the editor switch:
 
-1. **Phase 1 (`willToggleEditorMode`):** Outgoing editor saves cursor position, posts `didSaveCursorPosition`
-2. **Phase 2 (`didSaveCursorPosition`):** Sets `cursorRestore` binding, then posts `toggleEditorMode` to do the actual switch
-3. **`dismantleNSView`:** Skips redundant cursor save if Phase 1 already set the binding
+1. **Entry (`requestEditorModeToggle()`):** All entry points (ViewCommands via `@FocusedValue`, StatusBar) call this single method. It checks a 0.5s timestamp debounce (`lastToggleRequestTime` / `canToggleEditorMode`) and blocks during `.projectSwitch`/`.zoomTransition`, then posts `willToggleEditorMode`.
+2. **Phase 1 (`willToggleEditorMode`):** Outgoing editor saves cursor position, posts `didSaveCursorPosition`. During `.editorTransition` (Milkdown still initializing after source→WYSIWYG switch), `saveAndNotify()` skips `getContent()` to avoid capturing corrupted content but still saves cursor and fires the notification.
+3. **Phase 2 (`didSaveCursorPosition`):** Only `.projectSwitch` and `.zoomTransition` block the toggle here (NOT `.editorTransition`). Sets `cursorRestore` binding, then posts `toggleEditorMode` to do the actual switch.
+4. **`dismantleNSView`:** Skips redundant cursor save if Phase 1 already set the binding
 
 This prevents the race where the old editor is torn down before its cursor position can be read.
+
+**Key design decision:** The toggle debounce is decoupled from `contentState`. The 1.5s `.editorTransition` window (which suppresses content polling during Milkdown initialization) previously also blocked toggle requests, causing ~2/3 of Cmd+/ keystrokes to be silently dropped. Now `.editorTransition` only affects polling, not toggle requests.
 
 **General principle:** When `NSViewRepresentable` lifecycle methods (`makeNSView`, `updateNSView`) interact with async JS calls, ensure shared state guards (like `lastPushedContent`) are set synchronously *before* the async call, not in its callback.
 

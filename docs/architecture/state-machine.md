@@ -23,6 +23,10 @@ enum EditorContentState {
 
 **Guards**: All sync services check `editorState.isBusy` (computed as `contentState != .idle`) instead of maintaining separate suppression flags. ValueObservation also skips updates when `contentState != .idle`.
 
+**Toggle Debounce (decoupled from contentState)**: Editor mode toggle (Cmd+/) uses a separate 0.5s timestamp-based debounce (`lastToggleRequestTime` / `canToggleEditorMode` on `EditorViewState`) instead of relying on `contentState`. Only `.projectSwitch` and `.zoomTransition` block the toggle at the entry point (`requestEditorModeToggle()`) and at the notification handler (`.didSaveCursorPosition`). The `.editorTransition` state does NOT block toggles — it only suppresses content polling. This decoupling prevents the 1.5s post-WYSIWYG-switch `contentState` window from silently dropping Cmd+/ keystrokes. All toggle entry points (ViewCommands via `@FocusedValue`, StatusBar) route through `requestEditorModeToggle()`.
+
+**Milkdown Init Content Guard**: During `.editorTransition` (source→WYSIWYG switch), `MilkdownCoordinator.saveAndNotify()` skips the `getContent()` call to avoid capturing corrupted content from a still-initializing Milkdown editor. It still saves the cursor and fires the toggle notification.
+
 **Cancellation Pattern**: `EditorViewState.currentPersistTask` stores the current persist task during drag-drop reorder. Rapid successive reorders cancel the previous persist task before starting a new one, preventing stale writes.
 
 **Watchdog**: A `didSet` observer on `contentState` starts a 5-second watchdog Task whenever the state enters a non-idle value. If the state hasn't returned to `.idle` within 5 seconds, the watchdog force-resets it and cleans up associated state (e.g., `isZoomingContent`, pending continuations). This prevents permanently blocked ValueObservation if a transition is interrupted.
