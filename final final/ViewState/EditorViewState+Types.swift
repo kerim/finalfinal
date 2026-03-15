@@ -5,19 +5,6 @@
 
 import SwiftUI
 
-// MARK: - FocusedValue for Editor Toggle
-
-struct EditorToggleKey: FocusedValueKey {
-    typealias Value = EditorViewState
-}
-
-extension FocusedValues {
-    var editorState: EditorViewState? {
-        get { self[EditorToggleKey.self] }
-        set { self[EditorToggleKey.self] = newValue }
-    }
-}
-
 // MARK: - Focus Mode Snapshot
 
 /// Captures the pre-focus-mode state for restoration when exiting focus mode.

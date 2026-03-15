@@ -1,0 +1,17 @@
+name: Issue
+description: Report a bug or request a feature
+body:
+  - type: checkboxes
+    id: search
+    attributes:
+      label: Prerequisites
+      options:
+        - label: I have searched existing issues (including closed) and this has not already been reported or requested
+          required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: Describe the bug or feature request
+    validations:
+      required: true

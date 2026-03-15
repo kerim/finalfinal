@@ -6,8 +6,6 @@
 import SwiftUI
 
 struct ViewCommands: Commands {
-    @FocusedValue(\.editorState) var editorState
-
     var body: some Commands {
         CommandGroup(after: .sidebar) {
             Divider()
@@ -30,10 +28,9 @@ struct ViewCommands: Commands {
             .keyboardShortcut("f", modifiers: [.command, .shift])
 
             Button("Toggle Editor Mode") {
-                editorState?.requestEditorModeToggle()
+                NotificationCenter.default.post(name: .willToggleEditorMode, object: nil)
             }
             .keyboardShortcut("/", modifiers: .command)
-            .disabled(editorState == nil)
 
             Divider()
 

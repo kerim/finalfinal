@@ -100,7 +100,7 @@ struct StatusBar: View {
 
             // Clickable editor mode badge
             Button {
-                editorState.requestEditorModeToggle()
+                NotificationCenter.default.post(name: .willToggleEditorMode, object: nil)
             } label: {
                 Text(editorState.editorMode.rawValue)
                     .font(.caption)

@@ -10,17 +10,6 @@ import SwiftUI
 class EditorViewState {
     var editorMode: EditorMode = .wysiwyg
 
-    /// Timestamp of last editor mode toggle request — used for debounce
-    var lastToggleRequestTime: Date = .distantPast
-
-    /// Minimum interval between editor mode toggle requests (prevents rapid double-toggle)
-    private static let toggleDebounceInterval: TimeInterval = 0.5
-
-    /// Whether enough time has passed since last toggle request to allow another
-    var canToggleEditorMode: Bool {
-        Date().timeIntervalSince(lastToggleRequestTime) >= Self.toggleDebounceInterval
-    }
-
     /// Focus mode state - persists across app launches via UserDefaults
     var focusModeEnabled: Bool = UserDefaults.standard.bool(forKey: "focusModeEnabled") {
         didSet {
@@ -576,18 +565,8 @@ class EditorViewState {
         editorMode = editorMode == .wysiwyg ? .source : .wysiwyg
     }
 
-    /// Request editor mode toggle - posts notification for current editor to save cursor first.
-    /// Gates on debounce interval and blocks during data-sensitive transitions.
+    /// Request editor mode toggle - posts notification for current editor to save cursor first
     func requestEditorModeToggle() {
-        guard canToggleEditorMode else { return }
-        // Don't start the save chain during data-sensitive transitions
-        switch contentState {
-        case .projectSwitch, .zoomTransition:
-            return
-        default:
-            break
-        }
-        lastToggleRequestTime = Date()  // Record at entry point to close the race window
         NotificationCenter.default.post(name: .willToggleEditorMode, object: nil)
     }
 

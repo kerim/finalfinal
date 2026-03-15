@@ -466,7 +466,6 @@ struct ContentView: View {
     @ViewBuilder
     private var mainContentView: some View {
         navigationSplitViewContent
-            .focusedSceneValue(\.editorState, editorState)
             .withContentObservers(
                 editorState: editorState,
                 sectionSyncService: sectionSyncService,
