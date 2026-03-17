@@ -53,16 +53,6 @@ targets:
         type: folder
         buildPhase: resources
     preBuildScripts:
-      - name: "Build web editors if missing"
-        basedOnDependencyAnalysis: false
-        script: |
-          EDITOR_DIR="${SRCROOT}/final final/Resources/editor"
-          if [ ! -f "$EDITOR_DIR/milkdown/milkdown.html" ] || [ ! -f "$EDITOR_DIR/codemirror/codemirror.html" ]; then
-            echo "Web editors not found, building..."
-            cd "${SRCROOT}/web" && pnpm build
-          else
-            echo "Web editors already built, skipping."
-          fi
       - name: "Clean stale QuickLook DerivedData"
         basedOnDependencyAnalysis: false
         script: |
@@ -90,7 +80,7 @@ targets:
         PRODUCT_NAME: FINAL|FINAL
         PRODUCT_MODULE_NAME: final_final
         MARKETING_VERSION: "1"
-        CURRENT_PROJECT_VERSION: "0.2.83"
+        CURRENT_PROJECT_VERSION: "0.2.82"
         INFOPLIST_GENERATION_MODE: GeneratedFile
         GENERATE_INFOPLIST_FILE: YES
         SWIFT_VERSION: "5.9"
@@ -164,7 +154,7 @@ targets:
         SWIFT_VERSION: "5.9"
         MACOSX_DEPLOYMENT_TARGET: "15.0"
         MARKETING_VERSION: "1"
-        CURRENT_PROJECT_VERSION: "0.2.83"
+        CURRENT_PROJECT_VERSION: "0.2.82"
         CODE_SIGN_IDENTITY: "Developer ID Application"
         CODE_SIGN_STYLE: Manual
         DEVELOPMENT_TEAM: HBHZWD24V7
@@ -200,6 +190,10 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
         TEST_HOST: "$(BUILT_PRODUCTS_DIR)/FINAL|FINAL.app/Contents/MacOS/FINAL|FINAL"
         BUNDLE_LOADER: "$(TEST_HOST)"
+        CODE_SIGN_IDENTITY: "-"
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGNING_ALLOWED: YES
+        CODE_SIGNING_REQUIRED: YES
 
   final finalUITests:
     type: bundle.ui-testing
@@ -217,3 +211,7 @@ targets:
         SWIFT_VERSION: "5.9"
         GENERATE_INFOPLIST_FILE: YES
         TEST_TARGET_NAME: final final
+        CODE_SIGN_IDENTITY: "-"
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGNING_ALLOWED: YES
+        CODE_SIGNING_REQUIRED: YES

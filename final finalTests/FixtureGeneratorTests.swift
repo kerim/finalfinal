@@ -43,6 +43,61 @@ final class FixtureGeneratorTests: XCTestCase {
         print("[FixtureGenerator] Copy to final finalTests/Fixtures/test-fixture.ff to commit")
     }
 
+    /// Generates the rich test fixture with annotations, citations, footnotes, images.
+    /// Run this test to create or refresh the rich fixture after schema changes.
+    func testGenerateRichFixture() throws {
+        let outputPath: String
+        if let envPath = ProcessInfo.processInfo.environment["FIXTURE_OUTPUT_PATH"] {
+            outputPath = envPath.replacingOccurrences(of: ".ff", with: "-rich.ff")
+        } else {
+            outputPath = "/tmp/claude/test-fixture-rich.ff"
+        }
+
+        let fixtureURL = URL(fileURLWithPath: outputPath)
+        try? FileManager.default.removeItem(at: fixtureURL)
+
+        let db = try TestFixtureFactory.createRichFixture(at: fixtureURL)
+
+        // Verify fixture was created
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fixtureURL.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fixtureURL.appendingPathComponent("content.sqlite").path))
+
+        // Verify rich content characteristics
+        let blocks = try db.dbWriter.read { database in
+            try Block.fetchAll(database)
+        }
+
+        // Should have multiple headings at different levels
+        let headings = blocks.filter { $0.blockType == .heading }
+        XCTAssertGreaterThanOrEqual(headings.count, 5, "Rich fixture should have 5+ headings")
+
+        let h1s = headings.filter { $0.headingLevel == 1 }
+        let h2s = headings.filter { $0.headingLevel == 2 }
+        let h3s = headings.filter { $0.headingLevel == 3 }
+        XCTAssertGreaterThanOrEqual(h1s.count, 1, "Should have H1 headings")
+        XCTAssertGreaterThanOrEqual(h2s.count, 2, "Should have H2 headings")
+        XCTAssertGreaterThanOrEqual(h3s.count, 1, "Should have H3 headings")
+
+        // Should have image block
+        let images = blocks.filter { $0.blockType == .image }
+        XCTAssertGreaterThanOrEqual(images.count, 1, "Rich fixture should have at least 1 image")
+
+        // Verify content has citations, footnotes, and annotations
+        let content = try db.dbWriter.read { database in
+            try String.fetchOne(database, sql: "SELECT markdown FROM content LIMIT 1")
+        }
+        XCTAssertNotNil(content)
+        XCTAssertTrue(content?.contains("[@") ?? false, "Rich fixture should contain citations")
+        XCTAssertTrue(content?.contains("[^") ?? false, "Rich fixture should contain footnote refs")
+        XCTAssertTrue(content?.contains("<!-- ::task::") ?? false, "Rich fixture should contain task annotations")
+        XCTAssertTrue(content?.contains("<!-- ::comment::") ?? false, "Rich fixture should contain comment annotations")
+        XCTAssertTrue(content?.contains("<!-- ::reference::") ?? false, "Rich fixture should contain reference annotations")
+        XCTAssertTrue(content?.contains("==") ?? false, "Rich fixture should contain highlights")
+
+        print("[FixtureGenerator] Rich fixture created at: \(fixtureURL.path)")
+        print("[FixtureGenerator] \(blocks.count) blocks, \(headings.count) headings")
+    }
+
     /// Validates the committed fixture can be opened and has expected content.
     /// This catches schema drift — if migrations change, the fixture needs regeneration.
     func testCommittedFixtureIsValid() throws {
