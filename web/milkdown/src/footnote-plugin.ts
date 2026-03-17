@@ -39,7 +39,7 @@ export function getFootnoteDefinitions(): Map<string, string> {
 
 // Regex for footnote references: [^N] where N is one or more digits
 // Negative lookahead (?!:) prevents matching definitions [^N]:
-const footnoteRefRegex = /\[\^(\d+)\](?!:)/g;
+export const footnoteRefRegex = /\[\^(\d+)\](?!:)/g;
 
 // Helper: recursively extract text content from MDAST children
 function extractTextFromChildren(children: any[]): string {

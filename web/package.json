@@ -7,10 +7,12 @@
     "dev": "pnpm -r dev",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
-    "format": "biome format --write ."
+    "format": "biome format --write .",
+    "test": "vitest run"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.3.13",
-    "typescript": "^5.3.0"
+    "typescript": "^5.3.0",
+    "vitest": "^2.1.9"
   }
 }

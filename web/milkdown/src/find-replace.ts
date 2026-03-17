@@ -13,20 +13,10 @@ let searchMatches: SearchMatch[] = [];
 let currentMatchIndex = 0;
 
 /**
- * Find all matches in the document for the given query
- * Searches directly within ProseMirror's document structure
+ * Build a search regex from query string and options.
+ * Extracted for testability — no editor dependency.
  */
-export function findAllMatches(query: string, options: FindOptions): SearchMatch[] {
-  const editorInstance = getEditorInstance();
-  if (!editorInstance || !query) {
-    return [];
-  }
-
-  const view = editorInstance.ctx.get(editorViewCtx);
-  const doc = view.state.doc;
-  const matches: SearchMatch[] = [];
-
-  // Build regex from query
+export function buildSearchRegex(query: string, options: FindOptions): RegExp | null {
   let pattern: string;
   let flags = 'g';
 
@@ -46,8 +36,30 @@ export function findAllMatches(query: string, options: FindOptions): SearchMatch
   }
 
   try {
-    const regex = new RegExp(pattern, flags);
+    return new RegExp(pattern, flags);
+  } catch {
+    return null;
+  }
+}
 
+/**
+ * Find all matches in the document for the given query
+ * Searches directly within ProseMirror's document structure
+ */
+export function findAllMatches(query: string, options: FindOptions): SearchMatch[] {
+  const editorInstance = getEditorInstance();
+  if (!editorInstance || !query) {
+    return [];
+  }
+
+  const view = editorInstance.ctx.get(editorViewCtx);
+  const doc = view.state.doc;
+  const matches: SearchMatch[] = [];
+
+  const regex = buildSearchRegex(query, options);
+  if (!regex) return [];
+
+  try {
     // Walk through all text nodes in the document
     doc.descendants((node, pos) => {
       if (node.isText && node.text) {

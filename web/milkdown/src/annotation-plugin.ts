@@ -33,8 +33,8 @@ export const completedTaskMarker = '☑';
 // Regex to parse annotation HTML comments: <!-- ::type:: content -->
 // For tasks: <!-- ::task:: [ ] text --> or <!-- ::task:: [x] text -->
 // Note: (.*?) allows empty content for newly created annotations
-const annotationRegex = /^<!--\s*::(\w+)::\s*(.*?)\s*-->$/s;
-const taskCheckboxRegex = /^\s*\[([ xX])\]\s*(.*)$/s;
+export const annotationRegex = /^<!--\s*::(\w+)::\s*(.*?)\s*-->$/s;
+export const taskCheckboxRegex = /^\s*\[([ xX])\]\s*(.*)$/s;
 
 // Remark plugin to convert HTML comments to annotation nodes
 const remarkAnnotationPlugin = $remark('annotation', () => () => (tree: Root) => {
