@@ -153,7 +153,8 @@ extension VersionHistorySheet {
                         sortOrder: header.position
                     )
                 }
-                DebugLog.log(.lifecycle, "[VersionHistorySheet] fetchOrParseSnapshotSections: fallback parsed \(sections.count) sections from previewMarkdown")
+                DebugLog.log(.lifecycle,
+                    "[VersionHistorySheet] fetchOrParse: fallback parsed \(sections.count) sections")
             }
             return sections
         } catch {

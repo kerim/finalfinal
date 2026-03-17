@@ -53,7 +53,7 @@ struct VersionHistorySheet: View {
         return snapshots.first { $0.id == id }
     }
 
-    private var backupChangeTypes: [String: SectionChangeType] {
+    private var backupAnalysis: (changes: [String: SectionChangeType], wordDeltas: [String: Int]) {
         let displayed = selectedSnapshotSections.map { SnapshotSectionViewModel(from: $0) }
         let comparison: [SnapshotSectionViewModel]
         switch comparisonMode {
@@ -62,7 +62,15 @@ struct VersionHistorySheet: View {
         case .vsPrevious:
             comparison = previousSnapshotSections.map { SnapshotSectionViewModel(from: $0) }
         }
-        return computeSectionChanges(displayed: displayed, comparison: comparison)
+        return computeSectionAnalysis(displayed: displayed, comparison: comparison)
+    }
+
+    private var currentWordCount: Int {
+        currentSections.reduce(0) { $0 + $1.wordCount }
+    }
+
+    private var currentSectionCount: Int {
+        currentSections.count
     }
 
     var body: some View {
@@ -135,10 +143,12 @@ struct VersionHistorySheet: View {
             Button("Done") {
                 dismiss()
             }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
             .keyboardShortcut(.escape, modifiers: [])
         }
         .padding(.horizontal)
-        .padding(.vertical, 4)
+        .padding(.vertical, 6)
     }
 
     // MARK: - Main Content
@@ -154,7 +164,10 @@ struct VersionHistorySheet: View {
                     Task {
                         await loadSnapshotSections(snapshotId: snapshotId)
                     }
-                }
+                },
+                comparisonMode: comparisonMode,
+                currentWordCount: currentWordCount,
+                currentSectionCount: currentSectionCount
             )
             .frame(minWidth: 200, idealWidth: 220)
 
@@ -170,6 +183,7 @@ struct VersionHistorySheet: View {
 
             // Right: Selected backup
             if selectedSnapshot != nil {
+                let analysis = backupAnalysis
                 DocumentPreviewView(
                     title: "Selected Backup",
                     sections: selectedSnapshotSections.map { SnapshotSectionViewModel(from: $0) },
@@ -182,7 +196,8 @@ struct VersionHistorySheet: View {
                     onRestoreSection: { section, mode in
                         handleRestoreRequest(section: section, mode: mode)
                     },
-                    changeTypes: backupChangeTypes
+                    changeTypes: analysis.changes,
+                    sectionWordDeltas: analysis.wordDeltas
                 ) {
                     Picker("Compare", selection: $comparisonMode) {
                         ForEach(ComparisonMode.allCases, id: \.self) { mode in

@@ -29,6 +29,9 @@ struct VersionListView: View {
     @Binding var selectedSnapshotId: String?
     @Binding var showNamedOnly: Bool
     let onSelectSnapshot: (String) -> Void
+    var comparisonMode: ComparisonMode = .vsPrevious
+    var currentWordCount: Int?
+    var currentSectionCount: Int?
 
     @Environment(ThemeManager.self) private var themeManager
 
@@ -83,6 +86,7 @@ struct VersionListView: View {
                 Text("Named").tag(true)
             }
             .pickerStyle(.segmented)
+            .labelsHidden()
             .padding(8)
 
             Divider()
@@ -96,7 +100,10 @@ struct VersionListView: View {
                                 SnapshotRowView(
                                     snapshot: item.snapshot,
                                     wordCountCache: $wordCountCache,
-                                    allSnapshots: snapshots
+                                    allSnapshots: snapshots,
+                                    comparisonMode: comparisonMode,
+                                    currentWordCount: currentWordCount,
+                                    currentSectionCount: currentSectionCount
                                 )
                                 .tag(item.snapshot.id)
                                 .id(item.snapshot.id)
@@ -132,6 +139,9 @@ struct SnapshotRowView: View {
     let snapshot: Snapshot
     @Binding var wordCountCache: [String: Int]
     let allSnapshots: [SnapshotListItem]
+    var comparisonMode: ComparisonMode = .vsPrevious
+    var currentWordCount: Int?
+    var currentSectionCount: Int?
 
     @Environment(ThemeManager.self) private var themeManager
     @State private var isHovering = false
@@ -158,26 +168,38 @@ struct SnapshotRowView: View {
         return formatter
     }()
 
-    /// Word delta compared to the next (older) snapshot
+    /// Word delta compared to the comparison target
     private var wordDelta: Int? {
-        guard let currentCount = wordCountCache[snapshot.id] else { return nil }
-        // Find this snapshot's index, then get the next (older) one
-        guard let idx = allSnapshots.firstIndex(where: { $0.snapshot.id == snapshot.id }),
-              idx + 1 < allSnapshots.count else { return nil }
-        let olderSnapshotId = allSnapshots[idx + 1].snapshot.id
-        guard let olderCount = wordCountCache[olderSnapshotId] else { return nil }
-        return currentCount - olderCount
+        guard let snapshotCount = wordCountCache[snapshot.id] else { return nil }
+        switch comparisonMode {
+        case .vsCurrent:
+            guard let current = currentWordCount else { return nil }
+            return snapshotCount - current
+        case .vsPrevious:
+            guard let idx = allSnapshots.firstIndex(where: { $0.snapshot.id == snapshot.id }),
+                  idx + 1 < allSnapshots.count else { return nil }
+            let olderSnapshotId = allSnapshots[idx + 1].snapshot.id
+            guard let olderCount = wordCountCache[olderSnapshotId] else { return nil }
+            return snapshotCount - olderCount
+        }
     }
 
-    /// Section delta compared to the next (older) snapshot
+    /// Section delta compared to the comparison target
     private var sectionDelta: Int? {
         guard sectionCount > 0 else { return nil }
-        guard let idx = allSnapshots.firstIndex(where: { $0.snapshot.id == snapshot.id }),
-              idx + 1 < allSnapshots.count else { return nil }
-        let olderMarkdown = allSnapshots[idx + 1].snapshot.previewMarkdown
-        let olderCount = SnapshotListItem.sectionCount(from: olderMarkdown)
-        let delta = sectionCount - olderCount
-        return delta != 0 ? delta : nil
+        switch comparisonMode {
+        case .vsCurrent:
+            guard let current = currentSectionCount else { return nil }
+            let delta = sectionCount - current
+            return delta != 0 ? delta : nil
+        case .vsPrevious:
+            guard let idx = allSnapshots.firstIndex(where: { $0.snapshot.id == snapshot.id }),
+                  idx + 1 < allSnapshots.count else { return nil }
+            let olderMarkdown = allSnapshots[idx + 1].snapshot.previewMarkdown
+            let olderCount = SnapshotListItem.sectionCount(from: olderMarkdown)
+            let delta = sectionCount - olderCount
+            return delta != 0 ? delta : nil
+        }
     }
 
     var body: some View {
@@ -248,10 +270,6 @@ struct SnapshotRowView: View {
     }
 
     private func deltaColor(for delta: Int) -> Color {
-        if delta > 0 {
-            return themeManager.currentTheme.statusColors.deltaPositive
-        } else {
-            return themeManager.currentTheme.statusColors.deltaNegative
-        }
+        themeManager.currentTheme.statusColors.deltaColor(for: delta)
     }
 }

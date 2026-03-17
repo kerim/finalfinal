@@ -20,6 +20,10 @@ struct StatusColors: Equatable, Sendable {
     let deltaPositive: Color // Green for positive word/section deltas (step 11 — text)
     let deltaNegative: Color // Red for negative word/section deltas (step 11 — text)
 
+    func deltaColor(for delta: Int) -> Color {
+        delta > 0 ? deltaPositive : deltaNegative
+    }
+
     func color(for status: SectionStatus) -> Color {
         switch status {
         case .writing: return writing

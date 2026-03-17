@@ -167,7 +167,8 @@ extension VersionHistoryWindow {
                         sortOrder: header.position
                     )
                 }
-                DebugLog.log(.lifecycle, "[VersionHistory] fetchOrParseSnapshotSections: fallback parsed \(sections.count) sections from previewMarkdown")
+                DebugLog.log(.lifecycle,
+                    "[VersionHistory] fetchOrParse: fallback parsed \(sections.count) sections")
             }
             return sections
         } catch {

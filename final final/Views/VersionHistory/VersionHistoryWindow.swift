@@ -54,8 +54,8 @@ struct VersionHistoryWindow: View {
         coordinator.database != nil && coordinator.projectId != nil && !projectClosed
     }
 
-    /// Compute change types for the backup column based on comparison mode
-    private var backupChangeTypes: [String: SectionChangeType] {
+    /// Compute combined analysis (change types + word deltas) for the backup column
+    private var backupAnalysis: (changes: [String: SectionChangeType], wordDeltas: [String: Int]) {
         let displayed = selectedSnapshotSections.map { SnapshotSectionViewModel(from: $0) }
         let comparison: [SnapshotSectionViewModel]
         switch comparisonMode {
@@ -64,7 +64,17 @@ struct VersionHistoryWindow: View {
         case .vsPrevious:
             comparison = previousSnapshotSections.map { SnapshotSectionViewModel(from: $0) }
         }
-        return computeSectionChanges(displayed: displayed, comparison: comparison)
+        return computeSectionAnalysis(displayed: displayed, comparison: comparison)
+    }
+
+    /// Current document word count for sidebar comparison
+    private var currentWordCount: Int {
+        coordinator.currentSections.reduce(0) { $0 + $1.wordCount }
+    }
+
+    /// Current document section count for sidebar comparison
+    private var currentSectionCount: Int {
+        coordinator.currentSections.count
     }
 
     var body: some View {
@@ -152,10 +162,12 @@ struct VersionHistoryWindow: View {
             Button("Close") {
                 dismissWindow(id: "version-history")
             }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
             .keyboardShortcut(.escape, modifiers: [])
         }
         .padding(.horizontal)
-        .padding(.vertical, 4)
+        .padding(.vertical, 6)
         .background(themeManager.currentTheme.sidebarBackground)
     }
 
@@ -164,7 +176,8 @@ struct VersionHistoryWindow: View {
     private var mainContentView: some View {
         GeometryReader { geometry in
             let _ = { // swiftlint:disable:this redundant_discardable_let
-                DebugLog.log(.lifecycle, "[VersionHistory] mainContentView: current=\(coordinator.currentSections.count), backup=\(selectedSnapshotSections.count)")
+                DebugLog.log(.lifecycle,
+                    "[VersionHistory] mainContent: current=\(coordinator.currentSections.count), backup=\(selectedSnapshotSections.count)")
             }()
             let versionListWidth = min(geometry.size.width * 0.15, 200)
             let remainingWidth = geometry.size.width - versionListWidth
@@ -180,7 +193,10 @@ struct VersionHistoryWindow: View {
                         Task {
                             await loadSnapshotSections(snapshotId: snapshotId)
                         }
-                    }
+                    },
+                    comparisonMode: comparisonMode,
+                    currentWordCount: currentWordCount,
+                    currentSectionCount: currentSectionCount
                 )
                 .frame(width: versionListWidth)
 
@@ -200,6 +216,7 @@ struct VersionHistoryWindow: View {
 
                 // Right: Selected backup (half of remaining)
                 if selectedSnapshot != nil {
+                    let analysis = backupAnalysis
                     DocumentPreviewView(
                         title: "Selected Backup",
                         sections: selectedSnapshotSections.map { SnapshotSectionViewModel(from: $0) },
@@ -212,7 +229,8 @@ struct VersionHistoryWindow: View {
                         onRestoreSection: { section, mode in
                             handleRestoreRequest(section: section, mode: mode)
                         },
-                        changeTypes: backupChangeTypes
+                        changeTypes: analysis.changes,
+                        sectionWordDeltas: analysis.wordDeltas
                     ) {
                         Picker("Compare", selection: $comparisonMode) {
                             ForEach(ComparisonMode.allCases, id: \.self) { mode in
