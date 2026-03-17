@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.83] - 2026-03-17
+
 ### Added
 
 - **MarkdownContentView** — new shared SwiftUI component for rendering markdown previews with fenced code block support (monospace font, background), inline formatting, and heading styles
