@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.84] - 2026-03-17
+
 ### Added
 
 - **Tier 1 unit test suite** — SectionReconcilerTests, ContentStateMachineTests, ZoomDataIntegrityTests, BlockReorderIntegrityTests, BlockRoundtripTests
