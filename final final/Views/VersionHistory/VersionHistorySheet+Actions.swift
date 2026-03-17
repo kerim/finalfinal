@@ -108,7 +108,6 @@ extension VersionHistorySheet {
 
         do {
             snapshots = try database.fetchSnapshots(projectId: projectId)
-            snapshotItems = snapshots.map { SnapshotListItem(snapshot: $0) }
             if let firstSnapshot = snapshots.first {
                 selectedSnapshotId = firstSnapshot.id
                 await loadSnapshotSections(snapshotId: firstSnapshot.id)
@@ -122,11 +121,11 @@ extension VersionHistorySheet {
 
     func loadSnapshotSections(snapshotId: String) async {
         do {
-            selectedSnapshotSections = fetchOrParseSnapshotSections(snapshotId: snapshotId)
+            selectedSnapshotSections = try database.fetchSnapshotSections(snapshotId: snapshotId)
 
             // Load previous snapshot's sections for "vs Previous" comparison
             if let prevSnapshot = try database.fetchPreviousSnapshot(before: snapshotId, projectId: projectId) {
-                previousSnapshotSections = fetchOrParseSnapshotSections(snapshotId: prevSnapshot.id)
+                previousSnapshotSections = try database.fetchSnapshotSections(snapshotId: prevSnapshot.id)
             } else {
                 previousSnapshotSections = []
             }
@@ -134,32 +133,6 @@ extension VersionHistorySheet {
             DebugLog.log(.lifecycle, "[VersionHistorySheet] Error loading snapshot sections: \(error)")
             selectedSnapshotSections = []
             previousSnapshotSections = []
-        }
-    }
-
-    /// Fetch snapshot sections with fallback to parsing from previewMarkdown
-    private func fetchOrParseSnapshotSections(snapshotId: String) -> [SnapshotSection] {
-        do {
-            var sections = try database.fetchSnapshotSections(snapshotId: snapshotId)
-            if sections.isEmpty, let snapshot = try database.fetchSnapshot(id: snapshotId) {
-                let headers = SectionSyncService.parseHeaders(from: snapshot.previewMarkdown)
-                sections = headers.map { header in
-                    SnapshotSection(
-                        snapshotId: snapshotId,
-                        originalSectionId: nil,
-                        title: header.title,
-                        markdownContent: header.markdownContent,
-                        headerLevel: header.level,
-                        sortOrder: header.position
-                    )
-                }
-                DebugLog.log(.lifecycle,
-                    "[VersionHistorySheet] fetchOrParse: fallback parsed \(sections.count) sections")
-            }
-            return sections
-        } catch {
-            DebugLog.log(.lifecycle, "[VersionHistorySheet] fetchOrParseSnapshotSections ERROR for snapshot \(snapshotId): \(error)")
-            return []
         }
     }
 

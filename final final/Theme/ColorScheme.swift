@@ -17,12 +17,6 @@ struct StatusColors: Equatable, Sendable {
     let goalWarning: Color   // Orange for word count warning state
     let goalNotMet: Color    // Red for word count not-met state
     let goalMet: Color       // Green for word count met state
-    let deltaPositive: Color // Green for positive word/section deltas (step 11 — text)
-    let deltaNegative: Color // Red for negative word/section deltas (step 11 — text)
-
-    func deltaColor(for delta: Int) -> Color {
-        delta > 0 ? deltaPositive : deltaNegative
-    }
 
     func color(for status: SectionStatus) -> Color {
         switch status {
@@ -43,9 +37,7 @@ struct StatusColors: Equatable, Sendable {
         final_: RadixScales.green.step9,       // #30a46c - green
         goalWarning: RadixScales.orange.step9, // #f76b15 - orange warning
         goalNotMet: RadixScales.red.step9,     // red not-met
-        goalMet: RadixScales.green.step9,      // #30a46c - green met
-        deltaPositive: RadixScales.green.step11, // #218358 - readable green text
-        deltaNegative: RadixScales.red.step11    // #ce2c31 - readable red text
+        goalMet: RadixScales.green.step9       // #30a46c - green met
     )
 
     /// Dark theme status colors using Radix scales (brighter for visibility)
@@ -57,9 +49,7 @@ struct StatusColors: Equatable, Sendable {
         final_: RadixScales.greenDark.step11,    // #3dd68c - bright green
         goalWarning: RadixScales.orangeDark.step10, // #ff801f - bright orange warning
         goalNotMet: RadixScales.redDark.step10,     // bright red not-met
-        goalMet: RadixScales.greenDark.step11,      // #3dd68c - bright green met
-        deltaPositive: RadixScales.greenDark.step11, // #3dd68c - readable green text
-        deltaNegative: RadixScales.redDark.step10    // bright red text
+        goalMet: RadixScales.greenDark.step11       // #3dd68c - bright green met
     )
 
     /// Nord-themed status colors (using slate-based muted tones)
@@ -71,9 +61,7 @@ struct StatusColors: Equatable, Sendable {
         final_: RadixScales.greenDark.step11,    // #3dd68c - soft green
         goalWarning: RadixScales.amberDark.step11, // #ffca16 - soft amber warning
         goalNotMet: RadixScales.redDark.step10,    // red not-met
-        goalMet: RadixScales.greenDark.step11,     // #3dd68c - soft green met
-        deltaPositive: RadixScales.greenDark.step11, // #3dd68c - readable green text
-        deltaNegative: RadixScales.redDark.step10    // red text
+        goalMet: RadixScales.greenDark.step11      // #3dd68c - soft green met
     )
 }
 
