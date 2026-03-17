@@ -18,11 +18,6 @@ struct AnnotationSyncTests {
 
     // MARK: - Helpers
 
-    private func createTestDatabase(content: String) throws -> ProjectDatabase {
-        let url = URL(fileURLWithPath: "/tmp/claude/annotation-test-\(UUID().uuidString).ff")
-        return try TestFixtureFactory.createFixture(at: url, content: content)
-    }
-
     private func getContentId(_ db: ProjectDatabase) throws -> String {
         try db.dbWriter.read { database in
             try String.fetchOne(
@@ -124,7 +119,7 @@ struct AnnotationSyncTests {
 
     @Test("syncNowSync writes annotations to database")
     func syncNowSyncWritesToDatabase() throws {
-        let db = try createTestDatabase(content: TestFixtureFactory.richTestContent)
+        let db = try TestFixtureFactory.createTemporary(content: TestFixtureFactory.richTestContent)
         let contentId = try getContentId(db)
         let service = createService(db: db, contentId: contentId)
 
@@ -137,7 +132,7 @@ struct AnnotationSyncTests {
 
     @Test("syncNowSync reconciles CRUD on second sync")
     func syncNowSyncReconcilesCRUD() throws {
-        let db = try createTestDatabase(content: TestFixtureFactory.richTestContent)
+        let db = try TestFixtureFactory.createTemporary(content: TestFixtureFactory.richTestContent)
         let contentId = try getContentId(db)
         let service = createService(db: db, contentId: contentId)
 

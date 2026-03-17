@@ -15,32 +15,6 @@ import GRDB
 @Suite("Section Operations — Tier 2: Visible Breakage")
 struct SectionOperationsTests {
 
-    // MARK: - Helpers
-
-    private func createTestDatabase(content: String? = nil) throws -> ProjectDatabase {
-        let url = URL(fileURLWithPath: "/tmp/claude/section-ops-\(UUID().uuidString).ff")
-        return try TestFixtureFactory.createFixture(at: url, content: content)
-    }
-
-    private func fetchBlocks(_ db: ProjectDatabase) throws -> [Block] {
-        try db.dbWriter.read { database in
-            try Block
-                .filter(Block.Columns.projectId != "")
-                .order(Block.Columns.sortOrder)
-                .fetchAll(database)
-        }
-    }
-
-    private func getProjectId(_ db: ProjectDatabase) throws -> String {
-        try db.dbWriter.read { database in
-            try String.fetchOne(database, sql: "SELECT id FROM project LIMIT 1")!
-        }
-    }
-
-    private func headingBlocks(_ blocks: [Block]) -> [Block] {
-        blocks.filter { $0.blockType == .heading }
-    }
-
     // MARK: - Insert Heading
 
     @Test("Insert heading block at specific sort order appears in correct position")
@@ -59,9 +33,9 @@ struct SectionOperationsTests {
         Content B.
         """
 
-        let db = try createTestDatabase(content: content)
-        let pid = try getProjectId(db)
-        let blocksBefore = try fetchBlocks(db)
+        let db = try TestFixtureFactory.createTemporary(content: content)
+        let pid = try TestFixtureFactory.getProjectId(from: db)
+        let blocksBefore = try TestFixtureFactory.fetchBlocks(from: db)
 
         // Find sort orders of Section A and Section B headings
         let sectionA = blocksBefore.first { $0.textContent == "Section A" }!
@@ -82,8 +56,8 @@ struct SectionOperationsTests {
             try newHeading.insert(database)
         }
 
-        let blocksAfter = try fetchBlocks(db)
-        let headings = headingBlocks(blocksAfter)
+        let blocksAfter = try TestFixtureFactory.fetchBlocks(from: db)
+        let headings = TestFixtureFactory.headingBlocks(blocksAfter)
         let titles = headings.map { $0.textContent }
 
         #expect(titles == ["Document", "Section A", "Section A.5", "Section B"])
@@ -103,9 +77,9 @@ struct SectionOperationsTests {
         Paragraph in B.
         """
 
-        let db = try createTestDatabase(content: content)
-        let pid = try getProjectId(db)
-        let blocksBefore = try fetchBlocks(db)
+        let db = try TestFixtureFactory.createTemporary(content: content)
+        let pid = try TestFixtureFactory.getProjectId(from: db)
+        let blocksBefore = try TestFixtureFactory.fetchBlocks(from: db)
         let sectionA = blocksBefore.first { $0.textContent == "Section A" }!
         let countBefore = blocksBefore.count
 
@@ -114,11 +88,11 @@ struct SectionOperationsTests {
             try Block.filter(Block.Columns.id == sectionA.id).deleteAll(database)
         }
 
-        let blocksAfter = try fetchBlocks(db)
+        let blocksAfter = try TestFixtureFactory.fetchBlocks(from: db)
         #expect(blocksAfter.count == countBefore - 1)
 
         // Section A's paragraph now precedes Section B heading
-        let headings = headingBlocks(blocksAfter)
+        let headings = TestFixtureFactory.headingBlocks(blocksAfter)
         #expect(headings.count == 1)
         #expect(headings[0].textContent == "Section B")
 
@@ -130,9 +104,9 @@ struct SectionOperationsTests {
 
     @Test("Update heading block content (title change) persists in DB")
     func updateHeadingTitle() throws {
-        let db = try createTestDatabase()
-        let pid = try getProjectId(db)
-        let blocks = try fetchBlocks(db)
+        let db = try TestFixtureFactory.createTemporary()
+        let pid = try TestFixtureFactory.getProjectId(from: db)
+        let blocks = try TestFixtureFactory.fetchBlocks(from: db)
         let heading = blocks.first { $0.blockType == .heading }!
 
         try db.dbWriter.write { database in
@@ -142,7 +116,7 @@ struct SectionOperationsTests {
             try updated.update(database)
         }
 
-        let blocksAfter = try fetchBlocks(db)
+        let blocksAfter = try TestFixtureFactory.fetchBlocks(from: db)
         let updatedHeading = blocksAfter.first { $0.id == heading.id }!
         #expect(updatedHeading.textContent == "New Title")
         #expect(updatedHeading.markdownFragment == "# New Title")
@@ -162,8 +136,8 @@ struct SectionOperationsTests {
         Content.
         """
 
-        let db = try createTestDatabase(content: content)
-        let blocks = try fetchBlocks(db)
+        let db = try TestFixtureFactory.createTemporary(content: content)
+        let blocks = try TestFixtureFactory.fetchBlocks(from: db)
         let subsection = blocks.first { $0.textContent == "Subsection" }!
 
         #expect(subsection.headingLevel == 2)
@@ -175,7 +149,7 @@ struct SectionOperationsTests {
             try updated.update(database)
         }
 
-        let blocksAfter = try fetchBlocks(db)
+        let blocksAfter = try TestFixtureFactory.fetchBlocks(from: db)
         let promoted = blocksAfter.first { $0.id == subsection.id }!
         #expect(promoted.headingLevel == 1)
         #expect(promoted.markdownFragment == "# Subsection")
@@ -195,9 +169,9 @@ struct SectionOperationsTests {
         Content 3.
         """
 
-        let db = try createTestDatabase(content: content)
-        let pid = try getProjectId(db)
-        let blocks = try fetchBlocks(db)
+        let db = try TestFixtureFactory.createTemporary(content: content)
+        let pid = try TestFixtureFactory.getProjectId(from: db)
+        let blocks = try TestFixtureFactory.fetchBlocks(from: db)
 
         let first = blocks.first { $0.textContent == "First" }!
         let third = blocks.first { $0.textContent == "Third" }!
@@ -230,8 +204,8 @@ struct SectionOperationsTests {
             try para.insert(database)
         }
 
-        let blocksAfter = try fetchBlocks(db)
-        let headings = headingBlocks(blocksAfter)
+        let blocksAfter = try TestFixtureFactory.fetchBlocks(from: db)
+        let headings = TestFixtureFactory.headingBlocks(blocksAfter)
         let titles = headings.map { $0.textContent }
 
         #expect(titles == ["First", "Second", "Third"])
@@ -247,8 +221,8 @@ struct SectionOperationsTests {
 
     @Test("Section title update persists through DB read-back")
     func titleUpdatePersistsThroughReadBack() throws {
-        let db = try createTestDatabase()
-        let blocks = try fetchBlocks(db)
+        let db = try TestFixtureFactory.createTemporary()
+        let blocks = try TestFixtureFactory.fetchBlocks(from: db)
         let heading = blocks.first { $0.blockType == .heading }!
 
         let newTitle = "Updated Title \(UUID().uuidString)"

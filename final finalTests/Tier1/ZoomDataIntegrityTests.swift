@@ -18,31 +18,6 @@ struct ZoomDataIntegrityTests {
 
     let projectId = "zoom-test-project"
 
-    // MARK: - Helpers
-
-    /// Creates a temporary .ff fixture and returns the database
-    private func createTestDatabase(content: String? = nil) throws -> ProjectDatabase {
-        let url = URL(fileURLWithPath: "/tmp/claude/zoom-test-\(UUID().uuidString).ff")
-        return try TestFixtureFactory.createFixture(at: url, content: content)
-    }
-
-    /// Fetches all blocks for the test project, ordered by sortOrder
-    private func fetchBlocks(_ db: ProjectDatabase) throws -> [Block] {
-        try db.dbWriter.read { database in
-            try Block
-                .filter(Block.Columns.projectId != "")
-                .order(Block.Columns.sortOrder)
-                .fetchAll(database)
-        }
-    }
-
-    /// Gets the project ID from the database
-    private func getProjectId(_ db: ProjectDatabase) throws -> String {
-        try db.dbWriter.read { database in
-            try String.fetchOne(database, sql: "SELECT id FROM project LIMIT 1")!
-        }
-    }
-
     // MARK: - filterToSubtree
 
     @Test("filterToSubtree returns correct section IDs for nested hierarchies")
@@ -110,10 +85,10 @@ struct ZoomDataIntegrityTests {
         Content B.
         """
 
-        let db = try createTestDatabase(content: content)
-        let pid = try getProjectId(db)
+        let db = try TestFixtureFactory.createTemporary(content: content)
+        let pid = try TestFixtureFactory.getProjectId(from: db)
 
-        let blocksBefore = try fetchBlocks(db)
+        let blocksBefore = try TestFixtureFactory.fetchBlocks(from: db)
         let totalBefore = blocksBefore.count
 
         // Replace blocks in range of Section A (roughly sortOrder 3-4, before Section B)
@@ -136,7 +111,7 @@ struct ZoomDataIntegrityTests {
             endSortOrder: sectionBHeading.sortOrder
         )
 
-        let blocksAfter = try fetchBlocks(db)
+        let blocksAfter = try TestFixtureFactory.fetchBlocks(from: db)
 
         // Should have no duplicate sort orders
         let sortOrders = blocksAfter.map { $0.sortOrder }
@@ -156,8 +131,8 @@ struct ZoomDataIntegrityTests {
 
     @Test("replaceBlocksInRange preserves heading metadata by title")
     func replaceBlocksInRangePreservesMetadata() throws {
-        let db = try createTestDatabase(content: "# Doc\n\n## Section A\n\nContent.")
-        let pid = try getProjectId(db)
+        let db = try TestFixtureFactory.createTemporary(content: "# Doc\n\n## Section A\n\nContent.")
+        let pid = try TestFixtureFactory.getProjectId(from: db)
 
         // Set metadata on Section A heading
         try db.dbWriter.write { database in
@@ -171,7 +146,7 @@ struct ZoomDataIntegrityTests {
             }
         }
 
-        let blocks = try fetchBlocks(db)
+        let blocks = try TestFixtureFactory.fetchBlocks(from: db)
         let heading = blocks.first { $0.textContent == "Section A" }!
 
         // Replace with same-title heading
@@ -188,7 +163,7 @@ struct ZoomDataIntegrityTests {
             endSortOrder: nil
         )
 
-        let blocksAfter = try fetchBlocks(db)
+        let blocksAfter = try TestFixtureFactory.fetchBlocks(from: db)
         let headingAfter = blocksAfter.first { $0.textContent == "Section A" }!
 
         #expect(headingAfter.status == .review, "Status should be preserved")
@@ -201,8 +176,8 @@ struct ZoomDataIntegrityTests {
 
     @Test("Zoom content excludes bibliography blocks")
     func zoomExcludesBibliography() throws {
-        let db = try createTestDatabase(content: "# Doc\n\nText.\n\n## Section\n\nMore text.")
-        let pid = try getProjectId(db)
+        let db = try TestFixtureFactory.createTemporary(content: "# Doc\n\nText.\n\n## Section\n\nMore text.")
+        let pid = try TestFixtureFactory.getProjectId(from: db)
 
         // Mark a block as bibliography
         try db.dbWriter.write { database in
@@ -219,7 +194,7 @@ struct ZoomDataIntegrityTests {
             try bibBlock.insert(database)
         }
 
-        let blocks = try fetchBlocks(db)
+        let blocks = try TestFixtureFactory.fetchBlocks(from: db)
         let nonBibBlocks = blocks.filter { !$0.isBibliography }
         let bibBlocks = blocks.filter { $0.isBibliography }
 
@@ -235,8 +210,8 @@ struct ZoomDataIntegrityTests {
 
     @Test("Zoom content excludes notes blocks")
     func zoomExcludesNotes() throws {
-        let db = try createTestDatabase(content: "# Doc\n\nText.\n\n## Section\n\nMore text.")
-        let pid = try getProjectId(db)
+        let db = try TestFixtureFactory.createTemporary(content: "# Doc\n\nText.\n\n## Section\n\nMore text.")
+        let pid = try TestFixtureFactory.getProjectId(from: db)
 
         // Add a notes block
         try db.dbWriter.write { database in
@@ -252,7 +227,7 @@ struct ZoomDataIntegrityTests {
             try notesBlock.insert(database)
         }
 
-        let blocks = try fetchBlocks(db)
+        let blocks = try TestFixtureFactory.fetchBlocks(from: db)
         let notesBlocks = blocks.filter { $0.isNotes }
         #expect(!notesBlocks.isEmpty, "Should have notes blocks")
     }
@@ -262,10 +237,10 @@ struct ZoomDataIntegrityTests {
     @Test("Sort orders remain distinct after range replacement with overflow")
     func sortOrderPrecisionAfterOverflow() throws {
         // Create a document with tight sort orders, then replace a range with MORE blocks
-        let db = try createTestDatabase(content: "# Doc\n\nP1.\n\n## A\n\nA content.\n\n## B\n\nB content.")
-        let pid = try getProjectId(db)
+        let db = try TestFixtureFactory.createTemporary(content: "# Doc\n\nP1.\n\n## A\n\nA content.\n\n## B\n\nB content.")
+        let pid = try TestFixtureFactory.getProjectId(from: db)
 
-        let blocks = try fetchBlocks(db)
+        let blocks = try TestFixtureFactory.fetchBlocks(from: db)
         let headingA = blocks.first { $0.textContent == "A" }!
         let headingB = blocks.first { $0.textContent == "B" }!
 
@@ -284,7 +259,7 @@ struct ZoomDataIntegrityTests {
             endSortOrder: headingB.sortOrder
         )
 
-        let blocksAfter = try fetchBlocks(db)
+        let blocksAfter = try TestFixtureFactory.fetchBlocks(from: db)
 
         // All sort orders should be unique
         let sortOrders = blocksAfter.map { $0.sortOrder }

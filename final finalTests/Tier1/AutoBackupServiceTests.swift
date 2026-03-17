@@ -18,19 +18,8 @@ struct AutoBackupServiceTests {
 
     // MARK: - Helpers
 
-    private func createTestDatabase(content: String) throws -> ProjectDatabase {
-        let url = URL(fileURLWithPath: "/tmp/claude/autobackup-test-\(UUID().uuidString).ff")
-        return try TestFixtureFactory.createFixture(at: url, content: content)
-    }
-
-    private func getProjectId(_ db: ProjectDatabase) throws -> String {
-        try db.dbWriter.read { database in
-            try String.fetchOne(database, sql: "SELECT id FROM project LIMIT 1")!
-        }
-    }
-
     private func configureService(db: ProjectDatabase) throws -> (AutoBackupService, String) {
-        let pid = try getProjectId(db)
+        let pid = try TestFixtureFactory.getProjectId(from: db)
         let service = AutoBackupService()
         service.configure(database: db, projectId: pid)
         return (service, pid)
@@ -50,7 +39,7 @@ struct AutoBackupServiceTests {
 
     @Test("contentDidChange sets unsaved flag")
     func contentDidChangeSetsUnsavedFlag() throws {
-        let db = try createTestDatabase(content: TestFixtureFactory.testContent)
+        let db = try TestFixtureFactory.createTemporary(content: TestFixtureFactory.testContent)
         let (service, _) = try configureService(db: db)
 
         #expect(!service.hasUnsavedChanges)
@@ -60,7 +49,7 @@ struct AutoBackupServiceTests {
 
     @Test("contentDidSave resets unsaved flag")
     func contentDidSaveResetsUnsavedFlag() throws {
-        let db = try createTestDatabase(content: TestFixtureFactory.testContent)
+        let db = try TestFixtureFactory.createTemporary(content: TestFixtureFactory.testContent)
         let (service, _) = try configureService(db: db)
 
         service.contentDidChange()
@@ -74,7 +63,7 @@ struct AutoBackupServiceTests {
 
     @Test("projectWillClose creates backup when changes exist")
     func projectWillCloseCreatesBackup() async throws {
-        let db = try createTestDatabase(content: TestFixtureFactory.testContent)
+        let db = try TestFixtureFactory.createTemporary(content: TestFixtureFactory.testContent)
         let (service, pid) = try configureService(db: db)
 
         let countBefore = try snapshotCount(db: db, projectId: pid)
@@ -87,7 +76,7 @@ struct AutoBackupServiceTests {
 
     @Test("projectWillClose skips when no changes")
     func projectWillCloseSkipsWhenNoChanges() async throws {
-        let db = try createTestDatabase(content: TestFixtureFactory.testContent)
+        let db = try TestFixtureFactory.createTemporary(content: TestFixtureFactory.testContent)
         let (service, pid) = try configureService(db: db)
 
         let countBefore = try snapshotCount(db: db, projectId: pid)
@@ -100,7 +89,7 @@ struct AutoBackupServiceTests {
 
     @Test("appWillQuit creates backup when changes exist")
     func appWillQuitCreatesBackup() async throws {
-        let db = try createTestDatabase(content: TestFixtureFactory.testContent)
+        let db = try TestFixtureFactory.createTemporary(content: TestFixtureFactory.testContent)
         let (service, pid) = try configureService(db: db)
 
         let countBefore = try snapshotCount(db: db, projectId: pid)
@@ -115,7 +104,7 @@ struct AutoBackupServiceTests {
 
     @Test("reset clears all state")
     func resetClearsAllState() throws {
-        let db = try createTestDatabase(content: TestFixtureFactory.testContent)
+        let db = try TestFixtureFactory.createTemporary(content: TestFixtureFactory.testContent)
         let (service, _) = try configureService(db: db)
 
         service.contentDidChange()

@@ -16,28 +16,6 @@ import GRDB
 @Suite("Block Roundtrip — Tier 1: Silent Killers")
 struct BlockRoundtripTests {
 
-    // MARK: - Helpers
-
-    private func createTestDatabase(content: String) throws -> ProjectDatabase {
-        let url = URL(fileURLWithPath: "/tmp/claude/roundtrip-test-\(UUID().uuidString).ff")
-        return try TestFixtureFactory.createFixture(at: url, content: content)
-    }
-
-    private func fetchBlocks(_ db: ProjectDatabase) throws -> [Block] {
-        try db.dbWriter.read { database in
-            try Block
-                .filter(Block.Columns.projectId != "")
-                .order(Block.Columns.sortOrder)
-                .fetchAll(database)
-        }
-    }
-
-    private func getProjectId(_ db: ProjectDatabase) throws -> String {
-        try db.dbWriter.read { database in
-            try String.fetchOne(database, sql: "SELECT id FROM project LIMIT 1")!
-        }
-    }
-
     // MARK: - Block Parse → Assemble Roundtrip
 
     @Test("Parse and assemble roundtrip preserves block IDs")
@@ -52,9 +30,9 @@ struct BlockRoundtripTests {
         Second paragraph.
         """
 
-        let db = try createTestDatabase(content: content)
-        let pid = try getProjectId(db)
-        let blocks = try fetchBlocks(db)
+        let db = try TestFixtureFactory.createTemporary(content: content)
+        let pid = try TestFixtureFactory.getProjectId(from: db)
+        let blocks = try TestFixtureFactory.fetchBlocks(from: db)
 
         // Record original block IDs
         let originalIds = blocks.map { $0.id }
@@ -68,7 +46,7 @@ struct BlockRoundtripTests {
         // Replace blocks (preserves IDs by title for headings)
         try db.replaceBlocks(reparsedBlocks, for: pid)
 
-        let blocksAfter = try fetchBlocks(db)
+        let blocksAfter = try TestFixtureFactory.fetchBlocks(from: db)
 
         // Heading IDs should be preserved
         let headingsBefore = blocks.filter { $0.blockType == .heading }
@@ -84,8 +62,8 @@ struct BlockRoundtripTests {
     @Test("Assemble markdown filters empty fragments")
     func assembleFiltersEmptyFragments() throws {
         let content = "# Title\n\nSome text.\n\n## Next\n\nMore text."
-        let db = try createTestDatabase(content: content)
-        let blocks = try fetchBlocks(db)
+        let db = try TestFixtureFactory.createTemporary(content: content)
+        let blocks = try TestFixtureFactory.fetchBlocks(from: db)
 
         let assembled = BlockParser.assembleMarkdown(from: blocks)
 
@@ -111,9 +89,9 @@ struct BlockRoundtripTests {
         Some following text.
         """
 
-        let db = try createTestDatabase(content: content)
-        let pid = try getProjectId(db)
-        let blocks = try fetchBlocks(db)
+        let db = try TestFixtureFactory.createTemporary(content: content)
+        let pid = try TestFixtureFactory.getProjectId(from: db)
+        let blocks = try TestFixtureFactory.fetchBlocks(from: db)
 
         // Count image blocks and annotation comments
         let imageBlocks = blocks.filter { $0.blockType == .image }
@@ -127,7 +105,7 @@ struct BlockRoundtripTests {
         let reparsed = BlockParser.parse(markdown: assembled, projectId: pid)
         try db.replaceBlocks(reparsed, for: pid)
 
-        let blocksAfter = try fetchBlocks(db)
+        let blocksAfter = try TestFixtureFactory.fetchBlocks(from: db)
         let imageBlocksAfter = blocksAfter.filter { $0.blockType == .image }
         let commentBlocksAfter = blocksAfter.filter { $0.markdownFragment.contains("::comment::") }
 
@@ -149,18 +127,18 @@ struct BlockRoundtripTests {
         Text after image.
         """
 
-        let db = try createTestDatabase(content: content)
-        let pid = try getProjectId(db)
+        let db = try TestFixtureFactory.createTemporary(content: content)
+        let pid = try TestFixtureFactory.getProjectId(from: db)
 
         // Run 5 roundtrips
         for _ in 0..<5 {
-            let blocks = try fetchBlocks(db)
+            let blocks = try TestFixtureFactory.fetchBlocks(from: db)
             let assembled = BlockParser.assembleMarkdown(from: blocks)
             let reparsed = BlockParser.parse(markdown: assembled, projectId: pid)
             try db.replaceBlocks(reparsed, for: pid)
         }
 
-        let finalBlocks = try fetchBlocks(db)
+        let finalBlocks = try TestFixtureFactory.fetchBlocks(from: db)
         let commentBlocks = finalBlocks.filter { $0.markdownFragment.contains("::comment::") }
 
         #expect(commentBlocks.count <= 1,
@@ -185,8 +163,8 @@ struct BlockRoundtripTests {
         Second content.
         """
 
-        let db = try createTestDatabase(content: content)
-        let blocks = try fetchBlocks(db)
+        let db = try TestFixtureFactory.createTemporary(content: content)
+        let blocks = try TestFixtureFactory.fetchBlocks(from: db)
         let exported = BlockParser.assembleStandardMarkdownForExport(from: blocks)
 
         // Find positions of headings in export
@@ -211,8 +189,8 @@ struct BlockRoundtripTests {
         Text after.
         """
 
-        let db = try createTestDatabase(content: content)
-        let blocks = try fetchBlocks(db)
+        let db = try TestFixtureFactory.createTemporary(content: content)
+        let blocks = try TestFixtureFactory.fetchBlocks(from: db)
         let exported = BlockParser.assembleStandardMarkdownForExport(from: blocks)
 
         #expect(exported.contains("![Diagram]") || exported.contains("media/diagram.png"),

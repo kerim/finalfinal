@@ -20,34 +20,12 @@ import GRDB
 @Suite("Export Integrity — Tier 1: Silent Killers")
 struct ExportIntegrityTests {
 
-    // MARK: - Helpers
-
-    private func createTestDatabase(content: String) throws -> ProjectDatabase {
-        let url = URL(fileURLWithPath: "/tmp/claude/export-integrity-\(UUID().uuidString).ff")
-        return try TestFixtureFactory.createFixture(at: url, content: content)
-    }
-
-    private func fetchBlocks(_ db: ProjectDatabase) throws -> [Block] {
-        try db.dbWriter.read { database in
-            try Block
-                .filter(Block.Columns.projectId != "")
-                .order(Block.Columns.sortOrder)
-                .fetchAll(database)
-        }
-    }
-
-    private func getProjectId(_ db: ProjectDatabase) throws -> String {
-        try db.dbWriter.read { database in
-            try String.fetchOne(database, sql: "SELECT id FROM project LIMIT 1")!
-        }
-    }
-
     // MARK: - Export Excludes Bibliography
 
     @Test("loadContentForExport excludes bibliography blocks")
     func exportExcludesBibliography() throws {
-        let db = try createTestDatabase(content: TestFixtureFactory.richTestContent)
-        let blocks = try fetchBlocks(db)
+        let db = try TestFixtureFactory.createTemporary(content: TestFixtureFactory.richTestContent)
+        let blocks = try TestFixtureFactory.fetchBlocks(from: db)
         let exportBlocks = blocks.filter { !$0.isBibliography }
         let exported = BlockParser.assembleMarkdownForExport(from: exportBlocks)
 
@@ -85,8 +63,8 @@ struct ExportIntegrityTests {
         Content for section three.
         """
 
-        let db = try createTestDatabase(content: content)
-        let blocks = try fetchBlocks(db)
+        let db = try TestFixtureFactory.createTemporary(content: content)
+        let blocks = try TestFixtureFactory.fetchBlocks(from: db)
 
         // Simulate what loadContentForExport does: filter out bibliography, assemble all
         let exportBlocks = blocks.filter { !$0.isBibliography }
@@ -103,8 +81,8 @@ struct ExportIntegrityTests {
 
     @Test("Export includes footnote definitions from Notes section")
     func exportIncludesFootnoteDefinitions() throws {
-        let db = try createTestDatabase(content: TestFixtureFactory.richTestContent)
-        let blocks = try fetchBlocks(db)
+        let db = try TestFixtureFactory.createTemporary(content: TestFixtureFactory.richTestContent)
+        let blocks = try TestFixtureFactory.fetchBlocks(from: db)
         let exportBlocks = blocks.filter { !$0.isBibliography }
         let exported = BlockParser.assembleMarkdownForExport(from: exportBlocks)
 
@@ -170,8 +148,8 @@ struct ExportIntegrityTests {
         More text.
         """
 
-        let db = try createTestDatabase(content: content)
-        let blocks = try fetchBlocks(db)
+        let db = try TestFixtureFactory.createTemporary(content: content)
+        let blocks = try TestFixtureFactory.fetchBlocks(from: db)
         let exported = BlockParser.assembleMarkdownForExport(from: blocks)
 
         #expect(exported.contains("media/photo.png"),
@@ -188,8 +166,8 @@ struct ExportIntegrityTests {
         Text.
         """
 
-        let db = try createTestDatabase(content: content)
-        let blocks = try fetchBlocks(db)
+        let db = try TestFixtureFactory.createTemporary(content: content)
+        let blocks = try TestFixtureFactory.fetchBlocks(from: db)
         let exported = BlockParser.assembleMarkdownForExport(from: blocks)
 
         #expect(exported.contains("my screenshot.png"),
@@ -206,8 +184,8 @@ struct ExportIntegrityTests {
         Text.
         """
 
-        let db = try createTestDatabase(content: content)
-        let blocks = try fetchBlocks(db)
+        let db = try TestFixtureFactory.createTemporary(content: content)
+        let blocks = try TestFixtureFactory.fetchBlocks(from: db)
         let exported = BlockParser.assembleMarkdownForExport(from: blocks)
 
         #expect(exported.contains("Screenshot%202.png"),
@@ -284,8 +262,8 @@ struct ExportIntegrityTests {
         Third content.
         """
 
-        let db = try createTestDatabase(content: content)
-        let blocks = try fetchBlocks(db)
+        let db = try TestFixtureFactory.createTemporary(content: content)
+        let blocks = try TestFixtureFactory.fetchBlocks(from: db)
         let exported = BlockParser.assembleMarkdownForExport(from: blocks)
 
         // Verify order: First before Second before Third

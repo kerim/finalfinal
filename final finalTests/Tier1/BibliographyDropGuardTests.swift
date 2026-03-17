@@ -16,41 +16,15 @@ import GRDB
 @Suite("Bibliography Drop Guard — Tier 1: Silent Killers")
 struct BibliographyDropGuardTests {
 
-    // MARK: - Helpers
-
-    private func createTestDatabase(content: String) throws -> ProjectDatabase {
-        let url = URL(fileURLWithPath: "/tmp/claude/bib-guard-\(UUID().uuidString).ff")
-        return try TestFixtureFactory.createFixture(at: url, content: content)
-    }
-
-    private func fetchBlocks(_ db: ProjectDatabase) throws -> [Block] {
-        try db.dbWriter.read { database in
-            try Block
-                .filter(Block.Columns.projectId != "")
-                .order(Block.Columns.sortOrder)
-                .fetchAll(database)
-        }
-    }
-
-    private func getProjectId(_ db: ProjectDatabase) throws -> String {
-        try db.dbWriter.read { database in
-            try String.fetchOne(database, sql: "SELECT id FROM project LIMIT 1")!
-        }
-    }
-
-    private func headingBlocks(_ blocks: [Block]) -> [Block] {
-        blocks.filter { $0.blockType == .heading }
-    }
-
     // MARK: - Bibliography Position Tests
 
     @Test("Bibliography remains at end after reorder moves section after it")
     @MainActor
     func bibliographyRemainsAtEnd() throws {
-        let db = try createTestDatabase(content: TestFixtureFactory.richTestContent)
-        let pid = try getProjectId(db)
-        let blocks = try fetchBlocks(db)
-        let headings = headingBlocks(blocks)
+        let db = try TestFixtureFactory.createTemporary(content: TestFixtureFactory.richTestContent)
+        let pid = try TestFixtureFactory.getProjectId(from: db)
+        let blocks = try TestFixtureFactory.fetchBlocks(from: db)
+        let headings = TestFixtureFactory.headingBlocks(blocks)
 
         // Find bibliography and a regular section
         let bibHeading = headings.first { $0.isBibliography }
@@ -75,8 +49,8 @@ struct BibliographyDropGuardTests {
         try db.reorderAllBlocks(sections: sections, projectId: pid)
 
         // Verify the resulting block order
-        let blocksAfter = try fetchBlocks(db)
-        let headingsAfter = headingBlocks(blocksAfter)
+        let blocksAfter = try TestFixtureFactory.fetchBlocks(from: db)
+        let headingsAfter = TestFixtureFactory.headingBlocks(blocksAfter)
 
         // Document the current behavior: reorderAllBlocks does NOT guard
         // bibliography position — it applies whatever order it receives.
@@ -99,10 +73,10 @@ struct BibliographyDropGuardTests {
     @Test("Notes section is preserved during reorder")
     @MainActor
     func notesSectionPreserved() throws {
-        let db = try createTestDatabase(content: TestFixtureFactory.richTestContent)
-        let pid = try getProjectId(db)
-        let blocks = try fetchBlocks(db)
-        let headings = headingBlocks(blocks)
+        let db = try TestFixtureFactory.createTemporary(content: TestFixtureFactory.richTestContent)
+        let pid = try TestFixtureFactory.getProjectId(from: db)
+        let blocks = try TestFixtureFactory.fetchBlocks(from: db)
+        let headings = TestFixtureFactory.headingBlocks(blocks)
 
         let notesHeading = headings.first { $0.isNotes }
         #expect(notesHeading != nil, "Rich content should have a Notes heading")
@@ -113,8 +87,8 @@ struct BibliographyDropGuardTests {
 
         try db.reorderAllBlocks(sections: sections, projectId: pid)
 
-        let blocksAfter = try fetchBlocks(db)
-        let headingsAfter = headingBlocks(blocksAfter)
+        let blocksAfter = try TestFixtureFactory.fetchBlocks(from: db)
+        let headingsAfter = TestFixtureFactory.headingBlocks(blocksAfter)
 
         // Notes heading should still exist with its content
         let notesAfter = headingsAfter.first { $0.isNotes }
@@ -125,10 +99,10 @@ struct BibliographyDropGuardTests {
     @Test("reorderAllBlocks preserves bibliography/notes flags")
     @MainActor
     func reorderPreservesBibNotesFlags() throws {
-        let db = try createTestDatabase(content: TestFixtureFactory.richTestContent)
-        let pid = try getProjectId(db)
-        let blocks = try fetchBlocks(db)
-        let headings = headingBlocks(blocks)
+        let db = try TestFixtureFactory.createTemporary(content: TestFixtureFactory.richTestContent)
+        let pid = try TestFixtureFactory.getProjectId(from: db)
+        let blocks = try TestFixtureFactory.fetchBlocks(from: db)
+        let headings = TestFixtureFactory.headingBlocks(blocks)
 
         // Count bibliography and notes blocks before
         let bibCountBefore = blocks.filter { $0.isBibliography }.count
@@ -148,7 +122,7 @@ struct BibliographyDropGuardTests {
 
         try db.reorderAllBlocks(sections: sections, projectId: pid)
 
-        let blocksAfter = try fetchBlocks(db)
+        let blocksAfter = try TestFixtureFactory.fetchBlocks(from: db)
         let bibCountAfter = blocksAfter.filter { $0.isBibliography }.count
         let notesCountAfter = blocksAfter.filter { $0.isNotes }.count
 
@@ -161,10 +135,10 @@ struct BibliographyDropGuardTests {
     @Test("reorderAllBlocks preserves all blocks (no data loss)")
     @MainActor
     func reorderPreservesAllBlocks() throws {
-        let db = try createTestDatabase(content: TestFixtureFactory.richTestContent)
-        let pid = try getProjectId(db)
-        let blocks = try fetchBlocks(db)
-        let headings = headingBlocks(blocks)
+        let db = try TestFixtureFactory.createTemporary(content: TestFixtureFactory.richTestContent)
+        let pid = try TestFixtureFactory.getProjectId(from: db)
+        let blocks = try TestFixtureFactory.fetchBlocks(from: db)
+        let headings = TestFixtureFactory.headingBlocks(blocks)
         let blockCountBefore = blocks.count
 
         // Reverse all sections
@@ -173,7 +147,7 @@ struct BibliographyDropGuardTests {
 
         try db.reorderAllBlocks(sections: sections, projectId: pid)
 
-        let blocksAfter = try fetchBlocks(db)
+        let blocksAfter = try TestFixtureFactory.fetchBlocks(from: db)
         #expect(blocksAfter.count == blockCountBefore,
                 "Reorder must not lose or duplicate blocks")
     }
@@ -181,10 +155,10 @@ struct BibliographyDropGuardTests {
     @Test("Sort orders are valid after reorder with bibliography")
     @MainActor
     func sortOrdersValidAfterReorder() throws {
-        let db = try createTestDatabase(content: TestFixtureFactory.richTestContent)
-        let pid = try getProjectId(db)
-        let blocks = try fetchBlocks(db)
-        let headings = headingBlocks(blocks)
+        let db = try TestFixtureFactory.createTemporary(content: TestFixtureFactory.richTestContent)
+        let pid = try TestFixtureFactory.getProjectId(from: db)
+        let blocks = try TestFixtureFactory.fetchBlocks(from: db)
+        let headings = TestFixtureFactory.headingBlocks(blocks)
 
         // Shuffle regular sections
         var sections = headings.map { SectionViewModel(from: $0) }
@@ -199,7 +173,7 @@ struct BibliographyDropGuardTests {
 
         try db.reorderAllBlocks(sections: sections, projectId: pid)
 
-        let blocksAfter = try fetchBlocks(db)
+        let blocksAfter = try TestFixtureFactory.fetchBlocks(from: db)
 
         // All sort orders must be monotonically increasing
         for i in 1..<blocksAfter.count {

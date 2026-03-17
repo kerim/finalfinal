@@ -7,6 +7,7 @@
 //
 
 import Foundation
+import GRDB
 @testable import final_final
 
 enum TestFixtureFactory {
@@ -191,5 +192,36 @@ enum TestFixtureFactory {
         title: String = "Rich Test Project"
     ) throws -> ProjectDatabase {
         return try createFixture(at: url, title: title, content: richTestContent)
+    }
+
+    // MARK: - Shared Test Helpers
+
+    /// Create a temporary test database at a unique path under /tmp/claude/.
+    @discardableResult
+    static func createTemporary(content: String? = nil) throws -> ProjectDatabase {
+        let url = URL(fileURLWithPath: "/tmp/claude/test-\(UUID().uuidString).ff")
+        return try createFixture(at: url, content: content)
+    }
+
+    /// Fetch all blocks for the single project in a test database, ordered by sortOrder.
+    static func fetchBlocks(from db: ProjectDatabase) throws -> [Block] {
+        try db.dbWriter.read { database in
+            try Block
+                .filter(Block.Columns.projectId != "")
+                .order(Block.Columns.sortOrder)
+                .fetchAll(database)
+        }
+    }
+
+    /// Get the project ID from a test database (assumes single project).
+    static func getProjectId(from db: ProjectDatabase) throws -> String {
+        try db.dbWriter.read { database in
+            try String.fetchOne(database, sql: "SELECT id FROM project LIMIT 1")!
+        }
+    }
+
+    /// Filter blocks to just headings.
+    static func headingBlocks(_ blocks: [Block]) -> [Block] {
+        blocks.filter { $0.blockType == .heading }
     }
 }

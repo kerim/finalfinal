@@ -15,32 +15,6 @@ import GRDB
 @Suite("Block Reorder Integrity — Tier 1: Silent Killers")
 struct BlockReorderIntegrityTests {
 
-    // MARK: - Helpers
-
-    private func createTestDatabase(content: String) throws -> ProjectDatabase {
-        let url = URL(fileURLWithPath: "/tmp/claude/reorder-test-\(UUID().uuidString).ff")
-        return try TestFixtureFactory.createFixture(at: url, content: content)
-    }
-
-    private func fetchBlocks(_ db: ProjectDatabase) throws -> [Block] {
-        try db.dbWriter.read { database in
-            try Block
-                .filter(Block.Columns.projectId != "")
-                .order(Block.Columns.sortOrder)
-                .fetchAll(database)
-        }
-    }
-
-    private func getProjectId(_ db: ProjectDatabase) throws -> String {
-        try db.dbWriter.read { database in
-            try String.fetchOne(database, sql: "SELECT id FROM project LIMIT 1")!
-        }
-    }
-
-    private func headingBlocks(_ blocks: [Block]) -> [Block] {
-        blocks.filter { $0.blockType == .heading }
-    }
-
     // MARK: - Sort Order Correctness After Reorder
 
     @Test("Sort order is correct after moving section down")
@@ -64,12 +38,12 @@ struct BlockReorderIntegrityTests {
         Content C.
         """
 
-        let db = try createTestDatabase(content: content)
-        let pid = try getProjectId(db)
-        let blocks = try fetchBlocks(db)
+        let db = try TestFixtureFactory.createTemporary(content: content)
+        let pid = try TestFixtureFactory.getProjectId(from: db)
+        let blocks = try TestFixtureFactory.fetchBlocks(from: db)
 
         // Build SectionViewModels from heading blocks
-        let headings = headingBlocks(blocks)
+        let headings = TestFixtureFactory.headingBlocks(blocks)
         var sections = headings.map { SectionViewModel(from: $0) }
 
         // Move Section A (index 1) to after Section C (index 3)
@@ -79,8 +53,8 @@ struct BlockReorderIntegrityTests {
 
         try db.reorderAllBlocks(sections: sections, projectId: pid)
 
-        let blocksAfter = try fetchBlocks(db)
-        let headingsAfter = headingBlocks(blocksAfter)
+        let blocksAfter = try TestFixtureFactory.fetchBlocks(from: db)
+        let headingsAfter = TestFixtureFactory.headingBlocks(blocksAfter)
 
         // Verify new heading order
         let titles = headingsAfter.map { $0.textContent }
@@ -115,10 +89,10 @@ struct BlockReorderIntegrityTests {
         Gamma content.
         """
 
-        let db = try createTestDatabase(content: content)
-        let pid = try getProjectId(db)
-        let blocks = try fetchBlocks(db)
-        let headings = headingBlocks(blocks)
+        let db = try TestFixtureFactory.createTemporary(content: content)
+        let pid = try TestFixtureFactory.getProjectId(from: db)
+        let blocks = try TestFixtureFactory.fetchBlocks(from: db)
+        let headings = TestFixtureFactory.headingBlocks(blocks)
         var sections = headings.map { SectionViewModel(from: $0) }
 
         // Move Gamma (last) to position 1 (after Document)
@@ -127,8 +101,8 @@ struct BlockReorderIntegrityTests {
 
         try db.reorderAllBlocks(sections: sections, projectId: pid)
 
-        let blocksAfter = try fetchBlocks(db)
-        let headingsAfter = headingBlocks(blocksAfter)
+        let blocksAfter = try TestFixtureFactory.fetchBlocks(from: db)
+        let headingsAfter = TestFixtureFactory.headingBlocks(blocksAfter)
         let titles = headingsAfter.map { $0.textContent }
 
         #expect(titles == ["Document", "Gamma", "Alpha", "Beta"])
@@ -151,10 +125,10 @@ struct BlockReorderIntegrityTests {
         Another paragraph in B.
         """
 
-        let db = try createTestDatabase(content: content)
-        let pid = try getProjectId(db)
-        let blocks = try fetchBlocks(db)
-        let headings = headingBlocks(blocks)
+        let db = try TestFixtureFactory.createTemporary(content: content)
+        let pid = try TestFixtureFactory.getProjectId(from: db)
+        let blocks = try TestFixtureFactory.fetchBlocks(from: db)
+        let headings = TestFixtureFactory.headingBlocks(blocks)
         var sections = headings.map { SectionViewModel(from: $0) }
 
         // Reverse the section order: B then A
@@ -162,7 +136,7 @@ struct BlockReorderIntegrityTests {
 
         try db.reorderAllBlocks(sections: sections, projectId: pid)
 
-        let blocksAfter = try fetchBlocks(db)
+        let blocksAfter = try TestFixtureFactory.fetchBlocks(from: db)
 
         // Find Section B heading and verify its body follows
         let bHeadingIdx = blocksAfter.firstIndex { $0.textContent == "Section B" }!
@@ -194,10 +168,10 @@ struct BlockReorderIntegrityTests {
         Content.
         """
 
-        let db = try createTestDatabase(content: content)
-        let pid = try getProjectId(db)
-        let blocks = try fetchBlocks(db)
-        let headings = headingBlocks(blocks)
+        let db = try TestFixtureFactory.createTemporary(content: content)
+        let pid = try TestFixtureFactory.getProjectId(from: db)
+        let blocks = try TestFixtureFactory.fetchBlocks(from: db)
+        let headings = TestFixtureFactory.headingBlocks(blocks)
         let sections = headings.map { SectionViewModel(from: $0) }
 
         // Promote Section A to H1 and demote Section B to H3
@@ -211,8 +185,8 @@ struct BlockReorderIntegrityTests {
 
         try db.reorderAllBlocks(sections: sections, projectId: pid, headingUpdates: headingUpdates)
 
-        let blocksAfter = try fetchBlocks(db)
-        let headingsAfter = headingBlocks(blocksAfter)
+        let blocksAfter = try TestFixtureFactory.fetchBlocks(from: db)
+        let headingsAfter = TestFixtureFactory.headingBlocks(blocksAfter)
 
         let aAfter = headingsAfter.first { $0.textContent == "Section A" }!
         let bAfter = headingsAfter.first { $0.textContent == "Section B" }!
@@ -228,11 +202,11 @@ struct BlockReorderIntegrityTests {
     @Test("Sort-order precision: 60+ blocks between adjacent sort orders all distinct")
     func sortOrderPrecisionManyBlocks() throws {
         // Create a document, then do repeated reorderBlock operations
-        let db = try createTestDatabase(content: "# Title\n\nP1.\n\n## End\n\nEnd text.")
-        let pid = try getProjectId(db)
+        let db = try TestFixtureFactory.createTemporary(content: "# Title\n\nP1.\n\n## End\n\nEnd text.")
+        let pid = try TestFixtureFactory.getProjectId(from: db)
 
         // Insert 60 blocks between the first two
-        let blocks = try fetchBlocks(db)
+        let blocks = try TestFixtureFactory.fetchBlocks(from: db)
         guard blocks.count >= 2 else {
             Issue.record("Need at least 2 blocks")
             return
@@ -254,7 +228,7 @@ struct BlockReorderIntegrityTests {
         // Normalize to fix any precision issues
         try db.normalizeSortOrders(projectId: pid)
 
-        let blocksAfter = try fetchBlocks(db)
+        let blocksAfter = try TestFixtureFactory.fetchBlocks(from: db)
         let sortOrders = blocksAfter.map { $0.sortOrder }
 
         #expect(Set(sortOrders).count == sortOrders.count,
@@ -270,8 +244,8 @@ struct BlockReorderIntegrityTests {
 
     @Test("Normalize resolves duplicate sort orders with heading priority")
     func normalizeHeadingPriority() throws {
-        let db = try createTestDatabase(content: "# Doc\n\nText.")
-        let pid = try getProjectId(db)
+        let db = try TestFixtureFactory.createTemporary(content: "# Doc\n\nText.")
+        let pid = try TestFixtureFactory.getProjectId(from: db)
 
         // Manually create blocks with duplicate sort orders
         try db.dbWriter.write { database in
@@ -288,7 +262,7 @@ struct BlockReorderIntegrityTests {
 
         try db.normalizeSortOrders(projectId: pid)
 
-        let blocks = try fetchBlocks(db)
+        let blocks = try TestFixtureFactory.fetchBlocks(from: db)
         #expect(blocks.count == 2)
 
         // Heading should sort before paragraph at same original sortOrder
@@ -301,10 +275,10 @@ struct BlockReorderIntegrityTests {
 
     @Test("replaceBlocks preserves heading IDs by title match (first-match-wins)")
     func replaceBlocksPreservesIDs() throws {
-        let db = try createTestDatabase(content: "# Doc\n\n## Section A\n\nText.\n\n## Section B\n\nMore.")
-        let pid = try getProjectId(db)
+        let db = try TestFixtureFactory.createTemporary(content: "# Doc\n\n## Section A\n\nText.\n\n## Section B\n\nMore.")
+        let pid = try TestFixtureFactory.getProjectId(from: db)
 
-        let blocksBefore = try fetchBlocks(db)
+        let blocksBefore = try TestFixtureFactory.fetchBlocks(from: db)
         let sectionAId = blocksBefore.first { $0.textContent == "Section A" }?.id
         let sectionBId = blocksBefore.first { $0.textContent == "Section B" }?.id
 
@@ -329,7 +303,7 @@ struct BlockReorderIntegrityTests {
 
         try db.replaceBlocks(newBlocks, for: pid)
 
-        let blocksAfter = try fetchBlocks(db)
+        let blocksAfter = try TestFixtureFactory.fetchBlocks(from: db)
         let aAfter = blocksAfter.first { $0.textContent == "Section A" }
         let bAfter = blocksAfter.first { $0.textContent == "Section B" }
 
@@ -339,8 +313,8 @@ struct BlockReorderIntegrityTests {
 
     @Test("replaceBlocks preserves image metadata by src match")
     func replaceBlocksPreservesImageMetadata() throws {
-        let db = try createTestDatabase(content: "# Doc\n\n![Alt text](media/photo.png)\n\nText.")
-        let pid = try getProjectId(db)
+        let db = try TestFixtureFactory.createTemporary(content: "# Doc\n\n![Alt text](media/photo.png)\n\nText.")
+        let pid = try TestFixtureFactory.getProjectId(from: db)
 
         // Set image metadata on the image block
         try db.dbWriter.write { database in
@@ -366,7 +340,7 @@ struct BlockReorderIntegrityTests {
 
         try db.replaceBlocks(newBlocks, for: pid)
 
-        let blocksAfter = try fetchBlocks(db)
+        let blocksAfter = try TestFixtureFactory.fetchBlocks(from: db)
         let imageAfter = blocksAfter.first { $0.blockType == .image }
 
         #expect(imageAfter?.imageCaption == "Figure 1: A test image", "Image caption should be preserved")

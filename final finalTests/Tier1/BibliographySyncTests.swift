@@ -15,22 +15,6 @@ import GRDB
 @Suite("Bibliography Sync — Tier 1: Silent Killers")
 struct BibliographySyncTests {
 
-    // MARK: - Helpers
-
-    private func createTestDatabase(content: String) throws -> ProjectDatabase {
-        let url = URL(fileURLWithPath: "/tmp/claude/bib-sync-test-\(UUID().uuidString).ff")
-        return try TestFixtureFactory.createFixture(at: url, content: content)
-    }
-
-    private func fetchBlocks(_ db: ProjectDatabase) throws -> [Block] {
-        try db.dbWriter.read { database in
-            try Block
-                .filter(Block.Columns.projectId != "")
-                .order(Block.Columns.sortOrder)
-                .fetchAll(database)
-        }
-    }
-
     // MARK: - extractCitekeys
 
     @Test("extractCitekeys finds single key")
@@ -78,8 +62,8 @@ struct BibliographySyncTests {
 
     @Test("Rich content has bibliography blocks marked correctly")
     func bibliographyBlocksMarkedCorrectly() throws {
-        let db = try createTestDatabase(content: TestFixtureFactory.richTestContent)
-        let blocks = try fetchBlocks(db)
+        let db = try TestFixtureFactory.createTemporary(content: TestFixtureFactory.richTestContent)
+        let blocks = try TestFixtureFactory.fetchBlocks(from: db)
         let bibBlocks = blocks.filter { $0.isBibliography }
         #expect(!bibBlocks.isEmpty, "richTestContent should have blocks with isBibliography == true")
     }
