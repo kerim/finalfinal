@@ -78,3 +78,58 @@ describe('buildSearchRegex', () => {
     expect(regex!.test('Wordy')).toBe(false);
   });
 });
+
+describe('buildSearchRegex — annotation safety', () => {
+  // In Milkdown (ProseMirror), annotations are atom nodes — findAllMatches
+  // only walks node.isText nodes, so annotations are structurally invisible.
+  // In CodeMirror, @codemirror/search operates on raw markdown — annotations
+  // are plain <!-- ::type:: text --> strings and fully searchable/replaceable.
+  // These tests document the regex-level behavior (no structural protection).
+
+  it('matches text inside annotation comment syntax', () => {
+    const regex = buildSearchRegex('fix', {});
+    expect(regex).not.toBeNull();
+    const annotationText = '<!-- ::task:: fix the bug -->';
+    regex!.lastIndex = 0;
+    expect(regex!.test(annotationText)).toBe(true);
+  });
+
+  it('matches both inside and outside annotation comments', () => {
+    const regex = buildSearchRegex('review', {});
+    expect(regex).not.toBeNull();
+    const content = 'Please review this. <!-- ::task:: review the draft -->';
+    const matches: string[] = [];
+    let m: RegExpExecArray | null;
+    regex!.lastIndex = 0;
+    while ((m = regex!.exec(content)) !== null) {
+      matches.push(m[0]);
+    }
+    // Regex finds "review" in both the prose and the annotation comment
+    // This documents the vulnerability: replace-all would corrupt annotation syntax
+    expect(matches.length).toBe(2);
+  });
+
+  it('matches annotation delimiter characters when searched literally', () => {
+    // Searching for "::" would match inside annotation syntax
+    const regex = buildSearchRegex('::', {});
+    expect(regex).not.toBeNull();
+    const annotationText = '<!-- ::task:: do something -->';
+    regex!.lastIndex = 0;
+    const matches: string[] = [];
+    let m: RegExpExecArray | null;
+    while ((m = regex!.exec(annotationText)) !== null) {
+      matches.push(m[0]);
+    }
+    // Two occurrences of "::" in "::task::"
+    expect(matches.length).toBe(2);
+  });
+
+  it('wholeWord does not protect annotation content', () => {
+    // Even with wholeWord, a word like "fix" inside an annotation is matched
+    const regex = buildSearchRegex('fix', { wholeWord: true });
+    expect(regex).not.toBeNull();
+    const annotationText = '<!-- ::task:: fix the bug -->';
+    regex!.lastIndex = 0;
+    expect(regex!.test(annotationText)).toBe(true);
+  });
+});
