@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.85] - 2026-03-17
+
 ### Added
 
 - **Tier 2 integration test suite** (79 tests) — SectionMetadataTests, ImageImportServiceTests, FindBarStateTests, AnnotationFilterTests, FocusModeTests, SectionOperationsTests, ProjectLifecycleTests, FormattingBridgeTests, EditorModeSwitchTests
