@@ -10,6 +10,7 @@
 
 import Testing
 import Foundation
+import GRDB
 @testable import final_final
 
 @Suite("Block Roundtrip — Tier 1: Silent Killers")
@@ -189,12 +190,15 @@ struct BlockRoundtripTests {
         let exported = BlockParser.assembleStandardMarkdownForExport(from: blocks)
 
         // Find positions of headings in export
-        let titlePos = exported.range(of: "# Title")!.lowerBound
-        let firstPos = exported.range(of: "## First Section")!.lowerBound
-        let secondPos = exported.range(of: "## Second Section")!.lowerBound
+        guard let titleRange = exported.range(of: "# Title"),
+              let firstRange = exported.range(of: "## First Section"),
+              let secondRange = exported.range(of: "## Second Section") else {
+            Issue.record("Export should contain all headings. Got: \(exported.prefix(200))")
+            return
+        }
 
-        #expect(titlePos < firstPos, "Title should come before First Section")
-        #expect(firstPos < secondPos, "First Section should come before Second Section")
+        #expect(titleRange.lowerBound < firstRange.lowerBound, "Title should come before First Section")
+        #expect(firstRange.lowerBound < secondRange.lowerBound, "First Section should come before Second Section")
     }
 
     @Test("Export assembly preserves image references")

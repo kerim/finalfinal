@@ -72,7 +72,7 @@ struct ContentStateMachineTests {
             .editorTransition,
             .dragReorder,
             .projectSwitch,
-            .annotationEdit,
+            .annotationEdit
         ]
 
         for contentState in nonIdleStates {
@@ -165,7 +165,7 @@ struct ContentStateMachineTests {
             .bibliographyUpdate,
             .hierarchyEnforcement,
             .dragReorder,
-            .annotationEdit,
+            .annotationEdit
         ]
 
         for contentState in allowedStates {

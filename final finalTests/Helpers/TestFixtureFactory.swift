@@ -166,12 +166,21 @@ enum TestFixtureFactory {
         title: String = "Test Project",
         content: String? = nil
     ) throws -> ProjectDatabase {
+        let markdown = content ?? testContent
         let package = try ProjectPackage.create(at: url, title: title)
         let db = try ProjectDatabase.create(
             package: package,
             title: title,
-            initialContent: content ?? testContent
+            initialContent: markdown
         )
+
+        // Parse markdown into blocks so tests can query block data immediately
+        let projectId = try db.dbWriter.read { database in
+            try String.fetchOne(database, sql: "SELECT id FROM project LIMIT 1")!
+        }
+        let blocks = BlockParser.parse(markdown: markdown, projectId: projectId)
+        try db.replaceBlocks(blocks, for: projectId)
+
         return db
     }
 

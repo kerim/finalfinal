@@ -74,12 +74,12 @@ struct SectionReconcilerTests {
         let headers = [
             makeHeader(position: 0, title: "Introduction"),
             makeHeader(position: 1, title: "Methods"),
-            makeHeader(position: 2, title: "Results"),
+            makeHeader(position: 2, title: "Results")
         ]
         let dbSections = [
             makeSection(id: "s1", sortOrder: 0, title: "Introduction"),
             makeSection(id: "s2", sortOrder: 1, title: "Methods"),
-            makeSection(id: "s3", sortOrder: 2, title: "Results"),
+            makeSection(id: "s3", sortOrder: 2, title: "Results")
         ]
 
         let changes = reconciler.reconcile(headers: headers, dbSections: dbSections, projectId: projectId)
@@ -94,10 +94,10 @@ struct SectionReconcilerTests {
     @Test("Exact position match — title changed (rename)")
     func titleRenameDetected() {
         let headers = [
-            makeHeader(position: 0, title: "Introduction — Revised"),
+            makeHeader(position: 0, title: "Introduction — Revised")
         ]
         let dbSections = [
-            makeSection(id: "s1", sortOrder: 0, title: "Introduction"),
+            makeSection(id: "s1", sortOrder: 0, title: "Introduction")
         ]
 
         let changes = reconciler.reconcile(headers: headers, dbSections: dbSections, projectId: projectId)
@@ -115,16 +115,18 @@ struct SectionReconcilerTests {
 
     @Test("Same title anywhere — handles drag-drop reordering")
     func sameTitleMatchAfterDragDrop() {
-        // User dragged "Results" from position 2 to position 0
+        // After drag-drop, DB sortOrders are far from new header positions,
+        // so Tier 1 (exact position match) and Tier 3 (±3 proximity) won't fire.
+        // This forces Tier 2 (same title anywhere) to match by title.
         let headers = [
-            makeHeader(position: 0, title: "Results"),
-            makeHeader(position: 1, title: "Introduction"),
-            makeHeader(position: 2, title: "Methods"),
+            makeHeader(position: 0, title: "Results"),       // was at sortOrder 20
+            makeHeader(position: 1, title: "Introduction"),  // was at sortOrder 10
+            makeHeader(position: 2, title: "Methods")       // was at sortOrder 15
         ]
         let dbSections = [
-            makeSection(id: "s1", sortOrder: 0, title: "Introduction", status: .writing),
-            makeSection(id: "s2", sortOrder: 1, title: "Methods", status: .review),
-            makeSection(id: "s3", sortOrder: 2, title: "Results", status: .final_),
+            makeSection(id: "s1", sortOrder: 10, title: "Introduction", status: .writing),
+            makeSection(id: "s2", sortOrder: 15, title: "Methods", status: .review),
+            makeSection(id: "s3", sortOrder: 20, title: "Results", status: .final_)
         ]
 
         let changes = reconciler.reconcile(headers: headers, dbSections: dbSections, projectId: projectId)
@@ -135,7 +137,7 @@ struct SectionReconcilerTests {
         #expect(inserts.isEmpty, "Drag-drop should not create new sections")
         #expect(deletes.isEmpty, "Drag-drop should not delete sections")
 
-        // Verify "Results" (id s3) matched and got new position 0
+        // Verify "Results" (id s3) matched by title and got new position 0
         let resultsUpdate = changes.first { change in
             if case .update(let id, _) = change { return id == "s3" }
             return false
@@ -151,11 +153,11 @@ struct SectionReconcilerTests {
         // Two pseudo-sections with similar generated titles at different positions
         let headers = [
             makeHeader(position: 0, title: "Section Break", isPseudoSection: true),
-            makeHeader(position: 1, title: "Section Break", isPseudoSection: true),
+            makeHeader(position: 1, title: "Section Break", isPseudoSection: true)
         ]
         let dbSections = [
             makeSection(id: "ps1", sortOrder: 0, title: "Section Break", isPseudoSection: true),
-            makeSection(id: "ps2", sortOrder: 1, title: "Section Break", isPseudoSection: true),
+            makeSection(id: "ps2", sortOrder: 1, title: "Section Break", isPseudoSection: true)
         ]
 
         let changes = reconciler.reconcile(headers: headers, dbSections: dbSections, projectId: projectId)
@@ -174,12 +176,12 @@ struct SectionReconcilerTests {
         // A section was deleted, shifting positions
         let headers = [
             makeHeader(position: 0, title: "New Title A"),
-            makeHeader(position: 1, title: "New Title B"),
+            makeHeader(position: 1, title: "New Title B")
         ]
         let dbSections = [
             makeSection(id: "s1", sortOrder: 0, title: "Old Title A", status: .writing),
             // s2 was at sortOrder 1, deleted
-            makeSection(id: "s3", sortOrder: 2, title: "Old Title C", status: .review),
+            makeSection(id: "s3", sortOrder: 2, title: "Old Title C", status: .review)
         ]
 
         let changes = reconciler.reconcile(headers: headers, dbSections: dbSections, projectId: projectId)
@@ -196,7 +198,7 @@ struct SectionReconcilerTests {
         let dbSections = [
             makeSection(id: "s1", sortOrder: 0, title: "Alpha", status: .writing, tags: ["tag-a"]),
             makeSection(id: "s2", sortOrder: 1, title: "Beta", status: .review, tags: ["tag-b"]),
-            makeSection(id: "s3", sortOrder: 2, title: "Gamma", status: .final_, tags: ["tag-c"]),
+            makeSection(id: "s3", sortOrder: 2, title: "Gamma", status: .final_, tags: ["tag-c"])
         ]
 
         // User inserted two new sections, shifting positions
@@ -205,7 +207,7 @@ struct SectionReconcilerTests {
             makeHeader(position: 1, title: "New Section"), // Should be inserted
             makeHeader(position: 2, title: "Beta"),        // Should match s2 by title (Tier 2)
             makeHeader(position: 3, title: "Another New"), // Should be inserted
-            makeHeader(position: 4, title: "Gamma"),       // Should match s3 by title (Tier 2)
+            makeHeader(position: 4, title: "Gamma")       // Should match s3 by title (Tier 2)
         ]
 
         let changes = reconciler.reconcile(headers: headers, dbSections: dbSections, projectId: projectId)
@@ -244,12 +246,12 @@ struct SectionReconcilerTests {
     @Test("Unmatched DB sections produce delete changes")
     func unmatchedDBSectionsDeleted() {
         let headers = [
-            makeHeader(position: 0, title: "Only Section"),
+            makeHeader(position: 0, title: "Only Section")
         ]
         let dbSections = [
             makeSection(id: "s1", sortOrder: 0, title: "Only Section"),
             makeSection(id: "s2", sortOrder: 1, title: "Removed Section"),
-            makeSection(id: "s3", sortOrder: 2, title: "Also Removed"),
+            makeSection(id: "s3", sortOrder: 2, title: "Also Removed")
         ]
 
         let changes = reconciler.reconcile(headers: headers, dbSections: dbSections, projectId: projectId)
@@ -267,10 +269,10 @@ struct SectionReconcilerTests {
     func unmatchedHeadersInserted() {
         let headers = [
             makeHeader(position: 0, title: "Existing"),
-            makeHeader(position: 1, title: "Brand New Section"),
+            makeHeader(position: 1, title: "Brand New Section")
         ]
         let dbSections = [
-            makeSection(id: "s1", sortOrder: 0, title: "Existing"),
+            makeSection(id: "s1", sortOrder: 0, title: "Existing")
         ]
 
         let changes = reconciler.reconcile(headers: headers, dbSections: dbSections, projectId: projectId)
@@ -289,11 +291,11 @@ struct SectionReconcilerTests {
     @Test("Bibliography sections are never deleted even when unmatched")
     func bibliographyProtectedFromDeletion() {
         let headers = [
-            makeHeader(position: 0, title: "Introduction"),
+            makeHeader(position: 0, title: "Introduction")
         ]
         let dbSections = [
             makeSection(id: "s1", sortOrder: 0, title: "Introduction"),
-            makeSection(id: "bib", sortOrder: 1, title: "References", isBibliography: true),
+            makeSection(id: "bib", sortOrder: 1, title: "References", isBibliography: true)
         ]
 
         let changes = reconciler.reconcile(headers: headers, dbSections: dbSections, projectId: projectId)
@@ -308,11 +310,11 @@ struct SectionReconcilerTests {
     @Test("Notes sections are never deleted even when unmatched")
     func notesProtectedFromDeletion() {
         let headers = [
-            makeHeader(position: 0, title: "Introduction"),
+            makeHeader(position: 0, title: "Introduction")
         ]
         let dbSections = [
             makeSection(id: "s1", sortOrder: 0, title: "Introduction"),
-            makeSection(id: "notes", sortOrder: 1, title: "Notes", isNotes: true),
+            makeSection(id: "notes", sortOrder: 1, title: "Notes", isNotes: true)
         ]
 
         let changes = reconciler.reconcile(headers: headers, dbSections: dbSections, projectId: projectId)
@@ -329,11 +331,11 @@ struct SectionReconcilerTests {
         // A header at position 1 should not match the bibliography at sortOrder 1
         let headers = [
             makeHeader(position: 0, title: "Introduction"),
-            makeHeader(position: 1, title: "New Section"),
+            makeHeader(position: 1, title: "New Section")
         ]
         let dbSections = [
             makeSection(id: "s1", sortOrder: 0, title: "Introduction"),
-            makeSection(id: "bib", sortOrder: 1, title: "References", isBibliography: true),
+            makeSection(id: "bib", sortOrder: 1, title: "References", isBibliography: true)
         ]
 
         let changes = reconciler.reconcile(headers: headers, dbSections: dbSections, projectId: projectId)
@@ -355,7 +357,7 @@ struct SectionReconcilerTests {
     func emptyHeadersDeletesAll() {
         let dbSections = [
             makeSection(id: "s1", sortOrder: 0, title: "Section A"),
-            makeSection(id: "bib", sortOrder: 1, title: "References", isBibliography: true),
+            makeSection(id: "bib", sortOrder: 1, title: "References", isBibliography: true)
         ]
 
         let changes = reconciler.reconcile(headers: [], dbSections: dbSections, projectId: projectId)
@@ -372,7 +374,7 @@ struct SectionReconcilerTests {
     func emptyDBInsertsAll() {
         let headers = [
             makeHeader(position: 0, title: "Alpha"),
-            makeHeader(position: 1, title: "Beta"),
+            makeHeader(position: 1, title: "Beta")
         ]
 
         let changes = reconciler.reconcile(headers: headers, dbSections: [], projectId: projectId)
@@ -384,10 +386,10 @@ struct SectionReconcilerTests {
     @Test("Heading level change detected as update")
     func headingLevelChangeDetected() {
         let headers = [
-            makeHeader(position: 0, title: "Section", level: 3),
+            makeHeader(position: 0, title: "Section", level: 3)
         ]
         let dbSections = [
-            makeSection(id: "s1", sortOrder: 0, title: "Section", headerLevel: 2),
+            makeSection(id: "s1", sortOrder: 0, title: "Section", headerLevel: 2)
         ]
 
         let changes = reconciler.reconcile(headers: headers, dbSections: dbSections, projectId: projectId)
@@ -404,7 +406,7 @@ struct SectionReconcilerTests {
     @Test("No changes when headers perfectly match DB")
     func noChangesWhenPerfectMatch() {
         let headers = [
-            makeHeader(position: 0, title: "Alpha", level: 2, startOffset: 0, markdownContent: "content", wordCount: 5),
+            makeHeader(position: 0, title: "Alpha", level: 2, startOffset: 0, markdownContent: "content", wordCount: 5)
         ]
         let dbSections = [
             Section(
@@ -416,7 +418,7 @@ struct SectionReconcilerTests {
                 markdownContent: "content",
                 wordCount: 5,
                 startOffset: 0
-            ),
+            )
         ]
 
         let changes = reconciler.reconcile(headers: headers, dbSections: dbSections, projectId: projectId)
@@ -428,10 +430,10 @@ struct SectionReconcilerTests {
     func positionBeyondProximityRange() {
         // Header at position 10, DB section at position 0 — beyond ±3 range
         let headers = [
-            makeHeader(position: 10, title: "Far Away"),
+            makeHeader(position: 10, title: "Far Away")
         ]
         let dbSections = [
-            makeSection(id: "s1", sortOrder: 0, title: "Different Title"),
+            makeSection(id: "s1", sortOrder: 0, title: "Different Title")
         ]
 
         let changes = reconciler.reconcile(headers: headers, dbSections: dbSections, projectId: projectId)

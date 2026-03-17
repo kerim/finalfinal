@@ -99,6 +99,7 @@ if xcodebuild test \
     -scheme "$SCHEME" \
     -destination "$DESTINATION" \
     -only-testing "final finalTests" \
+    CODE_SIGN_IDENTITY="-" CODE_SIGN_STYLE=Manual \
     -quiet \
     2>&1 | tail -5; then
     end_time=$(date +%s)
@@ -119,6 +120,7 @@ if xcodebuild test \
     -scheme "$SCHEME" \
     -destination "$DESTINATION" \
     -only-testing "final finalUITests" \
+    CODE_SIGN_IDENTITY="-" CODE_SIGN_STYLE=Manual \
     -quiet \
     2>&1 | tail -5; then
     end_time=$(date +%s)

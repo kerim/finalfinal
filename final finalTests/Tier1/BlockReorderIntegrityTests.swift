@@ -9,6 +9,7 @@
 
 import Testing
 import Foundation
+import GRDB
 @testable import final_final
 
 @Suite("Block Reorder Integrity — Tier 1: Silent Killers")
@@ -205,7 +206,7 @@ struct BlockReorderIntegrityTests {
 
         let headingUpdates: [String: HeadingUpdate] = [
             sectionAId: HeadingUpdate(markdownFragment: "# Section A", headingLevel: 1),
-            sectionBId: HeadingUpdate(markdownFragment: "### Section B", headingLevel: 3),
+            sectionBId: HeadingUpdate(markdownFragment: "### Section B", headingLevel: 3)
         ]
 
         try db.reorderAllBlocks(sections: sections, projectId: pid, headingUpdates: headingUpdates)
@@ -323,7 +324,7 @@ struct BlockReorderIntegrityTests {
             Block(projectId: pid, sortOrder: 5, blockType: .heading, textContent: "Section B",
                   markdownFragment: "## Section B", headingLevel: 2),
             Block(projectId: pid, sortOrder: 6, blockType: .paragraph, textContent: "Updated B.",
-                  markdownFragment: "Updated B."),
+                  markdownFragment: "Updated B.")
         ]
 
         try db.replaceBlocks(newBlocks, for: pid)
@@ -360,7 +361,7 @@ struct BlockReorderIntegrityTests {
                   markdownFragment: "![Alt text](media/photo.png)", imageSrc: "media/photo.png",
                   imageAlt: "Alt text"),
             Block(projectId: pid, sortOrder: 3, blockType: .paragraph, textContent: "Text.",
-                  markdownFragment: "Text."),
+                  markdownFragment: "Text.")
         ]
 
         try db.replaceBlocks(newBlocks, for: pid)

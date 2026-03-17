@@ -10,6 +10,7 @@
 
 import Testing
 import Foundation
+import GRDB
 @testable import final_final
 
 @Suite("Zoom Data Integrity — Tier 1: Silent Killers")
@@ -52,10 +53,10 @@ struct ZoomDataIntegrityTests {
         // Simulate a document with H1 > H2 > H3 structure
         let sections = [
             makeSectionVM(id: "h1-intro", level: 1, sortOrder: 1, title: "Introduction"),
-            makeSectionVM(id: "h2-background", level: 2, sortOrder: 3, title: "Background"),
-            makeSectionVM(id: "h3-history", level: 3, sortOrder: 5, title: "History"),
-            makeSectionVM(id: "h2-methods", level: 2, sortOrder: 7, title: "Methods"),
-            makeSectionVM(id: "h1-results", level: 1, sortOrder: 9, title: "Results"),
+            makeSectionVM(id: "h2-background", level: 2, sortOrder: 3, title: "Background", parentId: "h1-intro"),
+            makeSectionVM(id: "h3-history", level: 3, sortOrder: 5, title: "History", parentId: "h2-background"),
+            makeSectionVM(id: "h2-methods", level: 2, sortOrder: 7, title: "Methods", parentId: "h1-intro"),
+            makeSectionVM(id: "h1-results", level: 1, sortOrder: 9, title: "Results")
         ]
 
         let subtree = state.filterToSubtree(sections: sections, rootId: "h1-intro")
@@ -77,9 +78,9 @@ struct ZoomDataIntegrityTests {
 
         let sections = [
             makeSectionVM(id: "h1-doc", level: 1, sortOrder: 1, title: "Document"),
-            makeSectionVM(id: "h2-alpha", level: 2, sortOrder: 3, title: "Alpha"),
-            makeSectionVM(id: "h3-sub", level: 3, sortOrder: 5, title: "Sub Alpha"),
-            makeSectionVM(id: "h2-beta", level: 2, sortOrder: 7, title: "Beta"),
+            makeSectionVM(id: "h2-alpha", level: 2, sortOrder: 3, title: "Alpha", parentId: "h1-doc"),
+            makeSectionVM(id: "h3-sub", level: 3, sortOrder: 5, title: "Sub Alpha", parentId: "h2-alpha"),
+            makeSectionVM(id: "h2-beta", level: 2, sortOrder: 7, title: "Beta", parentId: "h1-doc")
         ]
 
         let subtree = state.filterToSubtree(sections: sections, rootId: "h2-alpha")
@@ -125,7 +126,7 @@ struct ZoomDataIntegrityTests {
             Block(projectId: pid, sortOrder: 0, blockType: .paragraph, textContent: "Updated content A.",
                   markdownFragment: "Updated content A."),
             Block(projectId: pid, sortOrder: 0, blockType: .paragraph, textContent: "Extra paragraph.",
-                  markdownFragment: "Extra paragraph."),
+                  markdownFragment: "Extra paragraph.")
         ]
 
         try db.replaceBlocksInRange(
@@ -178,7 +179,7 @@ struct ZoomDataIntegrityTests {
             Block(projectId: pid, sortOrder: 0, blockType: .heading, textContent: "Section A",
                   markdownFragment: "## Section A", headingLevel: 2),
             Block(projectId: pid, sortOrder: 0, blockType: .paragraph, textContent: "New content.",
-                  markdownFragment: "New content."),
+                  markdownFragment: "New content.")
         ]
 
         try db.replaceBlocksInRange(
@@ -307,12 +308,14 @@ struct ZoomDataIntegrityTests {
         level: Int,
         sortOrder: Double,
         title: String,
+        parentId: String? = nil,
         isBibliography: Bool = false,
         isNotes: Bool = false
     ) -> SectionViewModel {
         let block = Block(
             id: id,
             projectId: projectId,
+            parentId: parentId,
             sortOrder: sortOrder,
             blockType: .heading,
             textContent: title,
