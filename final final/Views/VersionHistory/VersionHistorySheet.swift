@@ -21,6 +21,7 @@ struct VersionHistorySheet: View {
     let onRestoreComplete: () -> Void
 
     @State var snapshots: [Snapshot] = []
+    @State var snapshotItems: [SnapshotListItem] = []
     @State var selectedSnapshotId: String?
     @State var selectedSnapshotSections: [SnapshotSection] = []
     @State private var showNamedOnly = false
@@ -40,11 +41,11 @@ struct VersionHistorySheet: View {
     @State var showFullRestoreConfirmation = false
     @State var createSafetyBackup = true
 
-    private var filteredSnapshots: [Snapshot] {
+    private var filteredSnapshots: [SnapshotListItem] {
         if showNamedOnly {
-            return snapshots.filter { $0.isNamed }
+            return snapshotItems.filter { $0.snapshot.isNamed }
         }
-        return snapshots
+        return snapshotItems
     }
 
     private var selectedSnapshot: Snapshot? {
@@ -52,16 +53,25 @@ struct VersionHistorySheet: View {
         return snapshots.first { $0.id == id }
     }
 
-    private var backupChangeTypes: [String: SectionChangeType] {
-        let displayed = selectedSnapshotSections.map { SnapshotSectionViewModel(from: $0) }
-        let comparison: [SnapshotSectionViewModel]
-        switch comparisonMode {
-        case .vsCurrent:
-            comparison = currentSections.map { SnapshotSectionViewModel(from: $0) }
-        case .vsPrevious:
-            comparison = previousSnapshotSections.map { SnapshotSectionViewModel(from: $0) }
-        }
-        return computeSectionChanges(displayed: displayed, comparison: comparison)
+    private var currentSectionVMs: [SnapshotSectionViewModel] {
+        currentSections.map { SnapshotSectionViewModel(from: $0) }
+    }
+
+    private var backupAnalysis: (changes: [String: SectionChangeType], wordDeltas: [String: Int]) {
+        computeBackupAnalysis(
+            snapshotSections: selectedSnapshotSections,
+            currentSections: currentSectionVMs,
+            previousSections: previousSnapshotSections,
+            comparisonMode: comparisonMode
+        )
+    }
+
+    private var currentWordCount: Int {
+        currentSectionVMs.reduce(0) { $0 + $1.wordCount }
+    }
+
+    private var currentSectionCount: Int {
+        currentSections.count
     }
 
     var body: some View {
@@ -121,20 +131,25 @@ struct VersionHistorySheet: View {
 
             Spacer()
 
-            // Filter toggle
-            Picker("Filter", selection: $showNamedOnly) {
-                Text("All versions").tag(false)
-                Text("Named saves only").tag(true)
+            if selectedSnapshot != nil {
+                Button {
+                    showFullRestoreConfirmation = true
+                } label: {
+                    Label("Restore All", systemImage: "arrow.uturn.backward.circle")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
             }
-            .pickerStyle(.segmented)
-            .frame(width: 200)
 
             Button("Done") {
                 dismiss()
             }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
             .keyboardShortcut(.escape, modifiers: [])
         }
-        .padding()
+        .padding(.horizontal)
+        .padding(.vertical, 6)
     }
 
     // MARK: - Main Content
@@ -145,11 +160,15 @@ struct VersionHistorySheet: View {
             VersionListView(
                 snapshots: filteredSnapshots,
                 selectedSnapshotId: $selectedSnapshotId,
+                showNamedOnly: $showNamedOnly,
                 onSelectSnapshot: { snapshotId in
                     Task {
                         await loadSnapshotSections(snapshotId: snapshotId)
                     }
-                }
+                },
+                comparisonMode: comparisonMode,
+                currentWordCount: currentWordCount,
+                currentSectionCount: currentSectionCount
             )
             .frame(minWidth: 200, idealWidth: 220)
 
@@ -165,6 +184,7 @@ struct VersionHistorySheet: View {
 
             // Right: Selected backup
             if selectedSnapshot != nil {
+                let analysis = backupAnalysis
                 DocumentPreviewView(
                     title: "Selected Backup",
                     sections: selectedSnapshotSections.map { SnapshotSectionViewModel(from: $0) },
@@ -177,7 +197,8 @@ struct VersionHistorySheet: View {
                     onRestoreSection: { section, mode in
                         handleRestoreRequest(section: section, mode: mode)
                     },
-                    changeTypes: backupChangeTypes
+                    changeTypes: analysis.changes,
+                    sectionWordDeltas: analysis.wordDeltas
                 ) {
                     Picker("Compare", selection: $comparisonMode) {
                         ForEach(ComparisonMode.allCases, id: \.self) { mode in
@@ -191,6 +212,13 @@ struct VersionHistorySheet: View {
             } else {
                 placeholderView
                     .frame(minWidth: 250)
+            }
+        }
+        .onChange(of: showNamedOnly) { _, _ in
+            // Clear stale selection when filter changes
+            if let selectedId = selectedSnapshotId,
+               !filteredSnapshots.contains(where: { $0.snapshot.id == selectedId }) {
+                selectedSnapshotId = nil
             }
         }
     }

@@ -149,31 +149,32 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
         }
 
-        // Workaround for XCUITest window-creation bug (FB15577018):
-        // XCUIApplication.launch() bypasses LaunchServices, so SwiftUI's WindowGroup
-        // never receives the kAEOpenApplication event that triggers initial window creation.
-        // Re-activate via LaunchServices to send the proper Apple Events.
-        if TestMode.isUITesting {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-                if NSApp.windows.isEmpty {
-                    DebugLog.log(.lifecycle, "[AppDelegate] Test mode: 0 windows after 0.5s, re-activating via LaunchServices")
-                    let config = NSWorkspace.OpenConfiguration()
-                    config.activates = true
-                    NSWorkspace.shared.openApplication(
-                        at: Bundle.main.bundleURL,
-                        configuration: config
-                    ) { _, error in
-                        if let error = error {
-                            DebugLog.log(.lifecycle, "[AppDelegate] LaunchServices re-activation failed: \(error)")
-                        }
+        // Workaround for missing initial window (FB15577018):
+        // Xcode's debug launcher and XCUIApplication.launch() bypass LaunchServices,
+        // so SwiftUI's WindowGroup never receives the kAEOpenApplication event that
+        // triggers initial window creation. Re-activate via LaunchServices to send
+        // the proper Apple Events.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            let hasVisibleWindow = NSApp.windows.contains(where: { $0.isVisible })
+            DebugLog.log(.lifecycle, "[AppDelegate] Window check at 0.5s: hasVisibleWindow=\(hasVisibleWindow)")
+            if !hasVisibleWindow {
+                DebugLog.log(.lifecycle, "[AppDelegate] No visible windows, re-activating via LaunchServices")
+                let config = NSWorkspace.OpenConfiguration()
+                config.activates = true
+                NSWorkspace.shared.openApplication(
+                    at: Bundle.main.bundleURL,
+                    configuration: config
+                ) { _, error in
+                    if let error = error {
+                        DebugLog.log(.lifecycle, "[AppDelegate] LaunchServices re-activation failed: \(error)")
                     }
+                }
 
-                    // Capture window delegate after recovery
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
-                        if let window = NSApp.windows.first, self?.mainWindow == nil {
-                            self?.mainWindow = window
-                            window.delegate = self
-                        }
+                // Capture window delegate after recovery
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+                    if let window = NSApp.windows.first, self?.mainWindow == nil {
+                        self?.mainWindow = window
+                        window.delegate = self
                     }
                 }
             }
