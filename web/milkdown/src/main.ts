@@ -215,22 +215,24 @@ async function initEditor() {
 
     if (tr.docChanged) {
       clearContentPushTimer();
-      setContentPushTimer(setTimeout(() => {
-        // Re-check guard: setContent() may have run during the 50ms window
-        if (getIsSettingContent()) {
-          return;
-        }
-        // Block push before Swift has called setContent/setContentWithBlockIds —
-        // prevents stale initialization content from overwriting real content
-        if (!getContentHasBeenSet()) {
-          return;
-        }
-        const md = editorInstance.action(getMarkdown());
-        setCurrentContent(md);
-        const firstHeading = md.match(/^#{1,6}\s+.*/m)?.[0]?.slice(0, 60) || '(none)';
-        syncLog('ContentPush', `PUSHED: len=${md.length}, firstH="${firstHeading}"`);
-        (window as any).webkit?.messageHandlers?.contentChanged?.postMessage(md);
-      }, 50));
+      setContentPushTimer(
+        setTimeout(() => {
+          // Re-check guard: setContent() may have run during the 50ms window
+          if (getIsSettingContent()) {
+            return;
+          }
+          // Block push before Swift has called setContent/setContentWithBlockIds —
+          // prevents stale initialization content from overwriting real content
+          if (!getContentHasBeenSet()) {
+            return;
+          }
+          const md = editorInstance.action(getMarkdown());
+          setCurrentContent(md);
+          const firstHeading = md.match(/^#{1,6}\s+.*/m)?.[0]?.slice(0, 60) || '(none)';
+          syncLog('ContentPush', `PUSHED: len=${md.length}, firstH="${firstHeading}"`);
+          (window as any).webkit?.messageHandlers?.contentChanged?.postMessage(md);
+        }, 50)
+      );
     }
 
     // Check for section change on ANY transaction (cursor move or content change)

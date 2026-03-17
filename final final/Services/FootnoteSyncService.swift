@@ -45,7 +45,7 @@ final class FootnoteSyncService {
 
     /// Pre-compiled regex for footnote reference extraction
     /// Matches [^N] where N is one or more digits, with negative lookahead for definition [^N]:
-    private static let footnoteRefPattern: NSRegularExpression = {
+    nonisolated(unsafe) private static let footnoteRefPattern: NSRegularExpression = {
         do {
             return try NSRegularExpression(
                 pattern: #"\[\^(\d+)\](?!:)"#,
@@ -71,7 +71,7 @@ final class FootnoteSyncService {
 
     /// Extract ordered unique footnote reference labels from markdown content
     /// Excludes the #Notes section content (definitions should not be counted as references)
-    static func extractFootnoteRefs(from markdown: String) -> [String] {
+    nonisolated static func extractFootnoteRefs(from markdown: String) -> [String] {
         // Strip the #Notes section before scanning
         let bodyContent = stripNotesSection(from: markdown)
         let range = NSRange(bodyContent.startIndex..., in: bodyContent)
@@ -135,7 +135,7 @@ final class FootnoteSyncService {
     }
 
     /// Strip the #Notes section from markdown content (returns body only)
-    static func stripNotesSection(from markdown: String) -> String {
+    nonisolated static func stripNotesSection(from markdown: String) -> String {
         // Find "# Notes" heading (case-insensitive)
         let lines = markdown.components(separatedBy: "\n")
         var result: [String] = []

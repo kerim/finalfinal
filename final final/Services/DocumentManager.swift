@@ -92,7 +92,11 @@ final class DocumentManager {
     // MARK: - Initialization
 
     private init() {
-        loadRecentProjects()
+        // Skip bookmark resolution during unit tests to avoid TCC prompts
+        // for ~/Documents (bookmarks resolve to real user paths)
+        if !TestMode.isUnitTesting {
+            loadRecentProjects()
+        }
     }
 
     // MARK: - Version Tracking

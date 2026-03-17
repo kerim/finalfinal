@@ -1,2 +1,7 @@
 schemaVersion: 1
-enabledWorkflows: ["simulator", "macOS"]
+enabledWorkflows:
+  - simulator
+  - macos
+sessionDefaults:
+  projectPath: final final.xcodeproj
+  scheme: final final

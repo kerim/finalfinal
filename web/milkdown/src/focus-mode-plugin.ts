@@ -2,8 +2,8 @@
 // NOT DOM manipulation - critical for ProseMirror reconciliation
 // Uses state field with cached DecorationSet to avoid O(n) rebuild on every keystroke
 
-import { Plugin, PluginKey } from '@milkdown/kit/prose/state';
 import type { Transaction } from '@milkdown/kit/prose/state';
+import { Plugin, PluginKey } from '@milkdown/kit/prose/state';
 import { Decoration, DecorationSet } from '@milkdown/kit/prose/view';
 import { $prose } from '@milkdown/kit/utils';
 
@@ -42,7 +42,10 @@ function findCursorTextblockPos(doc: import('@milkdown/kit/prose/model').Node, p
 }
 
 /** Build a full DecorationSet, dimming all textblocks except the one at cursorPos */
-function buildDecorations(doc: import('@milkdown/kit/prose/model').Node, cursorTextblockPos: number | null): DecorationSet {
+function buildDecorations(
+  doc: import('@milkdown/kit/prose/model').Node,
+  cursorTextblockPos: number | null
+): DecorationSet {
   if (cursorTextblockPos === null) return DecorationSet.empty;
   const decorations: Decoration[] = [];
   doc.descendants((node, pos) => {

@@ -129,7 +129,7 @@ struct FinalFinalApp: App {
         guard !documentManager.hasCompletedInitialOpen else { return }
         defer { documentManager.hasCompletedInitialOpen = true }
 
-        // Test mode: skip normal flow, open fixture directly
+        // UI test mode: skip normal flow, open fixture directly
         if TestMode.isUITesting {
             TestMode.clearTestState()
             if let fixturePath = TestMode.testFixturePath {
@@ -144,6 +144,15 @@ struct FinalFinalApp: App {
             } else {
                 appViewState = .picker
             }
+            return
+        }
+
+        // Unit test mode: skip normal flow (no project restoration, no Getting Started).
+        // Do NOT call clearTestState() here — unit tests share the real user's
+        // UserDefaults.standard, so clearing would permanently delete the user's
+        // last-project bookmark and recent projects list.
+        if TestMode.isUnitTesting {
+            appViewState = .picker
             return
         }
 

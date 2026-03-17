@@ -90,16 +90,21 @@ targets:
         PRODUCT_NAME: FINAL|FINAL
         PRODUCT_MODULE_NAME: final_final
         MARKETING_VERSION: "1"
-        CURRENT_PROJECT_VERSION: "0.2.84"
+        CURRENT_PROJECT_VERSION: "0.2.83"
         INFOPLIST_GENERATION_MODE: GeneratedFile
         GENERATE_INFOPLIST_FILE: YES
         SWIFT_VERSION: "5.9"
         MACOSX_DEPLOYMENT_TARGET: "15.0"
-        CODE_SIGN_IDENTITY: "Developer ID Application"
-        CODE_SIGN_STYLE: Manual
-        DEVELOPMENT_TEAM: HBHZWD24V7
         ENABLE_HARDENED_RUNTIME: YES
         CODE_SIGN_ENTITLEMENTS: final final/final final.entitlements
+      configs:
+        Debug:
+          CODE_SIGN_IDENTITY: "-"
+          CODE_SIGN_STYLE: Manual
+        Release:
+          CODE_SIGN_IDENTITY: "Developer ID Application"
+          CODE_SIGN_STYLE: Manual
+          DEVELOPMENT_TEAM: HBHZWD24V7
     dependencies:
       - package: GRDB
       - target: QuickLook Extension
@@ -164,14 +169,19 @@ targets:
         SWIFT_VERSION: "5.9"
         MACOSX_DEPLOYMENT_TARGET: "15.0"
         MARKETING_VERSION: "1"
-        CURRENT_PROJECT_VERSION: "0.2.84"
-        CODE_SIGN_IDENTITY: "Developer ID Application"
-        CODE_SIGN_STYLE: Manual
-        DEVELOPMENT_TEAM: HBHZWD24V7
+        CURRENT_PROJECT_VERSION: "0.2.83"
         ENABLE_HARDENED_RUNTIME: YES
         CODE_SIGN_ENTITLEMENTS: QuickLook Extension/QuickLook Extension.entitlements
         SKIP_INSTALL: YES
         OTHER_LDFLAGS: ["-lsqlite3"]
+      configs:
+        Debug:
+          CODE_SIGN_IDENTITY: "-"
+          CODE_SIGN_STYLE: Manual
+        Release:
+          CODE_SIGN_IDENTITY: "Developer ID Application"
+          CODE_SIGN_STYLE: Manual
+          DEVELOPMENT_TEAM: HBHZWD24V7
     info:
       path: QuickLook Extension/Info.plist
       properties:
@@ -202,8 +212,6 @@ targets:
         BUNDLE_LOADER: "$(TEST_HOST)"
         CODE_SIGN_IDENTITY: "-"
         CODE_SIGN_STYLE: Manual
-        CODE_SIGNING_ALLOWED: YES
-        CODE_SIGNING_REQUIRED: YES
 
   final finalUITests:
     type: bundle.ui-testing
@@ -223,5 +231,3 @@ targets:
         TEST_TARGET_NAME: final final
         CODE_SIGN_IDENTITY: "-"
         CODE_SIGN_STYLE: Manual
-        CODE_SIGNING_ALLOWED: YES
-        CODE_SIGNING_REQUIRED: YES

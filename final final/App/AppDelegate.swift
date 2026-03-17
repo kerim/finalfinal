@@ -34,7 +34,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // In test mode, clean saved application state from the CORRECT path.
         // The test runner can't do this because its NSHomeDirectory() is containerized
         // and points to the wrong location. The app's NSHomeDirectory() is the real user home.
-        if TestMode.isUITesting {
+        if TestMode.isTesting {
             let savedStatePath = NSHomeDirectory()
                 + "/Library/Saved Application State/com.kerim.final-final.savedState"
             let exists = FileManager.default.fileExists(atPath: savedStatePath)
@@ -61,10 +61,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         // Explicitly set activation policy to .regular so the app gets a dock icon
         // and creates windows. XCUITest's launch mechanism may not set this automatically.
-        NSApp.setActivationPolicy(.regular)
+        // Skip during unit tests to avoid Dock icon flicker.
+        if !TestMode.isUnitTesting {
+            NSApp.setActivationPolicy(.regular)
+        }
 
         do {
-            database = try AppDatabase.makeDefault()
+            database = try TestMode.isUnitTesting ? AppDatabase.makeInMemory() : AppDatabase.makeDefault()
             DebugLog.log(.lifecycle, "[AppDelegate] Database initialized successfully")
 
             // Load theme and appearance settings now that database is ready
@@ -76,7 +79,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
 
         // Check for updates on launch (silent -- only alerts if update available)
-        if !TestMode.isUITesting {
+        if !TestMode.isTesting {
             Task {
                 let status = await UpdateChecker().check()
                 if case .updateAvailable(let version, let url) = status {
@@ -154,27 +157,29 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // so SwiftUI's WindowGroup never receives the kAEOpenApplication event that
         // triggers initial window creation. Re-activate via LaunchServices to send
         // the proper Apple Events.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-            let hasVisibleWindow = NSApp.windows.contains(where: { $0.isVisible })
-            DebugLog.log(.lifecycle, "[AppDelegate] Window check at 0.5s: hasVisibleWindow=\(hasVisibleWindow)")
-            if !hasVisibleWindow {
-                DebugLog.log(.lifecycle, "[AppDelegate] No visible windows, re-activating via LaunchServices")
-                let config = NSWorkspace.OpenConfiguration()
-                config.activates = true
-                NSWorkspace.shared.openApplication(
-                    at: Bundle.main.bundleURL,
-                    configuration: config
-                ) { _, error in
-                    if let error = error {
-                        DebugLog.log(.lifecycle, "[AppDelegate] LaunchServices re-activation failed: \(error)")
+        if !TestMode.isUnitTesting {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                let hasVisibleWindow = NSApp.windows.contains(where: { $0.isVisible })
+                DebugLog.log(.lifecycle, "[AppDelegate] Window check at 0.5s: hasVisibleWindow=\(hasVisibleWindow)")
+                if !hasVisibleWindow {
+                    DebugLog.log(.lifecycle, "[AppDelegate] No visible windows, re-activating via LaunchServices")
+                    let config = NSWorkspace.OpenConfiguration()
+                    config.activates = true
+                    NSWorkspace.shared.openApplication(
+                        at: Bundle.main.bundleURL,
+                        configuration: config
+                    ) { _, error in
+                        if let error = error {
+                            DebugLog.log(.lifecycle, "[AppDelegate] LaunchServices re-activation failed: \(error)")
+                        }
                     }
-                }
 
-                // Capture window delegate after recovery
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
-                    if let window = NSApp.windows.first, self?.mainWindow == nil {
-                        self?.mainWindow = window
-                        window.delegate = self
+                    // Capture window delegate after recovery
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+                        if let window = NSApp.windows.first, self?.mainWindow == nil {
+                            self?.mainWindow = window
+                            window.delegate = self
+                        }
                     }
                 }
             }

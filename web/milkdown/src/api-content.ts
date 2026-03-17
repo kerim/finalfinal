@@ -70,7 +70,7 @@ export function setContent(markdown: string, options?: { scrollToStart?: boolean
   }
 
   setContentHasBeenSet(true);
-  clearContentPushTimer();  // Cancel stale timers — both empty-content and normal paths replace doc
+  clearContentPushTimer(); // Cancel stale timers — both empty-content and normal paths replace doc
 
   // Handle empty content FIRST - ensure doc has valid empty paragraph, not section_break
   // This must run BEFORE the currentContent === markdown check because:
@@ -283,7 +283,7 @@ export function resetEditorState(): void {
 }
 
 export function resetForProjectSwitch(): void {
-  clearContentPushTimer();  // Defense in depth — prevent stale timer from old project
+  clearContentPushTimer(); // Defense in depth — prevent stale timer from old project
   const editorInstance = getEditorInstance();
 
   // Reset block-related state
@@ -326,7 +326,7 @@ export function resetForProjectSwitch(): void {
 }
 
 export function applyBlocks(blocks: Block[]): void {
-  clearContentPushTimer();  // Cancel stale timers before document replacement
+  clearContentPushTimer(); // Cancel stale timers before document replacement
   syncLog('API:applyBlocks', `entry blocks=${blocks.length} syncPaused=true`);
   const editorInstance = getEditorInstance();
   if (!editorInstance) return;
@@ -406,7 +406,7 @@ export function setContentWithBlockIds(
   blockIds: string[],
   options?: { scrollToStart?: boolean; imageMeta?: ImageBlockMeta[]; cursorBoundary?: number }
 ): void {
-  clearContentPushTimer();  // Cancel stale timers before document replacement
+  clearContentPushTimer(); // Cancel stale timers before document replacement
   syncLog(
     'API:setContentWithBlockIds',
     `entry len=${markdown.length} blocks=${blockIds.length} scrollToStart=${options?.scrollToStart ?? false}`
