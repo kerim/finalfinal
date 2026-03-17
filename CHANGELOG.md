@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **Tier 2 integration test suite** (79 tests) — SectionMetadataTests, ImageImportServiceTests, FindBarStateTests, AnnotationFilterTests, FocusModeTests, SectionOperationsTests, ProjectLifecycleTests, FormattingBridgeTests, EditorModeSwitchTests
+- **Phase 6 risk-based tests** (16 Swift + 4 Vitest) — ExportIntegrityTests, BibliographyDropGuardTests, find-replace annotation safety
+- **Vitest web test suite** (52 tests) — citation parsing, annotation parsing, footnote parsing, find-replace regex; set up Vitest 2.x in web/ monorepo
+
+### Changed
+
+- **TestFixtureFactory extraction** — moved `createTestDatabase`, `fetchBlocks`, `getProjectId`, `headingBlocks` from 11 test files into shared static methods (~170 lines dedup)
+- **Source refactors for testability** — exported `annotationRegex`/`taskCheckboxRegex` from annotation-plugin.ts, `footnoteRefRegex` from footnote-plugin.ts, extracted `buildSearchRegex()` from find-replace.ts
+
+### Fixed
+
+- **testEditorModeToggle** — query buttons instead of staticTexts; scoped to verifiable state (toggle depends on WebView async chain unavailable in XCUITest)
+
 ## [0.2.84] - 2026-03-17
 
 ### Added
