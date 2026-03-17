@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **Tier 1 unit test suite** — SectionReconcilerTests, ContentStateMachineTests, ZoomDataIntegrityTests, BlockReorderIntegrityTests, BlockRoundtripTests
+- **Test infrastructure** — TestFixtureFactory, rich test fixture with parsed blocks, FixtureGeneratorTests
+- **Pre-commit merge-check script** and install-hooks script for CI/CD gating
+
+### Changed
+
+- **Replaced Xcode MCP with XcodeBuildMCP** across documentation, settings, and hooks
+- **Updated test documentation** (running-tests.md, testing-architecture.md)
+
+### Fixed
+
+- **Test fixture block population** — fixture now parses markdown into blocks (was only storing raw markdown)
+- **Test signing for CLI execution** — CODE_SIGN_IDENTITY override for xcodebuild without Xcode GUI
+
 ## [0.2.83] - 2026-03-17
 
 ### Added
