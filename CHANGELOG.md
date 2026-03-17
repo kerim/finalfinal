@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **MarkdownContentView** — new shared SwiftUI component for rendering markdown previews with fenced code block support (monospace font, background), inline formatting, and heading styles
+- **Version history comparison mode improvements** — sidebar deltas now respond to "vs Current / vs Previous" picker; per-section word deltas shown in backup column; new sections show full count as positive delta
+
+### Changed
+
+- **Version history redesign** — redesigned version history window and sheet with improved layout: matched header button heights (.bordered/.small), increased header breathing room, tightened section row spacing (VStack 8→4, vertical padding 8→6), hidden redundant Filter label
+- **Build process** — updated build process so Chrome always loads; added build phases in project.yml
+- **Documentation reorganized** — split monolithic lesson files into focused sub-files with INDEX.md navigation; cleaned up old plans; restructured editor communication docs
+
+### Fixed
+
+- **Unstable SwiftUI IDs** — `MarkdownElement.lineBreak` now carries a stable index instead of generating a new UUID on every access, which defeated SwiftUI diffing
+- **O(n²) snapshot list performance** — `SnapshotRowView` now receives precomputed `snapshotIndex` via lookup map, eliminating O(n) `firstIndex(where:)` per row
+- **Duplicated backup analysis** — extracted `computeBackupAnalysis()` shared helper, eliminating duplication between Window and Sheet views
+
 ## [0.2.82] - 2026-03-15
 
 ### Fixed
