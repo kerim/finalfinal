@@ -89,9 +89,9 @@ else
 fi
 
 # ─────────────────────────────────────────────
-# Step 2: Tier 1 — Unit Tests (Silent Killers)
+# Step 2: Tier 1 + Tier 2 — Unit Tests (Silent Killers + Visible Breakage)
 # ─────────────────────────────────────────────
-print_header "Step 2/3: Tier 1 — Unit Tests (Silent Killers)"
+print_header "Step 2/3: Tier 1 + Tier 2 — Unit Tests"
 
 cd "$PROJECT_DIR"
 start_time=$(date +%s)
