@@ -14,7 +14,6 @@ struct VersionHistoryWindow: View {
     @Environment(VersionHistoryCoordinator.self) var coordinator
 
     @State var snapshots: [Snapshot] = []
-    @State var snapshotItems: [SnapshotListItem] = []
     @State var selectedSnapshotId: String?
     @State var selectedSnapshotSections: [SnapshotSection] = []
     @State var showNamedOnly = false
@@ -37,11 +36,11 @@ struct VersionHistoryWindow: View {
     /// Track if the project was closed while window is open
     @State var projectClosed = false
 
-    private var filteredSnapshots: [SnapshotListItem] {
+    private var filteredSnapshots: [Snapshot] {
         if showNamedOnly {
-            return snapshotItems.filter { $0.snapshot.isNamed }
+            return snapshots.filter { $0.isNamed }
         }
-        return snapshotItems
+        return snapshots
     }
 
     private var selectedSnapshot: Snapshot? {
@@ -54,8 +53,8 @@ struct VersionHistoryWindow: View {
         coordinator.database != nil && coordinator.projectId != nil && !projectClosed
     }
 
-    /// Compute combined analysis (change types + word deltas) for the backup column
-    private var backupAnalysis: (changes: [String: SectionChangeType], wordDeltas: [String: Int]) {
+    /// Compute change types for the backup column based on comparison mode
+    private var backupChangeTypes: [String: SectionChangeType] {
         let displayed = selectedSnapshotSections.map { SnapshotSectionViewModel(from: $0) }
         let comparison: [SnapshotSectionViewModel]
         switch comparisonMode {
@@ -64,17 +63,7 @@ struct VersionHistoryWindow: View {
         case .vsPrevious:
             comparison = previousSnapshotSections.map { SnapshotSectionViewModel(from: $0) }
         }
-        return computeSectionAnalysis(displayed: displayed, comparison: comparison)
-    }
-
-    /// Current document word count for sidebar comparison
-    private var currentWordCount: Int {
-        coordinator.currentSections.reduce(0) { $0 + $1.wordCount }
-    }
-
-    /// Current document section count for sidebar comparison
-    private var currentSectionCount: Int {
-        coordinator.currentSections.count
+        return computeSectionChanges(displayed: displayed, comparison: comparison)
     }
 
     var body: some View {
@@ -143,31 +132,48 @@ struct VersionHistoryWindow: View {
 
     private var headerView: some View {
         HStack {
-            Text("Version History")
-                .font(.headline)
-                .foregroundStyle(themeManager.currentTheme.sidebarText)
+            // Filter toggle
+            Picker("Filter", selection: $showNamedOnly) {
+                Text("All versions").tag(false)
+                Text("Named saves only").tag(true)
+            }
+            .pickerStyle(.segmented)
+            .frame(width: 200)
+
+            // Comparison mode picker (only when snapshot selected)
+            if selectedSnapshot != nil {
+                Spacer().frame(width: 32)
+
+                Picker("Compare", selection: $comparisonMode) {
+                    ForEach(ComparisonMode.allCases, id: \.self) { mode in
+                        Text(mode.rawValue).tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 160)
+            }
 
             Spacer()
 
+            // Restore All button (only when snapshot selected and project open)
             if selectedSnapshot != nil && !projectClosed {
                 Button {
                     showFullRestoreConfirmation = true
                 } label: {
                     Label("Restore All", systemImage: "arrow.uturn.backward.circle")
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
+                .buttonStyle(.borderedProminent)
+
+                Divider().frame(height: 16)
             }
 
             Button("Close") {
                 dismissWindow(id: "version-history")
             }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
             .keyboardShortcut(.escape, modifiers: [])
         }
         .padding(.horizontal)
-        .padding(.vertical, 6)
+        .padding(.vertical, 4)
         .background(themeManager.currentTheme.sidebarBackground)
     }
 
@@ -176,8 +182,7 @@ struct VersionHistoryWindow: View {
     private var mainContentView: some View {
         GeometryReader { geometry in
             let _ = { // swiftlint:disable:this redundant_discardable_let
-                DebugLog.log(.lifecycle,
-                    "[VersionHistory] mainContent: current=\(coordinator.currentSections.count), backup=\(selectedSnapshotSections.count)")
+                DebugLog.log(.lifecycle, "[VersionHistory] mainContentView: current=\(coordinator.currentSections.count), backup=\(selectedSnapshotSections.count)")
             }()
             let versionListWidth = min(geometry.size.width * 0.15, 200)
             let remainingWidth = geometry.size.width - versionListWidth
@@ -188,15 +193,11 @@ struct VersionHistoryWindow: View {
                 VersionListView(
                     snapshots: filteredSnapshots,
                     selectedSnapshotId: $selectedSnapshotId,
-                    showNamedOnly: $showNamedOnly,
                     onSelectSnapshot: { snapshotId in
                         Task {
                             await loadSnapshotSections(snapshotId: snapshotId)
                         }
-                    },
-                    comparisonMode: comparisonMode,
-                    currentWordCount: currentWordCount,
-                    currentSectionCount: currentSectionCount
+                    }
                 )
                 .frame(width: versionListWidth)
 
@@ -216,7 +217,6 @@ struct VersionHistoryWindow: View {
 
                 // Right: Selected backup (half of remaining)
                 if selectedSnapshot != nil {
-                    let analysis = backupAnalysis
                     DocumentPreviewView(
                         title: "Selected Backup",
                         sections: selectedSnapshotSections.map { SnapshotSectionViewModel(from: $0) },
@@ -229,29 +229,13 @@ struct VersionHistoryWindow: View {
                         onRestoreSection: { section, mode in
                             handleRestoreRequest(section: section, mode: mode)
                         },
-                        changeTypes: analysis.changes,
-                        sectionWordDeltas: analysis.wordDeltas
-                    ) {
-                        Picker("Compare", selection: $comparisonMode) {
-                            ForEach(ComparisonMode.allCases, id: \.self) { mode in
-                                Text(mode.rawValue).tag(mode)
-                            }
-                        }
-                        .pickerStyle(.segmented)
-                        .frame(width: 160)
-                    }
+                        changeTypes: backupChangeTypes
+                    )
                     .frame(width: documentWidth)
                 } else {
                     placeholderView
                         .frame(width: documentWidth)
                 }
-            }
-        }
-        .onChange(of: showNamedOnly) { _, _ in
-            // Clear stale selection when filter changes
-            if let selectedId = selectedSnapshotId,
-               !filteredSnapshots.contains(where: { $0.snapshot.id == selectedId }) {
-                selectedSnapshotId = nil
             }
         }
     }

@@ -26,55 +26,36 @@ func computeSectionChanges(
     displayed: [SnapshotSectionViewModel],
     comparison: [SnapshotSectionViewModel]
 ) -> [String: SectionChangeType] {
-    computeSectionAnalysis(displayed: displayed, comparison: comparison).changes
-}
-
-/// Combined section analysis returning both change types and word deltas in one pass
-func computeSectionAnalysis(
-    displayed: [SnapshotSectionViewModel],
-    comparison: [SnapshotSectionViewModel]
-) -> (changes: [String: SectionChangeType], wordDeltas: [String: Int]) {
     // Primary: match by originalSectionId
     let compMapById = Dictionary(
         comparison.compactMap { vm in
-            vm.originalSectionId.map { ($0, vm) }
+            vm.originalSectionId.map { ($0, vm.markdownContent) }
         },
         uniquingKeysWith: { first, _ in first }
     )
     // Fallback: match by (title, headerLevel) for old snapshots without originalSectionId
     let compMapByTitle = Dictionary(
-        comparison.map { ("\($0.title)|\($0.headerLevel)", $0) },
+        comparison.map { ("\($0.title)|\($0.headerLevel)", $0.markdownContent) },
         uniquingKeysWith: { first, _ in first }
     )
 
     var changes: [String: SectionChangeType] = [:]
-    var wordDeltas: [String: Int] = [:]
     for section in displayed {
-        if let origId = section.originalSectionId, let compVM = compMapById[origId] {
+        if let origId = section.originalSectionId, let compContent = compMapById[origId] {
             // Matched by ID
-            if compVM.markdownContent != section.markdownContent {
+            if compContent != section.markdownContent {
                 changes[section.id] = .modified
             }
-            let delta = section.wordCount - compVM.wordCount
-            if delta != 0 {
-                wordDeltas[section.id] = delta
-            }
-        } else if let compVM = compMapByTitle["\(section.title)|\(section.headerLevel)"] {
+        } else if let compContent = compMapByTitle["\(section.title)|\(section.headerLevel)"] {
             // Fallback: matched by title+level (for old snapshots or decode failures)
-            if compVM.markdownContent != section.markdownContent {
+            if compContent != section.markdownContent {
                 changes[section.id] = .modified
-            }
-            let delta = section.wordCount - compVM.wordCount
-            if delta != 0 {
-                wordDeltas[section.id] = delta
             }
         } else {
             changes[section.id] = .new
-            // New section — show full word count as delta
-            wordDeltas[section.id] = section.wordCount
         }
     }
-    return (changes, wordDeltas)
+    return changes
 }
 
 /// View model for displaying snapshot sections in preview
@@ -124,8 +105,6 @@ struct DocumentPreviewView<TrailingHeader: View>: View {
     var onRestoreSection: ((SnapshotSectionViewModel, SectionRestoreMode) -> Void)?
     /// Section change types for highlighting
     var changeTypes: [String: SectionChangeType] = [:]
-    /// Per-section word deltas for backup column
-    var sectionWordDeltas: [String: Int] = [:]
     /// Trailing content for the header area
     let trailingHeader: TrailingHeader
 
@@ -142,7 +121,6 @@ struct DocumentPreviewView<TrailingHeader: View>: View {
         showFullContent: Bool = false,
         onRestoreSection: ((SnapshotSectionViewModel, SectionRestoreMode) -> Void)? = nil,
         changeTypes: [String: SectionChangeType] = [:],
-        sectionWordDeltas: [String: Int] = [:],
         @ViewBuilder trailingHeader: () -> TrailingHeader
     ) {
         self.title = title
@@ -153,7 +131,6 @@ struct DocumentPreviewView<TrailingHeader: View>: View {
         self.showFullContent = showFullContent
         self.onRestoreSection = onRestoreSection
         self.changeTypes = changeTypes
-        self.sectionWordDeltas = sectionWordDeltas
         self.trailingHeader = trailingHeader()
     }
 
@@ -170,8 +147,8 @@ struct DocumentPreviewView<TrailingHeader: View>: View {
                 Spacer()
                 trailingHeader
             }
-            .frame(height: 34)
             .padding(.horizontal)
+            .padding(.vertical, 4)
             .background(themeManager.currentTheme.sidebarBackground)
 
             Divider()
@@ -188,7 +165,6 @@ struct DocumentPreviewView<TrailingHeader: View>: View {
                                 showRestoreButtons: showRestoreButtons,
                                 showFullContent: showFullContent,
                                 changeType: changeTypes[section.id],
-                                wordDelta: sectionWordDeltas[section.id],
                                 onTap: {
                                     onSectionTap?(section)
                                 },
@@ -231,8 +207,7 @@ extension DocumentPreviewView where TrailingHeader == EmptyView {
         showRestoreButtons: Bool = false,
         showFullContent: Bool = false,
         onRestoreSection: ((SnapshotSectionViewModel, SectionRestoreMode) -> Void)? = nil,
-        changeTypes: [String: SectionChangeType] = [:],
-        sectionWordDeltas: [String: Int] = [:]
+        changeTypes: [String: SectionChangeType] = [:]
     ) {
         self.title = title
         self.sections = sections
@@ -242,7 +217,6 @@ extension DocumentPreviewView where TrailingHeader == EmptyView {
         self.showFullContent = showFullContent
         self.onRestoreSection = onRestoreSection
         self.changeTypes = changeTypes
-        self.sectionWordDeltas = sectionWordDeltas
         self.trailingHeader = EmptyView()
     }
 }
@@ -255,7 +229,6 @@ struct SectionPreviewRow: View {
     let showRestoreButtons: Bool
     let showFullContent: Bool
     let changeType: SectionChangeType?
-    let wordDelta: Int?
     let onTap: () -> Void
     let onRestore: (SectionRestoreMode) -> Void
 
@@ -266,7 +239,6 @@ struct SectionPreviewRow: View {
         showRestoreButtons: Bool,
         showFullContent: Bool = false,
         changeType: SectionChangeType? = nil,
-        wordDelta: Int? = nil,
         onTap: @escaping () -> Void,
         onRestore: @escaping (SectionRestoreMode) -> Void
     ) {
@@ -276,7 +248,6 @@ struct SectionPreviewRow: View {
         self.showRestoreButtons = showRestoreButtons
         self.showFullContent = showFullContent
         self.changeType = changeType
-        self.wordDelta = wordDelta
         self.onTap = onTap
         self.onRestore = onRestore
     }
@@ -284,50 +255,66 @@ struct SectionPreviewRow: View {
     @Environment(ThemeManager.self) private var themeManager
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 8) {
             // Header
-            HStack(alignment: .firstTextBaseline) {
-                // Change dot indicator
-                if let change = changeType {
-                    Circle()
-                        .fill(change == .new ? Color.green : themeManager.currentTheme.accentColor)
-                        .frame(width: 6, height: 6)
-                        .offset(y: 2)
-                }
+            HStack {
+                // Header level indicator (flat display, no indent)
+                Text("H\(section.headerLevel)")
+                    .font(.caption2)
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 2)
+                    .background(themeManager.currentTheme.accentColor.opacity(0.2))
+                    .cornerRadius(4)
 
-                // Title with compact typography
+                // Title
                 Text(section.title)
-                    .font(.sectionTitleCompact(level: section.headerLevel))
+                    .font(.headline)
                     .foregroundStyle(themeManager.currentTheme.editorText)
+
+                // Change badge
+                if let change = changeType {
+                    Text(change == .new ? "New" : "Modified")
+                        .font(.caption2)
+                        .fontWeight(.medium)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(
+                            Capsule()
+                                .fill(change == .new ? Color.green.opacity(0.2) : themeManager.currentTheme.accentColor.opacity(0.2))
+                        )
+                        .foregroundStyle(change == .new ? Color.green : themeManager.currentTheme.accentColor)
+                }
 
                 Spacer()
 
-                // Restore buttons (icon-only on hover)
+                // Word count
+                Text("\(section.wordCount) words")
+                    .font(.caption)
+                    .foregroundStyle(themeManager.currentTheme.editorTextSecondary)
+
+                // Restore buttons (shown on hover)
                 if showRestoreButtons && isHovered {
                     restoreButtons
                 }
             }
 
-            // Content preview (full or truncated)
+            // Content preview (full or truncated, flat display)
             if showFullContent {
+                // Show full markdown content (excluding header line)
                 if let fullContent = fullContentText {
-                    MarkdownContentView(markdown: fullContent)
+                    Text(fullContent)
+                        .font(.body)
+                        .foregroundStyle(themeManager.currentTheme.editorTextSecondary)
+                        .textSelection(.enabled)
                 }
             } else if let preview = contentPreview {
-                Text(MarkdownUtils.stripMarkdownSyntax(from: preview))
+                Text(preview)
                     .font(.body)
                     .foregroundStyle(themeManager.currentTheme.editorTextSecondary)
                     .lineLimit(3)
             }
-
-            // Word delta (backup column only — no delta means current column, hide count)
-            if let delta = wordDelta {
-                Text(delta > 0 ? "+\(delta) words" : "\(delta) words")
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(themeManager.currentTheme.statusColors.deltaColor(for: delta))
-            }
         }
-        .padding(.vertical, 6)
+        .padding(.vertical, 8)
         .padding(.horizontal, 4)
         .padding(.leading, changeType != nil ? 4 : 0)
         .background(
@@ -412,7 +399,6 @@ struct SectionPreviewRow: View {
                     .font(.caption)
             }
             .buttonStyle(.bordered)
-            .controlSize(.small)
             .help("Replace current section with this backup")
 
             Button {
@@ -422,7 +408,6 @@ struct SectionPreviewRow: View {
                     .font(.caption)
             }
             .buttonStyle(.bordered)
-            .controlSize(.small)
             .help("Insert as new section at end of document")
         }
     }
