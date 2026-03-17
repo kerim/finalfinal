@@ -35,7 +35,6 @@
 		270928CAC5EB8D7CEE22A39E /* FocusModeSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0766B65EF63ED8A07F52CDAC /* FocusModeSettings.swift */; };
 		27788FB6CF7677E47103E1D6 /* EditorViewState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 31C89F3A4269349290CD8F03 /* EditorViewState.swift */; };
 		2802A3278F0A84FA184FCCBD /* VersionHistoryWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6BDEEE9C10B3CB00393F7E53 /* VersionHistoryWindow.swift */; };
-		2A2E2CE39E47E8C2F1853809 /* content.sqlite-wal in Resources */ = {isa = PBXBuildFile; fileRef = 098F9C7E9245C4968DAD750A /* content.sqlite-wal */; };
 		2A5EB4F121ED5781FDD710A7 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AD4BB30F275702838E8D3F8 /* AppDelegate.swift */; };
 		2A991A819263234EDC320A38 /* FootnoteSyncService.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF34C45C645EA726101A81D6 /* FootnoteSyncService.swift */; };
 		340253991038A90C28898154 /* DocumentPreviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 944062D49633F32557CC7161 /* DocumentPreviewView.swift */; };
@@ -98,7 +97,6 @@
 		7DFBEF78C3DD381D347A324C /* Database+BlocksObservation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8787EE28839E44DAAF698741 /* Database+BlocksObservation.swift */; };
 		7ECDA8650F5A11B84724DF8F /* EditorCommands.swift in Sources */ = {isa = PBXBuildFile; fileRef = 03BD491F2B87E03E136E9140 /* EditorCommands.swift */; };
 		7F09171B841269E80B7A71A6 /* KeychainHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E573D126ADEE441215EE597 /* KeychainHelper.swift */; };
-		7FDDD43BC669C264FB49866A /* content.sqlite-shm in Resources */ = {isa = PBXBuildFile; fileRef = BF0FD53F9E172EB24A356844 /* content.sqlite-shm */; };
 		802A2E3DC7C417EF81173AF8 /* FullScreenManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = DE4DE8D59CFC464F6E7D5123 /* FullScreenManager.swift */; };
 		80DDD68802F44504ACF653A7 /* StringExtensions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10BA92FC730511D06959AEDB /* StringExtensions.swift */; };
 		8384B00E2738A39290BDCB1B /* ThemeManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27856E54C5B28F839E83F154 /* ThemeManager.swift */; };
@@ -225,7 +223,6 @@
 		0513B2CBDCA0C3202CEDE7E4 /* OutlineSidebar+Components.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "OutlineSidebar+Components.swift"; sourceTree = "<group>"; };
 		0766B65EF63ED8A07F52CDAC /* FocusModeSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FocusModeSettings.swift; sourceTree = "<group>"; };
 		07DB82121B58A51D0946666A /* ContentView+ProjectLifecycle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ContentView+ProjectLifecycle.swift"; sourceTree = "<group>"; };
-		098F9C7E9245C4968DAD750A /* content.sqlite-wal */ = {isa = PBXFileReference; path = "content.sqlite-wal"; sourceTree = "<group>"; };
 		0CEC9B25AB24040A17CC1589 /* HashBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HashBar.swift; sourceTree = "<group>"; };
 		0E843650744C2F13D1618667 /* FinalFinalTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FinalFinalTests.swift; sourceTree = "<group>"; };
 		0F398C30DDF6EB57FF14A96D /* ContentView+SectionManagement.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ContentView+SectionManagement.swift"; sourceTree = "<group>"; };
@@ -352,7 +349,6 @@
 		BA0FC3BCB857DBEFB0FBA39F /* BlockRoundtripTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockRoundtripTests.swift; sourceTree = "<group>"; };
 		BC27954DE76B2ADD62BBFF00 /* Section.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Section.swift; sourceTree = "<group>"; };
 		BEC20B55C260FCF5460E4E23 /* ExportPreferencesPane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportPreferencesPane.swift; sourceTree = "<group>"; };
-		BF0FD53F9E172EB24A356844 /* content.sqlite-shm */ = {isa = PBXFileReference; path = "content.sqlite-shm"; sourceTree = "<group>"; };
 		BF41CB39EB2C5BD4E30A2CDA /* StatusBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusBar.swift; sourceTree = "<group>"; };
 		C193BFD9D30D088D972DBBDB /* FootnoteSyncTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FootnoteSyncTests.swift; sourceTree = "<group>"; };
 		C7DACB449A648403C7CCDD3F /* GitInfo.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitInfo.swift; sourceTree = "<group>"; };
@@ -503,8 +499,6 @@
 			isa = PBXGroup;
 			children = (
 				342DA0CDD64AC4355DCB9DA7 /* content.sqlite */,
-				BF0FD53F9E172EB24A356844 /* content.sqlite-shm */,
-				098F9C7E9245C4968DAD750A /* content.sqlite-wal */,
 			);
 			path = "test-fixture.ff";
 			sourceTree = "<group>";
@@ -898,6 +892,7 @@
 						TestTargetID = 4A3B93CDDB27C36925E7EC59;
 					};
 					D529D3B3388A2FCF4CDD62EF = {
+						DevelopmentTeam = HBHZWD24V7;
 						ProvisioningStyle = Manual;
 					};
 				};
@@ -945,8 +940,6 @@
 			buildActionMask = 2147483647;
 			files = (
 				A260B9AEA58D00DA58E332AD /* content.sqlite in Resources */,
-				7FDDD43BC669C264FB49866A /* content.sqlite-shm in Resources */,
-				2A2E2CE39E47E8C2F1853809 /* content.sqlite-wal in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1352,7 +1345,7 @@
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 0.2.83;
+				CURRENT_PROJECT_VERSION = 0.2.84;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "final final/Info.plist";
@@ -1378,7 +1371,8 @@
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 0.2.83;
+				CURRENT_PROJECT_VERSION = 0.2.84;
+				DEVELOPMENT_TEAM = HBHZWD24V7;
 				ENABLE_HARDENED_RUNTIME = YES;
 				INFOPLIST_FILE = "QuickLook Extension/Info.plist";
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -1408,7 +1402,7 @@
 				CODE_SIGN_IDENTITY = "Developer ID Application";
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 0.2.83;
+				CURRENT_PROJECT_VERSION = 0.2.84;
 				DEVELOPMENT_TEAM = HBHZWD24V7;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -1435,7 +1429,7 @@
 				CODE_SIGN_IDENTITY = "Developer ID Application";
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 0.2.83;
+				CURRENT_PROJECT_VERSION = 0.2.84;
 				DEVELOPMENT_TEAM = HBHZWD24V7;
 				ENABLE_HARDENED_RUNTIME = YES;
 				INFOPLIST_FILE = "QuickLook Extension/Info.plist";
