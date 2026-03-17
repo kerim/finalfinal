@@ -27,6 +27,18 @@ extension Font {
             return .system(size: 14, weight: .bold)
         }
     }
+    /// Compact variant for version history previews
+    /// Smaller scale preserves hierarchy without dominating
+    static func sectionTitleCompact(level: Int) -> Font {
+        switch level {
+        case 0, 1: return .system(size: 20, weight: .light)
+        case 2: return .system(size: 18, weight: .regular)
+        case 3: return .system(size: 16, weight: .regular)
+        case 4: return .system(size: 15, weight: .medium)
+        case 5: return .system(size: 14, weight: .semibold)
+        default: return .system(size: 13, weight: .bold)
+        }
+    }
 }
 
 #Preview {

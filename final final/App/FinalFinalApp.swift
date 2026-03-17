@@ -102,6 +102,7 @@ struct FinalFinalApp: App {
         Window("Version History", id: "version-history") {
             VersionHistoryWindow()
                 .environment(ThemeManager.shared)
+                .environment(GoalColorSettingsManager.shared)
                 .environment(versionHistoryCoordinator)
         }
         .defaultSize(width: 1200, height: 800)
