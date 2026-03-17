@@ -147,8 +147,8 @@ struct DocumentPreviewView<TrailingHeader: View>: View {
                 Spacer()
                 trailingHeader
             }
+            .frame(height: 34)
             .padding(.horizontal)
-            .padding(.vertical, 4)
             .background(themeManager.currentTheme.sidebarBackground)
 
             Divider()
@@ -257,62 +257,44 @@ struct SectionPreviewRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             // Header
-            HStack {
-                // Header level indicator (flat display, no indent)
-                Text("H\(section.headerLevel)")
-                    .font(.caption2)
-                    .padding(.horizontal, 4)
-                    .padding(.vertical, 2)
-                    .background(themeManager.currentTheme.accentColor.opacity(0.2))
-                    .cornerRadius(4)
-
-                // Title
-                Text(section.title)
-                    .font(.headline)
-                    .foregroundStyle(themeManager.currentTheme.editorText)
-
-                // Change badge
+            HStack(alignment: .firstTextBaseline) {
+                // Change dot indicator
                 if let change = changeType {
-                    Text(change == .new ? "New" : "Modified")
-                        .font(.caption2)
-                        .fontWeight(.medium)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(
-                            Capsule()
-                                .fill(change == .new ? Color.green.opacity(0.2) : themeManager.currentTheme.accentColor.opacity(0.2))
-                        )
-                        .foregroundStyle(change == .new ? Color.green : themeManager.currentTheme.accentColor)
+                    Circle()
+                        .fill(change == .new ? Color.green : themeManager.currentTheme.accentColor)
+                        .frame(width: 6, height: 6)
+                        .offset(y: 2)
                 }
+
+                // Title with compact typography
+                Text(section.title)
+                    .font(.sectionTitleCompact(level: section.headerLevel))
+                    .foregroundStyle(themeManager.currentTheme.editorText)
 
                 Spacer()
 
-                // Word count
-                Text("\(section.wordCount) words")
-                    .font(.caption)
-                    .foregroundStyle(themeManager.currentTheme.editorTextSecondary)
-
-                // Restore buttons (shown on hover)
+                // Restore buttons (icon-only on hover)
                 if showRestoreButtons && isHovered {
                     restoreButtons
                 }
             }
 
-            // Content preview (full or truncated, flat display)
+            // Content preview (full or truncated)
             if showFullContent {
-                // Show full markdown content (excluding header line)
                 if let fullContent = fullContentText {
-                    Text(fullContent)
-                        .font(.body)
-                        .foregroundStyle(themeManager.currentTheme.editorTextSecondary)
-                        .textSelection(.enabled)
+                    MarkdownContentView(markdown: fullContent)
                 }
             } else if let preview = contentPreview {
-                Text(preview)
+                Text(MarkdownUtils.stripMarkdownSyntax(from: preview))
                     .font(.body)
                     .foregroundStyle(themeManager.currentTheme.editorTextSecondary)
                     .lineLimit(3)
             }
+
+            // Word count below content
+            Text("\(section.wordCount) words")
+                .font(.caption)
+                .foregroundStyle(themeManager.currentTheme.editorTextSecondary)
         }
         .padding(.vertical, 8)
         .padding(.horizontal, 4)
@@ -399,6 +381,7 @@ struct SectionPreviewRow: View {
                     .font(.caption)
             }
             .buttonStyle(.bordered)
+            .controlSize(.small)
             .help("Replace current section with this backup")
 
             Button {
@@ -408,6 +391,7 @@ struct SectionPreviewRow: View {
                     .font(.caption)
             }
             .buttonStyle(.bordered)
+            .controlSize(.small)
             .help("Insert as new section at end of document")
         }
     }

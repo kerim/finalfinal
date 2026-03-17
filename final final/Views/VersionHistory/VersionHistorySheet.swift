@@ -21,6 +21,7 @@ struct VersionHistorySheet: View {
     let onRestoreComplete: () -> Void
 
     @State var snapshots: [Snapshot] = []
+    @State var snapshotItems: [SnapshotListItem] = []
     @State var selectedSnapshotId: String?
     @State var selectedSnapshotSections: [SnapshotSection] = []
     @State private var showNamedOnly = false
@@ -40,11 +41,11 @@ struct VersionHistorySheet: View {
     @State var showFullRestoreConfirmation = false
     @State var createSafetyBackup = true
 
-    private var filteredSnapshots: [Snapshot] {
+    private var filteredSnapshots: [SnapshotListItem] {
         if showNamedOnly {
-            return snapshots.filter { $0.isNamed }
+            return snapshotItems.filter { $0.snapshot.isNamed }
         }
-        return snapshots
+        return snapshotItems
     }
 
     private var selectedSnapshot: Snapshot? {
@@ -121,20 +122,23 @@ struct VersionHistorySheet: View {
 
             Spacer()
 
-            // Filter toggle
-            Picker("Filter", selection: $showNamedOnly) {
-                Text("All versions").tag(false)
-                Text("Named saves only").tag(true)
+            if selectedSnapshot != nil {
+                Button {
+                    showFullRestoreConfirmation = true
+                } label: {
+                    Label("Restore All", systemImage: "arrow.uturn.backward.circle")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
             }
-            .pickerStyle(.segmented)
-            .frame(width: 200)
 
             Button("Done") {
                 dismiss()
             }
             .keyboardShortcut(.escape, modifiers: [])
         }
-        .padding()
+        .padding(.horizontal)
+        .padding(.vertical, 4)
     }
 
     // MARK: - Main Content
@@ -145,6 +149,7 @@ struct VersionHistorySheet: View {
             VersionListView(
                 snapshots: filteredSnapshots,
                 selectedSnapshotId: $selectedSnapshotId,
+                showNamedOnly: $showNamedOnly,
                 onSelectSnapshot: { snapshotId in
                     Task {
                         await loadSnapshotSections(snapshotId: snapshotId)
@@ -191,6 +196,13 @@ struct VersionHistorySheet: View {
             } else {
                 placeholderView
                     .frame(minWidth: 250)
+            }
+        }
+        .onChange(of: showNamedOnly) { _, _ in
+            // Clear stale selection when filter changes
+            if let selectedId = selectedSnapshotId,
+               !filteredSnapshots.contains(where: { $0.snapshot.id == selectedId }) {
+                selectedSnapshotId = nil
             }
         }
     }

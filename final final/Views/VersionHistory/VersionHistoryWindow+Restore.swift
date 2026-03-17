@@ -116,6 +116,7 @@ extension VersionHistoryWindow {
 
         do {
             snapshots = try database.fetchSnapshots(projectId: projectId)
+            snapshotItems = snapshots.map { SnapshotListItem(snapshot: $0) }
             DebugLog.log(.lifecycle, "[VersionHistory] loadSnapshots: \(snapshots.count) snapshots found")
             DebugLog.log(.lifecycle, "[VersionHistory] coordinator.currentSections: \(coordinator.currentSections.count)")
             if let firstSnapshot = snapshots.first {
