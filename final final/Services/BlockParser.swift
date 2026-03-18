@@ -99,6 +99,7 @@ enum BlockParser {
             // Parse image metadata from markdown for image blocks
             var imageSrc: String?
             var imageAlt: String?
+            var imageWidth: Int?
             if blockType == .image {
                 if let imageMatch = trimmed.range(
                     of: #"!\[([^\]]*)\]\(([^)]+)\)"#, options: .regularExpression
@@ -109,6 +110,11 @@ enum BlockParser {
                         imageAlt = String(matchStr[altRange])
                         imageSrc = String(matchStr[srcRange])
                     }
+                }
+                // Parse {width=N%} from Pandoc attributes
+                imageWidth = Self.parseImageWidthPercent(from: trimmed)
+                if imageWidth != nil {
+                    DebugLog.log(.image, "[BlockParser] Parsed width=\(imageWidth ?? -1) from fragment: \(trimmed.prefix(60))")
                 }
             }
 
@@ -125,6 +131,7 @@ enum BlockParser {
                 wordCount: wordCount,
                 imageSrc: imageSrc,
                 imageAlt: imageAlt,
+                imageWidth: imageWidth,
                 isBibliography: isBibliography,
                 isNotes: isNotes,
                 isPseudoSection: isPseudoSection
@@ -486,6 +493,18 @@ enum BlockParser {
             .joined(separator: "\n\n")
 
         return result
+    }
+    /// Extract integer percentage from a `{width=N%}` Pandoc attribute in a markdown fragment.
+    /// Returns nil if no width attribute is present.
+    static func parseImageWidthPercent(from fragment: String) -> Int? {
+        guard let attrMatch = fragment.range(
+            of: #"\{[^}]*width=(\d+)%[^}]*\}"#, options: .regularExpression
+        ) else { return nil }
+        let attrStr = String(fragment[attrMatch])
+        guard let numRange = attrStr.range(
+            of: #"(?<=width=)\d+(?=%)"#, options: .regularExpression
+        ) else { return nil }
+        return Int(attrStr[numRange])
     }
 }
 

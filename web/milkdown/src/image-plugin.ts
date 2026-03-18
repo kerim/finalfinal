@@ -32,10 +32,30 @@ const remarkFigurePlugin = $remark('figure', () => () => (tree: Root) => {
       }
     }
 
-    // Transform paragraphs containing a single image with media/ URL
-    if (node.type === 'paragraph' && node.children?.length === 1) {
+    // Transform paragraphs containing an image with media/ URL
+    // With {width=N%} appended, remark parses as [image, text("{width=50%}")] = 2 children
+    if (node.type === 'paragraph' && node.children?.length >= 1) {
       const child = node.children[0];
       if (child.type === 'image' && child.url?.startsWith('media/')) {
+        // Guard: only allow extra children that are {width=N%} attribute text
+        if (node.children.length > 1) {
+          const extra = node.children.slice(1);
+          const allAttrs = extra.every(
+            (c: any) => c.type === 'text' && /^\s*\{[^}]*width=\d+%[^}]*\}\s*$/.test(c.value?.trim() ?? '')
+          );
+          if (!allAttrs) return; // Not a figure, skip
+        }
+
+        // Parse width from trailing attribute text node
+        let width: number | null = null;
+        if (node.children.length > 1) {
+          const lastChild = node.children[node.children.length - 1];
+          if (lastChild.type === 'text') {
+            const m = lastChild.value?.match(/\{[^}]*width=(\d+)%[^}]*\}/);
+            if (m) width = parseInt(m[1], 10);
+          }
+        }
+
         // Check for preceding caption comment
         let caption = '';
         if (index !== undefined && index > 0 && captionMap.has(index - 1)) {
@@ -52,6 +72,7 @@ const remarkFigurePlugin = $remark('figure', () => () => (tree: Root) => {
           src: child.url,
           alt: child.alt || '',
           caption,
+          width,
         };
         delete node.children;
       }
@@ -129,6 +150,7 @@ const figureNode = $node('figure', () => ({
         src: node.data?.src || '',
         alt: node.data?.alt || '',
         caption: node.data?.caption || '',
+        width: node.data?.width ?? null,
       });
     },
   },
@@ -154,6 +176,13 @@ const figureNode = $node('figure', () => ({
         alt: node.attrs.alt || '',
         title: null,
       });
+      if (node.attrs.width) {
+        // MUST be inside paragraph, before closeNode() — placing it after closeNode()
+        // would emit phrasing content at document root, collapsing all block separators
+        state.addNode('text', undefined, undefined, {
+          value: `{width=${node.attrs.width}%}`,
+        });
+      }
       state.closeNode();
     },
   },
@@ -171,6 +200,8 @@ class FigureNodeView implements ProsemirrorNodeView {
   private isResizing = false;
   private startX = 0;
   private startWidth = 0;
+  private startContainerWidth = 0;
+  private resizeTooltip: HTMLElement | null = null;
 
   constructor(node: ProsemirrorNode, view: EditorView, getPos: () => number | undefined) {
     this.node = node;
@@ -181,7 +212,8 @@ class FigureNodeView implements ProsemirrorNodeView {
     if (isSourceModeEnabled()) {
       this.dom = document.createElement('div');
       this.dom.className = 'figure-source-mode';
-      this.dom.textContent = `![${node.attrs.alt || ''}](${node.attrs.src || ''})`;
+      const base = `![${node.attrs.alt || ''}](${node.attrs.src || ''})`;
+      this.dom.textContent = node.attrs.width ? `${base}{width=${node.attrs.width}%}` : base;
       this.img = document.createElement('img'); // placeholder, not displayed
       return;
     }
@@ -196,7 +228,7 @@ class FigureNodeView implements ProsemirrorNodeView {
     this.img.src = displaySrc;
     this.img.alt = node.attrs.alt || '';
     if (node.attrs.width) {
-      this.img.style.width = `${node.attrs.width}px`;
+      this.img.style.width = `${node.attrs.width}%`;
     } else {
       this.img.style.maxWidth = '100%';
     }
@@ -266,6 +298,16 @@ class FigureNodeView implements ProsemirrorNodeView {
     this.isResizing = true;
     this.startX = e.clientX;
     this.startWidth = this.img.offsetWidth;
+    this.startContainerWidth = this.dom.parentElement?.clientWidth || this.dom.offsetWidth;
+
+    // Create percentage tooltip
+    if (!this.resizeTooltip) {
+      this.resizeTooltip = document.createElement('div');
+      this.resizeTooltip.className = 'figure-resize-tooltip';
+      this.dom.appendChild(this.resizeTooltip);
+    }
+    this.resizeTooltip.style.display = 'block';
+
     document.addEventListener('mousemove', this.onResizeMove);
     document.addEventListener('mouseup', this.onResizeEnd);
     this.dom.classList.add('resizing');
@@ -275,7 +317,13 @@ class FigureNodeView implements ProsemirrorNodeView {
     if (!this.isResizing) return;
     const diff = e.clientX - this.startX;
     const newWidth = Math.max(50, this.startWidth + diff);
-    this.img.style.width = `${newWidth}px`;
+    const pct = Math.max(5, Math.round((newWidth / this.startContainerWidth) * 100));
+    this.img.style.width = `${pct}%`;
+
+    // Show percentage tooltip
+    if (this.resizeTooltip) {
+      this.resizeTooltip.textContent = `${pct}%`;
+    }
   };
 
   private onResizeEnd = (_e: MouseEvent) => {
@@ -285,28 +333,34 @@ class FigureNodeView implements ProsemirrorNodeView {
     document.removeEventListener('mouseup', this.onResizeEnd);
     this.dom.classList.remove('resizing');
 
-    const newWidth = this.img.offsetWidth;
+    // Hide tooltip
+    if (this.resizeTooltip) {
+      this.resizeTooltip.style.display = 'none';
+    }
+
+    // Read the percentage already applied during drag
+    const newPercent = Math.max(5, Math.round((this.img.offsetWidth / this.startContainerWidth) * 100));
+
     const blockId = this.resolveBlockId();
 
-    // Update ProseMirror node attrs (always — preserves width in the editor)
+    // Update ProseMirror node attrs with percentage
     const pos = this.getPos();
     if (pos !== undefined) {
       const tr = this.view.state.tr.setNodeMarkup(pos, undefined, {
         ...this.node.attrs,
-        width: newWidth,
+        width: newPercent,
       });
       this.view.dispatch(tr);
     }
 
-    // Send to Swift — retry if temp ID
+    // Send percentage to Swift — retry if temp ID
     if (blockId && !blockId.startsWith('temp-')) {
       window.webkit?.messageHandlers?.updateImageMeta?.postMessage({
         blockId,
-        width: newWidth,
+        width: newPercent,
       });
     } else {
-      // Temp or empty ID — retry after BlockSyncService confirms real ID (~2s poll)
-      const retryWidth = newWidth;
+      const retryWidth = newPercent;
       setTimeout(() => {
         const currentPos = this.getPos();
         if (currentPos === undefined) return;
@@ -414,7 +468,8 @@ class FigureNodeView implements ProsemirrorNodeView {
 
     // Source mode check
     if (isSourceModeEnabled()) {
-      this.dom.textContent = `![${node.attrs.alt || ''}](${node.attrs.src || ''})`;
+      const base = `![${node.attrs.alt || ''}](${node.attrs.src || ''})`;
+      this.dom.textContent = node.attrs.width ? `${base}{width=${node.attrs.width}%}` : base;
       return true;
     }
 
@@ -425,7 +480,7 @@ class FigureNodeView implements ProsemirrorNodeView {
     }
     this.img.alt = node.attrs.alt || '';
     if (node.attrs.width) {
-      this.img.style.width = `${node.attrs.width}px`;
+      this.img.style.width = `${node.attrs.width}%`;
     } else {
       this.img.style.maxWidth = '100%';
       this.img.style.width = '';

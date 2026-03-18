@@ -107,12 +107,12 @@ extension ProjectDatabase {
                             block.imageCaption = String(fullMatch[textRange])
                         }
                     }
-                    // Restore DB metadata (overwrites markdown caption if DB has one)
+                    // Gap-fill only: don't overwrite parser-extracted values with stale DB cache
                     if let meta = imageMetaBySrc[src] {
-                        if let width = meta.imageWidth {
+                        if block.imageWidth == nil, let width = meta.imageWidth {
                             block.imageWidth = width
                         }
-                        if let caption = meta.imageCaption {
+                        if block.imageCaption == nil, let caption = meta.imageCaption {
                             block.imageCaption = caption
                         }
                         imageMetaBySrc.removeValue(forKey: src)  // first-match-wins
@@ -231,11 +231,12 @@ extension ProjectDatabase {
                             block.imageCaption = String(fullMatch[textRange])
                         }
                     }
+                    // Gap-fill only: don't overwrite parser-extracted values with stale DB cache
                     if let meta = imageMetaBySrc[src] {
-                        if let width = meta.imageWidth {
+                        if block.imageWidth == nil, let width = meta.imageWidth {
                             block.imageWidth = width
                         }
-                        if let caption = meta.imageCaption {
+                        if block.imageCaption == nil, let caption = meta.imageCaption {
                             block.imageCaption = caption
                         }
                         imageMetaBySrc.removeValue(forKey: src)

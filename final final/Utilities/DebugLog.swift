@@ -21,6 +21,7 @@ enum DebugLog {
         case fileOps     // [FileOperations] file commands
         case backup      // [SnapshotService] [AutoBackupService]
         case data        // [Database+Blocks] [ProjectRepairService] data layer
+        case image       // [Image] width lifecycle tracing
     }
 
     /// Default: only lifecycle + zotero. Add categories here when debugging.
