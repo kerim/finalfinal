@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.86] - 2026-03-18
+
 ### Fixed
 
 - **Persistent image size reset** — image width was stored only in a DB side-channel (`block.imageWidth`) that got lost during any markdown round-trip (editor mode toggle, swap, zoom, replaceBlocks). Now encodes width as `{width=N%}` in the markdown fragment itself using Pandoc attribute syntax, surviving all round-trip paths.
