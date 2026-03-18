@@ -80,8 +80,8 @@ enum MarkdownUtils {
             result = regex.stringByReplacingMatches(in: result, options: [], range: range, withTemplate: "$1")
         }
 
-        // Remove images ![alt](url){width=N%} entirely (don't count alt text as words)
-        let imagePattern = "!\\[[^\\]]*\\]\\([^)]+\\)(\\s*\\{[^}]*\\})?"
+        // Remove images ![alt](url) entirely (don't count alt text as words)
+        let imagePattern = "!\\[[^\\]]*\\]\\([^)]+\\)"
         if let regex = try? NSRegularExpression(pattern: imagePattern, options: []) {
             let range = NSRange(result.startIndex..., in: result)
             result = regex.stringByReplacingMatches(in: result, options: [], range: range, withTemplate: "")

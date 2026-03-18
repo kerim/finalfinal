@@ -78,7 +78,7 @@ struct Block: Codable, Identifiable, Equatable, Sendable, FetchableRecord, Mutab
     var imageSrc: String?           // Relative path: media/filename.png
     var imageAlt: String?           // Accessibility description
     var imageCaption: String?       // Visible caption text
-    var imageWidth: Int?            // Display width as percentage of container
+    var imageWidth: Int?            // Display width in pixels
 
     // Special flags
     var isBibliography: Bool
@@ -353,7 +353,7 @@ struct Block: Codable, Identifiable, Equatable, Sendable, FetchableRecord, Mutab
             attrs.append("fig-alt=\"\(escapedAlt)\"")
         }
         if let width = imageWidth {
-            attrs.append("width=\(width)%")
+            attrs.append("width=\(width)px")
         }
         if !attrs.isEmpty {
             result += "{\(attrs.joined(separator: " "))}"

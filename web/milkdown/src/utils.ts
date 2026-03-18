@@ -18,7 +18,7 @@ export function stripMarkdownSyntax(line: string): string {
     .replace(/\*(.+?)\*/g, '$1') // italic
     .replace(/_([^_]+)_/g, '$1') // italic alt
     .replace(/`([^`]+)`/g, '$1') // inline code
-    .replace(/!\[([^\]]*)\]\([^)]+\)(?:\s*\{[^}]*\})?/g, '$1') // images (+ optional {width=N%} attrs)
+    .replace(/!\[([^\]]*)\]\([^)]+\)/g, '$1') // images
     .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1') // links
     .trim()
     .replace(/\s+/g, ' '); // normalize whitespace

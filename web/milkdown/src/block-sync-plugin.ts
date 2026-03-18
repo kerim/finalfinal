@@ -184,10 +184,8 @@ function nodeToMarkdownFragment(node: Node): string {
       return '---';
     case 'section_break':
       return '<!-- ::break:: -->';
-    case 'figure': {
-      const base = `![${node.attrs.alt || ''}](${node.attrs.src || ''})`;
-      return node.attrs.width ? `${base}{width=${node.attrs.width}%}` : base;
-    }
+    case 'figure':
+      return `![${node.attrs.alt || ''}](${node.attrs.src || ''})`;
     case 'table':
       return node.textContent;
     default:

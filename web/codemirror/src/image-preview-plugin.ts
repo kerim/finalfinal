@@ -54,8 +54,8 @@ export function setImageMeta(meta: Array<{ src: string; width?: number | null }>
 
 // --- Constants ---
 
-/** Matches image markdown: ![alt](media/filename.ext){width=N%} */
-const IMAGE_REGEX = /!\[([^\]]*)\]\((media\/[^)]+)\)(?:\s*\{[^}]*width=(\d+)%[^}]*\})?/;
+/** Matches image markdown: ![alt](media/filename.ext) */
+const IMAGE_REGEX = /!\[([^\]]*)\]\((media\/[^)]+)\)/;
 
 /** Matches caption comment: <!-- caption: text --> */
 const CAPTION_REGEX = /^<!--\s*caption:\s*(.+?)\s*-->$/;
@@ -110,7 +110,7 @@ class ImagePreviewWidget extends WidgetType {
 
     // Apply explicit width before onload (cached images may not fire onload)
     if (this.width) {
-      img.style.width = `${this.width}%`;
+      img.style.width = `${this.width}px`;
       img.style.maxHeight = 'none';
     }
 
@@ -177,8 +177,7 @@ function buildDecorations(state: EditorState): DecorationSet {
 
     const alt = imageMatch[1];
     const src = imageMatch[2];
-    const regexWidth = imageMatch[3] ? parseInt(imageMatch[3], 10) : null;
-    const width = regexWidth ?? metaStore.get(src) ?? null;
+    const width = metaStore.get(src) ?? null;
 
     // Check preceding lines for caption comment, skipping blank lines
     // Database-loaded images have a blank line between caption and image:

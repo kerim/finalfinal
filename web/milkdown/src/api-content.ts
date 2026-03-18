@@ -383,7 +383,7 @@ export function applyBlocks(blocks: Block[]): void {
             metaTr = metaTr.setNodeMarkup(pos, undefined, {
               ...node.attrs,
               caption: block.imageCaption || '',
-              width: block.imageWidth ?? node.attrs.width ?? null,
+              width: block.imageWidth || null,
               blockId: block.id,
             });
             figureIdx++;
@@ -520,7 +520,7 @@ export function setContentWithBlockIds(
             metaTr = metaTr.setNodeMarkup(pos, undefined, {
               ...node.attrs,
               caption: meta.caption || '',
-              width: meta.width ?? node.attrs.width ?? null,
+              width: meta.width || null,
               blockId: meta.id,
             });
             figureIdx++;
