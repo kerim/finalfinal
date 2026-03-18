@@ -647,7 +647,7 @@ extension MilkdownEditor.Coordinator {
             }
         } catch {
             DebugLog.log(.zotero, "[MilkdownEditor] Failed to resolve citekeys: \(error.localizedDescription)")
-            // Don't show "Zotero not running" for decoding/format errors
+            showZoteroAlertIfNeeded()
         }
     }
 

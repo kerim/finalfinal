@@ -15,6 +15,10 @@ extension ZoteroService {
     /// - Parameter citekeys: The citekeys currently in the citation
     /// - Returns: Parsed citation and CSL items for the updated selection
     func editCitation(citekeys: [String]) async throws -> (ParsedCitation, [CSLItem]) {
+        guard isConnected else {
+            throw ZoteroError.notRunning
+        }
+
         DebugLog.log(.zotero, "[ZoteroService] Editing citation with citekeys: \(citekeys)")
 
         // Build zotero://select URL to select items in Zotero's library pane

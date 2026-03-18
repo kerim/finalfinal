@@ -314,6 +314,8 @@ final class ZoteroService {
     /// Unlike search(), this fetches specific citekeys from Zotero
     func fetchItemsForCitekeys(_ citekeys: [String]) async throws -> [CSLItem] {
         guard !citekeys.isEmpty else { return [] }
+        guard isConnected else { throw ZoteroError.notRunning }
+
         guard let url = URL(string: "\(baseURL)/better-bibtex/json-rpc") else {
             throw ZoteroError.invalidResponse("Invalid URL")
         }
@@ -383,16 +385,9 @@ final class ZoteroService {
                 itemsByKey[item.citekey] = item
             }
 
-            isConnected = true
-            connectionError = nil
-
             return items
         } catch let error as ZoteroError {
             throw error
-        } catch let urlError as URLError where urlError.code == .cannotConnectToHost
-            || urlError.code == .networkConnectionLost {
-            isConnected = false
-            throw ZoteroError.notRunning
         } catch {
             throw ZoteroError.networkError(error)
         }
