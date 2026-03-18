@@ -127,8 +127,6 @@ final class AutoBackupService {
         do {
             if let snapshot = try service.createAutoSnapshot() {
                 DebugLog.log(.backup, "[AutoBackupService] Created auto-backup on \(reason): \(snapshot.id)")
-                // Prune old backups after creating new one
-                try service.pruneAutoBackups()
             } else {
                 DebugLog.log(.backup, "[AutoBackupService] Skipped auto-backup on \(reason): content unchanged")
             }
@@ -149,6 +147,8 @@ final class AutoBackupService {
                 try await Task.sleep(for: .seconds(idleTimeout))
                 guard !Task.isCancelled else { return }
                 await createBackupIfNeeded(reason: "idle timeout")
+                // Prune old backups only on idle path to avoid slowing project switch/quit
+                try? snapshotService?.pruneAutoBackups()
             } catch {
                 // Task was cancelled, which is expected
             }
