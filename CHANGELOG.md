@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.87] - 2026-03-18
+
 ### Fixed
 
 - **False 'Zotero Not Running' alert on app launch** — `isConnected` guard in `fetchItemsForCitekeys` threw `.notRunning` without attempting an HTTP request. At launch, `isConnected` defaults to false, so citation resolution raced against `connectToZotero()` and always lost. Removed the premature guard; now sets `isConnected=true` on successful fetch and maps `URLError` connection-refused to `.notRunning`.
