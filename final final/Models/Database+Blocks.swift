@@ -373,9 +373,9 @@ extension ProjectDatabase {
                 try Block.deleteOne(db, key: id)
             }
 
-            // Track image fragments inserted within this batch to prevent duplicates
+            // Track image sources inserted within this batch to prevent duplicates
             // (catches the race condition where multiple inserts of the same image arrive in one sync cycle)
-            var insertedImageFragments: [String: String] = [:]  // fragment -> permanentId
+            var insertedImageSources: [String: String] = [:]  // imageSrc -> permanentId
 
             // Process inserts BEFORE updates — so idMapping is populated when
             // a temp-ID update arrives for a block that was also inserted
@@ -414,15 +414,6 @@ extension ProjectDatabase {
                     effectiveHeadingLevel = insert.headingLevel
                 }
 
-                // Within-batch dedup: skip duplicate image inserts in the same sync cycle
-                if blockType == .image {
-                    if let existingId = insertedImageFragments[insertTrimmed] {
-                        idMapping[insert.tempId] = existingId
-                        DebugLog.log(.data, "[Blocks] Skipped duplicate image insert: \(insertTrimmed.prefix(40))")
-                        continue
-                    }
-                }
-
                 let permanentId = UUID().uuidString
                 let insertTextContent = blockType == .heading
                     ? BlockParser.extractTextContent(from: insertTrimmed, blockType: .heading)
@@ -458,13 +449,22 @@ extension ProjectDatabase {
                     }
                     // Parse {width=N%} from Pandoc attributes
                     block.imageWidth = BlockParser.parseImageWidthPercent(from: insertTrimmed)
+
+                    // Within-batch dedup: skip duplicate image inserts in the same sync cycle
+                    if let src = block.imageSrc, !src.isEmpty {
+                        if let existingId = insertedImageSources[src] {
+                            idMapping[insert.tempId] = existingId
+                            DebugLog.log(.data, "[Blocks] Skipped duplicate image insert: \(src)")
+                            continue
+                        }
+                    }
                 }
 
                 try block.insert(db)
 
-                // Record image fragment for within-batch dedup
-                if blockType == .image {
-                    insertedImageFragments[insertTrimmed] = permanentId
+                // Record image source for within-batch dedup
+                if blockType == .image, let src = block.imageSrc, !src.isEmpty {
+                    insertedImageSources[src] = permanentId
                 }
 
                 // Record the mapping from temp ID to permanent ID
@@ -578,14 +578,14 @@ extension ProjectDatabase {
             guard imageBlocks.count > 1 else { return }
 
             var idsToDelete: [String] = []
-            var previousFragment: String?
+            var previousSrc: String?
 
             for block in imageBlocks {
-                let fragment = block.markdownFragment.trimmingCharacters(in: .whitespacesAndNewlines)
-                if fragment == previousFragment {
+                let src = block.imageSrc ?? ""
+                if !src.isEmpty && src == previousSrc {
                     idsToDelete.append(block.id)
                 } else {
-                    previousFragment = fragment
+                    previousSrc = src
                 }
             }
 

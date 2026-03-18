@@ -210,4 +210,89 @@ struct ImageWidthRoundtripTests {
         #expect(exported.contains("width=50%"))
         #expect(!exported.contains("width=50px"))
     }
+
+    // MARK: - Deduplication with different widths
+
+    @Test("deduplicateAdjacentImageBlocks removes same-src images with different widths")
+    func dedupDifferentWidths() throws {
+        let db = try TestFixtureFactory.createTemporary(content: "# Test")
+        let pid = try TestFixtureFactory.getProjectId(from: db)
+
+        let block1 = Block(projectId: pid, sortOrder: 2.0, blockType: .image,
+            markdownFragment: "![alt](media/photo.jpg){width=50%}",
+            imageSrc: "media/photo.jpg", imageWidth: 50)
+        let block2 = Block(projectId: pid, sortOrder: 3.0, blockType: .image,
+            markdownFragment: "![alt](media/photo.jpg){width=75%}",
+            imageSrc: "media/photo.jpg", imageWidth: 75)
+        try db.insertBlock(block1)
+        try db.insertBlock(block2)
+
+        try db.deduplicateAdjacentImageBlocks(projectId: pid)
+
+        let images = try TestFixtureFactory.fetchBlocks(from: db)
+            .filter { $0.blockType == .image }
+        #expect(images.count == 1, "Same-src images should be deduplicated regardless of width")
+    }
+
+    @Test("deduplicateAdjacentImageBlocks removes same-src images where only one has width")
+    func dedupOneWithWidthOneWithout() throws {
+        let db = try TestFixtureFactory.createTemporary(content: "# Test")
+        let pid = try TestFixtureFactory.getProjectId(from: db)
+
+        let block1 = Block(projectId: pid, sortOrder: 2.0, blockType: .image,
+            markdownFragment: "![alt](media/photo.jpg)",
+            imageSrc: "media/photo.jpg")
+        let block2 = Block(projectId: pid, sortOrder: 3.0, blockType: .image,
+            markdownFragment: "![alt](media/photo.jpg){width=50%}",
+            imageSrc: "media/photo.jpg", imageWidth: 50)
+        try db.insertBlock(block1)
+        try db.insertBlock(block2)
+
+        try db.deduplicateAdjacentImageBlocks(projectId: pid)
+
+        let images = try TestFixtureFactory.fetchBlocks(from: db)
+            .filter { $0.blockType == .image }
+        #expect(images.count == 1, "Same-src images should be deduplicated even if width differs")
+    }
+
+    @Test("applyBlockChangesFromEditor deduplicates same-src image inserts with different widths")
+    func withinBatchDedupDifferentWidths() throws {
+        let db = try TestFixtureFactory.createTemporary(content: "# Test")
+        let pid = try TestFixtureFactory.getProjectId(from: db)
+
+        let changes = BlockChanges(inserts: [
+            BlockInsert(tempId: "temp-img-1", blockType: "image", textContent: "",
+                markdownFragment: "![alt](media/photo.jpg){width=50%}",
+                headingLevel: nil, afterBlockId: nil),
+            BlockInsert(tempId: "temp-img-2", blockType: "image", textContent: "",
+                markdownFragment: "![alt](media/photo.jpg){width=75%}",
+                headingLevel: nil, afterBlockId: nil)
+        ])
+        _ = try db.applyBlockChangesFromEditor(changes, for: pid)
+
+        let images = try TestFixtureFactory.fetchBlocks(from: db)
+            .filter { $0.blockType == .image }
+        #expect(images.count == 1, "Same-src image inserts should be deduplicated in same batch")
+    }
+
+    @Test("deduplicateAdjacentImageBlocks works for identical fragments (baseline)")
+    func dedupIdenticalFragments() throws {
+        let db = try TestFixtureFactory.createTemporary(content: "# Test")
+        let pid = try TestFixtureFactory.getProjectId(from: db)
+
+        let block1 = Block(projectId: pid, sortOrder: 2.0, blockType: .image,
+            markdownFragment: "![alt](media/photo.jpg){width=50%}",
+            imageSrc: "media/photo.jpg", imageWidth: 50)
+        let block2 = Block(projectId: pid, sortOrder: 3.0, blockType: .image,
+            markdownFragment: "![alt](media/photo.jpg){width=50%}",
+            imageSrc: "media/photo.jpg", imageWidth: 50)
+        try db.insertBlock(block1)
+        try db.insertBlock(block2)
+
+        try db.deduplicateAdjacentImageBlocks(projectId: pid)
+
+        let images = try TestFixtureFactory.fetchBlocks(from: db)
+            .filter { $0.blockType == .image }
+        #expect(images.count == 1, "Identical fragments should still be deduplicated")
+    }
 }
