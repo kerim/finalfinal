@@ -11,27 +11,23 @@ struct ZoteroServiceConnectionTests {
     }
 
     @Test @MainActor
-    func fetchItemsForCitekeys_throwsNotRunning_onlyWhenHTTPFails() async {
+    func fetchItemsForCitekeys_attemptsHTTP_whenNotConnected() async {
         let service = ZoteroService()
-        // With the guard removed, fetchItemsForCitekeys now attempts the HTTP request.
-        // When Zotero is not running, connection-refused maps to .notRunning.
+        #expect(service.isConnected == false, "Precondition: starts disconnected")
+
+        // With the guard removed, fetchItemsForCitekeys attempts the HTTP request
+        // even when isConnected is false. This verifies it doesn't short-circuit.
+        let start = ContinuousClock.now
         do {
             _ = try await service.fetchItemsForCitekeys(["someCitekey"])
-            // If Zotero happens to be running, this could succeed — not a test failure
-        } catch let error as ZoteroError {
-            switch error {
-            case .notRunning:
-                // Connection refused → .notRunning (correct behavior)
-                break
-            case .networkError:
-                // Other network error — also acceptable when Zotero isn't running
-                break
-            default:
-                // Any ZoteroError is acceptable (invalidResponse, noResponse, etc.)
-                break
-            }
+            // Zotero is running in this environment — that's fine, verify it connected
+            #expect(service.isConnected == true, "Should set isConnected on success")
         } catch {
-            Issue.record("Unexpected non-ZoteroError type: \(error)")
+            // Any error is acceptable — what matters is the HTTP was attempted.
+            // The old guard would have returned in <1ms with .notRunning.
+            let elapsed = ContinuousClock.now - start
+            #expect(elapsed > .milliseconds(1),
+                    "Should take >1ms (HTTP attempt), not instant (old guard)")
         }
     }
 }
