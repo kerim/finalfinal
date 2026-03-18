@@ -457,12 +457,7 @@ extension ProjectDatabase {
                         }
                     }
                     // Parse {width=N%} from Pandoc attributes
-                    if let attrMatch = insertTrimmed.range(of: #"\{[^}]*width=(\d+)%[^}]*\}"#, options: .regularExpression) {
-                        let attrStr = String(insertTrimmed[attrMatch])
-                        if let numRange = attrStr.range(of: #"(?<=width=)\d+(?=%)"#, options: .regularExpression) {
-                            block.imageWidth = Int(attrStr[numRange])
-                        }
-                    }
+                    block.imageWidth = BlockParser.parseImageWidthPercent(from: insertTrimmed)
                 }
 
                 try block.insert(db)
@@ -509,14 +504,9 @@ extension ProjectDatabase {
                             block.blockType = .paragraph
                             block.headingLevel = nil
                         }
-                        // Re-extract image width from updated fragment
+                        // Re-extract image width from updated fragment (unconditional: clears if removed)
                         if block.blockType == .image {
-                            if let attrMatch = trimmed.range(of: #"\{[^}]*width=(\d+)%[^}]*\}"#, options: .regularExpression) {
-                                let attrStr = String(trimmed[attrMatch])
-                                if let numRange = attrStr.range(of: #"(?<=width=)\d+(?=%)"#, options: .regularExpression) {
-                                    block.imageWidth = Int(attrStr[numRange])
-                                }
-                            }
+                            block.imageWidth = BlockParser.parseImageWidthPercent(from: trimmed)
                         }
                     }
                     if let headingLevel = update.headingLevel {
@@ -652,8 +642,8 @@ extension ProjectDatabase {
     /// - No `{...}` after image → append `{width=N%}`
     /// - No image pattern → return unchanged
     static func updateWidthInMarkdown(_ fragment: String, width: Int) -> String {
-        // Find the image pattern: ![...](...)
-        guard fragment.range(of: #"!\[[^\]]*\]\([^)]+\)"#, options: .regularExpression) != nil else {
+        // Find the image pattern: ![...](...) — capture range for reuse in Case 3
+        guard let imageRange = fragment.range(of: #"!\[[^\]]*\]\([^)]+\)"#, options: .regularExpression) else {
             return fragment
         }
 
@@ -687,18 +677,10 @@ extension ProjectDatabase {
             return result
         }
 
-        // Case 3: No {...} — append {width=N%} after the image pattern
-        // Find the end of ![...](...)
-        if let imageEnd = fragment.range(
-            of: #"!\[[^\]]*\]\([^)]+\)"#,
-            options: .regularExpression
-        ) {
-            var result = fragment
-            result.insert(contentsOf: "{width=\(width)%}", at: imageEnd.upperBound)
-            return result
-        }
-
-        return fragment
+        // Case 3: No {...} — append {width=N%} after image (reuse imageRange from guard)
+        var result = fragment
+        result.insert(contentsOf: "{width=\(width)%}", at: imageRange.upperBound)
+        return result
     }
 
 }

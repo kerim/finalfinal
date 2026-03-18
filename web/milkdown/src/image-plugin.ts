@@ -317,10 +317,10 @@ class FigureNodeView implements ProsemirrorNodeView {
     if (!this.isResizing) return;
     const diff = e.clientX - this.startX;
     const newWidth = Math.max(50, this.startWidth + diff);
-    this.img.style.width = `${newWidth}px`;
+    const pct = Math.max(5, Math.round((newWidth / this.startContainerWidth) * 100));
+    this.img.style.width = `${pct}%`;
 
     // Show percentage tooltip
-    const pct = Math.round((newWidth / this.startContainerWidth) * 100);
     if (this.resizeTooltip) {
       this.resizeTooltip.textContent = `${pct}%`;
     }
@@ -338,12 +338,8 @@ class FigureNodeView implements ProsemirrorNodeView {
       this.resizeTooltip.style.display = 'none';
     }
 
-    // Compute percentage of container width
-    const containerWidth = this.startContainerWidth;
-    const newPercent = Math.round((this.img.offsetWidth / containerWidth) * 100);
-
-    // Apply percentage to img for consistent rendering
-    this.img.style.width = `${newPercent}%`;
+    // Read the percentage already applied during drag
+    const newPercent = Math.max(5, Math.round((this.img.offsetWidth / this.startContainerWidth) * 100));
 
     const blockId = this.resolveBlockId();
 
