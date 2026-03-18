@@ -72,6 +72,9 @@ extension ContentView {
         sections: inout [SectionViewModel],
         syncService: SectionSyncService
     ) {
+        // Skip allocation when hierarchy is already valid (common case on sync cycles)
+        guard hasHierarchyViolations(in: sections) else { return }
+
         var changed = true
         var passes = 0
         let maxPasses = 10
@@ -134,6 +137,9 @@ extension ContentView {
 
             sections = newSections
         }
+
+        // Pass 1 fixes violations, pass 2 confirms no more changes. More than 2 means delta propagation has a bug.
+        assert(passes <= 2, "enforceHierarchyConstraintsStatic needed \(passes) passes — delta propagation may be broken")
     }
 
     /// Async hierarchy enforcement using surgical heading level updates.
