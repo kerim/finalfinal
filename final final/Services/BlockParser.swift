@@ -99,6 +99,7 @@ enum BlockParser {
             // Parse image metadata from markdown for image blocks
             var imageSrc: String?
             var imageAlt: String?
+            var imageWidth: Int?
             if blockType == .image {
                 if let imageMatch = trimmed.range(
                     of: #"!\[([^\]]*)\]\(([^)]+)\)"#, options: .regularExpression
@@ -109,6 +110,14 @@ enum BlockParser {
                         imageAlt = String(matchStr[altRange])
                         imageSrc = String(matchStr[srcRange])
                     }
+                }
+                // Parse {width=N%} from Pandoc attributes
+                if let attrMatch = trimmed.range(of: #"\{[^}]*width=(\d+)%[^}]*\}"#, options: .regularExpression) {
+                    let attrStr = String(trimmed[attrMatch])
+                    if let numRange = attrStr.range(of: #"(?<=width=)\d+(?=%)"#, options: .regularExpression) {
+                        imageWidth = Int(attrStr[numRange])
+                    }
+                    DebugLog.log(.image, "[BlockParser] Parsed width=\(imageWidth ?? -1) from fragment: \(trimmed.prefix(60))")
                 }
             }
 
@@ -125,6 +134,7 @@ enum BlockParser {
                 wordCount: wordCount,
                 imageSrc: imageSrc,
                 imageAlt: imageAlt,
+                imageWidth: imageWidth,
                 isBibliography: isBibliography,
                 isNotes: isNotes,
                 isPseudoSection: isPseudoSection

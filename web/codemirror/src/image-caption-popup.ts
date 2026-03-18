@@ -14,7 +14,7 @@ import { positionPopup } from '../../shared/position-popup';
 // --- Constants ---
 
 const CAPTION_REGEX = /^<!--\s*caption:\s*(.+?)\s*-->$/;
-const IMAGE_REGEX = /!\[([^\]]*)\]\((media\/[^)]+)\)/;
+const IMAGE_REGEX = /!\[([^\]]*)\]\((media\/[^)]+)\)(?:\s*\{[^}]*width=(\d+)%[^}]*\})?/;
 
 // --- Module state (singleton) ---
 

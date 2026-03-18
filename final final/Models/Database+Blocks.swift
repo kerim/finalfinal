@@ -456,6 +456,13 @@ extension ProjectDatabase {
                             block.imageSrc = String(matchStr[srcRange])
                         }
                     }
+                    // Parse {width=N%} from Pandoc attributes
+                    if let attrMatch = insertTrimmed.range(of: #"\{[^}]*width=(\d+)%[^}]*\}"#, options: .regularExpression) {
+                        let attrStr = String(insertTrimmed[attrMatch])
+                        if let numRange = attrStr.range(of: #"(?<=width=)\d+(?=%)"#, options: .regularExpression) {
+                            block.imageWidth = Int(attrStr[numRange])
+                        }
+                    }
                 }
 
                 try block.insert(db)
@@ -501,6 +508,15 @@ extension ProjectDatabase {
                             // Was heading but no longer has heading syntax
                             block.blockType = .paragraph
                             block.headingLevel = nil
+                        }
+                        // Re-extract image width from updated fragment
+                        if block.blockType == .image {
+                            if let attrMatch = trimmed.range(of: #"\{[^}]*width=(\d+)%[^}]*\}"#, options: .regularExpression) {
+                                let attrStr = String(trimmed[attrMatch])
+                                if let numRange = attrStr.range(of: #"(?<=width=)\d+(?=%)"#, options: .regularExpression) {
+                                    block.imageWidth = Int(attrStr[numRange])
+                                }
+                            }
                         }
                     }
                     if let headingLevel = update.headingLevel {
@@ -620,11 +636,69 @@ extension ProjectDatabase {
             }
             if let width = imageWidth {
                 block.imageWidth = width
+                // KEY FIX: Also encode width in the markdown fragment so it survives round-trips
+                block.markdownFragment = Self.updateWidthInMarkdown(block.markdownFragment, width: width)
+                DebugLog.log(.image, "[updateBlockImageMeta] id=\(id.prefix(8)) width=\(width) fragment=\(block.markdownFragment.prefix(80))")
             }
 
             block.updatedAt = Date()
             try block.update(db)
         }
+    }
+
+    /// Update or insert `{width=N%}` in a markdown fragment containing an image.
+    /// - Has `{...width=N%...}` → update the number
+    /// - Has `{...}` without width → insert `width=N%` before `}`
+    /// - No `{...}` after image → append `{width=N%}`
+    /// - No image pattern → return unchanged
+    static func updateWidthInMarkdown(_ fragment: String, width: Int) -> String {
+        // Find the image pattern: ![...](...)
+        guard fragment.range(of: #"!\[[^\]]*\]\([^)]+\)"#, options: .regularExpression) != nil else {
+            return fragment
+        }
+
+        // Case 1: Already has {width=N%} — update the number
+        if let existing = fragment.range(
+            of: #"(\{[^}]*width=)\d+(%[^}]*\})"#,
+            options: .regularExpression
+        ) {
+            let match = String(fragment[existing])
+            // Replace just the digits between width= and %
+            if let updated = match.range(of: #"(?<=width=)\d+(?=%)"#, options: .regularExpression) {
+                var result = fragment
+                let globalRange = result.range(of: match)!
+                var newMatch = match
+                newMatch.replaceSubrange(updated, with: "\(width)")
+                result.replaceSubrange(globalRange, with: newMatch)
+                return result
+            }
+        }
+
+        // Case 2: Has {...} without width — insert width=N% before }
+        // Find the LAST occurrence of {...} after the image pattern
+        if let braceRange = fragment.range(of: #"\{[^}]*\}"#, options: [.regularExpression, .backwards]) {
+            var result = fragment
+            let braceStr = String(fragment[braceRange])
+            let insertPos = braceStr.index(before: braceStr.endIndex)
+            var newBrace = braceStr
+            let prefix = braceStr.count > 2 ? " " : ""  // Add space if there's existing content
+            newBrace.insert(contentsOf: "\(prefix)width=\(width)%", at: insertPos)
+            result.replaceSubrange(braceRange, with: newBrace)
+            return result
+        }
+
+        // Case 3: No {...} — append {width=N%} after the image pattern
+        // Find the end of ![...](...)
+        if let imageEnd = fragment.range(
+            of: #"!\[[^\]]*\]\([^)]+\)"#,
+            options: .regularExpression
+        ) {
+            var result = fragment
+            result.insert(contentsOf: "{width=\(width)%}", at: imageEnd.upperBound)
+            return result
+        }
+
+        return fragment
     }
 
 }

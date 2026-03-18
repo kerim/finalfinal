@@ -132,8 +132,8 @@ function mdToTextOffsetInternal(markdownLine: string, mdOffset: number): number 
       continue;
     }
 
-    // Image ![alt](url)
-    const imageMatch = remaining.match(/^!\[([^\]]*)\]\([^)]+\)/);
+    // Image ![alt](url){...}
+    const imageMatch = remaining.match(/^!\[([^\]]*)\]\([^)]+\)(?:\s*\{[^}]*\})?/);
     if (imageMatch) {
       const altLen = imageMatch[1].length;
       const fullLen = imageMatch[0].length;
@@ -308,8 +308,8 @@ export function textToMdOffset(markdownLine: string, textOffset: number): number
       continue;
     }
 
-    // Image ![alt](url)
-    const imageMatch = remaining.match(/^!\[([^\]]*)\]\([^)]+\)/);
+    // Image ![alt](url){...}
+    const imageMatch = remaining.match(/^!\[([^\]]*)\]\([^)]+\)(?:\s*\{[^}]*\})?/);
     if (imageMatch) {
       const altLen = imageMatch[1].length;
       const charsNeeded = textOffset - textPos;

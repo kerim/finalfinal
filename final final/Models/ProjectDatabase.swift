@@ -321,7 +321,7 @@ final class ProjectDatabase: Sendable {
                 t.add(column: "imageSrc", .text)      // media/filename.png
                 t.add(column: "imageAlt", .text)      // accessibility text
                 t.add(column: "imageCaption", .text)  // visible caption
-                t.add(column: "imageWidth", .integer)  // display width in px
+                t.add(column: "imageWidth", .integer)  // display width as percentage
             }
         }
 
