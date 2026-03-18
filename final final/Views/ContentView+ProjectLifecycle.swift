@@ -208,6 +208,9 @@ extension ContentView {
         annotationSyncService.cancelPendingSync()
         bibliographySyncService.reset()
         footnoteSyncService.reset()
+
+        // Create auto-backup of old project before switching
+        await autoBackupService.projectWillSwitch()
         autoBackupService.reset()
 
         // Set flag to prevent polling from overwriting empty content during reset
@@ -273,20 +276,20 @@ extension ContentView {
             return
         }
 
-        performProjectClose()
+        Task {
+            await performProjectClose()
+        }
     }
 
     /// Actually close the project and reset state
-    func performProjectClose() {
+    func performProjectClose() async {
         // Flush pending content synchronously before closing.
         // editorState.content is current (JS 50ms debounce has fired by button click time).
         editorState.flushAllSync()
 
         // Create auto-backup before closing if there are unsaved changes (not for Getting Started)
         if !documentManager.isGettingStartedProject {
-            Task {
-                await autoBackupService.projectWillClose()
-            }
+            await autoBackupService.projectWillClose()
         }
 
         // Stop observation and services FIRST to prevent any further syncs
