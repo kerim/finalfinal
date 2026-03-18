@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Persistent image size reset** — image width was stored only in a DB side-channel (`block.imageWidth`) that got lost during any markdown round-trip (editor mode toggle, swap, zoom, replaceBlocks). Now encodes width as `{width=N%}` in the markdown fragment itself using Pandoc attribute syntax, surviving all round-trip paths.
+- **Image dedup regression** — deduplication compared by exact markdown fragment, so same-src images with different `{width=N%}` suffixes bypassed dedup. Switched both `deduplicateAdjacentImageBlocks` and within-batch INSERT dedup to compare by `imageSrc`.
+- **Width nullification on edit** — removing `{width=N%}` in source mode now clears the stale DB value (UPDATE path unconditionally assigns `imageWidth`).
+- **Resize drag stale container width** — resize drag now computes percentage on each move instead of converting pixels at end, avoiding stale container width if sidebar opens mid-drag.
+- **Width preservation with `||` vs `??`** — `api-content.ts` width fallback used `||` which treated `width=0` as falsy; switched to `??`.
+
+### Changed
+
+- **Shared width parser** — extracted `BlockParser.parseImageWidthPercent(from:)` to replace 3 inline copies of the width-parsing regex.
+- **Image stripping regex** — `utils.ts` now consumes `{width=N%}` suffix when stripping image markup.
+
+### Added
+
+- **ImageWidthRoundtripTests** — 17 new tests covering parser extraction, roundtrip, helper methods, replaceBlocks, caption+width, editor sync paths, export format, and dedup regression cases.
+
 ## [0.2.85] - 2026-03-17
 
 ### Added
