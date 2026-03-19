@@ -121,7 +121,7 @@ const SKIP_NODE_TYPES = new Set([
 ]);
 
 /** Mark types whose text content should be skipped */
-const SKIP_MARK_TYPES = new Set(['inlineCode']);
+const SKIP_MARK_TYPES = new Set(['code_inline']);
 
 /**
  * Extract checkable text segments from ProseMirror document.
@@ -170,7 +170,7 @@ function extractSegments(view: EditorView): TextSegment[] {
         return;
       }
 
-      // Skip nodes with inlineCode mark
+      // Skip nodes with code_inline mark
       if (child.isText && child.marks.some((m) => SKIP_MARK_TYPES.has(m.type.name))) {
         if (blockText.length > 0) {
           segments.push({ text: blockText, from: segmentStart, to: segmentStart + blockText.length, blockId });

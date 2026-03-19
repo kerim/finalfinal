@@ -111,11 +111,6 @@ struct EditorCommands: Commands {
                     NotificationCenter.default.post(name: .toggleCodeBlock, object: nil)
                 }
 
-                Button("Inline Code") {
-                    NotificationCenter.default.post(name: .toggleInlineCode, object: nil)
-                }
-                .keyboardShortcut("c", modifiers: [.command, .shift])
-
                 Divider()
 
                 Button("Link") {

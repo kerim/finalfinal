@@ -258,17 +258,6 @@ export function getContent(): string {
     syncLog('API:getContent', 'footnote unescape applied');
   }
 
-  // Unescape backticks that ProseMirror's serializer escapes in text nodes.
-  // Safe: ProseMirror does not escape inside code_block nodes, only inline text.
-  // Global regex (not line-anchored) is correct because escaped backticks only appear in inline text.
-  if (!sourceEnabled) {
-    const beforeBacktickUnescape = markdown;
-    markdown = markdown.replace(/\\`/g, '`');
-    if (markdown !== beforeBacktickUnescape) {
-      syncLog('API:getContent', 'backtick unescape applied');
-    }
-  }
-
   // Fix double ## prefixes in source mode: "## ## Heading" → "## Heading"
   if (sourceEnabled) {
     const beforeDoubleFix = markdown;

@@ -68,8 +68,7 @@ extension CodeMirrorEditor.Coordinator {
         // Formatting command observers cleanup
         for observer in [toggleBoldObserver, toggleItalicObserver, toggleStrikethroughObserver,
                          setHeadingObserver, toggleBulletListObserver, toggleNumberListObserver,
-                         toggleBlockquoteObserver, toggleCodeBlockObserver, toggleInlineCodeObserver,
-                         insertLinkObserver] {
+                         toggleBlockquoteObserver, toggleCodeBlockObserver, insertLinkObserver] {
             if let observer { NotificationCenter.default.removeObserver(observer) }
         }
         toggleBoldObserver = nil
@@ -80,7 +79,6 @@ extension CodeMirrorEditor.Coordinator {
         toggleNumberListObserver = nil
         toggleBlockquoteObserver = nil
         toggleCodeBlockObserver = nil
-        toggleInlineCodeObserver = nil
         insertLinkObserver = nil
         webView = nil
     }

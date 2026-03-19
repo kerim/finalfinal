@@ -205,10 +205,6 @@ export function toggleCodeBlock(): boolean {
   return true;
 }
 
-export function toggleInlineCode(): boolean {
-  return toggleInlineWrap('`');
-}
-
 export function insertLinkAtCursor(): boolean {
   const view = getEditorView();
   if (!view) return false;

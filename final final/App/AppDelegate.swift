@@ -18,6 +18,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// Reference to editor state for cleanup on quit
     weak var editorState: EditorViewState?
 
+    /// Reference to auto-backup service for quit-time snapshot
+    weak var autoBackupService: AutoBackupService?
+
     /// Reference to main window for close interception
     private var mainWindow: NSWindow?
 
@@ -232,6 +235,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
 
             editorState.flushAllSync()
+
+            // Create final auto-backup with timeout to avoid blocking termination
+            await withTaskGroup(of: Void.self) { group in
+                group.addTask { await self.autoBackupService?.appWillQuit() }
+                group.addTask { try? await Task.sleep(for: .seconds(3)) }
+                _ = await group.next()
+                group.cancelAll()
+            }
+
             self.didFlushForQuit = true
             self.removeEscapeKeyMonitor()
             NSApp.reply(toApplicationShouldTerminate: true)

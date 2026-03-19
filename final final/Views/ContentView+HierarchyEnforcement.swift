@@ -67,10 +67,14 @@ extension ContentView {
     }
 
     /// Static version for use in closures - enforces hierarchy on provided sections array
+    /// Uses delta propagation to normalize sibling levels within affected subtrees.
     static func enforceHierarchyConstraintsStatic(
         sections: inout [SectionViewModel],
         syncService: SectionSyncService
     ) {
+        // Skip allocation when hierarchy is already valid (common case on sync cycles)
+        guard hasHierarchyViolations(in: sections) else { return }
+
         var changed = true
         var passes = 0
         let maxPasses = 10
@@ -80,12 +84,32 @@ extension ContentView {
             passes += 1
 
             var newSections: [SectionViewModel] = []
+            var pendingDelta = 0
+            var deltaFloor = Int.max
 
             for (index, section) in sections.enumerated() {
+                var level = section.headerLevel
+
+                // Exit subtree: original level below deltaFloor means we left the subtree
+                if section.headerLevel < deltaFloor {
+                    pendingDelta = 0
+                    deltaFloor = Int.max
+                }
+
+                // Apply pending delta within subtree
+                if pendingDelta != 0 && section.headerLevel >= deltaFloor {
+                    level = max(1, min(6, level + pendingDelta))
+                }
+
                 let predecessorLevel = index > 0 ? newSections[index - 1].headerLevel : 0
 
                 // First section must be H1
-                if index == 0 && section.headerLevel != 1 {
+                if index == 0 && level != 1 {
+                    let delta = 1 - section.headerLevel
+                    if delta != 0 {
+                        pendingDelta = delta
+                        deltaFloor = section.headerLevel
+                    }
                     changed = true
                     let newMarkdown = syncService.updateHeaderLevel(in: section.markdownContent, to: 1)
                     newSections.append(section.withUpdates(headerLevel: 1, markdownContent: newMarkdown))
@@ -94,10 +118,18 @@ extension ContentView {
 
                 // Max level is predecessor + 1
                 let maxLevel = predecessorLevel == 0 ? 1 : min(6, predecessorLevel + 1)
-                if section.headerLevel > maxLevel {
+                if level > maxLevel {
+                    pendingDelta = maxLevel - section.headerLevel  // delta from ORIGINAL level
+                    deltaFloor = section.headerLevel
+                    level = maxLevel
                     changed = true
-                    let newMarkdown = syncService.updateHeaderLevel(in: section.markdownContent, to: maxLevel)
-                    newSections.append(section.withUpdates(headerLevel: maxLevel, markdownContent: newMarkdown))
+                    let newMarkdown = syncService.updateHeaderLevel(in: section.markdownContent, to: level)
+                    newSections.append(section.withUpdates(headerLevel: level, markdownContent: newMarkdown))
+                } else if level != section.headerLevel {
+                    // Delta applied, no further clamping needed
+                    changed = true
+                    let newMarkdown = syncService.updateHeaderLevel(in: section.markdownContent, to: level)
+                    newSections.append(section.withUpdates(headerLevel: level, markdownContent: newMarkdown))
                 } else {
                     newSections.append(section)
                 }
@@ -105,6 +137,9 @@ extension ContentView {
 
             sections = newSections
         }
+
+        // Pass 1 fixes violations, pass 2 confirms no more changes. More than 2 means delta propagation has a bug.
+        assert(passes <= 2, "enforceHierarchyConstraintsStatic needed \(passes) passes — delta propagation may be broken")
     }
 
     /// Async hierarchy enforcement using surgical heading level updates.
@@ -299,49 +334,10 @@ extension ContentView {
     }
 
     /// Ensure no section is more than 1 level deeper than its predecessor
-    /// Uses iterative transformation with already-processed predecessors for correct constraint checking
+    /// Delegates to the static method to avoid duplication.
     func enforceHierarchyConstraints() {
         var sections = editorState.sections
-        var changed = true
-        var passes = 0
-        let maxPasses = 10
-
-        while changed && passes < maxPasses {
-            changed = false
-            passes += 1
-
-            // CRITICAL: Create new array each pass so predecessors are up-to-date
-            // Using map with sections[index-1] would check the ORIGINAL value, not the
-            // already-processed value from earlier in THIS pass
-            var newSections: [SectionViewModel] = []
-
-            for (index, section) in sections.enumerated() {
-                // Use newSections for predecessor (already processed in THIS pass)
-                let predecessorLevel = index > 0 ? newSections[index - 1].headerLevel : 0
-
-                // First section must be H1
-                if index == 0 && section.headerLevel != 1 {
-                    changed = true
-                    let newMarkdown = sectionSyncService.updateHeaderLevel(in: section.markdownContent, to: 1)
-                    newSections.append(section.withUpdates(headerLevel: 1, markdownContent: newMarkdown))
-                    continue
-                }
-
-                // Max level is predecessor + 1
-                let maxLevel = predecessorLevel == 0 ? 1 : min(6, predecessorLevel + 1)
-                if section.headerLevel > maxLevel {
-                    changed = true
-                    let newMarkdown = sectionSyncService.updateHeaderLevel(in: section.markdownContent, to: maxLevel)
-                    newSections.append(section.withUpdates(headerLevel: maxLevel, markdownContent: newMarkdown))
-                } else {
-                    newSections.append(section)
-                }
-            }
-
-            sections = newSections
-        }
-
-        // Single atomic update
+        Self.enforceHierarchyConstraintsStatic(sections: &sections, syncService: sectionSyncService)
         editorState.sections = sections
     }
 }
