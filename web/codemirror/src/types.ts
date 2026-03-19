@@ -75,6 +75,7 @@ declare global {
       toggleNumberList: () => boolean;
       toggleBlockquote: () => boolean;
       toggleCodeBlock: () => boolean;
+      toggleInlineCode: () => boolean;
       insertLink: () => boolean;
       // Citation API (CAYW picker callbacks)
       citationPickerCallback: (data: any, items: any[]) => void;

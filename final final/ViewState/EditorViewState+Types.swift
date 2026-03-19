@@ -73,6 +73,8 @@ extension Notification.Name {
     static let toggleBlockquote = Notification.Name("toggleBlockquote")
     /// Posted to toggle code block on current block
     static let toggleCodeBlock = Notification.Name("toggleCodeBlock")
+    /// Posted to toggle inline code on selected text
+    static let toggleInlineCode = Notification.Name("toggleInlineCode")
     /// Posted to insert a link at the cursor
     static let insertLink = Notification.Name("insertLink")
 

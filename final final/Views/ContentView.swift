@@ -500,7 +500,6 @@ struct ContentView: View {
         .toolbar(editorState.focusModeHidesToolbar ? .hidden : .visible, for: .windowToolbar)
         .task {
             AppDelegate.shared?.editorState = editorState
-            AppDelegate.shared?.autoBackupService = autoBackupService
             await initializeProject()
 
             // Restore focus mode from previous session if needed

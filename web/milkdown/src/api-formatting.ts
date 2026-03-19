@@ -12,7 +12,7 @@ import {
   wrapInOrderedListCommand,
 } from '@milkdown/kit/preset/commonmark';
 import { toggleStrikethroughCommand } from '@milkdown/kit/preset/gfm';
-import { lift } from '@milkdown/kit/prose/commands';
+import { lift, toggleMark } from '@milkdown/kit/prose/commands';
 import { liftListItem } from '@milkdown/kit/prose/schema-list';
 import { callCommand } from '@milkdown/kit/utils';
 import { getEditorInstance } from './editor-state';
@@ -186,6 +186,24 @@ export function toggleCodeBlock(): boolean {
     }
 
     editorInstance.action(callCommand(createCodeBlockCommand.key));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Uses raw ProseMirror toggleMark() because no toggleInlineCodeCommand exists
+// in the commonmark preset (unlike toggleStrongCommand, toggleEmphasisCommand).
+export function toggleInlineCode(): boolean {
+  const editorInstance = getEditorInstance();
+  if (!editorInstance) return false;
+  try {
+    const view = editorInstance.ctx.get(editorViewCtx);
+    // Milkdown's commonmark preset registers the mark as "inlineCode"
+    const codeMarkType = view.state.schema.marks.inlineCode;
+    if (!codeMarkType) return false;
+    toggleMark(codeMarkType)(view.state, view.dispatch);
+    view.focus();
     return true;
   } catch {
     return false;

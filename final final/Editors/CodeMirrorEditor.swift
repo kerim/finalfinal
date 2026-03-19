@@ -292,6 +292,7 @@ struct CodeMirrorEditor: NSViewRepresentable {
         var toggleNumberListObserver: NSObjectProtocol?
         var toggleBlockquoteObserver: NSObjectProtocol?
         var toggleCodeBlockObserver: NSObjectProtocol?
+        var toggleInlineCodeObserver: NSObjectProtocol?
         var insertLinkObserver: NSObjectProtocol?
 
         /// Active spellcheck task (cancelled on new check or cleanup)
@@ -504,6 +505,10 @@ struct CodeMirrorEditor: NSViewRepresentable {
                 forName: .toggleCodeBlock, object: nil, queue: .main
             ) { [weak self] _ in self?.executeFormatting("toggleCodeBlock") }
 
+            toggleInlineCodeObserver = NotificationCenter.default.addObserver(
+                forName: .toggleInlineCode, object: nil, queue: .main
+            ) { [weak self] _ in self?.executeFormatting("toggleInlineCode") }
+
             insertLinkObserver = NotificationCenter.default.addObserver(
                 forName: .insertLink, object: nil, queue: .main
             ) { [weak self] _ in self?.executeFormatting("insertLink") }
@@ -553,7 +558,8 @@ struct CodeMirrorEditor: NSViewRepresentable {
             // Formatting command observers cleanup
             for observer in [toggleBoldObserver, toggleItalicObserver, toggleStrikethroughObserver,
                              setHeadingObserver, toggleBulletListObserver, toggleNumberListObserver,
-                             toggleBlockquoteObserver, toggleCodeBlockObserver, insertLinkObserver] {
+                             toggleBlockquoteObserver, toggleCodeBlockObserver, toggleInlineCodeObserver,
+                             insertLinkObserver] {
                 if let observer { NotificationCenter.default.removeObserver(observer) }
             }
         }

@@ -57,6 +57,7 @@ import {
   toggleBold,
   toggleBulletList,
   toggleCodeBlock,
+  toggleInlineCode,
   toggleItalic,
   toggleNumberList,
   toggleStrikethrough,
@@ -163,6 +164,11 @@ function initEditor() {
           return true;
         },
       },
+      // Cmd+Shift+E: Inline Code (redundant with Swift menu shortcut, fallback for web-only dev)
+      {
+        key: 'Mod-Shift-e',
+        run: () => toggleInlineCode(),
+      },
     ]),
     EditorView.lineWrapping,
     EditorView.theme({
@@ -180,11 +186,22 @@ function initEditor() {
     }),
     // Reset pendingSlashUndo on any editing key, handle paste/drop for images
     EditorView.domEventHandlers({
-      keydown(event, _view) {
+      keydown(event, view) {
         // Reset flag on any editing key (typing, backspace, delete)
         if (event.key.length === 1 || event.key === 'Backspace' || event.key === 'Delete') {
           setPendingSlashUndo(false);
         }
+
+        // Backtick with selected text wraps as inline code
+        if (event.key === '`' && !event.metaKey && !event.ctrlKey && !event.altKey) {
+          const { from, to } = view.state.selection.main;
+          if (from !== to) {
+            event.preventDefault();
+            toggleInlineCode();
+            return true;
+          }
+        }
+
         return false;
       },
       click(event, view) {
@@ -384,6 +401,7 @@ window.FinalFinal = {
   toggleNumberList,
   toggleBlockquote,
   toggleCodeBlock,
+  toggleInlineCode,
   insertLink: insertLinkAtCursor,
 
   // Image API
