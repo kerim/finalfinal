@@ -149,6 +149,7 @@ extension View {
                 }
                 // Handle cursor position restoration during mode switch
                 if let position = notification.userInfo?["position"] as? CursorPosition {
+                    DebugLog.log(.editor, "[CURSOR-SYNC] Relay: line=\(position.line) col=\(position.column) visible=\(position.cursorIsVisible) topLine=\(position.topLine)")
                     cursorRestore.wrappedValue = position
                 }
                 // Complete the two-phase toggle: cursor is saved, now do the actual switch

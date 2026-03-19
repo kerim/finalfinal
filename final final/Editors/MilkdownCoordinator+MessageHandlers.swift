@@ -116,7 +116,15 @@ extension MilkdownEditor.Coordinator {
         // - Cursor IS visible → restore cursor + center on it
         let useScrollRestore = cursor.map { !$0.cursorIsVisible && $0.topLine > 1.0 } ?? false
 
-        DebugLog.log(.editor, "[batchInitialize] isResettingContent=\(isResettingContentBinding.wrappedValue), content=\(content.count), effective=\(effectiveContent.count)")
+        if let pos = cursor {
+            DebugLog.log(.editor,
+                "[CURSOR-SYNC] MW.batchInit: line=\(pos.line) col=\(pos.column) visible=\(pos.cursorIsVisible) scroll=\(useScrollRestore)")
+        } else {
+            DebugLog.log(.editor, "[CURSOR-SYNC] MW.batchInit: cursor=nil")
+        }
+
+        DebugLog.log(.editor,
+            "[batchInit] isResetting=\(isResettingContentBinding.wrappedValue) content=\(content.count) effective=\(effectiveContent.count)")
 
         // Build options dictionary for JSON encoding
         // Using JSON instead of template literals handles ALL special characters safely
@@ -128,6 +136,7 @@ extension MilkdownEditor.Coordinator {
             options["cursorPosition"] = ["line": pos.line, "column": pos.column]
         } else {
             // Don't pass cursor — prevents setCursorPosition(1,0) + scrollCursorToCenter
+            DebugLog.log(.editor, "[CURSOR-SYNC] MW.batchInit: DROPPING cursor (useScrollRestore=true), will scrollToLine instead")
             options["cursorPosition"] = NSNull()
         }
 
@@ -180,16 +189,24 @@ extension MilkdownEditor.Coordinator {
     }
 
     func restoreCursorPositionIfNeeded() {
-        guard let position = cursorPositionToRestoreBinding.wrappedValue else { return }
+        guard let position = cursorPositionToRestoreBinding.wrappedValue else {
+            DebugLog.log(.editor, "[CURSOR-SYNC] restoreCursorIfNeeded: no cursor binding, skipping")
+            return
+        }
         cursorPositionToRestoreBinding.wrappedValue = nil
 
         let useScrollRestore = !position.cursorIsVisible && position.topLine > 1.0
 
+        DebugLog.log(.editor,
+            "[CURSOR-SYNC] restoreCursor: line=\(position.line) col=\(position.column) scrollRestore=\(useScrollRestore)")
+
         if useScrollRestore {
             // Cursor not visible — restore scroll position only
+            DebugLog.log(.editor, "[CURSOR-SYNC] restoreCursorIfNeeded: scrollToLine=\(position.topLine)")
             scrollToLine(position.topLine)
         } else if position.line != 1 || position.column != 0 {
             // Cursor was placed and is visible — set cursor and center on it
+            DebugLog.log(.editor, "[CURSOR-SYNC] restoreCursorIfNeeded: restoring line=\(position.line) col=\(position.column)")
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
                 self?.setCursorPosition(position) {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in

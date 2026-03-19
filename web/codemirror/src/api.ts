@@ -302,6 +302,11 @@ export function getCursorPosition(): {
     const fraction = topBlock.height > 0 ? (scroller.scrollTop - topBlock.top) / topBlock.height : 0;
     const topLine = topLineInt + Math.min(fraction, 0.99);
 
+    (window as any).webkit?.messageHandlers?.errorHandler?.postMessage({
+      type: 'debug',
+      message: `[CURSOR-SYNC] CM.getCursorPosition: line=${line.number} col=${pos - line.from} visible=${cursorIsVisible} topLine=${topLine.toFixed(2)}`,
+    });
+
     return {
       line: line.number, // CodeMirror lines are 1-indexed
       column: pos - line.from,

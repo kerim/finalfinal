@@ -116,6 +116,7 @@ declare global {
       toggleNumberList: () => boolean;
       toggleBlockquote: () => boolean;
       toggleCodeBlock: () => boolean;
+      toggleInlineCode: () => boolean;
       insertLink: () => boolean;
       // Citation API
       setCitationLibrary: (items: CSLItem[]) => void;

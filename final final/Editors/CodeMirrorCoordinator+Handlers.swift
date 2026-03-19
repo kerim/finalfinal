@@ -68,7 +68,8 @@ extension CodeMirrorEditor.Coordinator {
         // Formatting command observers cleanup
         for observer in [toggleBoldObserver, toggleItalicObserver, toggleStrikethroughObserver,
                          setHeadingObserver, toggleBulletListObserver, toggleNumberListObserver,
-                         toggleBlockquoteObserver, toggleCodeBlockObserver, insertLinkObserver] {
+                         toggleBlockquoteObserver, toggleCodeBlockObserver, toggleInlineCodeObserver,
+                         insertLinkObserver] {
             if let observer { NotificationCenter.default.removeObserver(observer) }
         }
         toggleBoldObserver = nil
@@ -79,6 +80,7 @@ extension CodeMirrorEditor.Coordinator {
         toggleNumberListObserver = nil
         toggleBlockquoteObserver = nil
         toggleCodeBlockObserver = nil
+        toggleInlineCodeObserver = nil
         insertLinkObserver = nil
         webView = nil
     }
@@ -131,6 +133,8 @@ extension CodeMirrorEditor.Coordinator {
         // RACE CONDITION FIX: If we have a pending cursor restore that hasn't completed,
         // use that position instead of reading from the editor (which would return wrong value)
         if let pending = pendingCursorRestore {
+            DebugLog.log(.editor,
+                "[CURSOR-SYNC] CM.saveAndNotify: pendingRestore line=\(pending.line) col=\(pending.column)")
             NotificationCenter.default.post(
                 name: .didSaveCursorPosition,
                 object: nil,
@@ -181,6 +185,9 @@ extension CodeMirrorEditor.Coordinator {
                 let topLine = dict["topLine"] as? Double ?? 1.0
                 position = CursorPosition(line: line, column: column, scrollFraction: scrollFraction, cursorIsVisible: cursorIsVisible, topLine: topLine)
             }
+
+            DebugLog.log(.editor,
+                "[CURSOR-SYNC] CM.saveCursor: line=\(position.line) col=\(position.column) visible=\(position.cursorIsVisible)")
 
             NotificationCenter.default.post(
                 name: .didSaveCursorPosition,

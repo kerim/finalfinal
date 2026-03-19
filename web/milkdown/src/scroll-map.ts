@@ -146,12 +146,14 @@ function findNodeInMdLines(node: Node, mdLines: string[], startIdx: number): { m
       return { mdLine: idx, linesConsumed: 1 };
     }
     // Forward-search for a line whose stripped content partially matches PM text
+    // Normalize pmText for comparison (atom nodes produce double spaces in PM)
+    const pmTextNormalized = pmText.replace(/\s+/g, ' ');
     const found = scanForward(mdLines, idx, (line) => {
       const stripped = stripMarkdownSyntax(line).trim();
       if (!stripped) return false;
-      const pmPrefix = pmText.substring(0, 20);
+      const pmPrefix = pmTextNormalized.substring(0, 20);
       const mdPrefix = stripped.substring(0, 20);
-      return stripped.includes(pmPrefix) || pmText.includes(mdPrefix);
+      return stripped.includes(pmPrefix) || pmTextNormalized.includes(mdPrefix);
     });
     return { mdLine: found, linesConsumed: 1 };
   }

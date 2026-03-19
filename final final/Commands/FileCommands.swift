@@ -354,7 +354,6 @@ struct FileOperations {
         // Note: Content is auto-saved by SectionSyncService
         // This explicit save is for any pending changes
         DocumentManager.shared.markClean()
-        AppDelegate.shared?.autoBackupService?.contentDidSave()
         DebugLog.log(.fileOps, "[FileOperations] Project saved")
     }
 

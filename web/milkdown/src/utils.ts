@@ -5,9 +5,17 @@
  * Used for matching ProseMirror nodes to markdown lines
  */
 export function stripMarkdownSyntax(line: string): string {
-  return line
-    .replace(/^\||\|$/g, '') // leading/trailing pipes (table)
-    .replace(/\|/g, ' ') // internal pipes (table cells)
+  const trimmed = line.trim();
+  const looksLikeTable = trimmed.length >= 3 && trimmed.startsWith('|') && trimmed.endsWith('|');
+
+  let result = line;
+  if (looksLikeTable) {
+    result = result
+      .replace(/^\||\|$/g, '') // leading/trailing pipes (table)
+      .replace(/\|/g, ' '); // internal pipes (table cells)
+  }
+
+  return result
     .replace(/^#+\s*/, '') // headings
     .replace(/^\s*[-*+]\s*/, '') // unordered list items
     .replace(/^\s*\d+\.\s*/, '') // ordered list items
@@ -20,6 +28,10 @@ export function stripMarkdownSyntax(line: string): string {
     .replace(/`([^`]+)`/g, '$1') // inline code
     .replace(/!\[([^\]]*)\]\([^)]+\)(?:\s*\{[^}]*\})?/g, '$1') // images (+ optional {width=N%} attrs)
     .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1') // links
+    .replace(/\[[^\]]*@[\w:.-][^\]]*\]/g, '') // citations: [@key], [-@key], [prefix @key; @key2]
+    .replace(/\[\^[^\]]+\]/g, '') // footnote refs: [^1], [^label]
+    .replace(/==(.+?)==/g, '$1') // highlights: ==text== → text
+    .replace(/<!--\s*::\w+::\s*[\s\S]*?-->/g, '') // annotations: <!-- ::type:: text -->
     .trim()
     .replace(/\s+/g, ' '); // normalize whitespace
 }

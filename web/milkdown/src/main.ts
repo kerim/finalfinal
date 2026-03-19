@@ -7,7 +7,8 @@ import { clipboard } from '@milkdown/kit/plugin/clipboard';
 import { history } from '@milkdown/kit/plugin/history';
 import { commonmark } from '@milkdown/kit/preset/commonmark';
 import { gfm } from '@milkdown/kit/preset/gfm';
-import { getMarkdown } from '@milkdown/kit/utils';
+import { Plugin, PluginKey } from '@milkdown/kit/prose/state';
+import { $prose, getMarkdown } from '@milkdown/kit/utils';
 import { annotationDisplayPlugin } from './annotation-display-plugin';
 import { annotationPlugin } from './annotation-plugin';
 import {
@@ -54,6 +55,7 @@ import {
   toggleBold,
   toggleBulletList,
   toggleCodeBlock,
+  toggleInlineCode,
   toggleItalic,
   toggleNumberList,
   toggleStrikethrough,
@@ -119,7 +121,7 @@ import { searchPlugin } from './search-plugin';
 import { sectionBreakPlugin } from './section-break-plugin';
 import { selectionToolbarPlugin } from './selection-toolbar-plugin';
 import { configureSlash, slash } from './slash-commands';
-import { sourceModePlugin } from './source-mode-plugin';
+import { isSourceModeEnabled, sourceModePlugin } from './source-mode-plugin';
 import {
   disableSpellcheck as disableSpellcheckImpl,
   enableSpellcheck as enableSpellcheckImpl,
@@ -132,6 +134,26 @@ import './styles.css';
 // Import types to ensure declare global is included in the bundle
 import { syncLog } from './sync-debug';
 import './types';
+
+// Backtick with selected text wraps selection as inline code.
+// Uses ProseMirror's handleKeyDown (not DOM events) because WKWebView's
+// event timing lets ProseMirror's MutationObserver consume DOM changes
+// before DOM-level handlers can intercept them.
+const backtickWrapPlugin = $prose(() => {
+  return new Plugin({
+    key: new PluginKey('backtick-wrap'),
+    props: {
+      handleKeyDown(view, event) {
+        if (event.key !== '`' || event.metaKey || event.ctrlKey || event.altKey) return false;
+        if (isSourceModeEnabled()) return false;
+        if (view.state.selection.empty) return false;
+
+        toggleInlineCode();
+        return true; // ProseMirror calls preventDefault(), suppressing all input paths
+      },
+    },
+  });
+});
 
 async function initEditor() {
   const root = document.getElementById('editor');
@@ -173,6 +195,7 @@ async function initEditor() {
       .use(sourceModePlugin) // Dual-appearance source mode
       .use(annotationDisplayPlugin) // Controls annotation visibility
       .use(headingNodeViewPlugin) // Custom heading rendering for source mode # selection
+      .use(backtickWrapPlugin) // Backtick wraps selection as inline code (ProseMirror-level)
       // citationNodeView is now included in citationPlugin (same file = correct atom identity)
       .use(searchPlugin) // Search highlighting decorations
       .use(spellcheckPlugin) // Spellcheck/grammar decorations via NSSpellChecker
@@ -412,6 +435,7 @@ window.FinalFinal = {
   toggleNumberList,
   toggleBlockquote,
   toggleCodeBlock,
+  toggleInlineCode,
   insertLink: insertLinkAtCursor,
 
   // Find/replace API

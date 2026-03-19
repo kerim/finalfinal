@@ -122,14 +122,8 @@ final class FixtureGeneratorTests: XCTestCase {
             return
         }
 
-        // Copy to temp to avoid modifying the committed fixture (WAL mode, migrations)
-        let tempFixture = FileManager.default.temporaryDirectory
-            .appendingPathComponent("fixture-validation-\(UUID().uuidString).ff")
-        try FileManager.default.copyItem(at: url, to: tempFixture)
-        defer { try? FileManager.default.removeItem(at: tempFixture) }
-
-        // Open the copy — this will run migrations and validate schema
-        let package = try ProjectPackage.open(at: tempFixture)
+        // Open it — this will run migrations and validate schema
+        let package = try ProjectPackage.open(at: url)
         let db = try ProjectDatabase(package: package)
 
         // Verify content exists

@@ -92,7 +92,8 @@ extension MilkdownEditor.Coordinator {
         // Formatting command observers cleanup
         for observer in [toggleBoldObserver, toggleItalicObserver, toggleStrikethroughObserver,
                          setHeadingObserver, toggleBulletListObserver, toggleNumberListObserver,
-                         toggleBlockquoteObserver, toggleCodeBlockObserver, insertLinkObserver] {
+                         toggleBlockquoteObserver, toggleCodeBlockObserver, toggleInlineCodeObserver,
+                         insertLinkObserver] {
             if let observer { NotificationCenter.default.removeObserver(observer) }
         }
         toggleBoldObserver = nil
@@ -103,6 +104,7 @@ extension MilkdownEditor.Coordinator {
         toggleNumberListObserver = nil
         toggleBlockquoteObserver = nil
         toggleCodeBlockObserver = nil
+        toggleInlineCodeObserver = nil
         insertLinkObserver = nil
         webView = nil
     }
@@ -300,6 +302,7 @@ extension MilkdownEditor.Coordinator {
         // Milkdown may return corrupted content (missing # from headers) during this window.
         // Still save cursor and fire the toggle notification so the toggle proceeds.
         if contentState == .editorTransition {
+            DebugLog.log(.editor, "[CURSOR-SYNC] MW.saveAndNotify: SKIPPING content capture (editorTransition)")
             saveCursorAndNotify()
             return
         }
@@ -345,6 +348,9 @@ extension MilkdownEditor.Coordinator {
                 let topLine = dict["topLine"] as? Double ?? 1.0
                 position = CursorPosition(line: line, column: column, scrollFraction: scrollFraction, cursorIsVisible: cursorIsVisible, topLine: topLine)
             }
+
+            DebugLog.log(.editor,
+                "[CURSOR-SYNC] MW.saveCursor: line=\(position.line) col=\(position.column) visible=\(position.cursorIsVisible)")
 
             NotificationCenter.default.post(
                 name: .didSaveCursorPosition,

@@ -25,7 +25,7 @@ enum DebugLog {
     }
 
     /// Default: only lifecycle + zotero. Add categories here when debugging.
-    static let enabled: Set<Category> = [.lifecycle, .zotero]
+    static let enabled: Set<Category> = [.lifecycle, .zotero, .editor]
 
     /// Category-gated log. Compiles to nothing in release builds.
     @inline(__always)

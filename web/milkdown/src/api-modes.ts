@@ -146,7 +146,7 @@ export function setTheme(cssVariables: string): void {
 function pmPosToMdLine(view: import('@milkdown/kit/prose/view').EditorView, pmPos: number, mdLines: string[]): number {
   const $pos = view.state.doc.resolve(pmPos);
   const parentNode = $pos.parent;
-  const parentText = parentNode.textContent;
+  const parentText = parentNode.textContent.trim().replace(/\s+/g, ' ');
 
   let line = 1;
   let matched = false;
@@ -198,7 +198,7 @@ function pmPosToMdLine(view: import('@milkdown/kit/prose/view').EditorView, pmPo
   for (let i = 0; i < mdLines.length && !matched; i++) {
     const stripped = stripMarkdownSyntax(mdLines[i]);
 
-    if (stripped === parentText) {
+    if (stripped && stripped === parentText) {
       line = i + 1;
       matched = true;
       break;
@@ -218,6 +218,11 @@ function pmPosToMdLine(view: import('@milkdown/kit/prose/view').EditorView, pmPo
       break;
     }
   }
+
+  (window as any).webkit?.messageHandlers?.errorHandler?.postMessage({
+    type: 'debug',
+    message: `[CURSOR-SYNC] pmPosToMdLine: pmPos=${pmPos} parentText="${parentText.substring(0, 60)}" len=${parentText.length} matched=${matched} line=${line} method=${inTable ? 'table' : matched ? 'text' : 'scanning'}`,
+  });
 
   // Fallback: count blocks from document start
   if (!matched) {
@@ -243,6 +248,11 @@ function pmPosToMdLine(view: import('@milkdown/kit/prose/view').EditorView, pmPo
     if (contentLinesSeen < blockCount) {
       line = mdLines.length;
     }
+
+    (window as any).webkit?.messageHandlers?.errorHandler?.postMessage({
+      type: 'debug',
+      message: `[CURSOR-SYNC] pmPosToMdLine FALLBACK: blockCount=${blockCount} contentLinesSeen=${contentLinesSeen} resultLine=${line}`,
+    });
   }
 
   return line;
@@ -289,6 +299,11 @@ export function getCursorPosition(): {
     // Determine the markdown line at the viewport top (float with sub-line precision)
     const topLine = saveScrollPosition(view, mdLines);
 
+    (window as any).webkit?.messageHandlers?.errorHandler?.postMessage({
+      type: 'debug',
+      message: `[CURSOR-SYNC] MW.getCursorPosition: line=${line} col=${column} pmHead=${head} visible=${cursorIsVisible} topLine=${topLine.toFixed(2)}`,
+    });
+
     return { line, column, scrollFraction, cursorIsVisible, topLine };
   } catch {
     return { line: 1, column: 0, scrollFraction: 0, cursorIsVisible: true, topLine: 1 };
@@ -300,6 +315,11 @@ export function setCursorPosition(lineCol: { line: number; column: number }): vo
   if (!editorInstance) {
     return;
   }
+
+  (window as any).webkit?.messageHandlers?.errorHandler?.postMessage({
+    type: 'debug',
+    message: `[CURSOR-SYNC] MW.setCursorPosition INPUT: line=${lineCol.line} col=${lineCol.column}`,
+  });
 
   try {
     const view = editorInstance.ctx.get(editorViewCtx);
@@ -336,6 +356,8 @@ export function setCursorPosition(lineCol: { line: number; column: number }): vo
 
     let pmPos = 1;
     let found = false;
+    let matchedBlockStart = 0;
+    let matchedBlockEnd = 0;
 
     // SIMPLE TABLE HANDLING: Place cursor at the START of the table
     if (isTableLine(targetLine) && !isTableSeparator(targetLine)) {
@@ -360,6 +382,8 @@ export function setCursorPosition(lineCol: { line: number; column: number }): vo
             // Place cursor at start of table (position just inside first cell)
             pmPos = pos + 3;
             found = true;
+            matchedBlockStart = pos;
+            matchedBlockEnd = pos + node.nodeSize;
             return false;
           }
         }
@@ -372,9 +396,11 @@ export function setCursorPosition(lineCol: { line: number; column: number }): vo
       view.state.doc.descendants((node, pos) => {
         if (found) return false;
 
-        if (node.isBlock && node.textContent.trim() === targetText) {
+        if (node.isBlock && node.textContent.trim().replace(/\s+/g, ' ') === targetText) {
           pmPos = pos + 1 + Math.min(textOffset, node.content.size);
           found = true;
+          matchedBlockStart = pos;
+          matchedBlockEnd = pos + node.nodeSize;
           return false;
         }
         return true;
@@ -408,6 +434,8 @@ export function setCursorPosition(lineCol: { line: number; column: number }): vo
           if (blockCount === contentLineIndex) {
             pmPos = pos + 1 + Math.min(textOffset, node.content.size);
             found = true;
+            matchedBlockStart = pos;
+            matchedBlockEnd = pos + node.nodeSize;
             return false;
           }
           if (node.type.name === 'table') {
@@ -418,8 +446,19 @@ export function setCursorPosition(lineCol: { line: number; column: number }): vo
       });
     }
 
+    (window as any).webkit?.messageHandlers?.errorHandler?.postMessage({
+      type: 'debug',
+      message: `[CURSOR-SYNC] MW.setCursorPosition MAPPED: pmPos=${pmPos} found=${found}`,
+    });
+
     const selection = Selection.near(view.state.doc.resolve(pmPos));
-    view.dispatch(view.state.tr.setSelection(selection).scrollIntoView());
+    if (found && matchedBlockStart > 0 && (selection.head < matchedBlockStart || selection.head >= matchedBlockEnd)) {
+      // Selection.near() jumped outside the matched block — clamp it back
+      const clamped = Selection.near(view.state.doc.resolve(matchedBlockStart + 1));
+      view.dispatch(view.state.tr.setSelection(clamped).scrollIntoView());
+    } else {
+      view.dispatch(view.state.tr.setSelection(selection).scrollIntoView());
+    }
     view.focus();
   } catch {
     // Cursor positioning failed, ignore
@@ -540,7 +579,13 @@ export function initialize(options: {
   }
 
   // Restore cursor position if provided
-  if (options.cursorPosition) {
+  // Skip when content is empty — cursor would match against stale WebView content.
+  // restoreCursorPositionIfNeeded() handles cursor after real content arrives via setContentWithBlockIds().
+  if (options.cursorPosition && options.content.length > 0) {
+    (window as any).webkit?.messageHandlers?.errorHandler?.postMessage({
+      type: 'debug',
+      message: `[CURSOR-SYNC] MW.initialize: cursorPosition=line=${options.cursorPosition.line} col=${options.cursorPosition.column} contentLen=${options.content.length}`,
+    });
     setCursorPosition(options.cursorPosition);
     scrollCursorToCenter();
   }
