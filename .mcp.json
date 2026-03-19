@@ -4,7 +4,7 @@
       "type": "stdio",
       "command": "/opt/homebrew/bin/XcodeBuildMCP",
       "args": [
-        "--stdio"
+        "mcp"
       ],
       "env": {}
     }
