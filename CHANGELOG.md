@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.88] - 2026-03-19
+
 ### Fixed
 
 - **Hierarchy enforcement sibling normalization** — when a header was clamped (e.g., H4→H3), only the first child was adjusted; siblings at the same level passed the predecessor+1 constraint. Simplified by replacing delta propagation with direct demotion, with early-return guard for the common case where hierarchy is already valid.
