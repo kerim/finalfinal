@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Hierarchy enforcement sibling normalization** — when a header was clamped (e.g., H4→H3), only the first child was adjusted; siblings at the same level passed the predecessor+1 constraint. Simplified by replacing delta propagation with direct demotion, with early-return guard for the common case where hierarchy is already valid.
+- **Cursor sync drift on atom-containing paragraphs** — ProseMirror `textContent` produces double spaces for atom nodes (citations, footnotes), causing position mismatch during sync. Normalized whitespace at all comparison sites, clamped `Selection.near()` to matched block bounds to prevent cross-paragraph jumps, and stripped annotation syntax in `stripMarkdownSyntax()`.
+- **Spellcheck skipping inline code** — `SKIP_MARK_TYPES` used wrong mark name (`code_inline` instead of Milkdown's `inlineCode`), so inline code spans were spell-checked.
+- **Auto-backup lifecycle methods never called** — `appWillQuit()`, `projectWillSwitch()`, `contentDidSave()` were defined on AutoBackupService but never wired up; snapshots before quit/switch were not taken. Connected all three, added 3s timeout for quit snapshot, and fixed `performProjectClose()` race by awaiting backup before reset.
+- **Backup pruning blocking project switch/quit** — pruning ran synchronously on the project-switch/quit path. Moved to idle-time execution.
+
+### Added
+
+- **Inline code toggle** (Cmd+E / Cmd+Shift+C) — `toggleInlineCode` command in both Milkdown and CodeMirror editors, wired through EditorCommands and ViewNotificationModifiers. Includes backtick-wraps-selection ProseMirror plugin for WKWebView.
+- **HierarchyEnforcementTests** — 8 unit tests covering sibling normalization, nested subtrees, subtree exit, H1-first rule, deep nesting chains, and independent subtrees.
+
 ## [0.2.87] - 2026-03-18
 
 ### Fixed
