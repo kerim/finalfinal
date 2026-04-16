@@ -40,3 +40,6 @@ docs/plans/
 *.swp
 *.swo
 
+
+# Git worktrees
+.worktrees/
