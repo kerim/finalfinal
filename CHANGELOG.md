@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.93] - 2026-04-18
+
 ### Fixed
 
 - **Tiny window on first launch** — the main `WindowGroup` had no sizing modifier, so macOS sized the window to the loading view's intrinsic content. Added `.defaultWindowPlacement` that targets a 13-inch laptop's usable area (1400×900) and clamps to the visible screen: on smaller displays the window fills the screen, on larger displays it stays "13-inch sized" and centered. Last-used size/position and fullscreen state still restore automatically via SwiftUI's built-in scene persistence — the default only applies when there's no saved state.
