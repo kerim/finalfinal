@@ -3,7 +3,6 @@
 //  final final
 //
 
-import AppKit
 import SwiftUI
 
 /// App state for tracking what view to show
@@ -21,18 +20,6 @@ struct FinalFinalApp: App {
     @State private var appViewState: AppViewState = .loading
 
     private var documentManager: DocumentManager { DocumentManager.shared }
-
-    /// Fallback size for the main window on first launch, before `.defaultWindowPlacement`
-    /// has a display to measure. Mirrors the logic in `.defaultWindowPlacement`: clamp a
-    /// 13-inch target to whatever the main screen can show.
-    static var defaultInitialWindowSize: CGSize {
-        let target = CGSize(width: 1400, height: 900)
-        guard let visible = NSScreen.main?.visibleFrame.size else { return target }
-        return CGSize(
-            width: min(target.width, visible.width),
-            height: min(target.height, visible.height)
-        )
-    }
 
     var body: some Scene {
         WindowGroup {
@@ -96,14 +83,12 @@ struct FinalFinalApp: App {
                 DebugLog.log(.lifecycle, "[FinalFinalApp] State changed: \(oldState) -> \(newState)")
             }
         }
-        .defaultSize(width: FinalFinalApp.defaultInitialWindowSize.width,
-                     height: FinalFinalApp.defaultInitialWindowSize.height)
         .defaultWindowPlacement { _, context in
-            let visible = context.defaultDisplay.visibleRect
             // Target: usable area of a 13-inch laptop. On smaller displays the
             // min() clamps this to the visible area so the window fills the screen;
             // on larger displays it stays "13-inch sized" regardless of screen size.
             let target = CGSize(width: 1400, height: 900)
+            let visible = context.defaultDisplay.visibleRect
             let size = CGSize(
                 width: min(target.width, visible.width),
                 height: min(target.height, visible.height)
