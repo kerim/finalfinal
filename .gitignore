@@ -33,6 +33,7 @@ temp/
 .claude/settings.local.json
 .claude/debug/
 docs/plans/
+docs/course/
 
 # IDE
 .idea/
