@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.94] - 2026-04-18
+
 ### Fixed
 
 - **Spell/grammar popup priority on overlapping ranges** — when NSSpellChecker and LanguageTool both covered the same text range, the web editor rendered both underlines but the click handler returned NSSpellChecker's result first, so clicking a blue-underlined word opened the spell menu instead of LT's grammar/style popup. `SpellCheckService.check()` now suppresses any NSSpellChecker result whose range overlaps an active LT result. Built-in mode (LT off) is unchanged.
