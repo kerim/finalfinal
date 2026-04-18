@@ -52,6 +52,24 @@ echo "  Updated web/package.json"
 echo -e "${GREEN}  Version incremented to $NEW_VERSION${NC}"
 echo ""
 
+# Revert version bump and clean up leftover notarize zip if any later step fails.
+# Without this, an aborted build leaves project.yml/package.json/pbxproj at the bumped
+# version with no corresponding distribution zip — which breaks ffrelease.
+cleanup_on_failure() {
+    local exit_code=$?
+    trap - EXIT
+    if [ $exit_code -ne 0 ]; then
+        echo ""
+        echo -e "${RED}Build failed — reverting version bump and cleaning up...${NC}"
+        sed -i '' "s/CURRENT_PROJECT_VERSION: \"$NEW_VERSION\"/CURRENT_PROJECT_VERSION: \"$CURRENT_VERSION\"/" "$PROJECT_YML" 2>/dev/null || true
+        sed -i '' "s/\"version\": \"$NEW_VERSION\"/\"version\": \"$CURRENT_VERSION\"/" "$PACKAGE_JSON" 2>/dev/null || true
+        sed -i '' "s/CURRENT_PROJECT_VERSION = $NEW_VERSION;/CURRENT_PROJECT_VERSION = $CURRENT_VERSION;/g" "$PROJECT_DIR/final final.xcodeproj/project.pbxproj" 2>/dev/null || true
+        rm -f "$PROJECT_DIR/build/notarize-tmp.zip"
+        echo -e "${YELLOW}  Reverted to v$CURRENT_VERSION${NC}"
+    fi
+}
+trap cleanup_on_failure EXIT
+
 # Step 1b: Clean stale QuickLook extension registrations (DerivedData leftovers)
 # Each xcodegen run creates a new project hash → new DerivedData dir → new .appex copy.
 # Safe: build.sh uses its own -derivedDataPath "$PROJECT_DIR/build", not these.

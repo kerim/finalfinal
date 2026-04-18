@@ -83,6 +83,22 @@ struct FinalFinalApp: App {
                 DebugLog.log(.lifecycle, "[FinalFinalApp] State changed: \(oldState) -> \(newState)")
             }
         }
+        .defaultWindowPlacement { _, context in
+            // Target: usable area of a 13-inch laptop. On smaller displays the
+            // min() clamps this to the visible area so the window fills the screen;
+            // on larger displays it stays "13-inch sized" regardless of screen size.
+            let target = CGSize(width: 1400, height: 900)
+            let visible = context.defaultDisplay.visibleRect
+            let size = CGSize(
+                width: min(target.width, visible.width),
+                height: min(target.height, visible.height)
+            )
+            let origin = CGPoint(
+                x: visible.midX - size.width / 2,
+                y: visible.midY - size.height / 2
+            )
+            return WindowPlacement(origin, size: size)
+        }
         .commands {
             FileCommands()
             ViewCommands()
