@@ -37,6 +37,19 @@ enum DebugLog {
         #endif
     }
 
+    /// Check whether a category is currently logging. Use to short-circuit work
+    /// done *outside* a `log()` call (e.g. allocating a preview string or counting).
+    /// Inline the check at the top of logging helpers so the body is skipped entirely
+    /// when the category is disabled.
+    @inline(__always)
+    static func isEnabled(_ category: Category) -> Bool {
+        #if DEBUG
+        return enabled.contains(category)
+        #else
+        return false
+        #endif
+    }
+
     /// Always prints in ALL builds. Reserved for:
     /// - Mass-delete safety guards (data loss prevention)
     /// - Truly critical errors where silence risks data corruption

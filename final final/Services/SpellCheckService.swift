@@ -99,24 +99,40 @@ final class SpellCheckService {
         results.append(contentsOf: spellingResults)
         results.append(contentsOf: ltResults)
 
-        var spellingCount = 0
-        var grammarCount = 0
-        var styleCount = 0
-        for r in results {
-            switch r.type {
-            case "spelling": spellingCount += 1
-            case "grammar": grammarCount += 1
-            case "style": styleCount += 1
-            default: break
-            }
+        if DebugLog.isEnabled(.proofing) {
+            let counts = Self.countByType(results)
+            DebugLog.log(.proofing,
+                "[Dispatch] final returned: total=\(results.count) " +
+                "spelling=\(counts.spelling) grammar=\(counts.grammar) style=\(counts.style)")
         }
-        DebugLog.log(.proofing,
-            "[Dispatch] final returned: total=\(results.count) " +
-            "spelling=\(spellingCount) grammar=\(grammarCount) style=\(styleCount)")
 
         // Post notification so status bar can update connection status
         NotificationCenter.default.post(name: .proofingConnectionStatusChanged, object: nil)
         return results
+    }
+
+    struct TypeCounts {
+        let spelling: Int
+        let grammar: Int
+        let style: Int
+    }
+
+    /// Tally results by `type`. Used by `.proofing` diagnostics in both this file and
+    /// `LanguageToolProvider`; callers should gate with `DebugLog.isEnabled(.proofing)`
+    /// since the loop iterates the full result array.
+    static func countByType(_ results: [SpellCheckResult]) -> TypeCounts {
+        var spelling = 0
+        var grammar = 0
+        var style = 0
+        for result in results {
+            switch result.type {
+            case "spelling": spelling += 1
+            case "grammar": grammar += 1
+            case "style": style += 1
+            default: break
+            }
+        }
+        return TypeCounts(spelling: spelling, grammar: grammar, style: style)
     }
 
     func learnWord(_ word: String) {

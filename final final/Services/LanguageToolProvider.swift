@@ -130,6 +130,7 @@ final class LanguageToolProvider: ProofingProvider {
 
     struct ParseDiagnostics {
         var rawMatches: Int = 0
+        var droppedMissingFields: Int = 0
         var droppedZeroLength: Int = 0
         var droppedNoSegment: Int = 0
         var droppedBoundary: Int = 0
@@ -158,7 +159,7 @@ final class LanguageToolProvider: ProofingProvider {
         for match in matches {
             guard let offset = match["offset"] as? Int,
                   let length = match["length"] as? Int else {
-                diag.droppedZeroLength += 1
+                diag.droppedMissingFields += 1
                 continue
             }
             if length <= 0 {
@@ -174,8 +175,10 @@ final class LanguageToolProvider: ProofingProvider {
 
             let localOffset = offset - mapping.fullTextOffset
 
-            // Skip matches that span across same-block segment boundaries
-            // (these cross the injected space between segments and are always false positives)
+            // Skip matches that span across same-block segment boundaries — these cross
+            // the injected space between segments and are almost always false positives.
+            // Per-scan drop count is logged under .proofing as `[LT] matches: … boundary=N`;
+            // measured ~20% of raw matches on prose with citations/footnotes/annotations.
             let segmentTextLength = (mapping.segment.text as NSString).length
             if localOffset + length > segmentTextLength {
                 diag.droppedBoundary += 1
@@ -299,40 +302,37 @@ final class LanguageToolProvider: ProofingProvider {
 
     // MARK: - Diagnostic Logging
 
+    private static let boundaryPreviewChars = 200
+
     private func logRequestBoundary(fullText: String, segmentCount: Int) {
+        guard DebugLog.isEnabled(.proofing) else { return }
         let nsFull = fullText as NSString
         DebugLog.log(.proofing,
             "[LT] sent: segments=\(segmentCount) chars=\(nsFull.length) " +
             "mode=\(settings.mode.rawValue) picky=\(settings.pickyMode) " +
             "lang=\(settings.language) disabledRules=\(settings.disabledRules.count)")
         guard nsFull.length > 0 else { return }
-        let head = nsFull.substring(to: min(200, nsFull.length))
+        let previewLen = Self.boundaryPreviewChars
+        let head = nsFull.substring(to: min(previewLen, nsFull.length))
         DebugLog.log(.proofing, "[LT] head: \"\(head.replacingOccurrences(of: "\n", with: "⏎"))\"")
-        if nsFull.length > 200 {
-            let tail = nsFull.substring(from: nsFull.length - 200)
+        if nsFull.length > previewLen {
+            let tail = nsFull.substring(from: nsFull.length - previewLen)
             DebugLog.log(.proofing, "[LT] tail: \"\(tail.replacingOccurrences(of: "\n", with: "⏎"))\"")
         }
     }
 
     private func logResponseBoundary(parsed: ParsedResponse) {
+        guard DebugLog.isEnabled(.proofing) else { return }
         let diag = parsed.diagnostics
         DebugLog.log(.proofing,
             "[LT] matches: raw=\(diag.rawMatches) kept=\(parsed.results.count) | " +
-            "drops: zeroLen=\(diag.droppedZeroLength) noSegment=\(diag.droppedNoSegment) " +
-            "boundary=\(diag.droppedBoundary) ignored=\(diag.droppedIgnored) nonLatin=\(diag.droppedNonLatin)")
-        var spelling = 0
-        var grammar = 0
-        var style = 0
-        for result in parsed.results {
-            switch result.type {
-            case "spelling": spelling += 1
-            case "grammar": grammar += 1
-            case "style": style += 1
-            default: break
-            }
-        }
+            "drops: missing=\(diag.droppedMissingFields) zeroLen=\(diag.droppedZeroLength) " +
+            "noSegment=\(diag.droppedNoSegment) boundary=\(diag.droppedBoundary) " +
+            "ignored=\(diag.droppedIgnored) nonLatin=\(diag.droppedNonLatin)")
+        let counts = SpellCheckService.countByType(parsed.results)
         DebugLog.log(.proofing,
-            "[LT] byType (pre-dispatcher-filter): spelling=\(spelling) grammar=\(grammar) style=\(style)")
+            "[LT] byType (pre-dispatcher-filter): spelling=\(counts.spelling) " +
+            "grammar=\(counts.grammar) style=\(counts.style)")
     }
 
     // MARK: - Cloud Dictionary Sync
