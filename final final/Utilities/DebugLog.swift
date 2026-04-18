@@ -22,6 +22,7 @@ enum DebugLog {
         case backup      // [SnapshotService] [AutoBackupService]
         case data        // [Database+Blocks] [ProjectRepairService] data layer
         case image       // [Image] width lifecycle tracing
+        case proofing    // [LT] spellcheck + LanguageTool boundary diagnostics
     }
 
     /// Default: only lifecycle + zotero. Add categories here when debugging.

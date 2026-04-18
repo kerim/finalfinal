@@ -32,31 +32,8 @@ final class LanguageToolProvider: ProofingProvider {
         // Consolidate segments into a single text with offset map
         let (fullText, offsetMap) = consolidateSegments(segments)
 
-        // Build request
-        let url = baseURL.appendingPathComponent("v2/check")
-        var request = URLRequest(url: url, timeoutInterval: 10)
-        request.httpMethod = "POST"
-        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
-
-        var params: [String] = [
-            "text=\(urlEncode(fullText))",
-            "language=\(urlEncode(settings.language))"
-        ]
-        if settings.pickyMode {
-            params.append("level=picky")
-        }
-        if settings.mode == .languageToolPremium {
-            if !settings.username.isEmpty {
-                params.append("username=\(urlEncode(settings.username))")
-            }
-            if !settings.apiKey.isEmpty {
-                params.append("apiKey=\(urlEncode(settings.apiKey))")
-            }
-        }
-        if !settings.disabledRules.isEmpty {
-            params.append("disabledRules=\(urlEncode(settings.disabledRules.joined(separator: ",")))")
-        }
-        request.httpBody = params.joined(separator: "&").data(using: .utf8)
+        let request = buildCheckRequest(baseURL: baseURL, fullText: fullText)
+        logRequestBoundary(fullText: fullText, segmentCount: segments.count)
 
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
@@ -64,6 +41,7 @@ final class LanguageToolProvider: ProofingProvider {
 
             guard let httpResponse = response as? HTTPURLResponse else {
                 connectionStatus = .disconnected
+                DebugLog.log(.proofing, "[LT] network: non-HTTP response")
                 return []
             }
 
@@ -72,19 +50,25 @@ final class LanguageToolProvider: ProofingProvider {
                 connectionStatus = .connected
             case 401, 403:
                 connectionStatus = .authError
+                DebugLog.log(.proofing, "[LT] network: auth error \(httpResponse.statusCode)")
                 return []
             case 429:
                 connectionStatus = .rateLimited
+                DebugLog.log(.proofing, "[LT] network: rate limited")
                 return []
             default:
                 connectionStatus = .disconnected
+                DebugLog.log(.proofing, "[LT] network: status \(httpResponse.statusCode)")
                 return []
             }
 
-            return parseResponse(data: data, offsetMap: offsetMap)
+            let parsed = parseResponse(data: data, offsetMap: offsetMap)
+            logResponseBoundary(parsed: parsed)
+            return parsed.results
         } catch {
             guard !Task.isCancelled else { return [] }
             connectionStatus = .disconnected
+            DebugLog.log(.proofing, "[LT] network error: \(error.localizedDescription)")
             return []
         }
     }
@@ -144,39 +128,73 @@ final class LanguageToolProvider: ProofingProvider {
 
     // MARK: - Response Parsing
 
+    struct ParseDiagnostics {
+        var rawMatches: Int = 0
+        var droppedZeroLength: Int = 0
+        var droppedNoSegment: Int = 0
+        var droppedBoundary: Int = 0
+        var droppedIgnored: Int = 0
+        var droppedNonLatin: Int = 0
+    }
+
+    struct ParsedResponse {
+        let results: [SpellCheckService.SpellCheckResult]
+        let diagnostics: ParseDiagnostics
+    }
+
     private func parseResponse(
         data: Data,
         offsetMap: [SegmentMapping]
-    ) -> [SpellCheckService.SpellCheckResult] {
+    ) -> ParsedResponse {
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let matches = json["matches"] as? [[String: Any]] else {
-            return []
+            return ParsedResponse(results: [], diagnostics: ParseDiagnostics())
         }
 
         var results: [SpellCheckService.SpellCheckResult] = []
+        var diag = ParseDiagnostics()
+        diag.rawMatches = matches.count
 
         for match in matches {
             guard let offset = match["offset"] as? Int,
-                  let length = match["length"] as? Int,
-                  length > 0 else { continue }
+                  let length = match["length"] as? Int else {
+                diag.droppedZeroLength += 1
+                continue
+            }
+            if length <= 0 {
+                diag.droppedZeroLength += 1
+                continue
+            }
 
             // Find which segment this match belongs to
-            guard let mapping = findSegment(for: offset, in: offsetMap) else { continue }
+            guard let mapping = findSegment(for: offset, in: offsetMap) else {
+                diag.droppedNoSegment += 1
+                continue
+            }
 
             let localOffset = offset - mapping.fullTextOffset
 
             // Skip matches that span across same-block segment boundaries
             // (these cross the injected space between segments and are always false positives)
             let segmentTextLength = (mapping.segment.text as NSString).length
-            if localOffset + length > segmentTextLength { continue }
+            if localOffset + length > segmentTextLength {
+                diag.droppedBoundary += 1
+                continue
+            }
 
             let word = extractWord(from: mapping.segment.text, offset: localOffset, length: length)
 
             // Skip ignored words
-            if ignoredWords.contains(word) { continue }
+            if ignoredWords.contains(word) {
+                diag.droppedIgnored += 1
+                continue
+            }
 
             // Skip matches targeting non-Latin text (CJK, Arabic, Devanagari, etc.)
-            if containsNonLatinScript(word) { continue }
+            if containsNonLatinScript(word) {
+                diag.droppedNonLatin += 1
+                continue
+            }
 
             // Map to editor positions
             let editorFrom = mapping.segment.from + localOffset
@@ -204,7 +222,7 @@ final class LanguageToolProvider: ProofingProvider {
                 ruleId: ruleId, isPicky: isPicky))
         }
 
-        return results
+        return ParsedResponse(results: results, diagnostics: diag)
     }
 
     private func findSegment(
@@ -247,6 +265,74 @@ final class LanguageToolProvider: ProofingProvider {
             }
         }
         return "grammar"
+    }
+
+    // MARK: - Request Construction
+
+    private func buildCheckRequest(baseURL: URL, fullText: String) -> URLRequest {
+        let url = baseURL.appendingPathComponent("v2/check")
+        var request = URLRequest(url: url, timeoutInterval: 10)
+        request.httpMethod = "POST"
+        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+
+        var params: [String] = [
+            "text=\(urlEncode(fullText))",
+            "language=\(urlEncode(settings.language))"
+        ]
+        if settings.pickyMode {
+            params.append("level=picky")
+        }
+        if settings.mode == .languageToolPremium {
+            if !settings.username.isEmpty {
+                params.append("username=\(urlEncode(settings.username))")
+            }
+            if !settings.apiKey.isEmpty {
+                params.append("apiKey=\(urlEncode(settings.apiKey))")
+            }
+        }
+        if !settings.disabledRules.isEmpty {
+            params.append("disabledRules=\(urlEncode(settings.disabledRules.joined(separator: ",")))")
+        }
+        request.httpBody = params.joined(separator: "&").data(using: .utf8)
+        return request
+    }
+
+    // MARK: - Diagnostic Logging
+
+    private func logRequestBoundary(fullText: String, segmentCount: Int) {
+        let nsFull = fullText as NSString
+        DebugLog.log(.proofing,
+            "[LT] sent: segments=\(segmentCount) chars=\(nsFull.length) " +
+            "mode=\(settings.mode.rawValue) picky=\(settings.pickyMode) " +
+            "lang=\(settings.language) disabledRules=\(settings.disabledRules.count)")
+        guard nsFull.length > 0 else { return }
+        let head = nsFull.substring(to: min(200, nsFull.length))
+        DebugLog.log(.proofing, "[LT] head: \"\(head.replacingOccurrences(of: "\n", with: "⏎"))\"")
+        if nsFull.length > 200 {
+            let tail = nsFull.substring(from: nsFull.length - 200)
+            DebugLog.log(.proofing, "[LT] tail: \"\(tail.replacingOccurrences(of: "\n", with: "⏎"))\"")
+        }
+    }
+
+    private func logResponseBoundary(parsed: ParsedResponse) {
+        let diag = parsed.diagnostics
+        DebugLog.log(.proofing,
+            "[LT] matches: raw=\(diag.rawMatches) kept=\(parsed.results.count) | " +
+            "drops: zeroLen=\(diag.droppedZeroLength) noSegment=\(diag.droppedNoSegment) " +
+            "boundary=\(diag.droppedBoundary) ignored=\(diag.droppedIgnored) nonLatin=\(diag.droppedNonLatin)")
+        var spelling = 0
+        var grammar = 0
+        var style = 0
+        for result in parsed.results {
+            switch result.type {
+            case "spelling": spelling += 1
+            case "grammar": grammar += 1
+            case "style": style += 1
+            default: break
+            }
+        }
+        DebugLog.log(.proofing,
+            "[LT] byType (pre-dispatcher-filter): spelling=\(spelling) grammar=\(grammar) style=\(style)")
     }
 
     // MARK: - Cloud Dictionary Sync

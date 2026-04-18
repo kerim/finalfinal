@@ -59,18 +59,60 @@ final class SpellCheckService {
         let grammarOn = UserDefaults.standard.object(forKey: "isGrammarEnabled") == nil
             ? true : UserDefaults.standard.bool(forKey: "isGrammarEnabled")
 
-        var results: [SpellCheckResult] = []
-
-        // Spelling: always use BuiltInProvider (macOS NSSpellChecker)
+        // Spelling from BuiltInProvider (macOS NSSpellChecker)
+        var spellingResults: [SpellCheckResult] = []
         if spellingOn {
-            results.append(contentsOf: await builtInProvider.check(segments: segments))
+            spellingResults = await builtInProvider.check(segments: segments)
         }
 
-        // Grammar/style: use LanguageTool when configured and grammar is enabled
+        // Grammar/style from LanguageTool when configured and grammar is enabled
+        var ltResults: [SpellCheckResult] = []
         if grammarOn && ProofingSettings.shared.mode.isLanguageTool {
-            let ltResults = await languageToolProvider.check(segments: segments)
-            results.append(contentsOf: ltResults.filter { $0.type != "spelling" })
+            let raw = await languageToolProvider.check(segments: segments)
+            let spellingDropped = raw.filter { $0.type == "spelling" }
+            ltResults = raw.filter { $0.type != "spelling" }
+            DebugLog.log(.proofing,
+                "[Dispatch] LT post-filter: total=\(raw.count) " +
+                "droppedSpellingBucket=\(spellingDropped.count) kept=\(ltResults.count)")
+            if !spellingDropped.isEmpty {
+                let sample = spellingDropped.prefix(10).map { "\($0.word)[\($0.ruleId ?? "?")]" }
+                DebugLog.log(.proofing, "[Dispatch] spellingBucket sample: \(sample.joined(separator: ", "))")
+            }
         }
+
+        // When LT is active, suppress NSSpellChecker results whose range overlaps any LT
+        // result. Keeps the underline colour and click-popup in agreement — otherwise the
+        // word shows LT's blue underline but clicking opens NSSpellChecker's spell menu.
+        if !ltResults.isEmpty {
+            let before = spellingResults.count
+            spellingResults = spellingResults.filter { spelling in
+                !ltResults.contains { grammar in
+                    spelling.from < grammar.to && grammar.from < spelling.to
+                }
+            }
+            DebugLog.log(.proofing,
+                "[Dispatch] spelling/LT overlap suppressed: \(before - spellingResults.count) " +
+                "of \(before) spelling results")
+        }
+
+        var results: [SpellCheckResult] = []
+        results.append(contentsOf: spellingResults)
+        results.append(contentsOf: ltResults)
+
+        var spellingCount = 0
+        var grammarCount = 0
+        var styleCount = 0
+        for r in results {
+            switch r.type {
+            case "spelling": spellingCount += 1
+            case "grammar": grammarCount += 1
+            case "style": styleCount += 1
+            default: break
+            }
+        }
+        DebugLog.log(.proofing,
+            "[Dispatch] final returned: total=\(results.count) " +
+            "spelling=\(spellingCount) grammar=\(grammarCount) style=\(styleCount)")
 
         // Post notification so status bar can update connection status
         NotificationCenter.default.post(name: .proofingConnectionStatusChanged, object: nil)
