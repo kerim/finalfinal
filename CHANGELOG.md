@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Spell/grammar popup priority on overlapping ranges** — when NSSpellChecker and LanguageTool both covered the same text range, the web editor rendered both underlines but the click handler returned NSSpellChecker's result first, so clicking a blue-underlined word opened the spell menu instead of LT's grammar/style popup. `SpellCheckService.check()` now suppresses any NSSpellChecker result whose range overlaps an active LT result. Built-in mode (LT off) is unchanged.
+
+### Added
+
+- **`.proofing` DebugLog category** — LT request/response instrumentation (disabled by default; enable when diagnosing coverage or filter balance).
+- **`DebugLog.isEnabled(_:)`** — lets logging helpers early-return instead of running unconditional string/loop work on every scan.
+
+### Changed
+
+- **Proofing diagnostics simplified** — gated `logRequestBoundary`, `logResponseBoundary`, and the dispatcher-level summary behind `DebugLog.isEnabled(.proofing)` so their NSString substring/replace and per-type counting loops no longer run on the MainActor every ~400ms when disabled.
+- **Deduplicated type-counting loops** — extracted `SpellCheckService.countByType(_:) -> TypeCounts` to remove duplicated switch-on-String-type loops in `SpellCheckService` and `LanguageToolProvider`.
+- **Split parse-drop counters** — `ParseDiagnostics.droppedZeroLength` split into `droppedMissingFields` (guard-let failure) and `droppedZeroLength` (length ≤ 0); log line reports both.
+- **`LanguageToolProvider.check()` refactor** — extracted `buildCheckRequest` and diagnostic-logging helpers to stay under the cyclomatic-complexity limit.
+- **`boundaryPreviewChars` constant** (200) replaces the magic number in boundary logging.
+- **Boundary-filter comment** updated with measured note ("~20% of raw matches on prose with citations/footnotes/annotations") instead of the prior speculative claim.
+
 ## [0.2.93] - 2026-04-18
 
 ### Fixed
