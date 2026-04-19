@@ -402,42 +402,4 @@ extension ProjectDatabase {
         return result
     }
 
-    /// Recalculate word counts for all sections in a project
-    func recalculateWordCounts(projectId: String) throws {
-        try write { db in
-            var sections = try Section
-                .filter(Section.Columns.projectId == projectId)
-                .fetchAll(db)
-
-            for i in sections.indices {
-                sections[i].recalculateWordCount()
-                sections[i].updatedAt = Date()
-                try sections[i].update(db)
-            }
-        }
-    }
-
-    /// Get aggregated word count for a section and all its descendants
-    func aggregatedWordCount(sectionId: String) throws -> Int {
-        try read { db in
-            guard let section = try Section.fetchOne(db, key: sectionId) else { return 0 }
-
-            var total = section.wordCount
-
-            // Add children's counts recursively
-            func addChildCounts(parentId: String) throws {
-                let children = try Section
-                    .filter(Section.Columns.parentId == parentId)
-                    .fetchAll(db)
-
-                for child in children {
-                    total += child.wordCount
-                    try addChildCounts(parentId: child.id)
-                }
-            }
-
-            try addChildCounts(parentId: sectionId)
-            return total
-        }
-    }
 }

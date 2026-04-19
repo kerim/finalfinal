@@ -345,6 +345,7 @@ final class FootnoteSyncService {
                     status: .final_,
                     isNotes: true
                 )
+                headingBlock.recalculateWordCount()
                 try headingBlock.insert(db)
 
                 // 6. Insert definition blocks
@@ -516,6 +517,7 @@ final class FootnoteSyncService {
                 status: .final_,
                 isNotes: true
             )
+            headingBlock.recalculateWordCount()
             try headingBlock.insert(db)
 
             // 2. Insert one block per definition (1 DB block = 1 editor node)

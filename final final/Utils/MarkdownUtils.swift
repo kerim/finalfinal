@@ -73,18 +73,21 @@ enum MarkdownUtils {
             result = regex.stringByReplacingMatches(in: result, options: [], range: range, withTemplate: "$1")
         }
 
-        // Convert links [text](url) to just text
-        let linkPattern = "\\[([^\\]]+)\\]\\([^)]+\\)"
-        if let regex = try? NSRegularExpression(pattern: linkPattern, options: []) {
-            let range = NSRange(result.startIndex..., in: result)
-            result = regex.stringByReplacingMatches(in: result, options: [], range: range, withTemplate: "$1")
-        }
-
-        // Remove images ![alt](url){width=N%} entirely (don't count alt text as words)
+        // Remove images ![alt](url){width=N%} entirely (don't count alt text as words).
+        // MUST run before the link stripper, otherwise the link regex matches
+        // [alt](url) inside the image syntax and leaves a stray `!alt text` behind.
         let imagePattern = "!\\[[^\\]]*\\]\\([^)]+\\)(\\s*\\{[^}]*\\})?"
         if let regex = try? NSRegularExpression(pattern: imagePattern, options: []) {
             let range = NSRange(result.startIndex..., in: result)
             result = regex.stringByReplacingMatches(in: result, options: [], range: range, withTemplate: "")
+        }
+
+        // Convert links [text](url) to just text. Negative lookbehind `(?<!!)`
+        // is belt-and-braces in case the image stripper missed an unusual variant.
+        let linkPattern = "(?<!!)\\[([^\\]]+)\\]\\([^)]+\\)"
+        if let regex = try? NSRegularExpression(pattern: linkPattern, options: []) {
+            let range = NSRange(result.startIndex..., in: result)
+            result = regex.stringByReplacingMatches(in: result, options: [], range: range, withTemplate: "$1")
         }
 
         // Remove list markers: - * + or 1. 2. etc
@@ -166,14 +169,165 @@ enum MarkdownUtils {
         text.hasPrefix("![") && (text.contains("](blob:") || text.contains("](data:"))
     }
 
-    /// Count words in markdown content, excluding syntax symbols
+    /// Count words in markdown content, excluding syntax symbols and non-prose
+    /// regions (code blocks, math, citations, HTML, YAML frontmatter, etc.).
+    /// Tokens that are pure punctuation (e.g. a stray `.` left by a stripped
+    /// citation) are not counted. See `stripForWordCount(from:)` for the full
+    /// list of patterns removed.
     static func wordCount(for content: String) -> Int {
-        let text = stripMarkdownSyntax(from: content)
+        let text = stripForWordCount(from: content)
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return 0 }
 
         return trimmed.components(separatedBy: .whitespacesAndNewlines)
-            .filter { !$0.isEmpty }
+            .filter { token in
+                !token.isEmpty && token.contains(where: { $0.isLetter || $0.isNumber })
+            }
             .count
+    }
+
+    // MARK: - Precompiled regex patterns for stripForWordCount
+
+    // NSRegularExpression compile is expensive; hoisting each pattern once
+    // means `stripForWordCount` can run inside tight loops (e.g. the open-time
+    // migration sweep) without ~15 regex recompilations per block.
+    // Patterns below are compile-time constants — a failure is a programming
+    // error, not a runtime condition, so `try!` is the right contract here.
+    // swiftlint:disable force_try
+    private static let rxYAMLFrontmatter = try! NSRegularExpression(
+        pattern: #"\A---\s*\n[\s\S]*?\n---\s*(?:\n|$)"#
+    )
+    private static let rxFencedCodeBacktick = try! NSRegularExpression(
+        pattern: #"```[\s\S]*?```"#
+    )
+    private static let rxFencedCodeTilde = try! NSRegularExpression(
+        pattern: #"~~~[\s\S]*?~~~"#
+    )
+    private static let rxHTMLComment = try! NSRegularExpression(
+        pattern: #"<!--[\s\S]*?-->"#
+    )
+    private static let rxDisplayMath = try! NSRegularExpression(
+        pattern: #"\$\$[\s\S]+?\$\$"#
+    )
+    private static let rxInlineMath = try! NSRegularExpression(
+        pattern: #"(?<![A-Za-z0-9$])\$(?=\S)[^\$\n]+?(?<=\S)\$(?![A-Za-z0-9$])"#
+    )
+    private static let rxReferenceLinkDef = try! NSRegularExpression(
+        pattern: #"^\s*\[[^\^\]][^\]]*\]:\s*\S+.*$"#,
+        options: [.anchorsMatchLines]
+    )
+    private static let rxInlineReferenceLink = try! NSRegularExpression(
+        pattern: #"\[([^\^\]][^\]]*)\]\[[^\]]*\]"#
+    )
+    private static let rxHTMLTag = try! NSRegularExpression(
+        pattern: #"<\/?[A-Za-z][^>]*>"#
+    )
+    // Citation substitutions (render-then-count). Escaped `\-` in the citekey
+    // character class is CRITICAL: without the escape, `+-` reads as the ASCII
+    // range `+`..`-` (43..45), which silently includes `,` (44). With the escape,
+    // the class is the literal set `{+, -}`.
+    private static let rxCitationSuppressAuthor = try! NSRegularExpression(
+        pattern: #"(?<![A-Za-z0-9])-@[A-Za-z][A-Za-z0-9_:+\-]*"#
+    )
+    private static let rxCitationKey = try! NSRegularExpression(
+        pattern: #"(?<![A-Za-z0-9<\-])@[A-Za-z][A-Za-z0-9_:+\-]*"#
+    )
+    private static let rxCitationBracket = try! NSRegularExpression(
+        pattern: #"\[([^\]]*\bCIT\b[^\]]*)\]"#
+    )
+    private static let rxPandocAttrs = try! NSRegularExpression(
+        pattern: #"\{#[\w\-]+\}|\{\.[\w\-]+\}|\{[^}]*=[^}]*\}"#
+    )
+    private static let rxTaskCheckbox = try! NSRegularExpression(
+        pattern: #"^\s*\[[ xX]\]\s+"#,
+        options: [.anchorsMatchLines]
+    )
+    private static let rxTableSeparator = try! NSRegularExpression(
+        pattern: #"^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)+\|?\s*$"#,
+        options: [.anchorsMatchLines]
+    )
+    // swiftlint:enable force_try
+
+    /// Apply a precompiled regex to `input` with the given replacement template,
+    /// in-place. Keeps call sites as one-liners.
+    private static func apply(_ regex: NSRegularExpression, to input: inout String, with template: String) {
+        let range = NSRange(input.startIndex..., in: input)
+        input = regex.stringByReplacingMatches(in: input, options: [], range: range, withTemplate: template)
+    }
+
+    /// Strip markdown syntax AND non-prose regions in preparation for word counting.
+    /// More aggressive than `stripMarkdownSyntax`: also removes fenced code blocks,
+    /// math (`$…$`, `$$…$$`), HTML tags/comments, YAML frontmatter, reference-style
+    /// link definitions, Pandoc attribute blocks (`{#id}`, `{.class}`, `{key=val}`),
+    /// task checkbox markers, and table pipes. Em- and en-dashes are converted to
+    /// spaces so that `word—word` counts as two words.
+    ///
+    /// Pandoc citations are NOT stripped — they are rendered-count via placeholder
+    /// substitution: `[@key]` → 2 tokens ("Smith 2020"), `[-@key]` → 1 token ("2020"),
+    /// locator words inside the bracket preserved. This matches journal word counts.
+    ///
+    /// Ordering note: citation substitution runs AFTER `stripMarkdownSyntax` (which
+    /// removes backticks so `` `[@x]` `` → `[@x]`) and AFTER the HTML-tag strip
+    /// (which removes autolinks so `<alice@host.org>` doesn't trigger the `@key`
+    /// regex). Do not reorder without updating the citation tests.
+    static func stripForWordCount(from content: String) -> String {
+        var result = content
+
+        // YAML frontmatter at start of document
+        apply(rxYAMLFrontmatter, to: &result, with: "")
+
+        // Fenced code blocks (``` and ~~~) — entire block including content
+        apply(rxFencedCodeBacktick, to: &result, with: "")
+        apply(rxFencedCodeTilde, to: &result, with: "")
+
+        // HTML comments (catches annotation comments and any other)
+        apply(rxHTMLComment, to: &result, with: "")
+
+        // Display math: $$ ... $$
+        apply(rxDisplayMath, to: &result, with: "")
+
+        // Inline math: $ ... $ (Pandoc rule — see regex comment)
+        apply(rxInlineMath, to: &result, with: "")
+
+        // Reference-style link definitions: [label]: url (excludes footnote defs [^N]:)
+        apply(rxReferenceLinkDef, to: &result, with: "")
+
+        // Inline reference-style links: [text][ref] → text (excludes footnotes [^N])
+        apply(rxInlineReferenceLink, to: &result, with: "$1")
+
+        // Run the inline syntax stripper for headings, bold/italic, strikethrough,
+        // links, images, list markers, blockquotes, footnote refs/defs, horizontal
+        // rules, section breaks, code-fence language markers, inline code, annotations.
+        result = stripMarkdownSyntax(from: result)
+
+        // Remaining HTML tags (after stripMarkdownSyntax). Running BEFORE the
+        // citation substitution so `<alice@host.org>` is gone before @key scans.
+        apply(rxHTMLTag, to: &result, with: "")
+
+        // Pandoc citations — render-then-count. Order within this group matters:
+        // 1. -@key → " CIT " (suppress author: renders to year only, 1 word)
+        // 2. @key → " CIT CIT " (full: renders to name + year, 2 words)
+        // 3. Outer [ … CIT … ] → inner content (locator words pass through)
+        apply(rxCitationSuppressAuthor, to: &result, with: " CIT ")
+        apply(rxCitationKey, to: &result, with: " CIT CIT ")
+        apply(rxCitationBracket, to: &result, with: "$1")
+
+        // Pandoc attribute blocks: {#id}, {.class}, {key=val}
+        apply(rxPandocAttrs, to: &result, with: "")
+
+        // Task checkbox markers at start of (now-de-listed) lines: [ ] or [x]
+        apply(rxTaskCheckbox, to: &result, with: "")
+
+        // Table separator rows: |---|:--:|
+        apply(rxTableSeparator, to: &result, with: "")
+
+        // Table cell separators: pipe → space (so cells split into words)
+        result = result.replacingOccurrences(of: "|", with: " ")
+
+        // Em- and en-dashes split adjacent words
+        result = result.replacingOccurrences(of: "\u{2014}", with: " ")
+        result = result.replacingOccurrences(of: "\u{2013}", with: " ")
+
+        return result
     }
 }

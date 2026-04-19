@@ -46,7 +46,9 @@ enum BlockParser {
 
             let (blockType, headingLevel) = detectBlockType(trimmed)
             let textContent = extractTextContent(from: trimmed, blockType: blockType)
-            let wordCount = MarkdownUtils.wordCount(for: textContent)
+            // wordCount populated below via Block.recalculateWordCount() so the
+            // block-type rules (zero for code/image/HR/section break/bibliography)
+            // apply uniformly. Initial value 0 is overwritten before append.
 
             // Check for special flags
             let isBibliographyHeading = trimmed.contains("<!-- ::auto-bibliography:: -->") ||
@@ -118,7 +120,7 @@ enum BlockParser {
                 }
             }
 
-            let block = Block(
+            var block = Block(
                 projectId: projectId,
                 sortOrder: sortOrder,
                 blockType: blockType,
@@ -128,7 +130,6 @@ enum BlockParser {
                 status: status,
                 tags: tags,
                 wordGoal: wordGoal,
-                wordCount: wordCount,
                 imageSrc: imageSrc,
                 imageAlt: imageAlt,
                 imageWidth: imageWidth,
@@ -136,6 +137,7 @@ enum BlockParser {
                 isNotes: isNotes,
                 isPseudoSection: isPseudoSection
             )
+            block.recalculateWordCount()
 
             blocks.append(block)
             sortOrder += 1.0

@@ -483,7 +483,12 @@ extension ProjectDatabase {
                     // Block found - apply updates
                     if let textContent = update.textContent {
                         block.textContent = textContent
-                        block.wordCount = MarkdownUtils.wordCount(for: textContent)
+                        let oldWC = block.wordCount
+                        block.recalculateWordCount()
+                        if oldWC != block.wordCount {
+                            let id8 = String(block.id.prefix(8))
+                            DebugLog.log(.data, "[Blocks:edit] block=\(id8) oldWC=\(oldWC) newWC=\(block.wordCount)")
+                        }
                     }
                     if let markdownFragment = update.markdownFragment {
                         block.markdownFragment = markdownFragment
@@ -497,12 +502,24 @@ extension ProjectDatabase {
                             // Strip heading prefix from textContent for sidebar display
                             if let textContent = update.textContent, textContent.hasPrefix("#") {
                                 block.textContent = BlockParser.extractTextContent(from: trimmed, blockType: .heading)
-                                block.wordCount = MarkdownUtils.wordCount(for: block.textContent)
+                                let oldWC = block.wordCount
+                                block.recalculateWordCount()
+                                if oldWC != block.wordCount {
+                                    let id8 = String(block.id.prefix(8))
+                                    DebugLog.log(.data, "[Blocks:edit:→heading] block=\(id8) oldWC=\(oldWC) newWC=\(block.wordCount)")
+                                }
                             }
                         } else if block.blockType == .heading {
                             // Was heading but no longer has heading syntax
                             block.blockType = .paragraph
                             block.headingLevel = nil
+                            // Type changed: recalculate against the new type's rules
+                            let oldWC = block.wordCount
+                            block.recalculateWordCount()
+                            if oldWC != block.wordCount {
+                                let id8 = String(block.id.prefix(8))
+                                DebugLog.log(.data, "[Blocks:edit:→paragraph] block=\(id8) oldWC=\(oldWC) newWC=\(block.wordCount)")
+                            }
                         }
                         // Re-extract image width from updated fragment (unconditional: clears if removed)
                         if block.blockType == .image {
@@ -522,7 +539,12 @@ extension ProjectDatabase {
                         // Update the already-inserted block with newer content
                         if let textContent = update.textContent {
                             existingBlock.textContent = textContent
-                            existingBlock.wordCount = MarkdownUtils.wordCount(for: textContent)
+                            let oldWC = existingBlock.wordCount
+                            existingBlock.recalculateWordCount()
+                            if oldWC != existingBlock.wordCount {
+                                let id8 = String(existingBlock.id.prefix(8))
+                                DebugLog.log(.data, "[Blocks:edit:merged] block=\(id8) oldWC=\(oldWC) newWC=\(existingBlock.wordCount)")
+                            }
                         }
                         if let markdownFragment = update.markdownFragment {
                             existingBlock.markdownFragment = markdownFragment
@@ -537,7 +559,12 @@ extension ProjectDatabase {
                         // Block exists with temp ID (defensive)
                         if let textContent = update.textContent {
                             existingBlock.textContent = textContent
-                            existingBlock.wordCount = MarkdownUtils.wordCount(for: textContent)
+                            let oldWC = existingBlock.wordCount
+                            existingBlock.recalculateWordCount()
+                            if oldWC != existingBlock.wordCount {
+                                let id8 = String(existingBlock.id.prefix(8))
+                                DebugLog.log(.data, "[Blocks:edit:defensive] block=\(id8) oldWC=\(oldWC) newWC=\(existingBlock.wordCount)")
+                            }
                         }
                         if let markdownFragment = update.markdownFragment {
                             existingBlock.markdownFragment = markdownFragment

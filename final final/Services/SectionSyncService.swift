@@ -516,6 +516,7 @@ class SectionSyncService {
                     markdownFragment: "# Notes", headingLevel: 1,
                     status: .final_, isNotes: true
                 )
+                heading.recalculateWordCount()
                 try heading.insert(dbConn)
 
                 for (index, label) in sortedLabels.enumerated() {

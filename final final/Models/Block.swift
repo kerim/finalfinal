@@ -306,9 +306,19 @@ struct Block: Codable, Identifiable, Equatable, Sendable, FetchableRecord, Mutab
 
     // MARK: - Computed Properties
 
-    /// Calculate word count from text content
+    /// Calculate word count from text content.
+    /// Non-prose block types (code, image, horizontal rule, section break) always
+    /// count as zero words — they have no user-visible prose by definition.
+    /// Bibliography blocks DO count their prose; the user's `excludeBibliography`
+    /// toggle (applied at `EditorViewState.filteredTotalWordCount`) is the single
+    /// policy lever that drops the bibliography from the displayed total.
     mutating func recalculateWordCount() {
-        wordCount = MarkdownUtils.wordCount(for: textContent)
+        switch blockType {
+        case .codeBlock, .horizontalRule, .sectionBreak, .image:
+            wordCount = 0
+        default:
+            wordCount = MarkdownUtils.wordCount(for: textContent)
+        }
     }
 
     /// Progress toward word goal (0.0 to 1.0+)

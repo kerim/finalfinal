@@ -94,6 +94,21 @@ extension ContentView {
             DebugLog.log(.lifecycle, "[ContentView] Error deduplicating image blocks: \(error)")
         }
 
+        // Recompute stored block word counts under current rules. Bundled fixtures
+        // (getting-started.ff) and any user project saved before the rules changed
+        // have stale wordCount values on disk; this sweep brings them forward
+        // without bumping `updatedAt`. Idempotent: no writes when counts match.
+        do {
+            let summary = try db.recomputeStoredBlockWordCounts(projectId: pid)
+            // Unconditional print — the user needs to see this to verify the migration
+            // ran, even when `DebugLog.enabled` is narrow or we ever ship a release build.
+            let counts = "\(summary.totalBlocks) blocks, \(summary.changedBlocks) updated"
+            let totals = "total \(summary.oldTotal) -> \(summary.newTotal)"
+            DebugLog.always("[WordCount] recomputed \(counts), \(totals)")
+        } catch {
+            DebugLog.always("[WordCount] recompute failed: \(error)")
+        }
+
         // Start reactive observation (now uses blocks internally)
         editorState.startObserving(database: db, projectId: pid)
         editorState.startObservingAnnotations(database: db, contentId: cid)

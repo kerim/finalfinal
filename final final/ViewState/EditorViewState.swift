@@ -268,16 +268,19 @@ class EditorViewState {
                     // Convert blocks to SectionViewModels
                     var viewModels = outlineBlocks.map { SectionViewModel(from: $0) }
 
-                    // Batch word counts in a single DB read (replaces N+1 individual queries)
+                    // Batch word counts in a single DB read off the main thread.
                     let blockIds = viewModels.map { $0.id }
                     let needsAggregate = Set(viewModels.filter { $0.aggregateGoal != nil }.map { $0.id })
-                    if let counts = try? database.batchWordCounts(blockIds: blockIds, needsAggregate: needsAggregate) {
-                        for i in viewModels.indices {
-                            if let wc = counts[viewModels[i].id] {
-                                viewModels[i].wordCount = wc.sectionOnly
-                                if viewModels[i].aggregateGoal != nil {
-                                    viewModels[i].aggregateWordCount = wc.aggregate
-                                }
+                    let counts = await Self.fetchBatchWordCounts(
+                        database: database,
+                        blockIds: blockIds,
+                        needsAggregate: needsAggregate
+                    )
+                    for i in viewModels.indices {
+                        if let wc = counts[viewModels[i].id] {
+                            viewModels[i].wordCount = wc.sectionOnly
+                            if viewModels[i].aggregateGoal != nil {
+                                viewModels[i].aggregateWordCount = wc.aggregate
                             }
                         }
                     }
@@ -297,19 +300,26 @@ class EditorViewState {
 
     /// Re-fetch outline blocks from database and update sections.
     /// Called when ValueObservation may have been dropped during non-idle contentState.
+    /// Heavy DB work runs off the main actor; the section assignment lands back on @MainActor.
     func refreshSections() {
         guard let db = projectDatabase, let pid = currentProjectId else {
             DebugLog.log(.outline, "[EditorViewState:refresh] BAIL: no db/pid")
             return
         }
-        do {
-            let outlineBlocks = try db.fetchOutlineBlocks(projectId: pid)
-            var viewModels = outlineBlocks.map { SectionViewModel(from: $0) }
+        Task { [weak self] in
+            do {
+                let outlineBlocks = try await Task.detached(priority: .userInitiated) {
+                    try db.fetchOutlineBlocks(projectId: pid)
+                }.value
+                var viewModels = outlineBlocks.map { SectionViewModel(from: $0) }
 
-            // Batch word counts in a single DB read (replaces N+1 individual queries)
-            let blockIds = viewModels.map { $0.id }
-            let needsAggregate = Set(viewModels.filter { $0.aggregateGoal != nil }.map { $0.id })
-            if let counts = try? db.batchWordCounts(blockIds: blockIds, needsAggregate: needsAggregate) {
+                let blockIds = viewModels.map { $0.id }
+                let needsAggregate = Set(viewModels.filter { $0.aggregateGoal != nil }.map { $0.id })
+                let counts = await Self.fetchBatchWordCounts(
+                    database: db,
+                    blockIds: blockIds,
+                    needsAggregate: needsAggregate
+                )
                 for i in viewModels.indices {
                     if let wc = counts[viewModels[i].id] {
                         viewModels[i].wordCount = wc.sectionOnly
@@ -318,14 +328,33 @@ class EditorViewState {
                         }
                     }
                 }
+
+                guard let self else { return }
+                DebugLog.log(.outline, "[EditorViewState:refresh] \(viewModels.count) sections (contentState=\(self.contentState))")
+                self.sections = viewModels
+                self.recalculateParentRelationships()
+                self.onSectionsUpdated?()
+            } catch {
+                DebugLog.log(.outline, "[EditorViewState] refreshSections error: \(error)")
             }
-            DebugLog.log(.outline, "[EditorViewState:refresh] \(viewModels.count) sections (contentState=\(contentState))")
-            self.sections = viewModels
-            self.recalculateParentRelationships()
-            self.onSectionsUpdated?()
-        } catch {
-            DebugLog.log(.outline, "[EditorViewState] refreshSections error: \(error)")
         }
+    }
+
+    /// Fetch heading word counts off the main thread, logging (rather than swallowing)
+    /// any error so a silently-zeroed sidebar gets attention in the debug log.
+    private static func fetchBatchWordCounts(
+        database: ProjectDatabase,
+        blockIds: [String],
+        needsAggregate: Set<String>
+    ) async -> [String: ProjectDatabase.HeadingWordCounts] {
+        await Task.detached(priority: .userInitiated) {
+            do {
+                return try database.batchWordCounts(blockIds: blockIds, needsAggregate: needsAggregate)
+            } catch {
+                DebugLog.log(.outline, "[EditorViewState] batchWordCounts failed: \(error)")
+                return [:]
+            }
+        }.value
     }
 
     /// Stop observing sections from database
