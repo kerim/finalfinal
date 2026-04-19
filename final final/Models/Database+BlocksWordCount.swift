@@ -115,8 +115,13 @@ extension ProjectDatabase {
                 result[heading.id] = HeadingWordCounts(sectionOnly: sectionOnly, aggregate: aggregate)
             }
 
-            let total = result.values.reduce(0) { $0 + $1.sectionOnly }
-            DebugLog.log(.outline, "[batchWordCounts] project=\(String(projectId.prefix(8))) headings=\(result.count) total=\(total)")
+            // Gated so the total-reduce only runs when `.outline` logging is on.
+            // `batchWordCounts` fires on every sidebar refresh, so the savings add up.
+            if DebugLog.isEnabled(.outline) {
+                let total = result.values.reduce(0) { $0 + $1.sectionOnly }
+                let id8 = String(projectId.prefix(8))
+                DebugLog.log(.outline, "[batchWordCounts] project=\(id8) headings=\(result.count) total=\(total)")
+            }
 
             return result
         }

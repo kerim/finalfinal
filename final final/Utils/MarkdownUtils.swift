@@ -186,6 +186,16 @@ enum MarkdownUtils {
             .count
     }
 
+    // MARK: - Citation render-count placeholder
+
+    // Single source of truth for the CIT placeholder token used in `stripForWordCount`
+    // for render-then-count citation handling. Changing this requires changing it here
+    // only — the three substitution templates and the bracket-strip regex all derive
+    // from `citToken`, so they can't drift apart.
+    private static let citToken = "CIT"
+    private static let citSingle = " \(citToken) "
+    private static let citDouble = " \(citToken) \(citToken) "
+
     // MARK: - Precompiled regex patterns for stripForWordCount
 
     // NSRegularExpression compile is expensive; hoisting each pattern once
@@ -233,7 +243,7 @@ enum MarkdownUtils {
         pattern: #"(?<![A-Za-z0-9<\-])@[A-Za-z][A-Za-z0-9_:+\-]*"#
     )
     private static let rxCitationBracket = try! NSRegularExpression(
-        pattern: #"\[([^\]]*\bCIT\b[^\]]*)\]"#
+        pattern: #"\[([^\]]*\b"# + citToken + #"\b[^\]]*)\]"#
     )
     private static let rxPandocAttrs = try! NSRegularExpression(
         pattern: #"\{#[\w\-]+\}|\{\.[\w\-]+\}|\{[^}]*=[^}]*\}"#
@@ -308,8 +318,8 @@ enum MarkdownUtils {
         // 1. -@key → " CIT " (suppress author: renders to year only, 1 word)
         // 2. @key → " CIT CIT " (full: renders to name + year, 2 words)
         // 3. Outer [ … CIT … ] → inner content (locator words pass through)
-        apply(rxCitationSuppressAuthor, to: &result, with: " CIT ")
-        apply(rxCitationKey, to: &result, with: " CIT CIT ")
+        apply(rxCitationSuppressAuthor, to: &result, with: Self.citSingle)
+        apply(rxCitationKey, to: &result, with: Self.citDouble)
         apply(rxCitationBracket, to: &result, with: "$1")
 
         // Pandoc attribute blocks: {#id}, {.class}, {key=val}
