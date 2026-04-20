@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Sidebar and status-bar word count stopped updating after edits** — `observeOutlineBlocks` had `.removeDuplicates()` re-added by an unrelated perf-batch commit (`a004534`, Feb 27) that silently reverted the deliberate Feb 19 fix. The tracking closure returns only heading + pseudo-section rows, but the downstream sidebar derives per-section word counts from body blocks; body-only paragraph edits left the heading projection unchanged, so dedup suppressed the emission and the sidebar stayed frozen at open-time values. Today's `recomputeStoredBlockWordCounts` migration masked the regression by updating counts at project open, but subsequent edits were invisible. Removed the dedup, added a hostile-to-drive-by comment block citing the four architectural docs that agree the line must not be present, and asserted the property by `OutlineObservationTests.bodyEditReEmits`.
+
+### Removed
+
+- **Dead code: `ProjectDatabase.observeBlocks(for:)`** — unused since the pre-block-sync architecture (zero call sites in HEAD). Its co-existence alongside `observeOutlineBlocks` invited confusion about when `.removeDuplicates()` on a ValueObservation is safe. Only `observeOutlineBlocks` is now defined.
+
+### Added
+
+- **`OutlineObservationTests`** — three Swift Testing cases covering body-edit re-emission (the durable guardrail against `.removeDuplicates()` regressions), heading-edit re-emission (positive baseline), and metadata-column write re-emission on headings (covers the `updateSection` path).
+
 ## [0.2.95] - 2026-04-20
 
 ### Fixed
