@@ -31,6 +31,7 @@
 		1784E7C8015865BB9C8F2BFE /* BatchWordCountsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02A0D16851E9898C0E58C16F /* BatchWordCountsTests.swift */; };
 		1CB5D59D6B0C2C767547192A /* Database+BlocksWordCount.swift in Sources */ = {isa = PBXBuildFile; fileRef = DDC88DC217831BA18037CB1B /* Database+BlocksWordCount.swift */; };
 		1DD44825761501030369C6BA /* getting-started.ff in Resources */ = {isa = PBXBuildFile; fileRef = A2042D583D77D16E5A1E7A43 /* getting-started.ff */; };
+		1F5CD824C3B255DA2D04B0E0 /* BlockSyncStaleGuardTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A05E42B1B84A9B3F18B08E98 /* BlockSyncStaleGuardTests.swift */; };
 		20AFD8B3E9B9181745AD26B8 /* FinalFinalTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E843650744C2F13D1618667 /* FinalFinalTests.swift */; };
 		21E9D0A73D4F1709F165CC1E /* BuiltInProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = DDC98D54901B8744835E5EF4 /* BuiltInProvider.swift */; };
 		230D53A0B012FF234621652E /* BlockSyncService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4BE2C3C3ABC2BC1990C2AC24 /* BlockSyncService.swift */; };
@@ -351,6 +352,7 @@
 		9B422289970724FBD8F8FFDC /* FileCommands.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileCommands.swift; sourceTree = "<group>"; };
 		9D0F1D3975D391C0B6D18B52 /* BibliographyDropGuardTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BibliographyDropGuardTests.swift; sourceTree = "<group>"; };
 		9FD3816B3F5A73485D196C95 /* WordCountCalculationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WordCountCalculationTests.swift; sourceTree = "<group>"; };
+		A05E42B1B84A9B3F18B08E98 /* BlockSyncStaleGuardTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockSyncStaleGuardTests.swift; sourceTree = "<group>"; };
 		A0EE6A723C923D316B9CE89C /* BlockParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockParser.swift; sourceTree = "<group>"; };
 		A12F8033BDC1E3ED37C83195 /* ProjectIntegrityChecker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectIntegrityChecker.swift; sourceTree = "<group>"; };
 		A2042D583D77D16E5A1E7A43 /* getting-started.ff */ = {isa = PBXFileReference; lastKnownFileType = folder; name = "getting-started.ff"; path = "final final/Resources/getting-started.ff"; sourceTree = SOURCE_ROOT; };
@@ -644,13 +646,6 @@
 			path = "final final";
 			sourceTree = "<group>";
 		};
-		897DF43C87D41FD1A0CCF1C9 /* editor */ = {
-			isa = PBXGroup;
-			children = (
-			);
-			path = editor;
-			sourceTree = "<group>";
-		};
 		8A579DFDA89ED4D43AE65852 /* Components */ = {
 			isa = PBXGroup;
 			children = (
@@ -754,7 +749,6 @@
 		A0A538514A7F8AF439E6E08D /* Resources */ = {
 			isa = PBXGroup;
 			children = (
-				897DF43C87D41FD1A0CCF1C9 /* editor */,
 			);
 			path = Resources;
 			sourceTree = "<group>";
@@ -824,6 +818,7 @@
 				550103BE52E55711AC28DA7D /* BibliographySyncTests.swift */,
 				3D3FBDBD7AFB8677F62D8FD4 /* BlockReorderIntegrityTests.swift */,
 				BA0FC3BCB857DBEFB0FBA39F /* BlockRoundtripTests.swift */,
+				A05E42B1B84A9B3F18B08E98 /* BlockSyncStaleGuardTests.swift */,
 				B2E812DDA3AFC1F86DC9E06B /* ContentStateMachineTests.swift */,
 				0339BF768D7EB53896A726B7 /* ExportAssemblyTests.swift */,
 				3A6EB161196F59018FF141DA /* ExportIntegrityTests.swift */,
@@ -1101,6 +1096,7 @@
 				9D1A72AD8B1BB69AC3EFADE3 /* BlockParserAlignmentTests.swift in Sources */,
 				B4A5A572F785E929B8D232AD /* BlockReorderIntegrityTests.swift in Sources */,
 				0E73A2CA77ADED759B79CD01 /* BlockRoundtripTests.swift in Sources */,
+				1F5CD824C3B255DA2D04B0E0 /* BlockSyncStaleGuardTests.swift in Sources */,
 				51D43A91B1BFB2A3C21C5744 /* ContentStateMachineTests.swift in Sources */,
 				CF270F44F78860ADAC06380C /* DocumentManagerOpenTests.swift in Sources */,
 				873F99F4E522EE5DD90C8AB2 /* EditorBridgeTests.swift in Sources */,
@@ -1425,7 +1421,7 @@
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 0.2.94;
+				CURRENT_PROJECT_VERSION = 0.2.95;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "final final/Info.plist";
@@ -1451,7 +1447,7 @@
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 0.2.94;
+				CURRENT_PROJECT_VERSION = 0.2.95;
 				DEVELOPMENT_TEAM = HBHZWD24V7;
 				ENABLE_HARDENED_RUNTIME = YES;
 				INFOPLIST_FILE = "QuickLook Extension/Info.plist";
@@ -1482,7 +1478,7 @@
 				CODE_SIGN_IDENTITY = "Developer ID Application";
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 0.2.94;
+				CURRENT_PROJECT_VERSION = 0.2.95;
 				DEVELOPMENT_TEAM = HBHZWD24V7;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -1509,7 +1505,7 @@
 				CODE_SIGN_IDENTITY = "Developer ID Application";
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 0.2.94;
+				CURRENT_PROJECT_VERSION = 0.2.95;
 				DEVELOPMENT_TEAM = HBHZWD24V7;
 				ENABLE_HARDENED_RUNTIME = YES;
 				INFOPLIST_FILE = "QuickLook Extension/Info.plist";
