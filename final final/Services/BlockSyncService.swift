@@ -61,6 +61,58 @@ class BlockSyncService {
     /// (race between JS debounce and Swift confirmBlockIds).
     private var confirmedTempIds: [String: String] = [:]
 
+    /// Count of polls where a BlockChanges payload was hard-rejected as a stale snapshot
+    /// (the pre-existing 100%-delete-no-inserts rule). Defense-in-depth telemetry.
+    private(set) var staleSnapshotRejectCount: Int = 0
+
+    /// Count of polls where the "balanced massive churn" telemetry signature fired.
+    /// Warning-only: never rejects the payload. If this rises frequently in real usage,
+    /// a regression of the block-id Phase-1 type-theft bug is likely.
+    private(set) var suspectedChurnCount: Int = 0
+
+    // MARK: - Stale-snapshot guard helpers (pure, testable)
+
+    /// Reason a poll result was hard-rejected as a stale snapshot.
+    enum StaleRejectReason: Equatable {
+        case allDeletedNoInserts    // all blocks would be deleted with no inserts
+    }
+
+    /// Decide whether a poll payload should be hard-rejected.
+    /// Preserves the pre-existing tight "100% delete, no inserts" signature —
+    /// a tight pattern that never arises from a legitimate user action.
+    /// Pure, nonisolated, no effects.
+    nonisolated static func shouldRejectAsStale(
+        changes: BlockChanges,
+        blockCount: Int
+    ) -> StaleRejectReason? {
+        let d = changes.deletes.count
+        let i = changes.inserts.count
+        if blockCount > 2 && d == blockCount && i == 0 {
+            return .allDeletedNoInserts
+        }
+        return nil
+    }
+
+    /// Detect the "balanced massive churn" pattern — the observed signature of the
+    /// figure-ID-theft bug: large, balanced insert/delete churn together with
+    /// non-trivial updates on a document bigger than the threshold. Pure, nonisolated.
+    /// WARNING-only signal — never reject a payload based on this alone. Legitimate
+    /// bulk operations (paste-replace, find-and-replace with block-splitting, etc.)
+    /// can approach this signature, and rejecting silently discards user work.
+    nonisolated static func hasBalancedMassiveChurnSignature(
+        changes: BlockChanges,
+        blockCount: Int
+    ) -> Bool {
+        let d = changes.deletes.count
+        let i = changes.inserts.count
+        let u = changes.updates.count
+        guard blockCount > 10 else { return false }
+        guard d + i > blockCount / 2 && u > 5 else { return false }
+        let churn = max(d, i)
+        let balanceDelta = abs(d - i)
+        return churn > 0 && balanceDelta <= churn / 4
+    }
+
     // MARK: - Public API
 
     /// Configure the service for a specific project
@@ -324,21 +376,43 @@ class BlockSyncService {
         if !changes.deletes.isEmpty {
             DebugLog.log(.blockPoll, "[SYNC-DIAG:BlockPoll] Deleting IDs: \(changes.deletes.prefix(5))")
         }
+        // [SYNC-DIAG Phase 0] Dump first 10 updates as (idPrefix, textContentLength) tuples
+        // to correlate suspicious empty-textContent UPDATEs with DB row state.
+        if !changes.updates.isEmpty {
+            let digest = changes.updates.prefix(10).map { ($0.id.prefix(8), $0.textContent?.count ?? -1) }
+            DebugLog.log(.blockPoll, "[SYNC-DIAG:BlockPoll] Phase0 updateDigest=\(digest) u=\(changes.updates.count) i=\(changes.inserts.count) d=\(changes.deletes.count)")
+        } else if !changes.deletes.isEmpty || !changes.inserts.isEmpty {
+            DebugLog.log(.blockPoll, "[SYNC-DIAG:BlockPoll] Phase0 u=0 i=\(changes.inserts.count) d=\(changes.deletes.count) delIds=\(changes.deletes.prefix(5))")
+        }
 
-        // Safety logging: warn on mass deletes that may indicate a stale snapshot bug
-        if !changes.deletes.isEmpty {
+        // Stale-snapshot guard + telemetry. Hard-reject only the pre-existing
+        // 100%-delete-no-inserts pattern. Warning logs for mass delete or the
+        // balanced-churn type-theft signature — never reject on those.
+        if !changes.deletes.isEmpty || !changes.inserts.isEmpty {
             do {
                 let blockCount = try database.fetchBlockCount(projectId: projectId)
-                let deleteCount = changes.deletes.count
-                if blockCount > 2 && deleteCount > blockCount / 2 {
-                    DebugLog.always("[SYNC-DIAG:BlockPoll] WARNING: Mass delete detected " +
-                        "(\(deleteCount)/\(blockCount) blocks). May indicate stale snapshot.")
-                }
-                // Safety net: reject change sets that would delete ALL blocks with no inserts.
-                if blockCount > 2 && deleteCount == blockCount && changes.inserts.isEmpty {
-                    DebugLog.always("[SYNC-DIAG:BlockPoll] REJECTED: Mass delete of ALL \(blockCount) blocks " +
-                        "with no inserts (updates=\(changes.updates.count)). Stale snapshot likely.")
+                if let reason = Self.shouldRejectAsStale(changes: changes, blockCount: blockCount) {
+                    staleSnapshotRejectCount += 1
+                    DebugLog.always(
+                        "[SYNC-DIAG:BlockPoll] REJECTED: reason=\(reason) " +
+                        "d=\(changes.deletes.count) i=\(changes.inserts.count) blockCount=\(blockCount)"
+                    )
                     return
+                }
+                if changes.deletes.count > blockCount / 2 && blockCount > 2 {
+                    DebugLog.always(
+                        "[SYNC-DIAG:BlockPoll] WARNING: Mass delete detected " +
+                        "(\(changes.deletes.count)/\(blockCount) blocks). May indicate stale snapshot."
+                    )
+                }
+                if Self.hasBalancedMassiveChurnSignature(changes: changes, blockCount: blockCount) {
+                    suspectedChurnCount += 1
+                    DebugLog.always(
+                        "[SYNC-DIAG:BlockPoll] WARNING: Balanced massive churn signature " +
+                        "(d=\(changes.deletes.count) i=\(changes.inserts.count) u=\(changes.updates.count) " +
+                        "blockCount=\(blockCount)). If this fires frequently, a regression of the " +
+                        "block-id-plugin type-theft bug is likely."
+                    )
                 }
             } catch {
                 DebugLog.log(.blockPoll, "[SYNC-DIAG:BlockPoll] fetchBlockCount failed: \(error)")
