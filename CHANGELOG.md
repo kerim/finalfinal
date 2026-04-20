@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.96] - 2026-04-20
+
 ### Fixed
 
 - **Sidebar and status-bar word count stopped updating after edits** — `observeOutlineBlocks` had `.removeDuplicates()` re-added by an unrelated perf-batch commit (`a004534`, Feb 27) that silently reverted the deliberate Feb 19 fix. The tracking closure returns only heading + pseudo-section rows, but the downstream sidebar derives per-section word counts from body blocks; body-only paragraph edits left the heading projection unchanged, so dedup suppressed the emission and the sidebar stayed frozen at open-time values. Today's `recomputeStoredBlockWordCounts` migration masked the regression by updating counts at project open, but subsequent edits were invisible. Removed the dedup, added a hostile-to-drive-by comment block citing the four architectural docs that agree the line must not be present, and asserted the property by `OutlineObservationTests.bodyEditReEmits`.
