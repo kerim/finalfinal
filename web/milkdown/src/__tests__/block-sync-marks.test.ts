@@ -141,16 +141,14 @@ describe('nodeToMarkdownFragment — single mark round-trips', () => {
   });
 
   it('link', () => {
-    expect(
-      nodeToMarkdownFragment(para({ text: 'site', marks: ['link'], linkHref: 'https://x' }))
-    ).toBe('[site](https://x)');
+    expect(nodeToMarkdownFragment(para({ text: 'site', marks: ['link'], linkHref: 'https://x' }))).toBe(
+      '[site](https://x)'
+    );
   });
 
   it('link with title', () => {
     expect(
-      nodeToMarkdownFragment(
-        para({ text: 'site', marks: ['link'], linkHref: 'https://x', linkTitle: 'homepage' })
-      )
+      nodeToMarkdownFragment(para({ text: 'site', marks: ['link'], linkHref: 'https://x', linkTitle: 'homepage' }))
     ).toBe('[site](https://x "homepage")');
   });
 
@@ -166,9 +164,7 @@ describe('nodeToMarkdownFragment — single mark round-trips', () => {
   });
 
   it('link text with brackets is escaped', () => {
-    const output = nodeToMarkdownFragment(
-      para({ text: '[bracketed] text', marks: ['link'], linkHref: 'u' })
-    );
+    const output = nodeToMarkdownFragment(para({ text: '[bracketed] text', marks: ['link'], linkHref: 'u' }));
     expect(output).toBe('[\\[bracketed\\] text](u)');
   });
 
@@ -225,11 +221,7 @@ describe('nodeToMarkdownFragment — mark combinations', () => {
   });
 
   it('adjacent independent marks do not bleed', () => {
-    const node = para(
-      { text: 'bold', marks: ['strong'] },
-      { text: ' ' },
-      { text: 'code', marks: ['inlineCode'] }
-    );
+    const node = para({ text: 'bold', marks: ['strong'] }, { text: ' ' }, { text: 'code', marks: ['inlineCode'] });
     expect(nodeToMarkdownFragment(node)).toBe('**bold** `code`');
   });
 

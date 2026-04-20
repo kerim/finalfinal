@@ -164,10 +164,7 @@ export function padCodeSpan(text: string): string {
  * escapes (for `#` / `[^N]:`) apply only to the first text segment of a
  * paragraph, to prevent re-parse-as-heading / re-parse-as-footnote-def.
  */
-export function escapeInlineText(
-  text: string,
-  opts: { insideLink: boolean; applyLeadingEscape: boolean }
-): string {
+export function escapeInlineText(text: string, opts: { insideLink: boolean; applyLeadingEscape: boolean }): string {
   let result = text.replace(/\\/g, '\\\\');
   if (opts.insideLink) {
     result = result.replace(/\[/g, '\\[').replace(/\]/g, '\\]');
