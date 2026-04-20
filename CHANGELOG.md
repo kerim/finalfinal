@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Inline marks silently stripped during block-sync to SQLite** — `serializeInlineContent` in `block-sync-plugin.ts` read `child.text` directly, discarding every mark. Links, bold, italic, inline code, strikethrough, and highlight were dropped on the sync-to-DB path, so exports read already-broken data from SQLite even though the editor displayed the marks correctly. Rewrote the text-block branch to walk marks mirroring prosemirror-markdown's `MarkdownSerializer.renderInline`: link (with href/title escaping), strong, emphasis/em, inlineCode/code_inline, strike_through/strikethrough, and highlight. Schema aliases handled explicitly; unknown marks warn once and emit text without delimiters; expected marks asserted on plugin init. Recovery is passive — new edits self-heal, pre-fix blocks keep their stripped fragments until edited. Active backfill migration and table-cell mark serialization tracked as deferred stubs under `docs/deferred/`.
+
+### Added
+
+- **34 round-trip mark tests** in `block-sync-plugin.test.ts` covering each mark, combinations (bold-in-link, link-in-bold, code exclusivity), per-block-type paths, and the paragraph leading `\#` / `\[^N]:` structural escapes.
+- **`docs/findings/inline-marks-stripped-on-export.md`** — root cause, fix, and consumer-audit conclusions. Linked alongside the two new deferred stubs from `docs/INDEX.md`.
+
+### Changed
+
+- **Block-sync mark serializer hot-path optimization** — plain-text children (no marks, no active stack) now skip the mark-alignment and keep-prefix machinery entirely; this is the overwhelming common case while typing. Flat `CANONICAL_BY_NAME` lookup replaces the `Object.entries` + `Array.includes` scan in `canonicalMarkKey` (O(1), no allocation on the hot path). `MARK_RANK` record replaces `MARK_OPEN_ORDER.indexOf` in the sort comparator. Parallel `openFor`/`closeFor` switches collapsed into a single `MARK_DELIMITERS` table with per-mark `{open, close}` entries; adding a mark is now one row instead of two.
+- **Biome formatter pass** on `block-sync-plugin.ts` and its new test file (parameter wrapping, template literals in tests). No behavior change.
+
 ## [0.2.96] - 2026-04-20
 
 ### Fixed
