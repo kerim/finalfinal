@@ -11,9 +11,9 @@ import {
   getAllBlockIds,
   getBlockIdAtPos,
   resetBlockIdState,
+  SYNC_DIAG_DETAIL,
   setBlockIdsForTopLevel,
   setBlockIdZoomMode,
-  SYNC_DIAG_DETAIL,
 } from './block-id-plugin';
 import {
   type BlockChanges,
@@ -343,9 +343,9 @@ export function applyBlocks(blocks: Block[]): void {
   // [SYNC-DIAG Round 2] First-few (id, blockType, textLen) so we can correlate
   // Swift's block-array shape with the DOM that ends up in the editor.
   if (SYNC_DIAG_DETAIL) {
-    const firstFew = blocks.slice(0, 5).map(
-      (b) => `(${b.id.slice(0, 8)},${b.blockType},txtLen=${b.textContent?.length ?? 0})`
-    );
+    const firstFew = blocks
+      .slice(0, 5)
+      .map((b) => `(${b.id.slice(0, 8)},${b.blockType},txtLen=${b.textContent?.length ?? 0})`);
     syncLog('API:applyBlocks', `firstFew=[${firstFew.join(',')}]`);
   }
   const editorInstance = getEditorInstance();

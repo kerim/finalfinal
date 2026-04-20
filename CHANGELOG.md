@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Block-id Phase-1 figure ID theft** — when a user typed a single character inside a paragraph, every figure block whose offset shifted by +1 silently claimed the paragraph ID that had been at its new offset before the shift. `detectChanges` then reported the paragraph as "textContent went from N chars to empty" (the content is now on the figure node), cascading into a `u=15 i=85 d=85` diff per keystroke that grew the DB from 135 → 184 blocks on a single character. Root cause was `block-id-plugin.ts` Phase 1's `typeMatches` short-circuit (`!structureChanged || …`) that bypassed the type check whenever block count was unchanged. Fix introduces `ATOMIC_BLOCK_TYPES = {'figure'}` and a pure `phase1CanClaim` helper: cross-type Phase-1 claims are allowed for legitimate input-rule conversions (paragraph↔heading via `# `, paragraph↔table via `|a|b|`, paragraph↔hr via `---`, etc.) but blocked when either side is `figure`. The Phase-2 type-filtered proximity match correctly relocates the deferred figure to its actual position.
+
+### Added
+
+- **`phase1CanClaim` helper + 20 vitest cases** in `web/milkdown/src/__tests__/block-id-phase1.test.ts` covering same-type, input-rule conversions, atomic-type theft (forward and reverse), already-claimed, empty-offset.
+- **Swift safety net** — `BlockSyncService.shouldRejectAsStale` (refactored from existing inline guard, preserves the pre-existing 100%-delete-no-inserts hard reject at `blockCount > 2`) and `hasBalancedMassiveChurnSignature` (warning-only telemetry that detects the catastrophic-churn pattern observed during the bug). Two `private(set)` counters: `staleSnapshotRejectCount`, `suspectedChurnCount`. Both helpers are `nonisolated static` and pure-over-`Sendable`-value-types.
+- **`BlockSyncStaleGuardTests`** — 13 Swift Testing cases parity-asserting the hard-reject rule and exercising the warning-signature arithmetic against legitimate-bulk-op edge cases.
+
 ## [0.2.94] - 2026-04-18
 
 ### Fixed

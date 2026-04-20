@@ -140,7 +140,8 @@ export function applyPendingConfirmations(): Map<string, string> {
   }
   // [SYNC-DIAG Round 2] One log per call (NOT per loop entry), capped 5 pairs
   if (SYNC_DIAG_DETAIL && applied.size > 0) {
-    const pairs = Array.from(applied.entries()).slice(0, 5)
+    const pairs = Array.from(applied.entries())
+      .slice(0, 5)
       .map(([oldId, newId]) => `(${oldId.slice(0, 10)}→${newId.slice(0, 8)})`);
     syncLog('BlockId:confirm', `applyPendingConfirmations: size=${applied.size} firstFew=[${pairs.join(',')}]`);
   }
@@ -169,7 +170,7 @@ export function phase1CanClaim(
   newType: string,
   existingType: string | undefined,
   existingId: string | undefined,
-  claimed: ReadonlySet<string>,
+  claimed: ReadonlySet<string>
 ): boolean {
   if (!existingId) return false;
   if (claimed.has(existingId)) return false;
@@ -218,7 +219,7 @@ export function setBlockIdsForTopLevel(orderedIds: string[], doc: Node): void {
     const fmt = (e: { i: number; id: string; offset: number; type: string }) =>
       `(${e.i},${e.id.slice(0, 8)},pos=${e.offset},${e.type})`;
     const head = assigned.slice(0, 5).map(fmt).join(',');
-    const tail = assigned.length > 10 ? ',…,' + assigned.slice(-5).map(fmt).join(',') : '';
+    const tail = assigned.length > 10 ? `,…,${assigned.slice(-5).map(fmt).join(',')}` : '';
     syncLog('BlockId:setTopLevel', `totalAssigned=${index}/${orderedIds.length} entries=[${head}${tail}]`);
   }
 }
@@ -303,10 +304,7 @@ function assignBlockIds(
   // and skip per-block defer logs (prevents log-volume DoS).
   const skipPerBlockDeferLogs = deferred.length > 50;
   if (SYNC_DIAG_DETAIL && skipPerBlockDeferLogs) {
-    syncLog(
-      'BlockId:assign:phase2',
-      `deferred.length=${deferred.length} > 50, suppressing per-block defer logs`
-    );
+    syncLog('BlockId:assign:phase2', `deferred.length=${deferred.length} > 50, suppressing per-block defer logs`);
   }
 
   // Phase 2: proximity matching

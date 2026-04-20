@@ -372,9 +372,10 @@ function detectChanges(
         if (oldBlock.headingLevel !== newBlock.headingLevel)
           changes.push(`level:${oldBlock.headingLevel}→${newBlock.headingLevel}`);
         // [SYNC-DIAG Round 2] include old→new blockType to expose paragraph→image swaps
-        const typeStr = oldBlock.blockType !== newBlock.blockType
-          ? `type:${oldBlock.blockType}→${newBlock.blockType}`
-          : `type=${newBlock.blockType}`;
+        const typeStr =
+          oldBlock.blockType !== newBlock.blockType
+            ? `type:${oldBlock.blockType}→${newBlock.blockType}`
+            : `type=${newBlock.blockType}`;
         syncLog(
           'BlockSync:detect',
           `UPDATE id=${id.slice(0, 8)} [${changes.join(',')}] ${typeStr} "${newBlock.textContent.slice(0, 40)}"`
@@ -546,7 +547,8 @@ export function updateSnapshotIds(mapping: Map<string, string>): void {
   if (!currentState || mapping.size === 0) return;
   // [SYNC-DIAG Round 2] One log per call, capped 5 pairs
   if (SYNC_DIAG_DETAIL) {
-    const pairs = Array.from(mapping.entries()).slice(0, 5)
+    const pairs = Array.from(mapping.entries())
+      .slice(0, 5)
       .map(([oldId, newId]) => `(${oldId.slice(0, 10)}→${newId.slice(0, 8)})`);
     syncLog('BlockSync:updateSnapshotIds', `size=${mapping.size} firstFew=[${pairs.join(',')}]`);
   }
