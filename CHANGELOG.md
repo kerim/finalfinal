@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.97] - 2026-04-20
+
 ### Fixed
 
 - **Inline marks silently stripped during block-sync to SQLite** — `serializeInlineContent` in `block-sync-plugin.ts` read `child.text` directly, discarding every mark. Links, bold, italic, inline code, strikethrough, and highlight were dropped on the sync-to-DB path, so exports read already-broken data from SQLite even though the editor displayed the marks correctly. Rewrote the text-block branch to walk marks mirroring prosemirror-markdown's `MarkdownSerializer.renderInline`: link (with href/title escaping), strong, emphasis/em, inlineCode/code_inline, strike_through/strikethrough, and highlight. Schema aliases handled explicitly; unknown marks warn once and emit text without delimiters; expected marks asserted on plugin init. Recovery is passive — new edits self-heal, pre-fix blocks keep their stripped fragments until edited. Active backfill migration and table-cell mark serialization tracked as deferred stubs under `docs/deferred/`.
