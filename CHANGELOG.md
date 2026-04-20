@@ -17,6 +17,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **`try?` swallowed `batchWordCounts` errors** — a silently-zeroed sidebar would never surface. Replaced with explicit `catch` + `DebugLog.log(.outline, …)` and hopped the call off the main thread.
 - **Missing `recalculateWordCount()` after creating "Notes" heading blocks** — both `SectionSyncService` and `FootnoteSyncService` construct a `# Notes` heading block programmatically; neither initialized its `wordCount` (defaulted to 0). Both now call `recalculateWordCount()` before insert.
 - **`BlockParser.parse` bypassed the canonical helper** — computed `wordCount` inline via `MarkdownUtils.wordCount(for:)` instead of calling `Block.recalculateWordCount()` after block construction. Code-block and image blocks parsed from markdown therefore got inflated counts at parse time. Now routes through the canonical helper.
+- **Duplicated `SYNC_DIAG_DETAIL` constant** — `block-sync-plugin.ts` redeclared the flag locally instead of importing it from `block-id-plugin`. Flipping one to `true` silently left the other `false`. Now imported from a single source.
 
 ### Added
 
@@ -37,6 +38,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Dead code removed from `Database+BlocksWordCount.swift`** — `recalculateBlockWordCounts`, `totalWordCount`, `sectionOnlyWordCount`, `wordCountForHeading` (all unreferenced; `batchWordCounts` is now the single public entry point).
 - **Dead code removed from `Database+Sections.swift`** — `recalculateWordCounts(projectId:)` and `aggregatedWordCount(sectionId:)` (both unreferenced).
 - **`batchWordCounts` hardened** — safe NULL handling via `COALESCE`, multi-project-span warning log, doc comments spelling out section-only vs aggregate semantics.
+- **Dead diagnostic counters removed from `BlockSyncService`** — `staleSnapshotRejectCount` and `suspectedChurnCount` had no readers anywhere in the codebase; the `DebugLog.always` lines already carried the events.
+- **`block-sync-plugin` diagnostic logs gated** — the `SKIP` snapshot log and per-UPDATE detect log fired unconditionally on every keystroke (allocating `typeStr` and a `changes[]` array that are diagnostic-only); both now gated behind `SYNC_DIAG_DETAIL`.
 
 ## [0.2.94] - 2026-04-18
 
