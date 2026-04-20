@@ -2,7 +2,7 @@
 // Tracks inserts, updates, and deletes via ProseMirror transactions
 // Exports pending changes for Swift polling via getBlockChanges()
 
-import type { Node } from '@milkdown/kit/prose/model';
+import type { Mark, Node } from '@milkdown/kit/prose/model';
 import { Plugin, PluginKey } from '@milkdown/kit/prose/state';
 import { $prose } from '@milkdown/kit/utils';
 import { getAllBlockIds, SYNC_DIAG_DETAIL } from './block-id-plugin';
@@ -92,51 +92,309 @@ export function setSyncPaused(paused: boolean): void {
   syncPaused = paused;
 }
 
+// ---------------------------------------------------------------------------
+// Inline mark serialization
+//
+// Reconstructs markdown mark syntax (link, bold, italic, code, strike, highlight)
+// from ProseMirror marks. See docs/plans/markdown-html-links-text-url-majestic-mountain.md
+// for the design. The alternative — calling Milkdown's own serializer — is
+// unavailable here because this plugin is created via `$prose(() => …)` with no
+// editor-ctx access at construction time.
+//
+// Mark names: Milkdown exposes two naming conventions depending on preset/version,
+// so each mark accepts a primary name and optional alias. See the plan for the
+// full rationale and precedent at `source-mode-plugin.ts:41-56`.
+// ---------------------------------------------------------------------------
+
+type CanonicalMarkKey = 'link' | 'strong' | 'emphasis' | 'inlineCode' | 'strike_through' | 'highlight';
+
+const MARK_ALIASES: Record<CanonicalMarkKey, readonly string[]> = {
+  link: ['link'],
+  strong: ['strong'],
+  emphasis: ['emphasis', 'em'],
+  inlineCode: ['inlineCode', 'code_inline'],
+  strike_through: ['strike_through', 'strikethrough'],
+  highlight: ['highlight'],
+};
+
+// Outermost-first opening order. `inlineCode` is exclusive — not in the stack.
+const MARK_OPEN_ORDER: CanonicalMarkKey[] = ['link', 'highlight', 'strong', 'emphasis', 'strike_through'];
+
+function canonicalMarkKey(name: string): CanonicalMarkKey | null {
+  for (const [key, aliases] of Object.entries(MARK_ALIASES) as [CanonicalMarkKey, readonly string[]][]) {
+    if (aliases.includes(name)) return key;
+  }
+  return null;
+}
+
+function isCodeMark(mark: Mark): boolean {
+  return canonicalMarkKey(mark.type.name) === 'inlineCode';
+}
+
+/** Percent-encode href characters that would break CommonMark parsing. */
+export function escapeHref(href: string): string {
+  return href
+    .replace(/\\/g, '%5C')
+    .replace(/\(/g, '%28')
+    .replace(/\)/g, '%29')
+    .replace(/ /g, '%20')
+    .replace(/</g, '%3C')
+    .replace(/>/g, '%3E')
+    .replace(/"/g, '%22');
+}
+
+/** Escape the link title portion: backslashes and double-quotes only. */
+export function escapeTitle(title: string): string {
+  return title.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+
 /**
- * Serialize inline content of a node, preserving citation atoms and annotations.
- * Unlike node.textContent which strips atom nodes, this reconstructs their markdown syntax.
+ * Pad code-span inner text when it starts or ends with a backtick
+ * (CommonMark requires spaces in that case to disambiguate the delimiter).
+ */
+export function padCodeSpan(text: string): string {
+  let inner = text;
+  if (inner.startsWith('`')) inner = ' ' + inner;
+  if (inner.endsWith('`')) inner = inner + ' ';
+  return inner;
+}
+
+/**
+ * Escape inline text. Minimal — see plan for rationale. The leading-char
+ * escapes (for `#` / `[^N]:`) apply only to the first text segment of a
+ * paragraph, to prevent re-parse-as-heading / re-parse-as-footnote-def.
+ */
+export function escapeInlineText(
+  text: string,
+  opts: { insideLink: boolean; applyLeadingEscape: boolean }
+): string {
+  let result = text.replace(/\\/g, '\\\\');
+  if (opts.insideLink) {
+    result = result.replace(/\[/g, '\\[').replace(/\]/g, '\\]');
+  }
+  if (opts.applyLeadingEscape) {
+    result = result.replace(/^(#+\s)/, '\\$1');
+    result = result.replace(/^(\[\^\d+\]:)/, '\\$1');
+  }
+  return result;
+}
+
+function openFor(mark: Mark): string {
+  switch (canonicalMarkKey(mark.type.name)) {
+    case 'link':
+      return '[';
+    case 'highlight':
+      return '==';
+    case 'strong':
+      return '**';
+    case 'emphasis':
+      return '*';
+    case 'strike_through':
+      return '~~';
+    default:
+      return '';
+  }
+}
+
+function closeFor(mark: Mark): string {
+  switch (canonicalMarkKey(mark.type.name)) {
+    case 'link': {
+      const attrs = mark.attrs as { href?: string; title?: string };
+      const href = escapeHref(attrs.href || '');
+      const title = attrs.title ? ` "${escapeTitle(attrs.title)}"` : '';
+      return `](${href}${title})`;
+    }
+    case 'highlight':
+      return '==';
+    case 'strong':
+      return '**';
+    case 'emphasis':
+      return '*';
+    case 'strike_through':
+      return '~~';
+    default:
+      return '';
+  }
+}
+
+/** Canonical outermost-first comparator for non-code marks. */
+function compareByCanonicalOrder(a: Mark, b: Mark): number {
+  const ai = MARK_OPEN_ORDER.indexOf(canonicalMarkKey(a.type.name) as CanonicalMarkKey);
+  const bi = MARK_OPEN_ORDER.indexOf(canonicalMarkKey(b.type.name) as CanonicalMarkKey);
+  return ai - bi;
+}
+
+/**
+ * Return the known non-code marks of a text node, aligned with the current
+ * `active` stack so that marks already open keep their relative order. New
+ * marks are appended in canonical order. This mirrors prosemirror-markdown's
+ * "mixable mark reorder" step and maximizes the shared prefix with `active`,
+ * avoiding spurious close-reopen churn for cases like `**bold [link] bold**`.
+ */
+function alignedKnownNonCodeMarks(marks: readonly Mark[], active: readonly Mark[]): Mark[] {
+  const known = marks.filter((m) => {
+    const key = canonicalMarkKey(m.type.name);
+    return key !== null && key !== 'inlineCode';
+  });
+  const inBoth: Mark[] = [];
+  for (const a of active) {
+    const match = known.find((m) => m.eq(a));
+    if (match) inBoth.push(match);
+  }
+  const newOnes = known.filter((m) => !active.some((a) => a.eq(m)));
+  newOnes.sort(compareByCanonicalOrder);
+  return [...inBoth, ...newOnes];
+}
+
+// Module-scoped one-time-warn set for unknown marks.
+const _warnedUnknownMarks = new Set<string>();
+function warnUnknownMark(name: string): void {
+  if (!_warnedUnknownMarks.has(name)) {
+    _warnedUnknownMarks.add(name);
+    // eslint-disable-next-line no-console
+    console.warn(`block-sync: unknown mark "${name}" — emitting text without delimiters`);
+  }
+}
+
+/**
+ * Fail loud at plugin init if the editor schema is missing all aliases for any
+ * mark we expect to serialize. Safer than silently dropping marks after a
+ * future Milkdown upgrade retires one alias.
+ */
+function assertExpectedMarksRegistered(schema: { marks: Record<string, unknown> }): void {
+  const missing: CanonicalMarkKey[] = [];
+  for (const [key, aliases] of Object.entries(MARK_ALIASES) as [CanonicalMarkKey, readonly string[]][]) {
+    const found = aliases.some((name) => name in schema.marks);
+    if (!found) missing.push(key);
+  }
+  if (missing.length > 0) {
+    const detail = missing.map((k) => `${k} (aliases: ${MARK_ALIASES[k].join(', ')})`).join('; ');
+    const msg = `block-sync: editor schema is missing expected marks: ${detail}. Check Milkdown plugin loading order.`;
+    // eslint-disable-next-line no-console
+    console.error(msg);
+    throw new Error(msg);
+  }
+}
+
+/**
+ * Serialize inline content of a node, preserving citation/annotation/footnote
+ * atoms AND inline marks (link, strong, emphasis, inlineCode, strike_through,
+ * highlight). Unlike `node.textContent` which strips both atoms and marks.
  */
 function serializeInlineContent(node: Node): string {
   if (node.isTextblock) {
-    let result = '';
+    const applyLeadingForBlock = node.type.name === 'paragraph';
+    const active: Mark[] = []; // stack, outermost first
+    const parts: string[] = [];
+    // Track whether we're still at the first visible text segment. Flips
+    // false after the first non-empty emit (text or atom) within this block.
+    let awaitingFirstEmit = applyLeadingForBlock;
+
+    const closeAllActive = () => {
+      while (active.length > 0) {
+        parts.push(closeFor(active.pop() as Mark));
+      }
+    };
+
     node.forEach((child) => {
       if (child.isText) {
-        result += child.text || '';
+        // Warn once per unknown mark name.
+        for (const m of child.marks) {
+          if (canonicalMarkKey(m.type.name) === null) warnUnknownMark(m.type.name);
+        }
+
+        const codeMark = child.marks.find(isCodeMark);
+
+        // Code mark is exclusive — close ALL active marks, emit code span, reopen.
+        if (codeMark) {
+          const stashed = active.slice();
+          closeAllActive();
+          const inner = padCodeSpan(child.text || '');
+          parts.push('`' + inner + '`');
+          for (const m of stashed) {
+            active.push(m);
+            parts.push(openFor(m));
+          }
+          if (child.text && child.text.length > 0) awaitingFirstEmit = false;
+          return;
+        }
+
+        const desired = alignedKnownNonCodeMarks(child.marks, active);
+
+        // Find longest shared prefix between `active` and `desired` using
+        // deep equality. Everything beyond `keep` on `active` must close
+        // (innermost first); everything beyond `keep` on `desired` must open.
+        let keep = 0;
+        while (keep < active.length && keep < desired.length && (active[keep] as Mark).eq(desired[keep] as Mark)) {
+          keep++;
+        }
+        while (active.length > keep) {
+          parts.push(closeFor(active.pop() as Mark));
+        }
+        for (let i = keep; i < desired.length; i++) {
+          const m = desired[i] as Mark;
+          active.push(m);
+          parts.push(openFor(m));
+        }
+
+        // Emit escaped text.
+        const innermost = active.length > 0 ? active[active.length - 1] : undefined;
+        const insideLink = innermost !== undefined && canonicalMarkKey(innermost.type.name) === 'link';
+        parts.push(
+          escapeInlineText(child.text || '', {
+            insideLink,
+            applyLeadingEscape: awaitingFirstEmit,
+          })
+        );
+        if (child.text && child.text.length > 0) awaitingFirstEmit = false;
       } else if (child.type.name === 'citation') {
+        closeAllActive();
         const attrs = child.attrs as CitationAttrs;
         if (attrs.rawSyntax) {
-          result += attrs.rawSyntax;
+          parts.push(attrs.rawSyntax);
         } else {
           try {
-            result += serializeCitation(attrs);
+            parts.push(serializeCitation(attrs));
           } catch {
-            result += `[@${attrs.citekeys}]`;
+            parts.push(`[@${attrs.citekeys}]`);
           }
         }
+        awaitingFirstEmit = false;
       } else if (child.type.name === 'annotation') {
+        closeAllActive();
         const { type, isCompleted } = child.attrs;
         const text = (child.attrs.text || '')
           .replace(/[\r\n]+/g, ' ')
           .replace(/\s+/g, ' ')
           .trim();
         if (type === 'task') {
-          result += `<!-- ::task:: ${isCompleted ? '[x]' : '[ ]'} ${text} -->`;
+          parts.push(`<!-- ::task:: ${isCompleted ? '[x]' : '[ ]'} ${text} -->`);
         } else {
-          result += `<!-- ::${type}:: ${text} -->`;
+          parts.push(`<!-- ::${type}:: ${text} -->`);
         }
+        awaitingFirstEmit = false;
       } else if (child.type.name === 'footnote_ref') {
-        result += `[^${child.attrs.label}]`;
+        closeAllActive();
+        parts.push(`[^${child.attrs.label}]`);
+        awaitingFirstEmit = false;
       } else if (child.type.name === 'footnote_def') {
-        result += `[^${child.attrs.label}]:`;
+        closeAllActive();
+        parts.push(`[^${child.attrs.label}]:`);
         // IMPORTANT: Inline atom nodes (citation, annotation, footnote_ref, footnote_def)
         // must be handled explicitly above — child.textContent returns '' for atom nodes.
+        awaitingFirstEmit = false;
       } else {
-        result += child.textContent;
+        closeAllActive();
+        parts.push(child.textContent);
+        if (child.textContent.length > 0) awaitingFirstEmit = false;
       }
     });
-    return result;
+
+    // Close trailing marks.
+    closeAllActive();
+    return parts.join('');
   }
-  // Container nodes (list_item, blockquote children): recurse
+  // Container nodes (list_item, blockquote children): recurse.
   const parts: string[] = [];
   node.forEach((child) => {
     parts.push(serializeInlineContent(child));
@@ -147,8 +405,9 @@ function serializeInlineContent(node: Node): string {
 /**
  * Build a markdown fragment from a ProseMirror node.
  * Inline-aware: preserves citations and annotations that node.textContent strips.
+ * Exported for unit testing. In production, reached via `getMarkdownFragment`.
  */
-function nodeToMarkdownFragment(node: Node): string {
+export function nodeToMarkdownFragment(node: Node): string {
   const text = serializeInlineContent(node);
   switch (node.type.name) {
     case 'heading': {
@@ -447,6 +706,7 @@ export const blockSyncPlugin = $prose(() => {
 
     state: {
       init(_, state) {
+        assertExpectedMarksRegistered(state.schema);
         const snapshot = snapshotBlocks(state.doc);
         const initialState: BlockSyncPluginState = {
           lastSnapshot: snapshot,
