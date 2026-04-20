@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.95] - 2026-04-20
+
 ### Fixed
 
 - **Block-id Phase-1 figure ID theft** — when a user typed a single character inside a paragraph, every figure block whose offset shifted by +1 silently claimed the paragraph ID that had been at its new offset before the shift. `detectChanges` then reported the paragraph as "textContent went from N chars to empty" (the content is now on the figure node), cascading into a `u=15 i=85 d=85` diff per keystroke that grew the DB from 135 → 184 blocks on a single character. Root cause was `block-id-plugin.ts` Phase 1's `typeMatches` short-circuit (`!structureChanged || …`) that bypassed the type check whenever block count was unchanged. Fix introduces `ATOMIC_BLOCK_TYPES = {'figure'}` and a pure `phase1CanClaim` helper: cross-type Phase-1 claims are allowed for legitimate input-rule conversions (paragraph↔heading via `# `, paragraph↔table via `|a|b|`, paragraph↔hr via `---`, etc.) but blocked when either side is `figure`. The Phase-2 type-filtered proximity match correctly relocates the deferred figure to its actual position.
