@@ -13,6 +13,7 @@ import {
   resetBlockIdState,
   setBlockIdsForTopLevel,
   setBlockIdZoomMode,
+  SYNC_DIAG_DETAIL,
 } from './block-id-plugin';
 import {
   type BlockChanges,
@@ -339,6 +340,14 @@ export function resetForProjectSwitch(): void {
 export function applyBlocks(blocks: Block[]): void {
   clearContentPushTimer(); // Cancel stale timers before document replacement
   syncLog('API:applyBlocks', `entry blocks=${blocks.length} syncPaused=true`);
+  // [SYNC-DIAG Round 2] First-few (id, blockType, textLen) so we can correlate
+  // Swift's block-array shape with the DOM that ends up in the editor.
+  if (SYNC_DIAG_DETAIL) {
+    const firstFew = blocks.slice(0, 5).map(
+      (b) => `(${b.id.slice(0, 8)},${b.blockType},txtLen=${b.textContent?.length ?? 0})`
+    );
+    syncLog('API:applyBlocks', `firstFew=[${firstFew.join(',')}]`);
+  }
   const editorInstance = getEditorInstance();
   if (!editorInstance) return;
 
@@ -422,6 +431,11 @@ export function setContentWithBlockIds(
     'API:setContentWithBlockIds',
     `entry len=${markdown.length} blocks=${blockIds.length} scrollToStart=${options?.scrollToStart ?? false}`
   );
+  // [SYNC-DIAG Round 2] First-few IDs so we can tie Swift's id-array to the parsed DOM
+  if (SYNC_DIAG_DETAIL) {
+    const firstFew = blockIds.slice(0, 5).map((id) => id.slice(0, 8));
+    syncLog('API:setContentWithBlockIds', `firstFewIds=[${firstFew.join(',')}]`);
+  }
   setBlockIdZoomMode(false); // Clear zoom mode when loading full content
   setContentHasBeenSet(true);
   const editorInstance = getEditorInstance();
@@ -629,6 +643,15 @@ export function syncBlockIds(orderedIds: string[], zoomMode: boolean): void {
   const editorInstance = getEditorInstance();
   if (!editorInstance) return;
   const view = editorInstance.ctx.get(editorViewCtx);
+  // [SYNC-DIAG Round 2] syncBlockIds is a third Swift→JS seed point (zoom + pushBlockIds).
+  // Log before setBlockIdsForTopLevel runs so the plugin-side log reflects the input.
+  if (SYNC_DIAG_DETAIL) {
+    const firstFew = orderedIds.slice(0, 5).map((id) => id.slice(0, 8));
+    syncLog(
+      'API:syncBlockIds',
+      `entry orderedIds.length=${orderedIds.length} zoomMode=${zoomMode} firstFew=[${firstFew.join(',')}]`
+    );
+  }
   setBlockIdZoomMode(zoomMode); // Set zoom mode based on caller context
   setBlockIdsForTopLevel(orderedIds, view.state.doc);
   resetAndSnapshot(view.state.doc);

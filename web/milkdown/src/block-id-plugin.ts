@@ -24,6 +24,17 @@ const BLOCK_TYPES = new Set([
   'figure',
 ]);
 
+/**
+ * Block types that cannot be produced from another type via a Milkdown input
+ * rule. Cross-type Phase-1 claims involving these types are always invalid
+ * (they indicate ID theft from position shifting, not in-place conversion).
+ * Currently just 'figure' — the confirmed bug vector. Tables, horizontal rules,
+ * and section breaks have narrower latent vectors but also have observed
+ * paragraph→X input-rule conversions (`|a|b|`, `---`, etc.), so keeping them
+ * out preserves those transitions.
+ */
+const ATOMIC_BLOCK_TYPES: ReadonlySet<string> = new Set(['figure']);
+
 // Generate a UUID for new blocks
 function generateBlockId(): string {
   // Use crypto.randomUUID if available, otherwise fallback
@@ -58,6 +69,13 @@ const pendingConfirmations: Map<string, string> = new Map();
 // (prevents mini-Notes nodes from getting temp IDs)
 let blockIdZoomMode = false;
 
+/**
+ * Verbose-diagnostic logging toggle. Flip to true on demand for future investigations.
+ * Grep gate before commit: `grep -En 'SYNC_DIAG_DETAIL\s*=\s*true' web/milkdown/src/*.ts` must be empty.
+ * Re-exported for api-content.ts instrumentation sites.
+ */
+export const SYNC_DIAG_DETAIL = false;
+
 export function setBlockIdZoomMode(enabled: boolean): void {
   blockIdZoomMode = enabled;
 }
@@ -66,6 +84,7 @@ export function setBlockIdZoomMode(enabled: boolean): void {
  * Reset module-level state (call when destroying editor instance)
  */
 export function resetBlockIdState(): void {
+  syncLog('BlockId:resetBlockIdState', `clearing ${currentBlockIds.size} block IDs`);
   currentBlockIds.clear();
   currentBlockTypes.clear();
   pendingConfirmations.clear();
@@ -119,6 +138,12 @@ export function applyPendingConfirmations(): Map<string, string> {
   for (const [tempId] of applied) {
     pendingConfirmations.delete(tempId);
   }
+  // [SYNC-DIAG Round 2] One log per call (NOT per loop entry), capped 5 pairs
+  if (SYNC_DIAG_DETAIL && applied.size > 0) {
+    const pairs = Array.from(applied.entries()).slice(0, 5)
+      .map(([oldId, newId]) => `(${oldId.slice(0, 10)}→${newId.slice(0, 8)})`);
+    syncLog('BlockId:confirm', `applyPendingConfirmations: size=${applied.size} firstFew=[${pairs.join(',')}]`);
+  }
   return applied;
 }
 
@@ -127,8 +152,32 @@ export function applyPendingConfirmations(): Map<string, string> {
  * Used by applyBlocks() before setting real IDs from the blocks array.
  */
 export function clearBlockIds(): void {
+  syncLog('BlockId:clearBlockIds', `clearing ${currentBlockIds.size} block IDs (from applyBlocks path)`);
   currentBlockIds.clear();
   currentBlockTypes.clear();
+}
+
+/**
+ * Decide whether Phase 1 should claim an existing ID at a given offset.
+ * Returns true only when (a) there IS an existing ID at that offset, (b) it
+ * hasn't already been claimed, and (c) the type transition is allowed — same
+ * type or both types non-atomic (paragraph/heading/list/blockquote/etc., which
+ * can arise from input rules). Atomic types (currently `figure`) require
+ * strict type match to prevent position-shift ID theft. Exported for tests.
+ */
+export function phase1CanClaim(
+  newType: string,
+  existingType: string | undefined,
+  existingId: string | undefined,
+  claimed: ReadonlySet<string>,
+): boolean {
+  if (!existingId) return false;
+  if (claimed.has(existingId)) return false;
+  if (existingType === newType) return true;
+  if (existingType === undefined) return false;
+  if (ATOMIC_BLOCK_TYPES.has(existingType)) return false;
+  if (ATOMIC_BLOCK_TYPES.has(newType)) return false;
+  return true;
 }
 
 /**
@@ -145,10 +194,16 @@ export function isBlockType(node: Node): boolean {
  */
 export function setBlockIdsForTopLevel(orderedIds: string[], doc: Node): void {
   let index = 0;
+  // [SYNC-DIAG Round 2] Collect a sample of (i, id, offset, nodeType) for correlation
+  // with Swift's block-array shape. Cap at 5 head + 5 tail entries to bound volume.
+  const assigned: Array<{ i: number; id: string; offset: number; type: string }> = [];
   doc.forEach((node, offset) => {
     if (isBlockType(node) && index < orderedIds.length) {
       currentBlockIds.set(offset, orderedIds[index]);
       currentBlockTypes.set(offset, node.type.name);
+      if (SYNC_DIAG_DETAIL) {
+        assigned.push({ i: index, id: orderedIds[index], offset, type: node.type.name });
+      }
       index++;
     }
   });
@@ -158,6 +213,13 @@ export function setBlockIdsForTopLevel(orderedIds: string[], doc: Node): void {
       type: 'debug',
       message: `[setBlockIdsForTopLevel] PARITY MISMATCH: assigned ${index} of ${orderedIds.length} IDs`,
     });
+  }
+  if (SYNC_DIAG_DETAIL) {
+    const fmt = (e: { i: number; id: string; offset: number; type: string }) =>
+      `(${e.i},${e.id.slice(0, 8)},pos=${e.offset},${e.type})`;
+    const head = assigned.slice(0, 5).map(fmt).join(',');
+    const tail = assigned.length > 10 ? ',…,' + assigned.slice(-5).map(fmt).join(',') : '';
+    syncLog('BlockId:setTopLevel', `totalAssigned=${index}/${orderedIds.length} entries=[${head}${tail}]`);
   }
 }
 
@@ -182,28 +244,44 @@ function assignBlockIds(
   });
   const structureChanged = blockCount !== existingIds.size;
 
+  // [SYNC-DIAG Phase 0] Log when the existingIds baseline is empty — strong desync signal.
+  // Quiet on the common case (non-zero existingIds) to avoid log volume.
+  if (existingIds.size === 0) {
+    syncLog(
+      'BlockId:assign',
+      `WARNING existingIds.size=0 docBlockCount=${blockCount} structureChanged=${structureChanged} stack=${new Error().stack?.split('\n').slice(1, 5).join(' | ')}`
+    );
+  } else if (Math.abs(blockCount - existingIds.size) > 5) {
+    // Also log when the jump is large — another possible desync footprint.
+    syncLog(
+      'BlockId:assign',
+      `existingIds.size=${existingIds.size} docBlockCount=${blockCount} diff=${blockCount - existingIds.size} structureChanged=${structureChanged}`
+    );
+  }
+
   // Collect deferred blocks that need proximity matching
   const deferred: Array<{ offset: number; nodeType: string }> = [];
 
-  // Phase 1: exact-position matches
+  // Phase 1: exact-position matches. `phase1CanClaim` enforces the type gate
+  // that prevents atomic-type (figure) theft from position-shifted paragraphs
+  // while still admitting legitimate input-rule conversions (paragraph↔heading,
+  // paragraph↔list, paragraph↔table, etc.).
   doc.forEach((node, offset) => {
     if (isBlockType(node)) {
       const existingId = existingIds.get(offset);
-      // When structure changed, only allow exact-position match if type matches
-      const typeMatches = !structureChanged || existingTypes.get(offset) === node.type.name;
-
-      if (existingId && !claimedIds.has(existingId) && typeMatches) {
-        // Exact-position match (same type, or type conversion with same structure)
-        const confirmedId = pendingConfirmations.get(existingId);
+      const existingType = existingTypes.get(offset);
+      if (phase1CanClaim(node.type.name, existingType, existingId, claimedIds)) {
+        // Exact-position match (same type, or non-atomic type conversion).
+        const confirmedId = pendingConfirmations.get(existingId!);
         if (confirmedId) {
           newIds.set(offset, confirmedId);
           newTypes.set(offset, node.type.name);
           claimedIds.add(confirmedId);
-          pendingConfirmations.delete(existingId);
+          pendingConfirmations.delete(existingId!);
         } else {
-          newIds.set(offset, existingId);
+          newIds.set(offset, existingId!);
           newTypes.set(offset, node.type.name);
-          claimedIds.add(existingId);
+          claimedIds.add(existingId!);
         }
       } else {
         // Defer to Phase 2
@@ -211,6 +289,25 @@ function assignBlockIds(
       }
     }
   });
+
+  // End-of-Phase-1 summary (diagnostic only).
+  if (SYNC_DIAG_DETAIL) {
+    const claimed = blockCount - deferred.length;
+    syncLog(
+      'BlockId:assign:phase1',
+      `phase1 summary: claimed=${claimed} deferred=${deferred.length} structureChanged=${structureChanged}`
+    );
+  }
+
+  // [SYNC-DIAG Round 2] Hard cap guard — if >50 deferred blocks, emit one summary
+  // and skip per-block defer logs (prevents log-volume DoS).
+  const skipPerBlockDeferLogs = deferred.length > 50;
+  if (SYNC_DIAG_DETAIL && skipPerBlockDeferLogs) {
+    syncLog(
+      'BlockId:assign:phase2',
+      `deferred.length=${deferred.length} > 50, suppressing per-block defer logs`
+    );
+  }
 
   // Phase 2: proximity matching
   if (structureChanged && deferred.length > 0) {
@@ -242,6 +339,25 @@ function assignBlockIds(
       newTypes.set(p.newOffset, p.nodeType);
       claimedIds.add(finalId);
       assignedNew.add(p.newOffset);
+
+      // [SYNC-DIAG Round 2] Log when deferred figure gets matched, OR when chosen
+      // old type differs from deferred new type (latter should be impossible
+      // because type filter above — but log it as safety invariant).
+      if (SYNC_DIAG_DETAIL && !skipPerBlockDeferLogs) {
+        const chosenOldType = existingTypes.get(p.oldPos);
+        if (p.nodeType === 'figure' || chosenOldType !== p.nodeType) {
+          // Candidate pool for this deferred block (before greedy assignment),
+          // capped to first 5. Compute lazily only when we log.
+          const cands = pairs
+            .filter((x) => x.newOffset === p.newOffset)
+            .slice(0, 5)
+            .map((x) => `(${x.id.slice(0, 8)},oldPos=${x.oldPos},${existingTypes.get(x.oldPos)},d=${x.distance})`);
+          syncLog(
+            'BlockId:assign:phase2',
+            `[structureChanged] newOffset=${p.newOffset} newType=${p.nodeType} candidates=[${cands.join(',')}] chosen=(${p.id.slice(0, 8)},${chosenOldType},d=${p.distance})`
+          );
+        }
+      }
     }
 
     // Remaining deferred blocks get temp IDs (unless zoom mode)
@@ -252,6 +368,12 @@ function assignBlockIds(
       newIds.set(d.offset, newId);
       newTypes.set(d.offset, d.nodeType);
       claimedIds.add(newId);
+      if (SYNC_DIAG_DETAIL && !skipPerBlockDeferLogs && d.nodeType === 'figure') {
+        syncLog(
+          'BlockId:assign:phase2',
+          `[structureChanged] newOffset=${d.offset} newType=${d.nodeType} chosen=TEMP ${newId.slice(0, 13)}`
+        );
+      }
     }
   } else {
     // Structure unchanged or no deferred blocks: per-block proximity matching (original behavior)
@@ -282,6 +404,19 @@ function assignBlockIds(
           claimedIds.add(best.id);
         }
         found = true;
+
+        if (SYNC_DIAG_DETAIL && !skipPerBlockDeferLogs) {
+          const chosenOldType = existingTypes.get(best.pos);
+          if (d.nodeType === 'figure' || chosenOldType !== d.nodeType) {
+            const cands = sameType
+              .slice(0, 5)
+              .map((c) => `(${c.id.slice(0, 8)},oldPos=${c.pos},${existingTypes.get(c.pos)},d=${c.distance})`);
+            syncLog(
+              'BlockId:assign:phase2',
+              `[perBlock] newOffset=${d.offset} newType=${d.nodeType} candidates=[${cands.join(',')}] chosen=(${best.id.slice(0, 8)},${chosenOldType},d=${best.distance})`
+            );
+          }
+        }
       }
 
       if (!found) {
@@ -290,6 +425,12 @@ function assignBlockIds(
         newIds.set(d.offset, newId);
         newTypes.set(d.offset, d.nodeType);
         claimedIds.add(newId);
+        if (SYNC_DIAG_DETAIL && !skipPerBlockDeferLogs && d.nodeType === 'figure') {
+          syncLog(
+            'BlockId:assign:phase2',
+            `[perBlock] newOffset=${d.offset} newType=${d.nodeType} chosen=TEMP ${newId.slice(0, 13)}`
+          );
+        }
       }
     }
   }

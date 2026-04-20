@@ -25,7 +25,7 @@ enum DebugLog {
         case proofing    // [LT] spellcheck + LanguageTool boundary diagnostics
     }
 
-    /// Default: only lifecycle + zotero. Add categories here when debugging.
+    /// Default: only lifecycle + zotero + editor. Add categories here when debugging.
     static let enabled: Set<Category> = [.lifecycle, .zotero, .editor]
 
     /// Category-gated log. Compiles to nothing in release builds.

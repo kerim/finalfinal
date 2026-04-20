@@ -162,6 +162,11 @@ async function initEditor() {
     return;
   }
 
+  // [SYNC-DIAG Phase 0] One-time log of plugin registration order. If blockSyncPlugin
+  // ever runs BEFORE blockIdPlugin, snapshotBlocks() reads a stale currentBlockIds
+  // and emits phantom deletes — this log makes the order visible in Xcode console.
+  syncLog('Bootstrap:pluginOrder', 'blockIdPlugin → blockSyncPlugin (expected)');
+
   try {
     const editorInstance = await Editor.make()
       .config((ctx) => {
@@ -177,7 +182,7 @@ async function initEditor() {
       //    (fixes ==text== not persisting when switching to CodeMirror)
       // 5. citationPlugin MUST be before commonmark to parse [@citekey] syntax
       .use(blockIdPlugin) // Assign stable IDs to block-level nodes
-      .use(blockSyncPlugin) // Track block changes for Swift sync
+      .use(blockSyncPlugin) // Track block changes for Swift sync — MUST run AFTER blockIdPlugin so currentBlockIds is fresh before snapshotBlocks() reads it
       .use(sectionBreakPlugin) // Intercept <!-- ::break:: --> before commonmark filters it
       .use(zoomNotesMarkerPlugin) // Intercept <!-- ::zoom-notes:: --> before commonmark filters it
       .use(bibliographyPlugin) // Intercept <!-- ::auto-bibliography:: --> before commonmark filters it

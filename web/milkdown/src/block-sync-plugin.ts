@@ -10,6 +10,12 @@ import type { CitationAttrs } from './citation-plugin';
 import { serializeCitation } from './citation-plugin';
 import { syncLog } from './sync-debug';
 
+/**
+ * Verbose-diagnostic logging toggle. Flip to true on demand for future investigations.
+ * Grep gate before commit: `grep -En 'SYNC_DIAG_DETAIL\s*=\s*true' web/milkdown/src/*.ts` must be empty.
+ */
+const SYNC_DIAG_DETAIL = false;
+
 export const blockSyncPluginKey = new PluginKey<BlockSyncPluginState>('block-sync');
 
 // Block types that are synced (top-level only — no list_item)
@@ -244,9 +250,15 @@ function snapshotBlocks(doc: Node): Map<string, BlockSnapshot> {
   const snapshot = new Map<string, BlockSnapshot>();
   const blockIds = getAllBlockIds();
 
+  // [SYNC-DIAG Phase 0] Collect offsets where blockIds is missing an entry;
+  // emit a SINGLE aggregated log line at end of the function (not per skip).
+  const skippedOffsets: number[] = [];
+  let syncBlockCount = 0;
+
   // Use doc.forEach() for top-level only traversal, matching BlockParser behavior
   doc.forEach((node, offset) => {
     if (SYNC_BLOCK_TYPES.has(node.type.name)) {
+      syncBlockCount++;
       const blockId = blockIds.get(offset);
       if (blockId) {
         // Detect heading syntax in paragraphs (paste creates paragraphs, not headings)
@@ -268,9 +280,38 @@ function snapshotBlocks(doc: Node): Map<string, BlockSnapshot> {
           node,
           _cachedMarkdown: null, // Lazily computed only when needed
         });
+      } else {
+        skippedOffsets.push(offset);
       }
     }
   });
+
+  if (skippedOffsets.length > 0) {
+    syncLog(
+      'BlockSync:snapshot',
+      `SKIP count=${skippedOffsets.length} docBlockCount=${syncBlockCount} existingIdsSize=${blockIds.size} firstOffsets=[${skippedOffsets.slice(0, 5).join(',')}]`
+    );
+  }
+
+  // [SYNC-DIAG Round 2] Dump all image entries (bounded by actual figure count,
+  // typically 10-20) plus first 3 non-image entries for context. Targeted at the
+  // figure↔paragraph ID-theft hypothesis.
+  if (SYNC_DIAG_DETAIL) {
+    const images: string[] = [];
+    const nonImages: string[] = [];
+    for (const entry of snapshot.values()) {
+      const fmt = `(${entry.id.slice(0, 8)},pos=${entry.pos},textLen=${entry.textContent.length},size=${entry.nodeSize})`;
+      if (entry.blockType === 'image') {
+        images.push(fmt);
+      } else if (nonImages.length < 3) {
+        nonImages.push(`(${entry.id.slice(0, 8)},pos=${entry.pos},${entry.blockType})`);
+      }
+    }
+    syncLog(
+      'BlockSync:snapshot',
+      `size=${snapshot.size} images=[${images.join(',')}] firstNonImage=[${nonImages.join(',')}]`
+    );
+  }
 
   return snapshot;
 }
@@ -330,9 +371,13 @@ function detectChanges(
         if (oldBlock.nodeSize !== newBlock.nodeSize) changes.push(`size:${oldBlock.nodeSize}→${newBlock.nodeSize}`);
         if (oldBlock.headingLevel !== newBlock.headingLevel)
           changes.push(`level:${oldBlock.headingLevel}→${newBlock.headingLevel}`);
+        // [SYNC-DIAG Round 2] include old→new blockType to expose paragraph→image swaps
+        const typeStr = oldBlock.blockType !== newBlock.blockType
+          ? `type:${oldBlock.blockType}→${newBlock.blockType}`
+          : `type=${newBlock.blockType}`;
         syncLog(
           'BlockSync:detect',
-          `UPDATE id=${id.slice(0, 8)} [${changes.join(',')}] "${newBlock.textContent.slice(0, 40)}"`
+          `UPDATE id=${id.slice(0, 8)} [${changes.join(',')}] ${typeStr} "${newBlock.textContent.slice(0, 40)}"`
         );
       }
     }
@@ -422,6 +467,14 @@ export const blockSyncPlugin = $prose(() => {
           return value;
         }
 
+        // [SYNC-DIAG Round 2] doc.content.size delta — correlates "how much doc actually
+        // changed" with the diff churn. Source is explicit (_oldState, not tr.before).
+        if (SYNC_DIAG_DETAIL) {
+          const pre = _oldState.doc.content.size;
+          const post = newState.doc.content.size;
+          syncLog('BlockSync:apply', `docSize pre=${pre} post=${post} delta=${post - pre}`);
+        }
+
         // Snapshot is synchronous — needs current block IDs and doc positions
         const newSnapshot = snapshotBlocks(newState.doc);
 
@@ -491,6 +544,12 @@ export function resetBlockSyncState(): void {
  */
 export function updateSnapshotIds(mapping: Map<string, string>): void {
   if (!currentState || mapping.size === 0) return;
+  // [SYNC-DIAG Round 2] One log per call, capped 5 pairs
+  if (SYNC_DIAG_DETAIL) {
+    const pairs = Array.from(mapping.entries()).slice(0, 5)
+      .map(([oldId, newId]) => `(${oldId.slice(0, 10)}→${newId.slice(0, 8)})`);
+    syncLog('BlockSync:updateSnapshotIds', `size=${mapping.size} firstFew=[${pairs.join(',')}]`);
+  }
   const updated = new Map<string, BlockSnapshot>();
   for (const [oldId, snapshot] of currentState.lastSnapshot) {
     const newId = mapping.get(oldId);
