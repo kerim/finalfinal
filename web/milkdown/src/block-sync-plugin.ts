@@ -117,18 +117,45 @@ const MARK_ALIASES: Record<CanonicalMarkKey, readonly string[]> = {
   highlight: ['highlight'],
 };
 
-// Outermost-first opening order. `inlineCode` is exclusive — not in the stack.
-const MARK_OPEN_ORDER: CanonicalMarkKey[] = ['link', 'highlight', 'strong', 'emphasis', 'strike_through'];
+/** Per-mark delimiter strings. Link's close is a function because href/title escape into it. */
+const MARK_DELIMITERS: Record<CanonicalMarkKey, { open: string; close: string | ((mark: Mark) => string) }> = {
+  link: {
+    open: '[',
+    close: (mark) => {
+      const attrs = mark.attrs as { href?: string; title?: string };
+      const href = escapeHref(attrs.href || '');
+      const title = attrs.title ? ` "${escapeTitle(attrs.title)}"` : '';
+      return `](${href}${title})`;
+    },
+  },
+  highlight: { open: '==', close: '==' },
+  strong: { open: '**', close: '**' },
+  emphasis: { open: '*', close: '*' },
+  strike_through: { open: '~~', close: '~~' },
+  inlineCode: { open: '`', close: '`' }, // exclusive; not opened via openFor/closeFor
+};
 
-function canonicalMarkKey(name: string): CanonicalMarkKey | null {
+// Outermost-first rank for sort ordering. `inlineCode` is exclusive — not in the stack.
+const MARK_RANK: Record<CanonicalMarkKey, number> = {
+  link: 0,
+  highlight: 1,
+  strong: 2,
+  emphasis: 3,
+  strike_through: 4,
+  inlineCode: -1, // unused; exclusive path bypasses the sort
+};
+
+// Flat alias → canonical-key lookup, precomputed once to avoid Object.entries scans on the hot path.
+const CANONICAL_BY_NAME: Readonly<Record<string, CanonicalMarkKey>> = (() => {
+  const map: Record<string, CanonicalMarkKey> = {};
   for (const [key, aliases] of Object.entries(MARK_ALIASES) as [CanonicalMarkKey, readonly string[]][]) {
-    if (aliases.includes(name)) return key;
+    for (const alias of aliases) map[alias] = key;
   }
-  return null;
-}
+  return map;
+})();
 
 function isCodeMark(mark: Mark): boolean {
-  return canonicalMarkKey(mark.type.name) === 'inlineCode';
+  return CANONICAL_BY_NAME[mark.type.name] === 'inlineCode';
 }
 
 /** Percent-encode href characters that would break CommonMark parsing. */
@@ -154,8 +181,8 @@ export function escapeTitle(title: string): string {
  */
 export function padCodeSpan(text: string): string {
   let inner = text;
-  if (inner.startsWith('`')) inner = ' ' + inner;
-  if (inner.endsWith('`')) inner = inner + ' ';
+  if (inner.startsWith('`')) inner = ` ${inner}`;
+  if (inner.endsWith('`')) inner = `${inner} `;
   return inner;
 }
 
@@ -177,48 +204,22 @@ export function escapeInlineText(text: string, opts: { insideLink: boolean; appl
 }
 
 function openFor(mark: Mark): string {
-  switch (canonicalMarkKey(mark.type.name)) {
-    case 'link':
-      return '[';
-    case 'highlight':
-      return '==';
-    case 'strong':
-      return '**';
-    case 'emphasis':
-      return '*';
-    case 'strike_through':
-      return '~~';
-    default:
-      return '';
-  }
+  const key = CANONICAL_BY_NAME[mark.type.name];
+  return key ? MARK_DELIMITERS[key].open : '';
 }
 
 function closeFor(mark: Mark): string {
-  switch (canonicalMarkKey(mark.type.name)) {
-    case 'link': {
-      const attrs = mark.attrs as { href?: string; title?: string };
-      const href = escapeHref(attrs.href || '');
-      const title = attrs.title ? ` "${escapeTitle(attrs.title)}"` : '';
-      return `](${href}${title})`;
-    }
-    case 'highlight':
-      return '==';
-    case 'strong':
-      return '**';
-    case 'emphasis':
-      return '*';
-    case 'strike_through':
-      return '~~';
-    default:
-      return '';
-  }
+  const key = CANONICAL_BY_NAME[mark.type.name];
+  if (!key) return '';
+  const close = MARK_DELIMITERS[key].close;
+  return typeof close === 'function' ? close(mark) : close;
 }
 
-/** Canonical outermost-first comparator for non-code marks. */
+/** Canonical outermost-first comparator for non-code marks. Unknown marks sort last. */
 function compareByCanonicalOrder(a: Mark, b: Mark): number {
-  const ai = MARK_OPEN_ORDER.indexOf(canonicalMarkKey(a.type.name) as CanonicalMarkKey);
-  const bi = MARK_OPEN_ORDER.indexOf(canonicalMarkKey(b.type.name) as CanonicalMarkKey);
-  return ai - bi;
+  const ai = CANONICAL_BY_NAME[a.type.name];
+  const bi = CANONICAL_BY_NAME[b.type.name];
+  return (ai ? MARK_RANK[ai] : Number.MAX_SAFE_INTEGER) - (bi ? MARK_RANK[bi] : Number.MAX_SAFE_INTEGER);
 }
 
 /**
@@ -230,8 +231,8 @@ function compareByCanonicalOrder(a: Mark, b: Mark): number {
  */
 function alignedKnownNonCodeMarks(marks: readonly Mark[], active: readonly Mark[]): Mark[] {
   const known = marks.filter((m) => {
-    const key = canonicalMarkKey(m.type.name);
-    return key !== null && key !== 'inlineCode';
+    const key = CANONICAL_BY_NAME[m.type.name];
+    return key !== undefined && key !== 'inlineCode';
   });
   const inBoth: Mark[] = [];
   for (const a of active) {
@@ -295,9 +296,18 @@ function serializeInlineContent(node: Node): string {
 
     node.forEach((child) => {
       if (child.isText) {
+        // Hot-path fast exit: plain text with no marks and no active marks is the
+        // overwhelming common case while typing. Skip mark alignment / keep-prefix
+        // allocations and emit the escaped text directly.
+        if (child.marks.length === 0 && active.length === 0) {
+          parts.push(escapeInlineText(child.text || '', { insideLink: false, applyLeadingEscape: awaitingFirstEmit }));
+          if (child.text && child.text.length > 0) awaitingFirstEmit = false;
+          return;
+        }
+
         // Warn once per unknown mark name.
         for (const m of child.marks) {
-          if (canonicalMarkKey(m.type.name) === null) warnUnknownMark(m.type.name);
+          if (!CANONICAL_BY_NAME[m.type.name]) warnUnknownMark(m.type.name);
         }
 
         const codeMark = child.marks.find(isCodeMark);
@@ -307,7 +317,7 @@ function serializeInlineContent(node: Node): string {
           const stashed = active.slice();
           closeAllActive();
           const inner = padCodeSpan(child.text || '');
-          parts.push('`' + inner + '`');
+          parts.push(`\`${inner}\``);
           for (const m of stashed) {
             active.push(m);
             parts.push(openFor(m));
@@ -336,7 +346,7 @@ function serializeInlineContent(node: Node): string {
 
         // Emit escaped text.
         const innermost = active.length > 0 ? active[active.length - 1] : undefined;
-        const insideLink = innermost !== undefined && canonicalMarkKey(innermost.type.name) === 'link';
+        const insideLink = innermost !== undefined && CANONICAL_BY_NAME[innermost.type.name] === 'link';
         parts.push(
           escapeInlineText(child.text || '', {
             insideLink,
