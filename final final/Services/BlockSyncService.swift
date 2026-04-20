@@ -61,15 +61,6 @@ class BlockSyncService {
     /// (race between JS debounce and Swift confirmBlockIds).
     private var confirmedTempIds: [String: String] = [:]
 
-    /// Count of polls where a BlockChanges payload was hard-rejected as a stale snapshot
-    /// (the pre-existing 100%-delete-no-inserts rule). Defense-in-depth telemetry.
-    private(set) var staleSnapshotRejectCount: Int = 0
-
-    /// Count of polls where the "balanced massive churn" telemetry signature fired.
-    /// Warning-only: never rejects the payload. If this rises frequently in real usage,
-    /// a regression of the block-id Phase-1 type-theft bug is likely.
-    private(set) var suspectedChurnCount: Int = 0
-
     // MARK: - Stale-snapshot guard helpers (pure, testable)
 
     /// Reason a poll result was hard-rejected as a stale snapshot.
@@ -392,7 +383,6 @@ class BlockSyncService {
             do {
                 let blockCount = try database.fetchBlockCount(projectId: projectId)
                 if let reason = Self.shouldRejectAsStale(changes: changes, blockCount: blockCount) {
-                    staleSnapshotRejectCount += 1
                     DebugLog.always(
                         "[SYNC-DIAG:BlockPoll] REJECTED: reason=\(reason) " +
                         "d=\(changes.deletes.count) i=\(changes.inserts.count) blockCount=\(blockCount)"
@@ -406,7 +396,6 @@ class BlockSyncService {
                     )
                 }
                 if Self.hasBalancedMassiveChurnSignature(changes: changes, blockCount: blockCount) {
-                    suspectedChurnCount += 1
                     DebugLog.always(
                         "[SYNC-DIAG:BlockPoll] WARNING: Balanced massive churn signature " +
                         "(d=\(changes.deletes.count) i=\(changes.inserts.count) u=\(changes.updates.count) " +

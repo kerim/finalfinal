@@ -13,7 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 
 - **`phase1CanClaim` helper + 20 vitest cases** in `web/milkdown/src/__tests__/block-id-phase1.test.ts` covering same-type, input-rule conversions, atomic-type theft (forward and reverse), already-claimed, empty-offset.
-- **Swift safety net** — `BlockSyncService.shouldRejectAsStale` (refactored from existing inline guard, preserves the pre-existing 100%-delete-no-inserts hard reject at `blockCount > 2`) and `hasBalancedMassiveChurnSignature` (warning-only telemetry that detects the catastrophic-churn pattern observed during the bug). Two `private(set)` counters: `staleSnapshotRejectCount`, `suspectedChurnCount`. Both helpers are `nonisolated static` and pure-over-`Sendable`-value-types.
+- **Swift safety net** — `BlockSyncService.shouldRejectAsStale` (refactored from existing inline guard, preserves the pre-existing 100%-delete-no-inserts hard reject at `blockCount > 2`) and `hasBalancedMassiveChurnSignature` (warning-only telemetry that detects the catastrophic-churn pattern observed during the bug). Both helpers are `nonisolated static` and pure-over-`Sendable`-value-types.
 - **`BlockSyncStaleGuardTests`** — 13 Swift Testing cases parity-asserting the hard-reject rule and exercising the warning-signature arithmetic against legitimate-bulk-op edge cases.
 
 ## [0.2.94] - 2026-04-18

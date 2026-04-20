@@ -5,16 +5,10 @@
 import type { Node } from '@milkdown/kit/prose/model';
 import { Plugin, PluginKey } from '@milkdown/kit/prose/state';
 import { $prose } from '@milkdown/kit/utils';
-import { getAllBlockIds } from './block-id-plugin';
+import { getAllBlockIds, SYNC_DIAG_DETAIL } from './block-id-plugin';
 import type { CitationAttrs } from './citation-plugin';
 import { serializeCitation } from './citation-plugin';
 import { syncLog } from './sync-debug';
-
-/**
- * Verbose-diagnostic logging toggle. Flip to true on demand for future investigations.
- * Grep gate before commit: `grep -En 'SYNC_DIAG_DETAIL\s*=\s*true' web/milkdown/src/*.ts` must be empty.
- */
-const SYNC_DIAG_DETAIL = false;
 
 export const blockSyncPluginKey = new PluginKey<BlockSyncPluginState>('block-sync');
 
@@ -286,7 +280,7 @@ function snapshotBlocks(doc: Node): Map<string, BlockSnapshot> {
     }
   });
 
-  if (skippedOffsets.length > 0) {
+  if (SYNC_DIAG_DETAIL && skippedOffsets.length > 0) {
     syncLog(
       'BlockSync:snapshot',
       `SKIP count=${skippedOffsets.length} docBlockCount=${syncBlockCount} existingIdsSize=${blockIds.size} firstOffsets=[${skippedOffsets.slice(0, 5).join(',')}]`
@@ -366,20 +360,21 @@ function detectChanges(
           markdownFragment: getMarkdownFragment(newBlock),
           headingLevel: newBlock.headingLevel,
         });
-        const changes: string[] = [];
-        if (oldBlock.textContent !== newBlock.textContent) changes.push('text');
-        if (oldBlock.nodeSize !== newBlock.nodeSize) changes.push(`size:${oldBlock.nodeSize}→${newBlock.nodeSize}`);
-        if (oldBlock.headingLevel !== newBlock.headingLevel)
-          changes.push(`level:${oldBlock.headingLevel}→${newBlock.headingLevel}`);
-        // [SYNC-DIAG Round 2] include old→new blockType to expose paragraph→image swaps
-        const typeStr =
-          oldBlock.blockType !== newBlock.blockType
-            ? `type:${oldBlock.blockType}→${newBlock.blockType}`
-            : `type=${newBlock.blockType}`;
-        syncLog(
-          'BlockSync:detect',
-          `UPDATE id=${id.slice(0, 8)} [${changes.join(',')}] ${typeStr} "${newBlock.textContent.slice(0, 40)}"`
-        );
+        if (SYNC_DIAG_DETAIL) {
+          const changes: string[] = [];
+          if (oldBlock.textContent !== newBlock.textContent) changes.push('text');
+          if (oldBlock.nodeSize !== newBlock.nodeSize) changes.push(`size:${oldBlock.nodeSize}→${newBlock.nodeSize}`);
+          if (oldBlock.headingLevel !== newBlock.headingLevel)
+            changes.push(`level:${oldBlock.headingLevel}→${newBlock.headingLevel}`);
+          const typeStr =
+            oldBlock.blockType !== newBlock.blockType
+              ? `type:${oldBlock.blockType}→${newBlock.blockType}`
+              : `type=${newBlock.blockType}`;
+          syncLog(
+            'BlockSync:detect',
+            `UPDATE id=${id.slice(0, 8)} [${changes.join(',')}] ${typeStr} "${newBlock.textContent.slice(0, 40)}"`
+          );
+        }
       }
     }
   }
