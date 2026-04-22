@@ -12,7 +12,7 @@ import Sparkle
 @Observable
 final class SparkleUpdater {
     private let controller: SPUStandardUpdaterController
-    var canCheckForUpdates = false
+    private(set) var canCheckForUpdates = false
     private var cancellable: AnyCancellable?
 
     init() {

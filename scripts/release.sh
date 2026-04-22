@@ -146,7 +146,7 @@ fi
 if [ -z "$GENERATE_APPCAST" ]; then
     GENERATE_APPCAST=$(find ~/Library/Developer/Xcode/DerivedData -name "generate_appcast" 2>/dev/null | grep "final_final" | head -1)
 fi
-if [ -z "$GENERATE_APPCAST" ] || [ ! -f "$GENERATE_APPCAST" ]; then
+if [ -z "$GENERATE_APPCAST" ]; then
     echo -e "${RED}Error: generate_appcast not found. Re-run build.sh to restore DerivedData.${NC}"
     exit 1
 fi
