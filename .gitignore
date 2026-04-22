@@ -25,6 +25,7 @@ web/codemirror/dist/
 # Build outputs
 final\ final/Resources/editor/
 build/
+releases/
 temp/
 *.tmp
 

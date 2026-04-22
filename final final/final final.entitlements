@@ -13,5 +13,9 @@
     <!-- File access for user documents -->
     <key>com.apple.security.files.user-selected.read-write</key>
     <true/>
+
+    <!-- Required for Sparkle: its XPC helpers are signed by the Sparkle team, not this app's team -->
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
 </dict>
 </plist>

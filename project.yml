@@ -27,6 +27,9 @@ packages:
   GRDB:
     url: https://github.com/groue/GRDB.swift
     majorVersion: 7.0.0
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    majorVersion: 2.0.0
 
 targets:
   final final:
@@ -107,6 +110,7 @@ targets:
           DEVELOPMENT_TEAM: HBHZWD24V7
     dependencies:
       - package: GRDB
+      - package: Sparkle
       - target: QuickLook Extension
         embed: true
         link: false
@@ -120,6 +124,9 @@ targets:
         LSMinimumSystemVersion: "15.0"
         NSPrincipalClass: NSApplication
         NSHighResolutionCapable: true
+        SUFeedURL: https://finalfinalapp.cc/appcast.xml
+        SUEnableAutomaticChecks: true
+        SUPublicEDKey: gPX00ZVXHKsqmHM6W3Yspp4uTZnQg2yUCH8jkpKnBc4=
         CFBundleURLTypes:
           - CFBundleURLName: com.kerim.final-final
             CFBundleURLSchemes:

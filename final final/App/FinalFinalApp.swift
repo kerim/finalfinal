@@ -17,6 +17,7 @@ enum AppViewState {
 struct FinalFinalApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @State private var versionHistoryCoordinator = VersionHistoryCoordinator()
+    @State private var sparkleUpdater = SparkleUpdater()
     @State private var appViewState: AppViewState = .loading
 
     private var documentManager: DocumentManager { DocumentManager.shared }
@@ -103,10 +104,13 @@ struct FinalFinalApp: App {
             FileCommands()
             ViewCommands()
             EditorCommands()
-            HelpCommands(onGettingStarted: {
-                // Post notification to handle in view hierarchy
-                NotificationCenter.default.post(name: .openGettingStarted, object: nil)
-            })
+            HelpCommands(
+                onGettingStarted: {
+                    // Post notification to handle in view hierarchy
+                    NotificationCenter.default.post(name: .openGettingStarted, object: nil)
+                },
+                sparkleUpdater: sparkleUpdater
+            )
         }
         // Preferences window
         Settings {

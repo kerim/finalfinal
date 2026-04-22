@@ -8,8 +8,8 @@
 import SwiftUI
 
 struct HelpCommands: Commands {
-    /// Callback to open Getting Started
     var onGettingStarted: () -> Void
+    var sparkleUpdater: SparkleUpdater
 
     var body: some Commands {
         CommandGroup(replacing: .help) {
@@ -19,23 +19,14 @@ struct HelpCommands: Commands {
 
             Divider()
 
-            Button("Check for Updates...") {
-                Task {
-                    let status = await UpdateChecker().check()
-                    switch status {
-                    case .updateAvailable(let version, let url):
-                        UpdateChecker.showUpdateAlert(version: version, url: url)
-                    case .upToDate:
-                        UpdateChecker.showUpToDateAlert()
-                    case .error(let message):
-                        UpdateChecker.showErrorAlert(message)
-                    }
-                }
+            Button("Check for Updates\u{2026}") {
+                sparkleUpdater.checkForUpdates()
             }
+            .disabled(!sparkleUpdater.canCheckForUpdates)
 
             Divider()
 
-            Link("Report an Issue...", destination: URL(string: "https://github.com/kerim/final-final/issues")!)
+            Link("Report an Issue\u{2026}", destination: URL(string: "https://github.com/kerim/final-final/issues")!)
         }
     }
 }

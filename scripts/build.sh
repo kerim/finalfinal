@@ -16,6 +16,7 @@ NC='\033[0m' # No Color
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 PROJECT_YML="$PROJECT_DIR/project.yml"
 PACKAGE_JSON="$PROJECT_DIR/web/package.json"
+RELEASES_DIR="$PROJECT_DIR/releases"
 APP_NAME="FINAL|FINAL"
 SIGN_IDENTITY="Developer ID Application"
 
@@ -65,6 +66,7 @@ cleanup_on_failure() {
         sed -i '' "s/\"version\": \"$NEW_VERSION\"/\"version\": \"$CURRENT_VERSION\"/" "$PACKAGE_JSON" 2>/dev/null || true
         sed -i '' "s/CURRENT_PROJECT_VERSION = $NEW_VERSION;/CURRENT_PROJECT_VERSION = $CURRENT_VERSION;/g" "$PROJECT_DIR/final final.xcodeproj/project.pbxproj" 2>/dev/null || true
         rm -f "$PROJECT_DIR/build/notarize-tmp.zip"
+        rm -f "$RELEASES_DIR/FINAL-FINAL-v${NEW_VERSION}.zip" 2>/dev/null || true
         echo -e "${YELLOW}  Reverted to v$CURRENT_VERSION${NC}"
     fi
 }
@@ -191,6 +193,19 @@ fi
 # Zip from the codesigned copy in /Applications
 ditto -c -k --sequesterRsrc --keepParent "/Applications/$APP_NAME.app" "$ZIP_PATH"
 echo -e "${GREEN}  Zip created${NC}"
+echo ""
+
+# Step 5b: Archive to releases/ and prune to last 5 zips
+echo -e "${YELLOW}Step 5b: Archiving to releases/...${NC}"
+
+mkdir -p "$RELEASES_DIR"
+cp "$ZIP_PATH" "$RELEASES_DIR/"
+
+# Prune: keep 5 most recent by mtime (ls -t is reliable for sequentially-written zips).
+# Filenames are well-formed (no spaces) so ls + xargs is safe here.
+ls -t "$RELEASES_DIR"/FINAL-FINAL-v*.zip 2>/dev/null | tail -n +6 | xargs rm -f 2>/dev/null || true
+
+echo -e "${GREEN}  Archived (kept last 5 releases)${NC}"
 echo ""
 
 # Step 6: Commit version bump

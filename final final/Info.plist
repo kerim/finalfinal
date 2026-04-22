@@ -52,6 +52,12 @@
 	<true/>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>SUFeedURL</key>
+	<string>https://finalfinalapp.cc/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>gPX00ZVXHKsqmHM6W3Yspp4uTZnQg2yUCH8jkpKnBc4=</string>
 	<key>UTExportedTypeDeclarations</key>
 	<array>
 		<dict>

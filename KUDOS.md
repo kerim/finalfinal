@@ -13,6 +13,7 @@ Attribution for code, libraries, and inspiration used in final final.
 | Package | Version | License | Author | URL |
 |---------|---------|---------|--------|-----|
 | GRDB.swift | 7.0.0 | MIT | Gwendal Roué | https://github.com/groue/GRDB.swift |
+| Sparkle | 2.x | MIT | Sparkle Project | https://github.com/sparkle-project/Sparkle |
 
 ### TypeScript/JavaScript (via pnpm, bundled in app)
 

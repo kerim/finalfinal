@@ -16,6 +16,8 @@ NC='\033[0m'
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 PROJECT_YML="$PROJECT_DIR/project.yml"
 CHANGELOG="$PROJECT_DIR/CHANGELOG.md"
+RELEASES_DIR="$PROJECT_DIR/releases"
+HOMEPAGE_DIR="/Users/niyaro/Documents/GitHub/finalfinal-homepage"
 
 cd "$PROJECT_DIR"
 
@@ -23,6 +25,15 @@ cd "$PROJECT_DIR"
 echo -e "${YELLOW}Step 1: Checking working tree...${NC}"
 if ! git diff --quiet || ! git diff --cached --quiet; then
     echo -e "${RED}Error: Working tree is not clean. Commit or stash changes first.${NC}"
+    exit 1
+fi
+if [ ! -d "$HOMEPAGE_DIR/public" ]; then
+    echo -e "${RED}Error: Homepage repo not found at $HOMEPAGE_DIR/public${NC}"
+    echo -e "${RED}Clone kerim/finalfinal-homepage to $HOMEPAGE_DIR first.${NC}"
+    exit 1
+fi
+if [ ! -d "$RELEASES_DIR" ]; then
+    echo -e "${RED}Error: releases/ not found. Run build.sh first.${NC}"
     exit 1
 fi
 echo -e "${GREEN}  Working tree is clean${NC}"
@@ -125,6 +136,38 @@ else
     fi
 fi
 
+# Generate appcast (before publishing — validates signing before any public artifact)
+echo -e "${YELLOW}Generating appcast...${NC}"
+
+GENERATE_APPCAST="$PROJECT_DIR/build/SourcePackages/artifacts/sparkle/Sparkle/bin/generate_appcast"
+if [ ! -f "$GENERATE_APPCAST" ]; then
+    GENERATE_APPCAST=$(find "$PROJECT_DIR/build" -name "generate_appcast" 2>/dev/null | head -1)
+fi
+if [ -z "$GENERATE_APPCAST" ]; then
+    GENERATE_APPCAST=$(find ~/Library/Developer/Xcode/DerivedData -name "generate_appcast" 2>/dev/null | grep "final_final" | head -1)
+fi
+if [ -z "$GENERATE_APPCAST" ] || [ ! -f "$GENERATE_APPCAST" ]; then
+    echo -e "${RED}Error: generate_appcast not found. Re-run build.sh to restore DerivedData.${NC}"
+    exit 1
+fi
+
+# Run against a temp dir with ONLY the current zip — generate_appcast rewrites all
+# enclosure URLs from scratch, so isolating to one zip ensures correct URL scoping.
+APPCAST_TMP=$(mktemp -d)
+trap 'rm -rf "$APPCAST_TMP"' EXIT
+
+cp "$RELEASES_DIR/FINAL-FINAL-v${VERSION}.zip" "$APPCAST_TMP/"
+
+"$GENERATE_APPCAST" \
+    --download-url-prefix "https://github.com/kerim/finalfinal/releases/download/v${VERSION}/" \
+    --maximum-deltas 0 \
+    "$APPCAST_TMP/"
+
+cp "$APPCAST_TMP/appcast.xml" "$RELEASES_DIR/appcast.xml"
+
+echo -e "${GREEN}  Appcast generated${NC}"
+echo ""
+
 # Publish filtered commits to GitHub
 echo -e "${YELLOW}Publishing to GitHub...${NC}"
 "$PROJECT_DIR/scripts/publish.sh"
@@ -148,6 +191,23 @@ echo -e "${YELLOW}Creating GitHub release...${NC}"
 gh release create "v${VERSION}" "$ZIP_PATH" --title "v${VERSION}" --notes-file "$TMPFILE"
 
 rm -f "$TMPFILE"
+
+# Publish appcast to finalfinalapp.cc (after GitHub release asset is live)
+echo -e "${YELLOW}Publishing appcast to finalfinalapp.cc...${NC}"
+(
+    cd "$HOMEPAGE_DIR"
+    git pull --rebase
+    cp "$RELEASES_DIR/appcast.xml" public/appcast.xml
+    git add public/appcast.xml
+    git diff --cached --quiet || git commit -m "Update appcast for v${VERSION}"
+    git push
+) || {
+    echo -e "${RED}  Appcast push failed. Retry manually:${NC}"
+    echo -e "${RED}  cd $HOMEPAGE_DIR && git push${NC}"
+    exit 1
+}
+echo -e "${GREEN}  Appcast published (Cloudflare build deploys in ~1-3 min)${NC}"
+echo ""
 
 echo ""
 echo -e "${GREEN}========================================${NC}"
