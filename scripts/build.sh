@@ -125,13 +125,40 @@ APPEX_PATH="/Applications/$APP_NAME.app/Contents/PlugIns/QuickLook Extension.app
 QL_ENTITLEMENTS="$PROJECT_DIR/QuickLook Extension/QuickLook Extension.entitlements"
 APP_ENTITLEMENTS="$PROJECT_DIR/final final/final final.entitlements"
 
-# Sign embedded frameworks first (if any exist)
+# Sign embedded frameworks first (skip Sparkle — handled below with inside-out signing)
 FRAMEWORKS_DIR="/Applications/$APP_NAME.app/Contents/Frameworks"
 if [ -d "$FRAMEWORKS_DIR" ]; then
     echo "  Signing embedded frameworks..."
     for framework in "$FRAMEWORKS_DIR"/*.framework; do
+        [[ "$(basename "$framework")" == "Sparkle.framework" ]] && continue
         [ -d "$framework" ] && codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$framework"
     done
+fi
+
+# Sign Sparkle's nested components inside-out before signing the framework.
+# Sparkle 2.x ships these pre-signed with its own cert; all must be re-signed with Developer ID.
+# --preserve-metadata=entitlements preserves Sparkle's embedded entitlements (XPC sandbox,
+# network-client, privilege grants). Do not remove — stripping them breaks update functionality.
+# Use Versions/Current (symlink) rather than Versions/B to survive future Sparkle version bumps.
+SPARKLE_FW="/Applications/$APP_NAME.app/Contents/Frameworks/Sparkle.framework/Versions/Current"
+if [ -d "$SPARKLE_FW" ]; then
+    echo "  Signing Sparkle XPC services..."
+    codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" \
+        --preserve-metadata=entitlements \
+        "$SPARKLE_FW/XPCServices/Downloader.xpc"
+    codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" \
+        --preserve-metadata=entitlements \
+        "$SPARKLE_FW/XPCServices/Installer.xpc"
+    echo "  Signing Sparkle helper tools..."
+    codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" \
+        --preserve-metadata=entitlements \
+        "$SPARKLE_FW/Autoupdate"
+    codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" \
+        --preserve-metadata=entitlements \
+        "$SPARKLE_FW/Updater.app"
+    echo "  Signing Sparkle.framework..."
+    codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" \
+        "/Applications/$APP_NAME.app/Contents/Frameworks/Sparkle.framework"
 fi
 
 # Sign the QuickLook extension (must exist, must be sandboxed)
