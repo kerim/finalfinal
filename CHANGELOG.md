@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.98] - 2026-04-22
+
 ### Added
 
 - **Sparkle auto-update** — replaces the hand-rolled GitHub-API + NSAlert update checker with `SPUStandardUpdaterController`. `Help > Check for Updates…` now drives Sparkle's standard UI; automatic background checks are configured via `SUFeedURL`/`SUPublicEDKey`/`SUEnableAutomaticChecks` in Info.plist. New `scripts/release.sh` automates appcast generation and homepage push after each build. See `docs/guides/sparkle-updates.md`.
