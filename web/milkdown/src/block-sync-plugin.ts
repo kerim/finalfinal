@@ -194,13 +194,15 @@ export function padCodeSpan(text: string): string {
  * and content backtick are never adjacent (the parser strips those spaces).
  */
 export function codeSpanFor(text: string): string {
+  // Fast path for the common case: content has no backticks at all.
+  // Skips the regex scan and String.repeat allocation that fire on every code-mark text node.
+  if (!text.includes('`')) return `\`${text}\``;
   let maxRun = 0;
   for (const m of text.matchAll(/`+/g)) {
     if (m[0].length > maxRun) maxRun = m[0].length;
   }
   const delim = '`'.repeat(maxRun + 1);
-  let inner = text;
-  if (inner.startsWith('`') || inner.endsWith('`')) inner = ` ${inner} `;
+  const inner = text.startsWith('`') || text.endsWith('`') ? ` ${text} ` : text;
   return `${delim}${inner}${delim}`;
 }
 
