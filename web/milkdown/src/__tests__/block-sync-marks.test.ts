@@ -1,6 +1,13 @@
 import { Schema } from '@milkdown/kit/prose/model';
 import { describe, expect, it } from 'vitest';
-import { escapeHref, escapeInlineText, escapeTitle, nodeToMarkdownFragment, padCodeSpan } from '../block-sync-plugin';
+import {
+  codeSpanFor,
+  escapeHref,
+  escapeInlineText,
+  escapeTitle,
+  nodeToMarkdownFragment,
+  padCodeSpan,
+} from '../block-sync-plugin';
 
 // ----------------------------------------------------------------------------
 // Pure-helper tests (no ProseMirror schema needed)
@@ -38,6 +45,32 @@ describe('padCodeSpan', () => {
 
   it('leaves ordinary code text alone', () => {
     expect(padCodeSpan('hello')).toBe('hello');
+  });
+});
+
+describe('codeSpanFor', () => {
+  it('no backticks — single-tick delimiter, no padding', () => {
+    expect(codeSpanFor('x = 1')).toBe('`x = 1`');
+  });
+
+  it('single internal backtick — doubled delimiter', () => {
+    expect(codeSpanFor('foo`bar')).toBe('``foo`bar``');
+  });
+
+  it('double internal backtick run — triple delimiter', () => {
+    expect(codeSpanFor('a``b')).toBe('```a``b```');
+  });
+
+  it('leading backtick — doubled delimiter with symmetric space padding', () => {
+    expect(codeSpanFor('`code')).toBe('`` `code ``');
+  });
+
+  it('trailing backtick — doubled delimiter with symmetric space padding', () => {
+    expect(codeSpanFor('code`')).toBe('`` code` ``');
+  });
+
+  it('both-ends backtick — doubled delimiter with symmetric space padding', () => {
+    expect(codeSpanFor('`x`')).toBe('`` `x` ``');
   });
 });
 
@@ -184,8 +217,8 @@ describe('nodeToMarkdownFragment — single mark round-trips', () => {
     expect(nodeToMarkdownFragment(para({ text: 'x = 1', marks: ['inlineCode'] }))).toBe('`x = 1`');
   });
 
-  it('inlineCode with leading backtick gets padded', () => {
-    expect(nodeToMarkdownFragment(para({ text: '`code', marks: ['inlineCode'] }))).toBe('` `code`');
+  it('inlineCode with leading backtick uses doubled delimiter', () => {
+    expect(nodeToMarkdownFragment(para({ text: '`code', marks: ['inlineCode'] }))).toBe('`` `code ``');
   });
 
   it('highlight', () => {
@@ -263,6 +296,23 @@ describe('nodeToMarkdownFragment — per-block-type', () => {
   it('bullet list item with link', () => {
     const node = bulletList([{ text: 'See ' }, { text: 'here', marks: ['link'], linkHref: 'u' }]);
     expect(nodeToMarkdownFragment(node)).toBe('- See [here](u)');
+  });
+});
+
+describe('nodeToMarkdownFragment — code span round-trip fixes', () => {
+  it('[strong]+[inlineCode]+[] asymmetric shape — no stray delimiters', () => {
+    const node = para({ text: 'hello', marks: ['strong'] }, { text: 'code', marks: ['inlineCode'] }, { text: 'world' });
+    expect(nodeToMarkdownFragment(node)).toBe('**hello**`code`world');
+  });
+
+  it('inline code with internal backtick uses doubled delimiter', () => {
+    const node = para({ text: 'foo`bar', marks: ['inlineCode'] });
+    expect(nodeToMarkdownFragment(node)).toBe('``foo`bar``');
+  });
+
+  it('inline code with trailing backtick uses doubled delimiter', () => {
+    const node = para({ text: 'code`', marks: ['inlineCode'] });
+    expect(nodeToMarkdownFragment(node)).toBe('`` code` ``');
   });
 });
 

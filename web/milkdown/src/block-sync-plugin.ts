@@ -178,12 +178,30 @@ export function escapeTitle(title: string): string {
 /**
  * Pad code-span inner text when it starts or ends with a backtick
  * (CommonMark requires spaces in that case to disambiguate the delimiter).
+ * @deprecated — use codeSpanFor() which handles internal backtick sequences
  */
 export function padCodeSpan(text: string): string {
   let inner = text;
   if (inner.startsWith('`')) inner = ` ${inner}`;
   if (inner.endsWith('`')) inner = `${inner} `;
   return inner;
+}
+
+/**
+ * Build a CommonMark-correct code span for arbitrary inline-code content.
+ * Implements §6.1: delimiter length = longest internal backtick run + 1;
+ * space-pads when content starts or ends with a backtick so the delimiter
+ * and content backtick are never adjacent (the parser strips those spaces).
+ */
+export function codeSpanFor(text: string): string {
+  let maxRun = 0;
+  for (const m of text.matchAll(/`+/g)) {
+    if (m[0].length > maxRun) maxRun = m[0].length;
+  }
+  const delim = '`'.repeat(maxRun + 1);
+  let inner = text;
+  if (inner.startsWith('`') || inner.endsWith('`')) inner = ` ${inner} `;
+  return `${delim}${inner}${delim}`;
 }
 
 /**
@@ -312,16 +330,13 @@ function serializeInlineContent(node: Node): string {
 
         const codeMark = child.marks.find(isCodeMark);
 
-        // Code mark is exclusive — close ALL active marks, emit code span, reopen.
+        // Code mark is exclusive — close ALL active marks, emit code span.
+        // Do NOT reopen stashed marks here: the next child's prefix-matching
+        // already opens whatever marks it needs, avoiding stray empty-delimiter
+        // pairs when the following node has fewer (or no) marks.
         if (codeMark) {
-          const stashed = active.slice();
           closeAllActive();
-          const inner = padCodeSpan(child.text || '');
-          parts.push(`\`${inner}\``);
-          for (const m of stashed) {
-            active.push(m);
-            parts.push(openFor(m));
-          }
+          parts.push(codeSpanFor(child.text || ''));
           if (child.text && child.text.length > 0) awaitingFirstEmit = false;
           return;
         }
