@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Code-span serializer round-trip corruption** — two bugs in the `codeMark` branch of `serializeInlineContent` in `web/milkdown/src/block-sync-plugin.ts`. First, an unconditional reopen loop ran after emitting every code span, producing stray empty delimiter pairs whenever the next child had fewer marks (e.g. `[strong]'hello'` + `[inlineCode]'code'` + `[]'world'` serialized as `**hello**\`code\`****world`). Dropped the reopen loop — the next child's own prefix-matching path already opens whatever marks it actually has. Second, a hard-coded single-backtick delimiter corrupted content with internal backticks (`foo\`bar` serialized as `\`foo\`bar\``, which parses as `code('foo') + 'bar' + stray backtick`). New `codeSpanFor()` helper implements CommonMark §6.1: delimiter length = longest internal backtick run + 1, with symmetric space padding when content starts or ends with a backtick. The old `padCodeSpan` is retained but `@deprecated`.
+
+### Added
+
+- **`codeSpanFor` unit suite (6 cases)** and **"code span round-trip fixes" integration suite** in `block-sync-marks.test.ts` covering asymmetric mark shape, internal backtick, and trailing backtick scenarios. Updated the existing "inlineCode with leading backtick" test whose expected output was the old broken form.
+
+### Changed
+
+- **`codeSpanFor` fast-paths the no-backtick common case** — avoids a `matchAll` + `String.repeat(1)` allocation on every code-mark text node. When the content contains no backticks the delimiter is always a single backtick and padding never applies, so the full CommonMark §6.1 algorithm is unnecessary.
+
 ## [0.2.98] - 2026-04-22
 
 ### Added
