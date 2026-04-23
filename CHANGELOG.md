@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.99] - 2026-04-23
+
 ### Fixed
 
 - **Code-span serializer round-trip corruption** — two bugs in the `codeMark` branch of `serializeInlineContent` in `web/milkdown/src/block-sync-plugin.ts`. First, an unconditional reopen loop ran after emitting every code span, producing stray empty delimiter pairs whenever the next child had fewer marks (e.g. `[strong]'hello'` + `[inlineCode]'code'` + `[]'world'` serialized as `**hello**\`code\`****world`). Dropped the reopen loop — the next child's own prefix-matching path already opens whatever marks it actually has. Second, a hard-coded single-backtick delimiter corrupted content with internal backticks (`foo\`bar` serialized as `\`foo\`bar\``, which parses as `code('foo') + 'bar' + stray backtick`). New `codeSpanFor()` helper implements CommonMark §6.1: delimiter length = longest internal backtick run + 1, with symmetric space padding when content starts or ends with a backtick. The old `padCodeSpan` is retained but `@deprecated`.
