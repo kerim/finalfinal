@@ -289,7 +289,7 @@ class AnnotationSyncService {
         )
 
         // Only allow whitespace between highlight and annotation
-        if textAfterHighlight.trimmingCharacters(in: .whitespaces).isEmpty {
+        if textAfterHighlight.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             // Calculate absolute positions
             let highlightStart = startPos + lastMatch.range.location
             let highlightEnd = startPos + lastMatch.range.location + lastMatch.range.length
@@ -307,11 +307,15 @@ class AnnotationSyncService {
     ) -> [AnnotationChange] {
         var changes: [AnnotationChange] = []
 
-        // Build lookup by approximate position and type (tolerance for small edits)
-        var dbLookup: [String: Annotation] = [:]  // key = "type:offset_bucket"
+        // Build lookup by approximate position and type (tolerance for small edits).
+        // Uses a plural bucket so two DB rows sharing (type, bucket) both survive
+        // instead of the second overwriting the first in a singular [String: Annotation].
+        // GRDB returns rows ORDER BY charOffset (see Database+Annotations.swift:55),
+        // so each bucket's array is already sorted by offset — deterministic fallback order.
+        var dbLookup: [String: [Annotation]] = [:]  // key = "type:offset_bucket"
         for annotation in dbAnnotations {
             let key = "\(annotation.type.rawValue):\(annotation.charOffset / 50)"
-            dbLookup[key] = annotation
+            dbLookup[key, default: []].append(annotation)
         }
 
         var matchedDbIds = Set<String>()
@@ -320,41 +324,67 @@ class AnnotationSyncService {
         for parsed in parsed {
             let bucketKey = "\(parsed.type.rawValue):\(parsed.charOffset / 50)"
 
-            if let existing = dbLookup[bucketKey] {
-                // Found potential match - check if it needs updating
-                matchedDbIds.insert(existing.id)
-
-                var needsUpdate = false
-                var updates = AnnotationUpdates()
-
-                if existing.text != parsed.text {
-                    updates.text = parsed.text
-                    needsUpdate = true
-                }
-                if existing.isCompleted != parsed.isCompleted {
-                    updates.isCompleted = parsed.isCompleted
-                    needsUpdate = true
-                }
-                if existing.charOffset != parsed.charOffset {
-                    updates.charOffset = parsed.charOffset
-                    needsUpdate = true
-                }
-                if existing.highlightStart != parsed.highlightStart {
-                    updates.highlightStart = parsed.highlightStart
-                    needsUpdate = true
-                }
-                if existing.highlightEnd != parsed.highlightEnd {
-                    updates.highlightEnd = parsed.highlightEnd
-                    needsUpdate = true
-                }
-
-                if needsUpdate {
-                    changes.append(.update(id: existing.id, updates: updates))
-                }
-            } else {
-                // New annotation - insert
+            guard var candidates = dbLookup[bucketKey], !candidates.isEmpty else {
+                // No DB candidates in this bucket — new annotation, insert it
                 let annotation = parsed.toAnnotation(contentId: contentId)
                 changes.append(.insert(annotation))
+                continue
+            }
+
+            // Pick the best candidate using tie-breakers (in order):
+            // 1. Exact charOffset match (steady state — nothing moved).
+            // 2. Exact text match (prevents UUID swaps when offsets shift asymmetrically
+            //    within a bucket but the text uniquely identifies each annotation).
+            // 3. Smallest absolute offset distance (closest in position).
+            // 4. First in array order (deterministic fallback; ORDER BY charOffset from GRDB).
+            let existing: Annotation
+            if let exactOffset = candidates.first(where: { $0.charOffset == parsed.charOffset }) {
+                existing = exactOffset
+            } else if let exactText = candidates.first(where: { $0.text == parsed.text }) {
+                existing = exactText
+            } else {
+                existing = candidates.min(by: {
+                    abs($0.charOffset - parsed.charOffset) < abs($1.charOffset - parsed.charOffset)
+                }) ?? candidates[0]
+            }
+
+            // Consume the chosen candidate so the next parsed annotation cannot also match it
+            candidates.removeAll { $0.id == existing.id }
+            if candidates.isEmpty {
+                dbLookup.removeValue(forKey: bucketKey)
+            } else {
+                dbLookup[bucketKey] = candidates
+            }
+
+            // Found potential match - check if it needs updating
+            matchedDbIds.insert(existing.id)
+
+            var needsUpdate = false
+            var updates = AnnotationUpdates()
+
+            if existing.text != parsed.text {
+                updates.text = parsed.text
+                needsUpdate = true
+            }
+            if existing.isCompleted != parsed.isCompleted {
+                updates.isCompleted = parsed.isCompleted
+                needsUpdate = true
+            }
+            if existing.charOffset != parsed.charOffset {
+                updates.charOffset = parsed.charOffset
+                needsUpdate = true
+            }
+            if existing.highlightStart != parsed.highlightStart {
+                updates.highlightStart = parsed.highlightStart
+                needsUpdate = true
+            }
+            if existing.highlightEnd != parsed.highlightEnd {
+                updates.highlightEnd = parsed.highlightEnd
+                needsUpdate = true
+            }
+
+            if needsUpdate {
+                changes.append(.update(id: existing.id, updates: updates))
             }
         }
 
