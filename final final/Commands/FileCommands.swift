@@ -110,28 +110,21 @@ struct FileCommands: Commands {
 
 /// Submenu view for recent projects
 struct RecentProjectsMenu: View {
-    @State private var recentProjects: [DocumentManager.RecentProjectEntry] = []
-
     var body: some View {
+        let entries = DocumentManager.shared.recentProjects
         Group {
-            ForEach(recentProjects) { entry in
+            ForEach(entries) { entry in
                 Button(entry.title) {
                     openRecentProject(entry)
                 }
             }
 
-            if !recentProjects.isEmpty {
+            if !entries.isEmpty {
                 Divider()
                 Button("Clear Recent Projects") {
-                    Task { @MainActor in
-                        DocumentManager.shared.clearRecentProjects()
-                        recentProjects = []
-                    }
+                    DocumentManager.shared.clearRecentProjects()
                 }
             }
-        }
-        .onAppear {
-            recentProjects = DocumentManager.shared.recentProjects
         }
     }
 
