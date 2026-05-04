@@ -1,6 +1,7 @@
 // Highlight Plugin for Milkdown
 // Renders ==text== as highlighted text marks
 
+import { remarkStringifyOptionsCtx } from '@milkdown/kit/core';
 import type { MilkdownPlugin } from '@milkdown/kit/ctx';
 import { $mark, $remark } from '@milkdown/kit/utils';
 import type { Root, Text } from 'mdast';
@@ -75,17 +76,42 @@ const highlightMark = $mark('highlight', () => ({
   toMarkdown: {
     match: (mark: any) => mark.type.name === 'highlight',
     runner: (state: any, mark: any) => {
-      state.withMark(mark, 'highlight', undefined, {
-        open: '==',
-        close: '==',
-      });
+      state.withMark(mark, 'highlight');
     },
   },
 }));
 
+// Handler for the 'highlight' mdast node type.
+// Mirrors handleDelete from mdast-util-gfm-strikethrough, substituting '==' for '~~'.
+// Required because mdast-util-to-markdown has no built-in handler for 'highlight'.
+function handleHighlight(node: any, _parent: any, state: any, info: any): string {
+  const tracker = state.createTracker(info);
+  const exit = state.enter('highlight');
+  let value = tracker.move('==');
+  value += state.containerPhrasing(node, { ...tracker.current(), before: value, after: '=' });
+  value += tracker.move('==');
+  exit();
+  return value;
+}
+handleHighlight.peek = () => '=';
+
+// Plugin that registers the highlight handler with mdast-util-to-markdown via
+// Milkdown's remarkStringifyOptionsCtx slice.
+const highlightStringifyPlugin: MilkdownPlugin = (ctx) => {
+  ctx.update(remarkStringifyOptionsCtx, (prev) => ({
+    ...prev,
+    handlers: { ...prev.handlers, highlight: handleHighlight },
+  }));
+  return async () => {};
+};
+
 // Export the plugin array
 // Note: Input rule for ==text== removed - remark plugin handles parsing from markdown
-export const highlightPlugin: MilkdownPlugin[] = [remarkHighlightPlugin, highlightMark].flat();
+export const highlightPlugin: MilkdownPlugin[] = [
+  remarkHighlightPlugin,
+  highlightMark,
+  highlightStringifyPlugin,
+].flat();
 
 // Export the mark for programmatic use
 export { highlightMark };

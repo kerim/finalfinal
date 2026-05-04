@@ -1,5 +1,11 @@
+// @vitest-environment jsdom
+import { defaultValueCtx, Editor, rootCtx } from '@milkdown/kit/core';
+import { commonmark } from '@milkdown/kit/preset/commonmark';
+import { gfm } from '@milkdown/kit/preset/gfm';
 import { Schema } from '@milkdown/kit/prose/model';
-import { describe, expect, it } from 'vitest';
+import { getMarkdown } from '@milkdown/kit/utils';
+import { afterEach, describe, expect, it } from 'vitest';
+import { highlightPlugin } from '../highlight-plugin';
 import {
   codeSpanFor,
   escapeHref,
@@ -331,5 +337,58 @@ describe('nodeToMarkdownFragment — structural escapes', () => {
     // so it stays as-is. (Not common in practice.)
     const node = heading(1, { text: '# child' });
     expect(nodeToMarkdownFragment(node)).toBe('# # child');
+  });
+});
+
+// ----------------------------------------------------------------------------
+// Stock Milkdown serializer — highlight preservation
+// Integration tests that mount a real Milkdown editor (jsdom) and verify that
+// editor.action(getMarkdown()) no longer throws and correctly round-trips
+// ==highlight== delimiters.
+// ----------------------------------------------------------------------------
+
+describe('stock Milkdown serializer — highlight preservation', () => {
+  let editor: Editor | null = null;
+
+  afterEach(async () => {
+    if (editor) {
+      await editor.destroy();
+      editor = null;
+    }
+  });
+
+  async function makeEditor(markdown: string): Promise<Editor> {
+    const div = document.createElement('div');
+    document.body.appendChild(div);
+    const e = await Editor.make()
+      .config((ctx) => {
+        ctx.set(rootCtx, div);
+        ctx.set(defaultValueCtx, markdown);
+      })
+      .use(commonmark)
+      .use(gfm)
+      .use(highlightPlugin)
+      .create();
+    editor = e;
+    return e;
+  }
+
+  it('==marked== round-trips through parse → serialize', async () => {
+    const e = await makeEditor('==marked==');
+    const result = e.action(getMarkdown());
+    expect(result).toContain('==marked==');
+  });
+
+  it('**bold ==marked== bold** preserves highlight delimiters (mark-priority agnostic)', async () => {
+    const e = await makeEditor('**bold ==marked== bold**');
+    const result = e.action(getMarkdown());
+    expect(result).toContain('==marked==');
+  });
+
+  it('==a== ==b== round-trips both highlights without merging', async () => {
+    const e = await makeEditor('==a== ==b==');
+    const result = e.action(getMarkdown());
+    expect(result).toContain('==a==');
+    expect(result).toContain('==b==');
   });
 });
