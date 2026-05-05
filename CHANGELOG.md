@@ -6,7 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-## [0.2.99] - 2026-04-23
+### Fixed
+
+- **Highlight mark broke `getMarkdown()` on every keystroke** — `editor.action(getMarkdown())` threw `Cannot handle unknown node highlight` whenever a `==highlighted==` span was present in the document, because the highlight plugin registered a remark parse extension but no `mdast-util-to-markdown` stringify handler. The throw silently broke five downstream consumers (content push timer, mode-toggle, heading-level update, cursor helpers, quit-time sync). Registers a custom `highlight` handler via Milkdown's `remarkStringifyOptionsCtx` slice. Also drops the inert `{ open, close }` props from the `state.withMark()` call (never consumed by the serializer pipeline).
+- **Annotation reconcile silently overwrote rows sharing a `(type, bucket)` key** — `AnnotationSyncService` keyed `dbLookup` as `[String: Annotation]`, so when two DB annotations hashed to the same bucket the second clobbered the first, leaving one parsed annotation orphaned and one DB id stolen. `dbLookup` is now `[String: [Annotation]]` with best-candidate selection (exact-offset → exact-text → minimum-distance → array-order tiebreakers) and consume-on-match so one parsed annotation cannot steal another's DB id. The new `reconcileBucketCollisionPreservesBothAnnotations` test was confirmed to fail against the old code and pass with the fix.
+- **`findPrecedingHighlight` whitespace trim missed trailing newlines** — switched from `.whitespaces` to `.whitespacesAndNewlines`. Defensive: the highlight regex's `\s*$` already absorbs trailing newlines before trim runs, so this is a latent-bug fix rather than the primary symptom.
+- **Recent Projects menu stale after project switch** — `RecentProjectsMenu` snapshotted `DocumentManager.shared.recentProjects` into `@State` via `.onAppear`, but `@Observable` change-tracking only fires for property reads inside a tracked render pass; the `.onAppear` read did not subscribe, so the menu kept showing the pre-switch list. Reads `DocumentManager.shared.recentProjects` directly in `body`. Also drops the dead `Task { @MainActor in }` wrapper from the Clear button (the call site is already `@MainActor` via the class annotation).
+- **Pre-commit test hook fired on the wrong commands and missed Swift Testing failures** — the `pre-commit-tests.sh` PreToolUse hook triggered on any Bash command containing the string `git commit` (so `git commit-tree`, `grep 'git commit'`, etc. all ran tests), and its failure regex only matched XCTest markers, so Swift Testing failures slipped through with exit 0. Trigger now anchors to `git commit` / `git -C <path> commit` via a `case` match. Failure regex adds Swift Testing markers (`✘ Test`, `recorded an issue`, `Expectation failed`); `◇ Test` is deliberately excluded since it appears on every passing-test boundary. Hardening: `LC_ALL` pin for multibyte grep, `TEST_EXIT=$?` captured immediately after `xcodebuild`, `tr -d '\r'` on output, tail-30 fallback, empty/whitespace `COMMAND` safety log.
+
+### Added
+
+- **Highlight round-trip integration tests** in `block-sync-marks.test.ts` — three new cases that mount a real Milkdown editor (jsdom) and assert `==highlight==` delimiters survive parse → serialize round-trips. Adds `jsdom` as a devDependency.
+- **`AnnotationSyncTests` collision suite** — six new `@MainActor` cases covering bucket-collision preservation, exact-offset preference, exact-text preference, minimum-distance tiebreaker, array-order tiebreaker, and consume-on-match semantics.
+- **`docs/lessons/milkdown-mdast-stringify-handlers.md`** — documents the parse-extension/stringify-extension symmetry pattern surfaced by the highlight fix; any custom mdast node type needs registration on both sides or `getMarkdown()` will throw.
+- **`docs/lessons/swiftui-commands-observable.md`** — documents the `Commands` → `NSMenu` `@Observable` bridge: property reads must happen inside `body` for change-tracking to subscribe, not in `.onAppear` snapshots. Recents-menu manual-verification checklist appended to `docs/guides/testing-overview.md`.
+
+
 
 ### Fixed
 
