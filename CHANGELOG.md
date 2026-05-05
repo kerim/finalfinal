@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.100] - 2026-05-05
+
 ### Fixed
 
 - **Highlight mark broke `getMarkdown()` on every keystroke** — `editor.action(getMarkdown())` threw `Cannot handle unknown node highlight` whenever a `==highlighted==` span was present in the document, because the highlight plugin registered a remark parse extension but no `mdast-util-to-markdown` stringify handler. The throw silently broke five downstream consumers (content push timer, mode-toggle, heading-level update, cursor helpers, quit-time sync). Registers a custom `highlight` handler via Milkdown's `remarkStringifyOptionsCtx` slice. Also drops the inert `{ open, close }` props from the `state.withMark()` call (never consumed by the serializer pipeline).
