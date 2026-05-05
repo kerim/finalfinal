@@ -45,3 +45,6 @@ docs/course/
 
 # Git worktrees
 .worktrees/
+
+# Pre-commit test sentinel (mirrors annals)
+.last-test-pass
