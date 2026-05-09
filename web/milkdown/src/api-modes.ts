@@ -811,9 +811,16 @@ export function compareTableASTs(md1: string, md2: string): boolean {
     };
     const ast1 = fromMarkdown(md1, parseOpts);
     const ast2 = fromMarkdown(md2, parseOpts);
-    return JSON.stringify(ast1) === JSON.stringify(ast2);
+    // Strip position data before comparing — column-width padding changes
+    // character offsets but not semantic content.
+    return JSON.stringify(ast1, stripPosition) === JSON.stringify(ast2, stripPosition);
   } catch (e) {
     console.error('[Milkdown] compareTableASTs failed:', e);
     return false;
   }
+}
+
+function stripPosition(key: string, value: unknown): unknown {
+  if (key === 'position') return undefined;
+  return value;
 }
