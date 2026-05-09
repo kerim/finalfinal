@@ -75,6 +75,15 @@ importers:
       fuse.js:
         specifier: ^7.0.0
         version: 7.1.0
+      mdast-util-from-markdown:
+        specifier: ^2.0.2
+        version: 2.0.2
+      mdast-util-gfm-table:
+        specifier: ^2.0.0
+        version: 2.0.0
+      micromark-extension-gfm-table:
+        specifier: ^2.1.1
+        version: 2.1.1
       unist-util-visit:
         specifier: ^5.0.0
         version: 5.1.0

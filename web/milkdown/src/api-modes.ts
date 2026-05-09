@@ -1,6 +1,9 @@
 // Editor mode, cursor, and misc API method implementations for window.FinalFinal
 
 import { editorViewCtx, parserCtx } from '@milkdown/kit/core';
+import { fromMarkdown } from 'mdast-util-from-markdown';
+import { gfmTableFromMarkdown } from 'mdast-util-gfm-table';
+import { gfmTable } from 'micromark-extension-gfm-table';
 import { Slice } from '@milkdown/kit/prose/model';
 import { Selection } from '@milkdown/kit/prose/state';
 import { getMarkdown } from '@milkdown/kit/utils';
@@ -737,4 +740,80 @@ export function clearSearchApi(): void {
 
 export function getSearchStateApi(): SearchState | null {
   return getSearchStateImpl();
+}
+
+// === Table API ===
+
+export function insertTable(rows: number, cols: number): void {
+  const editorInstance = getEditorInstance();
+  if (!editorInstance) return;
+
+  try {
+    const view = editorInstance.ctx.get(editorViewCtx);
+    const { schema } = view.state;
+    const tableType = schema.nodes['table'];
+    const tableRowType = schema.nodes['table_row'];
+    const tableHeaderType = schema.nodes['table_header'];
+    const tableCellType = schema.nodes['table_cell'];
+    const paragraphType = schema.nodes['paragraph'];
+
+    if (!tableType || !tableRowType || !tableHeaderType || !tableCellType || !paragraphType) {
+      console.error('[Milkdown] table node types not found in schema');
+      return;
+    }
+
+    const emptyPara = () => paragraphType.create(null, []);
+
+    // Header row (row 0 uses table_header cells)
+    const headerCells = Array.from({ length: cols }, () => tableHeaderType.create(null, [emptyPara()]));
+    const headerRow = tableRowType.create(null, headerCells);
+
+    // Body rows (rows - 1 data rows using table_cell)
+    const bodyRowCount = Math.max(1, rows - 1);
+    const bodyRows = Array.from({ length: bodyRowCount }, () => {
+      const cells = Array.from({ length: cols }, () => tableCellType.create(null, [emptyPara()]));
+      return tableRowType.create(null, cells);
+    });
+
+    const tableNode = tableType.create(null, [headerRow, ...bodyRows]);
+
+    // Insert after the current selection's top-level block
+    const { from } = view.state.selection;
+    const $from = view.state.doc.resolve(from);
+    const insertPos = $from.after(1);
+
+    const tr = view.state.tr.insert(insertPos, tableNode);
+    view.dispatch(tr);
+    view.focus();
+  } catch (e) {
+    console.error('[Milkdown] insertTable failed:', e);
+  }
+}
+
+export function formatTable(): void {
+  const editorInstance = getEditorInstance();
+  if (!editorInstance) return;
+  try {
+    const view = editorInstance.ctx.get(editorViewCtx);
+    // Block-sync serializer already reformats tables on every dispatch.
+    // Trigger a no-op transaction to ensure the current table is re-serialized.
+    view.dispatch(view.state.tr);
+  } catch (e) {
+    console.error('[Milkdown] formatTable failed:', e);
+  }
+}
+
+export function compareTableASTs(md1: string, md2: string): boolean {
+  try {
+    const parseOpts = {
+      extensions: [gfmTable()],
+      mdastExtensions: [gfmTableFromMarkdown()],
+    };
+    const ast1 = fromMarkdown(md1, parseOpts);
+    const ast2 = fromMarkdown(md2, parseOpts);
+    return JSON.stringify(ast1) === JSON.stringify(ast2);
+  } catch (e) {
+    console.error('[Milkdown] compareTableASTs failed:', e);
+    return false;
+  }
 }

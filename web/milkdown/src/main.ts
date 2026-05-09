@@ -62,10 +62,12 @@ import {
 } from './api-formatting';
 import {
   clearSearchApi,
+  compareTableASTs,
   findApi,
   findNextApi,
   findPreviousApi,
   focus,
+  formatTable,
   getCurrentSectionBlockId,
   getCurrentSectionTitle,
   getCursorPosition,
@@ -75,6 +77,7 @@ import {
   initialize,
   insertAtCursor,
   insertBreak,
+  insertTable,
   replaceAllApi,
   replaceCurrentApi,
   scrollCursorToCenter,
@@ -442,6 +445,11 @@ window.FinalFinal = {
   toggleCodeBlock,
   toggleInlineCode,
   insertLink: insertLinkAtCursor,
+
+  // Table API
+  insertTable,
+  formatTable,
+  compareTableASTs,
 
   // Find/replace API
   find: findApi,
