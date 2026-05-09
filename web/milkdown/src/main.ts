@@ -123,6 +123,7 @@ import { linkTooltipPlugin, openLinkEdit } from './link-tooltip';
 import { searchPlugin } from './search-plugin';
 import { sectionBreakPlugin } from './section-break-plugin';
 import { selectionToolbarPlugin } from './selection-toolbar-plugin';
+import { tableToolsPlugin } from './table-tools-plugin';
 import { configureSlash, slash } from './slash-commands';
 import { isSourceModeEnabled, sourceModePlugin } from './source-mode-plugin';
 import {
@@ -211,6 +212,7 @@ async function initEditor() {
       .use(spellcheckPlugin) // Spellcheck/grammar decorations via NSSpellChecker
       .use(linkTooltipPlugin) // Custom link preview/edit tooltips (no Vue dependency)
       .use(selectionToolbarPlugin) // Selection toolbar (floating format bar)
+      .use(tableToolsPlugin) // Floating table toolbar (add/delete row & column, alignment)
       .use(slash)
       .create();
 
