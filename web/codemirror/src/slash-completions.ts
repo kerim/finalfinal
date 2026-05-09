@@ -27,6 +27,7 @@ interface SlashCommand {
   label: string;
   description: string;
   apply: (view: EditorView, from: number, to: number) => void;
+  disabledInsideTable?: boolean; // If true, hidden when current line looks like a table row
 }
 
 /** Helper: replace the /command text with a heading transformation */
@@ -166,6 +167,17 @@ const slashCommands: SlashCommand[] = [
       }
     },
   },
+  {
+    label: '/table',
+    description: 'Insert table',
+    disabledInsideTable: true,
+    apply: (view, from, to) => {
+      view.dispatch({ changes: { from, to, insert: '' } });
+      const fn = (window as any).FinalFinal?.insertTable;
+      if (typeof fn === 'function') fn(3, 2);
+      setPendingSlashUndo(true);
+    },
+  },
 ];
 
 // === Custom slash menu ViewPlugin ===
@@ -203,7 +215,12 @@ class SlashMenuPlugin {
         this.slashTo = head;
         this.selectedIndex = 0;
 
-        this.filteredCommands = slashCommands.filter((cmd) => cmd.label.toLowerCase().startsWith(`/${query}`));
+        const insideTable = line.text.trimStart().startsWith('|');
+        this.filteredCommands = slashCommands.filter((cmd) => {
+          if (!cmd.label.toLowerCase().startsWith(`/${query}`)) return false;
+          if (insideTable && cmd.disabledInsideTable) return false;
+          return true;
+        });
 
         if (this.filteredCommands.length > 0) {
           this.show();

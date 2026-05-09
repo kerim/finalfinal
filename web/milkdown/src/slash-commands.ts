@@ -27,6 +27,7 @@ interface SlashCommand {
   isNodeInsertion?: boolean; // If true, uses custom node insertion instead of text
   headingLevel?: number; // For heading commands, transforms paragraph to heading node
   apiCommand?: string; // If set, calls window.FinalFinal[apiCommand]() instead of custom logic
+  disabledInsideTable?: boolean; // If true, hidden when cursor is inside a table node
 }
 
 const slashCommands: SlashCommand[] = [
@@ -49,7 +50,18 @@ const slashCommands: SlashCommand[] = [
   { label: '/cite', replacement: '', description: 'Insert citation', isNodeInsertion: true },
   { label: '/footnote', replacement: '', description: 'Insert footnote', isNodeInsertion: true },
   { label: '/image', replacement: '', description: 'Insert image', isNodeInsertion: true },
+  { label: '/table', replacement: '', description: 'Insert table', isNodeInsertion: true, disabledInsideTable: true },
 ];
+
+// === Table context detection ===
+function isCursorInsideTable(view: any): boolean {
+  const { head } = view.state.selection;
+  const $head = view.state.doc.resolve(head);
+  for (let d = $head.depth; d >= 0; d--) {
+    if ($head.node(d).type.name === 'table') return true;
+  }
+  return false;
+}
 
 // === Slash menu UI state ===
 let slashMenuElement: HTMLElement | null = null;
@@ -105,7 +117,16 @@ function updateSlashMenu(filter: string) {
 
   // Filter commands based on what user typed after /
   const query = filter.slice(1).toLowerCase(); // Remove leading /
-  filteredCommands = slashCommands.filter((cmd) => cmd.label.toLowerCase().startsWith(`/${query}`));
+
+  const editorInstance = getEditorInstance();
+  const view = editorInstance?.ctx.get(editorViewCtx);
+  const insideTable = view ? isCursorInsideTable(view) : false;
+
+  filteredCommands = slashCommands.filter((cmd) => {
+    if (!cmd.label.toLowerCase().startsWith(`/${query}`)) return false;
+    if (insideTable && cmd.disabledInsideTable) return false;
+    return true;
+  });
 
   if (filteredCommands.length === 0) {
     const noResults = document.createElement('div');
@@ -244,6 +265,19 @@ function executeSlashCommand(index: number) {
     } else if (cmd.label === '/footnote') {
       // Insert footnote reference node — single transaction (delete slash + insert + renumber)
       insertFootnoteWithDelete(view, editorInstance, cmdStart, from);
+    } else if (cmd.label === '/table') {
+      // Delete the slash text then call native API to insert a 3×2 table
+      const tr = view.state.tr.delete(cmdStart, from);
+      view.dispatch(tr);
+      const fn = (window.FinalFinal as any).insertTable;
+      if (typeof fn === 'function') fn(3, 2);
+      // Hide menu and return early — table insert is not undoable via slash undo
+      if (slashProviderInstance) slashProviderInstance.hide();
+      filteredCommands = [];
+      requestAnimationFrame(() => {
+        suppressSlashMenu = false;
+      });
+      return;
     } else if (cmd.apiCommand) {
       // API-based commands: delete slash text, then call the FinalFinal API method
       const tr = view.state.tr.delete(cmdStart, from);
