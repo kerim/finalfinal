@@ -95,7 +95,7 @@ export function setContent(markdown: string, options?: { scrollToStart?: boolean
         const emptyParagraph = view.state.schema.nodes.paragraph.create();
         const emptyDoc = view.state.schema.nodes.doc.create(null, emptyParagraph);
         const tr = view.state.tr.replaceWith(0, view.state.doc.content.size, emptyDoc.content);
-        view.dispatch(tr.setSelection(Selection.atStart(tr.doc)));
+        view.dispatch(tr.setMeta('addToHistory', false).setSelection(Selection.atStart(tr.doc)));
         setCurrentContent(markdown);
       } finally {
         setIsSettingContent(false);
@@ -166,7 +166,7 @@ export function setContent(markdown: string, options?: { scrollToStart?: boolean
           tr = tr.setSelection(Selection.atStart(tr.doc));
         }
       }
-      view.dispatch(tr);
+      view.dispatch(tr.setMeta('addToHistory', false));
 
       // Restore figure attributes by position with src verification
       // (Matches applyBlocks/setContentWithBlockIds pattern — BEFORE resetAndSnapshot)
@@ -190,7 +190,7 @@ export function setContent(markdown: string, options?: { scrollToStart?: boolean
             figureIdx++;
           }
         });
-        if (metaTr.steps.length > 0) view.dispatch(metaTr);
+        if (metaTr.steps.length > 0) view.dispatch(metaTr.setMeta('addToHistory', false));
         syncLog('API:setContent', `figures after restore: ${restoredCount}/${savedFigures.length}`);
       }
 
@@ -381,7 +381,7 @@ export function applyBlocks(blocks: Block[]): void {
         tr = tr.setSelection(Selection.atStart(tr.doc));
       }
 
-      view.dispatch(tr);
+      view.dispatch(tr.setMeta('addToHistory', false));
       setCurrentContent(markdown);
 
       // Clear stale temp IDs from assignBlockIds, set real IDs, rebuild snapshot.
@@ -409,7 +409,7 @@ export function applyBlocks(blocks: Block[]): void {
             figureIdx++;
           }
         });
-        if (metaTr.steps.length > 0) view.dispatch(metaTr);
+        if (metaTr.steps.length > 0) view.dispatch(metaTr.setMeta('addToHistory', false));
       }
     } finally {
       setIsSettingContent(false);
@@ -454,7 +454,7 @@ export function setContentWithBlockIds(
         const emptyParagraph = view.state.schema.nodes.paragraph.create();
         const emptyDoc = view.state.schema.nodes.doc.create(null, emptyParagraph);
         const tr = view.state.tr.replaceWith(0, view.state.doc.content.size, emptyDoc.content);
-        view.dispatch(tr.setSelection(Selection.atStart(tr.doc)));
+        view.dispatch(tr.setMeta('addToHistory', false).setSelection(Selection.atStart(tr.doc)));
         clearBlockIds();
       });
       setCurrentContent(markdown);
@@ -524,7 +524,7 @@ export function setContentWithBlockIds(
           tr = tr.setSelection(Selection.atStart(tr.doc));
         }
       }
-      view.dispatch(tr);
+      view.dispatch(tr.setMeta('addToHistory', false));
       parseSucceeded = true;
 
       // Clear stale IDs, assign real ones, snapshot — all within syncPaused
@@ -551,7 +551,7 @@ export function setContentWithBlockIds(
             figureIdx++;
           }
         });
-        if (metaTr.steps.length > 0) view.dispatch(metaTr);
+        if (metaTr.steps.length > 0) view.dispatch(metaTr.setMeta('addToHistory', false));
       }
     });
     if (parseSucceeded) {

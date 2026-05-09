@@ -57,11 +57,12 @@ export function handleTablePaste(event: ClipboardEvent, view: EditorView): boole
     parsed = parseHTMLTable(html);
   }
 
-  // Fall back to TSV
+  // Fall back to TSV — require ≥2 columns AND ≥1 data row (mirrors MW table-paste-plugin).
   if (!parsed) {
     const text = clipboard.getData('text/plain');
     if (text && text.includes('\t')) {
-      parsed = parseTSV(text);
+      const tsv = parseTSV(text);
+      if (tsv && tsv.header.length >= 2 && tsv.rows.length >= 1) parsed = tsv;
     }
   }
 
@@ -74,7 +75,19 @@ export function handleTablePaste(event: ClipboardEvent, view: EditorView): boole
 
   const { head } = view.state.selection.main;
   const curLine = view.state.doc.lineAt(head);
-  const insideTable = curLine.text.trimStart().startsWith('|');
+  // A line beginning with | is a pipe-table row. Also check the previous
+  // non-blank line for | to catch continuation lines that may not start with |.
+  const prevLineText = (() => {
+    let lineNo = curLine.number - 1;
+    while (lineNo >= 1) {
+      const prev = view.state.doc.line(lineNo);
+      if (prev.text.trim().length > 0) return prev.text;
+      lineNo--;
+    }
+    return '';
+  })();
+  const insideTable =
+    curLine.text.trimStart().startsWith('|') || prevLineText.trimStart().startsWith('|');
 
   if (insideTable) {
     // Inside a cell: flatten multi-row content to plain text

@@ -10,7 +10,7 @@
  */
 
 import { $prose } from '@milkdown/kit/utils';
-import { Plugin, PluginKey } from '@milkdown/kit/prose/state';
+import { Plugin, PluginKey, TextSelection } from '@milkdown/kit/prose/state';
 import type { EditorView } from '@milkdown/kit/prose/view';
 import { formatTable, parseHTMLTable, parseTSV } from '../../shared/format-table';
 import type { ParsedTable } from '../../shared/format-table';
@@ -19,6 +19,21 @@ import type { ParsedTable } from '../../shared/format-table';
 
 const MAX_ROWS = 1000;
 const MAX_COLS = 100;
+
+// MARK: - Diagnostics (mirrors table-tools-plugin.ts pattern)
+
+const log = (...args: unknown[]) => {
+  const msg = '[table-paste] ' + args
+    .map((a) => {
+      if (typeof a === 'string') return a;
+      try { return JSON.stringify(a); } catch { return String(a); }
+    })
+    .join(' ');
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const handler = (window as any).webkit?.messageHandlers?.errorHandler;
+  if (handler?.postMessage) handler.postMessage({ type: 'debug', message: msg });
+  else console.log(msg);
+};
 
 // MARK: - Helpers
 
@@ -133,44 +148,60 @@ export const tablePastePlugin = $prose(() =>
           const clipboard = event.clipboardData;
           if (!clipboard) return false;
 
-          // Detection: HTML table first, then TSV.
-          let parsed: ParsedTable | null = null;
-
           const html = clipboard.getData('text/html');
-          if (html && html.includes('<table')) {
-            parsed = parseHTMLTable(html);
+          const text = clipboard.getData('text/plain');
+          const insideCell = isInsideTable(view);
+          log('handlePaste', {
+            insideCell,
+            htmlLen: html.length,
+            textLen: text.length,
+            hasTable: html.includes('<table'),
+            hasTab: text.includes('\t'),
+            sel: { from: view.state.selection.from, to: view.state.selection.to },
+          });
+
+          if (insideCell) {
+            // Always handle inside a cell — never let Milkdown's clipboard plugin run.
+            // Handles both plain-text pastes (parsed=null) and table/TSV pastes.
+            let parsed: ParsedTable | null = null;
+            if (html && html.includes('<table')) parsed = parseHTMLTable(html);
+            if (!parsed && text && text.includes('\t')) parsed = parseTSV(text);
+
+            const plain = parsed
+              ? [parsed.header, ...parsed.rows].flat().join(' ').replace(/\s+/g, ' ').trim()
+              : (text || html.replace(/<[^>]+>/g, '')).replace(/\s+/g, ' ').trim();
+
+            // Forward bias (1) keeps the resolved position inside the cell
+            // at table-closing boundaries where default bias could jump outside.
+            const $head = view.state.doc.resolve(view.state.selection.head);
+            let tr = view.state.tr.setSelection(TextSelection.near($head, 1));
+            tr = tr.insertText(plain);
+            view.dispatch(tr);
+            log('inside-cell handled', { plainLen: plain.length });
+            return true;
           }
 
-          if (!parsed) {
-            const text = clipboard.getData('text/plain');
-            if (text && text.includes('\t')) {
-              parsed = parseTSV(text);
-            }
+          // Outside a table: only insert a column-creating table for genuine sources.
+          // Require ≥2 columns AND ≥1 data row so single-line "col1\tcol2" pastes
+          // don't create header-only zero-row tables.
+          let parsed: ParsedTable | null = null;
+          if (html && html.includes('<table')) parsed = parseHTMLTable(html);
+          if (!parsed && text && text.includes('\t')) {
+            const tsv = parseTSV(text);
+            if (tsv && tsv.header.length >= 2 && tsv.rows.length >= 1) parsed = tsv;
           }
-
           if (!parsed) return false;
 
           const origRows = parsed.rows.length;
           const origCols = parsed.header.length;
           const { table, truncated } = truncateParsedTable(parsed);
 
-          if (isInsideTable(view)) {
-            // Inside a cell: flatten multi-row content to plain text.
-            const allCells = [table.header, ...table.rows].flat().join(' ');
-            const plainText = allCells.replace(/\s+/g, ' ').trim();
-            const tr = view.state.tr.insertText(plainText);
-            view.dispatch(tr);
-          } else {
-            // Outside a table: insert as real PM table nodes.
-            try {
-              const succeeded = insertTableNode(view, table);
-              if (!succeeded) {
-                insertTableMarkdown(view, table);
-              }
-            } catch (schemaErr) {
-              console.error('[table-paste] schema-based insertion failed, falling back:', schemaErr);
-              insertTableMarkdown(view, table);
-            }
+          try {
+            const succeeded = insertTableNode(view, table);
+            if (!succeeded) insertTableMarkdown(view, table);
+          } catch (schemaErr) {
+            log('schema insertion failed, falling back', schemaErr);
+            insertTableMarkdown(view, table);
           }
 
           if (truncated) {
@@ -182,7 +213,7 @@ export const tablePastePlugin = $prose(() =>
 
           return true;
         } catch (err) {
-          console.error('[table-paste] handlePaste error:', err);
+          log('handlePaste error', err);
           return false;
         }
       },

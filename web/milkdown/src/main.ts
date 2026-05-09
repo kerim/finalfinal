@@ -136,6 +136,7 @@ import {
 import { tablePastePlugin } from './table-paste-plugin';
 import { zoomNotesMarkerPlugin } from './zoom-notes-marker-plugin';
 import './styles.css';
+import 'prosemirror-tables/style/tables.css';
 // Import types to ensure declare global is included in the bundle
 import { syncLog } from './sync-debug';
 import './types';

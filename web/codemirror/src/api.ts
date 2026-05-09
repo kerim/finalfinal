@@ -8,7 +8,7 @@ import {
   SearchQuery,
   setSearchQuery,
 } from '@codemirror/search';
-import { EditorState } from '@codemirror/state';
+import { EditorState, Transaction } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
 import { stripAnchors } from './anchor-plugin';
 import { hideCitationAddButton, mergeCitations } from './citations';
@@ -120,6 +120,7 @@ export function setContent(markdown: string, options?: { scrollToStart?: boolean
   const prevLen = view.state.doc.length;
   view.dispatch({
     changes: { from: 0, to: prevLen, insert: markdown },
+    annotations: Transaction.addToHistory.of(false),
   });
 
   // Force CodeMirror to re-measure line heights after content change.

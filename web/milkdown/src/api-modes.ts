@@ -752,21 +752,22 @@ export function insertTable(rows: number, cols: number): void {
     const view = editorInstance.ctx.get(editorViewCtx);
     const { schema } = view.state;
     const tableType = schema.nodes['table'];
+    const tableHeaderRowType = schema.nodes['table_header_row'];
     const tableRowType = schema.nodes['table_row'];
     const tableHeaderType = schema.nodes['table_header'];
     const tableCellType = schema.nodes['table_cell'];
     const paragraphType = schema.nodes['paragraph'];
 
-    if (!tableType || !tableRowType || !tableHeaderType || !tableCellType || !paragraphType) {
+    if (!tableType || !tableHeaderRowType || !tableRowType || !tableHeaderType || !tableCellType || !paragraphType) {
       console.error('[Milkdown] table node types not found in schema');
       return;
     }
 
     const emptyPara = () => paragraphType.create(null, []);
 
-    // Header row (row 0 uses table_header cells)
+    // Header row uses table_header_row (schema: "table_header_row table_row+")
     const headerCells = Array.from({ length: cols }, () => tableHeaderType.create(null, [emptyPara()]));
-    const headerRow = tableRowType.create(null, headerCells);
+    const headerRow = tableHeaderRowType.create(null, headerCells);
 
     // Body rows (rows - 1 data rows using table_cell)
     const bodyRowCount = Math.max(1, rows - 1);
