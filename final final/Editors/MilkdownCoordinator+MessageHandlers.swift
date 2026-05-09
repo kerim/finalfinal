@@ -369,6 +369,23 @@ extension MilkdownEditor.Coordinator {
             }
         }
 
+        // Handle table paste truncation warning (> 1000 rows × 100 cols)
+        if message.name == "tableInsertTruncated", let body = message.body as? [String: Any] {
+            Task { @MainActor in
+                let rows = body["rows"] as? Int ?? 0
+                let cols = body["cols"] as? Int ?? 0
+                let window = self.webView?.window ?? NSApp.keyWindow
+                if let window {
+                    let alert = NSAlert()
+                    alert.messageText = "Table Truncated"
+                    alert.informativeText = "The pasted table was truncated to \(rows) rows × \(cols) columns."
+                    alert.alertStyle = .informational
+                    alert.addButton(withTitle: "OK")
+                    alert.beginSheetModal(for: window)
+                }
+            }
+        }
+
         // Handle spellcheck messages from editor
         if message.name == "spellcheck" {
             Task { @MainActor in

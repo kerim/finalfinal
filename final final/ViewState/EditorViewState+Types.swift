@@ -93,6 +93,8 @@ extension Notification.Name {
     static let setZoomFootnoteState = Notification.Name("setZoomFootnoteState")
     /// Posted to request image picker dialog (Insert > Image menu)
     static let requestInsertImage = Notification.Name("requestInsertImage")
+    /// Posted to insert a new 3×2 table at the cursor (Insert > Table menu + toolbar button)
+    static let requestInsertTable = Notification.Name("requestInsertTable")
 }
 
 enum EditorMode: String, CaseIterable {

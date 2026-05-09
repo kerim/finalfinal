@@ -84,11 +84,12 @@ struct EditorToolbar: ToolbarContent {
             }
             .help("Insert image (⌘⇧I)")
 
-            Button {} label: {
+            Button {
+                NotificationCenter.default.post(name: .requestInsertTable, object: nil)
+            } label: {
                 Label("Table", systemImage: "tablecells")
             }
-            .disabled(true)
-            .help("Coming soon")
+            .help("Insert table")
 
             Button {} label: {
                 Label("Math", systemImage: "function")

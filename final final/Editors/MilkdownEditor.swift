@@ -135,6 +135,7 @@ struct MilkdownEditor: NSViewRepresentable {
         configuration.userContentController.add(context.coordinator, name: "pasteImage")
         configuration.userContentController.add(context.coordinator, name: "requestImagePicker")
         configuration.userContentController.add(context.coordinator, name: "updateImageMeta")
+        configuration.userContentController.add(context.coordinator, name: "tableInsertTruncated")
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = context.coordinator
@@ -306,6 +307,7 @@ struct MilkdownEditor: NSViewRepresentable {
         var blockSyncPushObserver: NSObjectProtocol?
         var zoomFootnoteStateObserver: NSObjectProtocol?
         var insertImageObserver: NSObjectProtocol?
+        var insertTableObserver: NSObjectProtocol?
 
         // Formatting command observers
         var toggleBoldObserver: NSObjectProtocol?
@@ -594,6 +596,15 @@ struct MilkdownEditor: NSViewRepresentable {
             ) { [weak self] _ in
                 self?.handleImagePicker()
             }
+
+            // Subscribe to insert table notification (Insert > Table menu + toolbar button)
+            insertTableObserver = NotificationCenter.default.addObserver(
+                forName: .requestInsertTable,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                self?.webView?.evaluateJavaScript("window.FinalFinal.insertTable(3, 2)") { _, _ in }
+            }
         }
 
         deinit {
@@ -650,6 +661,9 @@ struct MilkdownEditor: NSViewRepresentable {
                 NotificationCenter.default.removeObserver(observer)
             }
             if let observer = insertImageObserver {
+                NotificationCenter.default.removeObserver(observer)
+            }
+            if let observer = insertTableObserver {
                 NotificationCenter.default.removeObserver(observer)
             }
             // Formatting command observers cleanup

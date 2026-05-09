@@ -166,6 +166,10 @@ struct EditorCommands: Commands {
                     NotificationCenter.default.post(name: .requestInsertImage, object: nil)
                 }
 
+                Button("Table") {
+                    NotificationCenter.default.post(name: .requestInsertTable, object: nil)
+                }
+
                 Divider()
 
                 Menu("Document Note") {
