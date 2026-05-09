@@ -14,6 +14,8 @@ import {
   nodeToMarkdownFragment,
   padCodeSpan,
 } from '../block-sync-plugin';
+import type { Align, ParsedTable } from '../../../shared/format-table';
+import { formatTable } from '../../../shared/format-table';
 
 // ----------------------------------------------------------------------------
 // Pure-helper tests (no ProseMirror schema needed)
@@ -130,6 +132,38 @@ const testSchema = new Schema({
     ordered_list: { group: 'block', content: 'list_item+', toDOM: () => ['ol', 0] },
     list_item: { content: 'paragraph block*', toDOM: () => ['li', 0] },
     text: { group: 'inline' },
+    table: {
+      group: 'block',
+      content: 'table_row+',
+      toDOM: () => ['table', 0],
+    },
+    table_row: {
+      content: '(table_header | table_cell)+',
+      toDOM: () => ['tr', 0],
+    },
+    table_header: {
+      content: 'block+',
+      attrs: { align: { default: null } },
+      toDOM: () => ['th', 0],
+    },
+    table_cell: {
+      content: 'block+',
+      attrs: { align: { default: null } },
+      toDOM: () => ['td', 0],
+    },
+    hard_break: {
+      group: 'inline',
+      inline: true,
+      isLeaf: true,
+      toDOM: () => ['br'],
+    },
+    footnote_ref: {
+      group: 'inline',
+      inline: true,
+      isLeaf: true,
+      attrs: { label: { default: '' } },
+      toDOM: (node: any) => ['span', {}, `[^${node.attrs.label}]`],
+    },
   },
   marks: {
     link: {
@@ -172,6 +206,36 @@ function blockquote(...paragraphs: ReturnType<typeof para>[]) {
 function bulletList(...items: Array<Parameters<typeof para>>) {
   const listItems = items.map((contents) => testSchema.nodes.list_item!.create({}, [para(...contents)]));
   return testSchema.nodes.bullet_list!.create({}, listItems);
+}
+
+// MARK: - Table builder helpers
+
+function tableHeaderCell(align: Align | null, ...children: Parameters<typeof para>) {
+  const paragraph = para(...children);
+  return testSchema.nodes.table_header!.create({ align }, [paragraph]);
+}
+
+function tableDataCell(align: Align | null, ...children: Parameters<typeof para>) {
+  if (children.length === 0) {
+    // Empty cell: paragraph with no inline children (inline* allows zero children)
+    const emptyPara = testSchema.nodes.paragraph!.create({});
+    return testSchema.nodes.table_cell!.create({ align }, [emptyPara]);
+  }
+  const paragraph = para(...children);
+  return testSchema.nodes.table_cell!.create({ align }, [paragraph]);
+}
+
+function tableRow(...cells: ReturnType<typeof tableHeaderCell | typeof tableDataCell>[]) {
+  return testSchema.nodes.table_row!.create({}, cells);
+}
+
+function makeTable(
+  headerCells: ReturnType<typeof tableHeaderCell>[],
+  bodyRows: ReturnType<typeof tableDataCell>[][]
+) {
+  const headerRow = tableRow(...headerCells);
+  const dataRows = bodyRows.map((cells) => tableRow(...cells));
+  return testSchema.nodes.table!.create({}, [headerRow, ...dataRows]);
 }
 
 describe('nodeToMarkdownFragment — single mark round-trips', () => {
@@ -390,5 +454,201 @@ describe('stock Milkdown serializer — highlight preservation', () => {
     const result = e.action(getMarkdown());
     expect(result).toContain('==a==');
     expect(result).toContain('==b==');
+  });
+});
+
+// ----------------------------------------------------------------------------
+// Table serializer — Layer 1 regression guard
+// Pure ProseMirror schema manipulation + nodeToMarkdownFragment(), no WebView.
+// ----------------------------------------------------------------------------
+
+describe('nodeToMarkdownFragment — table serializer', () => {
+  // Case 1: Bold in a cell
+  it('bold in a cell', () => {
+    const table = makeTable(
+      [tableHeaderCell(null, { text: 'A' })],
+      [[tableDataCell(null, { text: 'bold', marks: ['strong'] })]]
+    );
+    const output = nodeToMarkdownFragment(table);
+    expect(output).toContain('**bold**');
+  });
+
+  // Case 2: Italic in a cell
+  it('italic in a cell', () => {
+    const table = makeTable(
+      [tableHeaderCell(null, { text: 'A' })],
+      [[tableDataCell(null, { text: 'italic', marks: ['emphasis'] })]]
+    );
+    const output = nodeToMarkdownFragment(table);
+    expect(output).toContain('*italic*');
+  });
+
+  // Case 3: Inline code in a cell
+  it('inline code in a cell', () => {
+    const table = makeTable(
+      [tableHeaderCell(null, { text: 'A' })],
+      [[tableDataCell(null, { text: 'x = 1', marks: ['inlineCode'] })]]
+    );
+    const output = nodeToMarkdownFragment(table);
+    expect(output).toContain('`x = 1`');
+  });
+
+  // Case 4: Link in a cell
+  it('link in a cell', () => {
+    const table = makeTable(
+      [tableHeaderCell(null, { text: 'A' })],
+      [[tableDataCell(null, { text: 'site', marks: ['link'], linkHref: 'https://x' })]]
+    );
+    const output = nodeToMarkdownFragment(table);
+    expect(output).toContain('[site](https://x)');
+  });
+
+  // Case 5: Highlight in a cell
+  it('highlight in a cell', () => {
+    const table = makeTable(
+      [tableHeaderCell(null, { text: 'A' })],
+      [[tableDataCell(null, { text: 'marked', marks: ['highlight'] })]]
+    );
+    const output = nodeToMarkdownFragment(table);
+    expect(output).toContain('==marked==');
+  });
+
+  // Case 6: Footnote ref in a cell
+  it('footnote ref in a cell', () => {
+    const fnRef = testSchema.nodes.footnote_ref!.create({ label: '1' });
+    const cell = testSchema.nodes.table_cell!.create({ align: null }, [
+      testSchema.nodes.paragraph!.create({}, [fnRef]),
+    ]);
+    const row = tableRow(tableHeaderCell(null, { text: 'H' }));
+    const bodyRow = testSchema.nodes.table_row!.create({}, [cell]);
+    const table = testSchema.nodes.table!.create({}, [row, bodyRow]);
+    const output = nodeToMarkdownFragment(table);
+    expect(output).toContain('[^1]');
+  });
+
+  // Case 7: Pipe in plain text is escaped (but not double-escaped)
+  it('pipe in plain cell text is escaped once', () => {
+    const table = makeTable(
+      [tableHeaderCell(null, { text: 'H' })],
+      [[tableDataCell(null, { text: 'a|b' })]]
+    );
+    const output = nodeToMarkdownFragment(table);
+    expect(output).toContain('a\\|b');
+    expect(output).not.toContain('a\\\\|b');
+  });
+
+  // Case 8: Pipe inside inline code is NOT escaped
+  it('pipe inside inline code is not escaped', () => {
+    const table = makeTable(
+      [tableHeaderCell(null, { text: 'H' })],
+      [[tableDataCell(null, { text: 'a|b', marks: ['inlineCode'] })]]
+    );
+    const output = nodeToMarkdownFragment(table);
+    expect(output).toContain('`a|b`');
+    expect(output).not.toContain('`a\\|b`');
+  });
+
+  // Case 9: hard_break becomes <br> in cell output
+  it('hard_break in a cell becomes <br>', () => {
+    const hardBreak = testSchema.nodes.hard_break!.create();
+    const cell = testSchema.nodes.table_cell!.create({ align: null }, [
+      testSchema.nodes.paragraph!.create({}, [
+        testSchema.text('line1'),
+        hardBreak,
+        testSchema.text('line2'),
+      ]),
+    ]);
+    const headerRow = tableRow(tableHeaderCell(null, { text: 'H' }));
+    const bodyRow = testSchema.nodes.table_row!.create({}, [cell]);
+    const table = testSchema.nodes.table!.create({}, [headerRow, bodyRow]);
+    const output = nodeToMarkdownFragment(table);
+    expect(output).toContain('<br>');
+    expect(output).toContain('line1<br>line2');
+  });
+
+  // Case 10: Header row preserved — output has exactly 3 lines (header, separator, data)
+  it('header row is preserved and output has header/separator/data lines', () => {
+    const table = makeTable(
+      [tableHeaderCell(null, { text: 'Name' })],
+      [[tableDataCell(null, { text: 'Alice' })]]
+    );
+    const output = nodeToMarkdownFragment(table);
+    const lines = output.split('\n');
+    expect(lines).toHaveLength(3);
+    // Separator line contains dashes
+    expect(lines[1]).toMatch(/---/);
+  });
+
+  // Case 11: Per-column alignment preserved in separator row
+  it('per-column alignment is reflected in the separator row', () => {
+    const table = makeTable(
+      [
+        tableHeaderCell('left', { text: 'L' }),
+        tableHeaderCell('center', { text: 'C' }),
+        tableHeaderCell('right', { text: 'R' }),
+        tableHeaderCell(null, { text: 'N' }),
+      ],
+      [[
+        tableDataCell(null, { text: 'a' }),
+        tableDataCell(null, { text: 'b' }),
+        tableDataCell(null, { text: 'c' }),
+        tableDataCell(null, { text: 'd' }),
+      ]]
+    );
+    const output = nodeToMarkdownFragment(table);
+    const lines = output.split('\n');
+    const sep = lines[1];
+    // Split on | and trim; filter out leading/trailing empty strings
+    const cols = sep.split('|').map((s) => s.trim()).filter(Boolean);
+    expect(cols[0]).toMatch(/^:-+$/);    // left: colon prefix only
+    expect(cols[1]).toMatch(/^:-+:$/);   // center: colon on both ends
+    expect(cols[2]).toMatch(/^-+:$/);    // right: colon suffix only
+    expect(cols[3]).toMatch(/^-+$/);     // null: just dashes
+  });
+
+  // Case 12: Empty cell produces a padded cell, not ||
+  it('empty cell does not produce ||', () => {
+    const table = makeTable(
+      [tableHeaderCell(null, { text: 'H' })],
+      [[tableDataCell(null)]]
+    );
+    const output = nodeToMarkdownFragment(table);
+    const lines = output.split('\n');
+    const bodyLine = lines[2];
+    // The body row must have pipe-delimited content; the cell must not be empty (no ||)
+    expect(bodyLine).toMatch(/\|[\s]+\|/);
+    expect(bodyLine).not.toContain('||');
+  });
+
+  // Case 13: Column-width padding is idempotent
+  it('column-width padding is idempotent (accumulation guard)', () => {
+    // Simple GFM table row parser for the test
+    function parseFormattedTable(md: string): ParsedTable {
+      const lines = md.split('\n');
+      const splitRow = (line: string) => line.split('|').slice(1, -1).map((s) => s.trim());
+      const headerCells = splitRow(lines[0]);
+      const sepCells = splitRow(lines[1]);
+      const separator: Align[] = sepCells.map((s): Align => {
+        if (s.startsWith(':') && s.endsWith(':')) return 'center';
+        if (s.startsWith(':')) return 'left';
+        if (s.endsWith(':')) return 'right';
+        return null;
+      });
+      const rows = lines.slice(2).filter(Boolean).map(splitRow);
+      return { header: headerCells, separator, rows };
+    }
+
+    const table: ParsedTable = {
+      header: ['Name', 'Score', 'Notes'],
+      separator: [null, 'right', 'center'],
+      rows: [
+        ['Alice', '100', 'excellent'],
+        ['Bob', '50', 'ok'],
+      ],
+    };
+    const m1 = formatTable(table);
+    const table2 = parseFormattedTable(m1);
+    const m2 = formatTable(table2);
+    expect(m2).toBe(m1);
   });
 });
