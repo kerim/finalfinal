@@ -9,6 +9,7 @@ import { getAllBlockIds, SYNC_DIAG_DETAIL } from './block-id-plugin';
 import type { CitationAttrs } from './citation-plugin';
 import { serializeCitation } from './citation-plugin';
 import { syncLog } from './sync-debug';
+import { type Align, type ParsedTable, formatTable } from '../../shared/format-table';
 
 export const blockSyncPluginKey = new PluginKey<BlockSyncPluginState>('block-sync');
 
@@ -407,6 +408,10 @@ function serializeInlineContent(node: Node): string {
         // IMPORTANT: Inline atom nodes (citation, annotation, footnote_ref, footnote_def)
         // must be handled explicitly above — child.textContent returns '' for atom nodes.
         awaitingFirstEmit = false;
+      } else if (child.type.name === 'hard_break') {
+        closeAllActive();
+        parts.push('<br>');
+        awaitingFirstEmit = false;
       } else {
         closeAllActive();
         parts.push(child.textContent);
@@ -424,6 +429,27 @@ function serializeInlineContent(node: Node): string {
     parts.push(serializeInlineContent(child));
   });
   return parts.join('\n');
+}
+
+/**
+ * Escape pipe characters (`|`) that appear outside of backtick code spans.
+ * Inside code spans the pipe is part of the code content and must not be escaped.
+ */
+function escapePipesOutsideCode(text: string): string {
+  const parts: string[] = [];
+  const codeSpanPattern = /(`+)([\s\S]*?)\1/g;
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = codeSpanPattern.exec(text)) !== null) {
+    // Escape pipes in the text before this code span
+    parts.push(text.slice(lastIndex, match.index).replace(/\|/g, '\\|'));
+    // Keep the code span verbatim (no pipe escaping inside)
+    parts.push(match[0]);
+    lastIndex = match.index + match[0].length;
+  }
+  // Escape pipes in the remaining text after the last code span
+  parts.push(text.slice(lastIndex).replace(/\|/g, '\\|'));
+  return parts.join('');
 }
 
 /**
@@ -471,8 +497,34 @@ export function nodeToMarkdownFragment(node: Node): string {
       const base = `![${node.attrs.alt || ''}](${node.attrs.src || ''})`;
       return node.attrs.width ? `${base}{width=${node.attrs.width}%}` : base;
     }
-    case 'table':
-      return node.textContent;
+    case 'table': {
+      const header: string[] = [];
+      const separator: Align[] = [];
+      const bodyRows: string[][] = [];
+
+      node.forEach((rowNode, _offset, rowIndex) => {
+        const isHeaderRow = rowIndex === 0;
+        const cells: string[] = [];
+
+        rowNode.forEach((cellNode) => {
+          const rawContent = serializeInlineContent(cellNode);
+          cells.push(escapePipesOutsideCode(rawContent));
+          if (isHeaderRow) {
+            const align = (cellNode.attrs as { align?: string | null }).align;
+            separator.push((align === 'left' || align === 'center' || align === 'right') ? align : null);
+          }
+        });
+
+        if (isHeaderRow) {
+          header.push(...cells);
+        } else {
+          bodyRows.push(cells);
+        }
+      });
+
+      const parsedTable: ParsedTable = { header, separator, rows: bodyRows };
+      return formatTable(parsedTable);
+    }
     default:
       return text;
   }
