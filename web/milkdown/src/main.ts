@@ -132,6 +132,7 @@ import {
   spellcheckPlugin,
   triggerSpellcheck as triggerSpellcheckImpl,
 } from './spellcheck-plugin';
+import { tablePastePlugin } from './table-paste-plugin';
 import { zoomNotesMarkerPlugin } from './zoom-notes-marker-plugin';
 import './styles.css';
 // Import types to ensure declare global is included in the bundle
@@ -198,6 +199,7 @@ async function initEditor() {
       .use(autolinkPlugin) // Auto-link bare URLs on space - AFTER commonmark for link schema
       .use(highlightPlugin) // ==highlight== syntax - AFTER commonmark for serialization
       .use(history)
+      .use(tablePastePlugin) // Intercept TSV/HTML table paste before clipboard plugin
       .use(clipboard) // Parse pasted markdown as rich text instead of literal text
       .use(focusModePlugin)
       .use(sourceModePlugin) // Dual-appearance source mode
