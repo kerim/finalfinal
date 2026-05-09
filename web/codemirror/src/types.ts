@@ -115,6 +115,9 @@ declare global {
       // Image API
       insertImage: (opts: { src: string; alt?: string; caption?: string }) => void;
       setImageMeta: (meta: Array<{ src: string; width?: number | null }>) => void;
+      // Table API
+      insertTable: (rows: number, cols: number) => void;
+      formatTable: () => void;
       // Project switch reset
       resetForProjectSwitch: () => void;
       // Combined poll data

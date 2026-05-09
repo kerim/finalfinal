@@ -178,6 +178,15 @@ const slashCommands: SlashCommand[] = [
       setPendingSlashUndo(true);
     },
   },
+  {
+    label: '/format-table',
+    description: 'Format table columns',
+    apply: (view, from, to) => {
+      view.dispatch({ changes: { from, to, insert: '' } });
+      (window as any).FinalFinal?.formatTable?.();
+      setPendingSlashUndo(true);
+    },
+  },
 ];
 
 // === Custom slash menu ViewPlugin ===

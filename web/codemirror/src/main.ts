@@ -19,6 +19,7 @@ import {
   clearSearch,
   find,
   focusEditor,
+  formatTable,
   getAnnotations,
   getContent,
   getContentClean,
@@ -33,6 +34,7 @@ import {
   insertFootnote,
   insertImage,
   insertLink,
+  insertTable,
   renumberFootnotes,
   replaceCurrent,
   resetForProjectSwitch,
@@ -50,6 +52,7 @@ import {
   setTheme,
   toggleHighlight,
 } from './api';
+import { handleTablePaste } from './table-paste';
 import {
   insertLinkAtCursor,
   setHeading,
@@ -232,7 +235,13 @@ function initEditor() {
         }
         return false;
       },
-      paste(event, _view) {
+      paste(event, view) {
+        // Table paste — must come before image handling
+        if (handleTablePaste(event, view)) {
+          event.preventDefault();
+          return true;
+        }
+
         const items = event.clipboardData?.items;
         if (!items) return false;
         for (const item of items) {
@@ -407,6 +416,10 @@ window.FinalFinal = {
   // Image API
   insertImage,
   setImageMeta,
+
+  // Table API
+  insertTable,
+  formatTable,
 
   // Spellcheck API
   setSpellcheckResults,

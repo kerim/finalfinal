@@ -1,3 +1,4 @@
+import { formatTableCommand, insertTableCommand } from './table-format';
 import {
   findNext as cmFindNext,
   findPrevious as cmFindPrevious,
@@ -942,6 +943,16 @@ export function citationPickerCancelled(): void {
   setPendingCAYWRange(null);
   setPendingAppendMode(false);
   setPendingAppendRange(null);
+}
+
+// --- Table API ---
+
+export function insertTable(rows: number, cols: number): void {
+  insertTableCommand(rows, cols);
+}
+
+export function formatTable(): void {
+  formatTableCommand();
 }
 
 export function citationPickerError(message: string): void {
