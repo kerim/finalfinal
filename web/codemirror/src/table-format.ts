@@ -29,7 +29,10 @@ function parseGFMTable(md: string): ParsedTable | null {
   if (lines.length < 2) return null;
 
   const splitRow = (line: string): string[] =>
-    line.split('|').slice(1, -1).map((s) => s.trim());
+    line
+      .split('|')
+      .slice(1, -1)
+      .map((s) => s.trim());
 
   const header = splitRow(lines[0]);
   const sepCells = splitRow(lines[1]);
@@ -81,9 +84,7 @@ export function insertTableCommand(rows: number, cols: number): void {
 
   const header: string[] = Array.from({ length: safeCols }, (_, i) => `Column ${i + 1}`);
   const separator: Align[] = Array.from({ length: safeCols }, () => null);
-  const bodyRows: string[][] = Array.from({ length: safeRows - 1 }, () =>
-    Array.from({ length: safeCols }, () => ''),
-  );
+  const bodyRows: string[][] = Array.from({ length: safeRows - 1 }, () => Array.from({ length: safeCols }, () => ''));
 
   const tableStr = formatTable({ header, separator, rows: bodyRows });
 
@@ -92,7 +93,7 @@ export function insertTableCommand(rows: number, cols: number): void {
   const insertPos = line.to;
 
   view.dispatch({
-    changes: { from: insertPos, to: insertPos, insert: '\n\n' + tableStr },
+    changes: { from: insertPos, to: insertPos, insert: `\n\n${tableStr}` },
     selection: { anchor: insertPos + 2 },
   });
 }

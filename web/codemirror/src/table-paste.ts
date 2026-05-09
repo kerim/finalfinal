@@ -1,37 +1,6 @@
 import type { EditorView } from '@codemirror/view';
 import type { ParsedTable } from '../../shared/format-table';
-import { formatTable, parseHTMLTable, parseTSV } from '../../shared/format-table';
-
-// MARK: - Constants
-
-const MAX_ROWS = 1000;
-const MAX_COLS = 100;
-
-// MARK: - Helpers
-
-function truncateParsedTable(table: ParsedTable): { table: ParsedTable; truncated: boolean } {
-  const origRows = table.rows.length;
-  const origCols = table.header.length;
-  let truncated = false;
-
-  let header = table.header;
-  let separator = table.separator;
-  let rows = table.rows;
-
-  if (origCols > MAX_COLS) {
-    header = header.slice(0, MAX_COLS);
-    separator = separator.slice(0, MAX_COLS);
-    rows = rows.map((r) => r.slice(0, MAX_COLS));
-    truncated = true;
-  }
-
-  if (origRows > MAX_ROWS) {
-    rows = rows.slice(0, MAX_ROWS);
-    truncated = true;
-  }
-
-  return { table: { header, separator, rows }, truncated };
-}
+import { formatTable, parseHTMLTable, parseTSV, truncateParsedTable } from '../../shared/format-table';
 
 // MARK: - Public Handler
 
@@ -53,14 +22,14 @@ export function handleTablePaste(event: ClipboardEvent, view: EditorView): boole
 
   // Try HTML first
   const html = clipboard.getData('text/html');
-  if (html && html.includes('<table')) {
+  if (html?.includes('<table')) {
     parsed = parseHTMLTable(html);
   }
 
   // Fall back to TSV — require ≥2 columns AND ≥1 data row (mirrors MW table-paste-plugin).
   if (!parsed) {
     const text = clipboard.getData('text/plain');
-    if (text && text.includes('\t')) {
+    if (text?.includes('\t')) {
       const tsv = parseTSV(text);
       if (tsv && tsv.header.length >= 2 && tsv.rows.length >= 1) parsed = tsv;
     }
@@ -86,8 +55,7 @@ export function handleTablePaste(event: ClipboardEvent, view: EditorView): boole
     }
     return '';
   })();
-  const insideTable =
-    curLine.text.trimStart().startsWith('|') || prevLineText.trimStart().startsWith('|');
+  const insideTable = curLine.text.trimStart().startsWith('|') || prevLineText.trimStart().startsWith('|');
 
   if (insideTable) {
     // Inside a cell: flatten multi-row content to plain text
@@ -99,7 +67,7 @@ export function handleTablePaste(event: ClipboardEvent, view: EditorView): boole
     const tableStr = formatTable(table);
     const insertPos = curLine.to;
     view.dispatch({
-      changes: { from: insertPos, to: insertPos, insert: '\n\n' + tableStr },
+      changes: { from: insertPos, to: insertPos, insert: `\n\n${tableStr}` },
       selection: { anchor: insertPos + 2 },
     });
   }

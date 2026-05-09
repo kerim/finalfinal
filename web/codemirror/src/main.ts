@@ -52,7 +52,6 @@ import {
   setTheme,
   toggleHighlight,
 } from './api';
-import { handleTablePaste } from './table-paste';
 import {
   insertLinkAtCursor,
   setHeading,
@@ -89,6 +88,7 @@ import {
   spellcheckPlugin,
   triggerSpellcheck,
 } from './spellcheck-plugin';
+import { handleTablePaste } from './table-paste';
 import './styles.css';
 // Import types.ts for declare global side-effect
 import './types';

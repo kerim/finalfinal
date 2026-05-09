@@ -1,12 +1,12 @@
 // Editor mode, cursor, and misc API method implementations for window.FinalFinal
 
 import { editorViewCtx, parserCtx } from '@milkdown/kit/core';
-import { fromMarkdown } from 'mdast-util-from-markdown';
-import { gfmTableFromMarkdown } from 'mdast-util-gfm-table';
-import { gfmTable } from 'micromark-extension-gfm-table';
 import { Slice } from '@milkdown/kit/prose/model';
 import { Selection } from '@milkdown/kit/prose/state';
 import { getMarkdown } from '@milkdown/kit/utils';
+import { fromMarkdown } from 'mdast-util-from-markdown';
+import { gfmTableFromMarkdown } from 'mdast-util-gfm-table';
+import { gfmTable } from 'micromark-extension-gfm-table';
 import { getContent, setContent } from './api-content';
 import { getBlockIdAtPos } from './block-id-plugin';
 import { mdToTextOffset, textToMdOffset } from './cursor-mapping';
@@ -751,12 +751,12 @@ export function insertTable(rows: number, cols: number): void {
   try {
     const view = editorInstance.ctx.get(editorViewCtx);
     const { schema } = view.state;
-    const tableType = schema.nodes['table'];
-    const tableHeaderRowType = schema.nodes['table_header_row'];
-    const tableRowType = schema.nodes['table_row'];
-    const tableHeaderType = schema.nodes['table_header'];
-    const tableCellType = schema.nodes['table_cell'];
-    const paragraphType = schema.nodes['paragraph'];
+    const tableType = schema.nodes.table;
+    const tableHeaderRowType = schema.nodes.table_header_row;
+    const tableRowType = schema.nodes.table_row;
+    const tableHeaderType = schema.nodes.table_header;
+    const tableCellType = schema.nodes.table_cell;
+    const paragraphType = schema.nodes.paragraph;
 
     if (!tableType || !tableHeaderRowType || !tableRowType || !tableHeaderType || !tableCellType || !paragraphType) {
       console.error('[Milkdown] table node types not found in schema');

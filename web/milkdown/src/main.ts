@@ -123,7 +123,6 @@ import { linkTooltipPlugin, openLinkEdit } from './link-tooltip';
 import { searchPlugin } from './search-plugin';
 import { sectionBreakPlugin } from './section-break-plugin';
 import { selectionToolbarPlugin } from './selection-toolbar-plugin';
-import { tableToolsPlugin } from './table-tools-plugin';
 import { configureSlash, slash } from './slash-commands';
 import { isSourceModeEnabled, sourceModePlugin } from './source-mode-plugin';
 import {
@@ -134,6 +133,7 @@ import {
   triggerSpellcheck as triggerSpellcheckImpl,
 } from './spellcheck-plugin';
 import { tablePastePlugin } from './table-paste-plugin';
+import { tableToolsPlugin } from './table-tools-plugin';
 import { zoomNotesMarkerPlugin } from './zoom-notes-marker-plugin';
 import './styles.css';
 import 'prosemirror-tables/style/tables.css';

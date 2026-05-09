@@ -5,7 +5,8 @@ import { gfm } from '@milkdown/kit/preset/gfm';
 import { Schema } from '@milkdown/kit/prose/model';
 import { getMarkdown } from '@milkdown/kit/utils';
 import { afterEach, describe, expect, it } from 'vitest';
-import { highlightPlugin } from '../highlight-plugin';
+import type { Align, ParsedTable } from '../../../shared/format-table';
+import { formatTable } from '../../../shared/format-table';
 import {
   codeSpanFor,
   escapeHref,
@@ -14,8 +15,7 @@ import {
   nodeToMarkdownFragment,
   padCodeSpan,
 } from '../block-sync-plugin';
-import type { Align, ParsedTable } from '../../../shared/format-table';
-import { formatTable } from '../../../shared/format-table';
+import { highlightPlugin } from '../highlight-plugin';
 
 // ----------------------------------------------------------------------------
 // Pure-helper tests (no ProseMirror schema needed)
@@ -229,10 +229,7 @@ function tableRow(...cells: ReturnType<typeof tableHeaderCell | typeof tableData
   return testSchema.nodes.table_row!.create({}, cells);
 }
 
-function makeTable(
-  headerCells: ReturnType<typeof tableHeaderCell>[],
-  bodyRows: ReturnType<typeof tableDataCell>[][]
-) {
+function makeTable(headerCells: ReturnType<typeof tableHeaderCell>[], bodyRows: ReturnType<typeof tableDataCell>[][]) {
   const headerRow = tableRow(...headerCells);
   const dataRows = bodyRows.map((cells) => tableRow(...cells));
   return testSchema.nodes.table!.create({}, [headerRow, ...dataRows]);
@@ -528,10 +525,7 @@ describe('nodeToMarkdownFragment — table serializer', () => {
 
   // Case 7: Pipe in plain text is escaped (but not double-escaped)
   it('pipe in plain cell text is escaped once', () => {
-    const table = makeTable(
-      [tableHeaderCell(null, { text: 'H' })],
-      [[tableDataCell(null, { text: 'a|b' })]]
-    );
+    const table = makeTable([tableHeaderCell(null, { text: 'H' })], [[tableDataCell(null, { text: 'a|b' })]]);
     const output = nodeToMarkdownFragment(table);
     expect(output).toContain('a\\|b');
     expect(output).not.toContain('a\\\\|b');
@@ -552,11 +546,7 @@ describe('nodeToMarkdownFragment — table serializer', () => {
   it('hard_break in a cell becomes <br>', () => {
     const hardBreak = testSchema.nodes.hard_break!.create();
     const cell = testSchema.nodes.table_cell!.create({ align: null }, [
-      testSchema.nodes.paragraph!.create({}, [
-        testSchema.text('line1'),
-        hardBreak,
-        testSchema.text('line2'),
-      ]),
+      testSchema.nodes.paragraph!.create({}, [testSchema.text('line1'), hardBreak, testSchema.text('line2')]),
     ]);
     const headerRow = tableRow(tableHeaderCell(null, { text: 'H' }));
     const bodyRow = testSchema.nodes.table_row!.create({}, [cell]);
@@ -568,10 +558,7 @@ describe('nodeToMarkdownFragment — table serializer', () => {
 
   // Case 10: Header row preserved — output has exactly 3 lines (header, separator, data)
   it('header row is preserved and output has header/separator/data lines', () => {
-    const table = makeTable(
-      [tableHeaderCell(null, { text: 'Name' })],
-      [[tableDataCell(null, { text: 'Alice' })]]
-    );
+    const table = makeTable([tableHeaderCell(null, { text: 'Name' })], [[tableDataCell(null, { text: 'Alice' })]]);
     const output = nodeToMarkdownFragment(table);
     const lines = output.split('\n');
     expect(lines).toHaveLength(3);
@@ -588,30 +575,32 @@ describe('nodeToMarkdownFragment — table serializer', () => {
         tableHeaderCell('right', { text: 'R' }),
         tableHeaderCell(null, { text: 'N' }),
       ],
-      [[
-        tableDataCell(null, { text: 'a' }),
-        tableDataCell(null, { text: 'b' }),
-        tableDataCell(null, { text: 'c' }),
-        tableDataCell(null, { text: 'd' }),
-      ]]
+      [
+        [
+          tableDataCell(null, { text: 'a' }),
+          tableDataCell(null, { text: 'b' }),
+          tableDataCell(null, { text: 'c' }),
+          tableDataCell(null, { text: 'd' }),
+        ],
+      ]
     );
     const output = nodeToMarkdownFragment(table);
     const lines = output.split('\n');
     const sep = lines[1];
     // Split on | and trim; filter out leading/trailing empty strings
-    const cols = sep.split('|').map((s) => s.trim()).filter(Boolean);
-    expect(cols[0]).toMatch(/^:-+$/);    // left: colon prefix only
-    expect(cols[1]).toMatch(/^:-+:$/);   // center: colon on both ends
-    expect(cols[2]).toMatch(/^-+:$/);    // right: colon suffix only
-    expect(cols[3]).toMatch(/^-+$/);     // null: just dashes
+    const cols = sep
+      .split('|')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    expect(cols[0]).toMatch(/^:-+$/); // left: colon prefix only
+    expect(cols[1]).toMatch(/^:-+:$/); // center: colon on both ends
+    expect(cols[2]).toMatch(/^-+:$/); // right: colon suffix only
+    expect(cols[3]).toMatch(/^-+$/); // null: just dashes
   });
 
   // Case 12: Empty cell produces a padded cell, not ||
   it('empty cell does not produce ||', () => {
-    const table = makeTable(
-      [tableHeaderCell(null, { text: 'H' })],
-      [[tableDataCell(null)]]
-    );
+    const table = makeTable([tableHeaderCell(null, { text: 'H' })], [[tableDataCell(null)]]);
     const output = nodeToMarkdownFragment(table);
     const lines = output.split('\n');
     const bodyLine = lines[2];
@@ -625,7 +614,11 @@ describe('nodeToMarkdownFragment — table serializer', () => {
     // Simple GFM table row parser for the test
     function parseFormattedTable(md: string): ParsedTable {
       const lines = md.split('\n');
-      const splitRow = (line: string) => line.split('|').slice(1, -1).map((s) => s.trim());
+      const splitRow = (line: string) =>
+        line
+          .split('|')
+          .slice(1, -1)
+          .map((s) => s.trim());
       const headerCells = splitRow(lines[0]);
       const sepCells = splitRow(lines[1]);
       const separator: Align[] = sepCells.map((s): Align => {

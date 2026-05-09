@@ -5,11 +5,11 @@
 import type { Mark, Node } from '@milkdown/kit/prose/model';
 import { Plugin, PluginKey } from '@milkdown/kit/prose/state';
 import { $prose } from '@milkdown/kit/utils';
+import { type Align, formatTable, type ParsedTable } from '../../shared/format-table';
 import { getAllBlockIds, SYNC_DIAG_DETAIL } from './block-id-plugin';
 import type { CitationAttrs } from './citation-plugin';
 import { serializeCitation } from './citation-plugin';
 import { syncLog } from './sync-debug';
-import { type Align, type ParsedTable, formatTable } from '../../shared/format-table';
 
 export const blockSyncPluginKey = new PluginKey<BlockSyncPluginState>('block-sync');
 
@@ -511,7 +511,7 @@ export function nodeToMarkdownFragment(node: Node): string {
           cells.push(escapePipesOutsideCode(rawContent));
           if (isHeaderRow) {
             const align = (cellNode.attrs as { align?: string | null }).align;
-            separator.push((align === 'left' || align === 'center' || align === 'right') ? align : null);
+            separator.push(align === 'left' || align === 'center' || align === 'right' ? align : null);
           }
         });
 

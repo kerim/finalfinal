@@ -603,7 +603,8 @@ struct MilkdownEditor: NSViewRepresentable {
                 object: nil,
                 queue: .main
             ) { [weak self] _ in
-                self?.webView?.evaluateJavaScript("window.FinalFinal.insertTable(3, 2)") { _, _ in }
+                guard let self, self.isEditorReady, !self.isCleanedUp else { return }
+                self.webView?.evaluateJavaScript("window.FinalFinal.insertTable(3, 2)") { _, _ in }
             }
         }
 

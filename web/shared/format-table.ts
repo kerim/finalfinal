@@ -53,17 +53,17 @@ function buildSeparatorCell(align: Align, columnWidth: number): string {
     case 'left': {
       // colon + dashes = columnWidth
       const dashes = columnWidth - 1;
-      return ':' + '-'.repeat(dashes);
+      return `:${'-'.repeat(dashes)}`;
     }
     case 'right': {
       // dashes + colon = columnWidth
       const dashes = columnWidth - 1;
-      return '-'.repeat(dashes) + ':';
+      return `${'-'.repeat(dashes)}:`;
     }
     case 'center': {
       // colon + dashes + colon = columnWidth; minimum 3 dashes
       const dashes = columnWidth - 2;
-      return ':' + '-'.repeat(dashes) + ':';
+      return `:${'-'.repeat(dashes)}:`;
     }
     default: {
       // null — just dashes
@@ -113,19 +113,48 @@ export function formatTable(table: ParsedTable): string {
 
   const formatRow = (cells: string[]): string => {
     const padded = widths.map((w, i) => padEnd(cells[i] ?? '', w));
-    return '| ' + padded.join(' | ') + ' |';
+    return `| ${padded.join(' | ')} |`;
   };
 
   const headerLine = formatRow(header);
 
-  const separatorLine =
-    '| ' +
-    widths.map((w, i) => buildSeparatorCell(separator[i] ?? null, w)).join(' | ') +
-    ' |';
+  const separatorLine = `| ${widths.map((w, i) => buildSeparatorCell(separator[i] ?? null, w)).join(' | ')} |`;
 
   const bodyLines = rows.map(formatRow);
 
   return [headerLine, separatorLine, ...bodyLines].join('\n');
+}
+
+// MARK: - Truncation
+
+export const MAX_TABLE_ROWS = 1000;
+export const MAX_TABLE_COLS = 100;
+
+/**
+ * Truncate a ParsedTable to MAX_TABLE_ROWS × MAX_TABLE_COLS.
+ * Returns the (possibly truncated) table and a flag indicating whether
+ * truncation occurred. The originals' dimensions are the caller's
+ * responsibility to capture before calling this function if needed for
+ * reporting.
+ */
+export function truncateParsedTable(table: ParsedTable): { table: ParsedTable; truncated: boolean } {
+  let header = table.header;
+  let separator = table.separator;
+  let rows = table.rows;
+  let truncated = false;
+
+  if (header.length > MAX_TABLE_COLS) {
+    header = header.slice(0, MAX_TABLE_COLS);
+    separator = separator.slice(0, MAX_TABLE_COLS);
+    rows = rows.map((r) => r.slice(0, MAX_TABLE_COLS));
+    truncated = true;
+  }
+  if (rows.length > MAX_TABLE_ROWS) {
+    rows = rows.slice(0, MAX_TABLE_ROWS);
+    truncated = true;
+  }
+
+  return { table: { header, separator, rows }, truncated };
 }
 
 // MARK: - TSV Parser
@@ -169,9 +198,9 @@ function trimTrailingEmpty(cells: string[]): string[] {
  * truncated.
  */
 function normalizeColumnCount(rawRows: string[][]): { rows: string[][]; columnCount: number } {
-  const counts = rawRows.map(r => r.length);
+  const counts = rawRows.map((r) => r.length);
   const columnCount = mode(counts);
-  const rows = rawRows.map(row => {
+  const rows = rawRows.map((row) => {
     if (row.length === columnCount) return row;
     if (row.length < columnCount) {
       return [...row, ...new Array(columnCount - row.length).fill('')];
@@ -329,15 +358,15 @@ export function parseHTMLTable(html: string): ParsedTable | null {
   if (parsedRows.length === 0) return null;
 
   // Determine header row: first row with hasHeader, else first row
-  const headerIndex = parsedRows.findIndex(r => r.hasHeader);
+  const headerIndex = parsedRows.findIndex((r) => r.hasHeader);
   const effectiveHeaderIndex = headerIndex === -1 ? 0 : headerIndex;
 
   // Split into header and body
   const headerCells = parsedRows[effectiveHeaderIndex].cells;
   const bodyRows = parsedRows
     .slice(effectiveHeaderIndex + 1)
-    .filter(r => !r.hasHeader || effectiveHeaderIndex === 0)
-    .map(r => r.cells);
+    .filter((r) => !r.hasHeader || effectiveHeaderIndex === 0)
+    .map((r) => r.cells);
 
   if (headerCells.length === 0) return null;
 

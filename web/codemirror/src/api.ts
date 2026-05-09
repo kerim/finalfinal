@@ -1,4 +1,3 @@
-import { formatTableCommand, insertTableCommand } from './table-format';
 import {
   findNext as cmFindNext,
   findPrevious as cmFindPrevious,
@@ -36,6 +35,7 @@ import {
 import { setFocusModeEffect, setFocusModeEnabled } from './focus-mode-plugin';
 import { dismissImageCaptionPopup } from './image-caption-popup';
 import { installLineHeightFix, invalidateHeadingMetricsCache } from './line-height-fix';
+import { formatTableCommand, insertTableCommand } from './table-format';
 import type { AnnotationType, FindOptions, FindResult, ParsedAnnotation, SearchState } from './types';
 
 // --- Pending drop position for image drops ---

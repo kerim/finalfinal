@@ -56,9 +56,7 @@ function setColumnAlign(view: EditorView, align: string | null): void {
     const cellPos = rect.tableStart + cellOffset;
     const cellNode = state.doc.nodeAt(cellPos);
     if (!cellNode) return;
-    view.dispatch(
-      state.tr.setNodeMarkup(cellPos, undefined, { ...cellNode.attrs, align })
-    );
+    view.dispatch(state.tr.setNodeMarkup(cellPos, undefined, { ...cellNode.attrs, align }));
   } catch {
     // not in table
   }
@@ -144,25 +142,27 @@ function narrowToHeadCell(view: EditorView): void {
   }
 }
 
-// TEMPORARY DIAGNOSTIC LOGGING — remove after Phase A diagnosis.
 // Routes through the errorHandler bridge so logs appear in Xcode/xclog under
 // the .editor DebugLog category (type='debug'). Falls back to console.log when
 // the bridge isn't present (e.g., outside WKWebView).
 const log = (...args: unknown[]) => {
-  const msg = '[table-tools] ' + args
-    .map((a) => {
-      if (typeof a === 'string') return a;
-      try { return JSON.stringify(a); } catch { return String(a); }
-    })
-    .join(' ');
+  const msg =
+    '[table-tools] ' +
+    args
+      .map((a) => {
+        if (typeof a === 'string') return a;
+        try {
+          return JSON.stringify(a);
+        } catch {
+          return String(a);
+        }
+      })
+      .join(' ');
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const handler = (window as any).webkit?.messageHandlers?.errorHandler;
   if (handler?.postMessage) handler.postMessage({ type: 'debug', message: msg });
   else console.log(msg);
 };
-
-// Canary — confirms a fresh bundle is loaded.
-log('module loaded — diagnostic v1');
 
 export const tableToolsPlugin = $prose(() => {
   let toolbar: HTMLElement | null = null;
@@ -171,10 +171,12 @@ export const tableToolsPlugin = $prose(() => {
   const btn = (label: string): HTMLButtonElement =>
     toolbar!.querySelector(`[aria-label="${label}"]`) as HTMLButtonElement;
 
-  // TEMPORARY: instruments a click handler so we can see exactly what fails.
   const wireBtn = (
     label: string,
-    cmd: (state: EditorView['state'], dispatch: (tr: ReturnType<EditorView['state']['tr']['setMeta']> extends infer T ? T : never) => void) => boolean,
+    cmd: (
+      state: EditorView['state'],
+      dispatch: (tr: ReturnType<EditorView['state']['tr']['setMeta']> extends infer T ? T : never) => void
+    ) => boolean
   ) => {
     const button = btn(label);
     log('wireBtn: binding', label, 'button found?', !!button);
@@ -202,7 +204,7 @@ export const tableToolsPlugin = $prose(() => {
             const t = tr as { steps: unknown[]; docChanged: boolean };
             log(`  dispatch called: tr.steps.length=${t.steps.length} docChanged=${t.docChanged}`);
             currentView!.dispatch(tr as Parameters<EditorView['dispatch']>[0]);
-          },
+          }
         );
         log(`  cmd returned ${result}, dispatched=${dispatched}`);
       } catch (e) {
