@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.101] - 2026-05-10
+
 ### Added
 
 - **GFM table support across both editors** — full table feature in Milkdown (WYSIWYG) and CodeMirror (source). Three insertion paths (`/table` slash command, Insert menu, toolbar button) drop a 3×2 table (1 header + 2 data rows). Milkdown gets a floating cell toolbar with row/column add/delete and per-column alignment; CodeMirror keeps the GFM markdown. Slash command auto-hides when the cursor is inside an existing table to prevent GFM-invalid nesting.
