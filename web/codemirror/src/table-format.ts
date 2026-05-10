@@ -90,10 +90,25 @@ export function insertTableCommand(rows: number, cols: number): void {
 
   const { head } = view.state.selection.main;
   const line = view.state.doc.lineAt(head);
-  const insertPos = line.to;
+
+  if (line.length === 0) {
+    // Cursor sits on an empty line (typical after `/table` deletes its slash
+    // text). The empty line already provides the blank-line separator from
+    // any preceding block; inserting another `\n\n` would leave two blank
+    // lines above the table. At the start of the document, drop the leading
+    // newline entirely so the table sits at the very top.
+    const atStartOfDoc = line.from === 0;
+    const insert = atStartOfDoc ? tableStr : `\n${tableStr}`;
+    const offset = atStartOfDoc ? 0 : 1;
+    view.dispatch({
+      changes: { from: line.to, to: line.to, insert },
+      selection: { anchor: line.to + offset },
+    });
+    return;
+  }
 
   view.dispatch({
-    changes: { from: insertPos, to: insertPos, insert: `\n\n${tableStr}` },
-    selection: { anchor: insertPos + 2 },
+    changes: { from: line.to, to: line.to, insert: `\n\n${tableStr}` },
+    selection: { anchor: line.to + 2 },
   });
 }

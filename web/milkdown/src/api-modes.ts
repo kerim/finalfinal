@@ -778,12 +778,18 @@ export function insertTable(rows: number, cols: number): void {
 
     const tableNode = tableType.create(null, [headerRow, ...bodyRows]);
 
-    // Insert after the current selection's top-level block
+    // If the cursor is inside an empty top-level paragraph (the typical case
+    // after `/table` deletes its slash text), replace that paragraph with the
+    // table. Otherwise insert after the current top-level block.
     const { from } = view.state.selection;
     const $from = view.state.doc.resolve(from);
-    const insertPos = $from.after(1);
+    const topLevel = $from.depth >= 1 ? $from.node(1) : null;
+    const isEmptyTopParagraph =
+      topLevel !== null && topLevel.type.name === 'paragraph' && topLevel.content.size === 0;
 
-    const tr = view.state.tr.insert(insertPos, tableNode);
+    const tr = isEmptyTopParagraph
+      ? view.state.tr.replaceWith($from.before(1), $from.after(1), tableNode)
+      : view.state.tr.insert($from.after(1), tableNode);
     view.dispatch(tr);
     view.focus();
   } catch (e) {
