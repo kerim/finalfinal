@@ -1,9 +1,12 @@
 /**
  * Shared GFM pipe table formatting utility.
  *
- * Provides column-width padding for GFM pipe tables, plus parsers for
+ * Provides compact (unpadded) GFM pipe table output, plus parsers for
  * TSV and HTML table content. Used by the Milkdown block-sync serializer,
  * both paste handlers, and the CodeMirror formatTable() command.
+ *
+ * Separator cells use single-dash forms (`-`, `:-`, `-:`, `:-:`) to match
+ * the output of mdast-util-gfm-table when tablePipeAlign: false.
  */
 
 // MARK: - Types
@@ -22,104 +25,32 @@ export interface ParsedTable {
 // MARK: - Formatting
 
 /**
- * Returns the display width of a string, counted in Unicode code points.
- * Handles emoji correctly; CJK characters count as 1 (known limitation).
- */
-function codePointLength(str: string): number {
-  return [...str].length;
-}
-
-/**
- * Pad a string to the target width with trailing spaces.
- * If the string is already at or beyond targetWidth, it is returned as-is.
- */
-function padEnd(str: string, targetWidth: number): string {
-  const len = codePointLength(str);
-  if (len >= targetWidth) return str;
-  return str + ' '.repeat(targetWidth - len);
-}
-
-/**
- * Build the separator cell string for a given alignment and column width.
- * The dashes section is padded so the total entry fills the column width.
+ * Format a ParsedTable into a compact GFM pipe table string.
  *
- * Minimum column widths (to satisfy GFM's 3-dash minimum inside colons):
- *   null       → 3  (e.g. `---`)
- *   left/right → 4  (e.g. `:---` or `---:`)
- *   center     → 5  (e.g. `:---:`)
- */
-function buildSeparatorCell(align: Align, columnWidth: number): string {
-  switch (align) {
-    case 'left': {
-      // colon + dashes = columnWidth
-      const dashes = columnWidth - 1;
-      return `:${'-'.repeat(dashes)}`;
-    }
-    case 'right': {
-      // dashes + colon = columnWidth
-      const dashes = columnWidth - 1;
-      return `${'-'.repeat(dashes)}:`;
-    }
-    case 'center': {
-      // colon + dashes + colon = columnWidth; minimum 3 dashes
-      const dashes = columnWidth - 2;
-      return `:${'-'.repeat(dashes)}:`;
-    }
-    default: {
-      // null — just dashes
-      return '-'.repeat(columnWidth);
-    }
-  }
-}
-
-/**
- * Minimum column width required for a given alignment to satisfy GFM's
- * 3-dash rule (the dashes portion inside any colons must be >= 3).
- */
-function minColumnWidth(align: Align): number {
-  switch (align) {
-    case 'center':
-      return 5; // :---: = 2 colons + 3 dashes
-    case 'left':
-    case 'right':
-      return 4; // :--- or ---: = 1 colon + 3 dashes
-    default:
-      return 3; // --- = 3 dashes
-  }
-}
-
-/**
- * Format a ParsedTable into a GFM pipe table string.
- *
- * Each column is padded to the maximum code-point width across all cells
- * (header + body), with a floor set by the alignment type.
+ * Cells are not padded. Separator cells use single-dash forms to match
+ * mdast-util-gfm-table's tablePipeAlign: false output (markdown-table@3.0.4
+ * uses size=1 when alignDelimiters=false).
  */
 export function formatTable(table: ParsedTable): string {
   const { header, separator, rows } = table;
-  const columnCount = header.length;
 
-  // Compute per-column widths
-  const widths: number[] = new Array(columnCount).fill(0);
+  const formatRow = (cells: string[]): string => `| ${cells.map((c) => c ?? '').join(' | ')} |`;
 
-  for (let col = 0; col < columnCount; col++) {
-    const align = separator[col] ?? null;
-    let width = minColumnWidth(align);
-    width = Math.max(width, codePointLength(header[col] ?? ''));
-    for (const row of rows) {
-      width = Math.max(width, codePointLength(row[col] ?? ''));
+  const formatSeparator = (align: Align): string => {
+    switch (align) {
+      case 'left':
+        return ':-';
+      case 'right':
+        return '-:';
+      case 'center':
+        return ':-:';
+      default:
+        return '-';
     }
-    widths[col] = width;
-  }
-
-  const formatRow = (cells: string[]): string => {
-    const padded = widths.map((w, i) => padEnd(cells[i] ?? '', w));
-    return `| ${padded.join(' | ')} |`;
   };
 
   const headerLine = formatRow(header);
-
-  const separatorLine = `| ${widths.map((w, i) => buildSeparatorCell(separator[i] ?? null, w)).join(' | ')} |`;
-
+  const separatorLine = `| ${separator.map(formatSeparator).join(' | ')} |`;
   const bodyLines = rows.map(formatRow);
 
   return [headerLine, separatorLine, ...bodyLines].join('\n');

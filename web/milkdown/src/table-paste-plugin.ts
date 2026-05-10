@@ -9,6 +9,7 @@
  * Registration: must appear BEFORE .use(clipboard) in main.ts.
  */
 
+import type { Node as PMNode, Schema } from '@milkdown/kit/prose/model';
 import { Plugin, PluginKey, TextSelection } from '@milkdown/kit/prose/state';
 import type { EditorView } from '@milkdown/kit/prose/view';
 import { $prose } from '@milkdown/kit/utils';
@@ -116,6 +117,25 @@ function insertTableMarkdown(view: EditorView, table: ParsedTable): void {
   }
 }
 
+// MARK: - Inline link builder
+
+function buildInlineContent(text: string, schema: Schema): PMNode[] {
+  const re = /\[([^\]]+)\]\(([^)\s]+)(?:\s+"([^"]*)")?\)/g;
+  const nodes: PMNode[] = [];
+  let last = 0;
+  for (const m of text.matchAll(re)) {
+    const idx = m.index;
+    if (idx > last) nodes.push(schema.text(text.slice(last, idx)));
+    const linkMark = schema.marks.link;
+    // m[3] is empty-string for title="" syntax; omitting matches remark/cmark behavior
+    const attrs = m[3] ? { href: m[2], title: m[3] } : { href: m[2] };
+    nodes.push(schema.text(m[1], linkMark ? [linkMark.create(attrs)] : []));
+    last = idx + m[0].length;
+  }
+  if (last < text.length) nodes.push(schema.text(text.slice(last)));
+  return nodes;
+}
+
 // MARK: - Plugin
 
 export const tablePastePlugin = $prose(
@@ -155,7 +175,12 @@ export const tablePastePlugin = $prose(
               // at table-closing boundaries where default bias could jump outside.
               const $head = view.state.doc.resolve(view.state.selection.head);
               let tr = view.state.tr.setSelection(TextSelection.near($head, 1));
-              tr = tr.insertText(plain);
+              if (plain) {
+                // replaceWith is mark-aware; unlike insertText it does not apply
+                // storedMarks at the cursor, which is correct for clipboard paste.
+                const { from, to } = tr.selection;
+                tr = tr.replaceWith(from, to, buildInlineContent(plain, view.state.schema));
+              }
               view.dispatch(tr);
               log('inside-cell handled', { plainLen: plain.length });
               return true;

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { defaultValueCtx, Editor, rootCtx } from '@milkdown/kit/core';
 import { commonmark } from '@milkdown/kit/preset/commonmark';
-import { gfm } from '@milkdown/kit/preset/gfm';
+import { gfm, remarkGFMPlugin } from '@milkdown/kit/preset/gfm';
 import { Schema } from '@milkdown/kit/prose/model';
 import { getMarkdown } from '@milkdown/kit/utils';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -455,6 +455,61 @@ describe('stock Milkdown serializer — highlight preservation', () => {
 });
 
 // ----------------------------------------------------------------------------
+// Fix 2a: stock Milkdown serializer produces compact table output
+// Verifies that tablePipeAlign: false propagates through the remarkGFMPlugin
+// options slice so getMarkdown() emits compact (unpadded) table source.
+// ----------------------------------------------------------------------------
+
+describe('stock Milkdown serializer — compact table output (Fix 2a)', () => {
+  let editor: Editor | null = null;
+
+  afterEach(async () => {
+    if (editor) {
+      await editor.destroy();
+      editor = null;
+    }
+  });
+
+  async function makeEditorCompact(markdown: string): Promise<Editor> {
+    const div = document.createElement('div');
+    document.body.appendChild(div);
+    const e = await Editor.make()
+      .config((ctx) => {
+        ctx.set(rootCtx, div);
+        ctx.set(defaultValueCtx, markdown);
+      })
+      .config((ctx) => {
+        ctx.update(remarkGFMPlugin.options.key, () => ({ tablePipeAlign: false }));
+      })
+      .use(commonmark)
+      .use(gfm)
+      .use(highlightPlugin)
+      .create();
+    editor = e;
+    return e;
+  }
+
+  it('table with varied-length cells serializes without column padding', async () => {
+    const shortCell = 'x';
+    const longCell = 'a'.repeat(80);
+    const markdown = `| Short | Long |\n| --- | --- |\n| ${shortCell} | ${longCell} |`;
+    const e = await makeEditorCompact(markdown);
+    const result = e.action(getMarkdown());
+    // With tablePipeAlign: false, the short cell must not be padded to 80 chars.
+    // lines[0]=header, lines[1]=separator, lines[2]=body row
+    const tableLines = result.split('\n').filter((l) => l.includes('|'));
+    expect(tableLines.length).toBeGreaterThanOrEqual(3);
+    const bodyLine = tableLines[2];
+    const cols = bodyLine
+      .split('|')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    // Short cell must be exactly 'x', not padded to the width of 'a'.repeat(80)
+    expect(cols[0]).toBe(shortCell);
+  });
+});
+
+// ----------------------------------------------------------------------------
 // Table serializer — Layer 1 regression guard
 // Pure ProseMirror schema manipulation + nodeToMarkdownFragment(), no WebView.
 // ----------------------------------------------------------------------------
@@ -562,8 +617,8 @@ describe('nodeToMarkdownFragment — table serializer', () => {
     const output = nodeToMarkdownFragment(table);
     const lines = output.split('\n');
     expect(lines).toHaveLength(3);
-    // Separator line contains dashes
-    expect(lines[1]).toMatch(/---/);
+    // Separator line contains at least one dash (compact format: single-dash forms)
+    expect(lines[1]).toMatch(/-/);
   });
 
   // Case 11: Per-column alignment preserved in separator row
@@ -598,19 +653,19 @@ describe('nodeToMarkdownFragment — table serializer', () => {
     expect(cols[3]).toMatch(/^-+$/); // null: just dashes
   });
 
-  // Case 12: Empty cell produces a padded cell, not ||
+  // Case 12: Empty cell is not collapsed to ||
   it('empty cell does not produce ||', () => {
     const table = makeTable([tableHeaderCell(null, { text: 'H' })], [[tableDataCell(null)]]);
     const output = nodeToMarkdownFragment(table);
     const lines = output.split('\n');
     const bodyLine = lines[2];
-    // The body row must have pipe-delimited content; the cell must not be empty (no ||)
-    expect(bodyLine).toMatch(/\|[\s]+\|/);
+    // The body row must not collapse cell content to || — spaces around the cell content
+    expect(bodyLine).toMatch(/\|[\s]*\|/);
     expect(bodyLine).not.toContain('||');
   });
 
-  // Case 13: Column-width padding is idempotent
-  it('column-width padding is idempotent (accumulation guard)', () => {
+  // Case 13: Compact format is idempotent (parse → format → parse → format produces same output)
+  it('compact format is idempotent (accumulation guard)', () => {
     // Simple GFM table row parser for the test
     function parseFormattedTable(md: string): ParsedTable {
       const lines = md.split('\n');

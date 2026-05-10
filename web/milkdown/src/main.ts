@@ -6,7 +6,7 @@ import { defaultValueCtx, Editor, editorViewCtx } from '@milkdown/kit/core';
 import { clipboard } from '@milkdown/kit/plugin/clipboard';
 import { history } from '@milkdown/kit/plugin/history';
 import { commonmark } from '@milkdown/kit/preset/commonmark';
-import { gfm } from '@milkdown/kit/preset/gfm';
+import { gfm, remarkGFMPlugin } from '@milkdown/kit/preset/gfm';
 import { Plugin, PluginKey } from '@milkdown/kit/prose/state';
 import { $prose, getMarkdown } from '@milkdown/kit/utils';
 import { annotationDisplayPlugin } from './annotation-display-plugin';
@@ -118,6 +118,7 @@ import {
 import { headingNodeViewPlugin } from './heading-nodeview-plugin';
 import { highlightPlugin } from './highlight-plugin';
 import { imagePlugin } from './image-plugin';
+import { markdownLinkPlugin } from './markdown-link-input-rule';
 import './link-click-handler';
 import { linkTooltipPlugin, openLinkEdit } from './link-tooltip';
 import { searchPlugin } from './search-plugin';
@@ -198,7 +199,11 @@ async function initEditor() {
       .use(imagePlugin) // Parse ![alt](media/...) into figure nodes before commonmark
       .use(commonmark)
       .use(gfm)
+      .config((ctx) => {
+        ctx.update(remarkGFMPlugin.options.key, () => ({ tablePipeAlign: false }));
+      })
       .use(autolinkPlugin) // Auto-link bare URLs on space - AFTER commonmark for link schema
+      .use(markdownLinkPlugin) // Convert [text](url) to link mark on ) keypress - AFTER commonmark for link schema
       .use(highlightPlugin) // ==highlight== syntax - AFTER commonmark for serialization
       .use(history)
       .use(tablePastePlugin) // Intercept TSV/HTML table paste before clipboard plugin
