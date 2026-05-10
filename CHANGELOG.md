@@ -6,6 +6,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **GFM table support across both editors** — full table feature in Milkdown (WYSIWYG) and CodeMirror (source). Three insertion paths (`/table` slash command, Insert menu, toolbar button) drop a 3×2 table (1 header + 2 data rows). Milkdown gets a floating cell toolbar with row/column add/delete and per-column alignment; CodeMirror keeps the GFM markdown. Slash command auto-hides when the cursor is inside an existing table to prevent GFM-invalid nesting.
+- **TSV / HTML table paste** — pasting TSV or `<table>` HTML outside a table builds real ProseMirror table nodes (Milkdown) or inserts a GFM markdown block (CodeMirror); inside a cell the content is flattened to plain text. Capped at 1000×100 with a `tableInsertTruncated` WKScriptMessage bridge that surfaces an `NSAlert` from the Swift coordinator.
+- **Markdown link InputRule inside cells** — typing `[text](url)` then `)` inside a table cell converts to a real link mark. Registered as `markdownLinkPlugin` alongside `autolinkPlugin`.
+- **Three-layer table test suite** — 13 Vitest serializer cases (marks, alignment, pipe escaping, hard-break, header rows, padding idempotency) guard `block-sync-plugin.ts:474`; five `MilkdownTableMarkTests` exercise bold / italic / code / link / highlight inside cells across the 500ms block-sync poll cycle; `TableRoundtripTests` asserts AST equality for 5-cycle round-trips, a 10×10 performance smoke, and DOCX export integrity. Adds a `tables-roundtrip.md` golden fixture covering alignment, edge cases, and empty cells.
+- **Shared `formatTable()` utility** at `web/shared/format-table.ts` — single source of truth for compact pipe-table formatting; consumed by both editors and by the paste plugins. `truncateParsedTable` was hoisted here too, eliminating duplicate copies in `milkdown/table-paste-plugin.ts` and `codemirror/table-paste.ts`.
+- **`docs/lessons/tables/`** — `serializer-rules.md` (8 rules, dual-path explanation, `compareTableASTs` position-key stripping note) and `export-checklist.md` (automated CI checks + manual DOCX/ODT/PDF/Markdown visual checklist). Tables section added to Getting Started, replacing the prior "Tables and Formulas — coming soon" stub.
+
+### Fixed
+
+- **Table serializer stub silently produced empty markdown** in `block-sync-plugin.ts:474` — replaced with the real `mdast-util-gfm-table` GFM serializer, so tables now persist correctly to SQLite. The Vitest Layer 1 suite is the regression guard.
+- **In-cell paste dropped link marks** — ProseMirror's `handlePaste` chain is bypassed for inside-cell pastes (Milkdown's clipboard plugin runs first and strips marks). `tablePastePlugin` now installs a capture-phase `paste` listener on `editorView.dom` via a `view()` callback; the listener `preventDefault` + `stopImmediatePropagation` and runs the existing `buildInlineContent[FromHTML]` path that preserves link marks. Image pastes are deferred to `imagePasteDropPlugin` via `clipboardData.items` detection (mirrors `image-plugin.ts:556-563`; the `types[]` array is unreliable on Safari/WebKit). The `view()` returns a `destroy()` that removes the listener on editor recreate. Defense-in-depth: the inside-cell branch in `handlePaste` is preserved in case ProseMirror does dispatch for some path.
+- **Cross-cell content bleed on table paste** — the inside-cell branch now fires first and always returns true, blocking Milkdown's generic clipboard plugin from inserting block content across cell boundaries. `TextSelection.near($head, 1)` narrows any active `CellSelection` before `replaceWith`.
+- **Toolbar buttons misbehaved on multi-cell selection** — added `narrowToHeadCell()` helper that collapses `CellSelection` to a single cell at `sel.head` before any of the six toolbar commands fire. Skips `TextSelection` (no multi-cell span possible).
+- **Cross-editor undo polluted the timeline** — eight programmatic content-replacement dispatch sites in CodeMirror (`setContent`) and Milkdown (`setContent` / `applyBlocks` / `setContentWithBlockIds`, including the image-metadata `metaTr` follow-ups) now mark transactions with `addToHistory: false`. Lesson recorded in `docs/lessons/prosemirror/content-handling.md`.
+- **`/table` left a stray blank paragraph above the inserted table** — Milkdown `insertTable` now replaces an empty top-level paragraph instead of inserting after it; CodeMirror `insertTableCommand` drops the extra leading newline on empty lines and inserts no newline at all at the very top of the document.
+- **Inside-table heuristic missed pasted content following a table line** — CodeMirror `table-paste.ts` now also checks the previous non-blank line for a leading pipe character. TSV detection threshold tightened to `header.length >= 2 && rows.length >= 1` in both editors to suppress false-positive table conversion.
+- **`compareTableASTs` false negatives from column-width changes** — now strips `position` keys before JSON comparison, so column-width padding shifting source offsets no longer breaks AST equality assertions in `TableRoundtripTests`.
+
+### Changed
+
+- **Compact table source format** — `tablePipeAlign: false` on `remarkGFMPlugin` (mode-switch path) plus rewritten `formatTable()` (block-sync path) emit single-space cells and single-dash separators instead of width-padded columns. Both paths must match so DB writes and mode-switch reads stay consistent.
+- **`mdast-util-from-markdown`, `mdast-util-gfm-table`, `micromark-extension-gfm-table` promoted to direct milkdown package dependencies** — they were transitive-only, which caused Rollup to fail resolution once the real GFM serializer was wired up.
+- **Diagnostic noise removed** — dropped the `[table-paste]` log helper and six call sites; trimmed verbose factory-init / `handlePaste` entry payloads; collapsed dead-info comments left over from the bug3 investigation. ~50 lines removed from `table-paste-plugin.ts` with no behavior change. Biome auto-fix pass on 17 files (template literals, literal keys, optional chains, import order).
+- **`isEditorReady` / `isCleanedUp` guard** added to Milkdown's `insertTableObserver` to mirror the CodeMirror pattern; removes a class of "observer fires after editor torn down" hazards. Removed `TEMPORARY` comment labels and a stray canary log from `table-tools-plugin.ts`.
+
 ## [0.2.100] - 2026-05-05
 
 ### Fixed

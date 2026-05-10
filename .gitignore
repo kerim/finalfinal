@@ -51,3 +51,6 @@ docs/course/
 
 # Diagnostic capture artifacts (Claude debugging sessions)
 .diagnostic-*
+
+# Misplaced sibling worktree (belongs at /Users/niyaro/Code/ff-dev)
+ff-dev/
