@@ -62,9 +62,7 @@ describe('buildInlineContentFromHTML', () => {
   });
 
   it('extracts multiple links', () => {
-    const nodes = buildInlineContentFromHTML(
-      '<a href="http://a.com">A</a> and <a href="http://b.com">B</a>'
-    );
+    const nodes = buildInlineContentFromHTML('<a href="http://a.com">A</a> and <a href="http://b.com">B</a>');
     expect(nodes).not.toBeNull();
     expect(nodes!.filter((n) => n.href)).toHaveLength(2);
     expect(nodes!.find((n) => n.href === 'http://a.com')?.text).toBe('A');

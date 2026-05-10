@@ -16,27 +16,6 @@ import { $prose } from '@milkdown/kit/utils';
 import type { ParsedTable } from '../../shared/format-table';
 import { formatTable, parseHTMLTable, parseTSV, truncateParsedTable } from '../../shared/format-table';
 
-// MARK: - Diagnostics (mirrors table-tools-plugin.ts pattern)
-
-const log = (...args: unknown[]) => {
-  const msg =
-    '[table-paste] ' +
-    args
-      .map((a) => {
-        if (typeof a === 'string') return a;
-        try {
-          return JSON.stringify(a);
-        } catch {
-          return String(a);
-        }
-      })
-      .join(' ');
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const handler = (window as any).webkit?.messageHandlers?.errorHandler;
-  if (handler?.postMessage) handler.postMessage({ type: 'debug', message: msg });
-  else console.log(msg);
-};
-
 // MARK: - Helpers
 
 function isInsideTable(view: EditorView): boolean {
@@ -204,139 +183,105 @@ function handleInsideCellPaste(view: EditorView, html: string, text: string): bo
     // sources where the href lives in text/html <a> elements, not text/plain.
     // Markdown regex fallback: handles plain-text sources (CodeMirror, terminal).
     // Skip HTML extraction for table pastes — plain is already flattened cells.
-    const inlineNodes = (!parsed && buildInlineContentFromHTML(html, view.state.schema))
-      || buildInlineContent(plain, view.state.schema);
-    log('inlineNodes', {
-      count: inlineNodes.length,
-      hasMarks: inlineNodes.some((n) => n.marks.length > 0),
-      first100: plain.slice(0, 100),
-    });
+    const inlineNodes =
+      (!parsed && buildInlineContentFromHTML(html, view.state.schema)) || buildInlineContent(plain, view.state.schema);
     tr = tr.replaceWith(from, to, inlineNodes);
   }
   view.dispatch(tr);
-  log('inside-cell handled', { plainLen: plain.length });
   return true;
 }
 
 // MARK: - Plugin
 
-export const tablePastePlugin = $prose(
-  () => {
-    log('*** tablePastePlugin factory: creating plugin ***');
-    return new Plugin({
-      key: new PluginKey('table-paste'),
-      // view() installs a DOM-level paste listener with capture:true so we run BEFORE
-      // ProseMirror's plugin chain. Necessary because Branch B2 of the diagnostic
-      // confirmed `handlePaste` (below) is never invoked for inside-cell pastes —
-      // some upstream plugin or ProseMirror itself short-circuits the chain.
-      // The listener handles only inside-cell pastes; outside-cell table-creation
-      // stays in handlePaste because it is not the failing path.
-      view(editorView) {
-        const handler = (e: ClipboardEvent) => {
-          const clipboard = e.clipboardData;
-          if (!clipboard) return;
+export const tablePastePlugin = $prose(() => {
+  return new Plugin({
+    key: new PluginKey('table-paste'),
+    // view() installs a DOM-level paste listener with capture:true so we run BEFORE
+    // ProseMirror's plugin chain. Necessary because handlePaste (below) is never
+    // invoked for inside-cell pastes — some upstream plugin or ProseMirror itself
+    // short-circuits the chain. The listener handles only inside-cell pastes;
+    // outside-cell table-creation stays in handlePaste because it is not the
+    // failing path.
+    view(editorView) {
+      const handler = (e: ClipboardEvent) => {
+        const clipboard = e.clipboardData;
+        if (!clipboard) return;
+        if (!isInsideTable(editorView)) return;
 
-          const insideCell = isInsideTable(editorView);
-          log('dom-paste', {
-            types: Array.from(clipboard.types),
-            editable: editorView.props.editable?.(editorView.state) ?? null,
-            insideCell,
-          });
+        // Defer image pastes to imagePasteDropPlugin. Use clipboardData.items
+        // (matching imagePasteDropPlugin's detection in image-plugin.ts:556-563),
+        // not clipboardData.types — Safari/WebKit can surface a payload with
+        // types: ["Files"] and no `image/*` entry while items still contains
+        // type: "image/png".
+        const hasImage = Array.from(clipboard.items ?? []).some((item) => item.type.startsWith('image/'));
+        if (hasImage) return;
 
-          // Only intercept inside table cells; outside cells stay with handlePaste.
-          if (!insideCell) return;
+        const html = clipboard.getData('text/html');
+        const text = clipboard.getData('text/plain');
 
-          // Defer image pastes to imagePasteDropPlugin. Use clipboardData.items
-          // (matching imagePasteDropPlugin's detection in image-plugin.ts:556-563),
-          // not clipboardData.types — Safari/WebKit can surface a payload with
-          // types: ["Files"] and no `image/*` entry while items still contains
-          // type: "image/png".
-          const hasImage = Array.from(clipboard.items ?? []).some((item) =>
-            item.type.startsWith('image/')
-          );
-          if (hasImage) return;
+        e.preventDefault();
+        e.stopImmediatePropagation();
+
+        handleInsideCellPaste(editorView, html, text);
+      };
+
+      editorView.dom.addEventListener('paste', handler, true);
+      return {
+        destroy() {
+          editorView.dom.removeEventListener('paste', handler, true);
+        },
+      };
+    },
+    props: {
+      handlePaste(view, event, _slice) {
+        try {
+          const clipboard = event.clipboardData;
+          if (!clipboard) return false;
 
           const html = clipboard.getData('text/html');
           const text = clipboard.getData('text/plain');
 
-          // Stop the browser default and prevent any other listener from running.
-          e.preventDefault();
-          e.stopImmediatePropagation();
-
-          handleInsideCellPaste(editorView, html, text);
-        };
-
-        editorView.dom.addEventListener('paste', handler, true);
-        return {
-          destroy() {
-            editorView.dom.removeEventListener('paste', handler, true);
-          },
-        };
-      },
-      props: {
-        handlePaste(view, event, _slice) {
-          log('*** handlePaste called ***');
-          try {
-            const clipboard = event.clipboardData;
-            log('handlePaste-entry', { hasClipboard: !!clipboard });
-            if (!clipboard) return false;
-
-            const html = clipboard.getData('text/html');
-            const text = clipboard.getData('text/plain');
-            const insideCell = isInsideTable(view);
-            log('handlePaste', {
-              insideCell,
-              htmlLen: html.length,
-              textLen: text.length,
-              hasTable: html.includes('<table'),
-              hasTab: text.includes('\t'),
-              sel: { from: view.state.selection.from, to: view.state.selection.to },
-            });
-
-            // Defense-in-depth: if ProseMirror somehow does invoke handlePaste
-            // for an inside-cell paste despite the DOM listener, handle it here
-            // rather than falling through to Milkdown's clipboard plugin.
-            if (insideCell) {
-              return handleInsideCellPaste(view, html, text);
-            }
-
-            // Outside a table: only insert a column-creating table for genuine sources.
-            // Require ≥2 columns AND ≥1 data row so single-line "col1\tcol2" pastes
-            // don't create header-only zero-row tables.
-            let parsed: ParsedTable | null = null;
-            if (html?.includes('<table')) parsed = parseHTMLTable(html);
-            if (!parsed && text && text.includes('\t')) {
-              const tsv = parseTSV(text);
-              if (tsv && tsv.header.length >= 2 && tsv.rows.length >= 1) parsed = tsv;
-            }
-            if (!parsed) return false;
-
-            const origRows = parsed.rows.length;
-            const origCols = parsed.header.length;
-            const { table, truncated } = truncateParsedTable(parsed);
-
-            try {
-              const succeeded = insertTableNode(view, table);
-              if (!succeeded) insertTableMarkdown(view, table);
-            } catch (schemaErr) {
-              log('schema insertion failed, falling back', schemaErr);
-              insertTableMarkdown(view, table);
-            }
-
-            if (truncated) {
-              (window as any).webkit?.messageHandlers?.tableInsertTruncated?.postMessage({
-                rows: origRows,
-                cols: origCols,
-              });
-            }
-
-            return true;
-          } catch (err) {
-            log('handlePaste error', err);
-            return false;
+          // Defense-in-depth: if ProseMirror does invoke handlePaste for an
+          // inside-cell paste despite the DOM listener, handle it here rather
+          // than falling through to Milkdown's clipboard plugin.
+          if (isInsideTable(view)) {
+            return handleInsideCellPaste(view, html, text);
           }
-        },
+
+          // Outside a table: only insert a column-creating table for genuine sources.
+          // Require ≥2 columns AND ≥1 data row so single-line "col1\tcol2" pastes
+          // don't create header-only zero-row tables.
+          let parsed: ParsedTable | null = null;
+          if (html?.includes('<table')) parsed = parseHTMLTable(html);
+          if (!parsed && text && text.includes('\t')) {
+            const tsv = parseTSV(text);
+            if (tsv && tsv.header.length >= 2 && tsv.rows.length >= 1) parsed = tsv;
+          }
+          if (!parsed) return false;
+
+          const origRows = parsed.rows.length;
+          const origCols = parsed.header.length;
+          const { table, truncated } = truncateParsedTable(parsed);
+
+          try {
+            const succeeded = insertTableNode(view, table);
+            if (!succeeded) insertTableMarkdown(view, table);
+          } catch {
+            insertTableMarkdown(view, table);
+          }
+
+          if (truncated) {
+            (window as any).webkit?.messageHandlers?.tableInsertTruncated?.postMessage({
+              rows: origRows,
+              cols: origCols,
+            });
+          }
+
+          return true;
+        } catch {
+          return false;
+        }
       },
-    });
-  }
-);
+    },
+  });
+});
