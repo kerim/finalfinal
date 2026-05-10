@@ -784,8 +784,7 @@ export function insertTable(rows: number, cols: number): void {
     const { from } = view.state.selection;
     const $from = view.state.doc.resolve(from);
     const topLevel = $from.depth >= 1 ? $from.node(1) : null;
-    const isEmptyTopParagraph =
-      topLevel !== null && topLevel.type.name === 'paragraph' && topLevel.content.size === 0;
+    const isEmptyTopParagraph = topLevel !== null && topLevel.type.name === 'paragraph' && topLevel.content.size === 0;
 
     const tr = isEmptyTopParagraph
       ? view.state.tr.replaceWith($from.before(1), $from.after(1), tableNode)
