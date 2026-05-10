@@ -48,3 +48,6 @@ docs/course/
 
 # Pre-commit test sentinel (mirrors annals)
 .last-test-pass
+
+# Diagnostic capture artifacts (Claude debugging sessions)
+.diagnostic-*
