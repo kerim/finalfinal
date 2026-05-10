@@ -158,10 +158,16 @@ trap 'rm -rf "$APPCAST_TMP"' EXIT
 
 cp "$RELEASES_DIR/FINAL-FINAL-v${VERSION}.zip" "$APPCAST_TMP/"
 
-"$GENERATE_APPCAST" \
+# Fetch the EdDSA private key via `security` and pipe to generate_appcast.
+# This bypasses the keychain ACL, which breaks whenever Sparkle's adhoc-signed
+# generate_appcast is rebuilt with a fresh code-signature hash.
+ED_KEY=$(security find-generic-password -s "https://sparkle-project.org" -a "ed25519" -w)
+echo "$ED_KEY" | "$GENERATE_APPCAST" \
+    --ed-key-file - \
     --download-url-prefix "https://github.com/kerim/finalfinal/releases/download/v${VERSION}/" \
     --maximum-deltas 0 \
     "$APPCAST_TMP/"
+unset ED_KEY
 
 cp "$APPCAST_TMP/appcast.xml" "$RELEASES_DIR/appcast.xml"
 
