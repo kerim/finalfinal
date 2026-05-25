@@ -32,6 +32,7 @@ temp/
 # Claude Code runtime (not project config)
 .claude/worktrees/
 .claude/settings.local.json
+.claude/settings.json.bak.*
 .claude/debug/
 docs/plans/
 docs/course/
