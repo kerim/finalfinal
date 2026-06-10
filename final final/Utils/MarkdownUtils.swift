@@ -66,6 +66,13 @@ enum MarkdownUtils {
             result = regex.stringByReplacingMatches(in: result, options: [], range: range, withTemplate: "$1")
         }
 
+        // Remove highlight markers: ==text==
+        let highlightPattern = "==(.+?)=="
+        if let regex = try? NSRegularExpression(pattern: highlightPattern, options: []) {
+            let range = NSRange(result.startIndex..., in: result)
+            result = regex.stringByReplacingMatches(in: result, options: [], range: range, withTemplate: "$1")
+        }
+
         // Remove inline code backticks: `code`
         let inlineCodePattern = "`([^`]+)`"
         if let regex = try? NSRegularExpression(pattern: inlineCodePattern, options: []) {

@@ -68,6 +68,7 @@ struct MilkdownEditor: NSViewRepresentable {
             controller.add(context.coordinator, name: "pasteImage")
             controller.add(context.coordinator, name: "requestImagePicker")
             controller.add(context.coordinator, name: "updateImageMeta")
+            controller.add(context.coordinator, name: "tableInsertTruncated")
 
             preloaded.navigationDelegate = context.coordinator
             context.coordinator.webView = preloaded

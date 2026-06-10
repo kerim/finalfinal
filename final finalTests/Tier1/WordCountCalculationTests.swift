@@ -47,6 +47,12 @@ struct WordCountCalculationTests {
         #expect(MarkdownUtils.wordCount(for: "__also bold__ _also italic_") == 4)
     }
 
+    @Test("Highlight markers don't count")
+    func highlightMarkers() {
+        #expect(MarkdownUtils.wordCount(for: "==highlighted== text") == 2)
+        #expect(MarkdownUtils.wordCount(for: "some ==multi word highlight== here") == 5)
+    }
+
     @Test("List markers don't count")
     func listMarkers() {
         #expect(MarkdownUtils.wordCount(for: "- one\n- two\n- three") == 3)
