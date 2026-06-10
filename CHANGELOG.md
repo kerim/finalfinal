@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **`==highlight==` markers inflated word counts and leaked into previews** — `MarkdownUtils.stripMarkdownSyntax` strips `**bold**`, `*italic*`, `~~strike~~`, backticks, links, and images but had no rule for highlight marks, so the literal `==` delimiters survived into the word-count tokenizer and section preview strings. Added a `==(.+?)==` stripper alongside the other inline-mark rules, with two new `WordCountCalculationTests` cases.
+- **Table-truncation alert never fired on the common startup path** — the preloaded-WebView claim block in `MilkdownEditor.swift` re-registers fourteen message handlers but omitted `tableInsertTruncated`, so pasting an oversized table (>1000×100 cap) on a preloaded-editor session threw a silent JS `TypeError` instead of surfacing the `NSAlert`. The handler is now registered on both paths.
+
 ## [0.2.101] - 2026-05-10
 
 ### Added
