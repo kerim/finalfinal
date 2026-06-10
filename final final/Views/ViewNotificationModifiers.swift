@@ -11,6 +11,7 @@ import SwiftUI
 
 extension View {
     /// Adds editor-related notification handlers
+    @MainActor
     func withEditorNotifications(
         editorState: EditorViewState,
         cursorRestore: Binding<CursorPosition?>,
@@ -36,108 +37,11 @@ extension View {
                 )
             }
             .onReceive(NotificationCenter.default.publisher(for: .toggleEditorMode)) { _ in
-                // Clear find bar state when switching editors
-                findBarState.clearSearch()
-
-                // Toggle between WYSIWYG and Source mode with anchor injection/extraction
-                if editorState.editorMode == .wysiwyg {
-                    // Switching TO source mode - inject anchors
-                    editorState.contentState = .editorTransition
-                    DebugLog.log(.editor, "[SWITCH→CM] Starting. content length=\(editorState.content.count)")
-
-                    // When zoomed, only inject anchors for zoomed sections
-                    let sectionsToInject: [SectionViewModel]
-                    if let zoomedIds = editorState.zoomedSectionIds {
-                        sectionsToInject = editorState.sections.filter { zoomedIds.contains($0.id) }
-                    } else {
-                        sectionsToInject = editorState.sections
-                    }
-
-                    // Flush editor content to blocks DB before computing offsets.
-                    // Without this, recently-inserted nodes (e.g. images via editor-first
-                    // approach) may not be in the blocks table yet, causing wrong offsets
-                    // and anchor injection corruption.
-                    editorState.flushContentToDatabase()
-                    DebugLog.log(.editor, "[SWITCH→CM] After flush")
-
-                    // Compute offsets from blocks (same data that produced editorState.content)
-                    var adjustedSections: [SectionViewModel] = []
-                    if let db = editorState.projectDatabase,
-                       let pid = editorState.currentProjectId {
-                        do {
-                            let fetchedBlocks: [Block]
-                            if let zoomedIds = editorState.zoomedSectionIds {
-                                let allBlocks = try db.fetchBlocks(projectId: pid)
-                                fetchedBlocks = ContentView.filterBlocksForZoomStatic(
-                                    allBlocks, zoomedIds: zoomedIds,
-                                    zoomedBlockRange: editorState.zoomedBlockRange)
-                            } else {
-                                fetchedBlocks = try db.fetchBlocks(projectId: pid)
-                            }
-                            DebugLog.log(.editor, "[SWITCH→CM] Fetched \(fetchedBlocks.count) blocks")
-                            let sorted = fetchedBlocks.sorted { a, b in
-                                let aKey = (a.sortOrder, a.blockType == .heading ? 0 : 1)
-                                let bKey = (b.sortOrder, b.blockType == .heading ? 0 : 1)
-                                return aKey < bKey
-                            }
-                            // MUST stay in sync with BlockParser.assembleMarkdown filtering
-                            let nonEmpty = sorted.filter { !BlockParser.isEmptyFragment($0.markdownFragment) }
-                            var blockOffset: [String: Int] = [:]
-                            var offset = 0
-                            for (i, block) in nonEmpty.enumerated() {
-                                if i > 0 { offset += 2 }
-                                blockOffset[block.id] = offset
-                                offset += block.markdownFragment.count
-                            }
-                            for section in sectionsToInject.sorted(by: { $0.sortOrder < $1.sortOrder }) {
-                                if let off = blockOffset[section.id] {
-                                    adjustedSections.append(section.withUpdates(startOffset: off))
-                                }
-                            }
-                            DebugLog.log(.editor, "[SWITCH→CM] Sections with offsets: \(adjustedSections.count)")
-                        } catch {
-                            DebugLog.log(.editor, "[SWITCH→CM] ERROR fetching blocks: \(error)")
-                        }
-                    }
-
-                    let withAnchors = sectionSyncService.injectSectionAnchors(
-                        markdown: editorState.content,
-                        sections: adjustedSections
-                    )
-                    DebugLog.log(.editor, "[SWITCH→CM] After anchors: length=\(withAnchors.count)")
-                    // Also inject bibliography marker for source mode
-                    let withBibMarker = sectionSyncService.injectBibliographyMarker(
-                        markdown: withAnchors,
-                        sections: sectionsToInject
-                    )
-                    editorState.sourceContent = withBibMarker
-                    editorState.toggleEditorMode()
-                    editorState.contentState = .idle
-                } else {
-                    // Switching FROM source mode TO WYSIWYG - set state BEFORE flush
-                    editorState.contentState = .editorTransition
-                    DebugLog.log(.editor, "[SWITCH→MW] Starting. sourceContent length=\(editorState.sourceContent.count)")
-                    editorState.flushContentToDatabase()
-
-                    // Extract anchors and strip bibliography marker
-                    let (cleaned, anchors) = sectionSyncService.extractSectionAnchors(
-                        markdown: editorState.sourceContent
-                    )
-                    DebugLog.log(.editor, "[SWITCH→MW] After extract: cleaned length=\(cleaned.count), anchors=\(anchors.count)")
-                    editorState.sourceAnchors = anchors
-                    // Also strip bibliography marker since Milkdown shouldn't see it
-                    editorState.content = SectionSyncService.stripBibliographyMarker(from: cleaned)
-                    editorState.toggleEditorMode()
-
-                    // CRITICAL: Delay returning to .idle to give Milkdown time to initialize
-                    // Milkdown's first few polls can return corrupted content (missing # from headers)
-                    // Keep .editorTransition active to suppress polling during this initialization window
-                    // The 1.5s delay covers: WebView load + FinalFinal init + first stable poll cycle
-                    Task {
-                        try? await Task.sleep(for: .milliseconds(1500))
-                        editorState.contentState = .idle
-                    }
-                }
+                handleEditorModeToggle(
+                    editorState: editorState,
+                    sectionSyncService: sectionSyncService,
+                    findBarState: findBarState
+                )
             }
             .onReceive(NotificationCenter.default.publisher(for: .didSaveCursorPosition)) { notification in
                 // Block toggle only during states that would cause data corruption
@@ -287,87 +191,42 @@ extension View {
         autoBackupService: AutoBackupService,
         documentManager: DocumentManager
     ) -> some View {
+        contentSyncObservers(
+            editorState: editorState,
+            sectionSyncService: sectionSyncService,
+            annotationSyncService: annotationSyncService,
+            bibliographySyncService: bibliographySyncService,
+            footnoteSyncService: footnoteSyncService,
+            autoBackupService: autoBackupService,
+            documentManager: documentManager
+        )
+        .annotationModeObservers(editorState: editorState)
+        .goalPersistenceObservers(editorState: editorState, documentManager: documentManager)
+    }
+
+    /// Content, editor-mode, and zoom observers (split out to keep type-checking fast)
+    @MainActor
+    private func contentSyncObservers(
+        editorState: EditorViewState,
+        sectionSyncService: SectionSyncService,
+        annotationSyncService: AnnotationSyncService,
+        bibliographySyncService: BibliographySyncService,
+        footnoteSyncService: FootnoteSyncService,
+        autoBackupService: AutoBackupService,
+        documentManager: DocumentManager
+    ) -> some View {
         self
             .onChange(of: editorState.content) { _, newValue in
-                guard editorState.contentState == .idle else { return }
-                // BlockSyncService handles content -> block DB sync via polling
-                // SectionSyncService syncs the section table (used by version history snapshots)
-                sectionSyncService.contentChanged(newValue, zoomedIds: editorState.zoomedSectionIds)
-                annotationSyncService.contentChanged(newValue)
-
-                // When in source mode, re-parse blocks (BlockSyncService only works with Milkdown)
-                if editorState.editorMode == .source {
-                    if editorState.zoomedSectionId == nil {
-                        // Non-zoomed: full document re-parse via replaceBlocks()
-                        if let db = documentManager.projectDatabase,
-                           let pid = documentManager.projectId {
-                            editorState.blockReparseTask?.cancel()
-                            editorState.blockReparseGeneration += 1
-                            let myGeneration = editorState.blockReparseGeneration
-                            editorState.blockReparseTask = Task {
-                                try? await Task.sleep(for: .milliseconds(1000))
-                                guard !Task.isCancelled else { return }
-                                guard editorState.blockReparseGeneration == myGeneration else { return }
-                                guard editorState.contentState == .idle,
-                                      editorState.editorMode == .source,
-                                      editorState.zoomedSectionId == nil else { return }
-                                let existing = try? db.fetchBlocks(projectId: pid)
-                                var metadata: [String: SectionMetadata] = [:]
-                                for block in existing ?? [] where block.blockType == .heading {
-                                    metadata[block.textContent] = SectionMetadata(
-                                        status: block.status,
-                                        tags: block.tags?.isEmpty == false ? block.tags : nil,
-                                        wordGoal: block.wordGoal
-                                    )
-                                }
-                                let blocks = BlockParser.parse(
-                                    markdown: newValue,
-                                    projectId: pid,
-                                    existingSectionMetadata: metadata.isEmpty ? nil : metadata
-                                )
-                                try? db.replaceBlocks(blocks, for: pid)
-                            }
-                        }
-                    } else if editorState.zoomedBlockRange != nil {
-                        // Zoomed: scoped re-parse via flushCodeMirrorSyncIfNeeded()
-                        editorState.blockReparseTask?.cancel()
-                        editorState.blockReparseGeneration += 1
-                        let myGeneration = editorState.blockReparseGeneration
-                        editorState.blockReparseTask = Task {
-                            try? await Task.sleep(for: .milliseconds(1000))
-                            guard !Task.isCancelled else { return }
-                            guard editorState.blockReparseGeneration == myGeneration else { return }
-                            guard editorState.contentState == .idle,
-                                  editorState.editorMode == .source else { return }
-                            editorState.flushContentToDatabase()
-                        }
-                    }
-                }
-
-                // Skip bibliography sync when zoomed - we don't have full document context
-                // Bibliography will be synced when user zooms out and full content is rebuilt
-                guard editorState.zoomedSectionId == nil else { return }
-
-                // Check for citation changes and update bibliography if needed
-                // Always call even when citekeys is empty - this triggers bibliography removal
-                if let projectId = documentManager.projectId {
-                    let citekeys = BibliographySyncService.extractCitekeys(from: newValue)
-                    bibliographySyncService.checkAndUpdateBibliography(
-                        currentCitekeys: citekeys,
-                        projectId: projectId
-                    )
-
-                    // Check for footnote changes and update #Notes section
-                    let footnoteRefs = FootnoteSyncService.extractFootnoteRefs(from: newValue)
-                    footnoteSyncService.checkAndUpdateFootnotes(
-                        footnoteRefs: footnoteRefs,
-                        projectId: projectId,
-                        fullContent: newValue
-                    )
-                }
-
-                // Trigger auto-backup timer on content change
-                autoBackupService.contentDidChange()
+                handleContentChange(
+                    newValue,
+                    editorState: editorState,
+                    sectionSyncService: sectionSyncService,
+                    annotationSyncService: annotationSyncService,
+                    bibliographySyncService: bibliographySyncService,
+                    footnoteSyncService: footnoteSyncService,
+                    autoBackupService: autoBackupService,
+                    documentManager: documentManager
+                )
             }
             .onChange(of: editorState.editorMode) { _, _ in
                 editorState.blockReparseTask?.cancel()
@@ -376,43 +235,45 @@ extension View {
             .onChange(of: editorState.zoomedSectionId) { _, newValue in
                 sectionSyncService.isContentZoomed = (newValue != nil)
             }
+    }
+
+    /// Annotation display-mode observers (split out to keep type-checking fast)
+    @MainActor
+    private func annotationModeObservers(editorState: EditorViewState) -> some View {
+        self
             .onChange(of: editorState.annotationDisplayModes) { _, newModes in
                 // Notify editors when display modes change
-                NotificationCenter.default.post(
-                    name: .annotationDisplayModesChanged,
-                    object: nil,
-                    userInfo: [
-                        "modes": newModes,
-                        "isPanelOnly": editorState.isPanelOnlyMode,
-                        "hideCompletedTasks": editorState.hideCompletedTasks
-                    ]
+                postAnnotationDisplayModes(
+                    modes: newModes,
+                    isPanelOnly: editorState.isPanelOnlyMode,
+                    hideCompletedTasks: editorState.hideCompletedTasks
                 )
             }
             .onChange(of: editorState.isPanelOnlyMode) { _, newValue in
                 // Notify editors when panel-only mode changes
-                NotificationCenter.default.post(
-                    name: .annotationDisplayModesChanged,
-                    object: nil,
-                    userInfo: [
-                        "modes": editorState.annotationDisplayModes,
-                        "isPanelOnly": newValue,
-                        "hideCompletedTasks": editorState.hideCompletedTasks
-                    ]
+                postAnnotationDisplayModes(
+                    modes: editorState.annotationDisplayModes,
+                    isPanelOnly: newValue,
+                    hideCompletedTasks: editorState.hideCompletedTasks
                 )
             }
             .onChange(of: editorState.hideCompletedTasks) { _, newValue in
                 // Notify editors when hide completed tasks filter changes
-                NotificationCenter.default.post(
-                    name: .annotationDisplayModesChanged,
-                    object: nil,
-                    userInfo: [
-                        "modes": editorState.annotationDisplayModes,
-                        "isPanelOnly": editorState.isPanelOnlyMode,
-                        "hideCompletedTasks": newValue
-                    ]
+                postAnnotationDisplayModes(
+                    modes: editorState.annotationDisplayModes,
+                    isPanelOnly: editorState.isPanelOnlyMode,
+                    hideCompletedTasks: newValue
                 )
             }
-            // Document goal settings persistence
+    }
+
+    /// Document goal settings persistence observers (split out to keep type-checking fast)
+    @MainActor
+    private func goalPersistenceObservers(
+        editorState: EditorViewState,
+        documentManager: DocumentManager
+    ) -> some View {
+        self
             .onChange(of: editorState.documentGoal) { _, _ in
                 saveDocumentGoalSettings(editorState: editorState, documentManager: documentManager)
             }
@@ -422,6 +283,229 @@ extension View {
             .onChange(of: editorState.excludeBibliography) { _, _ in
                 saveDocumentGoalSettings(editorState: editorState, documentManager: documentManager)
             }
+    }
+
+    /// Body of the editorState.content onChange handler.
+    /// Extracted from the modifier chain to keep type-checking fast.
+    @MainActor
+    private func handleContentChange(
+        _ newValue: String,
+        editorState: EditorViewState,
+        sectionSyncService: SectionSyncService,
+        annotationSyncService: AnnotationSyncService,
+        bibliographySyncService: BibliographySyncService,
+        footnoteSyncService: FootnoteSyncService,
+        autoBackupService: AutoBackupService,
+        documentManager: DocumentManager
+    ) {
+        guard editorState.contentState == .idle else { return }
+        // BlockSyncService handles content -> block DB sync via polling
+        // SectionSyncService syncs the section table (used by version history snapshots)
+        sectionSyncService.contentChanged(newValue, zoomedIds: editorState.zoomedSectionIds)
+        annotationSyncService.contentChanged(newValue)
+
+        // When in source mode, re-parse blocks (BlockSyncService only works with Milkdown)
+        if editorState.editorMode == .source {
+            if editorState.zoomedSectionId == nil {
+                // Non-zoomed: full document re-parse via replaceBlocks()
+                if let db = documentManager.projectDatabase,
+                   let pid = documentManager.projectId {
+                    editorState.blockReparseTask?.cancel()
+                    editorState.blockReparseGeneration += 1
+                    let myGeneration = editorState.blockReparseGeneration
+                    editorState.blockReparseTask = Task {
+                        try? await Task.sleep(for: .milliseconds(1000))
+                        guard !Task.isCancelled else { return }
+                        guard editorState.blockReparseGeneration == myGeneration else { return }
+                        guard editorState.contentState == .idle,
+                              editorState.editorMode == .source,
+                              editorState.zoomedSectionId == nil else { return }
+                        let existing = try? db.fetchBlocks(projectId: pid)
+                        var metadata: [String: SectionMetadata] = [:]
+                        for block in existing ?? [] where block.blockType == .heading {
+                            metadata[block.textContent] = SectionMetadata(
+                                status: block.status,
+                                tags: block.tags?.isEmpty == false ? block.tags : nil,
+                                wordGoal: block.wordGoal
+                            )
+                        }
+                        let blocks = BlockParser.parse(
+                            markdown: newValue,
+                            projectId: pid,
+                            existingSectionMetadata: metadata.isEmpty ? nil : metadata
+                        )
+                        try? db.replaceBlocks(blocks, for: pid)
+                    }
+                }
+            } else if editorState.zoomedBlockRange != nil {
+                // Zoomed: scoped re-parse via flushCodeMirrorSyncIfNeeded()
+                editorState.blockReparseTask?.cancel()
+                editorState.blockReparseGeneration += 1
+                let myGeneration = editorState.blockReparseGeneration
+                editorState.blockReparseTask = Task {
+                    try? await Task.sleep(for: .milliseconds(1000))
+                    guard !Task.isCancelled else { return }
+                    guard editorState.blockReparseGeneration == myGeneration else { return }
+                    guard editorState.contentState == .idle,
+                          editorState.editorMode == .source else { return }
+                    editorState.flushContentToDatabase()
+                }
+            }
+        }
+
+        // Skip bibliography sync when zoomed - we don't have full document context
+        // Bibliography will be synced when user zooms out and full content is rebuilt
+        guard editorState.zoomedSectionId == nil else { return }
+
+        // Check for citation changes and update bibliography if needed
+        // Always call even when citekeys is empty - this triggers bibliography removal
+        if let projectId = documentManager.projectId {
+            let citekeys = BibliographySyncService.extractCitekeys(from: newValue)
+            bibliographySyncService.checkAndUpdateBibliography(
+                currentCitekeys: citekeys,
+                projectId: projectId
+            )
+
+            // Check for footnote changes and update #Notes section
+            let footnoteRefs = FootnoteSyncService.extractFootnoteRefs(from: newValue)
+            footnoteSyncService.checkAndUpdateFootnotes(
+                footnoteRefs: footnoteRefs,
+                projectId: projectId,
+                fullContent: newValue
+            )
+        }
+
+        // Trigger auto-backup timer on content change
+        autoBackupService.contentDidChange()
+    }
+
+    /// Posts the annotationDisplayModesChanged notification with explicit values.
+    @MainActor
+    private func postAnnotationDisplayModes(
+        modes: [AnnotationType: AnnotationDisplayMode],
+        isPanelOnly: Bool,
+        hideCompletedTasks: Bool
+    ) {
+        NotificationCenter.default.post(
+            name: .annotationDisplayModesChanged,
+            object: nil,
+            userInfo: [
+                "modes": modes,
+                "isPanelOnly": isPanelOnly,
+                "hideCompletedTasks": hideCompletedTasks
+            ]
+        )
+    }
+
+    /// Toggle between WYSIWYG and Source mode with anchor injection/extraction.
+    /// Extracted from the .toggleEditorMode onReceive closure to keep type-checking fast.
+    @MainActor
+    private func handleEditorModeToggle(
+        editorState: EditorViewState,
+        sectionSyncService: SectionSyncService,
+        findBarState: FindBarState
+    ) {
+        // Clear find bar state when switching editors
+        findBarState.clearSearch()
+
+        if editorState.editorMode == .wysiwyg {
+            // Switching TO source mode - inject anchors
+            editorState.contentState = .editorTransition
+            DebugLog.log(.editor, "[SWITCH→CM] Starting. content length=\(editorState.content.count)")
+
+            // When zoomed, only inject anchors for zoomed sections
+            let sectionsToInject: [SectionViewModel]
+            if let zoomedIds = editorState.zoomedSectionIds {
+                sectionsToInject = editorState.sections.filter { zoomedIds.contains($0.id) }
+            } else {
+                sectionsToInject = editorState.sections
+            }
+
+            // Flush editor content to blocks DB before computing offsets.
+            // Without this, recently-inserted nodes (e.g. images via editor-first
+            // approach) may not be in the blocks table yet, causing wrong offsets
+            // and anchor injection corruption.
+            editorState.flushContentToDatabase()
+            DebugLog.log(.editor, "[SWITCH→CM] After flush")
+
+            // Compute offsets from blocks (same data that produced editorState.content)
+            var adjustedSections: [SectionViewModel] = []
+            if let db = editorState.projectDatabase,
+               let pid = editorState.currentProjectId {
+                do {
+                    let fetchedBlocks: [Block]
+                    if let zoomedIds = editorState.zoomedSectionIds {
+                        let allBlocks = try db.fetchBlocks(projectId: pid)
+                        fetchedBlocks = ContentView.filterBlocksForZoomStatic(
+                            allBlocks, zoomedIds: zoomedIds,
+                            zoomedBlockRange: editorState.zoomedBlockRange)
+                    } else {
+                        fetchedBlocks = try db.fetchBlocks(projectId: pid)
+                    }
+                    DebugLog.log(.editor, "[SWITCH→CM] Fetched \(fetchedBlocks.count) blocks")
+                    let sorted = fetchedBlocks.sorted { a, b in
+                        let aKey = (a.sortOrder, a.blockType == .heading ? 0 : 1)
+                        let bKey = (b.sortOrder, b.blockType == .heading ? 0 : 1)
+                        return aKey < bKey
+                    }
+                    // MUST stay in sync with BlockParser.assembleMarkdown filtering
+                    let nonEmpty = sorted.filter { !BlockParser.isEmptyFragment($0.markdownFragment) }
+                    var blockOffset: [String: Int] = [:]
+                    var offset = 0
+                    for (i, block) in nonEmpty.enumerated() {
+                        if i > 0 { offset += 2 }
+                        blockOffset[block.id] = offset
+                        offset += block.markdownFragment.count
+                    }
+                    for section in sectionsToInject.sorted(by: { $0.sortOrder < $1.sortOrder }) {
+                        if let off = blockOffset[section.id] {
+                            adjustedSections.append(section.withUpdates(startOffset: off))
+                        }
+                    }
+                    DebugLog.log(.editor, "[SWITCH→CM] Sections with offsets: \(adjustedSections.count)")
+                } catch {
+                    DebugLog.log(.editor, "[SWITCH→CM] ERROR fetching blocks: \(error)")
+                }
+            }
+
+            let withAnchors = sectionSyncService.injectSectionAnchors(
+                markdown: editorState.content,
+                sections: adjustedSections
+            )
+            DebugLog.log(.editor, "[SWITCH→CM] After anchors: length=\(withAnchors.count)")
+            // Also inject bibliography marker for source mode
+            let withBibMarker = sectionSyncService.injectBibliographyMarker(
+                markdown: withAnchors,
+                sections: sectionsToInject
+            )
+            editorState.sourceContent = withBibMarker
+            editorState.toggleEditorMode()
+            editorState.contentState = .idle
+        } else {
+            // Switching FROM source mode TO WYSIWYG - set state BEFORE flush
+            editorState.contentState = .editorTransition
+            DebugLog.log(.editor, "[SWITCH→MW] Starting. sourceContent length=\(editorState.sourceContent.count)")
+            editorState.flushContentToDatabase()
+
+            // Extract anchors and strip bibliography marker
+            let (cleaned, anchors) = sectionSyncService.extractSectionAnchors(
+                markdown: editorState.sourceContent
+            )
+            DebugLog.log(.editor, "[SWITCH→MW] After extract: cleaned length=\(cleaned.count), anchors=\(anchors.count)")
+            editorState.sourceAnchors = anchors
+            // Also strip bibliography marker since Milkdown shouldn't see it
+            editorState.content = SectionSyncService.stripBibliographyMarker(from: cleaned)
+            editorState.toggleEditorMode()
+
+            // CRITICAL: Delay returning to .idle to give Milkdown time to initialize
+            // Milkdown's first few polls can return corrupted content (missing # from headers)
+            // Keep .editorTransition active to suppress polling during this initialization window
+            // The 1.5s delay covers: WebView load + FinalFinal init + first stable poll cycle
+            Task {
+                try? await Task.sleep(for: .milliseconds(1500))
+                editorState.contentState = .idle
+            }
+        }
     }
 
     /// Helper to save document goal settings when any of them change

@@ -22,38 +22,43 @@ struct FinalFinalApp: App {
 
     private var documentManager: DocumentManager { DocumentManager.shared }
 
+    /// Root view for the main window, switched on app state.
+    /// Extracted from body to keep type-checking fast.
+    @ViewBuilder
+    private var rootView: some View {
+        switch appViewState {
+        case .loading:
+            loadingView
+        case .picker:
+            ProjectPickerView(
+                onProjectOpened: {
+                    appViewState = .editor
+                },
+                onGettingStartedRequested: {
+                    openGettingStarted()
+                }
+            )
+        case .editor:
+            ContentView(
+                onProjectClosed: {
+                    documentManager.closeProject()
+                    appViewState = .picker
+                }
+            )
+        case .gettingStarted:
+            ContentView(
+                onProjectClosed: {
+                    // After closing Getting Started, show picker
+                    documentManager.closeProject()
+                    appViewState = .picker
+                }
+            )
+        }
+    }
+
     var body: some Scene {
         WindowGroup {
-            Group {
-                switch appViewState {
-                case .loading:
-                    loadingView
-                case .picker:
-                    ProjectPickerView(
-                        onProjectOpened: {
-                            appViewState = .editor
-                        },
-                        onGettingStartedRequested: {
-                            openGettingStarted()
-                        }
-                    )
-                case .editor:
-                    ContentView(
-                        onProjectClosed: {
-                            documentManager.closeProject()
-                            appViewState = .picker
-                        }
-                    )
-                case .gettingStarted:
-                    ContentView(
-                        onProjectClosed: {
-                            // After closing Getting Started, show picker
-                            documentManager.closeProject()
-                            appViewState = .picker
-                        }
-                    )
-                }
-            }
+            rootView
             .environment(ThemeManager.shared)
             .environment(GoalColorSettingsManager.shared)
             .environment(versionHistoryCoordinator)

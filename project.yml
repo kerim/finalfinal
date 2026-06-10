@@ -78,7 +78,18 @@ targets:
           done
     postBuildScripts:
       - name: Stamp Git Info into Info.plist
-        basedOnDependencyAnalysis: false
+        # Dependency-analyzed so Xcode skips this when HEAD hasn't moved.
+        # .git/logs/HEAD changes on every commit/checkout; .git/HEAD on branch
+        # switch. Output is a stamp file (not the plist itself — declaring the
+        # generated Info.plist as an output would conflict with the build
+        # system's own ProcessInfoPlist step). In worktrees .git is a file, so
+        # the inputs are missing and the script just runs every build (the old
+        # behavior).
+        inputFiles:
+          - $(SRCROOT)/.git/HEAD
+          - $(SRCROOT)/.git/logs/HEAD
+        outputFiles:
+          - $(DERIVED_FILE_DIR)/git-stamp.txt
         script: |
           PLIST_PATH="${BUILT_PRODUCTS_DIR}/${INFOPLIST_PATH}"
           BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
@@ -87,6 +98,8 @@ targets:
             /usr/libexec/PlistBuddy -c "Set :GitBranch $BRANCH" "$PLIST_PATH"
           /usr/libexec/PlistBuddy -c "Add :GitCommit string $COMMIT" "$PLIST_PATH" 2>/dev/null || \
             /usr/libexec/PlistBuddy -c "Set :GitCommit $COMMIT" "$PLIST_PATH"
+          mkdir -p "${DERIVED_FILE_DIR}"
+          echo "${BRANCH} ${COMMIT}" > "${DERIVED_FILE_DIR}/git-stamp.txt"
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.kerim.final-final
@@ -104,6 +117,13 @@ targets:
         Debug:
           CODE_SIGN_IDENTITY: "-"
           CODE_SIGN_STYLE: Manual
+          # Lock in incremental compilation + no optimization for debug builds
+          # (otherwise inherited implicitly; explicit so a default change can't
+          # silently switch debug builds to whole-module recompiles).
+          SWIFT_COMPILATION_MODE: singlefile
+          SWIFT_OPTIMIZATION_LEVEL: "-Onone"
+          # Surface slow-to-type-check functions/expressions (>200ms) as warnings.
+          OTHER_SWIFT_FLAGS: "-Xfrontend -warn-long-function-bodies=200 -Xfrontend -warn-long-expression-type-checking=200"
         Release:
           CODE_SIGN_IDENTITY: "Developer ID Application"
           CODE_SIGN_STYLE: Manual

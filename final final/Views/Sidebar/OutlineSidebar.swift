@@ -183,104 +183,19 @@ struct OutlineSidebar: View {
         dropPosition = nil  // Clear drop indicator
     }
 
+    /// Section level info for drop delegates - computed inline, no state modification
+    private var sectionLevelInfos: [SectionLevelInfo] {
+        filteredSections.enumerated().map { idx, sec in
+            SectionLevelInfo(id: sec.id, headerLevel: sec.headerLevel, index: idx)
+        }
+    }
+
     private var sectionsList: some View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: 0) {
                     ForEach(Array(filteredSections.enumerated()), id: \.element.id) { index, section in
-                        // Use DraggableCardView for cursor offset control via AppKit
-                        DraggableCardView(
-                            section: section,
-                            allSections: filteredSections,
-                            isGhost: draggingSubtreeIds.contains(section.id),
-                            isActive: section.id == currentSectionId,
-                            onDragStarted: { draggedIds in
-                                // Track subtree IDs for ghost state
-                                draggingSubtreeIds = draggedIds
-                                // Show hint for single-card drags on sections with children
-                                if draggedIds.count == 1 && sectionHasChildren(section.id) {
-                                    maybeShowSubtreeDragHint(for: section.id)
-                                }
-                                onDragStarted?()
-                            },
-                            onDragEnded: {
-                                clearDragState()
-                                onDragEnded?()
-                            },
-                            onSingleClick: {
-                                onScrollToSection(section.id)
-                            },
-                            onDoubleClick: { receivedMode in
-                                // Prevent zoom on managed sections — zoom filters these out,
-                                // producing empty content that destroys them on flush
-                                guard !section.isBibliography && !section.isNotes else { return }
-
-                                if zoomedSectionId == section.id {
-                                    // Zoom out if already zoomed to this section
-                                    onZoomOut?()
-                                } else {
-                                    // Pseudo-sections always use shallow zoom (show only the pseudo-section itself)
-                                    // Regular sections use the received mode (full or shallow based on Option key)
-                                    let mode = section.isPseudoSection ? .shallow : receivedMode
-                                    onZoomToSection?(section.id, mode)
-                                }
-                            },
-                            onSectionUpdated: onSectionUpdated,
-                            onHoverChanged: { isHovering in
-                                hoveredCardId = isHovering ? section.id : nil
-                            }
-                        )
-                        .id(section.id)
-                        .onGeometryChange(for: CGRect.self) { proxy in
-                            proxy.frame(in: .named("sidebarScroll"))
-                        } action: { newFrame in
-                            cardFrames[section.id] = newFrame
-                        }
-                        // Elevate z-index for drop indicators
-                        .zIndex(
-                            shouldShowIndicatorBefore(index: index)
-                            || shouldShowIndicatorAfter(index: index) ? 1 : 0
-                        )
-                        // Drop indicator BEFORE - overlay doesn't affect layout, preventing flickering
-                        .overlay(alignment: .top) {
-                            if shouldShowIndicatorBefore(index: index) {
-                                DropIndicatorLine(level: levelForIndicatorBefore(index: index))
-                                    .offset(y: -(DropIndicatorLine.height / 2))  // Center in gap above card
-                                    .allowsHitTesting(false)
-                            }
-                        }
-                        // Drop indicator AFTER - overlay doesn't affect layout, preventing flickering
-                        .overlay(alignment: .bottom) {
-                            if shouldShowIndicatorAfter(index: index) {
-                                DropIndicatorLine(level: levelForIndicatorAfter(index: index))
-                                    .offset(y: DropIndicatorLine.height / 2)  // Center in gap below card
-                                    .allowsHitTesting(false)
-                            }
-                        }
-                        .onDrop(of: [.sectionTransfer], delegate: SectionDropDelegate(
-                            section: section,
-                            index: index,
-                            cardHeight: cardHeight(for: section),
-                            // Compute section levels inline - no state modification
-                            sectionLevels: filteredSections.enumerated().map { idx, sec in
-                                SectionLevelInfo(id: sec.id, headerLevel: sec.headerLevel, index: idx)
-                            },
-                            sidebarWidth: sidebarWidth,  // Pass actual sidebar width for zone calculation
-                            dropPosition: $dropPosition,
-                            pendingDropId: $pendingDropId,
-                            lastDropLocation: $lastDropLocation,
-                            isDragging: $isDragging,
-                            onDrop: { transfer, position in
-                                handleDrop(dropped: transfer, position: position, targetSection: section)
-                            },
-                            onDragStarted: {
-                                // Ghost state already set by DraggableCardView.onDragStarted
-                                // This is called by drop delegate when drag enters a drop zone
-                            },
-                            onDragEnded: {
-                                // Drag ended callback already handled by DraggableCardView
-                            }
-                        ))
+                        sectionCard(section: section, index: index)
 
                         Divider()
                             .foregroundColor(themeManager.currentTheme.dividerColor)
@@ -291,10 +206,7 @@ struct OutlineSidebar: View {
                         .frame(height: 40)
                         .onDrop(of: [.sectionTransfer], delegate: EndDropDelegate(
                             sectionCount: filteredSections.count,
-                            // Compute section levels inline - no state modification
-                            sectionLevels: filteredSections.enumerated().map { idx, sec in
-                                SectionLevelInfo(id: sec.id, headerLevel: sec.headerLevel, index: idx)
-                            },
+                            sectionLevels: sectionLevelInfos,
                             sidebarWidth: sidebarWidth,  // Pass actual sidebar width for zone calculation
                             dropPosition: $dropPosition,
                             pendingDropId: $pendingDropId,
@@ -361,6 +273,101 @@ struct OutlineSidebar: View {
                 }
             }
         }
+    }
+
+    /// A single section card with drag, drop-indicator, and geometry tracking.
+    /// Extracted from sectionsList to keep type-checking fast.
+    private func sectionCard(section: SectionViewModel, index: Int) -> some View {
+        // Use DraggableCardView for cursor offset control via AppKit
+        DraggableCardView(
+            section: section,
+            allSections: filteredSections,
+            isGhost: draggingSubtreeIds.contains(section.id),
+            isActive: section.id == currentSectionId,
+            onDragStarted: { draggedIds in
+                // Track subtree IDs for ghost state
+                draggingSubtreeIds = draggedIds
+                // Show hint for single-card drags on sections with children
+                if draggedIds.count == 1 && sectionHasChildren(section.id) {
+                    maybeShowSubtreeDragHint(for: section.id)
+                }
+                onDragStarted?()
+            },
+            onDragEnded: {
+                clearDragState()
+                onDragEnded?()
+            },
+            onSingleClick: {
+                onScrollToSection(section.id)
+            },
+            onDoubleClick: { receivedMode in
+                // Prevent zoom on managed sections — zoom filters these out,
+                // producing empty content that destroys them on flush
+                guard !section.isBibliography && !section.isNotes else { return }
+
+                if zoomedSectionId == section.id {
+                    // Zoom out if already zoomed to this section
+                    onZoomOut?()
+                } else {
+                    // Pseudo-sections always use shallow zoom (show only the pseudo-section itself)
+                    // Regular sections use the received mode (full or shallow based on Option key)
+                    let mode = section.isPseudoSection ? .shallow : receivedMode
+                    onZoomToSection?(section.id, mode)
+                }
+            },
+            onSectionUpdated: onSectionUpdated,
+            onHoverChanged: { isHovering in
+                hoveredCardId = isHovering ? section.id : nil
+            }
+        )
+        .id(section.id)
+        .onGeometryChange(for: CGRect.self) { proxy in
+            proxy.frame(in: .named("sidebarScroll"))
+        } action: { newFrame in
+            cardFrames[section.id] = newFrame
+        }
+        // Elevate z-index for drop indicators
+        .zIndex(
+            shouldShowIndicatorBefore(index: index)
+            || shouldShowIndicatorAfter(index: index) ? 1 : 0
+        )
+        // Drop indicator BEFORE - overlay doesn't affect layout, preventing flickering
+        .overlay(alignment: .top) {
+            if shouldShowIndicatorBefore(index: index) {
+                DropIndicatorLine(level: levelForIndicatorBefore(index: index))
+                    .offset(y: -(DropIndicatorLine.height / 2))  // Center in gap above card
+                    .allowsHitTesting(false)
+            }
+        }
+        // Drop indicator AFTER - overlay doesn't affect layout, preventing flickering
+        .overlay(alignment: .bottom) {
+            if shouldShowIndicatorAfter(index: index) {
+                DropIndicatorLine(level: levelForIndicatorAfter(index: index))
+                    .offset(y: DropIndicatorLine.height / 2)  // Center in gap below card
+                    .allowsHitTesting(false)
+            }
+        }
+        .onDrop(of: [.sectionTransfer], delegate: SectionDropDelegate(
+            section: section,
+            index: index,
+            cardHeight: cardHeight(for: section),
+            sectionLevels: sectionLevelInfos,
+            sidebarWidth: sidebarWidth,  // Pass actual sidebar width for zone calculation
+            dropPosition: $dropPosition,
+            pendingDropId: $pendingDropId,
+            lastDropLocation: $lastDropLocation,
+            isDragging: $isDragging,
+            onDrop: { transfer, position in
+                handleDrop(dropped: transfer, position: position, targetSection: section)
+            },
+            onDragStarted: {
+                // Ghost state already set by DraggableCardView.onDragStarted
+                // This is called by drop delegate when drag enters a drop zone
+            },
+            onDragEnded: {
+                // Drag ended callback already handled by DraggableCardView
+            }
+        ))
     }
 
     // MARK: - Drop Indicator Visibility Helpers

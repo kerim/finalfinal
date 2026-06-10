@@ -1078,22 +1078,24 @@
 		};
 		FEF6C6A737962720093F21D9 /* Stamp Git Info into Info.plist */ = {
 			isa = PBXShellScriptBuildPhase;
-			alwaysOutOfDate = 1;
 			buildActionMask = 2147483647;
 			files = (
 			);
 			inputFileListPaths = (
 			);
 			inputPaths = (
+				"$(SRCROOT)/.git/HEAD",
+				"$(SRCROOT)/.git/logs/HEAD",
 			);
 			name = "Stamp Git Info into Info.plist";
 			outputFileListPaths = (
 			);
 			outputPaths = (
+				"$(DERIVED_FILE_DIR)/git-stamp.txt",
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "PLIST_PATH=\"${BUILT_PRODUCTS_DIR}/${INFOPLIST_PATH}\"\nBRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo \"unknown\")\nCOMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo \"unknown\")\n/usr/libexec/PlistBuddy -c \"Add :GitBranch string $BRANCH\" \"$PLIST_PATH\" 2>/dev/null || \\\n  /usr/libexec/PlistBuddy -c \"Set :GitBranch $BRANCH\" \"$PLIST_PATH\"\n/usr/libexec/PlistBuddy -c \"Add :GitCommit string $COMMIT\" \"$PLIST_PATH\" 2>/dev/null || \\\n  /usr/libexec/PlistBuddy -c \"Set :GitCommit $COMMIT\" \"$PLIST_PATH\"\n";
+			shellScript = "PLIST_PATH=\"${BUILT_PRODUCTS_DIR}/${INFOPLIST_PATH}\"\nBRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo \"unknown\")\nCOMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo \"unknown\")\n/usr/libexec/PlistBuddy -c \"Add :GitBranch string $BRANCH\" \"$PLIST_PATH\" 2>/dev/null || \\\n  /usr/libexec/PlistBuddy -c \"Set :GitBranch $BRANCH\" \"$PLIST_PATH\"\n/usr/libexec/PlistBuddy -c \"Add :GitCommit string $COMMIT\" \"$PLIST_PATH\" 2>/dev/null || \\\n  /usr/libexec/PlistBuddy -c \"Set :GitCommit $COMMIT\" \"$PLIST_PATH\"\nmkdir -p \"${DERIVED_FILE_DIR}\"\necho \"${BRANCH} ${COMMIT}\" > \"${DERIVED_FILE_DIR}/git-stamp.txt\"\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
@@ -1460,10 +1462,13 @@
 				);
 				MACOSX_DEPLOYMENT_TARGET = 15.0;
 				MARKETING_VERSION = 1;
+				OTHER_SWIFT_FLAGS = "-Xfrontend -warn-long-function-bodies=200 -Xfrontend -warn-long-expression-type-checking=200";
 				PRODUCT_BUNDLE_IDENTIFIER = "com.kerim.final-final";
 				PRODUCT_MODULE_NAME = final_final;
 				PRODUCT_NAME = "FINAL|FINAL";
 				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = singlefile;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_VERSION = 5.9;
 			};
 			name = Debug;
