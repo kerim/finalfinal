@@ -30,6 +30,9 @@ temp/
 *.tmp
 
 # Claude Code runtime (not project config)
+# .mcp.json must stay untracked: the sandbox hard-blocks writing that filename,
+# so a tracked copy breaks worktree creation (see wiki: Per-Project MCP Configuration)
+.mcp.json
 .claude/worktrees/
 .claude/settings.local.json
 .claude/settings.json.bak.*
