@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.102] - 2026-06-10
+
 ### Fixed
 
 - **`==highlight==` markers inflated word counts and leaked into previews** — `MarkdownUtils.stripMarkdownSyntax` strips `**bold**`, `*italic*`, `~~strike~~`, backticks, links, and images but had no rule for highlight marks, so the literal `==` delimiters survived into the word-count tokenizer and section preview strings. Added a `==(.+?)==` stripper alongside the other inline-mark rules, with two new `WordCountCalculationTests` cases.
