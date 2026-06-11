@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.103] - 2026-06-11
+
 ### Added
 
 - **Selection word count** — select any text and the status bar shows how many words are selected, as "123 of 4,567 words". It works in both editing modes, counts the selection with the same rules as the document total (so the two numbers always agree, citations included), and returns to the normal display when you click away.
