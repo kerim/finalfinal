@@ -8,26 +8,13 @@
 // a collapsed selection sends '' once so Swift clears the count.
 
 import { type EditorView, ViewPlugin, type ViewUpdate } from '@codemirror/view';
-
-const DEBOUNCE_MS = 150;
-let lastSent: string | null = null;
-
-function postSelection(text: string): void {
-  if (text === lastSent) return;
-  lastSent = text;
-  (
-    window as unknown as { webkit?: { messageHandlers?: { selectionChanged?: { postMessage: (m: string) => void } } } }
-  ).webkit?.messageHandlers?.selectionChanged?.postMessage(text);
-}
+import { postSelection, SELECTION_DEBOUNCE_MS } from '../../shared/selection-stats';
 
 export const selectionStatsPlugin = ViewPlugin.fromClass(
   class {
-    private view: EditorView;
     private debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
-    constructor(view: EditorView) {
-      this.view = view;
-    }
+    constructor(private view: EditorView) {}
 
     update(update: ViewUpdate) {
       if (!update.selectionSet && !update.docChanged) return;
@@ -36,7 +23,7 @@ export const selectionStatsPlugin = ViewPlugin.fromClass(
         this.debounceTimer = null;
         const { from, to } = this.view.state.selection.main;
         postSelection(from === to ? '' : this.view.state.sliceDoc(from, to));
-      }, DEBOUNCE_MS);
+      }, SELECTION_DEBOUNCE_MS);
     }
 
     destroy() {

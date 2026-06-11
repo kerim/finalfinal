@@ -12,20 +12,11 @@ import type { Node } from '@milkdown/kit/prose/model';
 import { Plugin, PluginKey } from '@milkdown/kit/prose/state';
 import type { EditorView } from '@milkdown/kit/prose/view';
 import { $prose } from '@milkdown/kit/utils';
+import { postSelection, SELECTION_DEBOUNCE_MS } from '../../shared/selection-stats';
 
 const selectionStatsKey = new PluginKey('selection-stats');
 
-const DEBOUNCE_MS = 150;
 let debounceTimer: ReturnType<typeof setTimeout> | null = null;
-let lastSent: string | null = null;
-
-function postSelection(text: string): void {
-  if (text === lastSent) return;
-  lastSent = text;
-  (
-    window as unknown as { webkit?: { messageHandlers?: { selectionChanged?: { postMessage: (m: string) => void } } } }
-  ).webkit?.messageHandlers?.selectionChanged?.postMessage(text);
-}
 
 /**
  * Text stand-in for atom leaf nodes inside a selection. Citations become
@@ -62,7 +53,7 @@ export const selectionStatsPlugin: MilkdownPlugin = $prose(() => {
             debounceTimer = null;
             // Re-read the selection at fire time — it may have moved during the debounce
             postSelection(selectedText(view));
-          }, DEBOUNCE_MS);
+          }, SELECTION_DEBOUNCE_MS);
         },
         destroy() {
           if (debounceTimer) {

@@ -95,7 +95,10 @@ final class ZoomWordCountSyncTests: XCTestCase {
         let pending = try await webView.evaluateJavaScript(
             "window.FinalFinal.hasBlockChanges()"
         ) as? Bool
-        DebugLog.always("[ZoomWordCountSyncTests] rafFired=\(String(describing: rafFired)) blockAtCursor=\(String(describing: blockAtCursor)) hasBlockChanges=\(String(describing: pending))")
+        DebugLog.always(
+            "[ZoomWordCountSyncTests] rafFired=\(String(describing: rafFired)) "
+            + "blockAtCursor=\(String(describing: blockAtCursor)) hasBlockChanges=\(String(describing: pending))"
+        )
     }
 
     /// Keeps the WebView on-screen so requestAnimationFrame fires.
@@ -109,8 +112,15 @@ final class ZoomWordCountSyncTests: XCTestCase {
         hostWindow = nil
     }
 
+    private struct EditorStack {
+        let helper: EditorTestHelper
+        let db: ProjectDatabase
+        let pid: String
+        let sync: BlockSyncService
+    }
+
     @MainActor
-    private func makeStack() async throws -> (helper: EditorTestHelper, db: ProjectDatabase, pid: String, sync: BlockSyncService) {
+    private func makeStack() async throws -> EditorStack {
         let db = try TestFixtureFactory.createTemporary(content: Self.doc)
         let pid = try TestFixtureFactory.getProjectId(from: db)
         let helper = EditorTestHelper(editorType: .milkdown)
@@ -135,7 +145,7 @@ final class ZoomWordCountSyncTests: XCTestCase {
 
         let sync = BlockSyncService()
         sync.configure(database: db, projectId: pid, webView: helper.webView)
-        return (helper, db, pid, sync)
+        return EditorStack(helper: helper, db: db, pid: pid, sync: sync)
     }
 
     // MARK: - Selection word count push
@@ -146,7 +156,9 @@ final class ZoomWordCountSyncTests: XCTestCase {
     /// replaceCurrent() with identical text collapses it again.
     @MainActor
     func testSelectionChanged_pushesSelectedTextAndClearsOnDeselect() async throws {
-        let (helper, db, _, sync) = try await makeStack()
+        let stack = try await makeStack()
+        let (helper, db) = (stack.helper, stack.db)
+        let sync = stack.sync
         let collector = SelectionMessageCollector()
         helper.webView.configuration.userContentController.add(collector, name: "selectionChanged")
         defer { helper.webView.configuration.userContentController.removeScriptMessageHandler(forName: "selectionChanged") }
@@ -203,7 +215,9 @@ final class ZoomWordCountSyncTests: XCTestCase {
 
     @MainActor
     func testControl_editWhileNotZoomed_updatesStoredWordCount() async throws {
-        let (helper, db, pid, sync) = try await makeStack()
+        let stack = try await makeStack()
+        let (helper, db) = (stack.helper, stack.db)
+        let (pid, sync) = (stack.pid, stack.sync)
 
         let blocks = try TestFixtureFactory.fetchBlocks(from: db)
             .sorted { $0.sortOrder < $1.sortOrder }
@@ -233,7 +247,9 @@ final class ZoomWordCountSyncTests: XCTestCase {
     /// split while zoomed must produce a DB insert on the next poll.
     @MainActor
     func testZoomed_newBlockWhileZoomed_reachesDatabase() async throws {
-        let (helper, db, pid, sync) = try await makeStack()
+        let stack = try await makeStack()
+        let (helper, db) = (stack.helper, stack.db)
+        let (pid, sync) = (stack.pid, stack.sync)
 
         let blocks = try TestFixtureFactory.fetchBlocks(from: db)
             .sorted { $0.sortOrder < $1.sortOrder }
@@ -298,7 +314,9 @@ final class ZoomWordCountSyncTests: XCTestCase {
     /// presentation-only and must never be inserted into the DB by block-sync.
     @MainActor
     func testZoomed_miniNotesTail_staysOutOfDatabase() async throws {
-        let (helper, db, pid, sync) = try await makeStack()
+        let stack = try await makeStack()
+        let (helper, db) = (stack.helper, stack.db)
+        let (pid, sync) = (stack.pid, stack.sync)
 
         let blocks = try TestFixtureFactory.fetchBlocks(from: db)
             .sorted { $0.sortOrder < $1.sortOrder }
@@ -344,7 +362,9 @@ final class ZoomWordCountSyncTests: XCTestCase {
 
     @MainActor
     func testZoomed_editInsideZoomedSection_updatesStoredWordCount() async throws {
-        let (helper, db, pid, sync) = try await makeStack()
+        let stack = try await makeStack()
+        let (helper, db) = (stack.helper, stack.db)
+        let (pid, sync) = (stack.pid, stack.sync)
 
         let blocks = try TestFixtureFactory.fetchBlocks(from: db)
             .sorted { $0.sortOrder < $1.sortOrder }
