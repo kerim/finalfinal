@@ -268,14 +268,21 @@ struct StatusBar: View {
         .frame(minWidth: 200)
     }
 
-    /// Word count display text: "X/Y words" if goal is set, otherwise "X words"
+    /// Word count display text. Priority: selection ("X of Y words") >
+    /// zoomed section ("X of Y words") > goal ("X/Y words") > plain ("X words").
     /// Uses filteredTotalWordCount for consistency with sidebar (respects excludeBibliography)
     private var wordCountDisplay: String {
-        let count = editorState.filteredTotalWordCount
-        if let goal = editorState.documentGoal {
-            return "\(count)/\(goal) words"
+        let total = editorState.filteredTotalWordCount
+        if let selected = editorState.selectedWordCount {
+            return "\(selected) of \(total) words"
         }
-        return "\(count) words"
+        if let zoomed = editorState.zoomedFilteredWordCount {
+            return "\(zoomed) of \(total) words"
+        }
+        if let goal = editorState.documentGoal {
+            return "\(total)/\(goal) words"
+        }
+        return "\(total) words"
     }
 }
 

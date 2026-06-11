@@ -260,6 +260,14 @@ extension MilkdownEditor.Coordinator {
             return
         }
 
+        // Push-based selection change (status-bar selection word count)
+        if message.name == "selectionChanged", let text = message.body as? String {
+            Task { @MainActor in
+                self.onSelectionChange?(text)
+            }
+            return
+        }
+
         // DebugLog handles #if DEBUG gating internally
         if message.name == "errorHandler", let body = message.body as? [String: Any] {
             let msgType = body["type"] as? String ?? "unknown"

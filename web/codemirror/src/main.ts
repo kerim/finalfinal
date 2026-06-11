@@ -79,6 +79,7 @@ import { customHighlightStyle, headingDecorationPlugin, syntaxHighlighting } fro
 import { imagePreviewPlugin, setImageMeta } from './image-preview-plugin';
 import { installLineHeightFix } from './line-height-fix';
 import { scrollStabilizer } from './scroll-stabilizer';
+import { selectionStatsPlugin } from './selection-stats-plugin';
 import { selectionToolbarPlugin } from './selection-toolbar-plugin';
 import { slashMenuPlugin } from './slash-completions';
 import {
@@ -340,6 +341,8 @@ function initEditor() {
     ...imagePreviewPlugin(),
     // Selection toolbar - floating format bar on text selection
     selectionToolbarPlugin,
+    // Push selected text to Swift for status-bar selection word count
+    selectionStatsPlugin,
     // Spellcheck/grammar decorations via NSSpellChecker
     ...spellcheckPlugin(),
   ];

@@ -42,6 +42,10 @@ struct MilkdownEditor: NSViewRepresentable {
     /// Callback for block-ID-based section tracking (blockId, title)
     var onSectionIdChange: ((String?, String) -> Void)?
 
+    /// Callback for selection changes (selected text; empty = deselected).
+    /// Drives the status-bar selection word count.
+    var onSelectionChange: ((String) -> Void)?
+
     /// Callback invoked when editor confirms content was set
     /// Used for acknowledgement-based sync during zoom transitions
     var onContentAcknowledged: (() -> Void)?
@@ -69,6 +73,7 @@ struct MilkdownEditor: NSViewRepresentable {
             controller.add(context.coordinator, name: "requestImagePicker")
             controller.add(context.coordinator, name: "updateImageMeta")
             controller.add(context.coordinator, name: "tableInsertTruncated")
+            controller.add(context.coordinator, name: "selectionChanged")
 
             preloaded.navigationDelegate = context.coordinator
             context.coordinator.webView = preloaded
@@ -137,6 +142,7 @@ struct MilkdownEditor: NSViewRepresentable {
         configuration.userContentController.add(context.coordinator, name: "requestImagePicker")
         configuration.userContentController.add(context.coordinator, name: "updateImageMeta")
         configuration.userContentController.add(context.coordinator, name: "tableInsertTruncated")
+        configuration.userContentController.add(context.coordinator, name: "selectionChanged")
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = context.coordinator
@@ -161,6 +167,7 @@ struct MilkdownEditor: NSViewRepresentable {
         context.coordinator.contentGeneration = contentGeneration
         context.coordinator.onContentAcknowledged = onContentAcknowledged
         context.coordinator.onSectionIdChange = onSectionIdChange
+        context.coordinator.onSelectionChange = onSelectionChange
 
         let effectiveFocusMode = focusModeEnabled && FocusModeSettingsManager.shared.enableParagraphHighlighting
         if context.coordinator.lastFocusModeState != effectiveFocusMode {
@@ -261,6 +268,9 @@ struct MilkdownEditor: NSViewRepresentable {
 
         /// Callback for block-ID-based section tracking (blockId, title)
         var onSectionIdChange: ((String?, String) -> Void)?
+
+        /// Callback for selection changes (selected text; empty = deselected)
+        var onSelectionChange: ((String) -> Void)?
 
         var pollingTimer: Timer?
         var lastReceivedFromEditor: Date = .distantPast

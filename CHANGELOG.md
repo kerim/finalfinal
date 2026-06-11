@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **Selection word count** — selecting text in either editor swaps the status bar to "X of Y words" (selection takes priority over the goal display; reverts on deselect). Both editors push the selected text to Swift via a new debounced `selectionChanged` script message (`selection-stats-plugin.ts` per editor), and Swift counts it with `MarkdownUtils.wordCount` — the same markdown-aware rules as the document total, so the two numbers always agree (citations included: Milkdown maps citation atoms to `@citekey` tokens). The count clears automatically on zoom, mode switch, and project switch.
+- **Zoomed status bar shows section + total** — while zoomed into a section, the status bar reads "X of Y words" (zoomed subtree vs. whole document) via the new `EditorViewState.zoomedFilteredWordCount`, instead of silently showing the document total.
+
+### Fixed
+
+- **Word count frozen (and text unsaved) while zoomed when writing new paragraphs** — zoom mode suppressed temp block-ID assignment for ALL unmatched editor nodes, so any paragraph created while zoomed was invisible to block-sync: word counts froze and the new text only reached the database at zoom-out (a crash while zoomed could lose it). Root-caused via live diagnosis: edits to pre-existing paragraphs synced fine; only new blocks went silent. The suppression — which exists so the appended mini-Notes tail never syncs as real content — is now scoped to nodes at/after the `zoom_notes_marker` (`zoomNotesBoundary`/`suppressTempIdInZoom` in `block-id-plugin.ts`). Guarded both ways by `ZoomWordCountSyncTests` (new-block-while-zoomed syncs within one poll; mini-Notes never leaks into the DB — the former verifiably fails on the unfixed bundle) and 7 Vitest cases. Also corrected `docs/architecture/word-count.md`, which still described a zoom word-count fallback (`onZoomedSectionsUpdated` → `refreshZoomedSections`) deleted in the block-architecture migration (`105f564`).
+
 ## [0.2.102] - 2026-06-10
 
 ### Fixed

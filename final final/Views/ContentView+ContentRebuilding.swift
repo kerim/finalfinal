@@ -359,6 +359,9 @@ extension ContentView {
                     onSectionIdChange: { blockId, title in
                         editorState.currentSectionId = editorState.resolveSectionId(blockId: blockId, title: title)
                     },
+                    onSelectionChange: { text in
+                        editorState.updateSelection(text)
+                    },
                     onContentAcknowledged: {
                         // Called when WebView confirms content was set
                         // Used for acknowledgement-based synchronization during zoom
@@ -425,6 +428,9 @@ extension ContentView {
                     },
                     onSectionIdChange: { blockId, title in
                         editorState.currentSectionId = editorState.resolveSectionId(blockId: blockId, title: title)
+                    },
+                    onSelectionChange: { text in
+                        editorState.updateSelection(text)
                     },
                     onContentAcknowledged: {
                         editorState.acknowledgeContent()

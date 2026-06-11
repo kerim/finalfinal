@@ -65,8 +65,11 @@ let currentBlockIds: Map<number, string> = new Map();
 let currentBlockTypes: Map<number, string> = new Map();
 const pendingConfirmations: Map<string, string> = new Map();
 
-// Zoom mode flag: when true, assignBlockIds skips unmatched nodes
-// (prevents mini-Notes nodes from getting temp IDs)
+// Zoom mode flag: when true, assignBlockIds skips unmatched nodes in the
+// mini-Notes tail — at/after the zoom_notes_marker node — so mini-Notes
+// content never gets temp IDs (which would sync it into the DB as real
+// blocks). Nodes BEFORE the marker (new user blocks created while zoomed)
+// still get temp IDs so live sync keeps working.
 let blockIdZoomMode = false;
 
 /**
@@ -225,6 +228,35 @@ export function setBlockIdsForTopLevel(orderedIds: string[], doc: Node): void {
 }
 
 /**
+ * Offset of the zoom-notes marker node, or Infinity when absent.
+ *
+ * In zoom mode, temp-ID suppression must apply ONLY to the mini-Notes tail
+ * (the `zoom_notes_marker` node and everything after it). A block without an
+ * ID is invisible to block-sync, so suppressing temp IDs for ALL unmatched
+ * nodes silently froze live sync — word count and DB persistence — for any
+ * paragraph created while zoomed, until zoom-out flushed it.
+ * Exported for unit testing.
+ */
+export function zoomNotesBoundary(doc: Node): number {
+  let boundary = Infinity;
+  doc.forEach((node, offset) => {
+    if (node.type.name === 'zoom_notes_marker' && offset < boundary) {
+      boundary = offset;
+    }
+  });
+  return boundary;
+}
+
+/**
+ * Whether temp-ID assignment should be suppressed for an unmatched node.
+ * True only in zoom mode for nodes at/after the mini-Notes boundary.
+ * Exported for unit testing.
+ */
+export function suppressTempIdInZoom(zoomMode: boolean, offset: number, notesBoundary: number): boolean {
+  return zoomMode && offset >= notesBoundary;
+}
+
+/**
  * Scan document and assign IDs to blocks that don't have them.
  * Uses type-aware matching to prevent cross-type ID theft
  * (e.g., a new paragraph stealing a heading's ID by proximity).
@@ -262,6 +294,9 @@ function assignBlockIds(
 
   // Collect deferred blocks that need proximity matching
   const deferred: Array<{ offset: number; nodeType: string }> = [];
+
+  // Zoom mode: only the mini-Notes tail is exempt from temp IDs (see zoomNotesBoundary)
+  const notesBoundary = blockIdZoomMode ? zoomNotesBoundary(doc) : Infinity;
 
   // Phase 1: exact-position matches. `phase1CanClaim` enforces the type gate
   // that prevents atomic-type (figure) theft from position-shifted paragraphs
@@ -358,10 +393,10 @@ function assignBlockIds(
       }
     }
 
-    // Remaining deferred blocks get temp IDs (unless zoom mode)
+    // Remaining deferred blocks get temp IDs (unless in the zoom-mode mini-Notes tail)
     for (const d of deferred) {
       if (assignedNew.has(d.offset)) continue;
-      if (blockIdZoomMode) continue;
+      if (suppressTempIdInZoom(blockIdZoomMode, d.offset, notesBoundary)) continue;
       const newId = TEMP_ID_PREFIX + generateBlockId();
       newIds.set(d.offset, newId);
       newTypes.set(d.offset, d.nodeType);
@@ -418,7 +453,7 @@ function assignBlockIds(
       }
 
       if (!found) {
-        if (blockIdZoomMode) continue;
+        if (suppressTempIdInZoom(blockIdZoomMode, d.offset, notesBoundary)) continue;
         const newId = TEMP_ID_PREFIX + generateBlockId();
         newIds.set(d.offset, newId);
         newTypes.set(d.offset, d.nodeType);

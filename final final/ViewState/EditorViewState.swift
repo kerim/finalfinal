@@ -80,6 +80,12 @@ class EditorViewState {
                 contentGeneration += 1
             }
 
+            // Editor content is being replaced (zoom, mode switch, project switch):
+            // any reported selection is stale, so drop the selection word count.
+            if contentState != .idle {
+                selectedWordCount = nil
+            }
+
             contentStateWatchdog?.cancel()
             contentStateWatchdog = nil
 
@@ -161,6 +167,17 @@ class EditorViewState {
     /// Used by both OutlineFilterBar and StatusBar for consistency
     var filteredTotalWordCount: Int {
         sections
+            .filter { !excludeBibliography || !$0.isBibliography }
+            .reduce(0) { $0 + $1.wordCount }
+    }
+
+    /// Word count of the zoomed subtree (root section + descendants), or nil when not zoomed.
+    /// Applies the same bibliography filter as filteredTotalWordCount so the
+    /// "X of Y words" status-bar display compares like with like.
+    var zoomedFilteredWordCount: Int? {
+        guard let zoomedIds = zoomedSectionIds else { return nil }
+        return sections
+            .filter { zoomedIds.contains($0.id) }
             .filter { !excludeBibliography || !$0.isBibliography }
             .reduce(0) { $0 + $1.wordCount }
     }
@@ -589,6 +606,16 @@ class EditorViewState {
     func updateStats(words: Int, characters: Int) {
         wordCount = words
         characterCount = characters
+    }
+
+    /// Word count of the current editor text selection, or nil when nothing is selected.
+    /// Fed by the selectionChanged push from both editors; counted with the same
+    /// MarkdownUtils rules as the document total so the two numbers agree.
+    var selectedWordCount: Int?
+
+    /// Called by editor coordinators when the selection changes (empty text = deselect).
+    func updateSelection(_ text: String) {
+        selectedWordCount = text.isEmpty ? nil : MarkdownUtils.wordCount(for: text)
     }
 
     func scrollTo(offset: Int) {

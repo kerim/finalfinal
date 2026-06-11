@@ -1,0 +1,393 @@
+//
+//  ZoomWordCountSyncTests.swift
+//  final finalTests
+//
+//  Tier 2: Visible Breakage — DIAGNOSTIC for "word count not updating while zoomed".
+//
+//  Reproduces the full editor→DB sync chain with a real Milkdown WKWebView:
+//    edit in editor → block-sync diff → BlockSyncService poll → applyBlockChangesFromEditor
+//    → stored Block.wordCount changes.
+//
+//  The control test runs the chain un-zoomed (full document pushed with all block IDs).
+//  The zoomed test replicates exactly what ContentView.onZoomToSection does:
+//  setContentWithBlockIds(zoomed subset) followed by pushBlockIds(for: range), which
+//  flips the JS editor into zoom mode (blockIdZoomMode = true).
+//
+//  If the control passes and the zoomed test fails, the freeze is in the editor→DB
+//  hop while zoomed (not in the GRDB observation layer, which OutlineObservationTests
+//  already prove works).
+//
+//  Uses XCTest (not Swift Testing) because WKWebView requires a run loop.
+//
+
+import XCTest
+import WebKit
+@testable import final_final
+
+/// Collects selectionChanged script messages for assertions.
+@MainActor
+private final class SelectionMessageCollector: NSObject, WKScriptMessageHandler {
+    private(set) var received: [String] = []
+    nonisolated func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard let text = message.body as? String else { return }
+        Task { @MainActor in
+            self.received.append(text)
+        }
+    }
+}
+
+final class ZoomWordCountSyncTests: XCTestCase {
+
+    /// Two sections so we can zoom into the second one.
+    private static let doc = """
+    # Alpha
+
+    one two three.
+
+    # Beta
+
+    four five six.
+    """
+
+    // MARK: - Helpers
+
+    /// Sum of stored block word counts — the same quantity batchWordCounts aggregates.
+    private func totalWordCount(_ db: ProjectDatabase, _ pid: String) throws -> Int {
+        try db.read { database in
+            try Int.fetchOne(database, sql: """
+                SELECT COALESCE(SUM(wordCount), 0)
+                FROM block
+                WHERE projectId = ?
+                """, arguments: [pid]) ?? 0
+        }
+    }
+
+    /// Simulate typing by replacing "six" with a longer phrase via the find/replace
+    /// API — a real ProseMirror transaction, indistinguishable from an edit for the
+    /// block-sync plugin (find/replace does not pause sync).
+    @MainActor
+    private func editBetaParagraph(_ webView: WKWebView) async throws {
+        let findResult = try await webView.evaluateJavaScript(
+            "JSON.stringify(window.FinalFinal.find('six'))"
+        ) as? String
+        let replacedCount = try await webView.evaluateJavaScript(
+            "window.FinalFinal.replaceAll('six seven eight nine')"
+        ) as? Int
+        DebugLog.always("[ZoomWordCountSyncTests] find=\(String(describing: findResult)) replaced=\(String(describing: replacedCount))")
+        // detectChanges debounce is 100ms; leave generous headroom
+        try await Task.sleep(nanoseconds: 600_000_000)
+        let contentAfter = try await webView.evaluateJavaScript(
+            "window.FinalFinal.getContent()"
+        ) as? String ?? ""
+        DebugLog.always("[ZoomWordCountSyncTests] editor content after edit: \(contentAfter.replacingOccurrences(of: "\n", with: "\\n"))")
+
+        // Probe 1: did requestAnimationFrame ever fire? (deferredSnapshotAndUnpause depends on it)
+        _ = try await webView.evaluateJavaScript(
+            "window.__rafFired = false; requestAnimationFrame(() => { window.__rafFired = true; }); true"
+        )
+        try await Task.sleep(nanoseconds: 300_000_000)
+        let rafFired = try await webView.evaluateJavaScript("window.__rafFired") as? Bool
+        // Probe 2: are block IDs assigned? (cursor sits at the replace target after find())
+        let blockAtCursor = try await webView.evaluateJavaScript(
+            "JSON.stringify(window.FinalFinal.getBlockAtCursor())"
+        ) as? String
+        // Probe 3: pending changes?
+        let pending = try await webView.evaluateJavaScript(
+            "window.FinalFinal.hasBlockChanges()"
+        ) as? Bool
+        DebugLog.always("[ZoomWordCountSyncTests] rafFired=\(String(describing: rafFired)) blockAtCursor=\(String(describing: blockAtCursor)) hasBlockChanges=\(String(describing: pending))")
+    }
+
+    /// Keeps the WebView on-screen so requestAnimationFrame fires.
+    /// block-sync's deferredSnapshotAndUnpause() relies on rAF; an offscreen
+    /// WKWebView never runs it and sync stays paused forever (test artifact).
+    private var hostWindow: NSWindow?
+
+    @MainActor
+    override func tearDown() async throws {
+        hostWindow?.orderOut(nil)
+        hostWindow = nil
+    }
+
+    @MainActor
+    private func makeStack() async throws -> (helper: EditorTestHelper, db: ProjectDatabase, pid: String, sync: BlockSyncService) {
+        let db = try TestFixtureFactory.createTemporary(content: Self.doc)
+        let pid = try TestFixtureFactory.getProjectId(from: db)
+        let helper = EditorTestHelper(editorType: .milkdown)
+
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 800, height: 600),
+            styleMask: [.titled], backing: .buffered, defer: false
+        )
+        window.contentView = helper.webView
+        window.orderFront(nil)
+        hostWindow = window
+
+        try await helper.loadAndWaitForReady(timeout: 15)
+
+        // Harness shim: WKWebView under xcodebuild never fires requestAnimationFrame,
+        // which block-sync's deferredSnapshotAndUnpause() depends on — without this,
+        // sync stays paused forever and no edit ever registers (pure test artifact;
+        // verified via __rafFired probe).
+        _ = try await helper.webView.evaluateJavaScript(
+            "window.requestAnimationFrame = (cb) => setTimeout(() => cb(performance.now()), 16); true"
+        )
+
+        let sync = BlockSyncService()
+        sync.configure(database: db, projectId: pid, webView: helper.webView)
+        return (helper, db, pid, sync)
+    }
+
+    // MARK: - Selection word count push
+
+    /// The selection-stats plugin must push selected text via the
+    /// selectionChanged message (debounced), and push '' on deselect.
+    /// find() dispatches a real ProseMirror text selection over the match;
+    /// replaceCurrent() with identical text collapses it again.
+    @MainActor
+    func testSelectionChanged_pushesSelectedTextAndClearsOnDeselect() async throws {
+        let (helper, db, _, sync) = try await makeStack()
+        let collector = SelectionMessageCollector()
+        helper.webView.configuration.userContentController.add(collector, name: "selectionChanged")
+        defer { helper.webView.configuration.userContentController.removeScriptMessageHandler(forName: "selectionChanged") }
+
+        let blocks = try TestFixtureFactory.fetchBlocks(from: db).sorted { $0.sortOrder < $1.sortOrder }
+        let ids = BlockParser.idsForProseMirrorAlignment(blocks)
+        let content = BlockParser.assembleMarkdown(from: blocks)
+        await sync.setContentWithBlockIds(markdown: content, blockIds: ids)
+        try await Task.sleep(nanoseconds: 500_000_000)
+
+        // Select the Beta paragraph's text the way a mouse drag does: set the DOM
+        // selection over the text node; ProseMirror's DOM observer syncs it into
+        // state.selection. (find() only places a collapsed cursor — decorations,
+        // not a range selection.) Then wait out the 150ms debounce.
+        let selected = try await helper.webView.evaluateJavaScript(
+            """
+            (() => {
+                const pm = document.querySelector('.ProseMirror');
+                pm.focus();
+                const walker = document.createTreeWalker(pm, NodeFilter.SHOW_TEXT);
+                let target = null;
+                while (walker.nextNode()) {
+                    if (walker.currentNode.textContent.includes('four five six')) {
+                        target = walker.currentNode; break;
+                    }
+                }
+                if (!target) return 'no-target';
+                const range = document.createRange();
+                range.selectNodeContents(target);
+                const sel = window.getSelection();
+                sel.removeAllRanges();
+                sel.addRange(range);
+                return sel.toString();
+            })()
+            """
+        ) as? String
+        try await Task.sleep(nanoseconds: 600_000_000)
+
+        XCTAssertTrue(
+            collector.received.contains { $0.contains("four five six") },
+            "selectionChanged must push the selected text (DOM selected: \(String(describing: selected)), got: \(collector.received))"
+        )
+
+        // find() places a collapsed cursor → selection cleared → '' push
+        _ = try await helper.webView.evaluateJavaScript("window.FinalFinal.find('four'); true")
+        try await Task.sleep(nanoseconds: 600_000_000)
+        XCTAssertEqual(
+            collector.received.last, "",
+            "deselect must push an empty string (got: \(collector.received))"
+        )
+    }
+
+    // MARK: - Control (not zoomed)
+
+    @MainActor
+    func testControl_editWhileNotZoomed_updatesStoredWordCount() async throws {
+        let (helper, db, pid, sync) = try await makeStack()
+
+        let blocks = try TestFixtureFactory.fetchBlocks(from: db)
+            .sorted { $0.sortOrder < $1.sortOrder }
+        let ids = BlockParser.idsForProseMirrorAlignment(blocks)
+        let content = BlockParser.assembleMarkdown(from: blocks)
+
+        await sync.setContentWithBlockIds(markdown: content, blockIds: ids)
+        try await Task.sleep(nanoseconds: 500_000_000)
+
+        let before = try totalWordCount(db, pid)
+        try await editBetaParagraph(helper.webView)
+        await sync.pollBlockChangesNow()
+
+        let after = try totalWordCount(db, pid)
+        XCTAssertGreaterThan(
+            after, before,
+            "CONTROL: un-zoomed edit must reach the DB (before=\(before), after=\(after))"
+        )
+    }
+
+    // MARK: - Zoomed: new block created while zoomed (regression for frozen word count)
+
+    /// Reproduces the root cause of "word count not updating while zoomed":
+    /// blocks created during zoom got no temp ID (blanket zoom-mode suppression),
+    /// were invisible to block-sync, and never reached the DB until zoom-out.
+    /// With the fix (suppression scoped to the mini-Notes tail), a paragraph
+    /// split while zoomed must produce a DB insert on the next poll.
+    @MainActor
+    func testZoomed_newBlockWhileZoomed_reachesDatabase() async throws {
+        let (helper, db, pid, sync) = try await makeStack()
+
+        let blocks = try TestFixtureFactory.fetchBlocks(from: db)
+            .sorted { $0.sortOrder < $1.sortOrder }
+        guard let betaHeading = blocks.first(where: {
+            $0.blockType == .heading && $0.textContent.contains("Beta")
+        }) else {
+            XCTFail("Fixture must contain a Beta heading"); return
+        }
+
+        let zoomedBlocks = blocks.filter {
+            $0.sortOrder >= betaHeading.sortOrder && !$0.isBibliography && !$0.isNotes
+        }
+        let zoomedIds = BlockParser.idsForProseMirrorAlignment(zoomedBlocks)
+        let zoomedContent = BlockParser.assembleMarkdown(from: zoomedBlocks)
+
+        await sync.setContentWithBlockIds(markdown: zoomedContent, blockIds: zoomedIds)
+        try await Task.sleep(nanoseconds: 500_000_000)
+        await sync.pushBlockIds(for: (start: betaHeading.sortOrder, end: nil))
+        try await Task.sleep(nanoseconds: 300_000_000)
+
+        let blockCountBefore = try db.fetchBlockCount(projectId: pid)
+
+        // Select "six" (places a real selection inside the paragraph), then press
+        // Enter via synthetic keydown — ProseMirror's keymap handles it and splits
+        // the paragraph, creating a NEW block while zoomed.
+        _ = try await helper.webView.evaluateJavaScript(
+            """
+            (() => {
+                window.FinalFinal.find('six');
+                const pm = document.querySelector('.ProseMirror');
+                pm.focus();
+                return pm.dispatchEvent(new KeyboardEvent('keydown', {
+                    key: 'Enter', code: 'Enter', keyCode: 13, which: 13,
+                    bubbles: true, cancelable: true
+                }));
+            })()
+            """
+        )
+        try await Task.sleep(nanoseconds: 600_000_000)
+
+        let hasChanges = try await helper.webView.evaluateJavaScript(
+            "window.FinalFinal.hasBlockChanges()"
+        ) as? Bool
+        await sync.pollBlockChangesNow()
+
+        let blockCountAfter = try db.fetchBlockCount(projectId: pid)
+        XCTAssertGreaterThan(
+            blockCountAfter, blockCountBefore,
+            """
+            ZOOMED: paragraph split while zoomed did not reach the DB \
+            (blocks before=\(blockCountBefore), after=\(blockCountAfter), \
+            hasBlockChanges=\(String(describing: hasChanges))). \
+            New blocks created during zoom must get temp IDs and sync live.
+            """
+        )
+    }
+
+    // MARK: - Zoomed: mini-Notes tail must NOT sync (the reason zoom mode exists)
+
+    /// The temp-ID fix must not regress the original protection: the appended
+    /// mini-Notes tail (zoom_notes_marker + # Notes + footnote definitions) is
+    /// presentation-only and must never be inserted into the DB by block-sync.
+    @MainActor
+    func testZoomed_miniNotesTail_staysOutOfDatabase() async throws {
+        let (helper, db, pid, sync) = try await makeStack()
+
+        let blocks = try TestFixtureFactory.fetchBlocks(from: db)
+            .sorted { $0.sortOrder < $1.sortOrder }
+        guard let betaHeading = blocks.first(where: {
+            $0.blockType == .heading && $0.textContent.contains("Beta")
+        }) else {
+            XCTFail("Fixture must contain a Beta heading"); return
+        }
+
+        let zoomedBlocks = blocks.filter {
+            $0.sortOrder >= betaHeading.sortOrder && !$0.isBibliography && !$0.isNotes
+        }
+        let zoomedIds = BlockParser.idsForProseMirrorAlignment(zoomedBlocks)
+        // Mirror zoomToSection's mini-Notes append (EditorViewState+Zoom.swift)
+        let zoomedContent = BlockParser.assembleMarkdown(from: zoomedBlocks)
+            + "\n\n<!-- ::zoom-notes:: -->\n# Notes\n\n[^note1]: A footnote definition that must not sync.\n"
+
+        await sync.setContentWithBlockIds(markdown: zoomedContent, blockIds: zoomedIds)
+        try await Task.sleep(nanoseconds: 500_000_000)
+        await sync.pushBlockIds(for: (start: betaHeading.sortOrder, end: nil))
+        try await Task.sleep(nanoseconds: 500_000_000)
+
+        let blockCountBefore = try db.fetchBlockCount(projectId: pid)
+
+        // Two poll cycles: any temp IDs wrongly assigned to the mini-Notes tail
+        // would surface as inserts here.
+        await sync.pollBlockChangesNow()
+        try await Task.sleep(nanoseconds: 300_000_000)
+        await sync.pollBlockChangesNow()
+
+        let blockCountAfter = try db.fetchBlockCount(projectId: pid)
+        XCTAssertEqual(
+            blockCountAfter, blockCountBefore,
+            "Mini-Notes tail must never be inserted into the DB by block-sync"
+        )
+        let leaked = try TestFixtureFactory.fetchBlocks(from: db).filter {
+            $0.textContent.contains("must not sync") || ($0.blockType == .heading && $0.textContent == "Notes")
+        }
+        XCTAssertTrue(leaked.isEmpty, "Mini-Notes content leaked into DB: \(leaked.map { $0.textContent })")
+    }
+
+    // MARK: - Zoomed
+
+    @MainActor
+    func testZoomed_editInsideZoomedSection_updatesStoredWordCount() async throws {
+        let (helper, db, pid, sync) = try await makeStack()
+
+        let blocks = try TestFixtureFactory.fetchBlocks(from: db)
+            .sorted { $0.sortOrder < $1.sortOrder }
+        guard let betaHeading = blocks.first(where: {
+            $0.blockType == .heading && $0.textContent.contains("Beta")
+        }) else {
+            XCTFail("Fixture must contain a Beta heading"); return
+        }
+
+        // Replicate EditorViewState.zoomToSection's content assembly:
+        // every block from the Beta heading to the end (Beta is the last section).
+        let zoomedBlocks = blocks.filter {
+            $0.sortOrder >= betaHeading.sortOrder && !$0.isBibliography && !$0.isNotes
+        }
+        let zoomedIds = BlockParser.idsForProseMirrorAlignment(zoomedBlocks)
+        let zoomedContent = BlockParser.assembleMarkdown(from: zoomedBlocks)
+
+        // Replicate ContentView.onZoomToSection: push zoomed content + IDs, then
+        // pushBlockIds(for: range) which enables JS zoom mode.
+        await sync.setContentWithBlockIds(markdown: zoomedContent, blockIds: zoomedIds)
+        try await Task.sleep(nanoseconds: 500_000_000)
+        await sync.pushBlockIds(for: (start: betaHeading.sortOrder, end: nil))
+        try await Task.sleep(nanoseconds: 300_000_000)
+
+        let before = try totalWordCount(db, pid)
+        try await editBetaParagraph(helper.webView)
+
+        // Diagnostic visibility: what does the JS side think it has pending?
+        let hasChanges = try await helper.webView.evaluateJavaScript(
+            "window.FinalFinal.hasBlockChanges()"
+        ) as? Bool
+        DebugLog.always("[ZoomWordCountSyncTests] zoomed hasBlockChanges=\(String(describing: hasChanges))")
+
+        await sync.pollBlockChangesNow()
+
+        let after = try totalWordCount(db, pid)
+        XCTAssertGreaterThan(
+            after, before,
+            """
+            ZOOMED: edit inside the zoomed section did not reach the DB \
+            (before=\(before), after=\(after), hasBlockChanges=\(String(describing: hasChanges))). \
+            This reproduces the frozen-word-count-while-zoomed bug.
+            """
+        )
+    }
+}
