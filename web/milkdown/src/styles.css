@@ -131,10 +131,24 @@ body {
 .milkdown code,
 .ProseMirror code {
   background: rgba(128, 128, 128, 0.1);
-  padding: 0.2em 0.4em;
+  /* No vertical padding: the caret inside an inline box is drawn at the box's full
+     height, so vertical padding made the caret visibly taller inside code spans than
+     outside (and the browser leaves the caret in the code box even after the typing
+     state steps outside). Zero vertical padding keeps the caret one height everywhere. */
+  padding: 0 0.4em;
   border-radius: 3px;
   font-family: var(--font-mono);
   font-size: 0.9em;
+}
+
+/* "Code mode" indicator: while the next keystroke would extend this code span, the
+   inline-code-cursor plugin wraps the run in .ff-code-inside. Brighten the pill and add
+   a ring so inside vs outside at the boundary is unmistakable. currentColor keeps it
+   theme-aware (no hardcoded light/dark colors). */
+.milkdown code:has(.ff-code-inside),
+.ProseMirror code:has(.ff-code-inside) {
+  background: rgba(128, 128, 128, 0.22);
+  box-shadow: 0 0 0 1px color-mix(in srgb, currentColor 45%, transparent);
 }
 
 .milkdown pre,
