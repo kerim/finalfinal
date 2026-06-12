@@ -25,6 +25,34 @@ echo -e "${GREEN}  Build: $APP_NAME${NC}"
 echo -e "${GREEN}========================================${NC}"
 echo ""
 
+# Step 0: Build web bundle and run unit tests — fail fast, before the version
+# bump, signing, and notarization. Nothing has been mutated yet, so a failure
+# here exits cleanly with no rollback needed. The web bundle must be built
+# first: the unit tests load the bundled editor, and Step 6's commit relies on
+# this run (it commits with --no-verify to skip the pre-commit hook's re-run).
+echo -e "${YELLOW}Step 0: Running unit tests...${NC}"
+
+cd "$PROJECT_DIR"
+
+echo "  Building web editors..."
+cd web && pnpm build && cd ..
+
+echo "  Generating Xcode project..."
+xcodegen generate
+
+echo "  Running unit tests..."
+xcodebuild test \
+    -project "final final.xcodeproj" \
+    -scheme "final final" \
+    -destination 'platform=macOS' \
+    -only-testing 'final finalTests' \
+    CODE_SIGN_IDENTITY='-' \
+    CODE_SIGN_STYLE=Manual
+touch "$PROJECT_DIR/.last-test-pass"
+
+echo -e "${GREEN}  Unit tests passed${NC}"
+echo ""
+
 # Step 1: Auto-increment version
 echo -e "${YELLOW}Step 1: Incrementing version...${NC}"
 
@@ -78,13 +106,11 @@ trap cleanup_on_failure EXIT
 echo "  Removing stale DerivedData directories..."
 rm -rf ~/Library/Developer/Xcode/DerivedData/final_final-*
 
-# Step 2: Build the app
+# Step 2: Build the app (web bundle already built in Step 0; regenerate the
+# Xcode project again because the version bump changed project.yml)
 echo -e "${YELLOW}Step 2: Building the app...${NC}"
 
 cd "$PROJECT_DIR"
-
-echo "  Building web editors..."
-cd web && pnpm build && cd ..
 
 echo "  Generating Xcode project..."
 xcodegen generate
@@ -235,11 +261,13 @@ ls -t "$RELEASES_DIR"/FINAL-FINAL-v*.zip 2>/dev/null | tail -n +6 | xargs rm -f 
 echo -e "${GREEN}  Archived (kept last 5 releases)${NC}"
 echo ""
 
-# Step 6: Commit version bump
+# Step 6: Commit version bump. --no-verify skips the pre-commit test hook:
+# Step 0 already ran the unit tests against this exact tree, and re-running
+# them here would rebuild from cold DerivedData after notarization.
 echo -e "${YELLOW}Step 6: Committing version bump...${NC}"
 cd "$PROJECT_DIR"
 git add project.yml web/package.json "final final.xcodeproj/project.pbxproj"
-git commit -m "Build v${NEW_VERSION}"
+git commit --no-verify -m "Build v${NEW_VERSION}"
 echo -e "${GREEN}  Committed${NC}"
 echo ""
 

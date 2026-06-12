@@ -90,8 +90,10 @@ else
         echo -e "${GREEN}  CHANGELOG.md updated${NC}"
         echo ""
 
+        # --no-verify: this commit contains only CHANGELOG.md (Step 1 requires a
+        # clean tree), so the pre-commit hook's unit-test run would test nothing new.
         git add CHANGELOG.md
-        git commit -m "Release v${VERSION}"
+        git commit --no-verify -m "Release v${VERSION}"
 
     # Option C: Draft from commits and open editor
     else
@@ -131,8 +133,9 @@ else
         echo -e "${GREEN}  CHANGELOG.md updated${NC}"
         echo ""
 
+        # --no-verify: changelog-only commit, same reasoning as Option B above.
         git add CHANGELOG.md
-        git commit -m "Release v${VERSION}"
+        git commit --no-verify -m "Release v${VERSION}"
     fi
 fi
 
@@ -180,21 +183,33 @@ echo -e "${YELLOW}Publishing to GitHub...${NC}"
 echo -e "${GREEN}  Published${NC}"
 echo ""
 
-# Tag the public (filtered) commit, not main
+# Tag the public (filtered) commit, not main.
+# Reuse an existing tag so a re-run after a partial failure picks up where it
+# left off instead of erroring (versions are never reused, so an existing
+# v${VERSION} tag can only come from an earlier attempt at this same release).
 echo -e "${YELLOW}Tagging v${VERSION}...${NC}"
-git tag "v${VERSION}" public
-echo -e "${GREEN}  Tagged${NC}"
+if git rev-parse -q --verify "refs/tags/v${VERSION}" >/dev/null; then
+    echo -e "${GREEN}  Tag already exists (previous attempt) - reusing${NC}"
+else
+    git tag "v${VERSION}" public
+    echo -e "${GREEN}  Tagged${NC}"
+fi
 echo ""
 
-# Push the tag
+# Push the tag (no-op if the remote already has it)
 echo -e "${YELLOW}Pushing tag...${NC}"
 git push origin "v${VERSION}"
 echo -e "${GREEN}  Pushed${NC}"
 echo ""
 
-# Create GitHub release
+# Create GitHub release (or finish a partially-created one on re-run)
 echo -e "${YELLOW}Creating GitHub release...${NC}"
-gh release create "v${VERSION}" "$ZIP_PATH" --title "v${VERSION}" --notes-file "$TMPFILE"
+if gh release view "v${VERSION}" >/dev/null 2>&1; then
+    echo "  Release already exists (previous attempt) - re-uploading zip..."
+    gh release upload "v${VERSION}" "$ZIP_PATH" --clobber
+else
+    gh release create "v${VERSION}" "$ZIP_PATH" --title "v${VERSION}" --notes-file "$TMPFILE"
+fi
 
 rm -f "$TMPFILE"
 
