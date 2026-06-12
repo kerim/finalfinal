@@ -25,6 +25,7 @@ const SYNC_BLOCK_TYPES = new Set([
   'section_break',
   'table',
   'figure',
+  'math_display',
 ]);
 
 // Types for block changes
@@ -408,6 +409,10 @@ function serializeInlineContent(node: Node): string {
         // IMPORTANT: Inline atom nodes (citation, annotation, footnote_ref, footnote_def)
         // must be handled explicitly above — child.textContent returns '' for atom nodes.
         awaitingFirstEmit = false;
+      } else if (child.type.name === 'math_inline') {
+        closeAllActive();
+        parts.push(`$${child.attrs.latex || ''}$`);
+        awaitingFirstEmit = false;
       } else if (child.type.name === 'hard_break') {
         closeAllActive();
         parts.push('<br>');
@@ -497,6 +502,8 @@ export function nodeToMarkdownFragment(node: Node): string {
       const base = `![${node.attrs.alt || ''}](${node.attrs.src || ''})`;
       return node.attrs.width ? `${base}{width=${node.attrs.width}%}` : base;
     }
+    case 'math_display':
+      return `$$${node.attrs.latex || ''}$$`;
     case 'table': {
       const header: string[] = [];
       const separator: Align[] = [];

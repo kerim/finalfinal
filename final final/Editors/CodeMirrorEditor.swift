@@ -69,6 +69,7 @@ struct CodeMirrorEditor: NSViewRepresentable {
             controller.add(context.coordinator, name: "pasteImage")
             controller.add(context.coordinator, name: "requestImagePicker")
             controller.add(context.coordinator, name: "updateImageMeta")
+            controller.add(context.coordinator, name: "openEquationDialog")
             controller.add(context.coordinator, name: "selectionChanged")
 
             preloaded.navigationDelegate = context.coordinator
@@ -134,6 +135,7 @@ struct CodeMirrorEditor: NSViewRepresentable {
         configuration.userContentController.add(context.coordinator, name: "requestImagePicker")
         configuration.userContentController.add(context.coordinator, name: "updateImageMeta")
         configuration.userContentController.add(context.coordinator, name: "tableInsertTruncated")
+        configuration.userContentController.add(context.coordinator, name: "openEquationDialog")
         configuration.userContentController.add(context.coordinator, name: "selectionChanged")
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
@@ -294,6 +296,7 @@ struct CodeMirrorEditor: NSViewRepresentable {
         var zoomFootnoteStateObserver: NSObjectProtocol?
         var insertImageObserver: NSObjectProtocol?
         var insertTableObserver: NSObjectProtocol?
+        var insertEquationObserver: NSObjectProtocol?
 
         // Formatting command observers
         var toggleBoldObserver: NSObjectProtocol?
@@ -490,6 +493,16 @@ struct CodeMirrorEditor: NSViewRepresentable {
                 self.webView?.evaluateJavaScript("window.FinalFinal.insertTable(3, 2)") { _, _ in }
             }
 
+            // Subscribe to insert equation notification (Insert > Equation menu + toolbar button)
+            insertEquationObserver = NotificationCenter.default.addObserver(
+                forName: .requestInsertEquation,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                guard let self, self.isEditorReady, !self.isCleanedUp else { return }
+                self.webView?.evaluateJavaScript("window.FinalFinal.insertEquationDialog()") { _, _ in }
+            }
+
             // Subscribe to formatting command notifications
             toggleBoldObserver = NotificationCenter.default.addObserver(
                 forName: .toggleBold, object: nil, queue: .main
@@ -578,6 +591,9 @@ struct CodeMirrorEditor: NSViewRepresentable {
                 NotificationCenter.default.removeObserver(observer)
             }
             if let observer = insertTableObserver {
+                NotificationCenter.default.removeObserver(observer)
+            }
+            if let observer = insertEquationObserver {
                 NotificationCenter.default.removeObserver(observer)
             }
             // Formatting command observers cleanup

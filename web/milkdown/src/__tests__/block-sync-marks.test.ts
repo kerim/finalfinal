@@ -164,6 +164,13 @@ const testSchema = new Schema({
       attrs: { label: { default: '' } },
       toDOM: (node: any) => ['span', {}, `[^${node.attrs.label}]`],
     },
+    math_inline: {
+      group: 'inline',
+      inline: true,
+      atom: true,
+      attrs: { latex: { default: '' } },
+      toDOM: (node: any) => ['span', { 'data-latex': node.attrs.latex }, `$${node.attrs.latex}$`],
+    },
   },
   marks: {
     link: {
@@ -664,6 +671,19 @@ describe('nodeToMarkdownFragment — table serializer', () => {
     expect(bodyLine).not.toContain('||');
   });
 
+  // Case 13a: math_inline in a cell
+  it('math_inline in a cell', () => {
+    const mathNode = testSchema.nodes.math_inline!.create({ latex: 'a_n' });
+    const cell = testSchema.nodes.table_cell!.create({ align: null }, [
+      testSchema.nodes.paragraph!.create({}, [mathNode]),
+    ]);
+    const headerRow = tableRow(tableHeaderCell(null, { text: 'H' }));
+    const bodyRow = testSchema.nodes.table_row!.create({}, [cell]);
+    const table = testSchema.nodes.table!.create({}, [headerRow, bodyRow]);
+    const output = nodeToMarkdownFragment(table);
+    expect(output).toContain('$a_n$');
+  });
+
   // Case 13: Compact format is idempotent (parse → format → parse → format produces same output)
   it('compact format is idempotent (accumulation guard)', () => {
     // Simple GFM table row parser for the test
@@ -698,5 +718,42 @@ describe('nodeToMarkdownFragment — table serializer', () => {
     const table2 = parseFormattedTable(m1);
     const m2 = formatTable(table2);
     expect(m2).toBe(m1);
+  });
+});
+
+// ----------------------------------------------------------------------------
+// math_inline serialization — persistence path (serializeInlineContent)
+// These tests guard Bug A: math_inline was silently dropped (child.textContent
+// returns '' for atom nodes) before the explicit branch was added.
+// ----------------------------------------------------------------------------
+
+describe('nodeToMarkdownFragment — math_inline persistence serializer', () => {
+  // Test 1: pure math paragraph is NOT empty — emits $...$ delimiters
+  it('paragraph containing only math_inline emits $...$', () => {
+    const mathNode = testSchema.nodes.math_inline!.create({ latex: '(a_n, d)' });
+    const node = testSchema.nodes.paragraph!.create({}, [mathNode]);
+    const result = nodeToMarkdownFragment(node);
+    expect(result).toBe('$(a_n, d)$');
+  });
+
+  // Test 2: pure math paragraph is NOT treated as empty (persistence guard)
+  it('pure math_inline paragraph is non-empty — not dropped', () => {
+    const mathNode = testSchema.nodes.math_inline!.create({ latex: '(a_n, d)' });
+    const node = testSchema.nodes.paragraph!.create({}, [mathNode]);
+    const result = nodeToMarkdownFragment(node);
+    expect(result.length).toBeGreaterThan(0);
+    expect(result).not.toBe('');
+  });
+
+  // Test 3: text + math_inline + text preserves all three parts in order
+  it('paragraph mixing text + math_inline + text preserves all content', () => {
+    const mathNode = testSchema.nodes.math_inline!.create({ latex: 'a_n' });
+    const node = testSchema.nodes.paragraph!.create({}, [
+      testSchema.text('where '),
+      mathNode,
+      testSchema.text(' is the start'),
+    ]);
+    const result = nodeToMarkdownFragment(node);
+    expect(result).toBe('where $a_n$ is the start');
   });
 });

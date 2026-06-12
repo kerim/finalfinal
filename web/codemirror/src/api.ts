@@ -1166,3 +1166,42 @@ export function resetForProjectSwitch(): void {
   view.setState(newState);
   installLineHeightFix(view);
 }
+
+/**
+ * Insert a math equation at the cursor position.
+ * Uses direct text insertion rather than setContent (which escapes $).
+ * isDisplay=true → $$latex$$ on its own line; isDisplay=false → $latex$ inline.
+ */
+export function insertEquation(latex: string, isDisplay: boolean): void {
+  const view = getEditorView();
+  if (!view) return;
+
+  const { from, to } = view.state.selection.main;
+
+  let insert: string;
+  let cursorOffset: number;
+  if (isDisplay) {
+    // Block: insert on its own line with surrounding newlines
+    insert = `$$${latex}$$\n`;
+    cursorOffset = insert.length;
+  } else {
+    insert = `$${latex}$`;
+    cursorOffset = insert.length;
+  }
+
+  view.dispatch({
+    changes: { from, to, insert },
+    selection: { anchor: from + cursorOffset },
+  });
+  view.focus();
+}
+
+/**
+ * Open the Swift-side equation dialog.
+ * Swift handles the NSAlert form, then calls window.FinalFinal.insertEquation(...).
+ */
+export function insertEquationDialog(): void {
+  if (typeof (window as any).webkit?.messageHandlers?.openEquationDialog?.postMessage === 'function') {
+    (window as any).webkit.messageHandlers.openEquationDialog.postMessage(null);
+  }
+}

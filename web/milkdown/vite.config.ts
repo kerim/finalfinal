@@ -65,8 +65,17 @@ export default defineConfig({
     },
     rollupOptions: {
       output: {
-        // Ensure CSS is extracted
-        assetFileNames: 'milkdown.[ext]',
+        // KaTeX font files must land in a fonts/ subdirectory so that
+        // the bundled katex.min.css url(fonts/KaTeX_*) references resolve
+        // correctly under the editor:// scheme. Other assets (CSS) keep
+        // the flat milkdown.<ext> name.
+        assetFileNames: (assetInfo) => {
+          const name = assetInfo.name ?? '';
+          if (/\.(woff2?|ttf|eot)$/.test(name)) {
+            return 'fonts/[name][extname]';
+          }
+          return 'milkdown.[ext]';
+        },
       },
     },
   },

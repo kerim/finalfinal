@@ -91,11 +91,12 @@ struct EditorToolbar: ToolbarContent {
             }
             .help("Insert table")
 
-            Button {} label: {
+            Button {
+                NotificationCenter.default.post(name: .requestInsertEquation, object: nil)
+            } label: {
                 Label("Math", systemImage: "function")
             }
-            .disabled(true)
-            .help("Coming soon")
+            .help("Insert equation")
         }
 
         ToolbarItemGroup(placement: .primaryAction) {

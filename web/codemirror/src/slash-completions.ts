@@ -187,6 +187,18 @@ const slashCommands: SlashCommand[] = [
       setPendingSlashUndo(true);
     },
   },
+  {
+    label: '/equation',
+    description: 'Insert math equation',
+    apply: (view, from, to) => {
+      view.dispatch({ changes: { from, to, insert: '' } });
+      // Open the Swift equation dialog — do NOT inject $$ directly (setContent escapes $)
+      if (typeof (window as any).webkit?.messageHandlers?.openEquationDialog?.postMessage === 'function') {
+        (window as any).webkit.messageHandlers.openEquationDialog.postMessage(null);
+      }
+      // No pendingSlashUndo — dialog is async
+    },
+  },
 ];
 
 // === Custom slash menu ViewPlugin ===

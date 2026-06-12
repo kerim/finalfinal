@@ -24,6 +24,7 @@ enum BlockType: String, Codable, CaseIterable, Sendable {
     case bibliography
     case table
     case image
+    case mathDisplay = "math_display"
 
     var displayName: String {
         switch self {
@@ -39,6 +40,7 @@ enum BlockType: String, Codable, CaseIterable, Sendable {
         case .bibliography: return "Bibliography"
         case .table: return "Table"
         case .image: return "Image"
+        case .mathDisplay: return "Math"
         }
     }
 
@@ -314,7 +316,7 @@ struct Block: Codable, Identifiable, Equatable, Sendable, FetchableRecord, Mutab
     /// policy lever that drops the bibliography from the displayed total.
     mutating func recalculateWordCount() {
         switch blockType {
-        case .codeBlock, .horizontalRule, .sectionBreak, .image:
+        case .codeBlock, .horizontalRule, .sectionBreak, .image, .mathDisplay:
             wordCount = 0
         default:
             wordCount = MarkdownUtils.wordCount(for: textContent)

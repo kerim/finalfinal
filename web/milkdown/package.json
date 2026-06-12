@@ -10,12 +10,16 @@
   "dependencies": {
     "@milkdown/kit": "^7.8.0",
     "@milkdown/plugin-slash": "^7.8.0",
+    "@types/katex": "^0.16.8",
     "citeproc": "^2.4.63",
     "fuse.js": "^7.0.0",
+    "katex": "^0.17.0",
     "mdast-util-from-markdown": "^2.0.2",
     "mdast-util-gfm-table": "^2.0.0",
+    "mdast-util-math": "^3.0.0",
     "micromark-extension-gfm-table": "^2.1.1",
     "prosemirror-tables": "^1.8.5",
+    "remark-math": "^6.0.0",
     "unist-util-visit": "^5.0.0"
   },
   "devDependencies": {

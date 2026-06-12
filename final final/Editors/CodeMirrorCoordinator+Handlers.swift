@@ -65,6 +65,14 @@ extension CodeMirrorEditor.Coordinator {
             NotificationCenter.default.removeObserver(observer)
             insertImageObserver = nil
         }
+        if let observer = insertTableObserver {
+            NotificationCenter.default.removeObserver(observer)
+            insertTableObserver = nil
+        }
+        if let observer = insertEquationObserver {
+            NotificationCenter.default.removeObserver(observer)
+            insertEquationObserver = nil
+        }
         // Formatting command observers cleanup
         for observer in [toggleBoldObserver, toggleItalicObserver, toggleStrikethroughObserver,
                          setHeadingObserver, toggleBulletListObserver, toggleNumberListObserver,
@@ -449,6 +457,13 @@ extension CodeMirrorEditor.Coordinator {
                     alert.addButton(withTitle: "OK")
                     alert.beginSheetModal(for: window)
                 }
+            }
+        }
+
+        // Handle equation dialog request from JS (/equation slash command or insertEquationDialog())
+        if message.name == "openEquationDialog" {
+            Task { @MainActor in
+                self.handleOpenEquationDialog()
             }
         }
 
@@ -1063,6 +1078,65 @@ extension CodeMirrorEditor.Coordinator {
         ) { _, error in
             if let error {
                 DebugLog.log(.editor, "[CodeMirrorEditor] insertImage JS error: \(error)")
+            }
+        }
+    }
+
+    /// Handle openEquationDialog message from JS (CodeMirror source editor).
+    /// Shows the same NSAlert form as the Milkdown coordinator.
+    /// On OK, calls window.FinalFinal.insertEquation(latex, isDisplay) which
+    /// inserts the raw $...$ / $$...$$ text directly at the cursor.
+    @MainActor
+    func handleOpenEquationDialog() {
+        let window = webView?.window ?? NSApp.keyWindow
+        guard let window else { return }
+
+        // Build the accessory view
+        let accessory = NSView(frame: NSRect(x: 0, y: 0, width: 380, height: 100))
+
+        let segmentControl = NSSegmentedControl(
+            labels: ["Inline  $...$", "Display  $$...$$"],
+            trackingMode: .selectOne,
+            target: nil,
+            action: nil
+        )
+        segmentControl.frame = NSRect(x: 0, y: 70, width: 380, height: 24)
+        segmentControl.selectedSegment = 0
+
+        let label = NSTextField(labelWithString: "LaTeX:")
+        label.frame = NSRect(x: 0, y: 48, width: 60, height: 18)
+
+        let textField = NSTextField(frame: NSRect(x: 64, y: 46, width: 316, height: 22))
+        textField.font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
+        textField.placeholderString = "e.g. x^2 + y^2 = r^2"
+
+        accessory.addSubview(segmentControl)
+        accessory.addSubview(label)
+        accessory.addSubview(textField)
+
+        let alert = NSAlert()
+        alert.messageText = "Insert Equation"
+        alert.informativeText = "Enter LaTeX for your equation."
+        alert.addButton(withTitle: "Insert")
+        alert.addButton(withTitle: "Cancel")
+        alert.accessoryView = accessory
+        alert.window.initialFirstResponder = textField
+
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard response == .alertFirstButtonReturn else { return }
+            let latex = textField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !latex.isEmpty else { return }
+            let isDisplay = segmentControl.selectedSegment == 1
+
+            // JSON-encode the latex string (JSONEncoder handles bare strings; JSONSerialization cannot)
+            guard let jsonData = try? JSONEncoder().encode(latex),
+                  let jsonString = String(data: jsonData, encoding: .utf8) else { return }
+
+            let js = "window.FinalFinal.insertEquation(\(jsonString), \(isDisplay ? "true" : "false"))"
+            self?.webView?.evaluateJavaScript(js) { _, error in
+                if let error {
+                    DebugLog.log(.editor, "[CodeMirrorEditor] insertEquation JS error: \(error)")
+                }
             }
         }
     }

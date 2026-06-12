@@ -162,10 +162,47 @@ enum BlockParser {
         var inCodeBlock = false
         var inTable = false
         var inFootnoteDef = false  // Track multi-paragraph footnote definitions
+        var inDisplayMath = false  // Track multi-line $$...$$ display math
 
         let lines = markdown.components(separatedBy: "\n")
 
         for (index, line) in lines.enumerated() {
+            let trimmedLine = line.trimmingCharacters(in: .whitespaces)
+
+            // Check for display math fence ($$)
+            if trimmedLine == "$$" || trimmedLine.hasPrefix("$$") && trimmedLine.hasSuffix("$$") && trimmedLine.count > 4 {
+                if !inDisplayMath && (trimmedLine == "$$" || trimmedLine.hasPrefix("$$")) {
+                    // Starting display math: flush current block
+                    if !currentBlock.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        blocks.append(currentBlock)
+                        currentBlock = ""
+                    }
+                    inDisplayMath = true
+                    inFootnoteDef = false
+                    currentBlock += line + "\n"
+                    // If the line is both opening and closing ($$...$$) on one line, end immediately
+                    if trimmedLine != "$$" && trimmedLine.hasSuffix("$$") && trimmedLine.count > 4 {
+                        blocks.append(currentBlock)
+                        currentBlock = ""
+                        inDisplayMath = false
+                    }
+                    continue
+                } else if inDisplayMath && trimmedLine == "$$" {
+                    // Closing $$
+                    currentBlock += line + "\n"
+                    blocks.append(currentBlock)
+                    currentBlock = ""
+                    inDisplayMath = false
+                    continue
+                }
+            }
+
+            // Inside display math: accumulate lines
+            if inDisplayMath {
+                currentBlock += line + "\n"
+                continue
+            }
+
             // Check for code fence
             if line.hasPrefix("```") {
                 inCodeBlock.toggle()
@@ -265,6 +302,11 @@ enum BlockParser {
             let hashes = trimmed[match].filter { $0 == "#" }
             let level = hashes.count
             return (.heading, level)
+        }
+
+        // Display math block: starts with $$ (either $$...$$ on one line or multi-line)
+        if trimmed.hasPrefix("$$") {
+            return (.mathDisplay, nil)
         }
 
         // Code block: starts with ```

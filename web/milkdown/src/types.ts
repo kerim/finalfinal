@@ -195,6 +195,9 @@ declare global {
       replaceAll: (replacement: string) => number;
       clearSearch: () => void;
       getSearchState: () => SearchState | null;
+      // Math equation API
+      insertEquation: (latex: string, isDisplay: boolean) => void;
+      insertEquationDialog: () => void;
     };
   }
 }

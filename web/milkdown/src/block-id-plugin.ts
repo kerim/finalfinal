@@ -22,6 +22,7 @@ const BLOCK_TYPES = new Set([
   'section_break',
   'table',
   'figure',
+  'math_display',
 ]);
 
 /**
@@ -33,7 +34,7 @@ const BLOCK_TYPES = new Set([
  * paragraph→X input-rule conversions (`|a|b|`, `---`, etc.), so keeping them
  * out preserves those transitions.
  */
-const ATOMIC_BLOCK_TYPES: ReadonlySet<string> = new Set(['figure']);
+const ATOMIC_BLOCK_TYPES: ReadonlySet<string> = new Set(['figure', 'math_display']);
 
 // Generate a UUID for new blocks
 function generateBlockId(): string {

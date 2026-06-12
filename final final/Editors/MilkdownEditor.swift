@@ -73,6 +73,7 @@ struct MilkdownEditor: NSViewRepresentable {
             controller.add(context.coordinator, name: "requestImagePicker")
             controller.add(context.coordinator, name: "updateImageMeta")
             controller.add(context.coordinator, name: "tableInsertTruncated")
+            controller.add(context.coordinator, name: "openEquationDialog")
             controller.add(context.coordinator, name: "selectionChanged")
 
             preloaded.navigationDelegate = context.coordinator
@@ -142,6 +143,7 @@ struct MilkdownEditor: NSViewRepresentable {
         configuration.userContentController.add(context.coordinator, name: "requestImagePicker")
         configuration.userContentController.add(context.coordinator, name: "updateImageMeta")
         configuration.userContentController.add(context.coordinator, name: "tableInsertTruncated")
+        configuration.userContentController.add(context.coordinator, name: "openEquationDialog")
         configuration.userContentController.add(context.coordinator, name: "selectionChanged")
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
@@ -319,6 +321,7 @@ struct MilkdownEditor: NSViewRepresentable {
         var zoomFootnoteStateObserver: NSObjectProtocol?
         var insertImageObserver: NSObjectProtocol?
         var insertTableObserver: NSObjectProtocol?
+        var insertEquationObserver: NSObjectProtocol?
 
         // Formatting command observers
         var toggleBoldObserver: NSObjectProtocol?
@@ -617,6 +620,16 @@ struct MilkdownEditor: NSViewRepresentable {
                 guard let self, self.isEditorReady, !self.isCleanedUp else { return }
                 self.webView?.evaluateJavaScript("window.FinalFinal.insertTable(3, 2)") { _, _ in }
             }
+
+            // Subscribe to insert equation notification (Insert > Equation menu + toolbar button)
+            insertEquationObserver = NotificationCenter.default.addObserver(
+                forName: .requestInsertEquation,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                guard let self, self.isEditorReady, !self.isCleanedUp else { return }
+                self.webView?.evaluateJavaScript("window.FinalFinal.insertEquationDialog()") { _, _ in }
+            }
         }
 
         deinit {
@@ -676,6 +689,9 @@ struct MilkdownEditor: NSViewRepresentable {
                 NotificationCenter.default.removeObserver(observer)
             }
             if let observer = insertTableObserver {
+                NotificationCenter.default.removeObserver(observer)
+            }
+            if let observer = insertEquationObserver {
                 NotificationCenter.default.removeObserver(observer)
             }
             // Formatting command observers cleanup

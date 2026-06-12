@@ -95,6 +95,8 @@ extension Notification.Name {
     static let requestInsertImage = Notification.Name("requestInsertImage")
     /// Posted to insert a new 3×2 table at the cursor (Insert > Table menu + toolbar button)
     static let requestInsertTable = Notification.Name("requestInsertTable")
+    /// Posted to open the equation dialog (Insert > Equation menu + toolbar button)
+    static let requestInsertEquation = Notification.Name("requestInsertEquation")
 }
 
 enum EditorMode: String, CaseIterable {

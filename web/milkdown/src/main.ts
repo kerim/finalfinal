@@ -121,7 +121,9 @@ import { imagePlugin } from './image-plugin';
 import { inlineCodeCursorPlugin } from './inline-code-cursor';
 import { markdownLinkPlugin } from './markdown-link-input-rule';
 import './link-click-handler';
+import { insertEquation, insertEquationDialog } from './api-math';
 import { linkTooltipPlugin, openLinkEdit } from './link-tooltip';
+import { mathPlugin } from './math-plugin';
 import { searchPlugin } from './search-plugin';
 import { sectionBreakPlugin } from './section-break-plugin';
 import { selectionStatsPlugin } from './selection-stats-plugin';
@@ -139,6 +141,7 @@ import { tablePastePlugin } from './table-paste-plugin';
 import { tableToolsPlugin } from './table-tools-plugin';
 import { zoomNotesMarkerPlugin } from './zoom-notes-marker-plugin';
 import './styles.css';
+import 'katex/dist/katex.min.css';
 import 'prosemirror-tables/style/tables.css';
 // Import types to ensure declare global is included in the bundle
 import { syncLog } from './sync-debug';
@@ -197,6 +200,7 @@ async function initEditor() {
       .use(bibliographyPlugin) // Intercept <!-- ::auto-bibliography:: --> before commonmark filters it
       .use(annotationPlugin) // Intercept annotation comments before filtering
       .use(citationPlugin) // Parse [@citekey] citations before commonmark
+      .use(mathPlugin) // Parse $...$ and $$...$$ math before commonmark
       .use(footnotePlugin) // Parse [^N] footnote references before commonmark
       .use(imagePlugin) // Parse ![alt](media/...) into figure nodes before commonmark
       .use(commonmark)
@@ -464,6 +468,10 @@ window.FinalFinal = {
   insertTable,
   formatTable,
   compareTableASTs,
+
+  // Math equation API
+  insertEquation,
+  insertEquationDialog,
 
   // Find/replace API
   find: findApi,

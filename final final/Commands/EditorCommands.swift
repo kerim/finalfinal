@@ -170,6 +170,10 @@ struct EditorCommands: Commands {
                     NotificationCenter.default.post(name: .requestInsertTable, object: nil)
                 }
 
+                Button("Equation...") {
+                    NotificationCenter.default.post(name: .requestInsertEquation, object: nil)
+                }
+
                 Divider()
 
                 Menu("Document Note") {

@@ -51,6 +51,7 @@ const slashCommands: SlashCommand[] = [
   { label: '/footnote', replacement: '', description: 'Insert footnote', isNodeInsertion: true },
   { label: '/image', replacement: '', description: 'Insert image', isNodeInsertion: true },
   { label: '/table', replacement: '', description: 'Insert table', isNodeInsertion: true, disabledInsideTable: true },
+  { label: '/equation', replacement: '', description: 'Insert math equation', isNodeInsertion: true },
 ];
 
 // === Table context detection ===
@@ -272,6 +273,18 @@ function executeSlashCommand(index: number) {
       const fn = (window.FinalFinal as any).insertTable;
       if (typeof fn === 'function') fn(3, 2);
       // Hide menu and return early — table insert is not undoable via slash undo
+      if (slashProviderInstance) slashProviderInstance.hide();
+      filteredCommands = [];
+      requestAnimationFrame(() => {
+        suppressSlashMenu = false;
+      });
+      return;
+    } else if (cmd.label === '/equation') {
+      // Delete the slash text then open the equation dialog via Swift bridge
+      const tr = view.state.tr.delete(cmdStart, from);
+      view.dispatch(tr);
+      (window.FinalFinal as any).insertEquationDialog?.();
+      // Hide menu and return early — equation dialog is async, not undoable via slash undo
       if (slashProviderInstance) slashProviderInstance.hide();
       filteredCommands = [];
       requestAnimationFrame(() => {

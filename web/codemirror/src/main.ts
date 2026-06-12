@@ -31,6 +31,8 @@ import {
   insertAnnotation,
   insertAtCursor,
   insertBreak,
+  insertEquation,
+  insertEquationDialog,
   insertFootnote,
   insertImage,
   insertLink,
@@ -423,6 +425,10 @@ window.FinalFinal = {
   // Table API
   insertTable,
   formatTable,
+
+  // Math equation API
+  insertEquation,
+  insertEquationDialog,
 
   // Spellcheck API
   setSpellcheckResults,

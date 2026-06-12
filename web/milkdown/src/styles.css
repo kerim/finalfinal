@@ -1075,3 +1075,50 @@ body.source-mode .ff-citation,
   color: var(--color-text, #333);
   cursor: pointer;
 }
+
+/* ===================== Math equation styles ===================== */
+
+/* Inline math node */
+.ff-math-inline {
+  display: inline-block;
+  cursor: pointer;
+  padding: 0 2px;
+  border-radius: 3px;
+  vertical-align: middle;
+}
+
+.ff-math-inline:hover {
+  background: var(--editor-selection, rgba(0, 122, 255, 0.15));
+}
+
+/* ProseMirror selected state */
+.ProseMirror-selectednode .ff-math-inline,
+.ProseMirror-selectednode.ff-math-inline {
+  outline: 2px solid var(--accent-color, #007aff);
+  outline-offset: 1px;
+}
+
+/* Display (block) math node */
+.ff-math-display {
+  display: block;
+  cursor: pointer;
+  padding: 12px 16px;
+  margin: 8px 0;
+  border-radius: 6px;
+  text-align: center;
+  overflow-x: auto;
+}
+
+.ff-math-display:hover {
+  background: var(--editor-selection, rgba(0, 122, 255, 0.05));
+}
+
+.ProseMirror-selectednode.ff-math-display {
+  outline: 2px solid var(--accent-color, #007aff);
+  outline-offset: 2px;
+}
+
+/* Math edit popup */
+.ff-math-edit-popup {
+  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+}

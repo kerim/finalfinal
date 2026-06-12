@@ -31,8 +31,8 @@ Although most of the core features (listed above) are already implemented, [FINA
 
 ## Known limitations
 
-- Inserting images, tables, and mathematical formulas is not yet supported
-- Exporting PDFs with bi-directional text, or mathematical formulas is not yet supported 
+- Inserting images and tables is not yet supported
+- Exporting PDFs with bi-directional text is not yet supported 
 
 # Set-up
 

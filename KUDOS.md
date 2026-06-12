@@ -2,7 +2,7 @@
 
 Attribution for code, libraries, and inspiration used in final final.
 
-**Last updated:** 2026-06-11 (inline-code cursor navigation, model from prosemirror-codemark)
+**Last updated:** 2026-06-12 (LaTeX math equations — KaTeX rendering, remark-math parsing)
 
 ---
 
@@ -27,6 +27,9 @@ Attribution for code, libraries, and inspiration used in final final.
 | citeproc | ^2.4.63 | CPAL/AGPLv3 | Frank Bennett | https://github.com/Juris-M/citeproc-js |
 | fuse.js | ^7.0.0 | Apache 2.0 | Kiro Risk | https://github.com/krisk/Fuse |
 | unist-util-visit | ^5.0.0 | MIT | Titus Wormer | https://github.com/syntax-tree/unist-util-visit |
+| katex | ^0.17.0 | MIT | KaTeX contributors (Khan Academy) | https://github.com/KaTeX/KaTeX |
+| remark-math | ^6.0.0 | MIT | remark contributors | https://github.com/remarkjs/remark-math |
+| mdast-util-math | ^3.0.0 | MIT | Titus Wormer | https://github.com/syntax-tree/mdast-util-math |
 
 The inline-code cursor navigation in `web/milkdown/src/inline-code-cursor.ts` (two cursor stops at code-span edges) follows the model documented by [prosemirror-codemark](https://github.com/curvenote/editor/tree/main/packages/prosemirror-codemark) (MIT, Curvenote), re-implemented without its fake-cursor decorations.
 
