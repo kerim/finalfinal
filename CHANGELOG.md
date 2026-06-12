@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.104] - 2026-06-12
+
 ### Added
 
 - **Math equations** — write mathematical formulas in LaTeX, both inline (like `$x^2$` inside a sentence) and as centered blocks (`$$...$$`). Insert them from the toolbar, the `/equation` slash command, or the Insert menu. In the visual editor an equation appears as properly typeset math; click it to edit the LaTeX code with a live preview, then press Enter to save or Escape to cancel. Equations are saved with your document and export to PDF and Word as real typeset formulas.
