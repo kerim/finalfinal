@@ -76,6 +76,21 @@ targets:
               rm -rf "$dd" 2>/dev/null || true
             fi
           done
+      - name: "Guard: no SQLite sidecars in bundled getting-started.ff"
+        basedOnDependencyAnalysis: false
+        script: |
+          # A leftover -wal/-shm pair next to the bundled guide gets copied into
+          # the app and silently rolls the document back to whatever state the
+          # WAL froze at (this shipped a stale guide in v0.2.101–v0.2.104).
+          # Fail fast: the fix is to open/close the .ff cleanly or checkpoint:
+          #   sqlite3 content.sqlite 'PRAGMA wal_checkpoint(TRUNCATE);' && rm content.sqlite-wal content.sqlite-shm
+          GS_DIR="${SRCROOT}/final final/Resources/getting-started.ff"
+          for sidecar in "$GS_DIR/content.sqlite-wal" "$GS_DIR/content.sqlite-shm"; do
+            if [ -e "$sidecar" ]; then
+              echo "error: Stale SQLite sidecar would be bundled into the app: $sidecar — it reverts the Getting Started guide to old content. Checkpoint or delete it, then rebuild."
+              exit 1
+            fi
+          done
     postBuildScripts:
       - name: Stamp Git Info into Info.plist
         # Dependency-analyzed so Xcode skips this when HEAD hasn't moved.

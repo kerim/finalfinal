@@ -3,6 +3,7 @@
 
 import { type EditorView, ViewPlugin, type ViewUpdate } from '@codemirror/view';
 import '../../shared/slash-menu.css';
+import { insertEquationDialog } from '../../shared/equation-dialog';
 import { insertFootnoteReplacingRange } from './api';
 import { setPendingCAYWRange, setPendingSlashUndo } from './editor-state';
 
@@ -193,9 +194,7 @@ const slashCommands: SlashCommand[] = [
     apply: (view, from, to) => {
       view.dispatch({ changes: { from, to, insert: '' } });
       // Open the Swift equation dialog — do NOT inject $$ directly (setContent escapes $)
-      if (typeof (window as any).webkit?.messageHandlers?.openEquationDialog?.postMessage === 'function') {
-        (window as any).webkit.messageHandlers.openEquationDialog.postMessage(null);
-      }
+      insertEquationDialog();
       // No pendingSlashUndo — dialog is async
     },
   },

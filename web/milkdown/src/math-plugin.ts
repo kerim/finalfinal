@@ -111,101 +111,70 @@ export const mathDisplayNode = $node('math_display', () => ({
   },
 }));
 
-// === NodeView for math_inline ===
-const mathInlineNodeView = $view(mathInlineNode, (_ctx: Ctx) => {
-  return (node, view, getPos) => {
-    const dom = document.createElement('span');
-    dom.className = 'ff-math-inline';
-    dom.dataset.latex = node.attrs.latex;
+// === NodeViews ===
+// One factory for both node types — they differ only in element tag, class name,
+// KaTeX display mode, and the raw-source fallback text.
+function createMathNodeView(nodeSchema: typeof mathInlineNode, isDisplay: boolean) {
+  const typeName = isDisplay ? 'math_display' : 'math_inline';
+  const className = isDisplay ? 'ff-math-display' : 'ff-math-inline';
+  const wrapRaw = (latex: string) => (isDisplay ? `$$${latex}$$` : `$${latex}$`);
 
-    const renderKaTeX = (latex: string) => {
-      if (!latex) {
-        dom.textContent = '$?$';
-        return;
-      }
-      try {
-        katex.render(latex, dom, {
-          displayMode: false,
-          throwOnError: false,
-          output: 'html',
-        });
-      } catch (_e) {
-        dom.textContent = `$${latex}$`;
-      }
+  return $view(nodeSchema, (_ctx: Ctx) => {
+    return (node, view, getPos) => {
+      const dom = document.createElement(isDisplay ? 'div' : 'span');
+      dom.className = className;
+      // Track the current latex locally — the constructor's `node` goes stale after
+      // update(), so the click handler must not read node.attrs.latex.
+      let currentLatex: string = node.attrs.latex;
+      dom.dataset.latex = currentLatex;
+
+      const renderKaTeX = (latex: string) => {
+        if (!latex) {
+          dom.textContent = wrapRaw('?');
+          return;
+        }
+        try {
+          katex.render(latex, dom, {
+            displayMode: isDisplay,
+            throwOnError: false,
+            output: 'html',
+          });
+        } catch (_e) {
+          dom.textContent = wrapRaw(latex);
+        }
+      };
+
+      renderKaTeX(currentLatex);
+
+      dom.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const pos = typeof getPos === 'function' ? getPos() : null;
+        if (pos !== null && pos !== undefined) {
+          showMathEditPopup(pos, view, currentLatex, isDisplay);
+        }
+      });
+
+      return {
+        dom,
+        update: (updatedNode) => {
+          if (updatedNode.type.name !== typeName) return false;
+          if (updatedNode.attrs.latex !== currentLatex) {
+            currentLatex = updatedNode.attrs.latex;
+            dom.dataset.latex = currentLatex;
+            renderKaTeX(currentLatex);
+          }
+          return true;
+        },
+        stopEvent: () => false,
+        ignoreMutation: () => true,
+      };
     };
+  });
+}
 
-    renderKaTeX(node.attrs.latex);
-
-    dom.addEventListener('click', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      const pos = typeof getPos === 'function' ? getPos() : null;
-      if (pos !== null && pos !== undefined) {
-        showMathEditPopup(pos, view, node.attrs.latex, false);
-      }
-    });
-
-    return {
-      dom,
-      update: (updatedNode) => {
-        if (updatedNode.type.name !== 'math_inline') return false;
-        dom.dataset.latex = updatedNode.attrs.latex;
-        renderKaTeX(updatedNode.attrs.latex);
-        return true;
-      },
-      stopEvent: () => false,
-      ignoreMutation: () => true,
-    };
-  };
-});
-
-// === NodeView for math_display ===
-const mathDisplayNodeView = $view(mathDisplayNode, (_ctx: Ctx) => {
-  return (node, view, getPos) => {
-    const dom = document.createElement('div');
-    dom.className = 'ff-math-display';
-    dom.dataset.latex = node.attrs.latex;
-
-    const renderKaTeX = (latex: string) => {
-      if (!latex) {
-        dom.textContent = '$$?$$';
-        return;
-      }
-      try {
-        katex.render(latex, dom, {
-          displayMode: true,
-          throwOnError: false,
-          output: 'html',
-        });
-      } catch (_e) {
-        dom.textContent = `$$${latex}$$`;
-      }
-    };
-
-    renderKaTeX(node.attrs.latex);
-
-    dom.addEventListener('click', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      const pos = typeof getPos === 'function' ? getPos() : null;
-      if (pos !== null && pos !== undefined) {
-        showMathEditPopup(pos, view, node.attrs.latex, true);
-      }
-    });
-
-    return {
-      dom,
-      update: (updatedNode) => {
-        if (updatedNode.type.name !== 'math_display') return false;
-        dom.dataset.latex = updatedNode.attrs.latex;
-        renderKaTeX(updatedNode.attrs.latex);
-        return true;
-      },
-      stopEvent: () => false,
-      ignoreMutation: () => true,
-    };
-  };
-});
+const mathInlineNodeView = createMathNodeView(mathInlineNode, false);
+const mathDisplayNodeView = createMathNodeView(mathDisplayNode, true);
 
 // Export the plugin array — node views MUST be in the same array as their nodes
 export const mathPlugin: MilkdownPlugin[] = [

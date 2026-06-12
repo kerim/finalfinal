@@ -56,6 +56,7 @@
 		3C01E547EFAD7C50604AEB10 /* VersionListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E99D04B51EB859A1BD1A73BB /* VersionListView.swift */; };
 		3D1B4B7C84B95B0C08F3555D /* VersionHistorySheet+Actions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 403B8E649101EE81EC675619 /* VersionHistorySheet+Actions.swift */; };
 		3F3CDE3F335D3DF046014F49 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 540DB80C2488D249796ABEAA /* Assets.xcassets */; };
+		45257C650B6A3255C091ACE7 /* EquationDialog.swift in Sources */ = {isa = PBXBuildFile; fileRef = C6E1612B4ACCCC5AF558AE92 /* EquationDialog.swift */; };
 		45869BA1A8791DA0E428B1BD /* Database.swift in Sources */ = {isa = PBXBuildFile; fileRef = E9A8D79672E775EA73854D93 /* Database.swift */; };
 		462CD674C023169FE6A7C21F /* VersionHistoryWindow+Restore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C8498B4341C08418634FB2AC /* VersionHistoryWindow+Restore.swift */; };
 		47DBF3857C5C06C046A299AD /* OutlineParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A1E8A83A78A7909AA1289DB /* OutlineParser.swift */; };
@@ -400,6 +401,7 @@
 		C193BFD9D30D088D972DBBDB /* FootnoteSyncTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FootnoteSyncTests.swift; sourceTree = "<group>"; };
 		C1CFEDB8DA2CEAACE5CC6EF8 /* HierarchyEnforcementTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HierarchyEnforcementTests.swift; sourceTree = "<group>"; };
 		C4430FB4485538CDFA0F4F53 /* ImageImportServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageImportServiceTests.swift; sourceTree = "<group>"; };
+		C6E1612B4ACCCC5AF558AE92 /* EquationDialog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EquationDialog.swift; sourceTree = "<group>"; };
 		C7DACB449A648403C7CCDD3F /* GitInfo.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitInfo.swift; sourceTree = "<group>"; };
 		C8498B4341C08418634FB2AC /* VersionHistoryWindow+Restore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "VersionHistoryWindow+Restore.swift"; sourceTree = "<group>"; };
 		CB51F453D350DBA8D3632F22 /* SnapshotService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SnapshotService.swift; sourceTree = "<group>"; };
@@ -485,6 +487,7 @@
 				47F42FEEB5EFB471BDEDB2DB /* CodeMirrorCoordinator+Handlers.swift */,
 				73EA833CAD13B84DA71C0544 /* CodeMirrorEditor.swift */,
 				CE6D9836DD14A789629A10CB /* EditorSchemeHandler.swift */,
+				C6E1612B4ACCCC5AF558AE92 /* EquationDialog.swift */,
 				B671C3D65663EC23DB5F698C /* MediaSchemeHandler.swift */,
 				2892EEB9AB8A127B61B8B1D8 /* MilkdownCoordinator+Content.swift */,
 				594727DD6667897CC1A2A75A /* MilkdownCoordinator+MessageHandlers.swift */,
@@ -902,6 +905,7 @@
 			buildPhases = (
 				BCCA5E97A6A2744B41788F3B /* Build web editors if missing */,
 				A8133880C98FB2F23DCDD5BC /* Clean stale QuickLook DerivedData */,
+				D27B6AB1F9D1071B0C0A97F9 /* Guard: no SQLite sidecars in bundled getting-started.ff */,
 				AC02281FB7B2A5BB611B1A29 /* Sources */,
 				3BC3CAED088CEF7AE191FA7D /* Resources */,
 				E9038C5955C3D5D57EF730DB /* Frameworks */,
@@ -1082,6 +1086,25 @@
 			shellPath = /bin/sh;
 			shellScript = "EDITOR_DIR=\"${SRCROOT}/final final/Resources/editor\"\nif [ ! -f \"$EDITOR_DIR/milkdown/milkdown.html\" ] || [ ! -f \"$EDITOR_DIR/codemirror/codemirror.html\" ]; then\n  echo \"Web editors not found, building...\"\n  cd \"${SRCROOT}/web\" && pnpm build\nelse\n  echo \"Web editors already built, skipping.\"\nfi\n";
 		};
+		D27B6AB1F9D1071B0C0A97F9 /* Guard: no SQLite sidecars in bundled getting-started.ff */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Guard: no SQLite sidecars in bundled getting-started.ff";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "# A leftover -wal/-shm pair next to the bundled guide gets copied into\n# the app and silently rolls the document back to whatever state the\n# WAL froze at (this shipped a stale guide in v0.2.101–v0.2.104).\n# Fail fast: the fix is to open/close the .ff cleanly or checkpoint:\n#   sqlite3 content.sqlite 'PRAGMA wal_checkpoint(TRUNCATE);' && rm content.sqlite-wal content.sqlite-shm\nGS_DIR=\"${SRCROOT}/final final/Resources/getting-started.ff\"\nfor sidecar in \"$GS_DIR/content.sqlite-wal\" \"$GS_DIR/content.sqlite-shm\"; do\n  if [ -e \"$sidecar\" ]; then\n    echo \"error: Stale SQLite sidecar would be bundled into the app: $sidecar — it reverts the Getting Started guide to old content. Checkpoint or delete it, then rebuild.\"\n    exit 1\n  fi\ndone\n";
+		};
 		FEF6C6A737962720093F21D9 /* Stamp Git Info into Info.plist */ = {
 			isa = PBXShellScriptBuildPhase;
 			buildActionMask = 2147483647;
@@ -1229,6 +1252,7 @@
 				6DCDEAA6E72ACBE2572AA9F3 /* EditorViewState+Types.swift in Sources */,
 				A63A6CAA68FA3A786C2E8B9F /* EditorViewState+Zoom.swift in Sources */,
 				27788FB6CF7677E47103E1D6 /* EditorViewState.swift in Sources */,
+				45257C650B6A3255C091ACE7 /* EquationDialog.swift in Sources */,
 				8DF608DC28695AC4BA728238 /* ExportCommands.swift in Sources */,
 				533D8BDE9118ACC34CF4BF89 /* ExportPreferencesPane.swift in Sources */,
 				53A856455FD6985D356DF716 /* ExportService.swift in Sources */,

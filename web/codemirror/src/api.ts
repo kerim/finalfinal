@@ -1177,31 +1177,14 @@ export function insertEquation(latex: string, isDisplay: boolean): void {
   if (!view) return;
 
   const { from, to } = view.state.selection.main;
-
-  let insert: string;
-  let cursorOffset: number;
-  if (isDisplay) {
-    // Block: insert on its own line with surrounding newlines
-    insert = `$$${latex}$$\n`;
-    cursorOffset = insert.length;
-  } else {
-    insert = `$${latex}$`;
-    cursorOffset = insert.length;
-  }
+  // Display goes on its own line; inline stays in the text flow.
+  const insert = isDisplay ? `$$${latex}$$\n` : `$${latex}$`;
 
   view.dispatch({
     changes: { from, to, insert },
-    selection: { anchor: from + cursorOffset },
+    selection: { anchor: from + insert.length },
   });
   view.focus();
 }
 
-/**
- * Open the Swift-side equation dialog.
- * Swift handles the NSAlert form, then calls window.FinalFinal.insertEquation(...).
- */
-export function insertEquationDialog(): void {
-  if (typeof (window as any).webkit?.messageHandlers?.openEquationDialog?.postMessage === 'function') {
-    (window as any).webkit.messageHandlers.openEquationDialog.postMessage(null);
-  }
-}
+export { insertEquationDialog } from '../../shared/equation-dialog';

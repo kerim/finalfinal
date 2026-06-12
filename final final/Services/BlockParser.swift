@@ -169,9 +169,10 @@ enum BlockParser {
         for (index, line) in lines.enumerated() {
             let trimmedLine = line.trimmingCharacters(in: .whitespaces)
 
-            // Check for display math fence ($$)
-            if trimmedLine == "$$" || trimmedLine.hasPrefix("$$") && trimmedLine.hasSuffix("$$") && trimmedLine.count > 4 {
-                if !inDisplayMath && (trimmedLine == "$$" || trimmedLine.hasPrefix("$$")) {
+            // Check for display math fence: bare "$$" opens/closes; "$$...$$" is a one-line block
+            let isSingleLineMath = trimmedLine.hasPrefix("$$") && trimmedLine.hasSuffix("$$") && trimmedLine.count > 4
+            if trimmedLine == "$$" || isSingleLineMath {
+                if !inDisplayMath {
                     // Starting display math: flush current block
                     if !currentBlock.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                         blocks.append(currentBlock)
@@ -180,14 +181,14 @@ enum BlockParser {
                     inDisplayMath = true
                     inFootnoteDef = false
                     currentBlock += line + "\n"
-                    // If the line is both opening and closing ($$...$$) on one line, end immediately
-                    if trimmedLine != "$$" && trimmedLine.hasSuffix("$$") && trimmedLine.count > 4 {
+                    // Opened and closed on one line ($$...$$): finish the block immediately
+                    if isSingleLineMath {
                         blocks.append(currentBlock)
                         currentBlock = ""
                         inDisplayMath = false
                     }
                     continue
-                } else if inDisplayMath && trimmedLine == "$$" {
+                } else if trimmedLine == "$$" {
                     // Closing $$
                     currentBlock += line + "\n"
                     blocks.append(currentBlock)

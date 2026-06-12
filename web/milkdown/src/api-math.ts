@@ -52,12 +52,4 @@ export function insertEquation(latex: string, isDisplay: boolean): void {
   }
 }
 
-/**
- * Open the Swift-side equation dialog.
- * Swift handles the NSAlert form, then calls window.FinalFinal.insertEquation(...).
- */
-export function insertEquationDialog(): void {
-  if (typeof (window as any).webkit?.messageHandlers?.openEquationDialog?.postMessage === 'function') {
-    (window as any).webkit.messageHandlers.openEquationDialog.postMessage(null);
-  }
-}
+export { insertEquationDialog } from '../../shared/equation-dialog';
