@@ -2,18 +2,21 @@
 
 I built [FINAL|FINAL](https://finalfinalapp.cc/) out of years of frustration with existing writing tools for academics. Some tools out there had one or more of these features, but no app had all of them:
 
-1. An clear **outline** of the document which allows you to re-organize sections or zoom in on them.
+1. A clear **outline** of the document which allows you to re-organize sections or zoom in on them.
 2. Built-in support for **citations** and **bibliographies** with Zotero, including the ability to export to Word with “live” Zotero markers so you can continue to prepare the final manuscript for publication there.
-3. **Versioning** that has both automatic updates and the ability to save named versions of the document at any time, and which allows you to easily restore all or part of the ducument from any backup.
-4. **WYSIWYG editing** without the surprises that you get when working in Word. In FINAL|FINAL you can switch seemlessly between formatted text or **raw markdown** without loosing your place, or giving up any features.
+3. **Versioning** that has both automatic updates and the ability to save named versions of the document at any time, and which allows you to easily restore all or part of the document from any backup.
+4. **WYSIWYG editing** without the surprises that you get when working in Word. In FINAL|FINAL you can switch seamlessly between formatted text or **raw markdown** without losing your place, or giving up any features.
 5. **Tasks** and **annotations** that can appear inline, as pop-ups, or completely hidden from the main document, and which can always be accessed from a dedicated sidebar.
-6. **Status markers**, **word counts**, and **writing goals** to easily track what still needs to be done.
-7. A configurable **focus mode** that lets you choose which distractions to hide while writing.
-8. Easy **theming** so you can customize every aspect of how it looks to suit your personal preferences.
+6. Easily insert **tables**, **images**, and **mathematical equations** that are formatted properly on export.
+7. **Status markers**, **word counts**, and **writing goals** to easily track what still needs to be done.
+8. A configurable **focus mode** that lets you choose which distractions to hide while writing.
+9. Easy **theming** so you can customize every aspect of how it looks to suit your personal preferences.
 
 FINAL|FINAL was built for academics, but it should be just as useful for longform fiction projects, screenplays, or technical documentation, any project where you need to keep track of your context while you focus on what you write.
 
 # Installation
+
+FINAL|FINAL requires **macOS 15 (Sequoia) or later**.
 
 1. Download the latest zip from [GitHub Releases](https://github.com/kerim/finalfinal/releases/latest)
 2. Unzip to extract `FINAL|FINAL.app`
@@ -22,17 +25,19 @@ FINAL|FINAL was built for academics, but it should be just as useful for longfor
 
 The app is signed and notarized with a Developer ID certificate, so macOS will allow it to open without any workarounds.
 
-# Alpha Software
+Once installed, FINAL|FINAL checks for updates on its own and can install them for you — or you can check any time from **Help → Check for Updates…**. You won't need to come back here to download future versions.
 
-Although most of the core features (listed above) are already implemented, [FINAL|FINAL](https://finalfinalapp.cc/) is still alpha software and should be used with caution.
+# Beta Software
+
+I use the app myself every day, so it is pretty stable, but [FINAL|FINAL](https://finalfinalapp.cc/) is still beta software and should be used with caution. Backup frequently. 
 
 
 # Roadmap
 
 ## Known limitations
 
-- Inserting images and tables is not yet supported
-- Exporting PDFs with bi-directional text is not yet supported 
+- I'm planning an overhaul of the theming system to make it more powerful
+- Exporting PDFs with bi-directional text is not yet supported
 
 # Set-up
 
@@ -56,7 +61,7 @@ Better BibTeX requires some setup:
 
 ## Pandoc
 
-[Pandoc](https://pandoc.org/), another popular free, open source project, is required for the advanced export functions. (Plain markdown exort works just fine without it.) 
+[Pandoc](https://pandoc.org/), another popular free, open source project, is required for the advanced export functions. (Plain markdown export works just fine without it.) 
 
 There is a package installer at pandoc’s [download page](https://github.com/jgm/pandoc/releases/latest). If you later want to uninstall the package, you can do so by downloading [this script](https://raw.githubusercontent.com/jgm/pandoc/main/macos/uninstall-pandoc.pl) and running it with `perl uninstall-pandoc.pl`.
 
@@ -89,7 +94,7 @@ Right-click sections to:
 
 * Set a **status** (Next, Writing, Waiting, Review, Final)
 
-* Add **word goals** with progress tracking. Can set minimum, maximum, or approximate (+/- %5) goals. 
+* Add **word goals** with progress tracking. Can set minimum, maximum, or approximate (+/- 5%) goals. 
 
 ### Source View
 
@@ -129,6 +134,18 @@ Open the preferences to change the fonts, colors, and paragraph spacing. You can
 
 Use `/footnote` to insert a footnote. Footnotes appear at the end of the document and are numbered automatically.
 
+### Tables
+
+Insert a table with `/table`, the Insert menu, or the toolbar button. In WYSIWYG mode a small toolbar appears over the table for adding or removing rows and columns and for setting each column's alignment. You can also paste a table copied from a spreadsheet or a web page and it becomes a real, editable table. Tables work in both WYSIWYG and source views.
+
+### Images
+
+Paste or drag an image straight into either editor. The image is copied inside your project file, so it always travels with the document. You can also use `/image` or the toolbar button to insert one from a file. Add a caption beneath any image, and resize it by dragging.
+
+### Math Equations
+
+Write mathematical formulas in LaTeX, either inline within a sentence (like `$x^2$`) or as a centered block (`$$ … $$`). Insert them with `/equation`, the toolbar, or the Insert menu. In WYSIWYG mode the formula appears as properly typeset math; click it to edit the LaTeX with a live preview, then press Enter to save or Escape to cancel. Equations are saved with your document and export to PDF and Word as real typeset formulas.
+
 ### Grammar & Spell Check
 
 Built-in spell check works out of the box. For enhanced grammar and style checking, connect to [LanguageTool](https://languagetool.org/) (free or premium) in the preferences.
@@ -139,7 +156,11 @@ A selection toolbar appears when you highlight text, and the Format menu provide
 
 ### Export
 
-Export your work to Markdown, Word (.docx), or PDF. Word export preserves Zotero citation markers for further editing. Advanced export requires [Pandoc](https://pandoc.org/).
+Export your work to Markdown, Markdown with images (a `.md` file plus a folder of its images), TextBundle, Word (.docx), or PDF. Word export preserves Zotero citation markers so you can keep preparing the manuscript there. PDF and Word export use [Pandoc](https://pandoc.org/); plain Markdown export works without it.
+
+### Finder Integration
+
+Double-click a `.ff` file in Finder to open it in FINAL|FINAL. You can also select a `.ff` file and press the spacebar to preview its contents with Quick Look, without opening the app.
 
 ## Giving Feedback
 
