@@ -14,14 +14,21 @@ schemes:
         QuickLook Extension: all
         final finalTests: [test]
         final finalUITests: [test]
+      # Mirrors the committed .xcscheme's BuildAction/@runPostActionsOnFailure="NO".
+      runPostActionsOnFailure: false
     run:
       config: Debug
       executable: final final
     test:
       config: Debug
       targets:
-        - final finalTests
-        - final finalUITests
+        # parallelizable: false is pinned explicitly (xcodegen's own default) —
+        # a dropped/flipped value here previously caused flaky isHittable UI
+        # test failures. scripts/verify-scheme.sh guards the generated output.
+        - name: final finalTests
+          parallelizable: false
+        - name: final finalUITests
+          parallelizable: false
 
 packages:
   GRDB:

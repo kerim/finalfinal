@@ -40,6 +40,9 @@ cd web && pnpm build && cd ..
 echo "  Generating Xcode project..."
 xcodegen generate
 
+echo "  Verifying scheme..."
+bash "$PROJECT_DIR/scripts/verify-scheme.sh"
+
 echo "  Running unit tests..."
 xcodebuild test \
     -project "final final.xcodeproj" \
@@ -114,6 +117,9 @@ cd "$PROJECT_DIR"
 
 echo "  Generating Xcode project..."
 xcodegen generate
+
+echo "  Verifying scheme..."
+bash "$PROJECT_DIR/scripts/verify-scheme.sh"
 
 echo "  Building macOS app..."
 xcodebuild -scheme "final final" -configuration Release -destination 'platform=macOS' -derivedDataPath "$PROJECT_DIR/build" build
