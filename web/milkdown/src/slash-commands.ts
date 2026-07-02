@@ -3,6 +3,7 @@
 import '../../shared/slash-menu.css';
 import { type Ctx, editorViewCtx } from '@milkdown/kit/core';
 import { redo, undo } from '@milkdown/kit/prose/history';
+import type { Node } from '@milkdown/kit/prose/model';
 import { Selection } from '@milkdown/kit/prose/state';
 import { SlashProvider, slashFactory } from '@milkdown/plugin-slash';
 import { showAnnotationEditPopup } from './annotation-edit-popup';
@@ -156,6 +157,33 @@ function updateMenuSelection() {
   });
 }
 
+// Placeholder passed as `textBetween`'s `leafText` argument. Without a leafText
+// argument, `textBetween` silently contributes zero characters for each inline
+// atom/leaf node it walks over (citations, footnotes, images, equations, hard
+// breaks) even though each occupies one real document position. That desyncs
+// string indices (e.g. from `lastIndexOf`) from document positions — every atom
+// before the match undercounts the position by one. Passing a leafText value
+// makes each atom contribute exactly one character, keeping indices aligned.
+// U+FFFC (OBJECT REPLACEMENT CHARACTER) can never be part of a typed command
+// name and can never equal '/', so it cannot be mistaken for either.
+const LEAF_TEXT_PLACEHOLDER = '￼';
+
+/**
+ * Compute the document position of the `/` that starts the slash command
+ * ending at cursor position `from`. Returns -1 if no `/` precedes the cursor
+ * within the current block.
+ *
+ * Pure function of (doc, from) — no EditorView/DOM dependency — so it is
+ * unit-testable in isolation.
+ */
+export function computeSlashCmdStart(doc: Node, from: number): number {
+  const $from = doc.resolve(from);
+  const lineStart = $from.start($from.depth);
+  const textBefore = doc.textBetween(lineStart, from, '\n', LEAF_TEXT_PLACEHOLDER);
+  const slashIndex = textBefore.lastIndexOf('/');
+  return slashIndex >= 0 ? lineStart + slashIndex : -1;
+}
+
 function executeSlashCommand(index: number) {
   const editorInstance = getEditorInstance();
   if (!editorInstance) return;
@@ -169,13 +197,9 @@ function executeSlashCommand(index: number) {
   const $from = view.state.doc.resolve(from);
 
   // Find the start of the slash command
-  const lineStart = $from.start($from.depth);
-  const textBefore = view.state.doc.textBetween(lineStart, from, '\n');
-  const slashIndex = textBefore.lastIndexOf('/');
+  const cmdStart = computeSlashCmdStart(view.state.doc, from);
 
-  if (slashIndex >= 0) {
-    const cmdStart = lineStart + slashIndex;
-
+  if (cmdStart >= 0) {
     if (cmd.isNodeInsertion && cmd.label === '/break') {
       // Insert section_break node
       const nodeType = sectionBreakNode.type(editorInstance.ctx);
@@ -185,10 +209,15 @@ function executeSlashCommand(index: number) {
       // We need to replace the entire paragraph if it only contains the slash
       const parentStart = $from.before($from.depth);
       const parentEnd = $from.after($from.depth);
-      const parentContent = view.state.doc.textBetween(parentStart + 1, parentEnd - 1, '\n').trim();
+      // Use the same leafText placeholder as computeSlashCmdStart so this comparison stays
+      // consistent whether or not the paragraph contains inline atoms (citations, footnotes, etc.)
+      const parentContent = view.state.doc
+        .textBetween(parentStart + 1, parentEnd - 1, '\n', LEAF_TEXT_PLACEHOLDER)
+        .trim();
+      const textBefore = view.state.doc.textBetween(parentStart + 1, from, '\n', LEAF_TEXT_PLACEHOLDER).trim();
 
       let tr = view.state.tr;
-      if (parentContent === textBefore.trim()) {
+      if (parentContent === textBefore) {
         // Paragraph only contains the slash command - replace the whole paragraph
         tr = tr.replaceWith(parentStart, parentEnd, node);
       } else {
