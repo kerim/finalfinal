@@ -44,6 +44,17 @@ body {
 }
 .ProseMirror {
   outline: none;
+  /* Required ProseMirror baseline (prosemirror-view/style/prosemirror.css), which this
+     app never imported. Without it, whitespace collapses under `white-space: normal`:
+     a paragraph-final space (e.g. the one autolink inserts after a fresh link) renders
+     as zero-width, WebKit's editing engine canonicalizes the caret backwards across it
+     to the inside of the preceding <a>, and the next typed character lands at the link
+     boundary while WebKit deletes the collapsed space. Net effect: "url W" became
+     "urlW" and typed text appeared absorbed into the link. Verified by the real
+     key-event cases in LinkTrailingTextNSEventDiagTests. */
+  word-wrap: break-word;
+  white-space: pre-wrap;
+  white-space: break-spaces;
 }
 .ProseMirror ::selection {
   background: var(--editor-selection);

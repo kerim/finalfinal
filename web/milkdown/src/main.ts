@@ -119,6 +119,7 @@ import { headingNodeViewPlugin } from './heading-nodeview-plugin';
 import { highlightPlugin } from './highlight-plugin';
 import { imagePlugin } from './image-plugin';
 import { inlineCodeCursorPlugin } from './inline-code-cursor';
+import { linkCursorPlugin } from './link-cursor';
 import { markdownLinkPlugin } from './markdown-link-input-rule';
 import './link-click-handler';
 import { insertEquation, insertEquationDialog } from './api-math';
@@ -220,6 +221,7 @@ async function initEditor() {
       .use(headingNodeViewPlugin) // Custom heading rendering for source mode # selection
       .use(backtickWrapPlugin) // Backtick wraps selection as inline code (ProseMirror-level)
       .use(inlineCodeCursorPlugin) // Two-stop cursor at inline-code edges: escape by default, arrow keys step in/out
+      .use(linkCursorPlugin) // Self-healing boundary fix: clears a fresh/stray link mark at the cursor so typing after a link stays plain
       // citationNodeView is now included in citationPlugin (same file = correct atom identity)
       .use(searchPlugin) // Search highlighting decorations
       .use(spellcheckPlugin) // Spellcheck/grammar decorations via NSSpellChecker
