@@ -9,7 +9,7 @@
 import WebKit
 
 @MainActor
-final class EditorPreloader: NSObject, WKNavigationDelegate {
+final class EditorPreloader: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
     static let shared = EditorPreloader()
 
     enum State {
@@ -65,6 +65,10 @@ final class EditorPreloader: NSObject, WKNavigationDelegate {
             forMainFrameOnly: true
         )
         configuration.userContentController.addUserScript(errorScript)
+        // userContentController.add retains the handler (self) strongly, creating a
+        // preloader<->webview reference cycle until claimMilkdownView() removes it below.
+        // Intentional and acceptable for a short-lived preload window, not a leak.
+        configuration.userContentController.add(self, name: "errorHandler")
 
         let webView = WKWebView(frame: CGRect(origin: .zero, size: preloadFrameSize), configuration: configuration)
         webView.navigationDelegate = self
@@ -106,6 +110,10 @@ final class EditorPreloader: NSObject, WKNavigationDelegate {
             forMainFrameOnly: true
         )
         configuration.userContentController.addUserScript(errorScript)
+        // userContentController.add retains the handler (self) strongly, creating a
+        // preloader<->webview reference cycle until claimCodeMirrorView() removes it below.
+        // Intentional and acceptable for a short-lived preload window, not a leak.
+        configuration.userContentController.add(self, name: "errorHandler")
 
         let webView = WKWebView(frame: CGRect(origin: .zero, size: preloadFrameSize), configuration: configuration)
         webView.navigationDelegate = self
@@ -189,6 +197,29 @@ final class EditorPreloader: NSObject, WKNavigationDelegate {
         }
     }
 
+    // MARK: - WKScriptMessageHandler
+
+    /// Route JS console/error messages fired during the preload window to DebugLog.
+    /// Mirrors the "errorHandler" case in MilkdownCoordinator+MessageHandlers.swift so
+    /// preload-time JS errors aren't silently dropped before an editor is claimed.
+    nonisolated func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard message.name == "errorHandler", let body = message.body as? [String: Any] else { return }
+        let msgType = body["type"] as? String ?? "unknown"
+        let msg = body["message"] as? String ?? "unknown"
+        let prefix = "[EditorPreloader]"
+
+        switch msgType {
+        case "sync-diag":
+            DebugLog.log(.sync, "\(prefix) JS SYNC-DIAG: \(msg)")
+        case "debug", "slash-diag":
+            DebugLog.log(.editor, "\(prefix) JS \(msgType.uppercased()): \(msg)")
+        case "plugin-error", "unhandledrejection", "error":
+            DebugLog.log(.editor, "\(prefix) JS ERROR: \(msg)")
+        default:
+            DebugLog.log(.editor, "\(prefix) JS \(msgType.uppercased()): \(msg)")
+        }
+    }
+
     // MARK: - Claim
 
     /// Claims the preloaded Milkdown WebView, transferring ownership to the caller.
@@ -202,6 +233,7 @@ final class EditorPreloader: NSObject, WKNavigationDelegate {
         DebugLog.log(.editor, "[EditorPreloader] Milkdown WebView claimed successfully")
 
         restartMilkdownPreloading()
+        view.configuration.userContentController.removeScriptMessageHandler(forName: "errorHandler")
         return view
     }
 
@@ -216,6 +248,7 @@ final class EditorPreloader: NSObject, WKNavigationDelegate {
         DebugLog.log(.editor, "[EditorPreloader] CodeMirror WebView claimed successfully")
 
         restartCodeMirrorPreloading()
+        view.configuration.userContentController.removeScriptMessageHandler(forName: "errorHandler")
         return view
     }
 
