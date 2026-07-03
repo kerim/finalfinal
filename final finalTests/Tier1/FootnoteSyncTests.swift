@@ -103,4 +103,75 @@ struct FootnoteSyncTests {
         #expect(stripped.contains("# References"), "Should preserve References heading")
         #expect(stripped.contains("Some references"), "Should preserve References content")
     }
+
+    // MARK: - Immediate/debounced race (duplicate definition guard)
+
+    @Test("Stale debounced rebuild after an immediate insertion is superseded (no lost/duplicate definition)")
+    @MainActor
+    func immediateInsertionSupersedesStaleDebounce() async throws {
+        // Seed a document whose Notes section already has one real definition ([^1]).
+        let seed = """
+        Body text[^1] here.
+
+        # Notes
+
+        [^1]: Real definition one.
+        """
+        let db = try TestFixtureFactory.createTemporary(content: seed)
+        let projectId = try TestFixtureFactory.getProjectId(from: db)
+
+        let service = FootnoteSyncService()
+        service.configure(database: db, projectId: projectId)
+
+        // A debounced rebuild was scheduled with the pre-insertion snapshot (generation 0, refs=["1"]).
+
+        // 1. Immediate insertion of [^2] (as if the user ran /footnote). Rebuilds Notes to
+        //    [^1] real + [^2] empty, and bumps syncGeneration 0 -> 1.
+        service.handleImmediateInsertion(label: "2", projectId: projectId)
+
+        // 2. The stale debounced rebuild now fires. It must bail because the immediate
+        //    insertion superseded it. Without the fix it deletes/empties the fresh [^2].
+        await service.performFootnoteUpdate(
+            refs: ["1"], projectId: projectId, fullContent: seed, scheduledGeneration: 0
+        )
+
+        // 3. DB must hold exactly two definition blocks: [^1] (real) and [^2] (empty placeholder),
+        //    with no duplicate and no data loss.
+        let defs = try TestFixtureFactory.fetchBlocks(from: db)
+            .filter { $0.isNotes && $0.blockType == .paragraph }
+        let frags = defs.map(\.markdownFragment)
+
+        #expect(defs.count == 2, "Expected exactly [^1] and [^2]; got \(frags)")
+        #expect(frags.filter { $0.hasPrefix("[^1]:") }.count == 1, "Exactly one [^1] block")
+        #expect(frags.filter { $0.hasPrefix("[^2]:") }.count == 1, "Exactly one [^2] block (not destroyed)")
+        #expect(frags.contains { $0.contains("Real definition one.") }, "[^1] real text preserved")
+    }
+
+    @Test("A current-generation debounced rebuild still runs (guard does not over-block)")
+    @MainActor
+    func currentGenerationDebounceStillRuns() async throws {
+        let seed = """
+        A[^1] B[^2].
+
+        # Notes
+
+        [^1]: First.
+
+        [^2]: Second.
+        """
+        let db = try TestFixtureFactory.createTemporary(content: seed)
+        let projectId = try TestFixtureFactory.getProjectId(from: db)
+
+        let service = FootnoteSyncService()
+        service.configure(database: db, projectId: projectId)
+
+        // No immediate insertion happened, so the debounce's captured generation (0) still matches.
+        await service.performFootnoteUpdate(
+            refs: ["1", "2"], projectId: projectId, fullContent: seed, scheduledGeneration: 0
+        )
+
+        let defs = try TestFixtureFactory.fetchBlocks(from: db)
+            .filter { $0.isNotes && $0.blockType == .paragraph }
+        #expect(defs.count == 2, "Legitimate debounced rebuild must still produce both definitions")
+    }
 }

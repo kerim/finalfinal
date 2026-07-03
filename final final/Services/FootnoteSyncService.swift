@@ -34,6 +34,11 @@ final class FootnoteSyncService {
     /// Debounce timer for footnote updates
     private var debounceTask: Task<Void, Never>?
 
+    /// Monotonic counter bumped by every immediate insertion. A debounced rebuild
+    /// captures this at schedule time; if an immediate insertion has bumped it since,
+    /// the debounced rebuild is stale and must not run.
+    private var syncGeneration: Int = 0
+
     /// Debounce interval (3 seconds — longer than bibliography to let Notes edits settle)
     private let debounceInterval: TimeInterval = 3.0
 
@@ -205,6 +210,7 @@ final class FootnoteSyncService {
         }
 
         // Debounce the update
+        let scheduledGeneration = syncGeneration
         debounceTask?.cancel()
         debounceTask = Task { [weak self] in
             guard !Task.isCancelled else { return }
@@ -212,7 +218,12 @@ final class FootnoteSyncService {
             try? await Task.sleep(nanoseconds: UInt64(3_000_000_000))
 
             guard !Task.isCancelled else { return }
-            await self?.performFootnoteUpdate(refs: footnoteRefs, projectId: projectId, fullContent: fullContent)
+            await self?.performFootnoteUpdate(
+                refs: footnoteRefs,
+                projectId: projectId,
+                fullContent: fullContent,
+                scheduledGeneration: scheduledGeneration
+            )
         }
     }
 
@@ -270,6 +281,7 @@ final class FootnoteSyncService {
 
         debounceTask?.cancel()
         debounceTask = nil
+        syncGeneration += 1        // supersede any debounced rebuild scheduled before now
 
         state = .syncing
         defer { state = .idle }
@@ -394,8 +406,21 @@ final class FootnoteSyncService {
 
     // MARK: - Private Methods
 
-    private func performFootnoteUpdate(refs: [String], projectId: String, fullContent: String) async {
+    /// Internal (not private) so the race-condition guard can be unit-tested directly.
+    func performFootnoteUpdate(
+        refs: [String],
+        projectId: String,
+        fullContent: String,
+        scheduledGeneration: Int
+    ) async {
         guard let database else { return }
+
+        // Execution-time mutual exclusion: an immediate insertion (handleImmediateInsertion)
+        // bumps syncGeneration and cancels the debounce. A debounced rebuild scheduled before
+        // that insertion must NOT run against its now-stale refs/fullContent snapshot.
+        guard !Task.isCancelled,
+              scheduledGeneration == syncGeneration,
+              state == .idle else { return }
 
         state = .syncing
         defer { state = .idle }
