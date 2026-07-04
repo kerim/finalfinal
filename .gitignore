@@ -34,6 +34,7 @@ temp/
 # so a tracked copy breaks worktree creation (see wiki: Per-Project MCP Configuration)
 .mcp.json
 .claude/worktrees/
+.claude/autodev/
 .claude/settings.local.json
 .claude/settings.json.bak.*
 .claude/debug/
