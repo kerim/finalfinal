@@ -87,10 +87,9 @@ struct ContentView: View {
     /// (it fires from the old project's debounced citekey check and is redundant)
     @State var suppressNextBibliographyRebuild = false
 
-    /// Queued footnote label for double-insertion safety.
-    /// If user presses Cmd+Shift+N while contentState != .idle, the label is stored
-    /// here and processed when contentState returns to .idle.
-    @State var pendingFootnoteLabel: String?
+    /// Queue of footnote labels awaiting insertion while contentState != .idle.
+    /// Drained one label per idle transition by drainNextPendingFootnoteIfPossible().
+    @State private var pendingFootnoteLabels = PendingFootnoteQueue()
 
     /// Queued bibliography/notes rebuild flags.
     /// If a rebuild notification arrives while contentState != .idle, store the flag
@@ -486,15 +485,25 @@ struct ContentView: View {
             DispatchQueue.main.async {
                 NotificationCenter.default.post(name: .notesSectionChanged, object: nil)
             }
-        } else if let pending = pendingFootnoteLabel {
-            pendingFootnoteLabel = nil
-            DispatchQueue.main.async {
-                NotificationCenter.default.post(
-                    name: .footnoteInsertedImmediate,
-                    object: nil,
-                    userInfo: ["label": pending]
-                )
-            }
+        } else if !pendingFootnoteLabels.isEmpty {
+            drainNextPendingFootnoteIfPossible()
+        }
+    }
+
+    /// Dequeues and re-posts exactly one pending footnote label, if contentState is
+    /// idle and the queue is non-empty. Called both from the idle-transition branch
+    /// above and from handleFootnoteInsertedImmediate's own early-return guard — the
+    /// latter closes a gap where a drained item that turns out unprocessable (nil
+    /// label/projectId) would otherwise never touch contentState, so no further idle
+    /// transition would occur to pick up whatever is left in the queue.
+    @MainActor
+    private func drainNextPendingFootnoteIfPossible() {
+        guard editorState.contentState == .idle,
+              let next = pendingFootnoteLabels.dequeue() else { return }
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(
+                name: .footnoteInsertedImmediate, object: nil,
+                userInfo: ["label": next])
         }
     }
 
@@ -503,6 +512,7 @@ struct ContentView: View {
     private func handleFootnoteInsertedImmediate(_ notification: Notification) {
         guard let label = notification.userInfo?["label"] as? String,
               let projectId = documentManager.projectId else {
+            drainNextPendingFootnoteIfPossible()
             return
         }
         // Zoom-aware handling: use zoom-specific insertion path
@@ -513,7 +523,7 @@ struct ContentView: View {
 
         // Rapid double-insertion safety: queue label if busy
         guard editorState.contentState == .idle else {
-            pendingFootnoteLabel = label
+            pendingFootnoteLabels.enqueue(label)
             return
         }
 
