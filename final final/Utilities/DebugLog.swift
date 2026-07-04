@@ -23,13 +23,14 @@ enum DebugLog {
         case data        // [Database+Blocks] [ProjectRepairService] data layer
         case image       // [Image] width lifecycle tracing
         case proofing    // [LT] spellcheck + LanguageTool boundary diagnostics
+        case footnotes   // [FootnoteSyncService] Notes-section reconciliation diagnostics
     }
 
     /// Default: only lifecycle + zotero + editor. Add categories here when debugging.
     /// `.outline` and `.data` enabled temporarily for word-count debugging — gives
     /// per-refresh totals (`[batchWordCounts]`) and per-edit deltas (`[Blocks:edit]`)
     /// so a spurious wordcount jump can be traced to the exact block that moved.
-    static let enabled: Set<Category> = [.lifecycle, .zotero, .editor, .outline, .data]
+    static let enabled: Set<Category> = [.lifecycle, .zotero, .editor, .outline, .data, .footnotes]
 
     /// Category-gated log. Compiles to nothing in release builds.
     @inline(__always)

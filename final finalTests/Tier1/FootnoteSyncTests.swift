@@ -123,6 +123,13 @@ struct FootnoteSyncTests {
         let service = FootnoteSyncService()
         service.configure(database: db, projectId: projectId)
 
+        // Capture [^1]'s block id before anything runs — the upsert must never delete
+        // and recreate a label it doesn't touch.
+        let originalOneId = try #require(
+            try TestFixtureFactory.fetchBlocks(from: db)
+                .first { $0.isNotes && $0.markdownFragment.hasPrefix("[^1]:") }
+        ).id
+
         // A debounced rebuild was scheduled with the pre-insertion snapshot (generation 0, refs=["1"]).
 
         // 1. Immediate insertion of [^2] (as if the user ran /footnote). Rebuilds Notes to
@@ -145,6 +152,11 @@ struct FootnoteSyncTests {
         #expect(frags.filter { $0.hasPrefix("[^1]:") }.count == 1, "Exactly one [^1] block")
         #expect(frags.filter { $0.hasPrefix("[^2]:") }.count == 1, "Exactly one [^2] block (not destroyed)")
         #expect(frags.contains { $0.contains("Real definition one.") }, "[^1] real text preserved")
+
+        // 4. [^1] must be the SAME row throughout — proves handleImmediateInsertion no
+        //    longer delete-and-recreates labels it never touched.
+        let survivingOne = defs.first { $0.markdownFragment.hasPrefix("[^1]:") }
+        #expect(survivingOne?.id == originalOneId, "[^1] must keep its original block id")
     }
 
     @Test("A current-generation debounced rebuild still runs (guard does not over-block)")
@@ -173,5 +185,282 @@ struct FootnoteSyncTests {
         let defs = try TestFixtureFactory.fetchBlocks(from: db)
             .filter { $0.isNotes && $0.blockType == .paragraph }
         #expect(defs.count == 2, "Legitimate debounced rebuild must still produce both definitions")
+    }
+
+    // MARK: - reconcileNotesBlocks (per-label-safe upsert)
+
+    @Test("reconcileNotesBlocks leaves unrelated labels byte-identical (same id, same updatedAt)")
+    @MainActor
+    func reconcileNotesBlocksLeavesUnrelatedLabelsUntouched() throws {
+        let seed = """
+        Body[^1] and[^2].
+
+        # Notes
+
+        [^1]: First real text.
+
+        [^2]: Second real text.
+        """
+        let db = try TestFixtureFactory.createTemporary(content: seed)
+        let projectId = try TestFixtureFactory.getProjectId(from: db)
+
+        let before = try TestFixtureFactory.fetchBlocks(from: db)
+            .filter { $0.isNotes && $0.blockType == .paragraph }
+        let beforeById = Dictionary(uniqueKeysWithValues: before.map { ($0.id, $0) })
+
+        // Append a brand-new [^3] — no rename needed, so [^1] and [^2] are never
+        // fetched-for-write.
+        try db.write { database in
+            try FootnoteSyncService.reconcileNotesBlocks(
+                db: database, projectId: projectId, targetRefs: ["1", "2", "3"]
+            )
+        }
+
+        let after = try TestFixtureFactory.fetchBlocks(from: db)
+            .filter { $0.isNotes && $0.blockType == .paragraph }
+        #expect(after.count == 3, "Expected [^1], [^2] (untouched) plus new [^3]")
+
+        for (id, beforeBlock) in beforeById {
+            let afterBlock = after.first { $0.id == id }
+            #expect(afterBlock != nil, "Untouched block \(id) must still exist under the same id")
+            #expect(
+                afterBlock?.updatedAt == beforeBlock.updatedAt,
+                "Untouched block \(id) must keep its original updatedAt — proves zero writes"
+            )
+            #expect(
+                afterBlock?.markdownFragment == beforeBlock.markdownFragment,
+                "Untouched block \(id) must keep its original text"
+            )
+        }
+
+        #expect(after.contains { $0.markdownFragment.hasPrefix("[^3]:") }, "New [^3] block must be inserted")
+    }
+
+    @Test("handleImmediateInsertion preserves block identity and text across a rename")
+    @MainActor
+    func handleImmediateInsertionPreservesIdentityAcrossRename() throws {
+        let seed = """
+        Body[^1] and[^2].
+
+        # Notes
+
+        [^1]: First real text.
+
+        [^2]: Second real text.
+        """
+        let db = try TestFixtureFactory.createTemporary(content: seed)
+        let projectId = try TestFixtureFactory.getProjectId(from: db)
+
+        let before = try TestFixtureFactory.fetchBlocks(from: db)
+            .filter { $0.isNotes && $0.blockType == .paragraph }
+        let originalOne = try #require(before.first { $0.markdownFragment.hasPrefix("[^1]:") })
+        let originalTwo = try #require(before.first { $0.markdownFragment.hasPrefix("[^2]:") })
+
+        let service = FootnoteSyncService()
+        service.configure(database: db, projectId: projectId)
+
+        // JS computed pivot "1" — inserting a new footnote before both existing ones
+        // forces 1->2, 2->3.
+        service.handleImmediateInsertion(label: "1", projectId: projectId)
+
+        let after = try TestFixtureFactory.fetchBlocks(from: db)
+            .filter { $0.isNotes && $0.blockType == .paragraph }
+        #expect(after.count == 3, "Expected [^1] (new, empty), [^2] (was [^1]), [^3] (was [^2])")
+
+        let renamedOne = after.first { $0.id == originalOne.id }
+        let renamedTwo = after.first { $0.id == originalTwo.id }
+
+        #expect(
+            renamedOne?.markdownFragment == "[^2]: First real text.",
+            "Original [^1] block survives rename to [^2] under the same id, with its original text intact"
+        )
+        #expect(
+            renamedTwo?.markdownFragment == "[^3]: Second real text.",
+            "Original [^2] block survives rename to [^3] under the same id, with its original text intact"
+        )
+
+        let newBlock = try #require(after.first { $0.markdownFragment.hasPrefix("[^1]:") })
+        #expect(
+            newBlock.id != originalOne.id && newBlock.id != originalTwo.id,
+            "The new [^1] placeholder is a genuinely new row, not a reused id"
+        )
+    }
+
+    @Test("reconcileNotesBlocks resolves a mixed insert+delete+rename in a single call")
+    @MainActor
+    func reconcileNotesBlocksHandlesMixedInsertDeleteRenameInOneCall() throws {
+        let seed = """
+        Body[^1] and[^2] and[^3] and[^5].
+
+        # Notes
+
+        [^1]: First real text.
+
+        [^2]: Second real text.
+
+        [^3]: Third real text.
+
+        [^5]: Fifth real text.
+        """
+        let db = try TestFixtureFactory.createTemporary(content: seed)
+        let projectId = try TestFixtureFactory.getProjectId(from: db)
+
+        let before = try TestFixtureFactory.fetchBlocks(from: db)
+            .filter { $0.isNotes && $0.blockType == .paragraph }
+        let originalOne = try #require(before.first { $0.markdownFragment.hasPrefix("[^1]:") })
+        let originalTwo = try #require(before.first { $0.markdownFragment.hasPrefix("[^2]:") })
+        let originalThree = try #require(before.first { $0.markdownFragment.hasPrefix("[^3]:") })
+        let originalFive = try #require(before.first { $0.markdownFragment.hasPrefix("[^5]:") })
+
+        // A single reconcile call that simultaneously: renames [^2]->[^4], deletes [^5]
+        // (no longer in the target set), inserts a brand-new [^6], and leaves [^1]
+        // completely untouched.
+        try db.write { database in
+            try FootnoteSyncService.reconcileNotesBlocks(
+                db: database,
+                projectId: projectId,
+                targetRefs: ["1", "3", "4", "6"],
+                renameMap: ["2": "4"]
+            )
+        }
+
+        let after = try TestFixtureFactory.fetchBlocks(from: db)
+            .filter { $0.isNotes && $0.blockType == .paragraph }
+        #expect(after.count == 4, "Expected [^1], [^3], [^4] (was [^2]), [^6] (new)")
+
+        // Untouched: [^1] was never in the rename map, delete set, or insert set — must
+        // be the exact same row, never fetched-for-write.
+        let untouchedOne = after.first { $0.id == originalOne.id }
+        #expect(untouchedOne?.updatedAt == originalOne.updatedAt, "[^1] must keep its original updatedAt — proves zero writes")
+        #expect(untouchedOne?.markdownFragment == originalOne.markdownFragment, "[^1] must keep its original text untouched")
+
+        // Renamed: [^2] survives as [^4] under the same block id, with its original text
+        // carried forward.
+        let renamedTwo = after.first { $0.id == originalTwo.id }
+        #expect(renamedTwo?.markdownFragment == "[^4]: Second real text.", "Original [^2] block survives rename to [^4] with its text intact")
+
+        // Untouched-content: [^3] keeps its id and text even though the rename shuffling
+        // [^2]->[^4] past it may bump its sortOrder/updatedAt during renormalization.
+        let survivingThree = after.first { $0.id == originalThree.id }
+        #expect(survivingThree?.markdownFragment == originalThree.markdownFragment, "[^3] keeps its original label and text")
+
+        // Deleted: [^5] is gone entirely, no longer present under its old id or label.
+        #expect(!after.contains { $0.id == originalFive.id }, "[^5] block must be deleted")
+        #expect(!after.contains { $0.markdownFragment.hasPrefix("[^5]:") }, "No block should carry the [^5] label anymore")
+
+        // Inserted: [^6] is a genuinely new row (not a reused id) with the expected blank
+        // placeholder text.
+        let newSix = try #require(after.first { $0.markdownFragment.hasPrefix("[^6]:") })
+        #expect(newSix.markdownFragment == "[^6]: ", "New [^6] gets the default blank placeholder text")
+        #expect(
+            ![originalOne.id, originalTwo.id, originalThree.id, originalFive.id].contains(newSix.id),
+            "The new [^6] placeholder is a genuinely new row, not a reused id"
+        )
+    }
+
+    @Test("A debounced rebuild with already-correct refs performs zero writes")
+    @MainActor
+    func debouncedUpdateNotesBlockIsNoOpWhenNothingChanged() async throws {
+        let seed = """
+        Body[^1] and[^2].
+
+        # Notes
+
+        [^1]: First real text.
+
+        [^2]: Second real text.
+        """
+        let db = try TestFixtureFactory.createTemporary(content: seed)
+        let projectId = try TestFixtureFactory.getProjectId(from: db)
+
+        let service = FootnoteSyncService()
+        service.configure(database: db, projectId: projectId)
+
+        let before = try TestFixtureFactory.fetchBlocks(from: db).filter { $0.isNotes }
+        let beforeById = Dictionary(uniqueKeysWithValues: before.map { ($0.id, $0) })
+
+        // Refs already match the DB exactly (sequential, no renumbering needed) — a
+        // debounced rebuild scheduled for this state must be a pure no-op at the write level.
+        await service.performFootnoteUpdate(
+            refs: ["1", "2"], projectId: projectId, fullContent: seed, scheduledGeneration: 0
+        )
+
+        let after = try TestFixtureFactory.fetchBlocks(from: db).filter { $0.isNotes }
+        #expect(after.count == before.count, "No blocks should be added or removed")
+        for (id, beforeBlock) in beforeById {
+            let afterBlock = after.first { $0.id == id }
+            #expect(
+                afterBlock?.updatedAt == beforeBlock.updatedAt,
+                "Block \(id) must be untouched (same updatedAt) when nothing actually changed"
+            )
+        }
+    }
+
+    @Test("Guaranteed resync recovers a debounce that an unrelated immediate insertion silently cancelled")
+    @MainActor
+    func guaranteedResyncRunsUnrelatedDroppedDebounce() async throws {
+        // Body already contains [^1] (defined) and a freshly pasted [^2] ref with no
+        // definition yet — its debounce (refs=["1","2"]) hasn't fired.
+        let seed = """
+        Body[^1] and pasted[^2] ref.
+
+        # Notes
+
+        [^1]: Real definition one.
+        """
+        let db = try TestFixtureFactory.createTemporary(content: seed)
+        let projectId = try TestFixtureFactory.getProjectId(from: db)
+
+        let service = FootnoteSyncService()
+        service.configure(database: db, projectId: projectId)
+
+        // 1. That paste would have scheduled a debounce for refs=["1","2"] at generation 0.
+        //    Not simulated as a real Task here — the existing race tests already establish
+        //    that a cancelled/stale debounce never reaches performFootnoteUpdate at all.
+
+        // 2. Before it fires, an unrelated immediate insertion happens elsewhere in the
+        //    live document. JS's live scan finds both [^1] and [^2] positioned before the
+        //    cursor, so it computes pivot "3" (a pure append). This cancels the pending
+        //    debounce and bumps syncGeneration — but handleImmediateInsertion only reads
+        //    the DB's Notes blocks (which don't have [^2] yet), so its own delta creates
+        //    [^3] without ever learning [^2] exists.
+        let bodyAfterInsertion = """
+        Body[^1] and pasted[^2] ref. New footnote[^3] too.
+
+        # Notes
+
+        [^1]: Real definition one.
+        """
+        service.handleImmediateInsertion(label: "3", projectId: projectId)
+
+        let midway = try TestFixtureFactory.fetchBlocks(from: db)
+            .filter { $0.isNotes && $0.blockType == .paragraph }
+        let midwayLabels = Set(midway.compactMap { FootnoteSyncService.parseNotesLabel(from: $0.markdownFragment)?.label })
+        #expect(
+            midwayLabels == Set(["1", "3"]),
+            "handleImmediateInsertion's own delta knows nothing about [^2] — it's silently missing here without the fix"
+        )
+
+        // 3. Guaranteed resync: ContentView calls checkAndUpdateFootnotes again with the
+        //    live document's fresh content once contentState returns to idle — this is the
+        //    fix under test. Without it, nothing else re-triggers a check (onChange was
+        //    suppressed for the whole immediate-insertion flow), so [^2] would stay missing
+        //    forever.
+        let refreshedRefs = FootnoteSyncService.extractFootnoteRefs(from: bodyAfterInsertion)
+        service.checkAndUpdateFootnotes(
+            footnoteRefs: refreshedRefs, projectId: projectId, fullContent: bodyAfterInsertion
+        )
+        // Drive the newly-scheduled debounce synchronously (avoids a real 3s sleep in the
+        // test). scheduledGeneration 1 matches syncGeneration after the immediate insertion
+        // above, exactly like the debounce checkAndUpdateFootnotes just scheduled.
+        await service.performFootnoteUpdate(
+            refs: refreshedRefs, projectId: projectId, fullContent: bodyAfterInsertion, scheduledGeneration: 1
+        )
+
+        let after = try TestFixtureFactory.fetchBlocks(from: db)
+            .filter { $0.isNotes && $0.blockType == .paragraph }
+        #expect(after.count == 3, "Expected exactly [^1], [^2], [^3] — no duplicates")
+        let afterLabels = Set(after.compactMap { FootnoteSyncService.parseNotesLabel(from: $0.markdownFragment)?.label })
+        #expect(afterLabels == Set(["1", "2", "3"]), "Guaranteed resync recovers the dropped [^2] entry")
     }
 }

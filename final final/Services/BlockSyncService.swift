@@ -148,12 +148,36 @@ class BlockSyncService {
     /// Call before reading blocks from DB when fresh editor content is needed.
     /// Uses force mode to bypass contentState/generation guards, since callers
     /// explicitly need the flush to succeed regardless of current state.
+    /// May block under contention: if a poll cycle is already running, this
+    /// waits for it to finish before running a fresh cycle of its own, so the
+    /// worst case is bounded by two 5-second watchdog periods rather than
+    /// returning immediately with stale (or no) data.
     func pollBlockChangesNow() async {
         await pollBlockChanges(force: true)
     }
 
-    /// Reentrancy guard for polling
-    private var isPolling = false
+    /// Handle to whichever poll cycle is currently running, or nil if none is.
+    /// Replaces a boolean `isPolling` reentrancy guard so a forced flush can
+    /// *wait out* a concurrently-running cycle instead of silently skipping
+    /// itself — see `pollBlockChanges(force:)` for the full reasoning. This was
+    /// the root cause of a footnote/Notes data-loss bug: a forced flush arriving
+    /// while a periodic poll was mid-flight used to return immediately without
+    /// ever reading the caller's just-made edit.
+    private var inFlightPoll: Task<Void, Never>?
+
+    #if DEBUG
+    /// Test-only hook, awaited at the very top of every poll cycle
+    /// (`runPollCycle`). Lets a test hold a cycle deterministically suspended
+    /// mid-flight to exercise the reentrancy paths below without racing real
+    /// timers or sleeping. No cost in release builds (property doesn't exist).
+    var testPollCycleHook: (() async -> Void)?
+
+    /// Test-only entry point to the otherwise-private poll, so tests can drive
+    /// forced/periodic cycles directly instead of waiting on the real timer.
+    func pollBlockChangesForTest(force: Bool = false) async {
+        await pollBlockChanges(force: force)
+    }
+    #endif
 
     // MARK: - Push Block IDs to Editor
 
@@ -299,15 +323,66 @@ class BlockSyncService {
 
     // MARK: - Polling
 
-    /// Poll the editor for block changes with a 5-second timeout to prevent permanent hangs.
+    /// Poll the editor for block changes, guarding against reentrancy.
+    ///
+    /// - Unforced (periodic): cheap skip — if a cycle is already in flight, drop
+    ///   this tick; the in-flight cycle will pick up any changes itself.
+    /// - Forced: callers need a guarantee that everything up to and including
+    ///   their own just-made edit has reached the DB. A merely-completed
+    ///   in-flight cycle is not sufficient on its own — its snapshot may predate
+    ///   the edit — so a forced call always (1) drains any cycle already in
+    ///   flight, then (2) runs and awaits a *fresh* cycle of its own, whose
+    ///   snapshot is guaranteed to be taken at or after the call.
     private func pollBlockChanges(force: Bool = false) async {
-        guard !isPolling else {
-            if force { DebugLog.log(.blockPoll, "[SYNC-DIAG:BlockPoll] BLOCKED: force poll skipped (already polling)") }
-            return
+        if force {
+            // Drain loop, not a single `if`/await: after `await inFlight.value`
+            // returns, a *different* caller may have installed a new cycle
+            // during that very suspension — recheck catches that.
+            while let inFlight = inFlightPoll {
+                await inFlight.value
+            }
+        } else {
+            guard inFlightPoll == nil else { return }
         }
-        isPolling = true
-        defer { isPolling = false }
 
+        // Spawn this cycle and register its handle so a concurrent caller can
+        // drain (forced) or skip (unforced) against it.
+        //
+        // Safety-critical: this task clears `inFlightPoll` itself, from INSIDE
+        // its own body, as its last action — never the spawner, after `await
+        // task.value` returns out here. If the spawner cleared it from outside,
+        // a concurrent drain loop elsewhere could observe this task as complete
+        // (`await` on an already-completed `Task`'s `.value` can resume inline,
+        // without yielding the MainActor's run loop) and loop back to recheck
+        // `inFlightPoll` before the spawner's own post-await statement ever
+        // runs. That is a deterministic hang: the drain loop spins forever on a
+        // stale non-nil handle. Clearing inside the task body — guaranteed to
+        // run before the task's result becomes observable to any awaiter —
+        // means the slot is already nil (or has been reassigned to a newer
+        // task) by the time anyone can see this task as finished.
+        //
+        // The clear is unconditional, with no identity check against a
+        // captured self-reference: `inFlightPoll = task` immediately follows
+        // `Task { ... }` with no `await` between them, and this whole method
+        // runs on @MainActor, so no other call can install a different task
+        // into the slot between this task's creation and its own eventual
+        // completion — only this task's own body is ever "the" in-flight poll
+        // for this particular slot occupancy.
+        let task = Task { @MainActor [weak self] in
+            await self?.runPollCycle(force: force)
+            self?.inFlightPoll = nil
+        }
+        inFlightPoll = task
+        await task.value
+    }
+
+    /// The poll cycle body: a 5-second watchdog racing the real poll work.
+    /// Shared by both the forced and unforced paths in `pollBlockChanges(force:)`
+    /// above — unchanged internals, just relocated so both can share it.
+    private func runPollCycle(force: Bool) async {
+        #if DEBUG
+        await testPollCycleHook?()
+        #endif
         do {
             try await withThrowingTaskGroup(of: Void.self) { group in
                 group.addTask { [weak self] in

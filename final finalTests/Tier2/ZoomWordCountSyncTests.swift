@@ -36,6 +36,74 @@ private final class SelectionMessageCollector: NSObject, WKScriptMessageHandler 
     }
 }
 
+/// MainActor-isolated one-shot checked-continuation signal. `wait()` suspends
+/// until `fire()` is called (or returns immediately if `fire()` already
+/// happened). Because both this type and its callers are @MainActor, calls
+/// into it never hop actors — they're synchronous when the caller is already
+/// on MainActor — which is what makes the event-ordering test below
+/// deterministic rather than a race against the scheduler.
+@MainActor
+private final class Signal {
+    private var fired = false
+    private var continuation: CheckedContinuation<Void, Never>?
+
+    func fire() {
+        guard !fired else { return }
+        fired = true
+        continuation?.resume()
+        continuation = nil
+    }
+
+    func wait() async {
+        if fired { return }
+        await withCheckedContinuation { continuation = $0 }
+    }
+}
+
+/// Checked-continuation gate (no sleep) that lets a test hold an in-flight poll
+/// cycle deterministically suspended mid-cycle via `testPollCycleHook`, confirm
+/// via `waitUntilReached()` that it's genuinely stuck there (not merely about
+/// to run), then release it with `open()`.
+@MainActor
+private final class PollGate {
+    private var reached = false
+    private var released = false
+    private var reachedContinuation: CheckedContinuation<Void, Never>?
+    private var releaseContinuation: CheckedContinuation<Void, Never>?
+
+    /// Call from inside the poll cycle (via `testPollCycleHook`).
+    func waitAtGate() async {
+        reached = true
+        reachedContinuation?.resume()
+        reachedContinuation = nil
+        if released { return }
+        await withCheckedContinuation { releaseContinuation = $0 }
+    }
+
+    /// Suspends until some poll cycle has actually reached the gate.
+    func waitUntilReached() async {
+        if reached { return }
+        await withCheckedContinuation { reachedContinuation = $0 }
+    }
+
+    /// Releases whatever is parked at the gate; future arrivals pass straight through.
+    func open() {
+        released = true
+        releaseContinuation?.resume()
+        releaseContinuation = nil
+    }
+}
+
+/// Records a happens-before-ordered sequence of named events. @MainActor (not
+/// a true `actor`) so `record()` is a synchronous call from any MainActor
+/// context — no suspension point that could reorder events relative to other
+/// synchronous MainActor work.
+@MainActor
+private final class EventLog {
+    private(set) var events: [String] = []
+    func record(_ event: String) { events.append(event) }
+}
+
 final class ZoomWordCountSyncTests: XCTestCase {
 
     /// Two sections so we can zoom into the second one.
@@ -235,6 +303,110 @@ final class ZoomWordCountSyncTests: XCTestCase {
         XCTAssertGreaterThan(
             after, before,
             "CONTROL: un-zoomed edit must reach the DB (before=\(before), after=\(after))"
+        )
+    }
+
+    // MARK: - Reentrancy: forced flush must drain an in-flight poll, then flush fresh
+
+    /// Regression test for a reentrancy bug in `BlockSyncService`'s poll/flush
+    /// primitive: a forced flush (`pollBlockChangesNow()`, used before footnote
+    /// insertion, bibliography rebuild, and notes rebuild) arriving while a
+    /// periodic poll cycle was already mid-flight used to return *immediately*
+    /// (the old `isPolling` guard), silently skipping the caller's just-made
+    /// edit — live data loss.
+    ///
+    /// This test forces the exact interleaving deterministically, with no sleep
+    /// race: it starts a periodic (unforced) poll cycle and gates it mid-cycle
+    /// via `testPollCycleHook` (confirmed via `PollGate.waitUntilReached()` to
+    /// be genuinely suspended, not merely about to run), makes a real edit,
+    /// then calls a forced flush and records a happens-before-ordered event
+    /// sequence — `.flushCalled` when the forced flush starts, `.gateReleased`
+    /// when the gated cycle is released, `.flushReturned` when the forced flush
+    /// returns.
+    ///
+    /// The assertion is on that recorded ORDER, not on timing: under the old
+    /// buggy `isPolling` guard the order would be `flushCalled, flushReturned,
+    /// gateReleased` (the forced flush returns instantly, before the gate is
+    /// even opened); under the fix it's `flushCalled, gateReleased,
+    /// flushReturned` (the forced flush drains the gated cycle, then runs and
+    /// awaits a fresh cycle of its own). A fixed ~200ms-sleep-based assertion
+    /// would false-pass on a loaded/slow CI machine if the margin weren't
+    /// enough; this ordering assertion cannot false-pass regardless of machine
+    /// speed, because it's derived from actual continuation-resume order, not
+    /// wall-clock timing.
+    @MainActor
+    func testForcedFlush_waitsForInFlightPoll_thenFlushesFreshEdit() async throws {
+        let stack = try await makeStack()
+        let (helper, db) = (stack.helper, stack.db)
+        let (pid, sync) = (stack.pid, stack.sync)
+
+        let blocks = try TestFixtureFactory.fetchBlocks(from: db)
+            .sorted { $0.sortOrder < $1.sortOrder }
+        let ids = BlockParser.idsForProseMirrorAlignment(blocks)
+        let content = BlockParser.assembleMarkdown(from: blocks)
+        await sync.setContentWithBlockIds(markdown: content, blockIds: ids)
+        try await Task.sleep(nanoseconds: 500_000_000)
+
+        let before = try totalWordCount(db, pid)
+
+        let gate = PollGate()
+        let events = EventLog()
+        sync.testPollCycleHook = { await gate.waitAtGate() }
+
+        // Start a periodic (unforced) poll cycle and let it hang at the gate —
+        // simulates a slow in-flight background poll.
+        let periodicTask = Task { @MainActor in
+            await sync.pollBlockChangesForTest(force: false)
+        }
+        await gate.waitUntilReached()
+
+        // Make a real edit AFTER the periodic cycle is already stuck mid-flight.
+        // This is the exact interleaving that produced live data loss: the
+        // stuck cycle's eventual snapshot predates this edit, so a forced flush
+        // that merely waited for it (without also running a fresh cycle of its
+        // own) would still miss the edit.
+        try await editBetaParagraph(helper.webView)
+
+        // Start the forced flush and deterministically confirm it has begun
+        // running (reached at least its entry decision) before we open the
+        // gate. `forcedStarted.fire()` is the task's first synchronous action;
+        // since everything here is @MainActor (a serial executor that doesn't
+        // preempt mid-synchronous-execution), by the time `forcedStarted.wait()`
+        // resumes in this method, the forced flush has already run its full
+        // synchronous prefix — including its `inFlightPoll` entry check — so
+        // opening the gate afterward can never race ahead of that decision.
+        let forcedStarted = Signal()
+        let forcedTask = Task { @MainActor in
+            forcedStarted.fire()
+            events.record("flushCalled")
+            await sync.pollBlockChangesForTest(force: true)
+            events.record("flushReturned")
+        }
+        await forcedStarted.wait()
+
+        events.record("gateReleased")
+        gate.open()
+
+        await periodicTask.value
+        await forcedTask.value
+
+        let recorded = events.events
+        guard let releasedIdx = recorded.firstIndex(of: "gateReleased"),
+              let returnedIdx = recorded.firstIndex(of: "flushReturned") else {
+            XCTFail("Expected both .gateReleased and .flushReturned events, got \(recorded)")
+            return
+        }
+        XCTAssertEqual(recorded.first, "flushCalled", "forced flush must start before we release the gate, got \(recorded)")
+        XCTAssertLessThan(
+            releasedIdx, returnedIdx,
+            "forced flush must not return before the gated in-flight poll it drained on is released — got order \(recorded)"
+        )
+
+        let after = try totalWordCount(db, pid)
+        XCTAssertGreaterThan(
+            after, before,
+            "forced flush must flush a fresh cycle after draining, so the edit made while the periodic " +
+                "cycle was gated must reach the DB (before=\(before), after=\(after))"
         )
     }
 

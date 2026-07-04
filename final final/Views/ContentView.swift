@@ -528,40 +528,59 @@ struct ContentView: View {
 
         footnoteSyncService.handleImmediateInsertion(label: label, projectId: projectId)
 
-        // Build Notes section from freshly-created DB blocks
-        let notesMarkdown = footnoteSyncService.buildNotesSectionMarkdown(projectId: projectId)
-
-        // Insert Notes between body and bibliography (preserving correct block order)
-        let combined: String
-        if let notes = notesMarkdown {
-            // Find bibliography heading to insert Notes before it
-            let bibHeading = "# " + ExportSettingsManager.shared.bibliographyHeaderName
-            let lines = stripped.components(separatedBy: "\n")
-            if let bibIdx = lines.firstIndex(where: { $0.trimmingCharacters(in: .whitespaces) == bibHeading }) {
-                let bodyPart = lines[..<bibIdx].joined(separator: "\n")
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                let bibPart = lines[bibIdx...].joined(separator: "\n")
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                combined = bodyPart + "\n\n" + notes + "\n\n" + bibPart
-            } else {
-                combined = stripped + "\n\n" + notes
-            }
-        } else {
-            combined = stripped
-        }
-
-        editorState.content = combined
-        updateSourceContentIfNeeded()
-
         Task {
-            // Force-flush pending JS changes to DB before reading blocks
+            // Force-flush pending JS changes to DB. This MUST complete before the
+            // Notes-markdown read below: editorState.content above only reflects what the
+            // JS coordinator had already synced at notification-post time, but the
+            // background block poller runs on its own ~2s interval, so a just-typed edit
+            // to an existing footnote definition can still be sitting unflushed in JS when
+            // we get here. buildNotesSectionMarkdown reads definition TEXT straight from
+            // the DB, so if that read raced ahead of this flush it would silently rebuild
+            // the Notes section from stale (pre-edit) text and stomp the user's edit when
+            // the result is pushed back to the editor below. Awaiting the flush first
+            // guarantees the read sees it.
             await blockSyncService.pollBlockChangesNow()
+            DebugLog.log(.footnotes, "[ContentView] handleFootnoteInsertedImmediate: fresh flush guaranteed " +
+                "complete for label=\(label), reading Notes markdown from DB")
+
+            // Build Notes section from freshly-created AND freshly-flushed DB blocks
+            let notesMarkdown = footnoteSyncService.buildNotesSectionMarkdown(projectId: projectId)
+            DebugLog.log(.footnotes, "[ContentView] handleFootnoteInsertedImmediate: Notes markdown read " +
+                "(\(notesMarkdown?.count ?? 0) chars) after flush")
+
+            // Insert Notes between body and bibliography (preserving correct block order)
+            let combined: String
+            if let notes = notesMarkdown {
+                // Find bibliography heading to insert Notes before it
+                let bibHeading = "# " + ExportSettingsManager.shared.bibliographyHeaderName
+                let lines = stripped.components(separatedBy: "\n")
+                if let bibIdx = lines.firstIndex(where: { $0.trimmingCharacters(in: .whitespaces) == bibHeading }) {
+                    let bodyPart = lines[..<bibIdx].joined(separator: "\n")
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                    let bibPart = lines[bibIdx...].joined(separator: "\n")
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                    combined = bodyPart + "\n\n" + notes + "\n\n" + bibPart
+                } else {
+                    combined = stripped + "\n\n" + notes
+                }
+            } else {
+                combined = stripped
+            }
+
+            editorState.content = combined
+            updateSourceContentIfNeeded()
+
+            // Known residual limitation (left as-is, not fixed here): keystrokes typed in
+            // the window between the flush above and setContentWithBlockIds below are still
+            // lost the same way, since that push resets pending-change tracking. Narrower
+            // window than before the reorder, but not eliminated.
 
             // Get block IDs from DB (count matches because slash commands
             // don't add/remove blocks — they only replace text within one block)
             guard let result = fetchBlocksWithIds() else {
                 editorState.isResettingContent = false
                 editorState.contentState = .idle
+                resyncFootnotesAfterImmediateInsertion(projectId: projectId)
                 return
             }
 
@@ -574,6 +593,7 @@ struct ContentView: View {
 
             editorState.isResettingContent = false
             editorState.contentState = .idle
+            resyncFootnotesAfterImmediateInsertion(projectId: projectId)
 
             await Task.yield()
 
@@ -584,6 +604,23 @@ struct ContentView: View {
                 userInfo: ["label": label]
             )
         }
+    }
+
+    /// Guaranteed resync after an immediate footnote insertion returns `contentState` to
+    /// `.idle`. `handleImmediateInsertion` unconditionally cancels any outstanding debounce,
+    /// and `handleContentChange`'s `contentState == .idle` guard drops every `onChange` firing
+    /// for the whole duration of this flow — including the flow's own final content push — so
+    /// nothing else re-schedules a debounce for work that was dropped. Calling
+    /// `checkAndUpdateFootnotes` here closes that gap. Cheap no-op in the common case: it
+    /// early-exits when the live document's ref set already matches `lastKnownRefs`.
+    @MainActor
+    private func resyncFootnotesAfterImmediateInsertion(projectId: String) {
+        let refreshedRefs = FootnoteSyncService.extractFootnoteRefs(from: editorState.content)
+        footnoteSyncService.checkAndUpdateFootnotes(
+            footnoteRefs: refreshedRefs,
+            projectId: projectId,
+            fullContent: editorState.content
+        )
     }
 
     /// Re-syncs annotations, hierarchy, bibliography, and footnotes after zoom-out

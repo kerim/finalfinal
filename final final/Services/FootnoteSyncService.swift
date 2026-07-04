@@ -74,6 +74,23 @@ final class FootnoteSyncService {
         }
     }()
 
+    /// Parse a single "[^N]: text" line/fragment into its label and definition text using
+    /// `footnoteDefPattern`. Shared by `extractFootnoteDefinitions` (per line) and
+    /// `reconcileNotesBlocks` (per Notes-block `markdownFragment`) — both previously carried
+    /// their own copy of this same regex-match-and-extract logic. Note the underlying regex's
+    /// `.` does not match newlines, so if `text` contains embedded "\n" (a multi-paragraph
+    /// definition stored in one block), only the first line is captured — unchanged from the
+    /// prior duplicated call sites.
+    nonisolated static func parseNotesLabel(from text: String) -> (label: String, text: String)? {
+        let range = NSRange(text.startIndex..., in: text)
+        guard let match = footnoteDefPattern.firstMatch(in: text, range: range),
+              let labelRange = Range(match.range(at: 1), in: text),
+              let textRange = Range(match.range(at: 2), in: text) else {
+            return nil
+        }
+        return (String(text[labelRange]), String(text[textRange]))
+    }
+
     /// Extract ordered unique footnote reference labels from markdown content
     /// Excludes the #Notes section content (definitions should not be counted as references)
     nonisolated static func extractFootnoteRefs(from markdown: String) -> [String] {
@@ -107,16 +124,13 @@ final class FootnoteSyncService {
             // Skip the heading line
             if line.hasPrefix("# ") { continue }
 
-            let range = NSRange(line.startIndex..., in: line)
-            if let match = footnoteDefPattern.firstMatch(in: line, range: range),
-               let labelRange = Range(match.range(at: 1), in: line),
-               let textRange = Range(match.range(at: 2), in: line) {
+            if let parsed = parseNotesLabel(from: line) {
                 // Save previous definition if any
                 if let label = currentLabel {
                     definitions[label] = currentText.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
                 }
-                currentLabel = String(line[labelRange])
-                currentText = [String(line[textRange])]
+                currentLabel = parsed.label
+                currentText = [parsed.text]
             } else if currentLabel != nil {
                 // Continuation line (4-space indented for multi-paragraph, or empty line)
                 if line.hasPrefix("    ") {
@@ -273,7 +287,12 @@ final class FootnoteSyncService {
 
     /// Handle immediate footnote insertion — bypasses 3s debounce.
     /// Called from ContentView when JS returns the label via evaluateJavaScript completion.
-    /// Reads existing defs from DB, shifts labels, creates Notes heading + definition blocks.
+    ///
+    /// Mirrors footnote-plugin.ts's `insertFootnote` shift rule instead of independently
+    /// deriving a label from a DB row count: `label` is JS's live-document-scan-computed
+    /// pivot, already fully authoritative. Every existing DB label >= that pivot shifts up
+    /// by one to make room; everything below the pivot is untouched. Reads/writes go through
+    /// `reconcileNotesBlocks`, so unrelated labels are never fetched-for-write.
     func handleImmediateInsertion(label: String, projectId: String) {
         guard let database else {
             return
@@ -286,121 +305,48 @@ final class FootnoteSyncService {
         state = .syncing
         defer { state = .idle }
 
-        var computedTotalCount = 0
+        let pivot = Int(label) ?? 1
+        var finalRefs: [String] = []
 
         do {
             try database.write { db in
-                // 1. Read existing defs from DB
                 let existingDefBlocks = try Block
                     .filter(Block.Columns.projectId == projectId)
                     .filter(Block.Columns.isNotes == true)
                     .filter(Block.Columns.blockType == BlockType.paragraph.rawValue)
-                    .order(Block.Columns.sortOrder)
                     .fetchAll(db)
 
-                var dbDefs: [String: String] = [:]
-                for block in existingDefBlocks {
-                    let frag = block.markdownFragment
-                    let range = NSRange(frag.startIndex..., in: frag)
-                    if let match = Self.footnoteDefPattern.firstMatch(in: frag, range: range),
-                       let labelRange = Range(match.range(at: 1), in: frag),
-                       let textRange = Range(match.range(at: 2), in: frag) {
-                        dbDefs[String(frag[labelRange])] = String(frag[textRange])
-                    }
+                let existingLabels: Set<Int> = Set(existingDefBlocks.compactMap { block in
+                    Self.parseNotesLabel(from: block.markdownFragment).flatMap { Int($0.label) }
+                })
+
+                // Shift every existing label >= pivot up by one; labels below pivot are
+                // untouched. When pivot == existingMax + 1 (append), this is empty by
+                // construction and the call degenerates to a pure insertion.
+                var renameMap: [String: String] = [:]
+                for oldInt in existingLabels where oldInt >= pivot {
+                    renameMap[String(oldInt)] = String(oldInt + 1)
                 }
 
-                // 2. Compute new refs and shifted defs
-                let newLabelInt = Int(label) ?? 1
-                computedTotalCount = dbDefs.count + 1
-                let effectiveRefs = (1...computedTotalCount).map { String($0) }
+                let targetLabels = Set(existingLabels.map { $0 >= pivot ? $0 + 1 : $0 })
+                    .union([pivot])
+                let targetRefs = targetLabels.sorted().map(String.init)
 
-                var newDefs: [String: String] = [:]
-                for (oldLabel, defText) in dbDefs {
-                    if let oldInt = Int(oldLabel) {
-                        if oldInt < newLabelInt {
-                            newDefs[oldLabel] = defText
-                        } else {
-                            newDefs[String(oldInt + 1)] = defText
-                        }
-                    }
-                }
-
-                // Preserve existing Notes heading block ID for scroll stability
-                let existingHeadingId = try Block
-                    .filter(Block.Columns.projectId == projectId)
-                    .filter(Block.Columns.isNotes == true)
-                    .filter(Block.Columns.blockType == BlockType.heading.rawValue)
-                    .fetchOne(db)?.id
-
-                // 3. Delete all notes blocks + orphan cleanup
-                try Block.filter(Block.Columns.projectId == projectId)
-                    .filter(Block.Columns.isNotes == true).deleteAll(db)
-                try Self.deleteOrphanedFootnoteDefinitions(db: db, projectId: projectId)
-
-                // 4. Get sort order (notes after content, before bibliography)
-                let maxNonBibSortOrder = try Block
-                    .filter(Block.Columns.projectId == projectId)
-                    .filter(Block.Columns.isBibliography == false)
-                    .order(Block.Columns.sortOrder.desc)
-                    .fetchOne(db)?.sortOrder ?? 0
-                let baseSortOrder = maxNonBibSortOrder + 0.5
-
-                // 5. Insert heading block (reuse existing ID for scroll stability)
-                var headingBlock = Block(
-                    id: existingHeadingId ?? UUID().uuidString,
+                try Self.reconcileNotesBlocks(
+                    db: db,
                     projectId: projectId,
-                    sortOrder: baseSortOrder,
-                    blockType: .heading,
-                    textContent: "Notes",
-                    markdownFragment: "# Notes",
-                    headingLevel: 1,
-                    status: .final_,
-                    isNotes: true
+                    targetRefs: targetRefs,
+                    renameMap: renameMap
                 )
-                headingBlock.recalculateWordCount()
-                try headingBlock.insert(db)
 
-                // 6. Insert definition blocks
-                for (index, ref) in effectiveRefs.enumerated() {
-                    let defText = newDefs[ref] ?? ""
-                    var defBlock = Block(
-                        projectId: projectId,
-                        sortOrder: baseSortOrder + Double(index + 1),
-                        blockType: .paragraph,
-                        textContent: defText,
-                        markdownFragment: "[^\(ref)]: \(defText)",
-                        isNotes: true
-                    )
-                    defBlock.recalculateWordCount()
-                    try defBlock.insert(db)
-                }
-
-                // 7. Re-sort: content → notes → bibliography
-                let allBlocks = try Block
-                    .filter(Block.Columns.projectId == projectId)
-                    .order(Block.Columns.sortOrder).fetchAll(db)
-                let sorted = allBlocks.sorted { a, b in
-                    let aGroup = a.isBibliography ? 2 : (a.isNotes ? 1 : 0)
-                    let bGroup = b.isBibliography ? 2 : (b.isNotes ? 1 : 0)
-                    if aGroup != bGroup { return aGroup < bGroup }
-                    return a.sortOrder < b.sortOrder
-                }
-                let now = Date()
-                for (index, var block) in sorted.enumerated() {
-                    let newSortOrder = Double(index + 1)
-                    if block.sortOrder != newSortOrder {
-                        block.sortOrder = newSortOrder
-                        block.updatedAt = now
-                        try block.update(db)
-                    }
-                }
+                finalRefs = targetRefs
             }
 
             // Update state to prevent debounce re-trigger
-            lastKnownRefs = (1...computedTotalCount).map { String($0) }
+            lastKnownRefs = finalRefs
             lastRenumberedHash = lastKnownRefs.joined(separator: ",").hashValue
         } catch {
-            DebugLog.log(.editor, "[FootnoteSyncService] Immediate insertion failed: \(error)")
+            DebugLog.log(.footnotes, "[FootnoteSyncService] Immediate insertion failed: \(error)")
         }
     }
 
@@ -472,67 +418,144 @@ final class FootnoteSyncService {
             )
             NotificationCenter.default.post(name: .notesSectionChanged, object: nil)
         } catch {
-            DebugLog.log(.editor, "[FootnoteSyncService] Failed to update notes section: \(error)")
+            DebugLog.log(.footnotes, "[FootnoteSyncService] Failed to update notes section: \(error)")
         }
 
         // Push definitions to editor for tooltip display
         pushDefinitionsToEditor(fullContent: fullContent)
     }
 
+    /// Thin wrapper around `reconcileNotesBlocks` for the debounced path: derives a
+    /// rename map from the position-aligned original/effective ref pairs (only entries
+    /// where the label actually changed), then reconciles toward `effectiveRefs`. An
+    /// entry where `original == effective` is untouched — never fetched-for-write.
     private func updateNotesBlock(
         effectiveRefs: [String],
         originalRefs: [String],
         projectId: String,
         database: ProjectDatabase
     ) throws {
+        var renameMap: [String: String] = [:]
+        for (original, effective) in zip(originalRefs, effectiveRefs) where original != effective {
+            renameMap[original] = effective
+        }
+
         try database.write { db in
-            // Read existing definition text from DB blocks BEFORE deleting
-            let existingDefBlocks = try Block
-                .filter(Block.Columns.projectId == projectId)
-                .filter(Block.Columns.isNotes == true)
-                .filter(Block.Columns.blockType == BlockType.paragraph.rawValue)
-                .fetchAll(db)
+            try Self.reconcileNotesBlocks(
+                db: db,
+                projectId: projectId,
+                targetRefs: effectiveRefs,
+                renameMap: renameMap
+            )
+        }
+    }
 
-            var dbDefs: [String: String] = [:]
-            for block in existingDefBlocks {
-                let frag = block.markdownFragment
-                let range = NSRange(frag.startIndex..., in: frag)
-                if let match = Self.footnoteDefPattern.firstMatch(in: frag, range: range),
-                   let labelRange = Range(match.range(at: 1), in: frag),
-                   let textRange = Range(match.range(at: 2), in: frag) {
-                    dbDefs[String(frag[labelRange])] = String(frag[textRange])
-                }
+    /// Reconcile the Notes section's definition blocks toward `targetRefs`: renames,
+    /// inserts, and deletes only the specific labels the delta requires — no
+    /// delete-all-and-recreate. A block whose label is in neither `renameMap.keys` nor
+    /// the insert set nor the delete set is never fetched-for-write and never has
+    /// `.update(db)` called, so an unrelated footnote's block keeps the exact same `id`
+    /// and `updatedAt` across a call that doesn't touch it. This is what makes a
+    /// stale/overlapping rebuild safe: it can only destroy data for labels it explicitly
+    /// says should change.
+    ///
+    /// Must be called from inside an existing `database.write { db in ... }` closure —
+    /// this function does not open its own transaction, so the fetch-then-mutate sequence
+    /// below is atomic with every other MainActor caller of `database.write`.
+    ///
+    /// - Parameters:
+    ///   - targetRefs: the final set of definition labels that must exist once this call
+    ///     returns (order doesn't matter — final display order is always numeric).
+    ///   - renameMap: old label -> new label, applied in place (same block id, text
+    ///     carried forward unless overridden) against a snapshot taken once at the top of
+    ///     this call — safe for overlapping shifts (e.g. "2"->"3" and "3"->"4" in the same
+    ///     call) because renames resolve against original identity, not by re-querying by
+    ///     label mid-loop.
+    ///   - definitionOverrides: new-label -> definition text, for a caller that already
+    ///     knows the text a renamed-into or newly-inserted label should carry. Neither
+    ///     current caller uses this (renames carry forward existing text; inserts default
+    ///     to blank).
+    static func reconcileNotesBlocks(
+        db: Database,
+        projectId: String,
+        targetRefs: [String],
+        renameMap: [String: String] = [:],
+        definitionOverrides: [String: String] = [:]
+    ) throws {
+        // 1. Fetch current Notes paragraph blocks fresh; snapshot label -> Block ONCE
+        //    before any writes. Defensively de-duplicate (keep most-recently-updated) in
+        //    case pre-fix corruption left two rows claiming one label.
+        let existingDefBlocks = try Block
+            .filter(Block.Columns.projectId == projectId)
+            .filter(Block.Columns.isNotes == true)
+            .filter(Block.Columns.blockType == BlockType.paragraph.rawValue)
+            .fetchAll(db)
+
+        var snapshot: [String: Block] = [:]
+        for block in existingDefBlocks {
+            guard let parsed = parseNotesLabel(from: block.markdownFragment) else { continue }
+            if let existing = snapshot[parsed.label], existing.updatedAt > block.updatedAt {
+                continue
             }
+            snapshot[parsed.label] = block
+        }
+        // Rows not kept as the canonical block for their label are extra corruption from
+        // before this fix (two rows claiming one label) — delete them outright.
+        let keptIds = Set(snapshot.values.map(\.id))
+        for block in existingDefBlocks where !keptIds.contains(block.id) {
+            try Block.deleteOne(db, key: block.id)
+        }
 
-            // Preserve existing Notes heading block ID for scroll stability
-            let existingHeadingId = try Block
-                .filter(Block.Columns.projectId == projectId)
-                .filter(Block.Columns.isNotes == true)
-                .filter(Block.Columns.blockType == BlockType.heading.rawValue)
-                .fetchOne(db)?.id
+        // 2. Apply renames FIRST, against the snapshot above — never re-queried mid-loop
+        //    — so overlapping shifts can't cross-contaminate each other.
+        var renamedNewLabels: Set<String> = []
+        for (oldLabel, newLabel) in renameMap {
+            guard oldLabel != newLabel, var block = snapshot[oldLabel] else { continue }
+            let existingText = parseNotesLabel(from: block.markdownFragment)?.text ?? ""
+            let text = definitionOverrides[newLabel] ?? existingText
+            block.markdownFragment = "[^\(newLabel)]: \(text)"
+            block.textContent = text
+            block.recalculateWordCount()
+            try block.update(db)
+            renamedNewLabels.insert(newLabel)
+        }
 
-            // Delete ALL existing notes blocks (handles duplicates)
-            try Block
-                .filter(Block.Columns.projectId == projectId)
-                .filter(Block.Columns.isNotes == true)
-                .deleteAll(db)
+        // 3. Insert-set and delete-set, computed AFTER the rename pass from the
+        //    post-rename label set.
+        let untouchedLabels = Set(snapshot.keys).subtracting(renameMap.keys)
+        let presentLabels = untouchedLabels.union(renamedNewLabels)
+        let targetSet = Set(targetRefs)
+        let toInsert = targetRefs.filter { !presentLabels.contains($0) }
+        let toDelete = untouchedLabels.subtracting(targetSet)
 
-            // Clean up orphaned footnote definitions from before isNotes propagation fix
-            try Self.deleteOrphanedFootnoteDefinitions(db: db, projectId: projectId)
+        // 4. Delete labels no longer wanted.
+        for label in toDelete {
+            if let block = snapshot[label] {
+                try Block.deleteOne(db, key: block.id)
+            }
+        }
 
-            // Get max sort order from non-bibliography blocks
-            // Notes should appear after user content but before bibliography
-            let maxNonBibSortOrder = try Block
-                .filter(Block.Columns.projectId == projectId)
-                .filter(Block.Columns.isBibliography == false)
-                .order(Block.Columns.sortOrder.desc)
-                .fetchOne(db)?.sortOrder ?? 0
+        // 5. Heading block: reuse existing id, leave completely untouched if already
+        //    present (no more churn-on-every-insert).
+        let existingHeading = try Block
+            .filter(Block.Columns.projectId == projectId)
+            .filter(Block.Columns.isNotes == true)
+            .filter(Block.Columns.blockType == BlockType.heading.rawValue)
+            .fetchOne(db)
 
-            let baseSortOrder = maxNonBibSortOrder + 0.5
+        // Get max sort order from non-bibliography blocks. Notes should appear after
+        // user content but before bibliography. This is only a placeholder for any
+        // newly-inserted rows below — the renormalization pass in step 7 assigns real,
+        // final sortOrder values.
+        let maxNonBibSortOrder = try Block
+            .filter(Block.Columns.projectId == projectId)
+            .filter(Block.Columns.isBibliography == false)
+            .order(Block.Columns.sortOrder.desc)
+            .fetchOne(db)?.sortOrder ?? 0
+        let baseSortOrder = maxNonBibSortOrder + 0.5
 
-            // 1. Insert heading block (reuse existing ID for scroll stability)
+        if existingHeading == nil, !targetRefs.isEmpty {
             var headingBlock = Block(
-                id: existingHeadingId ?? UUID().uuidString,
                 projectId: projectId,
                 sortOrder: baseSortOrder,
                 blockType: .heading,
@@ -544,47 +567,70 @@ final class FootnoteSyncService {
             )
             headingBlock.recalculateWordCount()
             try headingBlock.insert(db)
+        }
 
-            // 2. Insert one block per definition (1 DB block = 1 editor node)
-            for (index, ref) in effectiveRefs.enumerated() {
-                // Look up definition by the original (pre-renumber) label
-                let defText = dbDefs[originalRefs[index]] ?? ""
-                var defBlock = Block(
-                    projectId: projectId,
-                    sortOrder: baseSortOrder + Double(index + 1),
-                    blockType: .paragraph,
-                    textContent: defText,
-                    markdownFragment: "[^\(ref)]: \(defText)",
-                    isNotes: true
-                )
-                defBlock.recalculateWordCount()
-                try defBlock.insert(db)
+        // 6. Insert brand-new labels.
+        for (index, label) in toInsert.enumerated() {
+            let text = definitionOverrides[label] ?? ""
+            var defBlock = Block(
+                projectId: projectId,
+                sortOrder: baseSortOrder + Double(index + 1),
+                blockType: .paragraph,
+                textContent: text,
+                markdownFragment: "[^\(label)]: \(text)",
+                isNotes: true
+            )
+            defBlock.recalculateWordCount()
+            try defBlock.insert(db)
+        }
+
+        // Clean up orphaned footnote definitions from before isNotes propagation fix
+        try deleteOrphanedFootnoteDefinitions(db: db, projectId: projectId)
+
+        // 7. Whole-project sortOrder renormalization. Within the Notes group
+        //    specifically, order by PARSED NUMERIC LABEL rather than sortOrder — an
+        //    untouched block's stale sortOrder can no longer be trusted for relative
+        //    order once only some blocks in the group got fresh values from steps 2/6
+        //    above. Content and bibliography groups are unaffected by this call, so they
+        //    keep ordering by sortOrder exactly as before. Only writes (and only bumps
+        //    updatedAt for) a block whose sortOrder actually changes — this is what
+        //    keeps an untouched block's row byte-identical (same id, same updatedAt).
+        let allBlocks = try Block
+            .filter(Block.Columns.projectId == projectId)
+            .order(Block.Columns.sortOrder)
+            .fetchAll(db)
+
+        let sorted = allBlocks.sorted { a, b in
+            let aGroup = a.isBibliography ? 2 : (a.isNotes ? 1 : 0)
+            let bGroup = b.isBibliography ? 2 : (b.isNotes ? 1 : 0)
+            if aGroup != bGroup { return aGroup < bGroup }
+            if aGroup == 1 {
+                return notesGroupSortKey(a) < notesGroupSortKey(b)
             }
+            return a.sortOrder < b.sortOrder
+        }
 
-            // Ensure bibliography stays after notes by normalizing sort orders
-            let allBlocks = try Block
-                .filter(Block.Columns.projectId == projectId)
-                .order(Block.Columns.sortOrder)
-                .fetchAll(db)
-
-            // Re-sort: normal content first, then notes, then bibliography
-            let sorted = allBlocks.sorted { a, b in
-                let aGroup = a.isBibliography ? 2 : (a.isNotes ? 1 : 0)
-                let bGroup = b.isBibliography ? 2 : (b.isNotes ? 1 : 0)
-                if aGroup != bGroup { return aGroup < bGroup }
-                return a.sortOrder < b.sortOrder
-            }
-
-            let now = Date()
-            for (index, var block) in sorted.enumerated() {
-                let newSortOrder = Double(index + 1)
-                if block.sortOrder != newSortOrder {
-                    block.sortOrder = newSortOrder
-                    block.updatedAt = now
-                    try block.update(db)
-                }
+        let now = Date()
+        for (index, var block) in sorted.enumerated() {
+            let newSortOrder = Double(index + 1)
+            if block.sortOrder != newSortOrder {
+                block.sortOrder = newSortOrder
+                block.updatedAt = now
+                try block.update(db)
             }
         }
+    }
+
+    /// Sort key for a block within the Notes group: heading always first, then
+    /// definition paragraphs ordered by their parsed numeric label (not sortOrder — see
+    /// `reconcileNotesBlocks`).
+    private static func notesGroupSortKey(_ block: Block) -> Int {
+        guard block.blockType != .heading else { return -1 }
+        guard let parsed = parseNotesLabel(from: block.markdownFragment),
+              let labelInt = Int(parsed.label) else {
+            return Int.max
+        }
+        return labelInt
     }
 
     /// Pre-compiled regex for orphaned footnote definition detection
