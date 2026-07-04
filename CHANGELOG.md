@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Footnotes could export blank or broken if you exported right after typing them** — insert a footnote, type its note, and export to Word (or PDF, ODT, Markdown) right away, and the footnote could show up as raw leftover text in the body with an empty note, instead of a proper footnote marker and definition. Export now always waits for your latest edits to finish saving before it reads the document, closing two separate timing gaps that could each cause this on their own.
+
 ## [0.2.104] - 2026-06-12
 
 ### Added

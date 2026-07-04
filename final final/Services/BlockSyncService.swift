@@ -412,10 +412,31 @@ class BlockSyncService {
 
         guard isConfigured, let webView, let database = projectDatabase, let projectId else { return }
 
+        // Forced flush: the JS side (block-sync-plugin.ts) runs its own 100ms
+        // debounce independent of this Swift-side force flag, so a forced poll
+        // arriving in the gap before that timer fires would otherwise read a
+        // stale, unconverted pending-changes entry (e.g. a footnote trigger's
+        // raw text, not yet replaced by the confirming transaction). Flush that
+        // JS-side timer synchronously before checking/reading changes.
+        if force {
+            do {
+                _ = try await webView.evaluateJavaScript(
+                    "window.FinalFinal.flushPendingBlockChanges(); true"
+                )
+            } catch {
+                DebugLog.log(.blockPoll, "[SYNC-DIAG:BlockPoll] flushPendingBlockChanges failed: \(error) — forced flush may read stale data")
+            }
+        }
+
         let generationAtPoll = editorState?.contentGeneration ?? 0
 
         // Check if there are pending changes
         let hasChanges = await checkForChanges(webView: webView)
+        // DIAGNOSTIC (temporary, footnote-export-race investigation): log the raw
+        // hasBlockChanges() result even on the early-return path, so a forced flush
+        // that races the JS-side detection debounce is visible in the log instead of
+        // silently no-op'ing.
+        DebugLog.log(.blockPoll, "[DIAG:BlockPoll] hasChanges=\(hasChanges) force=\(force) at \(Date())")
         guard hasChanges else { return }
 
         DebugLog.log(.blockPoll, "[SYNC-DIAG:BlockPoll] changes detected, fetching... (force=\(force))")
@@ -427,6 +448,13 @@ class BlockSyncService {
 
         // Get the changes
         guard let changes = await getBlockChanges(webView: webView) else { return }
+        // DIAGNOSTIC (temporary, footnote-export-race investigation): dump the ACTUAL
+        // textContent of every update JS handed back, not just id+length -- to see
+        // directly whether getBlockChanges() returned a stale (pre-conversion) or
+        // fresh (post-conversion) snapshot of the edited block.
+        for u in changes.updates {
+            DebugLog.log(.blockPoll, "[DIAG:BlockPoll] update id=\(u.id.prefix(8)) force=\(force) text=\"\(u.textContent ?? "<nil>")\" md=\"\(u.markdownFragment ?? "<nil>")\"")
+        }
 
         // In force mode, skip generation check — caller explicitly needs flush
         if !force {

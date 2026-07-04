@@ -54,38 +54,38 @@ struct ContentView: View {
     @Environment(VersionHistoryCoordinator.self) private var versionHistoryCoordinator
 
     /// Observe appearance settings to trigger editor CSS updates when settings change
-    @State var appearanceManager = AppearanceSettingsManager.shared
+    @State internal var appearanceManager = AppearanceSettingsManager.shared
     @Environment(\.openWindow) private var openWindow
-    @State var editorState = EditorViewState()
-    @State var cursorPositionToRestore: CursorPosition?
-    @State var sectionSyncService = SectionSyncService()
-    @State var blockSyncService = BlockSyncService()
-    @State var annotationSyncService = AnnotationSyncService()
-    @State var bibliographySyncService = BibliographySyncService()
-    @State var footnoteSyncService = FootnoteSyncService()
-    @State var autoBackupService = AutoBackupService()
+    @State internal var editorState = EditorViewState()
+    @State internal var cursorPositionToRestore: CursorPosition?
+    @State internal var sectionSyncService = SectionSyncService()
+    @State internal var blockSyncService = BlockSyncService()
+    @State internal var annotationSyncService = AnnotationSyncService()
+    @State internal var bibliographySyncService = BibliographySyncService()
+    @State internal var footnoteSyncService = FootnoteSyncService()
+    @State internal var autoBackupService = AutoBackupService()
     @State private var sidebarVisibility: NavigationSplitViewVisibility = .all
 
     /// Integrity alert state
-    @State var integrityReport: IntegrityReport?
-    @State var pendingProjectURL: URL?
+    @State internal var integrityReport: IntegrityReport?
+    @State internal var pendingProjectURL: URL?
 
     /// Version history dialog state
-    @State var showSaveVersionDialog = false
-    @State var saveVersionName = ""
+    @State internal var showSaveVersionDialog = false
+    @State internal var saveVersionName = ""
 
     /// Getting Started close alert state
-    @State var showGettingStartedCloseAlert = false
+    @State internal var showGettingStartedCloseAlert = false
 
     /// Editor preload ready state - blocks editor display until WebView is ready
-    @State var isEditorPreloadReady = false
+    @State internal var isEditorPreloadReady = false
 
     /// Find bar state
-    @State var findBarState = FindBarState()
+    @State internal var findBarState = FindBarState()
 
     /// Suppress the first bibliography notification after a project switch
     /// (it fires from the old project's debounced citekey check and is redundant)
-    @State var suppressNextBibliographyRebuild = false
+    @State internal var suppressNextBibliographyRebuild = false
 
     /// Queue of footnote labels awaiting insertion while contentState != .idle.
     /// Drained one label per idle transition by drainNextPendingFootnoteIfPossible().
@@ -94,8 +94,8 @@ struct ContentView: View {
     /// Queued bibliography/notes rebuild flags.
     /// If a rebuild notification arrives while contentState != .idle, store the flag
     /// and process it when contentState returns to .idle.
-    @State var pendingBibliographyRebuild = false
-    @State var pendingNotesRebuild = false
+    @State internal var pendingBibliographyRebuild = false
+    @State internal var pendingNotesRebuild = false
 
     /// Callback when project is closed (to return to picker)
     var onProjectClosed: (() -> Void)?
@@ -270,6 +270,9 @@ struct ContentView: View {
         .task {
             AppDelegate.shared?.editorState = editorState
             AppDelegate.shared?.autoBackupService = autoBackupService
+            DocumentManager.shared.flushBeforeExport = { [weak editorState] in
+                await editorState?.blockSyncService?.pollBlockChangesNow()
+            }
             await initializeProject()
 
             // Restore focus mode from previous session if needed

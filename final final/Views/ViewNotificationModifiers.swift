@@ -129,10 +129,10 @@ extension View {
                 FileOperations.handleImportMarkdown()
             }
             .onReceive(NotificationCenter.default.publisher(for: .exportMarkdownWithImages)) { _ in
-                FileOperations.handleExportMarkdownWithImages()
+                Task { await FileOperations.handleExportMarkdownWithImages() }
             }
             .onReceive(NotificationCenter.default.publisher(for: .exportTextBundle)) { _ in
-                FileOperations.handleExportTextBundle()
+                Task { await FileOperations.handleExportTextBundle() }
             }
             .onReceive(NotificationCenter.default.publisher(for: .projectDidOpen)) { notification in
                 let isRestore = notification.userInfo?["isRestore"] as? Bool ?? false

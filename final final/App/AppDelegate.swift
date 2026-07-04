@@ -113,7 +113,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         ) { notification in
             Task { @MainActor in
                 if let format = notification.userInfo?["format"] as? ExportFormat {
-                    ExportOperations.handleExport(format: format)
+                    await ExportOperations.handleExport(format: format)
                 }
             }
         }

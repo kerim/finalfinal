@@ -35,6 +35,7 @@ import {
 import {
   applyBlocks,
   confirmBlockIdsApi,
+  flushPendingBlockChanges,
   getBlockAtCursor,
   getBlockChangesApi,
   getContent,
@@ -431,6 +432,7 @@ window.FinalFinal = {
   scrollToBlock,
   getBlockAtCursor,
   hasBlockChanges,
+  flushPendingBlockChanges,
   // Image API
   insertImage,
   // Surgical heading update API

@@ -18,6 +18,7 @@ import {
 import {
   type BlockChanges,
   destroyBlockSyncState,
+  flushPendingBlockChanges as flushPendingBlockChangesPlugin,
   getBlockChanges as getBlockChangesPlugin,
   hasPendingChanges,
   resetAndSnapshot,
@@ -626,6 +627,10 @@ export function getBlockAtCursor(): { blockId: string; offset: number } | null {
 
 export function hasBlockChanges(): boolean {
   return hasPendingChanges();
+}
+
+export function flushPendingBlockChanges(): void {
+  flushPendingBlockChangesPlugin();
 }
 
 export function getBlockChangesApi(): BlockChanges {

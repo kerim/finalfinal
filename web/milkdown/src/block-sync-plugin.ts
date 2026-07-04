@@ -755,6 +755,11 @@ function detectChanges(
 // Debounce state for detectChanges() — keeps snapshotBlocks() synchronous
 let detectTimer: ReturnType<typeof setTimeout> | null = null;
 let pendingOldSnapshot: Map<string, BlockSnapshot> | null = null;
+// Always current as of the latest doc-changing transaction — lets a forced
+// flush (flushPendingBlockChanges) run detection immediately instead of
+// waiting on detectTimer, without needing the setTimeout closure's captured
+// reference. See flushPendingBlockChanges() below.
+let pendingNewSnapshot: Map<string, BlockSnapshot> | null = null;
 
 // Accumulates temp→permanent ID remappings that arrive mid-debounce.
 // Applied to closure-captured snapshots in the setTimeout callback
@@ -780,6 +785,42 @@ function remapSnapshot(snapshot: Map<string, BlockSnapshot>, remap: Map<string, 
     }
   }
   return result;
+}
+
+/**
+ * Run change detection against the current pending snapshots immediately,
+ * cancelling any scheduled debounce timer. Shared by the normal 100ms-debounce
+ * path and flushPendingBlockChanges() (an out-of-band forced flush) so both
+ * go through the exact same detection logic.
+ */
+function runPendingDetectChanges(): void {
+  if (detectTimer !== null) {
+    clearTimeout(detectTimer);
+    detectTimer = null;
+  }
+  if (currentState && pendingOldSnapshot && pendingNewSnapshot) {
+    const resolvedOld = remapSnapshot(pendingOldSnapshot, pendingIdRemap);
+    const resolvedNew = remapSnapshot(pendingNewSnapshot, pendingIdRemap);
+    detectChanges(resolvedOld, resolvedNew, currentState);
+  }
+  pendingOldSnapshot = null;
+  pendingNewSnapshot = null;
+  pendingIdRemap.clear();
+}
+
+/**
+ * Force any debounced-but-not-yet-detected change to be processed right now.
+ * Called from Swift's forced poll (`BlockSyncService.pollBlockChangesNow()`)
+ * to close a race where a confirming transaction (e.g. footnote-trigger →
+ * real footnote marker) lands just before its own 100ms detectTimer fires —
+ * the forced poll's `force: true` only skips a Swift-side generation check
+ * and does nothing about this JS-side timer on its own. Calling this first
+ * guarantees getBlockChanges() reflects the latest transaction, not a stale
+ * mid-burst one.
+ */
+export function flushPendingBlockChanges(): void {
+  if (detectTimer === null) return; // nothing pending — normal periodic-poll cadence untouched
+  runPendingDetectChanges();
 }
 
 // Wrap ProseMirror plugin with $prose for Milkdown compatibility
@@ -816,6 +857,7 @@ export const blockSyncPlugin = $prose(() => {
 
         // Snapshot is synchronous — needs current block IDs and doc positions
         const newSnapshot = snapshotBlocks(newState.doc);
+        pendingNewSnapshot = newSnapshot;
 
         // Preserve the oldest un-processed snapshot across debounce resets.
         // Without this, rapid keystrokes A→B→C would only diff B→C,
@@ -828,8 +870,6 @@ export const blockSyncPlugin = $prose(() => {
           pendingOldSnapshot = value.lastSnapshot;
         }
 
-        const capturedOld = pendingOldSnapshot!;
-
         // Return proper new state first (immutable contract)
         const newValue = {
           ...value,
@@ -838,15 +878,7 @@ export const blockSyncPlugin = $prose(() => {
         currentState = newValue;
 
         detectTimer = setTimeout(() => {
-          if (currentState) {
-            // Re-key captured snapshots with any confirmations that arrived mid-debounce
-            const resolvedOld = remapSnapshot(capturedOld, pendingIdRemap);
-            const resolvedNew = remapSnapshot(newSnapshot, pendingIdRemap);
-            detectChanges(resolvedOld, resolvedNew, currentState);
-          }
-          pendingOldSnapshot = null;
-          pendingIdRemap.clear();
-          detectTimer = null;
+          runPendingDetectChanges();
         }, 100);
 
         return newValue;
@@ -865,6 +897,7 @@ export function resetBlockSyncState(): void {
     clearTimeout(detectTimer);
     detectTimer = null;
     pendingOldSnapshot = null;
+    pendingNewSnapshot = null;
   }
   pendingIdRemap.clear();
   if (currentState) {
@@ -933,6 +966,7 @@ export function resetAndSnapshot(doc: Node): void {
     clearTimeout(detectTimer);
     detectTimer = null;
     pendingOldSnapshot = null;
+    pendingNewSnapshot = null;
   }
   pendingIdRemap.clear();
   currentState.pendingUpdates.clear();
@@ -950,6 +984,7 @@ export function destroyBlockSyncState(): void {
     clearTimeout(detectTimer);
     detectTimer = null;
     pendingOldSnapshot = null;
+    pendingNewSnapshot = null;
   }
   pendingIdRemap.clear();
   if (currentState) {

@@ -154,6 +154,7 @@ declare global {
       scrollToBlock: (blockId: string) => void;
       getBlockAtCursor: () => { blockId: string; offset: number } | null;
       hasBlockChanges: () => boolean;
+      flushPendingBlockChanges: () => void;
       // Dual-appearance mode API (Phase C)
       setEditorMode: (mode: 'wysiwyg' | 'source') => void;
       getEditorMode: () => 'wysiwyg' | 'source';

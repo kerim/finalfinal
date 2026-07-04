@@ -485,17 +485,18 @@ struct FileOperations {
         }
     }
 
-    static func handleExportMarkdownWithImages() {
+    static func handleExportMarkdownWithImages() async {
         let dm = DocumentManager.shared
-        guard let db = dm.projectDatabase, let pid = dm.projectId else {
+        guard dm.projectDatabase != nil, dm.projectId != nil else {
             showNoContentError()
             return
         }
 
-        // Fetch blocks, filter bibliography, assemble standard markdown + extract image filenames
+        // Fetch blocks (flushing pending editor edits first), filter bibliography,
+        // assemble standard markdown + extract image filenames
         let blocks: [Block]
         do {
-            blocks = try db.fetchBlocks(projectId: pid).filter { !$0.isBibliography }
+            blocks = try await dm.exportBlocks()
         } catch {
             showErrorAlert("Could Not Load Content", error: error)
             return
@@ -548,17 +549,18 @@ struct FileOperations {
         }
     }
 
-    static func handleExportTextBundle() {
+    static func handleExportTextBundle() async {
         let dm = DocumentManager.shared
-        guard let db = dm.projectDatabase, let pid = dm.projectId else {
+        guard dm.projectDatabase != nil, dm.projectId != nil else {
             showNoContentError()
             return
         }
 
-        // Fetch blocks, filter bibliography, assemble standard markdown + extract image filenames
+        // Fetch blocks (flushing pending editor edits first), filter bibliography,
+        // assemble standard markdown + extract image filenames
         let blocks: [Block]
         do {
-            blocks = try db.fetchBlocks(projectId: pid).filter { !$0.isBibliography }
+            blocks = try await dm.exportBlocks()
         } catch {
             showErrorAlert("Could Not Load Content", error: error)
             return
