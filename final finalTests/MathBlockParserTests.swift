@@ -90,4 +90,43 @@ struct MathBlockParserTests {
         // This test ensures the rawValue is exactly "math_display".
         #expect(BlockType.mathDisplay.rawValue == "math_display")
     }
+
+    // MARK: - Code-fence guard regressions (table/math syntax shown *inside* a code block)
+
+    @Test func tableLineInsideCodeFenceStaysOneCodeBlock() {
+        // A fenced code block whose body happens to show raw markdown table
+        // syntax (e.g. documenting the table format) must stay one code block —
+        // the `|`-prefixed lines must not be sniffed out as a real table.
+        let markdown = """
+        ```
+
+        | Body | Temperature |
+        |---|---|
+        | Water | 100 |
+        ```
+        """
+        let blocks = BlockParser.parse(markdown: markdown, projectId: "test")
+        #expect(blocks.count == 1)
+        #expect(blocks[0].blockType == .codeBlock)
+        #expect(blocks[0].markdownFragment.contains("| Body | Temperature |"))
+        #expect(blocks.filter { $0.blockType == .table }.isEmpty)
+    }
+
+    @Test func mathFenceInsideCodeFenceStaysOneCodeBlock() {
+        // A fenced code block whose body shows raw LaTeX display-math syntax
+        // (a bare "$$" line) must stay one code block — the "$$" must not be
+        // sniffed out as a real math-display fence.
+        let markdown = """
+        ```
+        Display math example:
+        $$
+        \\int_0^1 x\\,dx
+        $$
+        ```
+        """
+        let blocks = BlockParser.parse(markdown: markdown, projectId: "test")
+        #expect(blocks.count == 1)
+        #expect(blocks[0].blockType == .codeBlock)
+        #expect(blocks.filter { $0.blockType == .mathDisplay }.isEmpty)
+    }
 }

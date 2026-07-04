@@ -98,6 +98,96 @@ final class FixtureGeneratorTests: XCTestCase {
         print("[FixtureGenerator] \(blocks.count) blocks, \(headings.count) headings")
     }
 
+    /// ONE-TIME UTILITY — not part of the regular suite's job.
+    ///
+    /// Repairs the shipped `getting-started.ff` fixture, which has a corrupted
+    /// block split: a fenced code block demonstrating raw table syntax got cut
+    /// into a `code_block` row (just the opening ``` fence) followed by a
+    /// separate `table` row (the table body + closing ``` fence). This is the
+    /// exact bug fixed in BlockParser.splitIntoRawBlocks (missing `!inCodeBlock`
+    /// guards on the table-start and `$$`-math-fence checks).
+    ///
+    /// This test does NOT touch the committed
+    /// `final final/Resources/getting-started.ff` — it copies it to a sandbox-
+    /// writable temp location, re-derives the block table from the fixture's own
+    /// `content.markdown` (the source of truth, which was never corrupted) using
+    /// the now-fixed `BlockParser`, and writes the repaired copy to a
+    /// UUID-suffixed path under `/tmp/claude/` (printed at runtime). A
+    /// human/reviewer must inspect that output and copy it over the committed
+    /// fixture if it looks correct — this test intentionally does not do that
+    /// itself.
+    ///
+    /// Run manually once (e.g. after verifying the BlockParser fix):
+    ///   xcodebuild test -scheme "final final" -destination 'platform=macOS' \
+    ///     -only-testing 'final finalTests/FixtureGeneratorTests/testRegenerateGettingStartedFixture_ONETIME'
+    func testRegenerateGettingStartedFixture_ONETIME() throws {
+        let fm = FileManager.default
+
+        // Locate the committed fixture relative to this source file.
+        let committedFixture = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()  // final finalTests/
+            .deletingLastPathComponent()  // repo root
+            .appendingPathComponent("final final/Resources/getting-started.ff")
+        guard fm.fileExists(atPath: committedFixture.path) else {
+            throw XCTSkip("Committed getting-started.ff not found at \(committedFixture.path) — skipping one-time repair utility")
+        }
+
+        // Work on a sandbox-writable copy; never mutate the committed fixture.
+        let tmpClaudeDir = URL(fileURLWithPath: "/tmp/claude")
+        try fm.createDirectory(at: tmpClaudeDir, withIntermediateDirectories: true)
+        let repairedURL = tmpClaudeDir.appendingPathComponent("getting-started-repaired-\(UUID().uuidString).ff")
+        try? fm.removeItem(at: repairedURL)
+        try fm.copyItem(at: committedFixture, to: repairedURL)
+
+        // Open, re-parse, and replace blocks in a scoped helper so the
+        // ProjectDatabase (and its pooled SQLite connections) is deallocated
+        // before we touch the -wal/-shm sidecar files below — deleting them
+        // while GRDB still holds open handles trips libsqlite3's
+        // "vnode unlinked while in use" API-violation guard.
+        try Self.repairGettingStartedFixture(at: repairedURL)
+
+        // Now that the connections are closed, the WAL was already checkpointed
+        // to TRUNCATE (0 bytes) inside the helper — remove the empty sidecars so
+        // the shipped copy is a single clean file (matches the "Guard: no SQLite
+        // sidecars" build-phase requirement).
+        for sidecar in ["content.sqlite-wal", "content.sqlite-shm"] {
+            let sidecarURL = repairedURL.appendingPathComponent(sidecar)
+            if fm.fileExists(atPath: sidecarURL.path) {
+                try fm.removeItem(at: sidecarURL)
+            }
+        }
+
+        print("[FixtureRepair] Repaired fixture written to: \(repairedURL.path)")
+        print("[FixtureRepair] Inspect it, then if correct, copy it over: \(committedFixture.path)")
+    }
+
+    /// Opens the fixture copy, re-derives blocks from `content.markdown` via the
+    /// fixed `BlockParser`, replaces them, and checkpoints the WAL to TRUNCATE.
+    /// Scoped to a static function so `db`/`package` go out of scope (and GRDB's
+    /// DatabasePool deallocates its connections) before the caller deletes the
+    /// now-empty -wal/-shm sidecar files.
+    private static func repairGettingStartedFixture(at url: URL) throws {
+        let package = try ProjectPackage.open(at: url)
+        let db = try ProjectDatabase(package: package)
+
+        // content.markdown is intact and is the source of truth for repair.
+        let (markdown, projectId): (String, String) = try db.dbWriter.read { database in
+            let markdown = try String.fetchOne(database, sql: "SELECT markdown FROM content LIMIT 1")!
+            let projectId = try String.fetchOne(database, sql: "SELECT id FROM project LIMIT 1")!
+            return (markdown, projectId)
+        }
+
+        // Re-parse with the fixed BlockParser and replace via the same production
+        // path TestFixtureFactory.createFixture uses.
+        let blocks = BlockParser.parse(markdown: markdown, projectId: projectId)
+        try db.replaceBlocks(blocks, for: projectId)
+
+        // Checkpoint WAL to TRUNCATE so the shipped copy is a single clean file.
+        try db.dbWriter.writeWithoutTransaction { database in
+            try database.checkpoint(.truncate)
+        }
+    }
+
     /// Validates the committed fixture can be opened and has expected content.
     /// This catches schema drift — if migrations change, the fixture needs regeneration.
     func testCommittedFixtureIsValid() throws {

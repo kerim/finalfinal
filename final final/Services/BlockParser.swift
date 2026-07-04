@@ -171,7 +171,7 @@ enum BlockParser {
 
             // Check for display math fence: bare "$$" opens/closes; "$$...$$" is a one-line block
             let isSingleLineMath = trimmedLine.hasPrefix("$$") && trimmedLine.hasSuffix("$$") && trimmedLine.count > 4
-            if trimmedLine == "$$" || isSingleLineMath {
+            if (trimmedLine == "$$" || isSingleLineMath) && !inCodeBlock {
                 if !inDisplayMath {
                     // Starting display math: flush current block
                     if !currentBlock.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -214,7 +214,7 @@ enum BlockParser {
 
             // Check for table (starts with |)
             let isTableLine = line.trimmingCharacters(in: .whitespaces).hasPrefix("|")
-            if isTableLine && !inTable {
+            if isTableLine && !inTable && !inCodeBlock {
                 // Starting a table, flush current block
                 if !currentBlock.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     blocks.append(currentBlock)
