@@ -253,8 +253,6 @@ targets:
     platform: macOS
     sources:
       - path: final finalTests
-        excludes:
-          - "Fixtures"
     dependencies:
       - target: final final
     settings:
