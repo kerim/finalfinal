@@ -257,6 +257,7 @@ targets:
           - "**/.DS_Store"
           - "**/*.sqlite-wal"
           - "**/*.sqlite-shm"
+          - "Fixtures"
     dependencies:
       - target: final final
     settings:
