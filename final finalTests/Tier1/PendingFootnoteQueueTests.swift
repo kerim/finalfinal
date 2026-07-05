@@ -43,4 +43,41 @@ struct PendingFootnoteQueueTests {
         #expect(queue.dequeue() == "1")
         #expect(queue.dequeue() == nil)
     }
+
+    // MARK: - reset() (project-switch guard)
+
+    @Test("reset() empties a populated queue")
+    func pendingFootnoteQueueResetEmptiesPopulatedQueue() {
+        var queue = PendingFootnoteQueue()
+        queue.enqueue("1")
+        queue.enqueue("2")
+        queue.enqueue("3")
+
+        queue.reset()
+
+        #expect(queue.isEmpty, "Queue must be empty after reset")
+        #expect(queue.dequeue() == nil, "Nothing should drain after reset")
+    }
+
+    @Test("reset() on an empty queue is a no-op")
+    func pendingFootnoteQueueResetOnEmptyQueueIsNoOp() {
+        var queue = PendingFootnoteQueue()
+        queue.reset()
+        #expect(queue.isEmpty)
+    }
+
+    @Test("enqueue after reset preserves FIFO order")
+    func pendingFootnoteQueueEnqueueAfterResetPreservesFIFO() {
+        var queue = PendingFootnoteQueue()
+        queue.enqueue("1")
+        queue.enqueue("2")
+        queue.reset()
+
+        queue.enqueue("4")
+        queue.enqueue("5")
+
+        #expect(queue.dequeue() == "4", "First label after reset must drain first")
+        #expect(queue.dequeue() == "5", "Second label after reset must drain second")
+        #expect(queue.dequeue() == nil, "Nothing left behind from before the reset")
+    }
 }

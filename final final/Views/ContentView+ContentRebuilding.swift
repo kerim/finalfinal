@@ -532,6 +532,12 @@ extension ContentView {
             }
 
             // Push block IDs for body blocks in zoom range
+            // KNOWN RESIDUAL RISK (single-source-splice plan, Part 2): pushBlockIds applies
+            // a DB-derived ID array positionally onto a doc built from an independently-
+            // serialized body string. Footnote-definition (isNotes) blocks are excluded from
+            // this array, so the footnote-blanking vector cannot occur here; a body-paragraph
+            // mis-ID is theoretically possible but unobserved. Not fixed this pass to keep the
+            // change surgical.
             await blockSyncService.pushBlockIds(for: range)
 
             editorState.contentState = .idle

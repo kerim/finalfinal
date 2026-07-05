@@ -759,22 +759,24 @@ export function scrollToFootnoteDefinition(label: string): void {
       }
       const sel = TextSelection.create(view.state.doc, cursorPos);
       view.dispatch(view.state.tr.setSelection(sel).scrollIntoView());
-      // Defer focus + scroll to next frame so WebKit completes layout
-      // after document replacement (footnote creation replaces entire
-      // document via setContentWithBlockIds before calling this)
+      // Double-RAF: WebKit needs a full layout+paint cycle after the document
+      // replacement (setContentWithBlockIds) before coordsAtPos is accurate.
+      // Same pattern as scrollCursorToCenter in api-modes.ts.
       requestAnimationFrame(() => {
-        try {
-          view.focus();
-          const coords = view.coordsAtPos(targetPos);
-          if (coords) {
-            window.scrollTo({
-              top: Math.max(0, coords.top + window.scrollY - 100),
-              behavior: 'smooth',
-            });
+        requestAnimationFrame(() => {
+          try {
+            view.focus();
+            const coords = view.coordsAtPos(targetPos);
+            if (coords) {
+              window.scrollTo({
+                top: Math.max(0, coords.top + window.scrollY - 100),
+                behavior: 'smooth',
+              });
+            }
+          } catch {
+            /* focus/scroll failed */
           }
-        } catch {
-          /* focus/scroll failed */
-        }
+        });
       });
     } catch {
       /* scroll failed */

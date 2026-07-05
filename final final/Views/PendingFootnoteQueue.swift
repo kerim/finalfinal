@@ -22,4 +22,10 @@ struct PendingFootnoteQueue {
     }
 
     var isEmpty: Bool { labels.isEmpty }
+
+    /// Clears all queued labels (e.g. on project switch) so a pending insertion
+    /// from a closed project cannot drain into a newly opened one.
+    mutating func reset() {
+        labels.removeAll()
+    }
 }

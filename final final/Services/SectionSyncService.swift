@@ -143,7 +143,7 @@ class SectionSyncService {
             guard !Task.isCancelled else { return }
             // Double-check: if another contentChanged fired during sleep, skip
             guard self.debounceGeneration == myGeneration else { return }
-            await syncContent(markdown, zoomedIds: zoomedIds)
+            await syncContent(markdown, zoomedIds: zoomedIds, fromEditorChange: true)
         }
     }
 
@@ -152,10 +152,15 @@ class SectionSyncService {
         lastSyncedContent = ""
     }
 
-    /// Force immediate sync (e.g., before app quit)
-    func syncNow(_ markdown: String) async {
+    /// Force immediate sync (e.g., before app quit).
+    /// - Parameter fromEditorChange: Pass `true` when this flush represents the user's real,
+    ///   settled editor content (e.g. `handleSaveVersion`'s "flush before snapshot" — the
+    ///   content is definitionally the user's current state at that point, not a
+    ///   pre-round-trip programmatic sync) so Getting Started edit-detection sees it. Defaults
+    ///   to `false` for programmatic/terminal syncs (initial load, version-history prep, etc.).
+    func syncNow(_ markdown: String, fromEditorChange: Bool = false) async {
         debounceTask?.cancel()
-        await syncContent(markdown)
+        await syncContent(markdown, fromEditorChange: fromEditorChange)
     }
 
     /// Synchronous section sync for app termination / project close.
@@ -237,7 +242,11 @@ class SectionSyncService {
 
     /// Core sync method using position-based reconciliation
     /// DB reads/writes are dispatched off the main thread via Task.detached
-    private func syncContent(_ markdown: String, zoomedIds: Set<String>? = nil) async {
+    /// - Parameter fromEditorChange: `true` only for content that came from the debounced
+    ///   `contentChanged` path (genuinely settled editor content) or an explicitly-flagged
+    ///   `syncNow` flush of the user's real current state. Gates Getting Started edit
+    ///   detection so a programmatic/terminal sync never poisons or falsely trips it.
+    private func syncContent(_ markdown: String, zoomedIds: Set<String>? = nil, fromEditorChange: Bool = false) async {
         guard let db = projectDatabase, let pid = projectId else { return }
 
         // When zoomed, update zoomed sections in-place
@@ -285,7 +294,9 @@ class SectionSyncService {
 
         // Back on MainActor
         lastSyncedContent = markdown
-        DocumentManager.shared.checkGettingStartedEdited(currentMarkdown: markdown)
+        if fromEditorChange {
+            DocumentManager.shared.checkGettingStartedEdited(currentMarkdown: markdown)
+        }
     }
 
     /// Sync zoomed content without replacing the full sections array

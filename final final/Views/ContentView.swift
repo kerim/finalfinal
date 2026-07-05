@@ -89,7 +89,9 @@ struct ContentView: View {
 
     /// Queue of footnote labels awaiting insertion while contentState != .idle.
     /// Drained one label per idle transition by drainNextPendingFootnoteIfPossible().
-    @State private var pendingFootnoteLabels = PendingFootnoteQueue()
+    /// internal (not private): reset() is called from the ContentView+ProjectLifecycle.swift
+    /// extension on project switch, matching the other pending-rebuild flags below.
+    @State internal var pendingFootnoteLabels = PendingFootnoteQueue()
 
     /// Queued bibliography/notes rebuild flags.
     /// If a rebuild notification arrives while contentState != .idle, store the flag
@@ -534,62 +536,30 @@ struct ContentView: View {
         editorState.contentState = .bibliographyUpdate
         editorState.isResettingContent = true
 
-        // editorState.content is fresh (coordinator synced via getContent before posting)
-        // Strip old Notes section, preserving body and bibliography
-        let stripped = FootnoteSyncService.stripNotesSection(from: editorState.content)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-
         footnoteSyncService.handleImmediateInsertion(label: label, projectId: projectId)
 
         Task {
             // Force-flush pending JS changes to DB. This MUST complete before the
-            // Notes-markdown read below: editorState.content above only reflects what the
-            // JS coordinator had already synced at notification-post time, but the
+            // fetchBlocksWithIds() read below: editorState.content above only reflects what
+            // the JS coordinator had already synced at notification-post time, but the
             // background block poller runs on its own ~2s interval, so a just-typed edit
             // to an existing footnote definition can still be sitting unflushed in JS when
-            // we get here. buildNotesSectionMarkdown reads definition TEXT straight from
-            // the DB, so if that read raced ahead of this flush it would silently rebuild
-            // the Notes section from stale (pre-edit) text and stomp the user's edit when
-            // the result is pushed back to the editor below. Awaiting the flush first
-            // guarantees the read sees it.
+            // we get here. fetchBlocksWithIds reads block text straight from the DB, so if
+            // that read raced ahead of this flush it would silently rebuild the document
+            // from stale (pre-edit) text and stomp the user's edit when the result is pushed
+            // back to the editor below. Awaiting the flush first guarantees the read sees it.
             await blockSyncService.pollBlockChangesNow()
             DebugLog.log(.footnotes, "[ContentView] handleFootnoteInsertedImmediate: fresh flush guaranteed " +
-                "complete for label=\(label), reading Notes markdown from DB")
+                "complete for label=\(label), reading blocks from DB")
 
-            // Build Notes section from freshly-created AND freshly-flushed DB blocks
-            let notesMarkdown = footnoteSyncService.buildNotesSectionMarkdown(projectId: projectId)
-            DebugLog.log(.footnotes, "[ContentView] handleFootnoteInsertedImmediate: Notes markdown read " +
-                "(\(notesMarkdown?.count ?? 0) chars) after flush")
-
-            // Insert Notes between body and bibliography (preserving correct block order)
-            let combined: String
-            if let notes = notesMarkdown {
-                // Find bibliography heading to insert Notes before it
-                let bibHeading = "# " + ExportSettingsManager.shared.bibliographyHeaderName
-                let lines = stripped.components(separatedBy: "\n")
-                if let bibIdx = lines.firstIndex(where: { $0.trimmingCharacters(in: .whitespaces) == bibHeading }) {
-                    let bodyPart = lines[..<bibIdx].joined(separator: "\n")
-                        .trimmingCharacters(in: .whitespacesAndNewlines)
-                    let bibPart = lines[bibIdx...].joined(separator: "\n")
-                        .trimmingCharacters(in: .whitespacesAndNewlines)
-                    combined = bodyPart + "\n\n" + notes + "\n\n" + bibPart
-                } else {
-                    combined = stripped + "\n\n" + notes
-                }
-            } else {
-                combined = stripped
-            }
-
-            editorState.content = combined
-            updateSourceContentIfNeeded()
-
-            // Known residual limitation (left as-is, not fixed here): keystrokes typed in
-            // the window between the flush above and setContentWithBlockIds below are still
-            // lost the same way, since that push resets pending-change tracking. Narrower
-            // window than before the reorder, but not eliminated.
-
-            // Get block IDs from DB (count matches because slash commands
-            // don't add/remove blocks — they only replace text within one block)
+            // Single source of truth: one DB fetch produces markdown + IDs that are
+            // guaranteed mutually aligned (BlockParser.assembleMarkdown /
+            // idsForProseMirrorAlignment share filtering + list-merge logic). Previously
+            // this function hand-spliced a separately-derived string and paired it with
+            // this fetch's block IDs; when the two disagreed on top-level node arrangement,
+            // the editor's positional ID-assignment could attach an existing footnote's
+            // identity to the wrong (blank) node. Pushing result.markdown directly (the
+            // same pattern rebuildDocumentContent already uses) eliminates that mismatch.
             guard let result = fetchBlocksWithIds() else {
                 editorState.isResettingContent = false
                 editorState.contentState = .idle
@@ -597,10 +567,19 @@ struct ContentView: View {
                 return
             }
 
+            editorState.content = result.markdown
+            editorState.pendingImageMeta = result.imageMeta
+            updateSourceContentIfNeeded()
+
+            // Known residual limitation (left as-is, not fixed here): keystrokes typed in
+            // the window between the flush above and setContentWithBlockIds below are still
+            // lost the same way, since that push resets pending-change tracking. Narrower
+            // window than before the reorder, but not eliminated.
+
             // Push fresh content with real block IDs atomically
             // (same pattern as bibliography — prevents temp ID race)
             await blockSyncService.setContentWithBlockIds(
-                markdown: combined, blockIds: result.blockIds,
+                markdown: result.markdown, blockIds: result.blockIds,
                 imageMeta: result.imageMeta,
                 cursorBoundary: result.bibBoundaryIndex)
 

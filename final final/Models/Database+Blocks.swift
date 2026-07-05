@@ -370,6 +370,14 @@ extension ProjectDatabase {
 
             // Process deletes first
             for id in changes.deletes {
+                // Safety net: Notes and Bibliography rows are machine-managed by their sync
+                // services (FootnoteSyncService / BibliographySyncService), which perform their
+                // own deletions inside their own transactions. A delete arriving via the editor
+                // diff for one of these rows is a stale-diff artifact — reject it.
+                if let existing = try Block.fetchOne(db, key: id), existing.isBibliography || existing.isNotes {
+                    DebugLog.log(.data, "[Database+Blocks] Rejecting editor-diff delete of \(existing.isNotes ? "notes" : "bibliography") block: \(id.prefix(8))")
+                    continue
+                }
                 try Block.deleteOne(db, key: id)
             }
 
@@ -479,6 +487,27 @@ extension ProjectDatabase {
                     if block.isBibliography {
                         DebugLog.log(.data, "[Database+Blocks] Rejecting update to bibliography block: \(update.id.prefix(8))")
                         continue
+                    }
+                    // Safety net: never let a stale editor diff revert or destroy a Notes row's
+                    // footnote label. Legitimate definition-text edits (label unchanged) are allowed —
+                    // the forced-flush pipeline in handleFootnoteInsertedImmediate depends on them.
+                    // A label change here means JS held a pre-rename view (reconcileNotesBlocks renames
+                    // labels in place, keeping the same block id), so reject it.
+                    // Note: a user manually retyping an existing Notes row's label in place is
+                    // indistinguishable from this stale-rename-revert signature and will also be
+                    // silently rejected — accepted trade-off, same category as the manual-deletion
+                    // callout below.
+                    // (Checked: this guard cannot be bypassed via a markdownFragment == nil,
+                    // textContent-only update. block-sync-plugin.ts's detectChanges always sets
+                    // markdownFragment via getMarkdownFragment(newBlock) — a non-optional string —
+                    // whenever it enqueues a pendingUpdate, so the editor diff never omits it.)
+                    if block.isNotes, let incomingFragment = update.markdownFragment {
+                        let currentLabel = FootnoteSyncService.parseNotesLabel(from: block.markdownFragment)?.label
+                        let incomingLabel = FootnoteSyncService.parseNotesLabel(from: incomingFragment)?.label
+                        if incomingLabel != currentLabel {
+                            DebugLog.log(.data, "[Database+Blocks] Rejecting label-changing update to notes block: \(update.id.prefix(8)) (\(currentLabel ?? "nil")→\(incomingLabel ?? "nil"))")
+                            continue
+                        }
                     }
                     // Block found - apply updates
                     if let textContent = update.textContent {

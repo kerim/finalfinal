@@ -162,21 +162,16 @@ extension ContentView {
                     updateSourceContentIfNeeded()
                 }
             }
-
-            // Record initial content hash for Getting Started edit detection
-            if documentManager.isGettingStartedProject {
-                var attempts = 0
-                while attempts < 4 && editorState.content.isEmpty {
-                    try? await Task.sleep(for: .milliseconds(150))
-                    attempts += 1
-                }
-                documentManager.recordGettingStartedLoadedContent(editorState.content)
-            }
         } catch {
             DebugLog.log(.lifecycle, "[ContentView] Failed to load content: \(error.localizedDescription)")
         }
 
-        // Populate section table from loaded content so version history has fresh data
+        // Populate section table from loaded content so version history has fresh data.
+        // For Getting Started, this pre-round-trip programmatic sync intentionally does NOT
+        // count as `fromEditorChange` — the Getting Started baseline is instead captured
+        // lazily from the first genuinely editor-settled `contentChanged` event (see
+        // DocumentManager.checkGettingStartedEdited), because Milkdown reformats content when
+        // it re-serializes and this string predates that round-trip.
         if !editorState.content.isEmpty {
             await sectionSyncService.syncNow(editorState.content)
         }
@@ -247,6 +242,7 @@ extension ContentView {
         suppressNextBibliographyRebuild = true
         pendingBibliographyRebuild = false
         pendingNotesRebuild = false
+        pendingFootnoteLabels.reset()
 
         // Reconfigure BlockSyncService with new DB (weak WebView ref still valid)
         if editorState.editorMode == .wysiwyg,
@@ -362,8 +358,11 @@ extension ContentView {
             return
         }
 
-        // Ensure sections are synced before snapshot (debounce may not have fired yet)
-        await sectionSyncService.syncNow(editorState.content)
+        // Ensure sections are synced before snapshot (debounce may not have fired yet).
+        // fromEditorChange: true — by the time this fires the content is definitionally the
+        // user's real, settled state (not a pre-round-trip programmatic sync), so a real edit
+        // immediately followed by Save Version must still reach Getting Started edit-detection.
+        await sectionSyncService.syncNow(editorState.content, fromEditorChange: true)
 
         let name = saveVersionName.isEmpty ? nil : saveVersionName
         let service = SnapshotService(database: db, projectId: pid)

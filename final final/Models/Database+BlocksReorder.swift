@@ -164,6 +164,58 @@ extension ProjectDatabase {
                 }
             }
 
+            // Safety net: Notes and Bibliography rows are machine-managed by their sync
+            // services (FootnoteSyncService / BibliographySyncService), symmetric with the
+            // guard in Database+Blocks.swift's applyBlockChangesFromEditor. A zoomed CodeMirror
+            // re-parse must never silently delete them just because the current in-editor view
+            // doesn't include them — flushContentToDatabase strips the mini-Notes text before
+            // parsing for the footnote-insertion path, so newBlocks legitimately contains zero
+            // isNotes rows on that call, which previously meant any real Notes row whose
+            // sortOrder fell inside [start, end) was deleted with nothing to replace it.
+            // Existing non-heading rows of these types are preserved untouched below (excluded
+            // from the delete query); if newBlocks legitimately contains a matching (same-label)
+            // Notes row, it is merged into the preserved row in place instead of inserted as a
+            // duplicate alongside it.
+            var notesRowByLabel: [String: Block] = [:]
+            for block in existingBlocks where block.isNotes {
+                if let label = FootnoteSyncService.parseNotesLabel(from: block.markdownFragment)?.label {
+                    notesRowByLabel[label] = block
+                }
+            }
+
+            // The "# Notes"/"# Bibliography" HEADING itself needs a different rule than the
+            // paragraph rows above: it normally survives via the delete-then-reinsert-by-title-
+            // match flow below (which already preserves its id/metadata safely), but that only
+            // works if newBlocks actually contains a heading with the same title to trigger the
+            // reinsert. When newBlocks omits it entirely (the same mini-Notes-stripped scenario),
+            // unconditionally deleting it here would orphan it with nothing to bring it back —
+            // so it must be excluded from the delete query in that case specifically.
+            let newHeadingTitles = Set(newBlocks.filter { $0.blockType == .heading }.map { $0.textContent })
+            let protectedHeadingIds = Set(
+                existingBlocks
+                    .filter { $0.blockType == .heading && ($0.isNotes || $0.isBibliography) }
+                    .filter { !newHeadingTitles.contains($0.textContent) }
+                    .map { $0.id }
+            )
+
+            // Every row the delete-then-reinsert logic below will NOT touch: preserved
+            // (undeleted) non-heading isNotes/isBibliography rows, plus a protected
+            // "# Notes"/"# Bibliography" heading (protectedHeadingIds, above). These keep
+            // whatever DB row they already have — nothing below assigns them a fresh sortOrder,
+            // so they'd otherwise be left at their stale original position. Collected here (in
+            // original relative order, since existingBlocks is already sorted by sortOrder) so
+            // step 3.5 below can re-anchor them immediately after the new content instead of
+            // leaving them at a stale absolute position that can numerically collide with, or
+            // fall inside, the freshly-sequenced new blocks — which previously let a newly-typed
+            // paragraph land between the preserved Notes heading and its own footnote
+            // definition, splitting the Notes section.
+            let preservedRowIds: [String] = existingBlocks
+                .filter { block in
+                    protectedHeadingIds.contains(block.id) ||
+                    ((block.isNotes || block.isBibliography) && block.blockType != .heading)
+                }
+                .map { $0.id }
+
             // Build image metadata lookup
             var imageMetaBySrc: [String: ImageMeta] = [:]
             for block in existingBlocks where block.blockType == .image {
@@ -175,19 +227,34 @@ extension ProjectDatabase {
                 }
             }
 
-            // 2. Delete blocks in range
+            // 2. Delete blocks in range — never delete non-heading isNotes/isBibliography rows
+            // (machine-managed, see safety-net comment above), and never delete an
+            // isNotes/isBibliography HEADING that has no matching replacement in newBlocks
+            // (protectedHeadingIds, see comment above). Any other heading — including one of
+            // these headings when newBlocks DOES contain a same-titled replacement — keeps
+            // going through the existing delete-then-reinsert-by-title-match flow below.
             var deleteQuery = Block
                 .filter(Block.Columns.projectId == projectId)
                 .filter(Block.Columns.sortOrder >= startSortOrder)
+                .filter(
+                    Block.Columns.blockType == BlockType.heading.rawValue ||
+                    (Block.Columns.isNotes == false && Block.Columns.isBibliography == false)
+                )
+            if !protectedHeadingIds.isEmpty {
+                deleteQuery = deleteQuery.filter(!protectedHeadingIds.contains(Block.Columns.id))
+            }
             if let end = endSortOrder {
                 deleteQuery = deleteQuery.filter(Block.Columns.sortOrder < end)
             }
             try deleteQuery.deleteAll(db)
 
-            // 2.5. Shift blocks after range to prevent sort order collisions
-            // when inserted blocks overflow the original range
+            // 2.5. Shift blocks after range to prevent sort order collisions when inserted
+            // blocks — plus any preserved rows re-anchored in step 3.5 below — overflow the
+            // original range. Reserving room for preservedRowIds.count here too (not just
+            // newBlocks.count) is what keeps step 3.5's re-anchored positions from themselves
+            // colliding with whatever comes after the range.
             if let end = endSortOrder {
-                let insertEnd = startSortOrder + Double(newBlocks.count)
+                let insertEnd = startSortOrder + Double(newBlocks.count) + Double(preservedRowIds.count)
                 if insertEnd > end {
                     let shift = insertEnd - end
                     try db.execute(
@@ -200,9 +267,57 @@ extension ProjectDatabase {
                 }
             }
 
+            // Track footnote labels already claimed within this batch — whether by merging into
+            // a preserved row or by falling through to a normal insert below — so a second
+            // newBlocks entry with the same label (e.g. two "[^1]:" paragraphs from a
+            // copy-paste slip or an interrupted renumbering) never produces a second DB row for
+            // that label. First-occurrence-wins, matching the imageMetaBySrc dedup convention
+            // used elsewhere in this file.
+            var claimedNotesLabels: Set<String> = []
+
             // 3. Insert new blocks with sort orders starting at startSortOrder
             for (index, var block) in newBlocks.enumerated() {
                 block.sortOrder = startSortOrder + Double(index)
+
+                // Bibliography rows are 100% machine-generated (BibliographySyncService is the
+                // sole writer); never insert a non-heading one through this path. The existing
+                // (preserved, undeleted) row above remains authoritative. The "# Bibliography"
+                // heading itself is excluded here (it goes through the normal
+                // delete-then-reinsert-by-title-match flow below, which already handles it).
+                if block.isBibliography && block.blockType != .heading {
+                    DebugLog.log(.data, "[replaceBlocksInRange] Skipping insert of bibliography-shaped block (machine-managed)")
+                    continue
+                }
+
+                // Notes rows: merge into the preserved existing row by label (same rule as the
+                // applyBlockChangesFromEditor guard) instead of inserting a duplicate. A user's
+                // legitimate label-preserving text edit reaching this path still lands (we copy
+                // its content onto the existing row); a stale/mismatched label falls through to
+                // a normal insert below rather than being silently dropped. (The "# Notes"
+                // heading itself never matches parseNotesLabel's "[^N]:" pattern, so it always
+                // falls through to the title-match flow below, same as any other heading.)
+                if block.isNotes && block.blockType != .heading,
+                   let label = FootnoteSyncService.parseNotesLabel(from: block.markdownFragment)?.label {
+                    if claimedNotesLabels.contains(label) {
+                        // Duplicate label within this same batch (e.g. two "[^1]:" paragraphs
+                        // from a copy-paste slip) — the first occurrence above already claimed
+                        // this label (merged or inserted); drop this one rather than producing a
+                        // second DB row with the same footnote label.
+                        DebugLog.log(.data, "[replaceBlocksInRange] Skipping duplicate notes label in batch: \(label)")
+                        continue
+                    }
+                    claimedNotesLabels.insert(label)
+
+                    if var existingNotesRow = notesRowByLabel[label] {
+                        existingNotesRow.markdownFragment = block.markdownFragment
+                        existingNotesRow.textContent = block.textContent
+                        existingNotesRow.recalculateWordCount()
+                        existingNotesRow.updatedAt = Date()
+                        try existingNotesRow.update(db)
+                        notesRowByLabel.removeValue(forKey: label)
+                        continue
+                    }
+                }
 
                 // 4. Preserve heading ID by title match (first-match-wins)
                 if block.blockType == .heading, let preservedId = idByTitle[block.textContent] {
@@ -244,6 +359,33 @@ extension ProjectDatabase {
                 }
 
                 try block.insert(db)
+            }
+
+            // 3.5. Re-anchor preserved isNotes/isBibliography rows (and any protected heading,
+            // see preservedRowIds above) immediately after all newly-inserted content. They kept
+            // their original, stale sortOrder through the merge/skip logic above — left in
+            // place, that stale value can numerically fall inside the range the new blocks now
+            // occupy (most commonly when endSortOrder is nil, the normal case for zooming a
+            // document's last section, which sits right before its own trailing footnotes). The
+            // final renormalize step below only breaks sortOrder ties by heading-vs-non-heading,
+            // so an actual collision there falls back to arbitrary DB/fetch order — which could
+            // split a preserved Notes section from its own heading. Assigning fresh sequential
+            // positions here — preserving relative order to each other, anchored right after the
+            // last new block's slot — fixes that. Re-fetch each row fresh by id (rather than
+            // reusing the pre-loop existingBlocks snapshot) so a content update already applied
+            // by the merge logic above isn't clobbered by a stale copy.
+            if !preservedRowIds.isEmpty {
+                let anchorBase = startSortOrder + Double(newBlocks.count)
+                let now = Date()
+                for (offset, rowId) in preservedRowIds.enumerated() {
+                    guard var row = try Block.fetchOne(db, key: rowId) else { continue }
+                    let newSortOrder = anchorBase + Double(offset)
+                    if row.sortOrder != newSortOrder {
+                        row.sortOrder = newSortOrder
+                        row.updatedAt = now
+                        try row.update(db)
+                    }
+                }
             }
 
             // 6. Normalize sort orders inline (atomic with delete+insert above)
