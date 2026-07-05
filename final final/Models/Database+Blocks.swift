@@ -390,7 +390,8 @@ extension ProjectDatabase {
             for insert in changes.inserts {
                 // Calculate sort order based on afterBlockId
                 var sortOrder: Double
-                if let afterId = insert.afterBlockId,
+                let resolvedAfterId = insert.afterBlockId.map { idMapping[$0] ?? $0 }
+                if let afterId = resolvedAfterId,
                    let afterBlock = try Block.fetchOne(db, key: afterId) {
                     // Find the next block to calculate midpoint
                     let nextBlock = try Block
