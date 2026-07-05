@@ -40,6 +40,9 @@ cd web && pnpm build && cd ..
 echo "  Generating Xcode project..."
 xcodegen generate
 
+echo "  Checking pbxproj determinism..."
+bash "$PROJECT_DIR/scripts/verify-pbxproj-determinism.sh"
+
 echo "  Verifying scheme..."
 bash "$PROJECT_DIR/scripts/verify-scheme.sh"
 
@@ -117,6 +120,9 @@ cd "$PROJECT_DIR"
 
 echo "  Generating Xcode project..."
 xcodegen generate
+
+echo "  Checking pbxproj determinism..."
+bash "$PROJECT_DIR/scripts/verify-pbxproj-determinism.sh"
 
 echo "  Verifying scheme..."
 bash "$PROJECT_DIR/scripts/verify-scheme.sh"

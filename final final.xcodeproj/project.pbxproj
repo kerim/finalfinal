@@ -147,7 +147,6 @@
 		9E99C57C2D8101B560301BAE /* BlockParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0EE6A723C923D316B9CE89C /* BlockParser.swift */; };
 		9F8A84E5700503E3140BB6AC /* Database+Blocks.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3B8BDB22DF0AC3535250A72E /* Database+Blocks.swift */; };
 		A05325CD92CBB929824DD2D3 /* SQLiteReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 19D9D6FF0D1C77C27B991957 /* SQLiteReader.swift */; };
-		A260B9AEA58D00DA58E332AD /* content.sqlite in Resources */ = {isa = PBXBuildFile; fileRef = 342DA0CDD64AC4355DCB9DA7 /* content.sqlite */; };
 		A27ED7C850192550DDFCD95B /* LinkTrailingTextTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 307DA2CD982351B53E2CE918 /* LinkTrailingTextTests.swift */; };
 		A36206EB02FE6CAD10AC3076 /* ZoteroService+CAYW.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6E8F8EC247BCC5E3E00BA145 /* ZoteroService+CAYW.swift */; };
 		A63A6CAA68FA3A786C2E8B9F /* EditorViewState+Zoom.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7CDE9D1D9ECA8A2C882564D /* EditorViewState+Zoom.swift */; };
@@ -192,7 +191,6 @@
 		E46A01D58B8F56C1034EB422 /* Snapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = 87F00396843D1E0300C1624A /* Snapshot.swift */; };
 		E46F3ED58DA8FEDB5213C283 /* AnnotationCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5903AE3511C621FF3093E3C9 /* AnnotationCardView.swift */; };
 		E581117BD3C50CC266680DE3 /* OutlineObservationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A8EFCD152C2A36B39ADE780 /* OutlineObservationTests.swift */; };
-		E7D17EC0E15E348A051B7187 /* tables-roundtrip.md in Resources */ = {isa = PBXBuildFile; fileRef = FCFB54EBEA7C2586E8A57656 /* tables-roundtrip.md */; };
 		ECA17134BABE98C9FC75300F /* MilkdownCoordinator+MessageHandlers.swift in Sources */ = {isa = PBXBuildFile; fileRef = 594727DD6667897CC1A2A75A /* MilkdownCoordinator+MessageHandlers.swift */; };
 		ED09710A150F3AB39B5C7AA3 /* ImageImportServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4430FB4485538CDFA0F4F53 /* ImageImportServiceTests.swift */; };
 		F0A005E8C501B38A29B52152 /* HelpCommands.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A8A74453B2CB08623CDE2B4 /* HelpCommands.swift */; };
@@ -282,7 +280,6 @@
 		307DA2CD982351B53E2CE918 /* LinkTrailingTextTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LinkTrailingTextTests.swift; sourceTree = "<group>"; };
 		31937040D58CFFD751C3C45D /* OutlineSidebar+DropDelegates.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "OutlineSidebar+DropDelegates.swift"; sourceTree = "<group>"; };
 		31C89F3A4269349290CD8F03 /* EditorViewState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorViewState.swift; sourceTree = "<group>"; };
-		342DA0CDD64AC4355DCB9DA7 /* content.sqlite */ = {isa = PBXFileReference; lastKnownFileType = file; path = content.sqlite; sourceTree = "<group>"; };
 		349348AA5F221A0782421BDB /* TestMode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TestMode.swift; sourceTree = "<group>"; };
 		354FD04A50F29512BEE6C1ED /* ZoomWordCountSyncTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZoomWordCountSyncTests.swift; sourceTree = "<group>"; };
 		355B348D7655EE1EA841872D /* SmokeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SmokeTests.swift; sourceTree = "<group>"; };
@@ -447,7 +444,6 @@
 		F56781FE0EE291AAD9AE24E8 /* FocusModeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FocusModeTests.swift; sourceTree = "<group>"; };
 		FA8E40231CCB32EC98E3B48F /* ProjectPickerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectPickerView.swift; sourceTree = "<group>"; };
 		FB77BD6B3DD5AF1E074B30A4 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
-		FCFB54EBEA7C2586E8A57656 /* tables-roundtrip.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "tables-roundtrip.md"; sourceTree = "<group>"; };
 		FDA7C9F1CFBE9EDB2C4D818C /* OutlineParserTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutlineParserTests.swift; sourceTree = "<group>"; };
 		FE24C13995368C23BC470A26 /* FinalFinalApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FinalFinalApp.swift; sourceTree = "<group>"; };
 		FF34C45C645EA726101A81D6 /* FootnoteSyncService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FootnoteSyncService.swift; sourceTree = "<group>"; };
@@ -560,14 +556,6 @@
 			path = Helpers;
 			sourceTree = "<group>";
 		};
-		3968114F8AC7B20B7B833FD5 /* test-fixture.ff */ = {
-			isa = PBXGroup;
-			children = (
-				342DA0CDD64AC4355DCB9DA7 /* content.sqlite */,
-			);
-			path = "test-fixture.ff";
-			sourceTree = "<group>";
-		};
 		3F528C948E209CDF817C3EC8 /* ViewState */ = {
 			isa = PBXGroup;
 			children = (
@@ -590,15 +578,6 @@
 				AEA97EE7FBB6B6E21D5FA0F0 /* QuickLook Extension.appex */,
 			);
 			name = Products;
-			sourceTree = "<group>";
-		};
-		713A66A0133FFEE258039893 /* Fixtures */ = {
-			isa = PBXGroup;
-			children = (
-				FCFB54EBEA7C2586E8A57656 /* tables-roundtrip.md */,
-				3968114F8AC7B20B7B833FD5 /* test-fixture.ff */,
-			);
-			path = Fixtures;
 			sourceTree = "<group>";
 		};
 		77839AE8F84D5BB394C9439D = {
@@ -763,7 +742,6 @@
 				FDA7C9F1CFBE9EDB2C4D818C /* OutlineParserTests.swift */,
 				E2BEC2E8F18731A82D861A36 /* ProjectRepairServiceTests.swift */,
 				55FB874281AB62837401C32A /* ProjectRepairServiceTests+AdvancedScenarios.swift */,
-				713A66A0133FFEE258039893 /* Fixtures */,
 				34A01CAE3C65372C6D2C72CF /* Helpers */,
 				ECF8DE5E85D674B973F1B0F6 /* Tier1 */,
 				E0191FF033C8C77755CE0163 /* Tier2 */,
@@ -900,7 +878,6 @@
 			buildConfigurationList = A113F1C650E247ABF9699C3F /* Build configuration list for PBXNativeTarget "final finalTests" */;
 			buildPhases = (
 				2D0D2A66A7555B777B919AF8 /* Sources */,
-				99EF20CE85F2E79E35430EC3 /* Resources */,
 			);
 			buildRules = (
 			);
@@ -1038,15 +1015,6 @@
 				8FC2C94655683E0A57EE671F /* TinyTeX in Resources */,
 				B17C6E9C011435B07C9EFF38 /* editor in Resources */,
 				1DD44825761501030369C6BA /* getting-started.ff in Resources */,
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-		99EF20CE85F2E79E35430EC3 /* Resources */ = {
-			isa = PBXResourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-				A260B9AEA58D00DA58E332AD /* content.sqlite in Resources */,
-				E7D17EC0E15E348A051B7187 /* tables-roundtrip.md in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
