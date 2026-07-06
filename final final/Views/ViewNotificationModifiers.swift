@@ -536,6 +536,24 @@ extension View {
             }
     }
 
+    /// When a resetting-content window closes, triggers a fresh poll of pending
+    /// JS-side changes (`pollBlockChangesNow()`), re-capturing any content push
+    /// previously dropped by handleContentPush's isResettingContent guard while
+    /// the window was open (e.g. right after a version-history restore).
+    @MainActor
+    func withResettingContentRecovery(
+        editorState: EditorViewState
+    ) -> some View {
+        self
+            .onChange(of: editorState.isResettingContent) { oldValue, newValue in
+                if EditorViewState.shouldForcePollAfterResettingContent(
+                    wasResetting: oldValue, isResetting: newValue, contentState: editorState.contentState
+                ) {
+                    Task { await editorState.blockSyncService?.pollBlockChangesNow() }
+                }
+            }
+    }
+
     /// Adds sidebar visibility sync observers
     @MainActor
     func withSidebarSync(

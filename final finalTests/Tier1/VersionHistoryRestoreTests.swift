@@ -144,4 +144,65 @@ struct VersionHistoryRestoreTests {
         #expect(all.contains { $0.id == manual.id },
                 "Manual snapshot should survive pruning")
     }
+
+    // MARK: - Trailing Blank Line Regression (Outline Desync)
+    //
+    // Regression coverage for a bug where sections were joined end-to-end with no
+    // separator. Whichever section sat last had no enforced trailing blank line, so
+    // when another section's markdown was appended after it, the next header glued
+    // onto the previous section's last sentence and the parser stopped recognizing
+    // it as a heading — it silently vanished from the Outline sidebar.
+
+    @Test("Restoring a section as duplicate preserves the restored header (SnapshotService)")
+    func restoreSectionAsDuplicatePreservesHeader() throws {
+        let db = try TestFixtureFactory.createTemporary()
+        let pid = try TestFixtureFactory.getProjectId(from: db)
+
+        // Existing section deliberately does NOT end in a trailing blank line
+        let existingSection = Section(
+            projectId: pid,
+            sortOrder: 0,
+            headerLevel: 1,
+            title: "Existing Section",
+            markdownContent: "# Existing Section\n\nSome body text with no trailing blank line."
+        )
+        try db.insertSection(existingSection)
+
+        // Section that will be captured in a snapshot, then restored as a duplicate
+        let toRestoreSection = Section(
+            projectId: pid,
+            sortOrder: 1,
+            headerLevel: 1,
+            title: "Restored Header",
+            markdownContent: "# Restored Header\n\nRestored body text."
+        )
+        try db.insertSection(toRestoreSection)
+
+        let (service, _) = try createSnapshotService(db: db)
+        let snapshot = try service.createManualSnapshot(name: "Before Restore")
+
+        let snapshotSections = try service.fetchSections(for: snapshot.id)
+        guard let restoredSnapshotSection = snapshotSections.first(where: { $0.title == "Restored Header" }) else {
+            Issue.record("Snapshot should contain the 'Restored Header' section")
+            return
+        }
+
+        // Remove the live section so restoring it models a real "bring back a section
+        // that's no longer present" restore-as-duplicate flow.
+        try db.deleteSection(id: toRestoreSection.id, moveChildrenUp: false)
+
+        try service.restoreSectionAsDuplicate(
+            snapshotSectionId: restoredSnapshotSection.id,
+            insertAfterSectionId: existingSection.id,
+            createSafetyBackup: false
+        )
+
+        let blocks = try TestFixtureFactory.fetchBlocks(from: db)
+        let headings = TestFixtureFactory.headingBlocks(blocks)
+
+        #expect(headings.count == 2,
+                "Restored Header should remain its own heading after restore-as-duplicate, not get glued into the previous section's paragraph")
+        #expect(headings.contains { $0.textContent == "Restored Header" },
+                "Restored Header text should be recognized as a heading block")
+    }
 }

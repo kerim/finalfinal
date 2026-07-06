@@ -17,12 +17,15 @@ import {
 } from './block-id-plugin';
 import {
   type BlockChanges,
+  type BlockSnapshot,
   destroyBlockSyncState,
+  detectPausedEditsAndSnapshot,
   flushPendingBlockChanges as flushPendingBlockChangesPlugin,
   getBlockChanges as getBlockChangesPlugin,
   hasPendingChanges,
   resetAndSnapshot,
   setSyncPaused,
+  snapshotBlocks,
   updateSnapshotIds,
 } from './block-sync-plugin';
 import { resetCAYWState } from './cayw';
@@ -44,13 +47,23 @@ import { syncLog } from './sync-debug';
 import type { Block, ImageBlockMeta } from './types';
 
 /** Re-snapshot in the next animation frame, then unpause sync.
- *  Ensures normalization transactions are absorbed before change detection resumes. */
-function deferredSnapshotAndUnpause(): void {
+ *  Ensures normalization transactions are absorbed before change detection resumes.
+ *  When `detectPausedEdits` is true, edits made while sync was paused are queued
+ *  as pending changes instead of being silently discarded, by diffing `baseline`
+ *  (a snapshot the caller captured at the moment its own paused push settled —
+ *  NOT the ambient last-known state, which may reflect an unrelated prior reset)
+ *  against the document as it stands once the pause ends. See
+ *  detectPausedEditsAndSnapshot() for the full reasoning and safety constraints. */
+function deferredSnapshotAndUnpause(detectPausedEdits = false, baseline?: Map<string, BlockSnapshot>): void {
   requestAnimationFrame(() => {
     const inst = getEditorInstance();
     if (inst) {
       const v = inst.ctx.get(editorViewCtx);
-      resetAndSnapshot(v.state.doc);
+      if (detectPausedEdits && baseline) {
+        detectPausedEditsAndSnapshot(v.state.doc, baseline);
+      } else {
+        resetAndSnapshot(v.state.doc);
+      }
     }
     setSyncPaused(false);
   });
@@ -425,7 +438,12 @@ export function applyBlocks(blocks: Block[]): void {
 export function setContentWithBlockIds(
   markdown: string,
   blockIds: string[],
-  options?: { scrollToStart?: boolean; imageMeta?: ImageBlockMeta[]; cursorBoundary?: number }
+  options?: {
+    scrollToStart?: boolean;
+    imageMeta?: ImageBlockMeta[];
+    cursorBoundary?: number;
+    detectPausedEdits?: boolean;
+  }
 ): void {
   clearContentPushTimer(); // Cancel stale timers before document replacement
   syncLog(
@@ -449,6 +467,7 @@ export function setContentWithBlockIds(
   if (!markdown.trim()) {
     setIsSettingContent(true);
     setSyncPaused(true);
+    let emptyPushBaseline: Map<string, BlockSnapshot> | undefined;
     try {
       editorInstance.action((ctx) => {
         const view = ctx.get(editorViewCtx);
@@ -457,11 +476,14 @@ export function setContentWithBlockIds(
         const tr = view.state.tr.replaceWith(0, view.state.doc.content.size, emptyDoc.content);
         view.dispatch(tr.setMeta('addToHistory', false).setSelection(Selection.atStart(tr.doc)));
         clearBlockIds();
+        if (options?.detectPausedEdits) {
+          emptyPushBaseline = snapshotBlocks(view.state.doc);
+        }
       });
       setCurrentContent(markdown);
     } finally {
       setIsSettingContent(false);
-      deferredSnapshotAndUnpause();
+      deferredSnapshotAndUnpause(options?.detectPausedEdits ?? false, emptyPushBaseline);
     }
     return;
   }
@@ -470,6 +492,11 @@ export function setContentWithBlockIds(
   setIsSettingContent(true);
   setSyncPaused(true);
   let parseSucceeded = false;
+  // Captured at the very end of the paused callback below, once the pushed
+  // content and its real block IDs (and any image-metadata adjustment) have
+  // fully settled — the correct "before" baseline for detectPausedEdits, as
+  // opposed to the ambient last-known state (see deferredSnapshotAndUnpause).
+  let pausedPushBaseline: Map<string, BlockSnapshot> | undefined;
   try {
     editorInstance.action((ctx) => {
       const view = ctx.get(editorViewCtx);
@@ -554,6 +581,13 @@ export function setContentWithBlockIds(
         });
         if (metaTr.steps.length > 0) view.dispatch(metaTr.setMeta('addToHistory', false));
       }
+
+      // Capture the "just pushed" baseline LAST, after every transaction in this
+      // paused callback has settled, so it reflects the fully-assembled restored
+      // content (real IDs, image metadata) — not an intermediate state.
+      if (options?.detectPausedEdits) {
+        pausedPushBaseline = snapshotBlocks(view.state.doc);
+      }
     });
     if (parseSucceeded) {
       setCurrentContent(markdown);
@@ -561,7 +595,7 @@ export function setContentWithBlockIds(
   } finally {
     setIsSettingContent(false);
     // Delay snapshot + unpause to RAF so normalization transactions are absorbed
-    deferredSnapshotAndUnpause();
+    deferredSnapshotAndUnpause(options?.detectPausedEdits ?? false, pausedPushBaseline);
   }
 }
 

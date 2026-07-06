@@ -231,7 +231,8 @@ class BlockSyncService {
         blockIds: [String],
         scrollToStart: Bool = false,
         imageMeta: [ContentView.ImageBlockMeta] = [],
-        cursorBoundary: Int? = nil
+        cursorBoundary: Int? = nil,
+        detectPausedEdits: Bool = false
     ) async {
         guard let webView else { return }
 
@@ -275,6 +276,9 @@ class BlockSyncService {
         }
         if let boundary = cursorBoundary {
             optionParts.append("cursorBoundary: \(boundary)")
+        }
+        if detectPausedEdits {
+            optionParts.append("detectPausedEdits: true")
         }
         let options = optionParts.isEmpty ? "" : ", {\(optionParts.joined(separator: ", "))}"
         let js = "window.FinalFinal.setContentWithBlockIds(`\(escapedMarkdown)`, JSON.parse(`\(escapedIds)`)\(options))"

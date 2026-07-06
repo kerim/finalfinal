@@ -386,7 +386,7 @@ final class SnapshotService {
     private func rebuildContentFromSections() throws {
         let sections = try database.fetchSections(projectId: projectId)
         let markdown = sections
-            .map { $0.markdownContent }
+            .map { MarkdownUtils.ensuringTrailingBlankLine($0.markdownContent) }
             .joined()
 
         try database.saveContent(markdown: markdown, for: projectId)

@@ -347,4 +347,15 @@ enum MarkdownUtils {
 
         return result
     }
+
+    /// Ensures markdown content ends with exactly one blank line (`\n\n`), so it can be
+    /// safely concatenated with more content after it without gluing the next section's
+    /// header onto this content's last line. A no-op if content is already empty or
+    /// already properly terminated.
+    static func ensuringTrailingBlankLine(_ content: String) -> String {
+        if content.isEmpty { return content }
+        if content.hasSuffix("\n\n") { return content }
+        if content.hasSuffix("\n") { return content + "\n" }
+        return content + "\n\n"
+    }
 }

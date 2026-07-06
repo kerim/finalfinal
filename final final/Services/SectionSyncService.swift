@@ -79,15 +79,6 @@ class SectionSyncService {
         debounceGeneration += 1
     }
 
-    /// Rebuild document markdown from sections in their current order
-    /// Used after drag-drop reordering to sync sections back to document
-    /// NOTE: Caller must pass sections in correct order - no sorting is performed
-    func rebuildDocument(from sections: [Section]) -> String {
-        sections
-            .map { $0.markdownContent }
-            .joined()  // Content already includes trailing newlines
-    }
-
     /// Update header level in markdown content
     /// Used when section level changes during drag-drop
     func updateHeaderLevel(in markdown: String, to newLevel: Int) -> String {

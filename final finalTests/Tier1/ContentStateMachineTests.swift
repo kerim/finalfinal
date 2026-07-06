@@ -203,4 +203,34 @@ struct ContentStateMachineTests {
         // Immediate second toggle — should be blocked by debounce
         #expect(!state.canToggleEditorMode, "Should be debounced after immediate re-toggle")
     }
+
+    // MARK: - shouldForcePollAfterResettingContent
+
+    @Test("Force-poll fires when resetting-content window closes while idle")
+    func forcePollFiresWhenResettingWindowClosesWhileIdle() {
+        #expect(EditorViewState.shouldForcePollAfterResettingContent(
+            wasResetting: true, isResetting: false, contentState: .idle
+        ))
+    }
+
+    @Test("Force-poll does not fire when window closes during another transition")
+    func forcePollSkippedWhenNonIdleTransitionInFlight() {
+        #expect(!EditorViewState.shouldForcePollAfterResettingContent(
+            wasResetting: true, isResetting: false, contentState: .zoomTransition
+        ), "Accepted narrowing: falls back to the periodic poll instead")
+    }
+
+    @Test("Force-poll does not fire when there was no resetting-content transition")
+    func forcePollSkippedWithNoTransition() {
+        #expect(!EditorViewState.shouldForcePollAfterResettingContent(
+            wasResetting: false, isResetting: false, contentState: .idle
+        ))
+    }
+
+    @Test("Force-poll does not fire while still resetting content")
+    func forcePollSkippedWhileStillResetting() {
+        #expect(!EditorViewState.shouldForcePollAfterResettingContent(
+            wasResetting: true, isResetting: true, contentState: .idle
+        ), "No transition: isResettingContent never closed")
+    }
 }

@@ -248,6 +248,7 @@ struct ContentView: View {
                 documentManager: documentManager
             )
             .withContentStateRecovery(editorState: editorState)
+            .withResettingContentRecovery(editorState: editorState)
             .withSidebarSync(
                 editorState: editorState,
                 sidebarVisibility: $sidebarVisibility

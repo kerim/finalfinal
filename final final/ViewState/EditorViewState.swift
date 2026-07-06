@@ -648,3 +648,19 @@ class EditorViewState {
     }
 
 }
+
+extension EditorViewState {
+    /// Whether a resetting-content window (e.g. version-history restore) just closed
+    /// in a state where it's safe and worthwhile to force an immediate block-sync poll,
+    /// recovering any content push `handleContentPush` silently dropped while the
+    /// window was open. Gated on `contentState == .idle` because `pollBlockChangesNow()`
+    /// deliberately bypasses that guard for its own other callers — firing it while a
+    /// different transition (zoom, hierarchy enforcement, etc.) is still in flight could
+    /// read a half-updated document tree. A drop that closes while non-idle is an
+    /// accepted narrowing: it still falls back to the ~2s periodic poll.
+    static func shouldForcePollAfterResettingContent(
+        wasResetting: Bool, isResetting: Bool, contentState: EditorContentState
+    ) -> Bool {
+        wasResetting && !isResetting && contentState == .idle
+    }
+}

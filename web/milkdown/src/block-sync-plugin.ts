@@ -60,7 +60,7 @@ interface BlockSyncPluginState {
   pendingDeletes: Set<string>;
 }
 
-interface BlockSnapshot {
+export interface BlockSnapshot {
   id: string;
   pos: number;
   blockType: string;
@@ -582,7 +582,7 @@ export function hasPendingChanges(): boolean {
 /**
  * Take a snapshot of current blocks
  */
-function snapshotBlocks(doc: Node): Map<string, BlockSnapshot> {
+export function snapshotBlocks(doc: Node): Map<string, BlockSnapshot> {
   const snapshot = new Map<string, BlockSnapshot>();
   const blockIds = getAllBlockIds();
 
@@ -655,7 +655,7 @@ function snapshotBlocks(doc: Node): Map<string, BlockSnapshot> {
 /**
  * Compare snapshots and detect changes
  */
-function detectChanges(
+export function detectChanges(
   oldSnapshot: Map<string, BlockSnapshot>,
   newSnapshot: Map<string, BlockSnapshot>,
   state: BlockSyncPluginState
@@ -973,6 +973,48 @@ export function resetAndSnapshot(doc: Node): void {
   currentState.pendingInserts.clear();
   currentState.pendingDeletes.clear();
   currentState.lastSnapshot = snapshotBlocks(doc);
+}
+
+/**
+ * Like resetAndSnapshot, but first detects any edits that happened while sync
+ * was paused (comparing an EXPLICITLY CAPTURED baseline against the current
+ * doc) and queues them as genuine pending changes instead of silently
+ * discarding them.
+ *
+ * `baseline` must be a snapshot taken by the caller at the precise moment the
+ * paused content push finished settling (e.g. right after setBlockIdsForTopLevel
+ * assigns real IDs to freshly-pushed restored content) — NOT the ambient
+ * `currentState.lastSnapshot`. That ambient value reflects whatever the doc
+ * looked like *before* this pause began, which for a version-history restore
+ * is typically an unrelated, already-reset-to-empty document (a separate,
+ * unconditional project-switch reset runs immediately beforehand) — comparing
+ * against it can never detect an edit to content that didn't exist until the
+ * paused push itself. Requiring an explicit, correctly-timed baseline from the
+ * caller avoids that entirely, regardless of what else may have mutated
+ * ambient state before the pause started.
+ *
+ * Use ONLY when old and new doc represent the SAME logical document scope
+ * (e.g. a version-history restore refreshing the full document) — NEVER when
+ * scope is intentionally changing (zoom in/out, project switch), where the
+ * two snapshots are expected to differ wholesale and diffing them would risk
+ * spurious mass deletes/inserts.
+ */
+export function detectPausedEditsAndSnapshot(doc: Node, baseline: Map<string, BlockSnapshot>): void {
+  if (!currentState) return;
+  if (detectTimer) {
+    clearTimeout(detectTimer);
+    detectTimer = null;
+    pendingOldSnapshot = null;
+    pendingNewSnapshot = null;
+  }
+  pendingIdRemap.clear();
+  currentState.pendingUpdates.clear();
+  currentState.pendingInserts.clear();
+  currentState.pendingDeletes.clear();
+
+  const newSnapshot = snapshotBlocks(doc);
+  detectChanges(baseline, newSnapshot, currentState);
+  currentState.lastSnapshot = newSnapshot;
 }
 
 /**

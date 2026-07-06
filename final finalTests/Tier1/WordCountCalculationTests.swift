@@ -349,4 +349,35 @@ struct WordCountCalculationTests {
         // Words: Introduction (1) + Some, prose, here. (3) + Closing, thoughts. (2) = 6
         #expect(MarkdownUtils.wordCount(for: input) == 6)
     }
+
+    // MARK: - ensuringTrailingBlankLine
+
+    @Test("Empty string is returned unchanged")
+    func ensuringTrailingBlankLineEmpty() {
+        #expect(MarkdownUtils.ensuringTrailingBlankLine("") == "")
+    }
+
+    @Test("Content already ending in a blank line is returned unchanged")
+    func ensuringTrailingBlankLineAlreadyTerminated() {
+        let input = "Some text.\n\n"
+        #expect(MarkdownUtils.ensuringTrailingBlankLine(input) == input)
+    }
+
+    @Test("Content ending in a single newline gets exactly one more newline appended")
+    func ensuringTrailingBlankLineSingleNewline() {
+        let input = "Some text.\n"
+        #expect(MarkdownUtils.ensuringTrailingBlankLine(input) == "Some text.\n\n")
+    }
+
+    @Test("Content with no trailing newline gets a blank line appended")
+    func ensuringTrailingBlankLineNoNewline() {
+        let input = "Some text."
+        #expect(MarkdownUtils.ensuringTrailingBlankLine(input) == "Some text.\n\n")
+    }
+
+    @Test("Over-terminated content (three newlines) is returned unchanged")
+    func ensuringTrailingBlankLineOverTerminated() {
+        let input = "Some text.\n\n\n"
+        #expect(MarkdownUtils.ensuringTrailingBlankLine(input) == input)
+    }
 }
