@@ -137,7 +137,7 @@ actor ExportService {
 
         // Get resource paths
         let luaScriptPath = settings.effectiveLuaScriptPath
-        let referenceDocPath = settings.effectiveReferenceDocPath
+        let referenceDocPath = settings.effectiveReferenceDocPath(for: format)
 
         // Validate Lua script if needed (DOCX/ODT only; PDF uses --citeproc)
         if format != .pdf, let luaPath = luaScriptPath {

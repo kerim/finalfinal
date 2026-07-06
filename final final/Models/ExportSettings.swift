@@ -120,12 +120,33 @@ struct ExportSettings: Codable, Sendable {
         return Bundle.main.url(forResource: "zotero", withExtension: "lua", subdirectory: "Export")?.path
     }
 
-    /// Effective reference document path (custom or bundled)
-    var effectiveReferenceDocPath: String? {
-        if useCustomReferenceDoc, let custom = customReferenceDocPath, !custom.isEmpty {
-            return custom
+    /// Effective reference document path (custom or bundled) for a given export format.
+    ///
+    /// Pandoc's `--reference-doc` must match the output format's container type: a `.docx`
+    /// reference for Word output, a `.odt` reference for ODT output. Passing a `.docx` reference
+    /// to an ODT export merges the Word file's internals into the `.odt` output — including its
+    /// sample body text — producing a malformed hybrid file. So each format only ever receives a
+    /// reference doc whose extension matches.
+    func effectiveReferenceDocPath(for format: ExportFormat) -> String? {
+        switch format {
+        case .pdf:
+            // Reference-doc is unused for PDF export.
+            return nil
+
+        case .word:
+            if useCustomReferenceDoc, let custom = customReferenceDocPath, !custom.isEmpty,
+               custom.lowercased().hasSuffix(".docx") {
+                return custom
+            }
+            return Bundle.main.url(forResource: "reference", withExtension: "docx", subdirectory: "Export")?.path
+
+        case .odt:
+            if useCustomReferenceDoc, let custom = customReferenceDocPath, !custom.isEmpty,
+               custom.lowercased().hasSuffix(".odt") {
+                return custom
+            }
+            return Bundle.main.url(forResource: "reference", withExtension: "odt", subdirectory: "Export")?.path
         }
-        return Bundle.main.url(forResource: "reference", withExtension: "docx", subdirectory: "Export")?.path
     }
 
     /// Check if custom Lua script path is valid

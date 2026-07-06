@@ -276,4 +276,57 @@ struct ExportIntegrityTests {
             Issue.record("Export should contain all section content")
         }
     }
+
+    // MARK: - Reference Doc Path Routing (ODT "fake data" fix)
+    //
+    // Regression coverage for a bug where ODT export passed the bundled Word
+    // reference.docx to Pandoc as --reference-doc. Pandoc can't use a .docx as an
+    // ODT reference, so it merged the Word file's internals into the .odt output —
+    // including the reference template's sample body text — producing a malformed
+    // hybrid file. effectiveReferenceDocPath(for:) must only ever hand a .docx path
+    // to Word export and a .odt path to ODT export.
+
+    @Test("effectiveReferenceDocPath routes a custom .docx reference only to Word export")
+    func referenceDocPathRoutesDocxToWordOnly() throws {
+        var settings = ExportSettings.default
+        settings.useCustomReferenceDoc = true
+        settings.customReferenceDocPath = "/x/reference.docx"
+
+        #expect(settings.effectiveReferenceDocPath(for: .word) == "/x/reference.docx",
+                "Word export should use the custom .docx reference doc")
+        #expect(settings.effectiveReferenceDocPath(for: .odt) != "/x/reference.docx",
+                "ODT export must never receive a .docx reference doc")
+        #expect(settings.effectiveReferenceDocPath(for: .odt) != nil,
+                "ODT should fall back to the bundled reference.odt when the custom doc isn't .odt")
+        #expect(settings.effectiveReferenceDocPath(for: .pdf) == nil,
+                "PDF export never uses a reference doc")
+    }
+
+    @Test("effectiveReferenceDocPath routes a custom .odt reference only to ODT export")
+    func referenceDocPathRoutesOdtToOdtOnly() throws {
+        var settings = ExportSettings.default
+        settings.useCustomReferenceDoc = true
+        settings.customReferenceDocPath = "/x/reference.odt"
+
+        #expect(settings.effectiveReferenceDocPath(for: .odt) == "/x/reference.odt",
+                "ODT export should use the custom .odt reference doc")
+        #expect(settings.effectiveReferenceDocPath(for: .word) != "/x/reference.odt",
+                "Word export must never receive the .odt reference doc")
+        #expect(settings.effectiveReferenceDocPath(for: .pdf) == nil,
+                "PDF export never uses a reference doc")
+    }
+
+    @Test("effectiveReferenceDocPath ignores the custom path when useCustomReferenceDoc is false")
+    func referenceDocPathIgnoresDisabledCustomDoc() throws {
+        var settings = ExportSettings.default
+        settings.useCustomReferenceDoc = false
+        settings.customReferenceDocPath = "/x/reference.odt"
+
+        #expect(settings.effectiveReferenceDocPath(for: .odt) != "/x/reference.odt",
+                "Custom reference doc should be ignored when useCustomReferenceDoc is false")
+        #expect(settings.effectiveReferenceDocPath(for: .odt) != nil,
+                "ODT should still fall back to the bundled reference.odt")
+        #expect(settings.effectiveReferenceDocPath(for: .pdf) == nil,
+                "PDF export never uses a reference doc")
+    }
 }
