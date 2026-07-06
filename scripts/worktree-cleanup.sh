@@ -139,7 +139,6 @@ if [ ! -d "$repo" ]; then
 fi
 
 WT="$repo/.claude/worktrees/$slug"
-BR="autodev/$slug"
 NOTES="$repo/.claude/autodev/$slug"
 
 # ─────────────────────────────────────────────
@@ -148,9 +147,11 @@ NOTES="$repo/.claude/autodev/$slug"
 
 registered=0
 prunable=0
+registered_branch=""
 if worktree_list_porcelain="$(git -C "$repo" worktree list --porcelain 2>/dev/null)"; then
     # Parse porcelain output: entries are separated by blank lines, each
-    # starting with "worktree <path>", possibly followed by a "prunable" line.
+    # starting with "worktree <path>", possibly followed by "HEAD"/"branch"/
+    # "prunable" lines.
     current_path=""
     while IFS= read -r line; do
         case "$line" in
@@ -158,6 +159,11 @@ if worktree_list_porcelain="$(git -C "$repo" worktree list --porcelain 2>/dev/nu
                 current_path="${line#worktree }"
                 if [ "$current_path" = "$WT" ]; then
                     registered=1
+                fi
+                ;;
+            "branch "*)
+                if [ "$current_path" = "$WT" ]; then
+                    registered_branch="${line#branch refs/heads/}"
                 fi
                 ;;
             "prunable"*)
@@ -170,6 +176,29 @@ if worktree_list_porcelain="$(git -C "$repo" worktree list --porcelain 2>/dev/nu
                 ;;
         esac
     done <<< "$worktree_list_porcelain"
+fi
+
+# Determine the branch for this slug. Prefer the branch git itself reports
+# for a currently-registered worktree (authoritative, and correct regardless
+# of naming convention) over guessing. Only guess when there's no live
+# registration to consult (branch/dir already removed by an earlier attempt,
+# or a detached worktree). Two conventions exist in practice: the manual
+# fallback this script's usage docs assume (`autodev/<slug>`), and the native
+# EnterWorktree tool, which prefixes the branch with `worktree-` and flattens
+# any `/` in the requested name to `+` (an EnterWorktree name of
+# "autodev/foo" ends up as branch "worktree-autodev+foo", worktree dir
+# ".claude/worktrees/autodev+foo" — so here `slug` is already "autodev+foo",
+# and "worktree-$slug" is the correct guess). Guessing wrong here previously
+# caused this script to refuse a fully-merged worktree with "branch not
+# merged" because it was checking a branch name that didn't exist at all.
+if [ "$registered" -eq 1 ] && [ -n "$registered_branch" ]; then
+    BR="$registered_branch"
+elif [ -n "$(git -C "$repo" branch --list "autodev/$slug" 2>/dev/null)" ]; then
+    BR="autodev/$slug"
+elif [ -n "$(git -C "$repo" branch --list "worktree-$slug" 2>/dev/null)" ]; then
+    BR="worktree-$slug"
+else
+    BR="autodev/$slug"
 fi
 
 dir_exists=0
