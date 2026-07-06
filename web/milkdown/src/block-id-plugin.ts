@@ -167,22 +167,80 @@ export function clearBlockIds(): void {
  * Returns true only when (a) there IS an existing ID at that offset, (b) it
  * hasn't already been claimed, and (c) the type transition is allowed — same
  * type or both types non-atomic (paragraph/heading/list/blockquote/etc., which
- * can arise from input rules). Atomic types (currently `figure`) require
- * strict type match to prevent position-shift ID theft. Exported for tests.
+ * can arise from input rules). Atomic types (currently `figure`, `math_display`)
+ * require strict type match to prevent position-shift ID theft.
+ *
+ * When `structureChanged` is true (a block was inserted or deleted elsewhere
+ * in the doc), position alone is not trustworthy: a same-type or convertible
+ * node can slide into a deleted node's old offset and would otherwise
+ * unconditionally inherit its ID (the header-delete-merge bug). In that case
+ * we additionally require `meaningfulTextOverlap` between the old node's text
+ * (at this offset, in the previous doc) and the new node's text — i.e. the
+ * claim must look like an in-place edit/conversion of the SAME content, not
+ * an unrelated node that happened to land on the same offset. Atomic same-type
+ * claims (figure/math_display) are exempt from the content check — their
+ * content (image src/alt, LaTeX) has no meaningful prefix/suffix relationship,
+ * and same-type-atomic slot reuse under churn is a narrow, accepted risk.
+ * Exported for tests.
  */
 export function phase1CanClaim(
   newType: string,
   existingType: string | undefined,
   existingId: string | undefined,
-  claimed: ReadonlySet<string>
+  claimed: ReadonlySet<string>,
+  structureChanged: boolean,
+  oldText: string | undefined,
+  newText: string
 ): boolean {
   if (!existingId) return false;
   if (claimed.has(existingId)) return false;
-  if (existingType === newType) return true;
+
+  if (existingType === newType) {
+    if (ATOMIC_BLOCK_TYPES.has(newType)) return true;
+    if (!structureChanged) return true;
+    return meaningfulTextOverlap(oldText, newText);
+  }
   if (existingType === undefined) return false;
   if (ATOMIC_BLOCK_TYPES.has(existingType)) return false;
   if (ATOMIC_BLOCK_TYPES.has(newType)) return false;
-  return true;
+  if (!structureChanged) return true;
+  return meaningfulTextOverlap(oldText, newText);
+}
+
+/**
+ * Whether `newText` looks like an in-place edit/conversion of `oldText`
+ * rather than unrelated content that happened to land on the same offset.
+ * Byte-identical text (including both empty) always counts. Otherwise a
+ * prefix/suffix relationship in either direction counts (covers typing,
+ * backspacing, and heading-level/list-type conversions that preserve the
+ * text run). An undefined `oldText` (no previous node at this offset, or it
+ * wasn't computed) never counts. One side empty and the other not does NOT
+ * count — every string is trivially a "prefix" of itself only when equal, so
+ * this prevents e.g. a freshly-emptied node from coincidentally claiming an
+ * unrelated node's old ID, or vice versa. Exported for tests.
+ */
+export function meaningfulTextOverlap(oldText: string | undefined, newText: string): boolean {
+  if (oldText === undefined) return false;
+  if (oldText === newText) return true; // covers empty-vs-empty, and byte-identical conversions
+  if (oldText === '' || newText === '') return false; // asymmetric empty → no coincidental credit
+  return (
+    newText.startsWith(oldText) || oldText.startsWith(newText) || newText.endsWith(oldText) || oldText.endsWith(newText)
+  );
+}
+
+/**
+ * Safe wrapper around `Node.nodeAt()`. ProseMirror's `nodeAt` throws a
+ * RangeError when `offset` exceeds the doc's content size, rather than
+ * returning null — which happens routinely here, since `oldDoc` and the
+ * current doc can differ hugely in size (e.g. a whole-document content
+ * replacement transaction, as in `setContentWithBlockIds`). An offset beyond
+ * the old doc's bounds correctly means "nothing there to compare against", so
+ * this returns undefined instead of throwing.
+ */
+function safeNodeAt(doc: Node | undefined, offset: number): Node | undefined {
+  if (!doc) return undefined;
+  if (offset < 0 || offset > doc.content.size) return undefined;
+  return doc.nodeAt(offset) ?? undefined;
 }
 
 /**
@@ -265,7 +323,8 @@ export function suppressTempIdInZoom(zoomMode: boolean, offset: number, notesBou
 function assignBlockIds(
   doc: Node,
   existingIds: Map<number, string>,
-  existingTypes: Map<number, string>
+  existingTypes: Map<number, string>,
+  oldDoc: Node | undefined
 ): [Map<number, string>, Map<number, string>] {
   const newIds = new Map<number, string>();
   const newTypes = new Map<number, string>();
@@ -294,7 +353,7 @@ function assignBlockIds(
   }
 
   // Collect deferred blocks that need proximity matching
-  const deferred: Array<{ offset: number; nodeType: string }> = [];
+  const deferred: Array<{ offset: number; nodeType: string; nodeText: string }> = [];
 
   // Zoom mode: only the mini-Notes tail is exempt from temp IDs (see zoomNotesBoundary)
   const notesBoundary = blockIdZoomMode ? zoomNotesBoundary(doc) : Infinity;
@@ -307,7 +366,13 @@ function assignBlockIds(
     if (isBlockType(node)) {
       const existingId = existingIds.get(offset);
       const existingType = existingTypes.get(offset);
-      if (phase1CanClaim(node.type.name, existingType, existingId, claimedIds)) {
+      // Only compute text content when it's actually needed (structureChanged gates
+      // the content check inside phase1CanClaim — see meaningfulTextOverlap, which is
+      // only reached when structureChanged is true) — keeps the dominant hot path
+      // (ordinary keystrokes, structureChanged === false) free of these lookups.
+      const oldText = structureChanged ? safeNodeAt(oldDoc, offset)?.textContent : undefined;
+      const newText = structureChanged ? node.textContent : '';
+      if (phase1CanClaim(node.type.name, existingType, existingId, claimedIds, structureChanged, oldText, newText)) {
         // Exact-position match (same type, or non-atomic type conversion).
         const confirmedId = pendingConfirmations.get(existingId!);
         if (confirmedId) {
@@ -321,8 +386,10 @@ function assignBlockIds(
           claimedIds.add(existingId!);
         }
       } else {
-        // Defer to Phase 2
-        deferred.push({ offset, nodeType: node.type.name });
+        // Defer to Phase 2. nodeText is only read by the structureChanged===true
+        // content-filter branch below (meaningfulTextOverlap) — skip the lookup
+        // on the structureChanged===false hot path, same as oldText/newText above.
+        deferred.push({ offset, nodeType: node.type.name, nodeText: structureChanged ? node.textContent : '' });
       }
     }
   });
@@ -353,6 +420,14 @@ function assignBlockIds(
       for (const [oldPos, id] of existingIds) {
         if (claimedIds.has(id)) continue;
         if (existingTypes.get(oldPos) !== d.nodeType) continue;
+        // Same content-relatedness gate as Phase 1: a same-type candidate at
+        // proximity is not enough evidence during structural churn — require
+        // the old and new text to actually be related (or exempt atomic types,
+        // whose content has no meaningful prefix/suffix relationship).
+        if (!ATOMIC_BLOCK_TYPES.has(d.nodeType)) {
+          const oldText = safeNodeAt(oldDoc, oldPos)?.textContent;
+          if (!meaningfulTextOverlap(oldText, d.nodeText)) continue;
+        }
         const distance = Math.abs(oldPos - d.offset);
         if (distance < 500) {
           pairs.push({ newOffset: d.offset, oldPos, id, distance, nodeType: d.nodeType });
@@ -410,7 +485,14 @@ function assignBlockIds(
       }
     }
   } else {
-    // Structure unchanged or no deferred blocks: per-block proximity matching (original behavior)
+    // Structure unchanged or no deferred blocks: per-block proximity matching (original behavior).
+    //
+    // No content-relatedness check here: this branch only does real work when
+    // structureChanged is false (when it's true, deferred.length is also 0 here,
+    // making the loop below a no-op — see the `if` above). That mirrors Phase 1's
+    // policy of gating the content check on structureChanged: when the block
+    // count hasn't changed, position-proximity matching alone is trusted, same
+    // as before this fix.
     for (const d of deferred) {
       let found = false;
       const candidates: { pos: number; id: string; distance: number }[] = [];
@@ -479,13 +561,13 @@ export const blockIdPlugin = $prose(() => {
 
     state: {
       init(_, state) {
-        const [blockIds, blockTypes] = assignBlockIds(state.doc, new Map(), new Map());
+        const [blockIds, blockTypes] = assignBlockIds(state.doc, new Map(), new Map(), undefined);
         currentBlockIds = blockIds;
         currentBlockTypes = blockTypes;
         return { blockIds, pendingConfirmations: new Map() };
       },
 
-      apply(tr, value, _oldState, newState) {
+      apply(tr, value, oldState, newState) {
         if (!tr.docChanged) {
           return value;
         }
@@ -494,7 +576,7 @@ export const blockIdPlugin = $prose(() => {
         // syncBlockIds() updates currentBlockIds directly without dispatching a
         // transaction, so value.blockIds can hold stale temp IDs that would
         // overwrite the confirmed UUIDs and trigger mass deletes.
-        const [blockIds, blockTypes] = assignBlockIds(newState.doc, currentBlockIds, currentBlockTypes);
+        const [blockIds, blockTypes] = assignBlockIds(newState.doc, currentBlockIds, currentBlockTypes, oldState.doc);
         currentBlockIds = blockIds;
         currentBlockTypes = blockTypes;
 

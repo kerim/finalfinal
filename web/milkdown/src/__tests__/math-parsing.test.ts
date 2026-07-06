@@ -100,14 +100,25 @@ describe('block-ID stability guard (structural assertion)', () => {
       'math_display', // newType
       'paragraph', // existingType (different)
       'some-id', // existingId
-      new Set() // claimed (empty)
+      new Set(), // claimed (empty)
+      false, // structureChanged (irrelevant on this path)
+      'irrelevant-old-text', // oldText (placeholder, unread when structureChanged is false)
+      'irrelevant-new-text' // newText (placeholder, unread when structureChanged is false)
     );
     // atomic types reject cross-type claims
     expect(canClaim).toBe(false);
   });
 
   it('same-type math_display claim is allowed', () => {
-    const canClaim = phase1CanClaim('math_display', 'math_display', 'some-id', new Set());
+    const canClaim = phase1CanClaim(
+      'math_display',
+      'math_display',
+      'some-id',
+      new Set(),
+      false,
+      'irrelevant-old-text',
+      'irrelevant-new-text'
+    );
     expect(canClaim).toBe(true);
   });
 });
