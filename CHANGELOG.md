@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.105] - 2026-07-06
+
 ### Fixed
 
 - **Deleting a header could sometimes delete the wrong content instead** — under certain conditions, removing a heading (and the text under it) could misattribute what should be deleted, silently wiping out unrelated surviving content while leaving the deleted heading's entry behind. Also fixes a related crash that could occur when replacing very large amounts of document content at once.
