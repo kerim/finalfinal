@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.106] - 2026-07-07
+
 ### Fixed
 
 - **ODT export could show placeholder sample text instead of your actual document** — exporting to ODT was, in some cases, given the Word template as its style reference, which isn't valid for ODT and produced a garbled file containing the Word template's own placeholder content instead of what you wrote. ODT export now always uses a proper ODT-native style template.
