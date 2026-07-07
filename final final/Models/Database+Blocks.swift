@@ -405,8 +405,21 @@ extension ProjectDatabase {
                     } else {
                         sortOrder = afterBlock.sortOrder + 1.0
                     }
+                } else if resolvedAfterId == nil, insert.atDocumentStart == true {
+                    // Block is literal ProseMirror doc position 0 — anchor it before the
+                    // current first block instead of falling through to append-at-end.
+                    let firstBlock = try Block
+                        .filter(Block.Columns.projectId == projectId)
+                        .order(Block.Columns.sortOrder)
+                        .fetchOne(db)
+                    if let first = firstBlock {
+                        sortOrder = first.sortOrder / 2.0
+                    } else {
+                        sortOrder = 1.0
+                    }
                 } else {
-                    // No afterBlockId — use the shared running counter
+                    // No afterBlockId (and not atDocumentStart), or afterBlockId present but
+                    // unresolvable — use the shared running counter
                     sortOrder = nextSortOrder
                     nextSortOrder += 1.0
                 }

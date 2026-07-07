@@ -6,7 +6,7 @@ import type { Mark, Node } from '@milkdown/kit/prose/model';
 import { Plugin, PluginKey } from '@milkdown/kit/prose/state';
 import { $prose } from '@milkdown/kit/utils';
 import { type Align, formatTable, type ParsedTable } from '../../shared/format-table';
-import { getAllBlockIds, SYNC_DIAG_DETAIL } from './block-id-plugin';
+import { getAllBlockIds, getBlockIdZoomMode, SYNC_DIAG_DETAIL } from './block-id-plugin';
 import type { CitationAttrs } from './citation-plugin';
 import { serializeCitation } from './citation-plugin';
 import { syncLog } from './sync-debug';
@@ -43,6 +43,7 @@ export interface BlockInsert {
   markdownFragment: string;
   headingLevel?: number;
   afterBlockId?: string;
+  atDocumentStart?: boolean;
 }
 
 export interface BlockChanges {
@@ -727,11 +728,16 @@ export function detectChanges(
       // New block with temporary ID
       // Find the block before this one for ordering
       let afterBlockId: string | undefined;
+      let atDocumentStart: boolean | undefined;
       const sortedBlocks = Array.from(newSnapshot.entries()).sort((a, b) => a[1].pos - b[1].pos);
 
       for (let i = 0; i < sortedBlocks.length; i++) {
-        if (sortedBlocks[i][0] === id && i > 0) {
-          afterBlockId = sortedBlocks[i - 1][0];
+        if (sortedBlocks[i][0] === id) {
+          if (i > 0) {
+            afterBlockId = sortedBlocks[i - 1][0];
+          } else if (!getBlockIdZoomMode()) {
+            atDocumentStart = true;
+          }
           break;
         }
       }
@@ -743,6 +749,7 @@ export function detectChanges(
         markdownFragment: getMarkdownFragment(newBlock),
         headingLevel: newBlock.headingLevel,
         afterBlockId,
+        atDocumentStart,
       });
       syncLog(
         'BlockSync:detect',

@@ -66,6 +66,14 @@ let currentBlockIds: Map<number, string> = new Map();
 let currentBlockTypes: Map<number, string> = new Map();
 const pendingConfirmations: Map<string, string> = new Map();
 
+// Ids of nodes that were just created empty by a document split (Enter making
+// a new empty paragraph) in a structural pass, but have not yet been filled
+// with content. Lets a later structural pass recognize a legitimate
+// split-then-fill and let the fill claim the split node's identity, instead
+// of the anti-ID-theft guard in meaningfulTextOverlap treating it as an
+// unrelated node landing on the same offset. See canClaimViaRecentSplitBypass.
+const recentlySplitEmptyIds: Set<string> = new Set();
+
 // Zoom mode flag: when true, assignBlockIds skips unmatched nodes in the
 // mini-Notes tail — at/after the zoom_notes_marker node — so mini-Notes
 // content never gets temp IDs (which would sync it into the DB as real
@@ -84,6 +92,10 @@ export function setBlockIdZoomMode(enabled: boolean): void {
   blockIdZoomMode = enabled;
 }
 
+export function getBlockIdZoomMode(): boolean {
+  return blockIdZoomMode;
+}
+
 /**
  * Reset module-level state (call when destroying editor instance)
  */
@@ -92,6 +104,7 @@ export function resetBlockIdState(): void {
   currentBlockIds.clear();
   currentBlockTypes.clear();
   pendingConfirmations.clear();
+  recentlySplitEmptyIds.clear();
 }
 
 /**
@@ -106,6 +119,11 @@ export function getBlockIdAtPos(pos: number): string | undefined {
  */
 export function getAllBlockIds(): Map<number, string> {
   return new Map(currentBlockIds);
+}
+
+/** Exported for tests — introspects the recently-split-empty marker set. No production code outside this file should depend on this. */
+export function getRecentlySplitEmptyIds(): Set<string> {
+  return new Set(recentlySplitEmptyIds);
 }
 
 /**
@@ -125,6 +143,25 @@ export function confirmBlockIds(mapping: Record<string, string>): void {
 }
 
 /**
+ * Resolve a candidate id to its Swift-confirmed permanent id, if one is
+ * pending, consuming the pendingConfirmations entry in the process. If the
+ * candidate id currently carries a recentlySplitEmptyIds marker, the marker
+ * is moved to the resolved id so the temp→permanent handoff never strands
+ * the marker on a dead id. Returns the resolved id, or the original
+ * candidate unchanged if nothing was pending.
+ */
+function resolveConfirmedId(candidateId: string): string {
+  const confirmedId = pendingConfirmations.get(candidateId);
+  if (!confirmedId) return candidateId;
+  pendingConfirmations.delete(candidateId);
+  if (recentlySplitEmptyIds.has(candidateId)) {
+    recentlySplitEmptyIds.delete(candidateId);
+    recentlySplitEmptyIds.add(confirmedId);
+  }
+  return confirmedId;
+}
+
+/**
  * Immediately apply pending confirmations to currentBlockIds.
  * Returns a map of temp→permanent IDs that were applied.
  * Call after confirmBlockIds() to prevent the insert-delete cycle
@@ -133,14 +170,11 @@ export function confirmBlockIds(mapping: Record<string, string>): void {
 export function applyPendingConfirmations(): Map<string, string> {
   const applied = new Map<string, string>();
   for (const [pos, id] of currentBlockIds) {
-    const confirmedId = pendingConfirmations.get(id);
-    if (confirmedId) {
-      currentBlockIds.set(pos, confirmedId);
-      applied.set(id, confirmedId);
+    const finalId = resolveConfirmedId(id);
+    if (finalId !== id) {
+      currentBlockIds.set(pos, finalId);
+      applied.set(id, finalId);
     }
-  }
-  for (const [tempId] of applied) {
-    pendingConfirmations.delete(tempId);
   }
   // [SYNC-DIAG Round 2] One log per call (NOT per loop entry), capped 5 pairs
   if (SYNC_DIAG_DETAIL && applied.size > 0) {
@@ -160,6 +194,7 @@ export function clearBlockIds(): void {
   syncLog('BlockId:clearBlockIds', `clearing ${currentBlockIds.size} block IDs (from applyBlocks path)`);
   currentBlockIds.clear();
   currentBlockTypes.clear();
+  recentlySplitEmptyIds.clear();
 }
 
 /**
@@ -181,6 +216,11 @@ export function clearBlockIds(): void {
  * claims (figure/math_display) are exempt from the content check — their
  * content (image src/alt, LaTeX) has no meaningful prefix/suffix relationship,
  * and same-type-atomic slot reuse under churn is a narrow, accepted risk.
+ *
+ * `recentlySplitEmptyIds` (8th param, defaulted to an empty set for callers
+ * that don't track it) lets a legitimate split-then-fill bypass the content
+ * check even though `meaningfulTextOverlap` alone would refuse it — see
+ * `canClaimViaRecentSplitBypass`, the single source of truth for that bypass.
  * Exported for tests.
  */
 export function phase1CanClaim(
@@ -190,7 +230,8 @@ export function phase1CanClaim(
   claimed: ReadonlySet<string>,
   structureChanged: boolean,
   oldText: string | undefined,
-  newText: string
+  newText: string,
+  recentlySplitEmptyIds: ReadonlySet<string> = new Set()
 ): boolean {
   if (!existingId) return false;
   if (claimed.has(existingId)) return false;
@@ -198,13 +239,13 @@ export function phase1CanClaim(
   if (existingType === newType) {
     if (ATOMIC_BLOCK_TYPES.has(newType)) return true;
     if (!structureChanged) return true;
-    return meaningfulTextOverlap(oldText, newText);
+    return canClaimViaRecentSplitBypass(oldText, newText, existingId, recentlySplitEmptyIds);
   }
   if (existingType === undefined) return false;
   if (ATOMIC_BLOCK_TYPES.has(existingType)) return false;
   if (ATOMIC_BLOCK_TYPES.has(newType)) return false;
   if (!structureChanged) return true;
-  return meaningfulTextOverlap(oldText, newText);
+  return canClaimViaRecentSplitBypass(oldText, newText, existingId, recentlySplitEmptyIds);
 }
 
 /**
@@ -226,6 +267,34 @@ export function meaningfulTextOverlap(oldText: string | undefined, newText: stri
   return (
     newText.startsWith(oldText) || oldText.startsWith(newText) || newText.endsWith(oldText) || oldText.endsWith(newText)
   );
+}
+
+/**
+ * Whether an otherwise-refused empty→non-empty claim should be allowed
+ * because `existingId` is a RECENTLY SPLIT node that is still empty — an
+ * artifact of Enter creating a new empty paragraph, not evidence of
+ * unrelated content sliding into its slot. This is the single source of
+ * truth for the bypass condition; every structural claim site that would
+ * otherwise call `meaningfulTextOverlap` alone as its final gate must route
+ * through this instead, so the sites cannot drift out of sync with each
+ * other. Exported for tests.
+ *
+ * Residual, accepted risk (same class as this file's ATOMIC_BLOCK_TYPES
+ * risk acceptances): if an unrelated, non-empty node happens to land at
+ * exactly the marked node's old offset while the marked node itself
+ * survives elsewhere, it could claim the marked id via this bypass. The
+ * oldText==='' gate re-verifies against the real old doc, so any
+ * misassigned identity provably belongs to a block that was empty — no
+ * content loss results, only a same-empty-slot id reassignment.
+ */
+export function canClaimViaRecentSplitBypass(
+  oldText: string | undefined,
+  newText: string,
+  existingId: string,
+  recentlySplitEmptyIds: ReadonlySet<string> = new Set()
+): boolean {
+  if (meaningfulTextOverlap(oldText, newText)) return true;
+  return oldText === '' && recentlySplitEmptyIds.has(existingId);
 }
 
 /**
@@ -319,8 +388,13 @@ export function suppressTempIdInZoom(zoomMode: boolean, offset: number, notesBou
  * Scan document and assign IDs to blocks that don't have them.
  * Uses type-aware matching to prevent cross-type ID theft
  * (e.g., a new paragraph stealing a heading's ID by proximity).
+ * Also mints `recentlySplitEmptyIds` markers for genuinely new (temp-ID)
+ * empty nodes, so a later split-then-fill can reclaim its own id instead of
+ * being refused as unrelated content — see `canClaimViaRecentSplitBypass`
+ * for the bypass mechanism itself.
+ * Exported for tests.
  */
-function assignBlockIds(
+export function assignBlockIds(
   doc: Node,
   existingIds: Map<number, string>,
   existingTypes: Map<number, string>,
@@ -372,19 +446,23 @@ function assignBlockIds(
       // (ordinary keystrokes, structureChanged === false) free of these lookups.
       const oldText = structureChanged ? safeNodeAt(oldDoc, offset)?.textContent : undefined;
       const newText = structureChanged ? node.textContent : '';
-      if (phase1CanClaim(node.type.name, existingType, existingId, claimedIds, structureChanged, oldText, newText)) {
+      if (
+        phase1CanClaim(
+          node.type.name,
+          existingType,
+          existingId,
+          claimedIds,
+          structureChanged,
+          oldText,
+          newText,
+          recentlySplitEmptyIds
+        )
+      ) {
         // Exact-position match (same type, or non-atomic type conversion).
-        const confirmedId = pendingConfirmations.get(existingId!);
-        if (confirmedId) {
-          newIds.set(offset, confirmedId);
-          newTypes.set(offset, node.type.name);
-          claimedIds.add(confirmedId);
-          pendingConfirmations.delete(existingId!);
-        } else {
-          newIds.set(offset, existingId!);
-          newTypes.set(offset, node.type.name);
-          claimedIds.add(existingId!);
-        }
+        const finalId = resolveConfirmedId(existingId!);
+        newIds.set(offset, finalId);
+        newTypes.set(offset, node.type.name);
+        claimedIds.add(finalId);
       } else {
         // Defer to Phase 2. nodeText is only read by the structureChanged===true
         // content-filter branch below (meaningfulTextOverlap) — skip the lookup
@@ -415,7 +493,14 @@ function assignBlockIds(
     // Closest-first global matching: collect ALL candidate pairs, sort by distance,
     // then assign greedily. This prevents a new paragraph at pos 30 from stealing
     // a bibliography entry's ID at pos 44 when the real entry is at pos 46 (distance=2).
-    const pairs: Array<{ newOffset: number; oldPos: number; id: string; distance: number; nodeType: string }> = [];
+    const pairs: Array<{
+      newOffset: number;
+      oldPos: number;
+      id: string;
+      distance: number;
+      nodeType: string;
+      nodeText: string;
+    }> = [];
     for (const d of deferred) {
       for (const [oldPos, id] of existingIds) {
         if (claimedIds.has(id)) continue;
@@ -426,11 +511,11 @@ function assignBlockIds(
         // whose content has no meaningful prefix/suffix relationship).
         if (!ATOMIC_BLOCK_TYPES.has(d.nodeType)) {
           const oldText = safeNodeAt(oldDoc, oldPos)?.textContent;
-          if (!meaningfulTextOverlap(oldText, d.nodeText)) continue;
+          if (!canClaimViaRecentSplitBypass(oldText, d.nodeText, id, recentlySplitEmptyIds)) continue;
         }
         const distance = Math.abs(oldPos - d.offset);
         if (distance < 500) {
-          pairs.push({ newOffset: d.offset, oldPos, id, distance, nodeType: d.nodeType });
+          pairs.push({ newOffset: d.offset, oldPos, id, distance, nodeType: d.nodeType, nodeText: d.nodeText });
         }
       }
     }
@@ -441,9 +526,7 @@ function assignBlockIds(
     const assignedNew = new Set<number>();
     for (const p of pairs) {
       if (claimedIds.has(p.id) || assignedNew.has(p.newOffset)) continue;
-      const confirmedId = pendingConfirmations.get(p.id);
-      const finalId = confirmedId || p.id;
-      if (confirmedId) pendingConfirmations.delete(p.id);
+      const finalId = resolveConfirmedId(p.id);
       newIds.set(p.newOffset, finalId);
       newTypes.set(p.newOffset, p.nodeType);
       claimedIds.add(finalId);
@@ -477,6 +560,9 @@ function assignBlockIds(
       newIds.set(d.offset, newId);
       newTypes.set(d.offset, d.nodeType);
       claimedIds.add(newId);
+      if (d.nodeText === '' && !ATOMIC_BLOCK_TYPES.has(d.nodeType)) {
+        recentlySplitEmptyIds.add(newId);
+      }
       if (SYNC_DIAG_DETAIL && !skipPerBlockDeferLogs && d.nodeType === 'figure') {
         syncLog(
           'BlockId:assign:phase2',
@@ -508,17 +594,26 @@ function assignBlockIds(
       const best = sameType.length > 0 ? sameType.sort((a, b) => a.distance - b.distance)[0] : null;
 
       if (best) {
-        const confirmedId = pendingConfirmations.get(best.id);
-        if (confirmedId) {
-          newIds.set(d.offset, confirmedId);
-          newTypes.set(d.offset, d.nodeType);
-          claimedIds.add(confirmedId);
-          pendingConfirmations.delete(best.id);
-        } else {
-          newIds.set(d.offset, best.id);
-          newTypes.set(d.offset, d.nodeType);
-          claimedIds.add(best.id);
-        }
+        // This branch is only reached when structureChanged is false (its
+        // containing `if` requires `structureChanged && deferred.length > 0`,
+        // so hitting this `else` with work to do implies structureChanged was
+        // false) — so it structurally never needs the recent-split bypass and
+        // never marks recentlySplitEmptyIds here. It still must route id
+        // renames through the shared helper so a marker from an earlier pass
+        // isn't stranded if this branch resolves a pending confirmation for
+        // a marked id.
+        //
+        // Accepted edge case: this reasoning assumes a genuine split's
+        // block-count increase isn't exactly offset, in the same transaction,
+        // by an unrelated deletion elsewhere in the doc (which would make
+        // structureChanged false overall and route the new split node through
+        // this never-marks branch). No evidence this app's real editing flows
+        // produce such a perfectly-offsetting combined transaction, so this is
+        // treated as a low-likelihood risk this fix does not handle.
+        const finalId = resolveConfirmedId(best.id);
+        newIds.set(d.offset, finalId);
+        newTypes.set(d.offset, d.nodeType);
+        claimedIds.add(finalId);
         found = true;
 
         if (SYNC_DIAG_DETAIL && !skipPerBlockDeferLogs) {
@@ -547,6 +642,31 @@ function assignBlockIds(
             `[perBlock] newOffset=${d.offset} newType=${d.nodeType} chosen=TEMP ${newId.slice(0, 13)}`
           );
         }
+      }
+    }
+  }
+
+  // Semantic pruning: a marker is valid only while its id both (a) still
+  // exists in this pass's live id set, and (b) still labels an empty node.
+  // This also correctly consumes the marker exactly when the bypass was the
+  // actual reason a claim succeeded: the bypass can only be decisive when
+  // oldText==='' and meaningfulTextOverlap returned false, which (given
+  // oldText==='') requires newText!=='' (if newText were also empty,
+  // oldText===newText would already make meaningfulTextOverlap true) — so
+  // whenever the bypass matters, this pass's newText is provably non-empty,
+  // and the "ends non-empty" check below always catches and deletes it.
+  if (recentlySplitEmptyIds.size > 0) {
+    const idToOffset = new Map<string, number>();
+    for (const [offset, id] of newIds) idToOffset.set(id, offset);
+    for (const markedId of recentlySplitEmptyIds) {
+      if (!claimedIds.has(markedId)) {
+        recentlySplitEmptyIds.delete(markedId);
+        continue;
+      }
+      const offset = idToOffset.get(markedId);
+      const node = offset !== undefined ? safeNodeAt(doc, offset) : undefined;
+      if (node && node.textContent !== '') {
+        recentlySplitEmptyIds.delete(markedId);
       }
     }
   }

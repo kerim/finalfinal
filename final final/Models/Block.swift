@@ -417,6 +417,18 @@ struct BlockInsert: Codable, Sendable {
     let markdownFragment: String
     let headingLevel: Int?
     let afterBlockId: String?   // Insert after this block
+    let atDocumentStart: Bool?  // True when this block is literal doc position 0
+
+    init(tempId: String, blockType: String, textContent: String, markdownFragment: String,
+         headingLevel: Int?, afterBlockId: String?, atDocumentStart: Bool? = nil) {
+        self.tempId = tempId
+        self.blockType = blockType
+        self.textContent = textContent
+        self.markdownFragment = markdownFragment
+        self.headingLevel = headingLevel
+        self.afterBlockId = afterBlockId
+        self.atDocumentStart = atDocumentStart
+    }
 }
 
 /// Represents a block update from the editor

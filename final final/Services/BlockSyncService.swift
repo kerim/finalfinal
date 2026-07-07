@@ -530,7 +530,8 @@ class BlockSyncService {
                let permanentId = confirmedTempIds[afterId] {
                 return BlockInsert(tempId: insert.tempId, blockType: insert.blockType,
                                    textContent: insert.textContent, markdownFragment: insert.markdownFragment,
-                                   headingLevel: insert.headingLevel, afterBlockId: permanentId)
+                                   headingLevel: insert.headingLevel, afterBlockId: permanentId,
+                                   atDocumentStart: insert.atDocumentStart)
             }
             return insert
         }
