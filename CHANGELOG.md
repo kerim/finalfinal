@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **ODT export could show placeholder sample text instead of your actual document** — exporting to ODT was, in some cases, given the Word template as its style reference, which isn't valid for ODT and produced a garbled file containing the Word template's own placeholder content instead of what you wrote. ODT export now always uses a proper ODT-native style template.
+- **Exporting to PDF while another PDF export was already in progress could crash the app** — overlapping PDF exports shared some of the same temporary files behind the scenes and could interfere with each other. Each export now uses its own private files, so running multiple exports at once is safe.
+- **A heading added right before an already-written paragraph could export below that paragraph instead of above it** — for example, writing a paragraph, then coming back later to add a heading right before it, could cause the exported document (Word, PDF, ODT, or Markdown) to show the paragraph first and the heading second, the opposite of what you'd written.
+- **Pressing Enter to start a new line, then filling it in later, could leave stray content or wrong ordering on export** — coming back to a blank line you'd created earlier (for instance, pasting text above an existing heading) could leave an invisible empty line behind and cause the new content to land in the wrong place when the document was exported.
+
 ## [0.2.105] - 2026-07-06
 
 ### Fixed
