@@ -207,7 +207,9 @@ struct MilkdownEditor: NSViewRepresentable {
         // Handle scroll-to-offset requests from sidebar
         if let offset = scrollToOffset {
             context.coordinator.scrollToOffset(offset)
+            DebugLog.log(.reentrancy, "[MilkdownEditor] updateNSView scheduling deferred nil-write: scrollToOffset (was \(offset))")
             DispatchQueue.main.async {
+                DebugLog.log(.reentrancy, "[MilkdownEditor] deferred write firing: scrollToOffset = nil")
                 self.scrollToOffset = nil
             }
         }
@@ -215,7 +217,9 @@ struct MilkdownEditor: NSViewRepresentable {
         // Handle block-ID-based scroll requests (used for sections when images are present)
         if let blockId = scrollToBlockId {
             context.coordinator.scrollToBlock(blockId)
+            DebugLog.log(.reentrancy, "[MilkdownEditor] updateNSView scheduling deferred nil-write: scrollToBlockId (was \(blockId))")
             DispatchQueue.main.async {
+                DebugLog.log(.reentrancy, "[MilkdownEditor] deferred write firing: scrollToBlockId = nil")
                 self.scrollToBlockId = nil
             }
         }
@@ -223,7 +227,9 @@ struct MilkdownEditor: NSViewRepresentable {
         // Handle annotation-specific scroll requests (uses ordinal index, not charOffset)
         if let index = scrollToAnnotationIndex {
             context.coordinator.scrollToAnnotation(index: index)
+            DebugLog.log(.reentrancy, "[MilkdownEditor] updateNSView scheduling deferred nil-write: scrollToAnnotationIndex (was \(index))")
             DispatchQueue.main.async {
+                DebugLog.log(.reentrancy, "[MilkdownEditor] deferred write firing: scrollToAnnotationIndex = nil")
                 self.scrollToAnnotationIndex = nil
             }
         }

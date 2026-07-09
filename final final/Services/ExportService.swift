@@ -413,7 +413,7 @@ private struct DiagnosticDump: Sendable {
 
 extension ExportService {
 
-    private static let diagnosticSubdirectory = "com.kerim.final-final/pdf-export-debug"
+    static let diagnosticSubdirectory = "com.kerim.final-final/pdf-export-debug"
     private static let diagnosticRetentionLimit = 20
 
     /// Captures everything needed to distinguish "GRDB returned a stale block list" from
@@ -548,6 +548,19 @@ extension ExportService {
         for staleDir in dumpDirs.dropFirst(limit) {
             try? fm.removeItem(at: staleDir)
         }
+    }
+
+    /// Read-only listing for the Diagnostics report generator — does not prune or mutate anything.
+    static func recentExportDiagnosticDirectories(limit: Int) -> [URL] {
+        let fm = FileManager.default
+        guard let cachesDir = fm.urls(for: .cachesDirectory, in: .userDomainMask).first else { return [] }
+        let baseDir = cachesDir.appendingPathComponent(diagnosticSubdirectory, isDirectory: true)
+        guard let entries = try? fm.contentsOfDirectory(at: baseDir, includingPropertiesForKeys: [.isDirectoryKey]) else { return [] }
+        return entries
+            .filter { (try? $0.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true }
+            .sorted { $0.lastPathComponent > $1.lastPathComponent }   // ISO8601 names sort newest-first
+            .prefix(limit)
+            .map { $0 }
     }
 
     /// Filtered `ProcessInfo.processInfo.environment` snapshot — PATH, HOME, TMPDIR, USER,

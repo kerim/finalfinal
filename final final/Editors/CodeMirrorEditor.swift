@@ -179,7 +179,9 @@ struct CodeMirrorEditor: NSViewRepresentable {
         // Push pending image metadata for width display in previews
         // Guard behind isEditorReady to avoid losing metadata when JS runtime hasn't initialized yet
         if let meta = pendingImageMeta, context.coordinator.isEditorReady {
+            DebugLog.log(.reentrancy, "[CodeMirrorEditor] updateNSView scheduling deferred nil-write: pendingImageMeta (was \(meta.count) items)")
             DispatchQueue.main.async {
+                DebugLog.log(.reentrancy, "[CodeMirrorEditor] deferred write firing: pendingImageMeta = nil")
                 self.pendingImageMeta = nil
             }
             let metaArray = meta.compactMap { item -> [String: Any]? in
@@ -204,7 +206,9 @@ struct CodeMirrorEditor: NSViewRepresentable {
         // Handle scroll-to-offset requests from sidebar
         if let offset = scrollToOffset {
             context.coordinator.scrollToOffset(offset)
+            DebugLog.log(.reentrancy, "[CodeMirrorEditor] updateNSView scheduling deferred nil-write: scrollToOffset (was \(offset))")
             DispatchQueue.main.async {
+                DebugLog.log(.reentrancy, "[CodeMirrorEditor] deferred write firing: scrollToOffset = nil")
                 self.scrollToOffset = nil
             }
         }
@@ -212,7 +216,9 @@ struct CodeMirrorEditor: NSViewRepresentable {
         // Handle annotation-specific scroll requests (uses ordinal index, not charOffset)
         if let index = scrollToAnnotationIndex {
             context.coordinator.scrollToAnnotation(index: index)
+            DebugLog.log(.reentrancy, "[CodeMirrorEditor] updateNSView scheduling deferred nil-write: scrollToAnnotationIndex (was \(index))")
             DispatchQueue.main.async {
+                DebugLog.log(.reentrancy, "[CodeMirrorEditor] deferred write firing: scrollToAnnotationIndex = nil")
                 self.scrollToAnnotationIndex = nil
             }
         }

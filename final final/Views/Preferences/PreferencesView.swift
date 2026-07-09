@@ -15,6 +15,7 @@ enum PreferencesTab: String, CaseIterable, Identifiable {
     case focus
     case goals
     case proofing
+    case diagnostics
 
     var id: String { rawValue }
 
@@ -25,6 +26,7 @@ enum PreferencesTab: String, CaseIterable, Identifiable {
         case .focus: return "Focus"
         case .goals: return "Goals"
         case .proofing: return "Proofing"
+        case .diagnostics: return "Diagnostics"
         }
     }
 
@@ -35,6 +37,7 @@ enum PreferencesTab: String, CaseIterable, Identifiable {
         case .focus: return "eye.slash"
         case .goals: return "target"
         case .proofing: return "textformat.abc"
+        case .diagnostics: return "stethoscope"
         }
     }
 }
@@ -74,6 +77,12 @@ struct PreferencesView: View {
                     Label(PreferencesTab.proofing.title, systemImage: PreferencesTab.proofing.icon)
                 }
                 .tag(PreferencesTab.proofing)
+
+            DiagnosticsPreferencesPane()
+                .tabItem {
+                    Label(PreferencesTab.diagnostics.title, systemImage: PreferencesTab.diagnostics.icon)
+                }
+                .tag(PreferencesTab.diagnostics)
         }
         .frame(width: 700, height: 550)
         .padding()

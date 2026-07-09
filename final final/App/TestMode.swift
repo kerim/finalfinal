@@ -36,5 +36,7 @@ enum TestMode {
         defaults.removeObject(forKey: "focusModeEnabled")
         defaults.removeObject(forKey: "com.kerim.final-final.focusModeSettings")
         defaults.removeObject(forKey: "hasSeenSubtreeDragHint")
+        defaults.removeObject(forKey: DiagnosticLogFile.loggingEnabledDefaultsKey)
+        defaults.removeObject(forKey: "com.kerim.final-final.diagnosticsLastReportGeneratedAt")
     }
 }

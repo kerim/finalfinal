@@ -24,6 +24,8 @@ enum DebugLog {
         case image       // [Image] width lifecycle tracing
         case proofing    // [LT] spellcheck + LanguageTool boundary diagnostics
         case footnotes   // [FootnoteSyncService] Notes-section reconciliation diagnostics
+        case reentrancy  // [Reentrancy] crash-forensics: deferred main-queue @Observable writes
+                         // from inside NSViewRepresentable.updateNSView (Milkdown/CodeMirror editors)
     }
 
     /// Default: only lifecycle + zotero + editor. Add categories here when debugging.
@@ -33,14 +35,38 @@ enum DebugLog {
     // DIAGNOSTIC (temporary, added during footnote-export-race investigation):
     // `.sync` and `.blockPoll` enabled to trace pollBlockChangesNow()/getBlockChanges()
     // during FootnoteExportRaceTests. Safe to remove once the flush race is resolved.
+    //
+    // `.reentrancy` is deliberately NOT added here — it stays out of the DEBUG console by
+    // default; it still reaches the persistent file whenever the user's Diagnostics toggle
+    // is on, which is the whole point (a durable trail without adding console noise for
+    // other developers).
     static let enabled: Set<Category> = [.lifecycle, .zotero, .editor, .outline, .data, .footnotes, .sync, .blockPoll]
 
-    /// Category-gated log. Compiles to nothing in release builds.
+    /// Category-gated log. In DEBUG builds, prints to the console when `category` is in
+    /// `enabled`. In ALL builds (including Release), forwards to the persistent
+    /// `DiagnosticLogFile` sink when the user's runtime Diagnostics toggle is on — this path
+    /// is independent of the compile-time `enabled` set above, so it captures every category.
+    ///
+    /// HARD REQUIREMENT: the enable-check guard below must run BEFORE `message()` is called.
+    /// `message` MUST stay `@autoclosure` so the interpolation/allocation at every one of this
+    /// app's ~500+ call sites (a 500ms polling loop, the GRDB writer queue, etc.) is never
+    /// paid when logging is off — do not change `message` to a plain `String` parameter, and
+    /// do not evaluate `message()` above the guard.
     @inline(__always)
     static func log(_ category: Category, _ message: @autoclosure () -> String) {
+        let forwardToFile = DiagnosticLogFile.isEnabled
         #if DEBUG
-        guard enabled.contains(category) else { return }
-        print(message())
+        let forwardToConsole = enabled.contains(category)
+        #else
+        let forwardToConsole = false
+        #endif
+        guard forwardToFile || forwardToConsole else { return }
+        let text = message()
+        if forwardToFile {
+            DiagnosticLogFile.shared.append("[\(category.rawValue)] \(text)")
+        }
+        #if DEBUG
+        if forwardToConsole { print(text) }
         #endif
     }
 
