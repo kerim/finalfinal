@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **The `/break` slash command could delete real text, not just the command itself** — typing a section break right after existing text in a paragraph (for example, `Some notes /break`) could delete that text along with the command, leaving only the break behind. The break now always lands in the right place relative to your text instead of eating it.
+- **Converting a paragraph to a heading could silently drop a citation or footnote** — using `/h1` through `/h6` on a paragraph that contained a citation or footnote could remove it from the resulting heading with no warning.
+- **Typing a section break didn't create a new section in the outline sidebar** — the break symbol appeared in the document, but the sidebar never picked it up as a new section, so the outline stayed out of sync with what you'd actually written.
+
 ## [0.2.106] - 2026-07-07
 
 ### Fixed
