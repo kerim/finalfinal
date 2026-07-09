@@ -70,7 +70,6 @@ let slashMenuElement: HTMLElement | null = null;
 let selectedIndex = 0;
 let filteredCommands: SlashCommand[] = [];
 let slashProviderInstance: SlashProvider | null = null;
-let currentFilter = '';
 let suppressSlashMenu = false; // Prevents re-showing menu during command execution
 let lastSlashShowTime = 0; // Debounce: prevents immediate hide after show
 
@@ -110,7 +109,6 @@ function createMenuItem(cmd: SlashCommand, index: number, isSelected: boolean): 
 
 function updateSlashMenu(filter: string) {
   if (!slashMenuElement) return;
-  currentFilter = filter;
 
   // Clear existing content
   while (slashMenuElement.firstChild) {
@@ -184,6 +182,78 @@ export function computeSlashCmdStart(doc: Node, from: number): number {
   return slashIndex >= 0 ? lineStart + slashIndex : -1;
 }
 
+/**
+ * Handle the `/break` slash command: insert a section_break node.
+ *
+ * Branches on whether the paragraph containing the command has other content
+ * before and/or after the command text (using `cmdStart`, the position of the
+ * `/`, as the split point — not the cursor position `from`, which would
+ * wrongly include trailing text as "before" content):
+ * - Neither side has content: replace the whole paragraph with the break.
+ * - Only content before: delete the command text, insert the break after
+ *   the paragraph (paragraph, then break).
+ * - Only content after: delete the command text, insert the break before
+ *   the paragraph (break, then paragraph).
+ * - Content on both sides: delete the command text, split the paragraph at
+ *   that point, and insert the break between the two resulting paragraphs.
+ */
+export function applyBreakCommand(view: any, ctx: Ctx, cmdStart: number, from: number): void {
+  const nodeType = sectionBreakNode.type(ctx);
+  const node = nodeType.create();
+
+  const $from = view.state.doc.resolve(from);
+  const parentStart = $from.before($from.depth);
+  const parentEnd = $from.after($from.depth);
+
+  const textBeforeCmd = view.state.doc.textBetween(parentStart + 1, cmdStart, '\n', LEAF_TEXT_PLACEHOLDER);
+  const textAfterCmd = view.state.doc.textBetween(from, parentEnd - 1, '\n', LEAF_TEXT_PLACEHOLDER);
+  const hasBefore = textBeforeCmd.trim().length > 0;
+  const hasAfter = textAfterCmd.trim().length > 0;
+
+  let tr = view.state.tr;
+
+  if (!hasBefore && !hasAfter) {
+    tr = tr.replaceWith(parentStart, parentEnd, node);
+  } else {
+    tr = tr.delete(cmdStart, from);
+    if (hasBefore && hasAfter) {
+      tr = tr.split(cmdStart);
+      tr = tr.insert(cmdStart + 1, node);
+    } else if (hasBefore) {
+      const insertPos = tr.mapping.map(parentEnd);
+      tr = tr.insert(insertPos, node);
+    } else {
+      tr = tr.insert(parentStart, node);
+    }
+  }
+
+  view.dispatch(tr);
+}
+
+/**
+ * Handle `/h1`–`/h6` slash commands: transform the current paragraph (or
+ * heading) into a heading of the given level.
+ *
+ * Uses `setBlockType` rather than rebuilding the node from a plain string —
+ * this preserves all inline child content, including atom nodes (citations,
+ * footnotes, etc.), which a string-based rebuild would silently discard.
+ */
+export function applyHeadingCommand(view: any, cmdStart: number, from: number, level: number): void {
+  const headingType = view.state.schema.nodes.heading;
+  if (!headingType) {
+    console.error('[Milkdown] Heading schema not found');
+    return;
+  }
+
+  const $from = view.state.doc.resolve(from);
+  const parentStart = $from.before($from.depth);
+
+  let tr = view.state.tr.delete(cmdStart, from);
+  tr = tr.setBlockType(parentStart + 1, parentStart + 1, headingType, { level });
+  tr = tr.setSelection(Selection.near(tr.doc.resolve(Math.min(cmdStart, tr.doc.content.size - 1))));
+  view.dispatch(tr);
+}
+
 function executeSlashCommand(index: number) {
   const editorInstance = getEditorInstance();
   if (!editorInstance) return;
@@ -194,75 +264,15 @@ function executeSlashCommand(index: number) {
   const cmd = filteredCommands[index];
   const view = editorInstance.ctx.get(editorViewCtx);
   const { from } = view.state.selection;
-  const $from = view.state.doc.resolve(from);
 
   // Find the start of the slash command
   const cmdStart = computeSlashCmdStart(view.state.doc, from);
 
   if (cmdStart >= 0) {
     if (cmd.isNodeInsertion && cmd.label === '/break') {
-      // Insert section_break node
-      const nodeType = sectionBreakNode.type(editorInstance.ctx);
-      const node = nodeType.create();
-
-      // Delete the slash command text, then replace the parent paragraph with the break node
-      // We need to replace the entire paragraph if it only contains the slash
-      const parentStart = $from.before($from.depth);
-      const parentEnd = $from.after($from.depth);
-      // Use the same leafText placeholder as computeSlashCmdStart so this comparison stays
-      // consistent whether or not the paragraph contains inline atoms (citations, footnotes, etc.)
-      const parentContent = view.state.doc
-        .textBetween(parentStart + 1, parentEnd - 1, '\n', LEAF_TEXT_PLACEHOLDER)
-        .trim();
-      const textBefore = view.state.doc.textBetween(parentStart + 1, from, '\n', LEAF_TEXT_PLACEHOLDER).trim();
-
-      let tr = view.state.tr;
-      if (parentContent === textBefore) {
-        // Paragraph only contains the slash command - replace the whole paragraph
-        tr = tr.replaceWith(parentStart, parentEnd, node);
-      } else {
-        // Paragraph has other content - insert break BEFORE paragraph, delete only /break text
-        tr = tr.delete(cmdStart, from); // Delete the "/break" text
-        tr = tr.insert(parentStart, node); // Insert section_break BEFORE the paragraph
-      }
-      view.dispatch(tr);
+      applyBreakCommand(view, editorInstance.ctx, cmdStart, from);
     } else if (cmd.headingLevel) {
-      // Transform to heading (works for both paragraphs and existing headings)
-      const headingType = view.state.schema.nodes.heading;
-
-      if (!headingType) {
-        console.error('[Milkdown] Heading schema not found');
-        return;
-      }
-
-      // Get parent block boundaries and full text content
-      const parentStart = $from.before($from.depth);
-      const parentEnd = $from.after($from.depth);
-      const fullText = view.state.doc.textBetween(parentStart + 1, parentEnd - 1, '\n');
-
-      // Calculate slash position within fullText directly (not textBefore)
-      const slashPosInFull = fullText.lastIndexOf('/');
-
-      // Preserve text before AND after the slash command (without adding space)
-      const textBeforeSlash = fullText.slice(0, slashPosInFull);
-      const textAfterCommand = fullText.slice(slashPosInFull + currentFilter.length);
-
-      // Concatenate directly (don't use join(' ') which adds unwanted space)
-      const combinedText = (textBeforeSlash + textAfterCommand).trim();
-
-      // Create heading node with level attribute
-      const heading = combinedText
-        ? headingType.create({ level: cmd.headingLevel }, view.state.schema.text(combinedText))
-        : headingType.create({ level: cmd.headingLevel });
-
-      // Replace parent block (works for both paragraph and heading nodes)
-      let tr = view.state.tr.replaceWith(parentStart, parentEnd, heading);
-
-      // Position cursor at end of heading content
-      const cursorPos = parentStart + 1 + (combinedText ? combinedText.length : 0);
-      tr = tr.setSelection(Selection.near(tr.doc.resolve(Math.min(cursorPos, tr.doc.content.size - 1))));
-
-      view.dispatch(tr);
+      applyHeadingCommand(view, cmdStart, from, cmd.headingLevel);
     } else if (cmd.isNodeInsertion && ['/task', '/comment', '/reference'].includes(cmd.label)) {
       // Insert annotation atom node
       const annotationType = cmd.label.slice(1) as AnnotationType;

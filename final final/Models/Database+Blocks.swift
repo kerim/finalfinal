@@ -448,7 +448,13 @@ extension ProjectDatabase {
                     blockType: blockType,
                     textContent: insertTextContent,
                     markdownFragment: insert.markdownFragment,
-                    headingLevel: effectiveHeadingLevel
+                    headingLevel: effectiveHeadingLevel,
+                    // A genuinely new section_break block (the /break "text before" / "text
+                    // after" / "split" cases all insert one) must be flagged as a pseudo-section
+                    // here — observeOutlineBlocks and fetchOutlineBlocks filter on isPseudoSection,
+                    // not blockType, so without this the block silently never appears in the
+                    // outline sidebar despite being correctly typed as .sectionBreak.
+                    isPseudoSection: blockType == .sectionBreak
                 )
                 block.recalculateWordCount()
 
@@ -542,6 +548,7 @@ extension ProjectDatabase {
                             let hashes = trimmed[match].filter { $0 == "#" }
                             block.blockType = .heading
                             block.headingLevel = hashes.count
+                            block.isPseudoSection = false
                             // Strip heading prefix from textContent for sidebar display
                             if let textContent = update.textContent, textContent.hasPrefix("#") {
                                 block.textContent = BlockParser.extractTextContent(from: trimmed, blockType: .heading)
@@ -551,6 +558,24 @@ extension ProjectDatabase {
                                     let id8 = String(block.id.prefix(8))
                                     DebugLog.log(.data, "[Blocks:edit:→heading] block=\(id8) oldWC=\(oldWC) newWC=\(block.wordCount)")
                                 }
+                            }
+                        } else if trimmed.contains("<!-- ::break:: -->") {
+                            // paragraph → section_break in-place conversion (bare /break on an
+                            // empty paragraph reaches here as an UPDATE, not an INSERT — see
+                            // block-id-plugin.ts phase1CanClaim: section_break is not in
+                            // ATOMIC_BLOCK_TYPES, so the exact-offset claim keeps the paragraph's
+                            // existing block ID). Without isPseudoSection=true here, the block
+                            // never satisfies observeOutlineBlocks'/fetchOutlineBlocks' filter and
+                            // silently never appears in the outline sidebar.
+                            block.blockType = .sectionBreak
+                            block.headingLevel = nil
+                            block.isPseudoSection = true
+                            block.textContent = ""
+                            let oldWC = block.wordCount
+                            block.recalculateWordCount()
+                            if oldWC != block.wordCount {
+                                let id8 = String(block.id.prefix(8))
+                                DebugLog.log(.data, "[Blocks:edit:→sectionBreak] block=\(id8) oldWC=\(oldWC) newWC=\(block.wordCount)")
                             }
                         } else if block.blockType == .heading {
                             // Was heading but no longer has heading syntax
@@ -562,6 +587,25 @@ extension ProjectDatabase {
                             if oldWC != block.wordCount {
                                 let id8 = String(block.id.prefix(8))
                                 DebugLog.log(.data, "[Blocks:edit:→paragraph] block=\(id8) oldWC=\(oldWC) newWC=\(block.wordCount)")
+                            }
+                        } else if block.blockType == .sectionBreak {
+                            // Defensive symmetry: a section_break block is a leaf node with no
+                            // editable content in the ProseMirror schema, so this branch is
+                            // believed unreachable via normal editing; kept defensively —
+                            // reachability via deleting the sole/last section_break, causing
+                            // ProseMirror to backfill an empty paragraph at the same offset
+                            // (which could claim the section_break's block id via the normal
+                            // UPDATE path, since section_break isn't in ATOMIC_BLOCK_TYPES and
+                            // meaningfulTextOverlap treats empty↔empty as a valid claim), is
+                            // plausible but unverified. Kept so isPseudoSection can never drift
+                            // out of sync with blockType if that path exists.
+                            block.blockType = .paragraph
+                            block.isPseudoSection = false
+                            let oldWC = block.wordCount
+                            block.recalculateWordCount()
+                            if oldWC != block.wordCount {
+                                let id8 = String(block.id.prefix(8))
+                                DebugLog.log(.data, "[Blocks:edit:→paragraph:fromSectionBreak] block=\(id8) oldWC=\(oldWC) newWC=\(block.wordCount)")
                             }
                         }
                         // Re-extract image width from updated fragment (unconditional: clears if removed)
