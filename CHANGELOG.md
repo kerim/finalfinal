@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.107] - 2026-07-09
+
 ### Fixed
 
 - **The `/break` slash command could delete real text, not just the command itself** — typing a section break right after existing text in a paragraph (for example, `Some notes /break`) could delete that text along with the command, leaving only the break behind. The break now always lands in the right place relative to your text instead of eating it.
