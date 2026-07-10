@@ -199,7 +199,9 @@ class BlockSyncService {
             } else {
                 filtered = blocks
             }
-            let orderedIds = BlockParser.idsForProseMirrorAlignment(filtered.sorted { $0.sortOrder < $1.sortOrder })
+            let pairs = BlockParser.alignmentPairs(filtered.sorted { $0.sortOrder < $1.sortOrder })
+            let orderedIds = pairs.map { $0.id }
+            let expectedBlocks = pairs.map { $0.meta }
 
             if let range = range {
                 DebugLog.log(.sync, "[BlockSyncService] pushBlockIds filtered: \(orderedIds.count) blocks " +
@@ -214,9 +216,17 @@ class BlockSyncService {
                 .replacingOccurrences(of: "`", with: "\\`")
                 .replacingOccurrences(of: "${", with: "\\${")
 
+            guard let expectedData = try? JSONEncoder().encode(expectedBlocks),
+                  let expectedJsonString = String(data: expectedData, encoding: .utf8) else { return }
+
+            let escapedExpected = expectedJsonString
+                .replacingOccurrences(of: "\\", with: "\\\\")
+                .replacingOccurrences(of: "`", with: "\\`")
+                .replacingOccurrences(of: "${", with: "\\${")
+
             let zoomMode = range != nil ? "true" : "false"
             _ = try? await webView.evaluateJavaScript(
-                "window.FinalFinal.syncBlockIds(JSON.parse(`\(escaped)`), \(zoomMode)); true"
+                "window.FinalFinal.syncBlockIds(JSON.parse(`\(escaped)`), \(zoomMode), JSON.parse(`\(escapedExpected)`)); true"
             )
 
             DebugLog.log(.sync, "[BlockSyncService] Pushed \(orderedIds.count) block IDs to editor")
@@ -232,7 +242,8 @@ class BlockSyncService {
         scrollToStart: Bool = false,
         imageMeta: [ContentView.ImageBlockMeta] = [],
         cursorBoundary: Int? = nil,
-        detectPausedEdits: Bool = false
+        detectPausedEdits: Bool = false,
+        expectedBlocks: [BlockParser.BlockAlignmentMeta] = []
     ) async {
         guard let webView else { return }
 
@@ -279,6 +290,16 @@ class BlockSyncService {
         }
         if detectPausedEdits {
             optionParts.append("detectPausedEdits: true")
+        }
+        if !expectedBlocks.isEmpty {
+            if let expectedData = try? JSONEncoder().encode(expectedBlocks),
+               let expectedJson = String(data: expectedData, encoding: .utf8) {
+                let escapedExpected = expectedJson
+                    .replacingOccurrences(of: "\\", with: "\\\\")
+                    .replacingOccurrences(of: "`", with: "\\`")
+                    .replacingOccurrences(of: "${", with: "\\${")
+                optionParts.append("expected: JSON.parse(`\(escapedExpected)`)")
+            }
         }
         let options = optionParts.isEmpty ? "" : ", {\(optionParts.joined(separator: ", "))}"
         let js = "window.FinalFinal.setContentWithBlockIds(`\(escapedMarkdown)`, JSON.parse(`\(escapedIds)`)\(options))"

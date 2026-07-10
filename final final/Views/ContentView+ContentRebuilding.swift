@@ -19,7 +19,10 @@ extension ContentView {
 
     /// Fetch blocks from DB and return assembled markdown + ordered block IDs + image metadata
     /// Used for atomic content+ID pushes (bibliography rebuild, etc.)
-    func fetchBlocksWithIds() -> (markdown: String, blockIds: [String], imageMeta: [ImageBlockMeta], bibBoundaryIndex: Int?)? {
+    func fetchBlocksWithIds() -> (
+        markdown: String, blockIds: [String], imageMeta: [ImageBlockMeta],
+        bibBoundaryIndex: Int?, expectedBlocks: [BlockParser.BlockAlignmentMeta]
+    )? {
         guard let db = documentManager.projectDatabase,
               let pid = documentManager.projectId else { return nil }
 
@@ -38,7 +41,11 @@ extension ContentView {
                 return aKey < bKey
             }
             let markdown = BlockParser.assembleMarkdown(from: sorted)
-            let ids = BlockParser.idsForProseMirrorAlignment(sorted)
+            // Single call produces both the id array and its expected-metadata array from the
+            // SAME iteration, so the two cannot drift apart in count/order (see alignmentPairs).
+            let pairs = BlockParser.alignmentPairs(sorted)
+            let ids = pairs.map { $0.id }
+            let expectedBlocks = pairs.map { $0.meta }
 
             // Collect image metadata for figure nodes (width/caption/alt persistence)
             let imageMeta = sorted
@@ -49,7 +56,7 @@ extension ContentView {
 
             DebugLog.log(.bib, "[fetchBlocksWithIds] bibBoundaryIndex=\(String(describing: bibBoundaryIndex)) blockCount=\(sorted.count) idCount=\(ids.count)")
 
-            return (markdown, ids, imageMeta, bibBoundaryIndex)
+            return (markdown, ids, imageMeta, bibBoundaryIndex, expectedBlocks)
         } catch {
             return nil
         }
@@ -74,7 +81,8 @@ extension ContentView {
                 markdown: result.markdown,
                 blockIds: result.blockIds,
                 imageMeta: result.imageMeta,
-                cursorBoundary: result.bibBoundaryIndex)
+                cursorBoundary: result.bibBoundaryIndex,
+                expectedBlocks: result.expectedBlocks)
             editorState.isResettingContent = false
         }
     }
@@ -382,7 +390,8 @@ extension ContentView {
                                     await blockSyncService.setContentWithBlockIds(
                                         markdown: result.markdown, blockIds: result.blockIds,
                                         imageMeta: result.imageMeta,
-                                        cursorBoundary: result.bibBoundaryIndex)
+                                        cursorBoundary: result.bibBoundaryIndex,
+                                        expectedBlocks: result.expectedBlocks)
                                     // Always sync editorState.content to DB-assembled markdown.
                                     // Without this, updateNSView sees editorState.content (e.g. 1748 chars)
                                     // ≠ lastPushedContent (1747 chars) and re-pushes WITHOUT block IDs,

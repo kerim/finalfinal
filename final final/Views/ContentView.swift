@@ -426,7 +426,8 @@ struct ContentView: View {
             await blockSyncService.setContentWithBlockIds(
                 markdown: result.markdown, blockIds: result.blockIds,
                 imageMeta: result.imageMeta,
-                cursorBoundary: result.bibBoundaryIndex)
+                cursorBoundary: result.bibBoundaryIndex,
+                expectedBlocks: result.expectedBlocks)
             editorState.isResettingContent = false
             editorState.contentState = .idle
         }
@@ -462,7 +463,8 @@ struct ContentView: View {
             await blockSyncService.setContentWithBlockIds(
                 markdown: result.markdown, blockIds: result.blockIds,
                 imageMeta: result.imageMeta,
-                cursorBoundary: result.bibBoundaryIndex)
+                cursorBoundary: result.bibBoundaryIndex,
+                expectedBlocks: result.expectedBlocks)
             editorState.isResettingContent = false
             editorState.contentState = .idle
         }
@@ -582,7 +584,8 @@ struct ContentView: View {
             await blockSyncService.setContentWithBlockIds(
                 markdown: result.markdown, blockIds: result.blockIds,
                 imageMeta: result.imageMeta,
-                cursorBoundary: result.bibBoundaryIndex)
+                cursorBoundary: result.bibBoundaryIndex,
+                expectedBlocks: result.expectedBlocks)
 
             editorState.isResettingContent = false
             editorState.contentState = .idle

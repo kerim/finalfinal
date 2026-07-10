@@ -7,6 +7,7 @@ import { Plugin, PluginKey } from '@milkdown/kit/prose/state';
 import { Decoration, DecorationSet } from '@milkdown/kit/prose/view';
 import { $prose } from '@milkdown/kit/utils';
 import { syncLog } from './sync-debug';
+import type { ExpectedBlockMeta } from './types';
 
 export const blockIdPluginKey = new PluginKey<BlockIdPluginState>('block-id');
 
@@ -319,26 +320,144 @@ export function isBlockType(node: Node): boolean {
   return BLOCK_TYPES.has(node.type.name);
 }
 
+/** Maps a Swift `BlockType.rawValue` string to the PM node-type name it produces.
+ * Returns undefined for types with no direct top-level PM equivalent (list_item never
+ * appears top-level; bibliography-marker blocks are excluded entirely upstream — see
+ * BlockParser.alignmentPairs on the Swift side, which never emits an id/meta pair for them). */
+export function pmTypeForBlockType(blockType: string): string | undefined {
+  if (blockType === 'image') return 'figure';
+  if (blockType === 'list_item' || blockType === 'bibliography') return undefined;
+  return blockType; // paragraph, heading, bullet_list, ordered_list, blockquote, code_block,
+  // horizontal_rule, section_break, table, math_display — same name both sides
+}
+
+/**
+ * Atom-type inline nodes whose real payload lives entirely in node attrs and
+ * which Swift's own extraction does NOT strip to empty text. Deliberately
+ * NOT a general "any atom" rule — two atom types were considered and
+ * excluded for verified, opposite reasons:
+ * - footnote_ref: not included, doesn't need to be — Swift already strips
+ *   ALL adjacent refs to '' via a whole-string regex replace, so both sides
+ *   already agree without any exemption.
+ * - footnote_def: not included, and must NEVER be — its own blankness is
+ *   exactly the signal the historical corruption attached to the wrong node;
+ *   Swift's extraction already agrees with PM's textContent for it (both
+ *   compare only the post-prefix remainder), so exempting it would silently
+ *   defeat this hardening's own motivating case.
+ *
+ * NOTE for future maintainers: if a new inline atom type is added to the
+ * schema (beyond citation/footnote_ref/footnote_def), it needs a deliberate
+ * decision here — add it to this set, or confirm (like footnote_ref) that
+ * Swift's own text extraction already strips it to blank on both sides. Do
+ * not assume new atom types are automatically handled.
+ *
+ * Trusts blankness parity, not content identity: this exemption fires for
+ * ANY node whose blankness is explained by a citation descendant, including
+ * one that's positionally misaligned but coincidentally citation-only —
+ * that narrower case is below this check's detection threshold.
+ */
+const CONTENT_CHECK_ATOM_EXEMPTIONS: ReadonlySet<string> = new Set(['citation']);
+
+/**
+ * True when `node`'s trimmed textContent is blank AND that blankness is
+ * explained by an exempted-atom descendant rather than genuine absence of
+ * content. Checks for ANY matching descendant, not "all children are atoms"
+ * (the predicate this replaced) — necessary because inline atoms are often
+ * separated by whitespace text nodes (e.g. two citations side by side,
+ * `[@a] [@b]`, parse to [citation, text(" "), citation]), which an
+ * all-children-must-be-atoms check would wrongly refuse to exempt.
+ *
+ * Uses node.descendants() rather than direct children specifically so an
+ * atom NESTED inside a non-flat block type is still found — e.g. a
+ * blockquote whose only content is a citation-only paragraph: the citation
+ * is two levels down (blockquote > paragraph > citation), not a direct
+ * child of the blockquote node itself. The whitespace-separated-siblings
+ * case above doesn't need this — those citations ARE direct children of
+ * their paragraph, so an any-match check over direct children alone would
+ * already handle it. Exported for tests.
+ */
+export function isBlankDueToExemptAtom(node: Node): boolean {
+  if (node.textContent.trim().length > 0) return false;
+  let found = false;
+  node.descendants((child) => {
+    if (found) return false; // skip descending into already-matched subtrees
+    if (CONTENT_CHECK_ATOM_EXEMPTIONS.has(child.type.name)) found = true;
+    return true;
+  });
+  return found;
+}
+
 /**
  * Set block IDs for top-level nodes from an ordered array of IDs.
  * Matches BlockParser.parse() which creates one block per top-level node.
  * Uses doc.forEach() (top-level only, NOT doc.descendants()).
+ *
+ * `expected` (optional, 3rd param) is a per-id ground-truth array from the Swift side
+ * (BlockParser.alignmentPairs) enabling an alignment sanity check beyond the pre-existing
+ * count-parity check below: for each slot, if the expected PM type doesn't match the actual
+ * node's type, or the expected non-blank text doesn't match an actually-blank node (net of the
+ * atomic/citation exemptions), the id is WITHHELD rather than assigned — see the loop body for
+ * why withholding (not aliasing) is the safe choice. Omitting `expected` (2-arg call, or passing
+ * undefined explicitly) skips this check entirely and preserves the pre-existing behavior.
  */
-export function setBlockIdsForTopLevel(orderedIds: string[], doc: Node): void {
+export function setBlockIdsForTopLevel(orderedIds: string[], doc: Node, expected?: ExpectedBlockMeta[]): void {
   let index = 0;
   // [SYNC-DIAG Round 2] Collect a sample of (i, id, offset, nodeType) for correlation
   // with Swift's block-array shape. Cap at 5 head + 5 tail entries to bound volume.
   const assigned: Array<{ i: number; id: string; offset: number; type: string }> = [];
+  const mismatches: Array<{ index: number; offset: number; reason: string }> = [];
   doc.forEach((node, offset) => {
     if (isBlockType(node) && index < orderedIds.length) {
-      currentBlockIds.set(offset, orderedIds[index]);
-      currentBlockTypes.set(offset, node.type.name);
-      if (SYNC_DIAG_DETAIL) {
-        assigned.push({ i: index, id: orderedIds[index], offset, type: node.type.name });
+      const meta = expected?.[index];
+      let ok = true;
+      let reason = '';
+      if (meta) {
+        const expectedType = pmTypeForBlockType(meta.blockType);
+        if (expectedType !== undefined && expectedType !== node.type.name) {
+          ok = false;
+          reason = `type: expected=${expectedType} actual=${node.type.name}`;
+        } else if (
+          meta.nonEmpty &&
+          !ATOMIC_BLOCK_TYPES.has(node.type.name) &&
+          node.textContent.trim().length === 0 &&
+          !isBlankDueToExemptAtom(node)
+        ) {
+          ok = false;
+          reason = 'content: expected non-blank, actual blank';
+        }
       }
-      index++;
+      if (ok) {
+        currentBlockIds.set(offset, orderedIds[index]);
+        currentBlockTypes.set(offset, node.type.name);
+        if (SYNC_DIAG_DETAIL) {
+          assigned.push({ i: index, id: orderedIds[index], offset, type: node.type.name });
+        }
+      } else {
+        mismatches.push({ index, offset, reason });
+        // Deliberately NOT calling currentBlockIds.set/currentBlockTypes.set here — the id is
+        // WITHHELD, not aliased onto the wrong node. This slot gets a fresh temp id on the next
+        // assignBlockIds pass (safe — see plan notes on the withheld-id trace), instead of
+        // silently attaching a real DB row's identity to content it doesn't belong to.
+      }
+      index++; // increment regardless of ok/mismatch — positional accounting vs. orderedIds
+      // must stay in lockstep or every later comparison desyncs.
     }
   });
+  if (mismatches.length > 0) {
+    const wholesale = mismatches.length >= 3 && mismatches.length > orderedIds.length * 0.3;
+    const tag = wholesale
+      ? 'WIDESPREAD ALIGNMENT MISMATCH (possible wholesale shift — ids reported as OK may be coincidentally correct)'
+      : 'ALIGNMENT MISMATCH';
+    const examples = mismatches
+      .slice(0, 10)
+      .map((m) => `(idx=${m.index},offset=${m.offset},${m.reason})`)
+      .join(',');
+    syncLog('BlockId', `${tag}: ${mismatches.length} of ${orderedIds.length} ids withheld examples=[${examples}]`);
+    (window as any).webkit?.messageHandlers?.errorHandler?.postMessage({
+      type: 'debug',
+      message: `[setBlockIdsForTopLevel] ${tag}: ${mismatches.length} of ${orderedIds.length} ids withheld`,
+    });
+  }
   if (index !== orderedIds.length) {
     syncLog('BlockId', `PARITY MISMATCH: assigned ${index} of ${orderedIds.length} IDs — LIKELY CAUSE OF CORRUPTION`);
     (window as any).webkit?.messageHandlers?.errorHandler?.postMessage({
@@ -351,7 +470,7 @@ export function setBlockIdsForTopLevel(orderedIds: string[], doc: Node): void {
       `(${e.i},${e.id.slice(0, 8)},pos=${e.offset},${e.type})`;
     const head = assigned.slice(0, 5).map(fmt).join(',');
     const tail = assigned.length > 10 ? `,…,${assigned.slice(-5).map(fmt).join(',')}` : '';
-    syncLog('BlockId:setTopLevel', `totalAssigned=${index}/${orderedIds.length} entries=[${head}${tail}]`);
+    syncLog('BlockId:setTopLevel', `totalAssigned=${assigned.length}/${orderedIds.length} entries=[${head}${tail}]`);
   }
 }
 
