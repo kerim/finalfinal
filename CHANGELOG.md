@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **New Diagnostics pane in Preferences** — an off-by-default toggle turns on persistent logging, and a "Generate Diagnostic Report" button bundles the log and some system info into a folder you can share when troubleshooting a hard-to-reproduce problem.
+
+### Fixed
+
+- **The app didn't remember your window's size and position after quitting** — resizing or moving the main window, then quitting and reopening the app, used to reset it back to a default size and position every time instead of where you left it. It now reopens at the same size and position, and returns to full screen if that's how you left it.
+- **The Help menu's "Report an Issue" link went to a page that didn't exist** — it now goes to the correct place.
+
 ## [0.2.107] - 2026-07-09
 
 ### Fixed
