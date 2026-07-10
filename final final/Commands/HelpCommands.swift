@@ -26,7 +26,7 @@ struct HelpCommands: Commands {
 
             Divider()
 
-            Link("Report an Issue\u{2026}", destination: URL(string: "https://github.com/kerim/final-final/issues")!)
+            Link("Report an Issue\u{2026}", destination: URL(string: "https://github.com/kerim/finalfinal/issues")!)
         }
     }
 }
