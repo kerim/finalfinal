@@ -13,6 +13,7 @@ import Foundation
 @testable import final_final
 
 @Suite("Section Reconciler — Tier 1: Silent Killers")
+// swiftlint:disable:next type_body_length
 struct SectionReconcilerTests {
 
     let reconciler = SectionReconciler()
@@ -48,6 +49,7 @@ struct SectionReconcilerTests {
         isPseudoSection: Bool = false,
         isBibliography: Bool = false,
         isNotes: Bool = false,
+        markdownContent: String = "",
         status: SectionStatus = .writing,
         tags: [String] = ["important"],
         wordGoal: Int? = 500
@@ -61,6 +63,7 @@ struct SectionReconcilerTests {
             isBibliography: isBibliography,
             isNotes: isNotes,
             title: title,
+            markdownContent: markdownContent,
             status: status,
             tags: tags,
             wordGoal: wordGoal
@@ -239,6 +242,275 @@ struct SectionReconcilerTests {
         let s3Matched = updates.contains { $0.0 == "s3" } ||
                         !changes.contains { if case .delete(let id) = $0 { return id == "s3" }; return false }
         #expect(s3Matched, "Gamma should match by title, preserving status=final and tags")
+    }
+
+    // MARK: - Tier 1 Content-Relatedness Gate
+
+    @Test("Delete-and-shift: later section must not steal the deleted section's slot")
+    func deleteAndShiftDoesNotMisattributeIdentity() {
+        // A(0), B(1), C(2) exist. User deletes B's header+body in one edit.
+        // Reparsed headers become A(0), C(1) — C slides into B's old sortOrder slot.
+        // Tier 1 must NOT claim B for C's header; Tier 2 (title match) must instead
+        // correctly reattach "C" to DB row C, leaving B correctly unmatched/deleted.
+        let headers = [
+            makeHeader(position: 0, title: "A", markdownContent: "## A\nAlpha body text discussing the setup."),
+            makeHeader(position: 1, title: "C", markdownContent: "## C\nGamma body text discussing the results.")
+        ]
+        let dbSections = [
+            makeSection(id: "sA", sortOrder: 0, title: "A", markdownContent: "## A\nAlpha body text discussing the setup."),
+            makeSection(id: "sB", sortOrder: 1, title: "B", markdownContent: "## B\nBeta body text, wholly unrelated."),
+            makeSection(id: "sC", sortOrder: 2, title: "C", markdownContent: "## C\nGamma body text discussing the results.")
+        ]
+
+        let changes = reconciler.reconcile(headers: headers, dbSections: dbSections, projectId: projectId)
+
+        let deletes = changes.compactMap { change -> String? in if case .delete(let id) = change { return id }; return nil }
+        let updates = changes.compactMap { change -> (String, SectionUpdates)? in
+            if case .update(let id, let update) = change { return (id, update) }; return nil
+        }
+
+        #expect(deletes == ["sB"], "B (genuinely removed) should be deleted — not C")
+        #expect(!updates.contains { $0.0 == "sB" }, "B's row must not be repurposed for C's content")
+
+        let cUpdate = updates.first { $0.0 == "sC" }
+        #expect(cUpdate != nil, "C should survive matched (via Tier 2 title match), keeping its own row")
+        if let cUpdate {
+            #expect(cUpdate.1.sortOrder == 1, "C should move to its new position 1")
+            #expect(cUpdate.1.title == nil, "C's title is unchanged — no spurious title update")
+        }
+    }
+
+    @Test("Delete-and-shift with empty bodies: two empty-content sections must not count as related")
+    func deleteAndShiftDoesNotMisattributeIdentityWithEmptyBodies() {
+        // Same A/B/C scenario as above, but all markdownContent is empty (a common
+        // real state: skeleton/fresh headers). This specifically catches the ordering
+        // bug the judge caught in contentRelated: if the `==` check runs before the
+        // `isEmpty` guard, "" == "" short-circuits to true and Tier 1 wrongly claims
+        // row B for header "C" purely because both have empty content. With the guard
+        // ordered first, empty-vs-empty must return false, so Tier 1 refuses and Tier
+        // 2's title match correctly rescues "C".
+        let headers = [
+            makeHeader(position: 0, title: "A"),
+            makeHeader(position: 1, title: "C")
+        ]
+        let dbSections = [
+            makeSection(id: "sA", sortOrder: 0, title: "A"),
+            makeSection(id: "sB", sortOrder: 1, title: "B"),
+            makeSection(id: "sC", sortOrder: 2, title: "C")
+        ]
+
+        let changes = reconciler.reconcile(headers: headers, dbSections: dbSections, projectId: projectId)
+
+        let deletes = changes.compactMap { change -> String? in if case .delete(let id) = change { return id }; return nil }
+        let updates = changes.compactMap { change -> (String, SectionUpdates)? in
+            if case .update(let id, let update) = change { return (id, update) }; return nil
+        }
+
+        #expect(deletes == ["sB"], "B (genuinely removed) should be deleted — not C — even with empty bodies")
+        #expect(!updates.contains { $0.0 == "sB" }, "B's row must not be repurposed for C's identity")
+        #expect(updates.contains { $0.0 == "sC" }, "C should survive matched via Tier 2 title match")
+    }
+
+    @Test("Tier 1 still claims: title-only rename with unchanged content")
+    func tier1ClaimsTitleOnlyRename() {
+        let headers = [
+            makeHeader(position: 0, title: "Introduction, Revised", markdownContent: "## Introduction\nShared unchanged body.")
+        ]
+        let dbSections = [
+            makeSection(id: "s1", sortOrder: 0, title: "Introduction", markdownContent: "## Introduction\nShared unchanged body.")
+        ]
+
+        let changes = reconciler.reconcile(headers: headers, dbSections: dbSections, projectId: projectId)
+
+        #expect(changes.count == 1, "Should be a single update, not an insert+delete")
+        if case .update(let id, let updates) = changes.first {
+            #expect(id == "s1")
+            #expect(updates.title == "Introduction, Revised")
+        } else {
+            Issue.record("Expected a Tier 1 update, got \(changes)")
+        }
+    }
+
+    @Test("Tier 1 still claims: content-only edit with unchanged title")
+    func tier1ClaimsContentOnlyEdit() {
+        let headers = [
+            makeHeader(position: 0, title: "Methods", markdownContent: "## Methods\nRewritten body describing the revised procedure.")
+        ]
+        let dbSections = [
+            makeSection(id: "s1", sortOrder: 0, title: "Methods", markdownContent: "## Methods\nOriginal body describing the old procedure.")
+        ]
+
+        let changes = reconciler.reconcile(headers: headers, dbSections: dbSections, projectId: projectId)
+
+        #expect(changes.count == 1, "Should be a single update, not an insert+delete")
+        if case .update(let id, let updates) = changes.first {
+            #expect(id == "s1")
+            #expect(updates.markdownContent == "## Methods\nRewritten body describing the revised procedure.")
+            #expect(updates.title == nil, "Title unchanged — no spurious title update")
+        } else {
+            Issue.record("Expected a Tier 1 update, got \(changes)")
+        }
+    }
+
+    @Test("Tier 1 still claims: combined title-rename + header-level change with unchanged body")
+    func tier1ClaimsCombinedTitleAndLevelChange() {
+        // Reasoned-through legitimate case: user promotes a subsection to a top-level
+        // section (### -> ##) and renames it in the same edit, without touching the
+        // body. Title alone differs from the DB row, so the gate must fall back to
+        // content equality (unchanged body) rather than refusing the match — and
+        // must NOT additionally require headerLevel equality (that would wrongly
+        // block this exact legitimate case).
+        let headers = [
+            makeHeader(position: 0, title: "Background", level: 2, markdownContent: "### Prior Context\nUnchanged shared body text.")
+        ]
+        let dbSections = [
+            makeSection(
+                id: "s1", sortOrder: 0, title: "Prior Context", headerLevel: 3,
+                markdownContent: "### Prior Context\nUnchanged shared body text."
+            )
+        ]
+
+        let changes = reconciler.reconcile(headers: headers, dbSections: dbSections, projectId: projectId)
+
+        #expect(changes.count == 1, "Should be a single update, not an insert+delete")
+        if case .update(let id, let updates) = changes.first {
+            #expect(id == "s1")
+            #expect(updates.title == "Background")
+            #expect(updates.headerLevel == 2)
+        } else {
+            Issue.record("Expected a Tier 1 update (matched via content equality), got \(changes)")
+        }
+    }
+
+    // MARK: - Tier 3 Content-Relatedness Gate
+
+    @Test("Tier 3 prefers related-but-farther candidate over closer-but-unrelated one")
+    func tier3PrefersRelatedOverCloser() {
+        // A(0) B(1) X(2) C(3) exist. User deletes B and X, and renames C -> D
+        // in the same edit (body unchanged). Reparsed headers become A(0), D(1).
+        // Tier 1 refuses (title/content both differ from B). Tier 2 fails (no DB
+        // row titled "D" yet). Tier 3 must not grab B just because it's closest
+        // (distance 0) -- it must prefer C (distance 2, but content-related) since
+        // D's content is byte-identical to C's stored content.
+        let headers = [
+            makeHeader(position: 0, title: "A", markdownContent: "commonAlphaBody"),
+            makeHeader(position: 1, title: "D", markdownContent: "commonDeltaBody")
+        ]
+        let dbSections = [
+            makeSection(id: "sA", sortOrder: 0, title: "A", markdownContent: "commonAlphaBody"),
+            makeSection(id: "sB", sortOrder: 1, title: "B", markdownContent: "commonBetaBody"),
+            makeSection(id: "sX", sortOrder: 2, title: "X", markdownContent: "commonChiBody"),
+            makeSection(id: "sC", sortOrder: 3, title: "C", markdownContent: "commonDeltaBody")
+        ]
+
+        let changes = reconciler.reconcile(headers: headers, dbSections: dbSections, projectId: projectId)
+
+        let deletes = Set(changes.compactMap { change -> String? in if case .delete(let id) = change { return id }; return nil })
+        let updates = changes.compactMap { change -> (String, SectionUpdates)? in
+            if case .update(let id, let update) = change { return (id, update) }; return nil
+        }
+
+        #expect(deletes == ["sB", "sX"], "B and X (genuinely removed) should be deleted")
+        let cUpdate = updates.first { $0.0 == "sC" }
+        #expect(cUpdate != nil, "D should reattach to C's row (content-related), not B's (closer but unrelated)")
+        if let cUpdate {
+            #expect(cUpdate.1.sortOrder == 1, "C should move to its new position 1")
+            #expect(cUpdate.1.title == "D", "C's title should update to D")
+        }
+    }
+
+    @Test("Tier 3 pseudo-section batch shift: reattaches by content, not raw proximity")
+    func tier3PseudoSectionBatchShift() {
+        // A pseudo-section is deleted, shifting a later pseudo-section's position,
+        // and that surviving pseudo-section's own auto-derived title has also
+        // drifted because a trailing sentence was appended to its body (pseudo
+        // titles are derived from content, so an edited body plausibly changes the
+        // title too). The header's title is therefore deliberately DIFFERENT from
+        // sP2's stored title -- only `contentRelated`'s prefix check (the header's
+        // body is sP2's stored body plus an appended sentence) can put sP2 into
+        // Tier 3's `related` set. Pseudo-sections skip Tier 2 (Tier 2 explicitly
+        // excludes them), so Tier 3 is their only fallback path. Must not
+        // misattribute the surviving pseudo-section's identity to the deleted
+        // one's now-closer old slot.
+        let headers = [
+            makeHeader(position: 0, title: "A"),
+            makeHeader(
+                position: 1,
+                title: "§ Knights and castles guard the border, ever vigilant through the night",
+                isPseudoSection: true,
+                markdownContent: "<!-- ::break:: -->\nKnights and castles guard the border tirelessly. Ever vigilant through the night."
+            )
+        ]
+        let dbSections = [
+            makeSection(id: "sA", sortOrder: 0, title: "A"),
+            makeSection(
+                id: "sP1", sortOrder: 1, title: "§ Wizards and dragons roam this land",
+                isPseudoSection: true,
+                markdownContent: "<!-- ::break:: -->\nWizards and dragons roam this land in peace."
+            ),
+            makeSection(
+                id: "sP2", sortOrder: 2, title: "§ Knights and castles guard the border",
+                isPseudoSection: true,
+                markdownContent: "<!-- ::break:: -->\nKnights and castles guard the border tirelessly."
+            )
+        ]
+
+        let changes = reconciler.reconcile(headers: headers, dbSections: dbSections, projectId: projectId)
+
+        let deletes = Set(changes.compactMap { change -> String? in if case .delete(let id) = change { return id }; return nil })
+        let updates = changes.compactMap { change -> (String, SectionUpdates)? in
+            if case .update(let id, let update) = change { return (id, update) }; return nil
+        }
+
+        #expect(deletes == ["sP1"], "The genuinely-deleted pseudo-section (sP1) should be deleted")
+        let p2Update = updates.first { $0.0 == "sP2" }
+        #expect(p2Update != nil, "sP2 should survive matched to its own content, not stolen by sP1's old slot")
+        if let p2Update {
+            #expect(p2Update.1.sortOrder == 1, "sP2 should move to its new position 1")
+            #expect(
+                p2Update.1.title == "§ Knights and castles guard the border, ever vigilant through the night",
+                "sP2's title should update to the header's new (content-derived) title"
+            )
+        }
+    }
+
+    @Test("Tier 3 pseudo-sections with empty content still degrade to proximity fallback")
+    func tier3PseudoSectionsEmptyContentFallsBackToProximity() {
+        // Fresh skeleton pseudo-sections with empty markdownContent (no
+        // distinguishing body at all) and titles that all genuinely differ from
+        // one another and from the reparsed header. Neither title equality nor
+        // `contentRelated` (which returns false whenever either side is empty) can
+        // put ANY candidate into Tier 3's `related` set here, so this genuinely
+        // exercises the `related.isEmpty` fallback branch -- proximity alone,
+        // exactly as Tier 3 behaved before the content-relatedness gate was added.
+        // The header also deliberately does NOT land on a same-titled row's exact
+        // sortOrder, so Tier 1's gate doesn't resolve this directly either.
+        let headers = [
+            makeHeader(position: 0, title: "A"),
+            makeHeader(position: 1, title: "§ Section Break", isPseudoSection: true)
+        ]
+        let dbSections = [
+            makeSection(id: "sA", sortOrder: 0, title: "A"),
+            makeSection(id: "sP1", sortOrder: 1, title: "§ Fragment One", isPseudoSection: true),
+            makeSection(id: "sP2", sortOrder: 2, title: "§ Fragment Two", isPseudoSection: true)
+        ]
+
+        let changes = reconciler.reconcile(headers: headers, dbSections: dbSections, projectId: projectId)
+
+        let inserts = changes.filter { if case .insert = $0 { return true }; return false }
+        #expect(inserts.isEmpty, "Should still match via proximity fallback, not insert a new section")
+
+        let updates = changes.compactMap { change -> (String, SectionUpdates)? in
+            if case .update(let id, let update) = change { return (id, update) }; return nil
+        }
+        let deletes = Set(changes.compactMap { change -> String? in if case .delete(let id) = change { return id }; return nil })
+
+        let p1Update = updates.first { $0.0 == "sP1" }
+        #expect(
+            p1Update != nil,
+            "Closest candidate (sP1) should be matched via the pure-proximity fallback since neither title nor content offers any evidence"
+        )
+        #expect(deletes.contains("sP2"), "Farther candidate (sP2) should be left unmatched and deleted, not stolen")
     }
 
     // MARK: - Unmatched Sections

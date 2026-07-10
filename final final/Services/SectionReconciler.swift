@@ -100,7 +100,15 @@ struct SectionReconciler: Sendable {
         let available = sections.filter { !excluding.contains($0.id) && !$0.isBibliography && !$0.isNotes }
 
         // Tier 1: Exact position match (most common - edits within a section)
-        if let match = available.first(where: { $0.sortOrder == header.position }) {
+        // Only honored when there's actual evidence the parsed header and the DB
+        // row are the SAME logical section — not just co-located by sortOrder.
+        // Without this gate, deleting a section's header+body causes whatever
+        // follows to slide into the deleted section's old sortOrder slot and
+        // silently inherit its identity (see meaningfulTextOverlap() in
+        // web/milkdown/src/block-id-plugin.ts for the analogous fix on the
+        // ProseMirror side of this exact bug).
+        if let match = available.first(where: { $0.sortOrder == header.position }),
+           header.title == match.title || contentRelated(header.markdownContent, match.markdownContent) {
             return match
         }
 
@@ -112,9 +120,41 @@ struct SectionReconciler: Sendable {
         }
 
         // Tier 3: Closest position within ±3 (handles batch deletes/inserts)
-        return available
-            .filter { abs($0.sortOrder - header.position) <= 3 }
+        // Prefer a candidate with title/content evidence (the same relatedness gate
+        // used by Tier 1) over a merely-closer unrelated one. Without this, a header
+        // that lands within ±3 of an unrelated row (e.g. two sections deleted and a
+        // third renamed in the same edit) can steal that row's identity while the
+        // row that actually matches, now slightly farther away but still in range,
+        // is left to be hard-deleted. Pseudo-sections rely on this exclusively,
+        // since Tier 2 explicitly skips them (their titles are too generic to
+        // trust) — but real pseudo-section content always includes at least the
+        // break marker line and, in the common case, the distinguishing paragraph
+        // that follows it, so the same gate that protects Tier 1 works here
+        // unmodified. If NO candidate in range has any evidence at all, fall back
+        // to the original pure-proximity behavior — Tier 3 exists specifically as
+        // a last resort when a section's title AND content have both changed and
+        // only position continuity remains as a signal (see closestPositionMatch).
+        let inRange = available.filter { abs($0.sortOrder - header.position) <= 3 }
+        let related = inRange.filter { header.title == $0.title || contentRelated(header.markdownContent, $0.markdownContent) }
+        let candidates = related.isEmpty ? inRange : related
+        return candidates
             .min { abs($0.sortOrder - header.position) < abs($1.sortOrder - header.position) }
+    }
+
+    /// Whether a parsed header's content looks like the same logical section as an
+    /// existing DB row, rather than unrelated content that happens to occupy the
+    /// same sortOrder slot. Byte-identical content (including both empty) always
+    /// counts as related. Otherwise, a prefix/suffix relationship in either
+    /// direction counts — this covers body-only edits, header-level conversions,
+    /// and partial rewrites that preserve a leading or trailing run of text. One
+    /// side empty and the other not does NOT count: every string is trivially a
+    /// "prefix" of any string, so an empty section could otherwise claim any
+    /// unrelated non-empty row (or vice versa) just by chance.
+    private func contentRelated(_ headerContent: String, _ existingContent: String) -> Bool {
+        if headerContent.isEmpty || existingContent.isEmpty { return false }
+        if headerContent == existingContent { return true }
+        return headerContent.hasPrefix(existingContent) || existingContent.hasPrefix(headerContent)
+            || headerContent.hasSuffix(existingContent) || existingContent.hasSuffix(headerContent)
     }
 
     /// Build updates struct if any field changed

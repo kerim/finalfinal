@@ -15,28 +15,12 @@ extension DocumentManager {
         var title: String
         var bookmarkData: Data
         var lastOpenedAt: Date
-        var path: String
 
-        init(id: String = UUID().uuidString, title: String, bookmarkData: Data, lastOpenedAt: Date = Date(), path: String) {
+        init(id: String = UUID().uuidString, title: String, bookmarkData: Data, lastOpenedAt: Date = Date()) {
             self.id = id
             self.title = title
             self.bookmarkData = bookmarkData
             self.lastOpenedAt = lastOpenedAt
-            self.path = path
-        }
-
-        private enum CodingKeys: String, CodingKey {
-            case id, title, bookmarkData, lastOpenedAt, path
-        }
-
-        init(from decoder: Decoder) throws {
-            let container = try decoder.container(keyedBy: CodingKeys.self)
-            id = try container.decode(String.self, forKey: .id)
-            title = try container.decode(String.self, forKey: .title)
-            bookmarkData = try container.decode(Data.self, forKey: .bookmarkData)
-            lastOpenedAt = try container.decode(Date.self, forKey: .lastOpenedAt)
-            // Entries persisted before `path` was introduced won't have this key.
-            path = try container.decodeIfPresent(String.self, forKey: .path) ?? ""
         }
     }
 
@@ -49,22 +33,21 @@ extension DocumentManager {
                 includingResourceValuesForKeys: nil,
                 relativeTo: nil
             )
-            let path = url.standardizedFileURL.path
 
-            // Check if already in list — compare plain paths, not resolved bookmarks,
-            // so a transient bookmark-resolution hiccup can't cause a duplicate entry.
-            if let existingIndex = recentProjects.firstIndex(where: { $0.path == path }) {
+            // Check if already in list
+            if let existingIndex = recentProjects.firstIndex(where: { entry in
+                resolveBookmark(entry.bookmarkData)?.path == url.path
+            }) {
                 // Update existing entry
                 var entry = recentProjects[existingIndex]
                 entry.title = title
                 entry.lastOpenedAt = Date()
                 entry.bookmarkData = bookmarkData
-                entry.path = path
                 recentProjects.remove(at: existingIndex)
                 recentProjects.insert(entry, at: 0)
             } else {
                 // Add new entry
-                let entry = RecentProjectEntry(title: title, bookmarkData: bookmarkData, path: path)
+                let entry = RecentProjectEntry(title: title, bookmarkData: bookmarkData)
                 recentProjects.insert(entry, at: 0)
 
                 // Trim to max size
@@ -205,59 +188,10 @@ extension DocumentManager {
         }
 
         do {
-            let decodedEntries = try JSONDecoder().decode([RecentProjectEntry].self, from: data)
-            var needsResave = false
-
-            let processedEntries: [RecentProjectEntry] = decodedEntries.compactMap { decodedEntry in
-                var entry = decodedEntry
-                var resolvedURL: URL?
-
-                // Migration: backfill `path` for entries persisted before it existed.
-                if entry.path.isEmpty {
-                    resolvedURL = resolveBookmark(entry.bookmarkData)
-                    if let resolvedURL {
-                        entry.path = resolvedURL.standardizedFileURL.path
-                        needsResave = true
-                    }
-                }
-
-                // Cheap check first — no security-scope access needed.
-                if FileManager.default.fileExists(atPath: entry.path) {
-                    return entry
-                }
-
-                // Fall back to bookmark resolution (reuse the result above if we already tried).
-                if resolvedURL == nil {
-                    resolvedURL = resolveBookmark(entry.bookmarkData)
-                }
-
-                guard let resolvedURL else {
-                    DebugLog.log(.lifecycle, "[DocumentManager] Dropping recent project '\(entry.title)' (path: \(entry.path)): file missing and bookmark failed to resolve")
-                    return nil
-                }
-
-                // fileExists failed but the bookmark still resolved (e.g. the project
-                // was moved or renamed since this entry was saved) — update the stored
-                // path to the new location so future dedup doesn't compare against a
-                // permanently stale path.
-                entry.path = resolvedURL.standardizedFileURL.path
-                needsResave = true
-
-                return entry
-            }
-
-            // Clean up duplicate entries (same path) that may have accumulated before
-            // this fix landed. The list is already ordered most-recent-first, so
-            // keeping the first occurrence per path keeps the most-recently-opened one.
-            var seenPaths = Set<String>()
-            let dedupedEntries = processedEntries.filter { seenPaths.insert($0.path).inserted }
-            if dedupedEntries.count != processedEntries.count {
-                needsResave = true
-            }
-            recentProjects = dedupedEntries
-
-            if needsResave {
-                saveRecentProjects()
+            recentProjects = try JSONDecoder().decode([RecentProjectEntry].self, from: data)
+            // Validate bookmarks on load
+            recentProjects = recentProjects.filter { entry in
+                resolveBookmark(entry.bookmarkData) != nil
             }
         } catch {
             DebugLog.log(.lifecycle, "[DocumentManager] Failed to load recent projects: \(error)")
