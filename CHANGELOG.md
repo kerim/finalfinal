@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.108] - 2026-07-10
+
 ### Added
 
 - **New Diagnostics pane in Preferences** — an off-by-default toggle turns on persistent logging, and a "Generate Diagnostic Report" button bundles the log and some system info into a folder you can share when troubleshooting a hard-to-reproduce problem.
