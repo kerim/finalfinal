@@ -90,6 +90,26 @@ struct FinalFinalApp: App {
             }
         }
         .defaultWindowPlacement { _, context in
+            // Restore the last-saved windowed frame directly into the window's initial
+            // placement, rather than creating it at the default size/position and resizing
+            // a moment later — the latter produced a visible flash-then-jump on launch.
+            // WindowPlacement's position is top-left-based (Y measured down from the screen
+            // top), while the saved frame is `window.frame` — AppKit's native bottom-left
+            // convention (Y measured up from the screen bottom). Verified empirically via
+            // diagnostic logging: passing the saved origin straight through restored X and
+            // the window's size correctly but silently flipped Y. Converting requires the
+            // *primary* screen's height, since that's what anchors AppKit's global coordinate
+            // space (the screen whose origin is (0, 0), not necessarily `.screens.first`).
+            if !TestMode.isTesting,
+               let frameString = UserDefaults.standard.string(forKey: AppDelegate.mainWindowFrameDefaultsKey),
+               let primaryScreenHeight = (NSScreen.screens.first(where: { $0.frame.origin == .zero }) ?? NSScreen.screens.first)?.frame.height {
+                let savedFrame = NSRectFromString(frameString)
+                if NSScreen.screens.contains(where: { $0.frame.intersects(savedFrame) }) {
+                    let flippedY = primaryScreenHeight - savedFrame.origin.y - savedFrame.height
+                    return WindowPlacement(CGPoint(x: savedFrame.origin.x, y: flippedY), size: savedFrame.size)
+                }
+            }
+
             // Target: usable area of a 13-inch laptop. On smaller displays the
             // min() clamps this to the visible area so the window fills the screen;
             // on larger displays it stays "13-inch sized" regardless of screen size.

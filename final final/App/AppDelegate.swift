@@ -24,6 +24,20 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// Reference to main window for close interception
     private var mainWindow: NSWindow?
 
+    /// UserDefaults key for the manually-persisted main window frame. Not private: read by
+    /// `FinalFinalApp`'s `.defaultWindowPlacement` too, so the window is created at the saved
+    /// frame directly instead of being resized a moment after appearing (which produced a
+    /// visible flash-then-jump). See `saveMainWindowFrame` for why this is hand-rolled instead
+    /// of AppKit's frame autosave APIs.
+    static let mainWindowFrameDefaultsKey = "com.kerim.final-final.mainWindowFrame"
+
+    /// Whether the main window was in native full screen when last saved. Tracked separately
+    /// from the frame itself: entering full screen resizes the window to the screen's bounds,
+    /// which is not a real "windowed" frame to restore into — restoring just that rect would
+    /// produce a maximized *window*, not true full screen (no dedicated Space, menu bar/Dock
+    /// still present). See `windowDidEnterFullScreen`/`windowDidExitFullScreen`.
+    private static let mainWindowWasFullScreenDefaultsKey = "com.kerim.final-final.mainWindowWasFullScreen"
+
     /// NSEvent monitor for Esc key to exit focus mode (works even when WKWebView has focus)
     private var escapeKeyMonitor: Any?
 
@@ -134,7 +148,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if let window = NSApp.windows.first {
                 self?.mainWindow = window
                 window.delegate = self
-                DebugLog.log(.lifecycle, "[AppDelegate] Set window delegate for Cmd-W interception")
+                let savedFrame = UserDefaults.standard.string(forKey: Self.mainWindowFrameDefaultsKey) ?? "nil"
+                DebugLog.log(
+                    .lifecycle,
+                    "[AppDelegate] Set window delegate for Cmd-W interception; "
+                        + "actual frame at launch=\(window.frame), saved frame=\(savedFrame)"
+                )
+                self?.restoreFullScreenIfNeeded(window)
 
                 // If macOS restored the window to fullscreen (Saved Application State),
                 // ensure we switch to that Space immediately
@@ -172,6 +192,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                         if let window = NSApp.windows.first, self?.mainWindow == nil {
                             self?.mainWindow = window
                             window.delegate = self
+                            self?.restoreFullScreenIfNeeded(window)
                         }
                     }
                 }
@@ -182,6 +203,32 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // This is necessary because WKWebView captures keyboard events and
         // SwiftUI's .onKeyPress(.escape) is unreliable when WebView has focus
         setupEscapeKeyMonitor()
+    }
+
+    /// Re-enters true full screen (not just a maximized window) if that's how the main window
+    /// was left at last quit. No-op otherwise, and on first launch (nothing saved yet).
+    ///
+    /// The windowed frame itself is restored earlier, at window *creation*, via
+    /// `.defaultWindowPlacement` in `FinalFinalApp.swift` — full screen has no WindowPlacement
+    /// equivalent, so that part still has to happen here, once the window exists.
+    ///
+    /// Frame persistence is hand-rolled UserDefaults read/write (`NSStringFromRect`/
+    /// `NSRectFromString`) rather than AppKit's `NSWindow.setFrameAutosaveName`/
+    /// `saveFrame(usingName:)`: a diagnostic-log-verified investigation (see
+    /// `saveMainWindowFrame`) found that mechanism's UserDefaults write never actually lands for
+    /// this window — even an in-process readback immediately after the call returns nil — most
+    /// likely because `windowShouldClose` unconditionally returns `false` here (Cmd-W is
+    /// intercepted to show the project picker instead of closing), and AppKit's autosave commit
+    /// appears to be tied to the window actually closing, which never happens.
+    private func restoreFullScreenIfNeeded(_ window: NSWindow) {
+        // Tests run against the same bundle ID as the real app (see TestMode.clearTestState()),
+        // so restoring/saving here would let test runs clobber the user's real saved state.
+        guard !TestMode.isTesting else { return }
+        guard UserDefaults.standard.bool(forKey: Self.mainWindowWasFullScreenDefaultsKey),
+              !window.styleMask.contains(.fullScreen) else { return }
+
+        DebugLog.log(.lifecycle, "[AppDelegate] Restoring full screen")
+        window.toggleFullScreen(nil)
     }
 
     /// Set up NSEvent local monitor for Esc key to exit focus mode
@@ -354,5 +401,38 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             window.makeKeyAndOrderFront(nil)
         }
         NSApp.activate()
+
+        if !TestMode.isTesting, (notification.object as? NSWindow) === mainWindow {
+            UserDefaults.standard.set(true, forKey: Self.mainWindowWasFullScreenDefaultsKey)
+        }
+    }
+
+    func windowDidExitFullScreen(_ notification: Notification) {
+        if !TestMode.isTesting, (notification.object as? NSWindow) === mainWindow {
+            UserDefaults.standard.set(false, forKey: Self.mainWindowWasFullScreenDefaultsKey)
+        }
+    }
+
+    func windowDidResize(_ notification: Notification) {
+        saveMainWindowFrame(from: notification, trigger: "resize")
+    }
+
+    func windowDidMove(_ notification: Notification) {
+        saveMainWindowFrame(from: notification, trigger: "move")
+    }
+
+    /// Explicitly saves the main window's frame to UserDefaults on every move/resize.
+    /// See `restoreFullScreenIfNeeded` for why frame persistence bypasses AppKit's frame-autosave APIs
+    /// entirely rather than using `saveFrame(usingName:)`.
+    private func saveMainWindowFrame(from notification: Notification, trigger: String) {
+        guard !TestMode.isTesting else { return }
+        guard let window = notification.object as? NSWindow, window === mainWindow else { return }
+        // Entering/exiting full screen fires resize/move with the screen's own bounds — not a
+        // real windowed frame. Skip so the last genuine windowed frame is left untouched;
+        // full-screen state itself is tracked separately (see windowDidEnterFullScreen).
+        guard !window.styleMask.contains(.fullScreen) else { return }
+
+        UserDefaults.standard.set(NSStringFromRect(window.frame), forKey: Self.mainWindowFrameDefaultsKey)
+        DebugLog.log(.lifecycle, "[AppDelegate] Saved main window frame (trigger: \(trigger)): \(window.frame)")
     }
 }
