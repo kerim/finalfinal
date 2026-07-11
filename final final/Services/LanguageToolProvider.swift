@@ -21,118 +21,59 @@ final class LanguageToolProvider: ProofingProvider {
     private var ignoredWords: Set<String> = []
     private(set) var connectionStatus: LTConnectionStatus = .disconnected
 
-    // MARK: - Deduplication State
-
-    // Tracks the request currently in flight (if any) and the most recently
-    // completed successful request, both keyed by `requestSignature(for:)`, so that
-    // `check(segments:)` can recognize "this is the exact same text and check
-    // settings as a request that's already running or just finished" and reuse it
-    // instead of firing a redundant HTTP call. See `check(segments:)` for the guard
-    // logic and `performNetworkCheck` for the actual network round-trip.
-    private var inFlightSignature: String?
-    private var inFlightTask: Task<CheckOutcome, Never>?
-    private var lastCompletedSignature: String?
-    private var lastCompletedResults: [SpellCheckService.SpellCheckResult]?
-
-    // Monotonically increasing counter, bumped every time a new network request is
-    // installed as "the" in-flight request AND every time `learnWord`/`ignoreWord`
-    // invalidate all dedup state (see `invalidateDedupState()`). Each fired request
-    // captures its own epoch at install time; when it resumes, it only touches the
-    // shared dedup state above if its captured epoch still matches the current one.
-    // Comparing `requestSignature` strings alone isn't enough for this: (1) an older,
-    // superseded request finishing late would otherwise unconditionally overwrite a
-    // newer request's already-cached result (or the fresh emptiness left by a
-    // learn/ignore invalidation) with its own stale one; (2) if content changes away
-    // from and back to an earlier signature while that earlier request is still in
-    // flight, the old request's completion would match the new request's signature by
-    // value and wrongly clear its in-flight bookkeeping (an ABA hazard) — letting a
-    // duplicate concurrent request for the same content slip through, which is exactly
-    // what this cache exists to prevent. The epoch makes "is this still the request
-    // that matters" an identity check instead of a value comparison.
-    private var checkEpoch = 0
-
-    private struct CheckOutcome: Sendable {
-        let results: [SpellCheckService.SpellCheckResult]
-        let succeeded: Bool
-    }
-
     // MARK: - ProofingProvider
 
     func check(segments: [SpellCheckService.TextSegment]) async -> [SpellCheckService.SpellCheckResult] {
         guard let baseURL = settings.mode.baseURL else { return [] }
         guard !segments.isEmpty else { return [] }
 
-        let signature = requestSignature(for: segments)
+        connectionStatus = .checking
 
-        // A check for this exact content+settings is already running — await it
-        // instead of firing a second HTTP request for the same thing. LanguageTool's
-        // server has been observed returning inconsistent results for near-simultaneous
-        // identical requests, so there's nothing to gain (and real risk) in asking twice.
-        // Deliberately does not touch `connectionStatus`: it's left at whatever it last
-        // resolved to (e.g. `.connected`) rather than getting stuck mid-check.
-        if signature == inFlightSignature, let task = inFlightTask {
-            DebugLog.log(.proofing, "[LT] dedup: identical check already in flight — awaiting it instead of re-requesting")
-            return await task.value.results
-        }
-
-        // Content + settings unchanged since the last completed check — reuse it.
-        // Same as above: `connectionStatus` is deliberately left untouched here too.
-        if signature == lastCompletedSignature, let cached = lastCompletedResults {
-            DebugLog.log(.proofing, "[LT] dedup: content+settings unchanged since last completed check — reusing cached results")
-            return cached
-        }
-
+        // Consolidate segments into a single text with offset map
         let (fullText, offsetMap) = consolidateSegments(segments)
-        let segmentCount = segments.count
-        checkEpoch += 1
-        let myEpoch = checkEpoch
-        let task = Task<CheckOutcome, Never> { [weak self] in
-            await self?.performNetworkCheck(
-                baseURL: baseURL, fullText: fullText, offsetMap: offsetMap, segmentCount: segmentCount
-            ) ?? CheckOutcome(results: [], succeeded: false)
+
+        let request = buildCheckRequest(baseURL: baseURL, fullText: fullText)
+        logRequestBoundary(fullText: fullText, segmentCount: segments.count)
+
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard !Task.isCancelled else { return [] }
+
+            guard let httpResponse = response as? HTTPURLResponse else {
+                connectionStatus = .disconnected
+                DebugLog.log(.proofing, "[LT] network: non-HTTP response")
+                return []
+            }
+
+            switch httpResponse.statusCode {
+            case 200:
+                connectionStatus = .connected
+            case 401, 403:
+                connectionStatus = .authError
+                DebugLog.log(.proofing, "[LT] network: auth error \(httpResponse.statusCode)")
+                return []
+            case 429:
+                connectionStatus = .rateLimited
+                DebugLog.log(.proofing, "[LT] network: rate limited")
+                return []
+            default:
+                connectionStatus = .disconnected
+                DebugLog.log(.proofing, "[LT] network: status \(httpResponse.statusCode)")
+                return []
+            }
+
+            let parsed = parseResponse(data: data, offsetMap: offsetMap)
+            logResponseBoundary(parsed: parsed)
+            return parsed.results
+        } catch {
+            guard !Task.isCancelled else { return [] }
+            connectionStatus = .disconnected
+            DebugLog.log(.proofing, "[LT] network error: \(error.localizedDescription)")
+            return []
         }
-        inFlightSignature = signature
-        inFlightTask = task
-
-        let outcome = await task.value
-
-        // Only touch the shared dedup state if no newer request — and no
-        // learn/ignore invalidation — has superseded this one while we were awaiting
-        // the network. Otherwise this stale completion would clobber a fresher
-        // in-flight/cached entry, or resurrect a just-invalidated cache. See the
-        // `checkEpoch` doc comment above for why signature equality alone isn't
-        // sufficient here.
-        guard myEpoch == checkEpoch else { return outcome.results }
-
-        inFlightSignature = nil
-        inFlightTask = nil
-        // Only cache a genuine success. A transient failure (rate limit, auth error,
-        // network blip, timeout) must NOT be cached — the next trigger for the same
-        // content should get a real retry, not a replay of the failure forever.
-        if outcome.succeeded {
-            lastCompletedSignature = signature
-            lastCompletedResults = outcome.results
-        } else {
-            lastCompletedSignature = nil
-            lastCompletedResults = nil
-        }
-        return outcome.results
     }
 
     func learnWord(_ word: String) {
-        // Invalidate all dedup state: `parseResponse` bakes `ignoredWords` filtering
-        // into its results, so without this the very next check — which both JS
-        // plugins fire immediately after learn/ignore, with unchanged text/settings —
-        // would replay results computed before this word was learned. Bumping
-        // `checkEpoch` makes any request still in flight at this moment a no-op on
-        // resume (it's left to complete on its own terms — not cancelled — but its
-        // result is discarded rather than cached). Clearing `inFlightSignature`/
-        // `inFlightTask` here too, not just the completed cache, matters just as much:
-        // without it, a new identical-signature check arriving right after this call
-        // would still match the *stale* in-flight task and simply await its
-        // already-in-progress (pre-invalidation) result instead of firing fresh.
-        invalidateDedupState()
-
         // Always add to macOS dictionary
         NSSpellChecker.shared.learnWord(word)
         ignoredWords.remove(word)
@@ -146,100 +87,105 @@ final class LanguageToolProvider: ProofingProvider {
     }
 
     func ignoreWord(_ word: String) {
-        // See learnWord(_:) above — same cache-invalidation reasoning applies here.
-        invalidateDedupState()
         ignoredWords.insert(word)
-    }
-
-    /// Clears all dedup tracking (in-flight *and* completed) and bumps `checkEpoch` so
-    /// any request already in flight becomes a no-op on resume instead of clobbering
-    /// whatever the next fresh check produces. Used by `learnWord`/`ignoreWord`, whose
-    /// effect on future results isn't captured by content+settings signature equality
-    /// alone.
-    private func invalidateDedupState() {
-        checkEpoch += 1
-        inFlightSignature = nil
-        inFlightTask = nil
-        lastCompletedSignature = nil
-        lastCompletedResults = nil
-    }
-
-    // MARK: - Network
-
-    /// Performs the actual LanguageTool HTTP round-trip. Extracted from
-    /// `check(segments:)` so the dedup logic there can track this work as a single
-    /// awaitable `Task` — letting duplicate callers await the one real network
-    /// round-trip instead of each starting (and racing) their own.
-    private func performNetworkCheck(
-        baseURL: URL,
-        fullText: String,
-        offsetMap: [SegmentMapping],
-        segmentCount: Int
-    ) async -> CheckOutcome {
-        connectionStatus = .checking
-
-        let request = buildCheckRequest(baseURL: baseURL, fullText: fullText)
-        logRequestBoundary(fullText: fullText, segmentCount: segmentCount)
-
-        do {
-            let (data, response) = try await URLSession.shared.data(for: request)
-            guard !Task.isCancelled else { return CheckOutcome(results: [], succeeded: false) }
-
-            guard let httpResponse = response as? HTTPURLResponse else {
-                connectionStatus = .disconnected
-                DebugLog.log(.proofing, "[LT] network: non-HTTP response")
-                return CheckOutcome(results: [], succeeded: false)
-            }
-
-            switch httpResponse.statusCode {
-            case 200:
-                connectionStatus = .connected
-            case 401, 403:
-                connectionStatus = .authError
-                DebugLog.log(.proofing, "[LT] network: auth error \(httpResponse.statusCode)")
-                return CheckOutcome(results: [], succeeded: false)
-            case 429:
-                connectionStatus = .rateLimited
-                DebugLog.log(.proofing, "[LT] network: rate limited")
-                return CheckOutcome(results: [], succeeded: false)
-            default:
-                connectionStatus = .disconnected
-                DebugLog.log(.proofing, "[LT] network: status \(httpResponse.statusCode)")
-                return CheckOutcome(results: [], succeeded: false)
-            }
-
-            let parsed = parseResponse(data: data, offsetMap: offsetMap)
-            logResponseBoundary(parsed: parsed)
-            return CheckOutcome(results: parsed.results, succeeded: true)
-        } catch {
-            guard !Task.isCancelled else { return CheckOutcome(results: [], succeeded: false) }
-            connectionStatus = .disconnected
-            DebugLog.log(.proofing, "[LT] network error: \(error.localizedDescription)")
-            return CheckOutcome(results: [], succeeded: false)
-        }
     }
 
     // MARK: - Segment Consolidation
 
-    private struct SegmentMapping {
+    struct SegmentMapping {
         let index: Int
         let fullTextOffset: Int
         let segment: SpellCheckService.TextSegment
     }
 
-    private func consolidateSegments(
+    private static let noSpaceBeforePunctuation: Set<Character> = [
+        ".", ",", ";", ":", "!", "?", ")", "]", "}"
+    ]
+
+    /// Normalizes segments before consolidation: when a segment starts with
+    /// punctuation that conventionally takes no preceding space, trims trailing
+    /// whitespace from the nearest preceding same-block segment with real content —
+    /// dropping any whitespace-only segments consumed along the way (artifacts of
+    /// extractSegments flushing on every skipped inline atom: citations, footnotes,
+    /// section breaks, annotations, hard breaks). This runs entirely on the
+    /// `[TextSegment]` array, before fullText/offsetMap construction, so the
+    /// existing single-pass consolidation loop and parseResponse's boundary check
+    /// need no changes: segment.text already reflects what will actually be written.
+    ///
+    /// Note: a trimmed segment's `to` position is intentionally left unchanged
+    /// (still reflects the original, untrimmed editor range) — nothing downstream
+    /// reads `to` for offset arithmetic (only `from` + a LanguageTool match's own
+    /// `length` are used), so this is safe, but keep it in mind if that changes.
+    func normalizeSegmentsForElisionSeams(
+        _ segments: [SpellCheckService.TextSegment]
+    ) -> [SpellCheckService.TextSegment] {
+        guard !segments.isEmpty else { return segments }
+        var result = segments
+
+        for i in 0..<result.count {
+            guard let firstChar = result[i].text.first,
+                  Self.noSpaceBeforePunctuation.contains(firstChar) else { continue }
+            var j = i - 1
+            // Require non-nil blockId equality here, matching consolidateSegments'
+            // own same-block test (`if let bid = segment.blockId, bid == lastBlockId`)
+            // where a nil blockId is always treated as a different block. Without
+            // this guard, two segments that both happen to have a nil blockId would
+            // be treated as "same block" here but not there — a latent
+            // inconsistency, even though in practice blockId is always populated
+            // from a real ProseMirror position on the JS side and never nil.
+            while j >= 0, let jBid = result[j].blockId, let iBid = result[i].blockId, jBid == iBid {
+                if result[j].text.allSatisfy(\.isWhitespace) {
+                    // Whitespace-only segment (e.g. from a skipped annotation/hard
+                    // break sandwiched between this seam and the previous real
+                    // content) — fully absorbed by the elision, drop it.
+                    if !result[j].text.isEmpty {
+                        result[j] = SpellCheckService.TextSegment(
+                            text: "", from: result[j].from, to: result[j].to, blockId: result[j].blockId)
+                    }
+                    j -= 1
+                    continue
+                }
+                // Found the nearest real content — trim its trailing whitespace and stop.
+                var text = result[j].text
+                while let last = text.last, last.isWhitespace {
+                    text.removeLast()
+                }
+                result[j] = SpellCheckService.TextSegment(
+                    text: text, from: result[j].from, to: result[j].to, blockId: result[j].blockId)
+                break
+            }
+        }
+
+        return result.filter { !$0.text.isEmpty }
+    }
+
+    func consolidateSegments(
         _ segments: [SpellCheckService.TextSegment]
     ) -> (String, [SegmentMapping]) {
+        let segments = normalizeSegmentsForElisionSeams(segments)
         var fullText = ""
         var offsetMap: [SegmentMapping] = []
         var lastBlockId: Int?
 
         for (i, segment) in segments.enumerated() {
             if !fullText.isEmpty {
-                // Same paragraph: join with space to preserve sentence context
-                // Different paragraph (or no blockId): join with paragraph break
                 if let bid = segment.blockId, bid == lastBlockId {
-                    fullText += " "
+                    // Same paragraph. If this segment starts with no-preceding-space
+                    // punctuation, normalization above already stripped the
+                    // preceding segment's trailing whitespace, so no joiner is
+                    // needed (and none should be added, or the artifact would come
+                    // right back). Otherwise, only insert a joiner space if neither
+                    // side already has whitespace at the seam, to avoid
+                    // concatenating two real words into a bogus token.
+                    let nextStartsWithNoSpacePunctuation = segment.text.first
+                        .map { Self.noSpaceBeforePunctuation.contains($0) } ?? false
+                    if !nextStartsWithNoSpacePunctuation {
+                        let prevEndsWithWhitespace = fullText.last?.isWhitespace ?? false
+                        let nextStartsWithWhitespace = segment.text.first?.isWhitespace ?? false
+                        if !prevEndsWithWhitespace && !nextStartsWithWhitespace {
+                            fullText += " "
+                        }
+                    }
                 } else {
                     fullText += "\n\n"
                 }
@@ -265,7 +211,6 @@ final class LanguageToolProvider: ProofingProvider {
         var droppedBoundary: Int = 0
         var droppedIgnored: Int = 0
         var droppedNonLatin: Int = 0
-        var rawOffsetsDiag: [String] = []
     }
 
     struct ParsedResponse {
@@ -273,7 +218,7 @@ final class LanguageToolProvider: ProofingProvider {
         let diagnostics: ParseDiagnostics
     }
 
-    private func parseResponse(
+    func parseResponse(
         data: Data,
         offsetMap: [SegmentMapping]
     ) -> ParsedResponse {
@@ -285,7 +230,6 @@ final class LanguageToolProvider: ProofingProvider {
         var results: [SpellCheckService.SpellCheckResult] = []
         var diag = ParseDiagnostics()
         diag.rawMatches = matches.count
-        var rawOffsets: [String] = []
 
         for match in matches {
             guard let offset = match["offset"] as? Int,
@@ -293,7 +237,6 @@ final class LanguageToolProvider: ProofingProvider {
                 diag.droppedMissingFields += 1
                 continue
             }
-            rawOffsets.append("\(offset)")
             if length <= 0 {
                 diag.droppedZeroLength += 1
                 continue
@@ -357,7 +300,6 @@ final class LanguageToolProvider: ProofingProvider {
                 ruleId: ruleId, isPicky: isPicky))
         }
 
-        diag.rawOffsetsDiag = rawOffsets
         return ParsedResponse(results: results, diagnostics: diag)
     }
 
@@ -407,10 +349,9 @@ final class LanguageToolProvider: ProofingProvider {
 
     private func buildCheckRequest(baseURL: URL, fullText: String) -> URLRequest {
         let url = baseURL.appendingPathComponent("v2/check")
-        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalAndRemoteCacheData, timeoutInterval: 10)
+        var request = URLRequest(url: url, timeoutInterval: 10)
         request.httpMethod = "POST"
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
-        request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
 
         var params: [String] = [
             "text=\(urlEncode(fullText))",
@@ -432,37 +373,6 @@ final class LanguageToolProvider: ProofingProvider {
         }
         request.httpBody = params.joined(separator: "&").data(using: .utf8)
         return request
-    }
-
-    // MARK: - Request Signature
-
-    /// Builds a cache/in-flight key that identifies "this exact document content
-    /// checked with this exact set of parameters." Includes each segment's
-    /// `from`/`to`/`blockId` (not just its `text`) because position matters: the same
-    /// text could come from structurally different segments (e.g. a paragraph split
-    /// elsewhere), and reusing a cached result in that case would place underlines at
-    /// the wrong offsets. Also includes every check parameter that affects the actual
-    /// LT request, so a real settings change (language, picky mode, disabled rules) is
-    /// never mistaken for a duplicate. `disabledRules` is sorted first since its order
-    /// doesn't affect the request's meaning.
-    private func requestSignature(for segments: [SpellCheckService.TextSegment]) -> String {
-        let fieldSeparator = "\u{0}"
-        let segmentSeparator = "\u{1}"
-
-        var parts: [String] = segments.map { segment in
-            [
-                String(segment.from),
-                String(segment.to),
-                segment.blockId.map(String.init) ?? "nil",
-                segment.text
-            ].joined(separator: fieldSeparator)
-        }
-        parts.append(settings.mode.rawValue)
-        parts.append(String(settings.pickyMode))
-        parts.append(settings.language)
-        parts.append(settings.disabledRules.sorted().joined(separator: fieldSeparator))
-
-        return parts.joined(separator: segmentSeparator)
     }
 
     // MARK: - Diagnostic Logging
@@ -498,9 +408,6 @@ final class LanguageToolProvider: ProofingProvider {
         DebugLog.log(.proofing,
             "[LT] byType (pre-dispatcher-filter): spelling=\(counts.spelling) " +
             "grammar=\(counts.grammar) style=\(counts.style)")
-        let positions = parsed.results.map { "\($0.from)-\($0.to):\($0.type)" }.joined(separator: ", ")
-        DebugLog.log(.proofing, "[LT] DIAG kept positions (editor coords): [\(positions)]")
-        DebugLog.log(.proofing, "[LT] DIAG raw offsets (LT's own text coords): [\(diag.rawOffsetsDiag.joined(separator: ", "))]")
     }
 
     // MARK: - Cloud Dictionary Sync
@@ -540,20 +447,7 @@ final class LanguageToolProvider: ProofingProvider {
         return false
     }
 
-    /// Encodes a single `application/x-www-form-urlencoded` field value. `.urlQueryAllowed`
-    /// is the wrong character set for this: it leaves `&`, `+`, and `=` unescaped (they're
-    /// valid inside a URL query component as a whole), but those are exactly the delimiter
-    /// characters that separate fields within a form-urlencoded body — a literal `&` in a
-    /// value (e.g. an ampersand in document prose) silently truncates that field, and
-    /// everything after it in the body is misparsed as bogus/ignored parameters, with no
-    /// error surfaced anywhere. Only percent-encode-exempt RFC 3986 "unreserved" characters
-    /// (letters, digits, `-._~`) may pass through unescaped; everything else — including the
-    /// delimiters — must be escaped.
-    private static let formFieldSafeCharacters = CharacterSet(
-        charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~"
-    )
-
     private func urlEncode(_ string: String) -> String {
-        string.addingPercentEncoding(withAllowedCharacters: Self.formFieldSafeCharacters) ?? string
+        string.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? string
     }
 }
