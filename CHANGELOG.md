@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.109] - 2026-07-11
+
 ### Added
 
 - **Smart quotes** — straight quotes now curl into matching "curly" pairs as you type, in both the visual and source editors, and a pair can no longer end up mismatched (an opening quote without its closing match, or vice versa). A new toggle in the Edit menu, and a matching button in the status bar, lets you turn this off if you prefer straight quotes. The setting is now remembered correctly even when you switch between the two editing modes.
