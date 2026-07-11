@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.110] - 2026-07-11
+
 ### Fixed
 
 - **Selecting text underlined by LanguageTool was nearly impossible** — clicking or dragging across a flagged word or phrase to select it would instead pop open the suggestion popover, which blocked the selection and kept reappearing even after you tried to dismiss it. Clicking and dragging across flagged text now selects it normally, and the popover closes on its own once you move the cursor away instead of getting in the way.
