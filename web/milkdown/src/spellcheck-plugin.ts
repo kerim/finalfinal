@@ -7,7 +7,7 @@
 
 import { editorViewCtx } from '@milkdown/kit/core';
 import type { Node } from '@milkdown/kit/prose/model';
-import { Plugin, PluginKey } from '@milkdown/kit/prose/state';
+import { Plugin, PluginKey, type Transaction } from '@milkdown/kit/prose/state';
 import { Decoration, DecorationSet, type EditorView } from '@milkdown/kit/prose/view';
 import { $prose } from '@milkdown/kit/utils';
 import { getEditorInstance } from './editor-state';
@@ -16,7 +16,7 @@ import { dismissPopover, showProofingPopover } from './spellcheck-popover';
 
 // --- Module state ---
 
-interface SpellcheckResult {
+export interface SpellcheckResult {
   from: number;
   to: number;
   word: string;
@@ -98,6 +98,56 @@ function mapResults(
   return results
     .map((r) => ({ ...r, from: mapping.map(r.from, 1), to: mapping.map(r.to, -1) }))
     .filter((r) => r.from < r.to);
+}
+
+/**
+ * Compute the ranges of the pre-transaction document that a transaction's steps touched
+ * (inserted into, deleted from, or replaced), in the same coordinate space as `spellcheckResults`
+ * before the transaction is applied. Each step's StepMap reports its touched range in the
+ * coordinate space just before that step; for steps after the first we map that range back
+ * through the (inverted) preceding steps to land in the original, pre-transaction doc.
+ */
+function getChangedRangesInOldDoc(tr: Transaction): { from: number; to: number }[] {
+  const ranges: { from: number; to: number }[] = [];
+  const maps = tr.mapping.maps;
+  for (let i = 0; i < maps.length; i++) {
+    maps[i].forEach((oldStart, oldEnd) => {
+      let from = oldStart;
+      let to = oldEnd;
+      for (let j = i - 1; j >= 0; j--) {
+        from = maps[j].invert().map(from, -1);
+        to = maps[j].invert().map(to, 1);
+      }
+      ranges.push({ from, to });
+    });
+  }
+  return ranges;
+}
+
+/**
+ * Does a changed range "touch" a result's range? Interior overlap always counts. A zero-width
+ * change (a pure insertion, no deletion) also counts if it lands exactly on either boundary —
+ * e.g. typing a missing letter right after "runnin" to fix "running", or right before a word —
+ * so the underline clears on that same keystroke instead of surviving until the async re-check.
+ */
+function touchesResult(range: { from: number; to: number }, result: { from: number; to: number }): boolean {
+  if (range.from === range.to) {
+    return result.from <= range.from && range.from <= result.to;
+  }
+  return range.from < result.to && result.from < range.to;
+}
+
+/**
+ * Reconcile existing spellcheck results against a document-changing transaction: drop any
+ * result whose range was touched by the edit (so its underline clears immediately instead of
+ * lingering until the async LanguageTool re-check responds), then remap the survivors'
+ * positions through the transaction.
+ */
+export function reconcileResultsAfterEdit(results: SpellcheckResult[], tr: Transaction): SpellcheckResult[] {
+  const touchedRanges = getChangedRangesInOldDoc(tr);
+  const survivors =
+    touchedRanges.length === 0 ? results : results.filter((r) => !touchedRanges.some((t) => touchesResult(t, r)));
+  return mapResults(survivors, tr.mapping);
 }
 
 // --- Text extraction ---
@@ -381,8 +431,8 @@ export const spellcheckPlugin = $prose(() => {
           return buildDecorationSet(newResults, tr.doc);
         }
         if (tr.docChanged) {
-          spellcheckResults = mapResults(spellcheckResults, tr.mapping);
-          return decorationSet.map(tr.mapping, tr.doc);
+          spellcheckResults = reconcileResultsAfterEdit(spellcheckResults, tr);
+          return buildDecorationSet(spellcheckResults, tr.doc);
         }
         return decorationSet;
       },
