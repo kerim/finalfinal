@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Selecting text underlined by LanguageTool was nearly impossible** — clicking or dragging across a flagged word or phrase to select it would instead pop open the suggestion popover, which blocked the selection and kept reappearing even after you tried to dismiss it. Clicking and dragging across flagged text now selects it normally, and the popover closes on its own once you move the cursor away instead of getting in the way.
+- **Grammar and style checking could silently stop partway through a document** — if a document contained a `&`, `+`, or `=` character anywhere in the text (for example, a journal name like "Context & Media"), LanguageTool would only ever check the text up to that character, with nothing checked after it and no indication anything was wrong. Also fixed: re-checking the same unchanged text more than once in a row, which could occasionally cause LanguageTool to return inconsistent results. Grammar and style checking now reliably covers the whole document.
+- **Fixing a flagged spelling or grammar mistake left its underline on screen for a moment** — the underline used to stick around until the next background check caught up, even right after you'd corrected the word. It now clears the instant you edit it.
+- **LanguageTool sometimes flagged the space right before a citation as an error** — for example, `schooling [@key].` could get flagged for the space before the citation, even though it was typed correctly. Fixed at the source instead of filtering out the false alarm afterward.
+
 ## [0.2.109] - 2026-07-11
 
 ### Added
