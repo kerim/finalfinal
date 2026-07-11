@@ -317,7 +317,6 @@ struct MilkdownEditor: NSViewRepresentable {
         var refreshAllCitationsObserver: NSObjectProtocol?
         var editorModeObserver: NSObjectProtocol?
         var spellcheckStateObserver: NSObjectProtocol?
-        var smartQuotesStateObserver: NSObjectProtocol?
         var proofingModeObserver: NSObjectProtocol?
         var proofingSettingsObserver: NSObjectProtocol?
         var footnoteDefsObserver: NSObjectProtocol?
@@ -474,17 +473,6 @@ struct MilkdownEditor: NSViewRepresentable {
             ) { [weak self] notification in
                 if let enabled = notification.userInfo?["enabled"] as? Bool {
                     self?.setSpellcheck(enabled)
-                }
-            }
-
-            // Subscribe to smart quotes toggle
-            smartQuotesStateObserver = NotificationCenter.default.addObserver(
-                forName: .smartQuotesStateChanged,
-                object: nil,
-                queue: .main
-            ) { [weak self] notification in
-                if let enabled = notification.userInfo?["enabled"] as? Bool {
-                    self?.setSmartQuotes(enabled)
                 }
             }
 
@@ -677,9 +665,6 @@ struct MilkdownEditor: NSViewRepresentable {
                 NotificationCenter.default.removeObserver(observer)
             }
             if let observer = spellcheckStateObserver {
-                NotificationCenter.default.removeObserver(observer)
-            }
-            if let observer = smartQuotesStateObserver {
                 NotificationCenter.default.removeObserver(observer)
             }
             if let observer = proofingModeObserver {

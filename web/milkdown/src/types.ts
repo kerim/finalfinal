@@ -42,16 +42,6 @@ export interface ImageBlockMeta {
   alt?: string | null;
 }
 
-/** Per-id ground-truth metadata for setBlockIdsForTopLevel's optional alignment check.
- * blockType: Swift BlockType.rawValue (e.g. "paragraph", "image").
- * nonEmpty: whether the DB's ground-truth text for this block is non-blank, where
- * blankness is defined identically on both sides as `text.trim() === ''` — keep this
- * definition in lockstep with BlockParser.alignmentPairs on the Swift side. */
-export interface ExpectedBlockMeta {
-  blockType: string;
-  nonEmpty: boolean;
-}
-
 // Search match position
 export interface SearchMatch {
   from: number;
@@ -155,17 +145,11 @@ declare global {
       getBlockChanges: () => BlockChanges;
       applyBlocks: (blocks: Block[]) => void;
       confirmBlockIds: (mapping: Record<string, string>) => void;
-      syncBlockIds: (orderedIds: string[], zoomMode: boolean, expected?: ExpectedBlockMeta[]) => void;
+      syncBlockIds: (orderedIds: string[], zoomMode: boolean) => void;
       setContentWithBlockIds: (
         markdown: string,
         blockIds: string[],
-        options?: {
-          scrollToStart?: boolean;
-          imageMeta?: ImageBlockMeta[];
-          cursorBoundary?: number;
-          detectPausedEdits?: boolean;
-          expected?: ExpectedBlockMeta[];
-        }
+        options?: { scrollToStart?: boolean; imageMeta?: ImageBlockMeta[] }
       ) => void;
       scrollToBlock: (blockId: string) => void;
       getBlockAtCursor: () => { blockId: string; offset: number } | null;
@@ -194,9 +178,6 @@ declare global {
       enableSpellcheck: () => void;
       disableSpellcheck: () => void;
       triggerSpellcheck: () => void;
-      // Smart quotes API
-      enableSmartQuotes: () => void;
-      disableSmartQuotes: () => void;
       // Footnote API
       setFootnoteDefinitions: (defs: Record<string, string>) => void;
       insertFootnote: (atPosition?: number) => string | null;

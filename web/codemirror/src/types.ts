@@ -98,9 +98,6 @@ declare global {
       enableSpellcheck: () => void;
       disableSpellcheck: () => void;
       triggerSpellcheck: () => void;
-      // Smart quotes API
-      enableSmartQuotes: () => void;
-      disableSmartQuotes: () => void;
       // Footnote API
       setFootnoteDefinitions: (defs: Record<string, string>) => void;
       insertFootnote: (atPosition?: number) => string | null;

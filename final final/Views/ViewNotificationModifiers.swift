@@ -69,20 +69,11 @@ extension View {
                 // Push initial spellcheck state to editors on launch
                 // (JS defaults to enabled, but UserDefaults may have it disabled)
                 let anyEnabled = editorState.isSpellingEnabled || editorState.isGrammarEnabled
-                // Push initial smart quotes state to editors on launch, same reasoning
-                // (JS defaults to enabled, but UserDefaults may have it disabled)
-                let smartQuotesEnabled = UserDefaults.standard.object(forKey: "isSmartQuotesEnabled") == nil
-                    ? true : UserDefaults.standard.bool(forKey: "isSmartQuotesEnabled")
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
                     NotificationCenter.default.post(
                         name: .spellcheckStateChanged,
                         object: nil,
                         userInfo: ["enabled": anyEnabled]
-                    )
-                    NotificationCenter.default.post(
-                        name: .smartQuotesStateChanged,
-                        object: nil,
-                        userInfo: ["enabled": smartQuotesEnabled]
                     )
                 }
             }

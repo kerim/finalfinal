@@ -311,21 +311,53 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return
         }
         DebugLog.always("[FINDER-OPEN] URL: \(url.path)")
-        DebugLog.always("[FINDER-OPEN] hasOpenProject=\(DocumentManager.shared.hasOpenProject)")
+        DebugLog.always(
+            "[FINDER-OPEN] hasOpenProject=\(DocumentManager.shared.hasOpenProject) "
+                + "hasCompletedInitialOpen=\(DocumentManager.shared.hasCompletedInitialOpen)"
+        )
+
+        // AppKit spawns an extra WindowGroup window for this event before this method even
+        // runs (see closeSpuriousFinderOpenWindows doc comment) — clean it up regardless of
+        // which branch below fires. No-ops safely if mainWindow isn't captured yet.
+        closeSpuriousFinderOpenWindows()
 
         // If app is still launching (no project open yet), stash URL for
         // determineInitialState() to consume — avoids race where
         // restoreLastProject() overwrites Finder intent.
-        if !DocumentManager.shared.hasOpenProject {
+        if !DocumentManager.shared.hasCompletedInitialOpen {
             DebugLog.always("[FINDER-OPEN] Stashing URL for launch (no project open yet)")
             finderOpenURL = url
             return
         }
 
-        // App already running — flush pending editor content, then open
+        if !DocumentManager.shared.hasOpenProject {
+            // Launch already completed and no project is open (picker showing) —
+            // open directly. There's no editor content to flush.
+            DebugLog.always("[FINDER-OPEN] App running with no project open, opening directly")
+            openProjectFromFinder(at: url)
+            return
+        }
+
+        // App already running with a project open — flush pending editor content, then open
         DebugLog.always("[FINDER-OPEN] App running with project, flushing and opening")
         editorState?.flushContentToDatabase()
         openProjectFromFinder(at: url)
+    }
+
+    /// Closes the extra window AppKit spawns for every Finder/`open(1)`-delivered "open documents"
+    /// event on this app. Root cause (confirmed via targeted window-count instrumentation): declaring
+    /// `.ff` as an "Editor"-role `CFBundleDocumentTypes` entry, combined with using a plain
+    /// `WindowGroup` (not `DocumentGroup`), makes AppKit create a brand-new WindowGroup window scene
+    /// for every incoming open-document Apple Event *before* `application(_:open:)` even runs —
+    /// entirely independent of this method's own single-window state handling via `mainWindow`.
+    /// Same cleanup pattern already used above for macOS-restored "version-history" windows.
+    private func closeSpuriousFinderOpenWindows() {
+        guard let mainWindow else { return }
+        for window in NSApp.windows where window !== mainWindow
+            && window.identifier?.rawValue.contains("AppWindow") == true {
+            DebugLog.always("[FINDER-OPEN] Closing spurious duplicate window: id=\(window.identifier?.rawValue ?? "nil")")
+            window.close()
+        }
     }
 
     func application(_ sender: NSApplication, openFile filename: String) -> Bool {

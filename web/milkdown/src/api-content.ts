@@ -44,7 +44,7 @@ import { clearSearch } from './find-replace';
 import { consumePendingDropPos } from './image-plugin';
 import { isSourceModeEnabled } from './source-mode-plugin';
 import { syncLog } from './sync-debug';
-import type { Block, ExpectedBlockMeta, ImageBlockMeta } from './types';
+import type { Block, ImageBlockMeta } from './types';
 
 /** Re-snapshot in the next animation frame, then unpause sync.
  *  Ensures normalization transactions are absorbed before change detection resumes.
@@ -403,14 +403,7 @@ export function applyBlocks(blocks: Block[]): void {
       // (consecutive same-type list blocks map to a single PM list node).
       clearBlockIds();
       const blockIds = nonEmptyBlocks.map((b) => b.id);
-      // NOTE: as of this writing, no Swift call site invokes window.FinalFinal.applyBlocks
-      // (verified via repo-wide grep) — likely superseded by setContentWithBlockIds. Hardened
-      // here anyway for uniformity/future-proofing; zero live-path risk either way.
-      const expected: ExpectedBlockMeta[] = nonEmptyBlocks.map((b) => ({
-        blockType: b.blockType,
-        nonEmpty: b.textContent.trim().length > 0,
-      }));
-      setBlockIdsForTopLevel(blockIds, view.state.doc, expected);
+      setBlockIdsForTopLevel(blockIds, view.state.doc);
 
       // Inject image metadata (caption, width) from block data into figure nodes
       // MUST use nonEmptyBlocks to keep positional figure matching aligned
@@ -450,7 +443,6 @@ export function setContentWithBlockIds(
     imageMeta?: ImageBlockMeta[];
     cursorBoundary?: number;
     detectPausedEdits?: boolean;
-    expected?: ExpectedBlockMeta[];
   }
 ): void {
   clearContentPushTimer(); // Cancel stale timers before document replacement
@@ -566,7 +558,7 @@ export function setContentWithBlockIds(
       // Clear stale IDs, assign real ones, snapshot — all within syncPaused
       clearBlockIds();
       if (blockIds.length > 0) {
-        setBlockIdsForTopLevel(blockIds, view.state.doc, options?.expected);
+        setBlockIdsForTopLevel(blockIds, view.state.doc);
       }
 
       // Inject image metadata (width, caption, blockId) into figure nodes
@@ -686,7 +678,7 @@ export function confirmBlockIdsApi(mapping: Record<string, string>): void {
   // No empty transaction needed — IDs updated synchronously in maps
 }
 
-export function syncBlockIds(orderedIds: string[], zoomMode: boolean, expected?: ExpectedBlockMeta[]): void {
+export function syncBlockIds(orderedIds: string[], zoomMode: boolean): void {
   const editorInstance = getEditorInstance();
   if (!editorInstance) return;
   const view = editorInstance.ctx.get(editorViewCtx);
@@ -700,7 +692,7 @@ export function syncBlockIds(orderedIds: string[], zoomMode: boolean, expected?:
     );
   }
   setBlockIdZoomMode(zoomMode); // Set zoom mode based on caller context
-  setBlockIdsForTopLevel(orderedIds, view.state.doc, expected);
+  setBlockIdsForTopLevel(orderedIds, view.state.doc);
   resetAndSnapshot(view.state.doc);
 }
 

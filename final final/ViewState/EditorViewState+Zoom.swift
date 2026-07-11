@@ -137,9 +137,7 @@ extension EditorViewState {
             let zoomedImageMeta = zoomedBlocks
                 .filter { $0.blockType == .image }
                 .map { ContentView.ImageBlockMeta(id: $0.id, width: $0.imageWidth, caption: $0.imageCaption, alt: $0.imageAlt, src: $0.imageSrc) }
-            let zoomedPairs = BlockParser.alignmentPairs(zoomedBlocks)
-            let zoomedBlockIds = zoomedPairs.map { $0.id }
-            let zoomedExpectedBlocks = zoomedPairs.map { $0.meta }
+            let zoomedBlockIds = BlockParser.idsForProseMirrorAlignment(zoomedBlocks)
 
             var zoomedContent = BlockParser.assembleMarkdown(from: zoomedBlocks)
 
@@ -184,8 +182,7 @@ extension EditorViewState {
             isResettingContent = true
             await blockSyncService?.setContentWithBlockIds(
                 markdown: zoomedContent, blockIds: zoomedBlockIds,
-                scrollToStart: true, imageMeta: zoomedImageMeta,
-                expectedBlocks: zoomedExpectedBlocks)
+                scrollToStart: true, imageMeta: zoomedImageMeta)
             content = zoomedContent
             pendingImageMeta = zoomedImageMeta
             isResettingContent = false
@@ -275,9 +272,7 @@ extension EditorViewState {
             let allImageMeta = allBlocks
                 .filter { $0.blockType == .image }
                 .map { ContentView.ImageBlockMeta(id: $0.id, width: $0.imageWidth, caption: $0.imageCaption, alt: $0.imageAlt, src: $0.imageSrc) }
-            let allPairs = BlockParser.alignmentPairs(allBlocks)
-            let allBlockIds = allPairs.map { $0.id }
-            let allExpectedBlocks = allPairs.map { $0.meta }
+            let allBlockIds = BlockParser.idsForProseMirrorAlignment(allBlocks)
 
             // Clear zoom footnote state BEFORE pushing full document content
             NotificationCenter.default.post(
@@ -292,7 +287,7 @@ extension EditorViewState {
             isResettingContent = true
             await blockSyncService?.setContentWithBlockIds(
                 markdown: mergedContent, blockIds: allBlockIds,
-                imageMeta: allImageMeta, expectedBlocks: allExpectedBlocks)
+                imageMeta: allImageMeta)
             content = mergedContent
             pendingImageMeta = allImageMeta
             isResettingContent = false
