@@ -44,14 +44,31 @@ let resultsVersion = 0;
 
 // --- API exports ---
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const diagLog = (...args: unknown[]) => {
+  const msg = '[LT-DIAG:codemirror] ' + args.map((a) => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ');
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const handler = (window as any).webkit?.messageHandlers?.errorHandler;
+  if (handler?.postMessage) handler.postMessage({ type: 'debug', message: msg });
+  else console.log(msg);
+};
+
 export function setSpellcheckResults(requestId: number, results: SpellcheckResult[]): void {
-  if (requestId !== currentRequestId) return;
+  if (requestId !== currentRequestId) {
+    diagLog(
+      `DISCARDED stale results: incoming requestId=${requestId} currentRequestId=${currentRequestId} resultsCount=${results.length}`
+    );
+    return;
+  }
   spellcheckResults = results;
   resultsVersion++;
+  diagLog(`ACCEPTED requestId=${requestId} resultsCount=${results.length}`);
 
   const view = getEditorView();
   if (view) {
     view.dispatch({});
+  } else {
+    diagLog('DISCARDED: no editor view available');
   }
 }
 
@@ -322,6 +339,12 @@ export function reconcileResultsAfterEdit(results: SpellcheckResult[], changes: 
   });
   const survivors =
     touchedRanges.length === 0 ? results : results.filter((r) => !touchedRanges.some((t) => touchesResult(t, r)));
+  if (results.length !== survivors.length) {
+    diagLog(
+      `RECONCILE dropped ${results.length - survivors.length}/${results.length} results | ` +
+        `touchedRanges=${JSON.stringify(touchedRanges)}`
+    );
+  }
   return mapResultPositions(survivors, changes);
 }
 

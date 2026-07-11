@@ -523,11 +523,21 @@ extension CodeMirrorEditor.Coordinator {
                         guard !Task.isCancelled else { return }
                         let encoder = JSONEncoder()
                         guard let data = try? encoder.encode(results),
-                              let json = String(data: data, encoding: .utf8) else { return }
+                              let json = String(data: data, encoding: .utf8) else {
+                            DebugLog.log(.proofing, "[LT] DIAG delivery(CM): JSON encode FAILED for \(results.count) results, requestId=\(requestId)")
+                            return
+                        }
                         let escaped = json.escapedForJSTemplateLiteral
+                        DebugLog.log(.proofing, "[LT] DIAG delivery(CM): sending requestId=\(requestId) results=\(results.count) jsonBytes=\(data.count)")
                         self.webView?.evaluateJavaScript(
                             "window.FinalFinal.setSpellcheckResults(\(requestId), JSON.parse(`\(escaped)`))"
-                        ) { _, _ in }
+                        ) { _, error in
+                            if let error {
+                                DebugLog.log(.proofing, "[LT] DIAG delivery(CM): evaluateJavaScript FAILED requestId=\(requestId) error=\(error)")
+                            } else {
+                                DebugLog.log(.proofing, "[LT] DIAG delivery(CM): evaluateJavaScript OK requestId=\(requestId)")
+                            }
+                        }
                     }
 
                 case "learn":

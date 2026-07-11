@@ -37,14 +37,35 @@ export const spellcheckPluginKey = new PluginKey('spellcheck-decorations');
 
 // --- API exports ---
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const diagLog = (...args: unknown[]) => {
+  const msg = '[LT-DIAG:milkdown] ' + args.map((a) => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ');
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const handler = (window as any).webkit?.messageHandlers?.errorHandler;
+  if (handler?.postMessage) handler.postMessage({ type: 'debug', message: msg });
+  else console.log(msg);
+};
+
 export function setSpellcheckResults(requestId: number, results: SpellcheckResult[]): void {
-  if (requestId !== currentRequestId) return; // Discard stale results
+  if (requestId !== currentRequestId) {
+    diagLog(
+      `DISCARDED stale results: incoming requestId=${requestId} currentRequestId=${currentRequestId} resultsCount=${results.length}`
+    );
+    return; // Discard stale results
+  }
   spellcheckResults = results;
+  diagLog(`ACCEPTED requestId=${requestId} resultsCount=${results.length}`);
 
   const editor = getEditorInstance();
   if (editor) {
     const view = editor.ctx.get(editorViewCtx);
+    const before = buildDecorationSet(results, view.state.doc);
+    diagLog(
+      `buildDecorationSet produced ${before.find().length} decorations from ${results.length} results, docSize=${view.state.doc.content.size}`
+    );
     view.dispatch(view.state.tr.setMeta(spellcheckPluginKey, results));
+  } else {
+    diagLog('DISCARDED: no editor instance available');
   }
 }
 
@@ -147,6 +168,13 @@ export function reconcileResultsAfterEdit(results: SpellcheckResult[], tr: Trans
   const touchedRanges = getChangedRangesInOldDoc(tr);
   const survivors =
     touchedRanges.length === 0 ? results : results.filter((r) => !touchedRanges.some((t) => touchesResult(t, r)));
+  const isSyncOrigin = tr.getMeta('addToHistory') === false;
+  if (results.length !== survivors.length) {
+    diagLog(
+      `RECONCILE dropped ${results.length - survivors.length}/${results.length} results | ` +
+        `syncOrigin=${isSyncOrigin} touchedRanges=${JSON.stringify(touchedRanges)} steps=${tr.steps.length}`
+    );
+  }
   return mapResults(survivors, tr.mapping);
 }
 
