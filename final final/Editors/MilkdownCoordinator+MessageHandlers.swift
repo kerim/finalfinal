@@ -28,6 +28,7 @@ extension MilkdownEditor.Coordinator {
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         isEditorReady = true
+        applyPersistedToggleStates()
         batchInitialize()
         startPolling()
 
@@ -54,6 +55,7 @@ extension MilkdownEditor.Coordinator {
     /// Called when using a preloaded WebView (navigation already finished)
     func handlePreloadedView() {
         isEditorReady = true
+        applyPersistedToggleStates()
         batchInitialize()
         startPolling()
         pushCachedCitationLibrary()

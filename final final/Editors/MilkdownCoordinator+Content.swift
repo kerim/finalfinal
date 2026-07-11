@@ -432,6 +432,26 @@ extension MilkdownEditor.Coordinator {
         webView.evaluateJavaScript("window.FinalFinal.triggerSpellcheck()") { _, _ in }
     }
 
+    func setSmartQuotes(_ enabled: Bool) {
+        guard isEditorReady, let webView else { return }
+        let fn = enabled ? "enableSmartQuotes" : "disableSmartQuotes"
+        webView.evaluateJavaScript("window.FinalFinal.\(fn)()") { _, _ in }
+    }
+
+    /// Applies the persisted spellcheck/smart-quotes toggle state to this editor instance.
+    /// Each fresh WKWebView (new load, or a preloaded instance just claimed from
+    /// EditorPreloader) starts its JS module state at the default (enabled), independent
+    /// of whatever the Edit menu currently shows. The one-shot app-launch notification only
+    /// reaches whichever coordinator happens to exist at that moment — every editor created
+    /// later (e.g. every WYSIWYG/Source mode switch creates a fresh Coordinator+WKWebView)
+    /// never received it. Call this whenever isEditorReady flips true, not just on launch.
+    func applyPersistedToggleStates() {
+        let spellingOn = UserDefaults.standard.bool(forKey: "isSpellingEnabled", defaultingTo: true)
+        let grammarOn = UserDefaults.standard.bool(forKey: "isGrammarEnabled", defaultingTo: true)
+        setSpellcheck(spellingOn || grammarOn)
+        setSmartQuotes(UserDefaults.standard.bool(forKey: "isSmartQuotesEnabled", defaultingTo: true))
+    }
+
     func setTheme(_ cssVariables: String) {
         guard isEditorReady, let webView else { return }
         let escaped = cssVariables.escapedForJSTemplateLiteral

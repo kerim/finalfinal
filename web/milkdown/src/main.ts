@@ -92,7 +92,7 @@ import {
 } from './api-modes';
 import { autolinkPlugin } from './autolink-plugin';
 import { bibliographyPlugin } from './bibliography-plugin';
-import { blockIdPlugin, getAllBlockIds } from './block-id-plugin';
+import { blockIdPlugin } from './block-id-plugin';
 import { blockSyncPlugin } from './block-sync-plugin';
 import { openCAYWPicker } from './cayw';
 import { citationPlugin } from './citation-plugin';
@@ -131,6 +131,15 @@ import { sectionBreakPlugin } from './section-break-plugin';
 import { selectionStatsPlugin } from './selection-stats-plugin';
 import { selectionToolbarPlugin } from './selection-toolbar-plugin';
 import { configureSlash, slash } from './slash-commands';
+import {
+  disableSmartQuotes as disableSmartQuotesImpl,
+  enableSmartQuotes as enableSmartQuotesImpl,
+  isNativeQuoteSubstitution,
+  isSmartQuotesEnabled,
+  plainEquivalentOf,
+  runSmartQuoteInputRules,
+  smartQuotesPlugin,
+} from './smart-quotes-plugin';
 import { isSourceModeEnabled, sourceModePlugin } from './source-mode-plugin';
 import {
   disableSpellcheck as disableSpellcheckImpl,
@@ -212,6 +221,7 @@ async function initEditor() {
       })
       .use(autolinkPlugin) // Auto-link bare URLs on space - AFTER commonmark for link schema
       .use(markdownLinkPlugin) // Convert [text](url) to link mark on ) keypress - AFTER commonmark for link schema
+      .use(smartQuotesPlugin) // Context-aware curly quote conversion (balanced open/close)
       .use(highlightPlugin) // ==highlight== syntax - AFTER commonmark for serialization
       .use(history)
       .use(tablePastePlugin) // Intercept TSV/HTML table paste before clipboard plugin
@@ -315,6 +325,69 @@ async function initEditor() {
       // Get the replacement text from the event
       const replacement = e.dataTransfer?.getData('text/plain') || e.data || '';
       if (!replacement) return;
+
+      if (isNativeQuoteSubstitution(replacement)) {
+        // WebKit's own quote-curling attempt (see smart-quotes-fix plan). Our own
+        // smartQuotesPlugin already owns quote-curling; WebKit's attempt is discarded
+        // unconditionally here — whether the toggle is on (its own InputRule already
+        // produced the correct result via the ordinary typing path, so WebKit's
+        // replacement is redundant/stale) or off (WebKit's attempt must simply be
+        // thrown away for "off" to mean anything, since there's no public WKWebView
+        // API to disable the native substitution at the source).
+        //
+        // The exact event sequence this relies on — an ordinary `insertText` landing
+        // first via the normal InputRule pipeline, then this async
+        // `insertReplacementText` — could not be empirically confirmed (this
+        // environment's build/test host had its screen locked, so no real OS-level
+        // keystroke synthesis into a running build was possible; see the smart-quotes-fix
+        // plan's Step 0a). Handling both possible sequences defensively rather than
+        // assuming one:
+        const quoteRanges = e.getTargetRanges();
+        let startPos: number;
+        let endPos: number;
+        if (quoteRanges.length > 0) {
+          const range = quoteRanges[0];
+          startPos = view.posAtDOM(range.startContainer, range.startOffset);
+          endPos = view.posAtDOM(range.endContainer, range.endOffset);
+        } else {
+          ({ from: startPos, to: endPos } = view.state.selection);
+        }
+
+        if (startPos !== endPos) {
+          // Non-collapsed range: a character already occupies this range, meaning an
+          // ordinary insertText already landed here via the normal path (two-event
+          // model) — either smartQuotesPlugin already curled it (toggle on) or it's
+          // still the plain character (toggle off). Either way this native replacement
+          // is redundant/stale — discard it outright, changing nothing.
+          return;
+        }
+
+        // Collapsed range: nothing was inserted here by an ordinary path first —
+        // evidence of a single-event model for this keystroke. A discard-only
+        // interceptor would leave the keystroke dead (no character inserted at all), so
+        // drive the insertion ourselves: run it through the same InputRule resolution
+        // real typing would use (toggle on, so curling can still happen from context),
+        // or insert it plainly (toggle off).
+        //
+        // Processed one character at a time — exactly as real keystrokes would arrive
+        // — rather than as a single dispatcher call over the whole plain string. Each
+        // smartQuotes InputRule only ever matches a single trailing character, so if
+        // `replacement` is multi-character (isNativeQuoteSubstitution permits this),
+        // one call with the whole string would always fail the length check inside
+        // runSmartQuoteInputRules and silently fall back to inserting it straight —
+        // even with the toggle on. Looping re-derives the current cursor position from
+        // view.state after each dispatch, so each character sees the real, up-to-date
+        // document (including whatever curly quote the previous character produced).
+        const plain = plainEquivalentOf(replacement);
+        const smartQuotesEnabled = isSmartQuotesEnabled();
+        let pos = startPos;
+        for (const ch of plain) {
+          const inputRuleTr = smartQuotesEnabled ? runSmartQuoteInputRules(view.state, pos, pos, ch) : null;
+          view.dispatch(inputRuleTr ?? view.state.tr.insertText(ch, pos, pos));
+          pos = view.state.selection.to;
+        }
+        return;
+      }
 
       // Get the range being replaced from getTargetRanges()
       const ranges = e.getTargetRanges();
@@ -448,6 +521,9 @@ window.FinalFinal = {
   enableSpellcheck: enableSpellcheckImpl,
   disableSpellcheck: disableSpellcheckImpl,
   triggerSpellcheck: triggerSpellcheckImpl,
+  // Smart quotes API
+  enableSmartQuotes: enableSmartQuotesImpl,
+  disableSmartQuotes: disableSmartQuotesImpl,
   // Footnote API
   setFootnoteDefinitions,
   insertFootnote,
@@ -507,17 +583,6 @@ window.FinalFinal = {
       editorReady: getEditorInstance() !== null,
       focusModeEnabled: isFocusModeEnabled(),
     };
-  },
-
-  // Test-only hook — read-only, introspects the block-id plugin's current
-  // position→id assignments via its existing getAllBlockIds() export. No
-  // behavior change. Not for production use; no production code should
-  // depend on this. Sorted by offset so callers get document order without
-  // relying on Map iteration/insertion order.
-  __testGetBlockIds() {
-    return Array.from(getAllBlockIds().entries())
-      .sort((a, b) => a[0] - b[0])
-      .map(([offset, id]) => ({ offset, id }));
   },
 };
 

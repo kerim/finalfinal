@@ -256,8 +256,7 @@ extension ContentView {
                     updateSourceContentIfNeeded()
                     await blockSyncService.setContentWithBlockIds(
                         markdown: result.markdown, blockIds: result.blockIds,
-                        imageMeta: result.imageMeta, detectPausedEdits: isRestore,
-                        expectedBlocks: result.expectedBlocks)
+                        imageMeta: result.imageMeta, detectPausedEdits: isRestore)
                 }
                 editorState.isResettingContent = false
                 blockSyncService.startPolling()

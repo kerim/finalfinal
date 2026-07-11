@@ -85,6 +85,12 @@ import { selectionStatsPlugin } from './selection-stats-plugin';
 import { selectionToolbarPlugin } from './selection-toolbar-plugin';
 import { slashMenuPlugin } from './slash-completions';
 import {
+  disableSmartQuotes,
+  enableSmartQuotes,
+  handleBeforeInput,
+  smartQuotesInputHandler,
+} from './smart-quotes-plugin';
+import {
   disableSpellcheck,
   enableSpellcheck,
   setSpellcheckResults,
@@ -192,6 +198,9 @@ function initEditor() {
     }),
     // Reset pendingSlashUndo on any editing key, handle paste/drop for images
     EditorView.domEventHandlers({
+      beforeinput(event, view) {
+        return handleBeforeInput(event, view);
+      },
       keydown(event, view) {
         // Reset flag on any editing key (typing, backspace, delete)
         if (event.key.length === 1 || event.key === 'Backspace' || event.key === 'Delete') {
@@ -347,6 +356,8 @@ function initEditor() {
     selectionStatsPlugin,
     // Spellcheck/grammar decorations via NSSpellChecker
     ...spellcheckPlugin(),
+    // Smart quotes — live curling of straight quotes as the user types
+    EditorView.inputHandler.of(smartQuotesInputHandler),
   ];
 
   setEditorExtensions(extensions);
@@ -435,6 +446,10 @@ window.FinalFinal = {
   enableSpellcheck,
   disableSpellcheck,
   triggerSpellcheck,
+
+  // Smart quotes API
+  enableSmartQuotes,
+  disableSmartQuotes,
   find,
   findNext: apiFindNext,
   findPrevious: apiFindPrevious,

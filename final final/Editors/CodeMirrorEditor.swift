@@ -294,6 +294,7 @@ struct CodeMirrorEditor: NSViewRepresentable {
         var insertAnnotationObserver: NSObjectProtocol?
         var toggleHighlightObserver: NSObjectProtocol?
         var spellcheckStateObserver: NSObjectProtocol?
+        var smartQuotesStateObserver: NSObjectProtocol?
         var proofingModeObserver: NSObjectProtocol?
         var proofingSettingsObserver: NSObjectProtocol?
         var insertFootnoteObserver: NSObjectProtocol?
@@ -415,6 +416,17 @@ struct CodeMirrorEditor: NSViewRepresentable {
             ) { [weak self] notification in
                 if let enabled = notification.userInfo?["enabled"] as? Bool {
                     self?.setSpellcheck(enabled)
+                }
+            }
+
+            // Subscribe to smart quotes toggle
+            smartQuotesStateObserver = NotificationCenter.default.addObserver(
+                forName: .smartQuotesStateChanged,
+                object: nil,
+                queue: .main
+            ) { [weak self] notification in
+                if let enabled = notification.userInfo?["enabled"] as? Bool {
+                    self?.setSmartQuotes(enabled)
                 }
             }
 
@@ -573,6 +585,9 @@ struct CodeMirrorEditor: NSViewRepresentable {
                 NotificationCenter.default.removeObserver(observer)
             }
             if let observer = spellcheckStateObserver {
+                NotificationCenter.default.removeObserver(observer)
+            }
+            if let observer = smartQuotesStateObserver {
                 NotificationCenter.default.removeObserver(observer)
             }
             if let observer = proofingModeObserver {
