@@ -129,6 +129,11 @@ export function dismissPopover(): void {
   }
 }
 
+/** Whether a proofing popover is currently displayed. */
+export function isPopoverOpen(): boolean {
+  return activePopover !== null;
+}
+
 function handleOutsideClick(e: MouseEvent): void {
   if (activePopover && !activePopover.contains(e.target as Node)) {
     dismissPopover();

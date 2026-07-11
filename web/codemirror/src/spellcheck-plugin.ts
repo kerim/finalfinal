@@ -11,7 +11,7 @@ import { Decoration, type DecorationSet, type EditorView, ViewPlugin, type ViewU
 import { ALL_HIDDEN_MARKERS_REGEX } from './anchor-plugin';
 import { getEditorView } from './editor-state';
 import { dismissMenu, showSpellcheckMenu } from './spellcheck-menu';
-import { dismissPopover, showProofingPopover } from './spellcheck-popover';
+import { dismissPopover, isPopoverOpen, showProofingPopover } from './spellcheck-popover';
 
 // --- Types ---
 
@@ -41,6 +41,9 @@ let currentRequestId = 0;
 let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 let enabled = true;
 let resultsVersion = 0;
+
+/** Range of the grammar/style result whose proofing popover is currently open, if any. */
+let activeProofingRange: { from: number; to: number } | null = null;
 
 // --- API exports ---
 
@@ -399,6 +402,20 @@ export function spellcheckPlugin() {
             this.decorations = buildDecorations(update.view);
             this.lastResultsVersion = resultsVersion;
           }
+
+          // Dismiss the proofing popover once the selection moves outside
+          // the range it was opened for (mirrors link-tooltip.ts's pattern).
+          if (activeProofingRange) {
+            if (!isPopoverOpen()) {
+              activeProofingRange = null;
+            } else {
+              const { from } = update.state.selection.main;
+              if (from < activeProofingRange.from || from > activeProofingRange.to) {
+                dismissPopover();
+                activeProofingRange = null;
+              }
+            }
+          }
         }
       },
       {
@@ -495,13 +512,25 @@ export function spellcheckPlugin() {
               return true;
             }
 
-            // Grammar/style: show proofing popover
+            // Grammar/style: show proofing popover — but don't hijack a selection
+            // gesture. A shift-click (extending selection) or a click that left
+            // a non-empty selection (drag-select) means the user wants to select
+            // text, not see suggestions.
+            if (event.shiftKey || !view.state.selection.main.empty) {
+              return false;
+            }
+
             dismissMenu();
             dismissPopover();
 
+            // Anchor the popover to the bottom of the flagged range rather than
+            // the click point, so it doesn't overlap the annotated line.
+            const coords = view.coordsAtPos(result.to);
+            activeProofingRange = { from: result.from, to: result.to };
+
             showProofingPopover({
-              x: event.clientX,
-              y: event.clientY + 20,
+              x: coords ? coords.left : event.clientX,
+              y: coords ? coords.bottom + 4 : event.clientY + 20,
               word: result.word,
               type: result.type,
               message: result.message || '',
@@ -531,7 +560,7 @@ export function spellcheckPlugin() {
               },
             });
 
-            return true;
+            return false; // Don't consume — let CodeMirror place the cursor
           },
         },
       }

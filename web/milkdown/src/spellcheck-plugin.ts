@@ -12,7 +12,7 @@ import { Decoration, DecorationSet, type EditorView } from '@milkdown/kit/prose/
 import { $prose } from '@milkdown/kit/utils';
 import { getEditorInstance } from './editor-state';
 import { dismissMenu, showSpellcheckMenu } from './spellcheck-menu';
-import { dismissPopover, showProofingPopover } from './spellcheck-popover';
+import { dismissPopover, isPopoverOpen, showProofingPopover } from './spellcheck-popover';
 
 // --- Module state ---
 
@@ -32,6 +32,9 @@ let spellcheckResults: SpellcheckResult[] = [];
 let currentRequestId = 0;
 let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 let enabled = true;
+
+/** Range of the grammar/style result whose proofing popover is currently open, if any. */
+let activeProofingRange: { from: number; to: number } | null = null;
 
 export const spellcheckPluginKey = new PluginKey('spellcheck-decorations');
 
@@ -407,13 +410,25 @@ function handleClick(view: EditorView, event: MouseEvent): boolean {
     return true;
   }
 
-  // Grammar/style: show proofing popover
+  // Grammar/style: show proofing popover — but don't hijack a selection gesture.
+  // A shift-click (extending selection) or a click that left a non-empty
+  // selection (drag-select) means the user wants to select text, not see
+  // suggestions.
+  if (event.shiftKey || !view.state.selection.empty) {
+    return false;
+  }
+
   dismissMenu();
   dismissPopover();
 
+  // Anchor the popover to the bottom of the flagged range rather than the
+  // click point, so it doesn't overlap the annotated line.
+  const coords = view.coordsAtPos(result.to);
+  activeProofingRange = { from: result.from, to: result.to };
+
   showProofingPopover({
-    x: event.clientX,
-    y: event.clientY + 20,
+    x: coords.left,
+    y: coords.bottom + 4,
     word: result.word,
     type: result.type,
     message: result.message || '',
@@ -440,7 +455,7 @@ function handleClick(view: EditorView, event: MouseEvent): boolean {
     },
   });
 
-  return true;
+  return false; // Don't consume — let ProseMirror place the cursor
 }
 
 // --- Plugin ---
@@ -484,6 +499,20 @@ export const spellcheckPlugin = $prose(() => {
         update(view, prevState) {
           if (view.state.doc !== prevState.doc) {
             debouncedCheck();
+          }
+
+          // Dismiss the proofing popover once the selection moves outside
+          // the range it was opened for (mirrors link-tooltip.ts's pattern).
+          if (activeProofingRange) {
+            if (!isPopoverOpen()) {
+              activeProofingRange = null;
+            } else {
+              const { from } = view.state.selection;
+              if (from < activeProofingRange.from || from > activeProofingRange.to) {
+                dismissPopover();
+                activeProofingRange = null;
+              }
+            }
           }
         },
       };
