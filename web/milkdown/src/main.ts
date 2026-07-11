@@ -92,7 +92,7 @@ import {
 } from './api-modes';
 import { autolinkPlugin } from './autolink-plugin';
 import { bibliographyPlugin } from './bibliography-plugin';
-import { blockIdPlugin } from './block-id-plugin';
+import { blockIdPlugin, getAllBlockIds } from './block-id-plugin';
 import { blockSyncPlugin } from './block-sync-plugin';
 import { openCAYWPicker } from './cayw';
 import { citationPlugin } from './citation-plugin';
@@ -583,6 +583,17 @@ window.FinalFinal = {
       editorReady: getEditorInstance() !== null,
       focusModeEnabled: isFocusModeEnabled(),
     };
+  },
+
+  // Test-only hook — read-only, introspects the block-id plugin's current
+  // position→id assignments via its existing getAllBlockIds() export. No
+  // behavior change. Not for production use; no production code should
+  // depend on this. Sorted by offset so callers get document order without
+  // relying on Map iteration/insertion order.
+  __testGetBlockIds() {
+    return Array.from(getAllBlockIds().entries())
+      .sort((a, b) => a[0] - b[0])
+      .map(([offset, id]) => ({ offset, id }));
   },
 };
 
