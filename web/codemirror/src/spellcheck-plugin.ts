@@ -11,11 +11,11 @@ import { Decoration, type DecorationSet, type EditorView, ViewPlugin, type ViewU
 import { ALL_HIDDEN_MARKERS_REGEX } from './anchor-plugin';
 import { getEditorView } from './editor-state';
 import { dismissMenu, showSpellcheckMenu } from './spellcheck-menu';
-import { dismissPopover, showProofingPopover } from './spellcheck-popover';
+import { dismissPopover, isPopoverOpen, showProofingPopover } from './spellcheck-popover';
 
 // --- Types ---
 
-export interface SpellcheckResult {
+interface SpellcheckResult {
   from: number;
   to: number;
   word: string;
@@ -42,33 +42,19 @@ let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 let enabled = true;
 let resultsVersion = 0;
 
+/** Range of the grammar/style result whose proofing popover is currently open, if any. */
+let activeProofingRange: { from: number; to: number } | null = null;
+
 // --- API exports ---
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const diagLog = (...args: unknown[]) => {
-  const msg = '[LT-DIAG:codemirror] ' + args.map((a) => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ');
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const handler = (window as any).webkit?.messageHandlers?.errorHandler;
-  if (handler?.postMessage) handler.postMessage({ type: 'debug', message: msg });
-  else console.log(msg);
-};
-
 export function setSpellcheckResults(requestId: number, results: SpellcheckResult[]): void {
-  if (requestId !== currentRequestId) {
-    diagLog(
-      `DISCARDED stale results: incoming requestId=${requestId} currentRequestId=${currentRequestId} resultsCount=${results.length}`
-    );
-    return;
-  }
+  if (requestId !== currentRequestId) return;
   spellcheckResults = results;
   resultsVersion++;
-  diagLog(`ACCEPTED requestId=${requestId} resultsCount=${results.length}`);
 
   const view = getEditorView();
   if (view) {
     view.dispatch({});
-  } else {
-    diagLog('DISCARDED: no editor view available');
   }
 }
 
@@ -312,42 +298,6 @@ function mapResultPositions(results: SpellcheckResult[], changes: ChangeDesc): S
     .filter((r) => r.from < r.to);
 }
 
-/**
- * Does a changed range "touch" a result's range? Interior overlap always counts. A zero-width
- * change (a pure insertion, no deletion) also counts if it lands exactly on either boundary —
- * e.g. typing a missing letter right after "runnin" to fix "running", or right before a word —
- * so the underline clears on that same keystroke instead of surviving until the async re-check.
- */
-function touchesResult(range: { from: number; to: number }, result: { from: number; to: number }): boolean {
-  if (range.from === range.to) {
-    return result.from <= range.from && range.from <= result.to;
-  }
-  return range.from < result.to && result.from < range.to;
-}
-
-/**
- * Reconcile existing spellcheck results against a document-changing transaction: drop any
- * result whose range was touched by the edit (so its underline clears immediately instead of
- * lingering until the async LanguageTool re-check responds), then remap the survivors'
- * positions through the change set.
- */
-export function reconcileResultsAfterEdit(results: SpellcheckResult[], changes: ChangeDesc): SpellcheckResult[] {
-  if (changes.empty) return results;
-  const touchedRanges: { from: number; to: number }[] = [];
-  changes.iterChangedRanges((fromA, toA) => {
-    touchedRanges.push({ from: fromA, to: toA });
-  });
-  const survivors =
-    touchedRanges.length === 0 ? results : results.filter((r) => !touchedRanges.some((t) => touchesResult(t, r)));
-  if (results.length !== survivors.length) {
-    diagLog(
-      `RECONCILE dropped ${results.length - survivors.length}/${results.length} results | ` +
-        `touchedRanges=${JSON.stringify(touchedRanges)}`
-    );
-  }
-  return mapResultPositions(survivors, changes);
-}
-
 // --- Decoration builder ---
 
 const spellingDeco = Decoration.mark({ class: 'cm-spell-error' });
@@ -391,13 +341,27 @@ export function spellcheckPlugin() {
 
         update(update: ViewUpdate) {
           if (update.docChanged) {
-            spellcheckResults = reconcileResultsAfterEdit(spellcheckResults, update.changes);
-            this.decorations = buildDecorations(update.view);
             debouncedCheck();
+            this.decorations = this.decorations.map(update.changes);
+            spellcheckResults = mapResultPositions(spellcheckResults, update.changes);
           }
           if (resultsVersion !== this.lastResultsVersion) {
             this.decorations = buildDecorations(update.view);
             this.lastResultsVersion = resultsVersion;
+          }
+
+          // Dismiss the proofing popover once the selection moves outside
+          // the range it was opened for (mirrors link-tooltip.ts's pattern).
+          if (activeProofingRange) {
+            if (!isPopoverOpen()) {
+              activeProofingRange = null;
+            } else {
+              const { from } = update.state.selection.main;
+              if (from < activeProofingRange.from || from > activeProofingRange.to) {
+                dismissPopover();
+                activeProofingRange = null;
+              }
+            }
           }
         }
       },
@@ -495,13 +459,25 @@ export function spellcheckPlugin() {
               return true;
             }
 
-            // Grammar/style: show proofing popover
+            // Grammar/style: show proofing popover — but don't hijack a selection
+            // gesture. A shift-click (extending selection) or a click that left
+            // a non-empty selection (drag-select) means the user wants to select
+            // text, not see suggestions.
+            if (event.shiftKey || !view.state.selection.main.empty) {
+              return false;
+            }
+
             dismissMenu();
             dismissPopover();
 
+            // Anchor the popover to the bottom of the flagged range rather than
+            // the click point, so it doesn't overlap the annotated line.
+            const coords = view.coordsAtPos(result.to);
+            activeProofingRange = { from: result.from, to: result.to };
+
             showProofingPopover({
-              x: event.clientX,
-              y: event.clientY + 20,
+              x: coords ? coords.left : event.clientX,
+              y: coords ? coords.bottom + 4 : event.clientY + 20,
               word: result.word,
               type: result.type,
               message: result.message || '',
@@ -531,7 +507,7 @@ export function spellcheckPlugin() {
               },
             });
 
-            return true;
+            return false; // Don't consume — let CodeMirror place the cursor
           },
         },
       }

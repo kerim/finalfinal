@@ -74,15 +74,8 @@ enum DebugLog {
     /// done *outside* a `log()` call (e.g. allocating a preview string or counting).
     /// Inline the check at the top of logging helpers so the body is skipped entirely
     /// when the category is disabled.
-    ///
-    /// Must mirror `log()`'s own gate (`forwardToFile || forwardToConsole`) exactly — this
-    /// used to check only the compile-time console set, so a caller gating on `isEnabled()`
-    /// (e.g. `LanguageToolProvider`'s request/response boundary logging) silently never wrote
-    /// to the persistent `DiagnosticLogFile` sink even with the user's runtime Diagnostics
-    /// toggle on, since that path only checked `forwardToFile` inside `log()` itself, never here.
     @inline(__always)
     static func isEnabled(_ category: Category) -> Bool {
-        if DiagnosticLogFile.isEnabled { return true }
         #if DEBUG
         return enabled.contains(category)
         #else
