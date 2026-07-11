@@ -500,29 +500,48 @@ enum BlockParser {
         return nil
     }
 
+    /// Per-id ground-truth metadata handed to the JS side's optional `setBlockIdsForTopLevel`
+    /// alignment check (see block-id-plugin.ts `ExpectedBlockMeta`). Kept as a separate
+    /// Codable type (rather than reusing `Block`) so the JSON payload sent to JS is minimal
+    /// and doesn't leak unrelated Block fields.
+    struct BlockAlignmentMeta: Codable, Sendable {
+        /// blockType: Swift BlockType.rawValue. nonEmpty: blankness ⟺ text.trim() == "" —
+        /// SAME symmetric definition as the TS side (block-id-plugin.ts). Keep both in lockstep.
+        let blockType: String
+        let nonEmpty: Bool
+    }
+
+    /// Single source of truth for "which blocks get a top-level PM id, and what they're
+    /// expected to be" — idsForProseMirrorAlignment delegates here TOTALLY (see below), so the
+    /// id array and the metadata array cannot drift apart in count/order by construction.
+    static func alignmentPairs(_ blocks: [Block]) -> [(id: String, meta: BlockAlignmentMeta)] {
+        var result: [(id: String, meta: BlockAlignmentMeta)] = []
+        var prevListType: BlockType? = nil
+        for block in blocks {
+            if isEmptyFragment(block.markdownFragment) { continue }
+            // The standalone auto-bibliography MARKER block (distinct from ordinary blocks
+            // flagged isBibliography=true, which keep blockType .heading/.paragraph) parses to
+            // the `auto_bibliography` PM atom, excluded from BLOCK_TYPES/isBlockType() on the JS
+            // side, so it never consumes an index tick in setBlockIdsForTopLevel's walk.
+            // Including its id here would shift every subsequent id one position early — so it
+            // must contribute NEITHER an id NOR metadata, matching the JS-side exclusion exactly.
+            if block.blockType == .bibliography { continue }
+            let isListBlock = (block.blockType == .bulletList || block.blockType == .orderedList)
+            if isListBlock && block.blockType == prevListType { continue }
+            let nonEmpty = !block.textContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            result.append((block.id, BlockAlignmentMeta(blockType: block.blockType.rawValue, nonEmpty: nonEmpty)))
+            prevListType = isListBlock ? block.blockType : nil
+        }
+        return result
+    }
+
     /// Collapse consecutive same-type list block IDs for ProseMirror alignment.
     /// ProseMirror merges consecutive list items (separated by \n\n in assembleMarkdown)
     /// into a single list node. This produces an ID array matching PM's top-level node count.
+    /// Delegates entirely to `alignmentPairs` — see that function for the filtering/merging rules.
     /// - Parameter blocks: Must be sorted by `sortOrder` ascending.
     static func idsForProseMirrorAlignment(_ blocks: [Block]) -> [String] {
-        var ids: [String] = []
-        var prevListType: BlockType? = nil
-
-        for block in blocks {
-            // MUST stay in sync with BlockParser.assembleMarkdown filtering
-            if isEmptyFragment(block.markdownFragment) { continue }
-
-            let isListBlock = (block.blockType == .bulletList || block.blockType == .orderedList)
-
-            if isListBlock && block.blockType == prevListType {
-                continue  // PM merges this with previous list node
-            }
-
-            ids.append(block.id)
-            prevListType = isListBlock ? block.blockType : nil
-        }
-
-        return ids
+        alignmentPairs(blocks).map { $0.id }
     }
 
     static func assembleStandardMarkdownForExport(from blocks: [Block]) -> String {

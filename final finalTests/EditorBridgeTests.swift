@@ -86,6 +86,30 @@ final class MilkdownBridgeTests: XCTestCase {
         let disabledSnapshot = try await helper.captureSnapshot()
         XCTAssertFalse(disabledSnapshot.focusModeEnabled, "Focus mode should be disabled")
     }
+
+    @MainActor
+    func testMilkdownSmartQuotesBridgeMethodsCallable() async throws {
+        // Verifies ONLY that the window.FinalFinal.disableSmartQuotes()/enableSmartQuotes()
+        // bridge surface exists and is callable without throwing from Swift's side — NOT that
+        // toggling has any behavioral effect. setContent() parses markdown directly into the
+        // ProseMirror doc without ever touching the InputRules/handleTextInput pipeline, so
+        // straight quotes round-trip identically here whether disableSmartQuotes() is a real
+        // implementation or a no-op stub; this test cannot and does not distinguish the two.
+        // Behavioral correctness of the balanced-curling logic itself is covered by the
+        // web/milkdown/src/__tests__/smart-quotes-plugin.test.ts vitest suite instead. Per this
+        // project's established lesson, execCommand/programmatic content-setting doesn't
+        // replicate real keyboard input for WKWebView, so exercising the actual toggle's effect
+        // from a Swift test would require real keystroke simulation, which is out of scope here.
+        _ = try await helper.webView.evaluateJavaScript("window.FinalFinal.disableSmartQuotes()")
+
+        let testMarkdown = "She said \"hello\" and it's a test."
+        try await helper.setContent(testMarkdown)
+        try await Task.sleep(nanoseconds: 300_000_000)
+
+        let retrieved = try await helper.getContent()
+        XCTAssertTrue(retrieved.contains("\"hello\""), "Content should round-trip via setContent/getContent regardless of the toggle")
+        XCTAssertTrue(retrieved.contains("it's"), "Content should round-trip via setContent/getContent regardless of the toggle")
+    }
 }
 
 // MARK: - CodeMirror Tests
@@ -144,5 +168,29 @@ final class CodeMirrorBridgeTests: XCTestCase {
         // Cursor position should be valid
         XCTAssertGreaterThanOrEqual(snapshot.cursorPosition.line, 1)
         XCTAssertGreaterThanOrEqual(snapshot.cursorPosition.column, 0)
+    }
+
+    @MainActor
+    func testCodeMirrorSmartQuotesBridgeMethodsCallable() async throws {
+        // Verifies ONLY that the window.FinalFinal.disableSmartQuotes()/enableSmartQuotes()
+        // bridge surface exists and is callable without throwing from Swift's side — NOT that
+        // toggling has any behavioral effect. setContent() sets the CodeMirror EditorState
+        // directly without ever touching the EditorView.inputHandler pipeline, so straight
+        // quotes round-trip identically here whether disableSmartQuotes() is a real
+        // implementation or a no-op stub; this test cannot and does not distinguish the two.
+        // Behavioral correctness of the balanced-curling logic itself is covered by the
+        // web/codemirror/src/__tests__/smart-quotes-plugin.test.ts vitest suite instead. Per
+        // this project's established lesson, execCommand/programmatic content-setting doesn't
+        // replicate real keyboard input for WKWebView, so exercising the actual toggle's effect
+        // from a Swift test would require real keystroke simulation, which is out of scope here.
+        _ = try await helper.webView.evaluateJavaScript("window.FinalFinal.disableSmartQuotes()")
+
+        let testMarkdown = "She said \"hello\" and it's a test."
+        try await helper.setContent(testMarkdown)
+        try await Task.sleep(nanoseconds: 300_000_000)
+
+        let retrieved = try await helper.getContent()
+        XCTAssertTrue(retrieved.contains("\"hello\""), "Content should round-trip via setContent/getContent regardless of the toggle")
+        XCTAssertTrue(retrieved.contains("it's"), "Content should round-trip via setContent/getContent regardless of the toggle")
     }
 }

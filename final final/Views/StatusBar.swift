@@ -10,6 +10,7 @@ struct StatusBar: View {
     let editorState: EditorViewState
     @AppStorage("isSpellingEnabled") private var spellingEnabled = true
     @AppStorage("isGrammarEnabled") private var grammarEnabled = true
+    @AppStorage("isSmartQuotesEnabled") private var smartQuotesEnabled = true
     @State private var showProofingPopover = false
     @State private var showOutlinePopover = false
 
@@ -97,6 +98,25 @@ struct StatusBar: View {
                 : themeManager.currentTheme.sidebarText.opacity(0.4))
             .help(grammarEnabled ? "Grammar: on (⌘⇧;)" : "Grammar: off (⌘⇧;)")
             .accessibilityIdentifier("status-bar-grammar")
+
+            // Smart quotes toggle
+            Button {
+                smartQuotesEnabled.toggle()
+                NotificationCenter.default.post(
+                    name: .smartQuotesStateChanged,
+                    object: nil,
+                    userInfo: ["enabled": smartQuotesEnabled]
+                )
+            } label: {
+                Image(systemName: "quote.opening")
+                    .font(.caption)
+            }
+            .buttonStyle(.plain)
+            .foregroundColor(smartQuotesEnabled
+                ? themeManager.currentTheme.accentColor
+                : themeManager.currentTheme.sidebarText.opacity(0.4))
+            .help(smartQuotesEnabled ? "Smart Quotes: on" : "Smart Quotes: off")
+            .accessibilityIdentifier("status-bar-smart-quotes")
 
             // Clickable editor mode badge
             Button {

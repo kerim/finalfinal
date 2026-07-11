@@ -170,6 +170,7 @@
 		AC1816323A52499CA6DCFD2A /* SectionReconciler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61DE6BB00F5D1EF8A75439EB /* SectionReconciler.swift */; };
 		ACAF912B9BF42D9FD97B82C2 /* Database+CRUD.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13133CB5518EA086A3120EDE /* Database+CRUD.swift */; };
 		AD8451C7428BC1E2016746D1 /* StatusBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF41CB39EB2C5BD4E30A2CDA /* StatusBar.swift */; };
+		AE0E40070044B09854962B11 /* BlockIdAlignmentHardeningLiveTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9C92ED5B2BE260D34B66182 /* BlockIdAlignmentHardeningLiveTests.swift */; };
 		B170D8E5C33C7D7D14A350D4 /* AnnotationSyncService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6253961779E064C92D1B172E /* AnnotationSyncService.swift */; };
 		B17C6E9C011435B07C9EFF38 /* editor in Resources */ = {isa = PBXBuildFile; fileRef = 80D86FAB5657E30D2DC86655 /* editor */; };
 		B259B700914FE014C1073B42 /* PreviewViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2FED51A67AC5513383E13195 /* PreviewViewController.swift */; };
@@ -447,6 +448,7 @@
 		D567C1445BFF0160D8410001 /* ProjectStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectStore.swift; sourceTree = "<group>"; };
 		D678FA29904C6946CACDC1D6 /* ViewCommands.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ViewCommands.swift; sourceTree = "<group>"; };
 		D7CDE9D1D9ECA8A2C882564D /* EditorViewState+Zoom.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "EditorViewState+Zoom.swift"; sourceTree = "<group>"; };
+		D9C92ED5B2BE260D34B66182 /* BlockIdAlignmentHardeningLiveTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockIdAlignmentHardeningLiveTests.swift; sourceTree = "<group>"; };
 		DA881EDD8E51F372A2C980A5 /* UITestHelpers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UITestHelpers.swift; sourceTree = "<group>"; };
 		DBBD3F44DAC64E5BDF50919F /* EditorViewState+FocusMode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "EditorViewState+FocusMode.swift"; sourceTree = "<group>"; };
 		DDC88DC217831BA18037CB1B /* Database+BlocksWordCount.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Database+BlocksWordCount.swift"; sourceTree = "<group>"; };
@@ -825,6 +827,7 @@
 			isa = PBXGroup;
 			children = (
 				18247CD049B78F944DCB3676 /* AnnotationFilterTests.swift */,
+				D9C92ED5B2BE260D34B66182 /* BlockIdAlignmentHardeningLiveTests.swift */,
 				5F2DCF084A58C8E4311F4D2B /* EditorModeSwitchTests.swift */,
 				D14A9CC69590FE1E89B7ED89 /* FindBarStateTests.swift */,
 				F56781FE0EE291AAD9AE24E8 /* FocusModeTests.swift */,
@@ -1166,6 +1169,7 @@
 				1784E7C8015865BB9C8F2BFE /* BatchWordCountsTests.swift in Sources */,
 				095F5997B2C6B62465116900 /* BibliographyDropGuardTests.swift in Sources */,
 				7042D9A13DBB273E726F8D1A /* BibliographySyncTests.swift in Sources */,
+				AE0E40070044B09854962B11 /* BlockIdAlignmentHardeningLiveTests.swift in Sources */,
 				D589BB2ED3C7D6D418FC5C27 /* BlockInsertAnchorTests.swift in Sources */,
 				9E974BA85308BA7DC6FA11D2 /* BlockInsertHeadingParagraphOrderTests.swift in Sources */,
 				9D1A72AD8B1BB69AC3EFADE3 /* BlockParserAlignmentTests.swift in Sources */,
