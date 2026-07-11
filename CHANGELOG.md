@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **Smart quotes** — straight quotes now curl into matching "curly" pairs as you type, in both the visual and source editors, and a pair can no longer end up mismatched (an opening quote without its closing match, or vice versa). A new toggle in the Edit menu, and a matching button in the status bar, lets you turn this off if you prefer straight quotes. The setting is now remembered correctly even when you switch between the two editing modes.
+
+### Fixed
+
+- **Double-clicking a document in Finder could silently do nothing, or open a stray blank window** — if no project was already open, double-clicking a document in Finder did nothing at all. Fixing that surfaced a second bug: opening a document from Finder (whether or not one was already open) could also pop open an extra, empty window alongside the correct one. Both are now fixed.
+- **Added extra protection against content silently ending up in the wrong place** — closes off another way the editor's internal bookkeeping could, in rare cases, attach an existing piece of writing (like a footnote) to the wrong, blank spot instead of its own. This is the same category of bug fixed in an earlier release, now guarded against in a different part of the app.
+- **Restoring a document to an older version could corrupt the wrong section** — in rare cases, deleting a section and then restoring an earlier version of the document could misidentify a different, unrelated section as the one being restored, silently corrupting it while the section you actually wanted stayed lost. The app now checks that a section's title or content actually matches before treating it as the one being restored.
+- **The Recent Projects list could lose or duplicate entries** — a project could silently disappear from the list, or show up twice, because of how the app tracked where projects were stored. The list now updates reliably, and a one-time cleanup removes any duplicate entries left over from before this fix.
+
 ## [0.2.108] - 2026-07-10
 
 ### Added
