@@ -15,7 +15,7 @@ import { dismissPopover, showProofingPopover } from './spellcheck-popover';
 
 // --- Types ---
 
-interface SpellcheckResult {
+export interface SpellcheckResult {
   from: number;
   to: number;
   word: string;
@@ -44,14 +44,31 @@ let resultsVersion = 0;
 
 // --- API exports ---
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const diagLog = (...args: unknown[]) => {
+  const msg = '[LT-DIAG:codemirror] ' + args.map((a) => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ');
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const handler = (window as any).webkit?.messageHandlers?.errorHandler;
+  if (handler?.postMessage) handler.postMessage({ type: 'debug', message: msg });
+  else console.log(msg);
+};
+
 export function setSpellcheckResults(requestId: number, results: SpellcheckResult[]): void {
-  if (requestId !== currentRequestId) return;
+  if (requestId !== currentRequestId) {
+    diagLog(
+      `DISCARDED stale results: incoming requestId=${requestId} currentRequestId=${currentRequestId} resultsCount=${results.length}`
+    );
+    return;
+  }
   spellcheckResults = results;
   resultsVersion++;
+  diagLog(`ACCEPTED requestId=${requestId} resultsCount=${results.length}`);
 
   const view = getEditorView();
   if (view) {
     view.dispatch({});
+  } else {
+    diagLog('DISCARDED: no editor view available');
   }
 }
 
@@ -295,6 +312,42 @@ function mapResultPositions(results: SpellcheckResult[], changes: ChangeDesc): S
     .filter((r) => r.from < r.to);
 }
 
+/**
+ * Does a changed range "touch" a result's range? Interior overlap always counts. A zero-width
+ * change (a pure insertion, no deletion) also counts if it lands exactly on either boundary —
+ * e.g. typing a missing letter right after "runnin" to fix "running", or right before a word —
+ * so the underline clears on that same keystroke instead of surviving until the async re-check.
+ */
+function touchesResult(range: { from: number; to: number }, result: { from: number; to: number }): boolean {
+  if (range.from === range.to) {
+    return result.from <= range.from && range.from <= result.to;
+  }
+  return range.from < result.to && result.from < range.to;
+}
+
+/**
+ * Reconcile existing spellcheck results against a document-changing transaction: drop any
+ * result whose range was touched by the edit (so its underline clears immediately instead of
+ * lingering until the async LanguageTool re-check responds), then remap the survivors'
+ * positions through the change set.
+ */
+export function reconcileResultsAfterEdit(results: SpellcheckResult[], changes: ChangeDesc): SpellcheckResult[] {
+  if (changes.empty) return results;
+  const touchedRanges: { from: number; to: number }[] = [];
+  changes.iterChangedRanges((fromA, toA) => {
+    touchedRanges.push({ from: fromA, to: toA });
+  });
+  const survivors =
+    touchedRanges.length === 0 ? results : results.filter((r) => !touchedRanges.some((t) => touchesResult(t, r)));
+  if (results.length !== survivors.length) {
+    diagLog(
+      `RECONCILE dropped ${results.length - survivors.length}/${results.length} results | ` +
+        `touchedRanges=${JSON.stringify(touchedRanges)}`
+    );
+  }
+  return mapResultPositions(survivors, changes);
+}
+
 // --- Decoration builder ---
 
 const spellingDeco = Decoration.mark({ class: 'cm-spell-error' });
@@ -338,9 +391,9 @@ export function spellcheckPlugin() {
 
         update(update: ViewUpdate) {
           if (update.docChanged) {
+            spellcheckResults = reconcileResultsAfterEdit(spellcheckResults, update.changes);
+            this.decorations = buildDecorations(update.view);
             debouncedCheck();
-            this.decorations = this.decorations.map(update.changes);
-            spellcheckResults = mapResultPositions(spellcheckResults, update.changes);
           }
           if (resultsVersion !== this.lastResultsVersion) {
             this.decorations = buildDecorations(update.view);
