@@ -467,6 +467,40 @@ extension EditorViewState {
         }
     }
 
+    // MARK: - Export Flush
+
+    /// Flush the freshest possible content to the database before an export reads
+    /// blocks, then re-sync the editor's block ids so subsequent edits still land.
+    ///
+    /// block-sync-plugin.ts's incremental `detectChanges()` silently drops a pure
+    /// block move (same id, same content, different position) when the ProseMirror
+    /// node reference is unchanged -- so the incremental diff alone (as used by
+    /// `pollBlockChangesNow()`) can't be trusted before export. This does a full
+    /// re-parse via `flushContentToDatabase()` instead, which re-derives every
+    /// block's sortOrder from document order.
+    ///
+    /// `currentContent` is injected (rather than this method calling
+    /// `blockSyncService?.fetchContentFromWebView()` itself) so production and
+    /// tests can share this exact implementation -- production supplies a live
+    /// WebView fetch, tests supply a stubbed string standing in for one.
+    ///
+    /// `flushContentToDatabase()`'s full re-parse reassigns fresh ids to most
+    /// non-heading block types, so `pushBlockIds(for:)` must follow immediately to
+    /// re-tag the editor's block-id-plugin state and rebuild block-sync's snapshot
+    /// from the DB's new ids -- otherwise the next incremental edit updates a row
+    /// that no longer exists and is silently lost. Same pairing already used by the
+    /// `zoomToSection` and `handleZoomedFootnoteInsertion` call sites.
+    func flushForExport(currentContent: () async -> String?) async {
+        // Guard mirrors AppDelegate.swift's applicationShouldTerminate: skip the
+        // assignment on a failed/empty fetch rather than clobbering known-good
+        // content with nothing.
+        if let freshContent = await currentContent(), !freshContent.isEmpty {
+            content = freshContent
+        }
+        flushContentToDatabase()
+        await blockSyncService?.pushBlockIds(for: zoomedBlockRange)
+    }
+
     // MARK: - Block Range Helpers
 
     /// Find the sortOrder of the first heading that ends a zoom scope.

@@ -325,9 +325,11 @@ final class DocumentManager {
     }
 
     /// Hook invoked before any export reads blocks from the database.
-    /// Wired by ContentView to `blockSyncService.pollBlockChangesNow()` so exports
-    /// see live editor edits (e.g. a just-inserted footnote) instead of whatever
-    /// was last flushed by the ~2s background poller.
+    /// Wired by ContentView to `EditorViewState.flushForExport(currentContent:)`,
+    /// which fetches fresh content from the live WebView, does a full block
+    /// re-parse (`flushContentToDatabase()`), and re-syncs block ids
+    /// (`pushBlockIds(for:)`) -- so exports see live editor edits, including pure
+    /// block moves the incremental block-sync diff alone would miss.
     var flushBeforeExport: (() async -> Void)?
 
     /// Fetch the current project's blocks for export, excluding bibliography blocks.

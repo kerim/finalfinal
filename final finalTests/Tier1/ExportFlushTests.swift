@@ -153,4 +153,72 @@ struct ExportFlushTests {
             "exportBlocks should return the block written by the flush"
         )
     }
+
+    @Test("exportBlocks reflects an in-editor block move that the incremental diff never recorded")
+    @MainActor
+    func exportBlocksReflectsBlockMoveNotRecordedByIncrementalDiff() async throws {
+        let dir = try makeTempDir()
+        defer {
+            cleanup(dir)
+            DocumentManager.shared.flushBeforeExport = nil
+            DocumentManager.shared.closeProject()
+        }
+
+        // Seed a fixture with 4 blocks in a known order: heading, paragraph, image, paragraph.
+        let fixtureURL = dir.appendingPathComponent("BlockMoveTest.ff")
+        try TestFixtureFactory.createFixture(
+            at: fixtureURL,
+            title: "BlockMoveTest",
+            content: "# Title\n\nPara A.\n\n![alt](media/img.png)\n\nPara B."
+        )
+        let projectId = try DocumentManager.shared.openProject(at: fixtureURL)
+
+        // Model the confirmed bug: block-sync-plugin.ts's detectChanges() silently
+        // drops a pure move when a block's ProseMirror node reference is unchanged,
+        // even though its position moved -- so the DB is deliberately left untouched
+        // here. editorState.content starts as the stale pre-move markdown, matching
+        // what's still in the DB.
+        let editorState = EditorViewState()
+        editorState.projectDatabase = DocumentManager.shared.projectDatabase
+        editorState.currentProjectId = projectId
+        editorState.content = "# Title\n\nPara A.\n\n![alt](media/img.png)\n\nPara B."
+
+        // Drives the SAME production method ContentView.swift wires flushBeforeExport
+        // to (EditorViewState+Zoom.swift's flushForExport(currentContent:)) -- not a
+        // hand-rolled stand-in -- with a stubbed content provider in place of a live
+        // WebView fetch, returning the post-move markdown (image now after the second
+        // paragraph) that a real fetchContentFromWebView() would have returned after
+        // the drag. This makes the test a genuine regression guard: if flushForExport
+        // were reverted to the old poll-only behavior, this test would fail.
+        DocumentManager.shared.flushBeforeExport = {
+            await editorState.flushForExport {
+                "# Title\n\nPara A.\n\nPara B.\n\n![alt](media/img.png)"
+            }
+        }
+
+        let blocks = try await DocumentManager.shared.exportBlocks()
+        let sorted = blocks.sorted { $0.sortOrder < $1.sortOrder }
+
+        let imageIndex = try #require(
+            sorted.firstIndex { $0.blockType == .image },
+            "Expected an image block in the exported blocks"
+        )
+        let paraBIndex = try #require(
+            sorted.firstIndex { $0.textContent == "Para B." },
+            "Expected a 'Para B.' paragraph block in the exported blocks"
+        )
+        #expect(
+            imageIndex > paraBIndex,
+            "Image block should sort after 'Para B.' (its new neighbor post-move), not before it, as the untouched, stale DB order would show"
+        )
+
+        let exported = try await DocumentManager.shared.loadContentForExport()
+        let markdown = try #require(exported)
+        let paraBRange = try #require(markdown.range(of: "Para B."))
+        let imageRange = try #require(markdown.range(of: "media/img.png"))
+        #expect(
+            paraBRange.lowerBound < imageRange.lowerBound,
+            "Exported markdown should show the image after 'Para B.', reflecting its new position"
+        )
+    }
 }
