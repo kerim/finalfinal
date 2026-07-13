@@ -204,7 +204,14 @@ declare global {
       scrollToFootnoteDefinition: (label: string) => void;
       setZoomFootnoteState: (zoomed: boolean, maxLabel: number) => void;
       // Image API
-      insertImage: (opts: { src: string; alt: string; caption: string; width: number | null; blockId: string }) => void;
+      insertImage: (opts: {
+        src: string;
+        alt: string;
+        caption: string;
+        width: number | null;
+        blockId: string;
+        origin?: string;
+      }) => void;
       // Surgical heading update API
       updateHeadingLevels: (changes: Array<{ blockId: string; newLevel: number }>) => void;
       // Find/replace API

@@ -534,8 +534,19 @@ const figureNodeViewPlugin = $prose(() => {
   });
 });
 
+// How long a captured paste/drop position survives before self-clearing as
+// "abandoned" (covers imports that fail before ever calling insertImage()).
+// See the two setTimeout call sites below for why this isn't a few seconds:
+// Swift's ImageImportService shows a blocking NSAlert for large images, which
+// can easily outlast a short timeout while never actually abandoning the paste.
+const PENDING_POS_TIMEOUT_MS = 120_000;
+
 // Module-level: pending drop position for async image insertion
 let pendingDropPos: number | null = null;
+
+// Module-level: pending paste position for async image insertion (mirrors
+// pendingDropPos above). One-shot consume via consumePendingPastePos().
+let pendingPastePos: number | null = null;
 
 // Guard against macOS kDragIPCCompleted firing twice for a single drop.
 // The two events arrive within ~5ms; 200ms window safely catches them
@@ -547,12 +558,18 @@ export function consumePendingDropPos(): number | null {
   return pos;
 }
 
+export function consumePendingPastePos(): number | null {
+  const pos = pendingPastePos;
+  pendingPastePos = null;
+  return pos;
+}
+
 // Paste/drop interception plugin
 // Intercepts paste/drop containing image data, sends to Swift via pasteImage message
 const imagePasteDropPlugin = $prose(() => {
   return new Plugin({
     props: {
-      handlePaste(_view: EditorView, event: ClipboardEvent): boolean {
+      handlePaste(view: EditorView, event: ClipboardEvent): boolean {
         const items = event.clipboardData?.items;
         if (!items) return false;
 
@@ -561,6 +578,42 @@ const imagePasteDropPlugin = $prose(() => {
             event.preventDefault();
             const file = item.getAsFile();
             if (!file) return true;
+
+            // Capture paste position before the async FileReader/Swift round-trip.
+            const capturedPastePos = view.state.selection.$from.pos;
+            pendingPastePos = capturedPastePos;
+            // Mutual clearing: a paste supersedes any stale pending drop position,
+            // preventing an orphaned drop from later hijacking this paste.
+            pendingDropPos = null;
+            syncLog('ImagePaste', `captured pastePos=${pendingPastePos}`);
+            // Clear stale paste position after PENDING_POS_TIMEOUT_MS (covers
+            // failed imports where insertImage() never gets called at all).
+            // Guarded by identity: only clear if pendingPastePos still holds THIS
+            // capture — a second, still-legitimate paste within the window must
+            // not have its own pending position wiped out by this timer.
+            //
+            // Was 10s until this was found to race against the REAL Swift-side
+            // round trip: ImageImportService.importFromData() shows a blocking
+            // NSAlert (`alert.runModal()`) for any image over warnSizeBytes
+            // (10MB) — a real screenshot/photo paste routinely exceeds that.
+            // runModal() blocks Swift's main thread but NOT this WebContent
+            // process's JS timers, so a user taking more than 10s to notice/
+            // dismiss that dialog let this timeout fire BEFORE insertImage()
+            // ever ran — silently discarding the captured caret position and
+            // making insertImage() fall back to the pre-fix, non-cursor-aware
+            // "after the current top-level block" placement (see api-content.ts
+            // insertImage()'s final `else` branch). 2 minutes comfortably covers
+            // a user reading/dismissing that dialog, or any other slow disk/
+            // decode step, while the mutual-clearing above still guarantees a
+            // genuinely NEW paste or drop immediately supersedes a stale one.
+            setTimeout(() => {
+              if (pendingPastePos === capturedPastePos) {
+                if (pendingPastePos !== null) {
+                  syncLog('ImagePaste', `timeout clearing stale pendingPastePos=${pendingPastePos}`);
+                }
+                pendingPastePos = null;
+              }
+            }, PENDING_POS_TIMEOUT_MS);
 
             const reader = new FileReader();
             reader.onload = () => {
@@ -608,14 +661,26 @@ const imagePasteDropPlugin = $prose(() => {
             pendingDropPos = docSizeAtDrop;
           }
         }
+        // Mutual clearing: a drop supersedes any stale pending paste position,
+        // preventing an orphaned paste from later hijacking this drop.
+        pendingPastePos = null;
         syncLog('ImageDrop', `captured dropPos=${pendingDropPos} docSize=${docSizeAtDrop}`);
-        // Clear stale drop position after 10 seconds (covers failed imports)
+        // Clear stale drop position after PENDING_POS_TIMEOUT_MS (covers failed
+        // imports). Guarded by identity: only clear if pendingDropPos still
+        // holds THIS capture — a second, still-legitimate drop within the
+        // window must not have its own pending position wiped out by this
+        // timer. See the matching comment in handlePaste above for why this is
+        // no longer 10s — the same blocking "Large Image" NSAlert on the Swift
+        // side applies equally to drop-originated imports.
+        const capturedDropPos = pendingDropPos;
         setTimeout(() => {
-          if (pendingDropPos !== null) {
-            syncLog('ImageDrop', `10s timeout clearing pendingDropPos=${pendingDropPos}`);
+          if (pendingDropPos === capturedDropPos) {
+            if (pendingDropPos !== null) {
+              syncLog('ImageDrop', `timeout clearing stale pendingDropPos=${pendingDropPos}`);
+            }
+            pendingDropPos = null;
           }
-          pendingDropPos = null;
-        }, 10000);
+        }, PENDING_POS_TIMEOUT_MS);
 
         const dropCaptureTime = Date.now();
         const reader = new FileReader();

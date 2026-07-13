@@ -298,6 +298,35 @@ function assertExpectedMarksRegistered(schema: { marks: Record<string, unknown> 
 }
 
 /**
+ * Block-level node types that can appear NESTED inside a list_item or
+ * blockquote (both have "paragraph block*" / "block+" content models, so any
+ * `block`-group node — not just paragraphs — can land there) but do NOT
+ * themselves recurse via `serializeInlineContent`'s generic container walk.
+ * `nodeToMarkdownFragment` already has a correct `case` for every one of
+ * these at the TOP level; without this dispatch, `serializeInlineContent`'s
+ * container-recursion branch below would treat one as a plain container,
+ * find zero text/inline children (they're all atoms or have their own
+ * self-contained content model), and silently serialize it as an EMPTY
+ * STRING — the confirmed root cause of a pasted image vanishing from a
+ * block's persisted `markdownFragment` when it lands nested inside a list
+ * item (the deliberate "insert at end of item" placement in
+ * `computeCursorAwareInsertPos`/`insert-pos.test.ts` produces exactly this
+ * shape — a `figure` as a `list_item`'s second child, sibling to its
+ * mandatory-first paragraph). NOT list_item/bullet_list/ordered_list/
+ * blockquote themselves — those must stay on the recursive container path
+ * (nested lists, list-inside-blockquote, etc. — unchanged, pre-existing
+ * behavior).
+ */
+const NESTED_BLOCK_ATOM_TYPES: ReadonlySet<string> = new Set([
+  'figure',
+  'table',
+  'code_block',
+  'horizontal_rule',
+  'math_display',
+  'section_break',
+]);
+
+/**
  * Serialize inline content of a node, preserving citation/annotation/footnote
  * atoms AND inline marks (link, strong, emphasis, inlineCode, strike_through,
  * highlight). Unlike `node.textContent` which strips both atoms and marks.
@@ -432,9 +461,34 @@ function serializeInlineContent(node: Node): string {
   // Container nodes (list_item, blockquote children): recurse.
   const parts: string[] = [];
   node.forEach((child) => {
-    parts.push(serializeInlineContent(child));
+    if (NESTED_BLOCK_ATOM_TYPES.has(child.type.name)) {
+      // Delegate to the top-level dispatcher (nodeToMarkdownFragment is
+      // defined below and already handles all of these correctly) instead of
+      // recursing — see NESTED_BLOCK_ATOM_TYPES for why recursing here would
+      // silently drop the content.
+      parts.push(nodeToMarkdownFragment(child));
+    } else {
+      parts.push(serializeInlineContent(child));
+    }
   });
   return parts.join('\n');
+}
+
+/**
+ * Indent every line AFTER the first in `text` by `pad` spaces. Used when a
+ * list item's serialized content spans multiple lines (its mandatory-first
+ * paragraph plus a nested block-atom sibling, e.g. a pasted figure) — the
+ * continuation lines must be indented at least as far as the marker's own
+ * content column, or a markdown re-parse (BlockParser.parse() on the Swift
+ * side, or Pandoc at export) will read them as a new top-level block instead
+ * of remaining part of this list item, silently un-nesting the content.
+ */
+function indentContinuationLines(text: string, pad: string): string {
+  if (!text.includes('\n')) return text;
+  return text
+    .split('\n')
+    .map((line, i) => (i === 0 ? line : `${pad}${line}`))
+    .join('\n');
 }
 
 /**
@@ -482,16 +536,20 @@ export function nodeToMarkdownFragment(node: Node): string {
       return `\`\`\`${lang}\n${node.textContent}\n\`\`\``;
     }
     case 'bullet_list': {
+      const marker = '- ';
       const items: string[] = [];
       node.forEach((child) => {
-        items.push(`- ${serializeInlineContent(child)}`);
+        const itemText = serializeInlineContent(child);
+        items.push(`${marker}${indentContinuationLines(itemText, ' '.repeat(marker.length))}`);
       });
       return items.join('\n');
     }
     case 'ordered_list': {
       const oItems: string[] = [];
       node.forEach((child, _offset, index) => {
-        oItems.push(`${index + 1}. ${serializeInlineContent(child)}`);
+        const marker = `${index + 1}. `;
+        const itemText = serializeInlineContent(child);
+        oItems.push(`${marker}${indentContinuationLines(itemText, ' '.repeat(marker.length))}`);
       });
       return oItems.join('\n');
     }

@@ -1,6 +1,7 @@
 // Content-related API method implementations for window.FinalFinal
 
 import { editorViewCtx, parserCtx } from '@milkdown/kit/core';
+import type { NodeType, Node as ProsemirrorNode, ResolvedPos } from '@milkdown/kit/prose/model';
 import { Slice } from '@milkdown/kit/prose/model';
 import { Selection } from '@milkdown/kit/prose/state';
 import { getMarkdown } from '@milkdown/kit/utils';
@@ -41,7 +42,7 @@ import {
   setZoomFootnoteState,
 } from './editor-state';
 import { clearSearch } from './find-replace';
-import { consumePendingDropPos } from './image-plugin';
+import { consumePendingDropPos, consumePendingPastePos } from './image-plugin';
 import { isSourceModeEnabled } from './source-mode-plugin';
 import { syncLog } from './sync-debug';
 import type { Block, ExpectedBlockMeta, ImageBlockMeta } from './types';
@@ -704,6 +705,154 @@ export function syncBlockIds(orderedIds: string[], zoomMode: boolean, expected?:
   resetAndSnapshot(view.state.doc);
 }
 
+// ---------------------------------------------------------------------------
+// Cursor-aware insert-position algorithm (pasted-image placement fix)
+//
+// Pinned down and exhaustively verified against the real installed schema by
+// the committed test suite in `__tests__/insert-pos.test.ts` (16+ tests) —
+// see that file and `docs/`/plan history for the full container-by-container
+// rationale. This is the production implementation the tests exercise
+// directly (no parallel/duplicated copy).
+// ---------------------------------------------------------------------------
+
+const TABLE_FAMILY = new Set(['table', 'table_row', 'table_header_row', 'table_cell', 'table_header']);
+
+function isTableFamily(node: ProsemirrorNode): boolean {
+  return TABLE_FAMILY.has(node.type.name);
+}
+
+/** Ordered depths (deepest/least-escalated first) for which the caret's
+ * position is at the start/end of every ancestor from that depth up to the
+ * caret's own immediate parent — i.e. valid candidate anchor points for
+ * "before(d)" / "after(d)" that still represent "at the caret", not a jump
+ * backward/forward past sibling content.
+ *
+ * Always seeded with `$pos.depth` itself as the base candidate, so the
+ * returned array is never empty (see `chainWalk`'s guard below, which relies
+ * on this). */
+function candidateDepths($pos: ResolvedPos, atStart: boolean): number[] {
+  const out = [$pos.depth];
+  for (let d = $pos.depth - 1; d >= 1; d--) {
+    const idx = $pos.index(d);
+    const matches = atStart ? idx === 0 : idx === $pos.node(d).childCount - 1;
+    if (!matches) break;
+    out.push(d);
+  }
+  return out;
+}
+
+/** Does this node's content model accept `nodeType` somewhere after its
+ * actual current children (walking its content-match state machine), even
+ * if not as the very first child? Handles position-dependent expressions
+ * like list_item's "paragraph block*" (false before the mandatory first
+ * paragraph, true after it) as well as unconditional ones like blockquote's
+ * "block+" (true immediately) and bullet_list's "listItem+" (always false). */
+function canEventuallyContainBlockType(node: ProsemirrorNode, nodeType: NodeType): boolean {
+  let match = node.type.contentMatch;
+  if (match.matchType(nodeType)) return true;
+  for (let i = 0; i < node.childCount; i++) {
+    const next = match.matchType(node.child(i).type);
+    if (!next) return false;
+    match = next;
+    if (match.matchType(nodeType)) return true;
+  }
+  return false;
+}
+
+/** Full boundary-chain walk: always escalate exactly as far as the
+ * structural "am I at the edge of this whole run of interchangeable
+ * siblings" condition demands — never further, never less. Correct on its
+ * own for: START in any container, and END in a "symmetric" container (one
+ * whose content model treats all children uniformly, e.g. blockquote's
+ * "block+" — no distinguished reserved slot to signal "nest here instead"). */
+function chainWalk($pos: ResolvedPos, wantStart: boolean): number {
+  const candidates = candidateDepths($pos, wantStart);
+  const shallowest = candidates[candidates.length - 1];
+  if (shallowest === undefined) {
+    // candidateDepths always seeds its result with $pos.depth (itself
+    // guaranteed >= 1 by the depth < 1 early-return in
+    // computeCursorAwareInsertPos), so this branch should be unreachable.
+    // Guard explicitly rather than falling through: $pos.before(undefined)/
+    // $pos.after(undefined) silently default to $pos.depth in ProseMirror,
+    // which would mask a real bug here instead of surfacing it.
+    throw new Error('chainWalk: candidateDepths returned an empty array (unreachable)');
+  }
+  return wantStart ? $pos.before(shallowest) : $pos.after(shallowest);
+}
+
+/** Compute where to insert a block-level node (e.g. a pasted/dropped image
+ * figure) so that it lands exactly at the caret, splitting the minimum
+ * necessary structure and never tearing apart something that should stay
+ * whole (e.g. a table, or a list's mandatory-first paragraph). */
+export function computeCursorAwareInsertPos(doc: ProsemirrorNode, rawPos: number, nodeType: NodeType): number {
+  const $pos = doc.resolve(rawPos);
+
+  // Depth 0: already an unambiguous, valid top-level insertion point.
+  if ($pos.depth < 1) return rawPos;
+
+  const atStart = $pos.parentOffset === 0;
+  const atEnd = $pos.parentOffset === $pos.parent.content.size;
+
+  if (atStart || atEnd) {
+    // Never attempt to escalate/split through table structure — table_cell's
+    // content ("paragraph", exactly one) forces escalation all the way past
+    // table/table_row, and ProseMirror's schema has no structural guarantee
+    // that a split table would keep matching row/column counts. Use the
+    // existing, proven-safe "after the outermost block" fallback instead.
+    for (let d = 1; d <= $pos.depth; d++) {
+      if (isTableFamily($pos.node(d))) return $pos.after(1);
+    }
+
+    // Is the caret's own immediate container "asymmetric" — does it reject
+    // the figure type as a FIRST child (index 0)? list_item's
+    // "paragraph block*" does (paragraph is mandatory-first); blockquote's
+    // "block+" does not (no ordering constraint — any index is equally
+    // valid). This distinguishes containers with a genuine "supplementary
+    // content lives here, after the required lead-in" slot (list_item) from
+    // uniform runs of interchangeable siblings (blockquote), where nesting —
+    // even though schema-valid — has no such meaning and must not be
+    // preferred over full escalation (verified: preferring it regresses the
+    // blockquote-start/end flagship cases, since block+ trivially accepts a
+    // figure at any index).
+    const immediateParent = $pos.node($pos.depth - 1);
+    const asymmetric = !immediateParent.canReplaceWith(0, 0, nodeType);
+
+    const tryNestAtEnd = (): number | null => {
+      const idx = $pos.indexAfter($pos.depth - 1);
+      if (immediateParent.canReplaceWith(idx, idx, nodeType)) return $pos.after($pos.depth);
+      return null;
+    };
+
+    if (atStart && atEnd) {
+      // Genuinely empty textblock (e.g. an empty bullet). Prefer appending
+      // in place (no escalation) when the container's own reserved-slot
+      // asymmetry makes that the natural, intended placement; otherwise
+      // (symmetric container, e.g. an empty quoted line) fall through to the
+      // ordinary chain walk.
+      if (asymmetric) {
+        const nested = tryNestAtEnd();
+        if (nested !== null) return nested;
+      }
+      return chainWalk($pos, false);
+    }
+
+    if (atEnd && asymmetric) {
+      const nested = tryNestAtEnd();
+      if (nested !== null) return nested;
+    }
+
+    return chainWalk($pos, atStart);
+  }
+
+  // Genuinely mid-text (interior, not at any ancestor's boundary).
+  if ($pos.depth === 1) return $pos.pos;
+  for (let d = $pos.depth - 1; d >= 1; d--) {
+    if (isTableFamily($pos.node(d))) return $pos.after(1);
+    if (canEventuallyContainBlockType($pos.node(d), nodeType)) return $pos.pos;
+  }
+  return $pos.after(1);
+}
+
 /**
  * Insert an image figure node at the end of the document.
  * Called from Swift after image import completes.
@@ -714,6 +863,11 @@ export function insertImage(opts: {
   caption: string;
   width: number | null;
   blockId: string;
+  /** Where this insert originated. `'picker'` = native file picker (no
+   * cursor-based paste/drop position to consult — see position-selection
+   * logic below). Any other value (or omitted) is treated as a
+   * clipboard/drop origin. */
+  origin?: string;
 }): void {
   const editorInstance = getEditorInstance();
   if (!editorInstance) return;
@@ -763,16 +917,51 @@ export function insertImage(opts: {
       blockId: opts.blockId,
     });
 
-    // Use pending drop position if available (from handleDrop), otherwise insert after cursor's block
-    // Compute against tr.doc (which may have had ghost images removed)
-    let insertPos: number;
+    // Position selection order: cursor-aware paste position first, then the
+    // existing drop-position handling (unchanged), then the existing
+    // after-cursor-block fallback (still used by the image-picker flow).
+    // Compute against tr.doc (which may have had ghost images removed).
+    //
+    // Both pending position fields are drained unconditionally (even for a
+    // picker-originated call) so a picker insert never leaves stale state
+    // behind for a later, unrelated paste/drop to pick up — see the mutual
+    // one-shot-consume contract in image-plugin.ts.
+    const pastePos = consumePendingPastePos();
     const dropPos = consumePendingDropPos();
+    // pastePos was captured in pre-deletion document coordinates. If a ghost
+    // inline image (blob:/data:) existed before pastePos, the tr.delete(...)
+    // calls above shifted everything after it, so pastePos must be mapped
+    // through the accumulated transform steps before it's resolved against
+    // tr.doc — otherwise it can point at the wrong logical spot.
+    // NOTE: dropPos is deliberately NOT mapped here — same latent gap exists
+    // there, but it's out of scope for this fix (pre-existing, untouched).
+    const mappedPastePos = pastePos !== null ? tr.mapping.map(pastePos) : null;
     const docSize = tr.doc.content.size;
-    syncLog('API:insertImage', `dropPos=${dropPos} docSize=${docSize}`);
-    if (dropPos !== null && dropPos >= 0 && dropPos <= docSize) {
+    syncLog(
+      'API:insertImage',
+      `pastePos=${pastePos} mappedPastePos=${mappedPastePos} dropPos=${dropPos} docSize=${docSize} origin=${opts.origin ?? ''}`
+    );
+
+    const isPicker = opts.origin === 'picker';
+    let insertPos: number;
+    if (!isPicker && mappedPastePos !== null && mappedPastePos >= 0 && mappedPastePos <= docSize) {
+      insertPos = computeCursorAwareInsertPos(tr.doc, mappedPastePos, figureType);
+      syncLog('API:insertImage', `cursor-aware insertPos=${insertPos} (from mappedPastePos=${mappedPastePos})`);
+    } else if (!isPicker && dropPos !== null && dropPos >= 0 && dropPos <= docSize) {
       insertPos = dropPos;
     } else {
-      // Fallback: after current selection's top-level block
+      // Fallback: after current selection's top-level block. Reached whenever
+      // there's no usable cursor-aware position — the picker path (expected),
+      // OR (unexpected, and a loss of precision) a clipboard paste/drop whose
+      // pendingPastePos/pendingDropPos was never set or already expired (see
+      // PENDING_POS_TIMEOUT_MS in image-plugin.ts). Logged explicitly so a
+      // live-app retest's console makes it obvious which case this was.
+      if (!isPicker) {
+        syncLog(
+          'API:insertImage',
+          `FALLBACK: no usable paste/drop position (pastePos=${pastePos} mappedPastePos=${mappedPastePos} dropPos=${dropPos}) — using after-current-block placement, cursor-aware positioning was lost`
+        );
+      }
       try {
         const { from } = view.state.selection;
         const $from = tr.doc.resolve(Math.min(from, docSize));

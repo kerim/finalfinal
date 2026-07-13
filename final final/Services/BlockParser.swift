@@ -156,6 +156,21 @@ enum BlockParser {
         }
     }()
 
+    /// Whether `trimmedLine` looks like the start of a bullet ("-"/"*"/"+ ") or
+    /// ordered ("1. ") list item, and which kind. Returns nil for anything else.
+    /// Single-line check — used to detect a list "interrupting" non-list
+    /// content with no blank line in between (see the call site in
+    /// `splitIntoRawBlocks` for why this matters).
+    private static func listMarkerKind(_ trimmedLine: String) -> BlockType? {
+        if trimmedLine.range(of: "^[-*+]\\s+", options: .regularExpression) != nil {
+            return .bulletList
+        }
+        if trimmedLine.range(of: "^\\d+\\.\\s+", options: .regularExpression) != nil {
+            return .orderedList
+        }
+        return nil
+    }
+
     private static func splitIntoRawBlocks(_ markdown: String) -> [String] {
         var blocks: [String] = []
         var currentBlock = ""
@@ -281,6 +296,51 @@ enum BlockParser {
                         currentBlock = ""
                     }
                     inFootnoteDef = true
+                } else if let newLineListKind = listMarkerKind(trimmedLine),
+                          !currentBlock.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                          detectBlockType(currentBlock).0 != newLineListKind {
+                    // A list-item-looking line arriving with NO preceding blank
+                    // line, while currentBlock is non-list content (or a
+                    // DIFFERENT list type). This splitter's default assumption
+                    // — "a blank line is the only block boundary" — doesn't hold
+                    // here: per CommonMark itself, a list CAN interrupt a
+                    // paragraph (or any other block) with no blank line needed.
+                    //
+                    // Confirmed real-world corruption this guards against: a
+                    // pasted image splitting one bullet_list into two siblings
+                    // around a new figure (a deliberate, tested placement — see
+                    // insert-pos.test.ts) produces, from a still-unconfirmed
+                    // upstream cause, markdown where the figure's line and the
+                    // second list's first line are adjacent with NO blank line
+                    // between them. Without this guard, the figure line and the
+                    // entire second list get glued into ONE row, typed `.image`
+                    // (since that's the first line) — the second list's own rows
+                    // (and, for the caller reading this row's markdownFragment
+                    // going forward, its distinct identity) are silently lost.
+                    // See BlockListSplitPasteExportTests.swift for the
+                    // regression test built from the exact real persisted DB
+                    // state this was found in.
+                    //
+                    // detectBlockType(currentBlock) — not just its last line —
+                    // correctly classifies a normal multi-item list (all list
+                    // marker lines) OR a list whose last line is an indented,
+                    // nested atom continuation (block-sync-plugin.ts's
+                    // indentContinuationLines, e.g. "- Item 2\n  ![](...)") as
+                    // .bulletList/.orderedList from its FIRST line — so a
+                    // genuine continuation of the SAME list never gets split.
+                    //
+                    // DIAGNOSTIC: this guard firing at all means the upstream
+                    // text was missing a blank line where CommonMark/Milkdown's
+                    // own serializer normally puts one. The exact upstream
+                    // trigger is still unconfirmed (see the investigation notes
+                    // above) — this log lets a real retest confirm whether this
+                    // is the mechanism still in play, and captures enough of
+                    // both sides of the boundary to identify the trigger if it
+                    // recurs. `.data` is enabled by default in this build.
+                    DebugLog.log(.data, "[BlockParser] list-interruption guard fired: " +
+                        "currentBlock tail=\"\(currentBlock.suffix(80))\" newLine=\"\(line.prefix(80))\"")
+                    blocks.append(currentBlock)
+                    currentBlock = ""
                 }
                 currentBlock += line + "\n"
             }

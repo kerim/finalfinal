@@ -882,7 +882,10 @@ extension MilkdownEditor.Coordinator {
             )
 
             // Create image block in database
-            insertImageBlock(src: relativePath, alt: suggestedName ?? "")
+            // origin: "clipboard" — this handler is the single Swift entry point for both
+            // clipboard paste and drag-and-drop, since the JS side posts both through the
+            // same `pasteImage` message channel (see handlePaste/handleDrop in image-plugin.ts).
+            insertImageBlock(src: relativePath, alt: suggestedName ?? "", origin: "clipboard")
         } catch {
             DebugLog.log(.editor, "[MilkdownEditor] Image paste failed: \(error.localizedDescription)")
             let window = webView?.window ?? NSApp.keyWindow
@@ -916,7 +919,7 @@ extension MilkdownEditor.Coordinator {
         do {
             let relativePath = try ImageImportService.importFromURL(url, mediaDir: mediaDir)
             let alt = (url.lastPathComponent as NSString).deletingPathExtension
-            insertImageBlock(src: relativePath, alt: alt)
+            insertImageBlock(src: relativePath, alt: alt, origin: "picker")
         } catch {
             DebugLog.log(.editor, "[MilkdownEditor] Image import failed: \(error.localizedDescription)")
             let window = webView?.window ?? NSApp.keyWindow
@@ -957,11 +960,16 @@ extension MilkdownEditor.Coordinator {
     /// Insert figure node into editor via JS (editor-first approach).
     /// No DB write — BlockSyncService detects the new node on its next poll
     /// and creates the block record via the normal insert path.
+    ///
+    /// `origin` is threaded through to JS's `insertImage()` so it can decide
+    /// whether to consult a pending paste/drop caret position ("clipboard")
+    /// or always fall back to inserting after the current selection's block
+    /// ("picker" — the picker has no associated caret-capture event).
     @MainActor
-    private func insertImageBlock(src: String, alt: String) {
+    private func insertImageBlock(src: String, alt: String, origin: String) {
         let escapedAlt = alt.escapedForJSTemplateLiteral
         webView?.evaluateJavaScript(
-            "window.FinalFinal.insertImage && window.FinalFinal.insertImage({src: `\(src)`, alt: `\(escapedAlt)`, caption: '', width: null, blockId: ''})"
+            "window.FinalFinal.insertImage && window.FinalFinal.insertImage({src: `\(src)`, alt: `\(escapedAlt)`, caption: '', width: null, blockId: '', origin: '\(origin)'})"
         ) { _, error in
             if let error {
                 DebugLog.log(.editor, "[MilkdownEditor] insertImage JS error: \(error)")
