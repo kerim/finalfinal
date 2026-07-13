@@ -917,10 +917,13 @@ export function insertImage(opts: {
       blockId: opts.blockId,
     });
 
-    // Position selection order: cursor-aware paste position first, then the
-    // existing drop-position handling (unchanged), then the existing
-    // after-cursor-block fallback (still used by the image-picker flow).
-    // Compute against tr.doc (which may have had ghost images removed).
+    // Position selection order: cursor-aware paste position first, then
+    // cursor-aware drop position, then the existing after-cursor-block
+    // fallback (still used by the image-picker flow). Both paste and drop
+    // positions are routed through computeCursorAwareInsertPos() so a raw
+    // position at any depth/boundary escalates or nests correctly instead of
+    // going straight to tr.insert(). Compute against tr.doc (which may have
+    // had ghost images removed).
     //
     // Both pending position fields are drained unconditionally (even for a
     // picker-originated call) so a picker insert never leaves stale state
@@ -928,27 +931,31 @@ export function insertImage(opts: {
     // one-shot-consume contract in image-plugin.ts.
     const pastePos = consumePendingPastePos();
     const dropPos = consumePendingDropPos();
-    // pastePos was captured in pre-deletion document coordinates. If a ghost
-    // inline image (blob:/data:) existed before pastePos, the tr.delete(...)
-    // calls above shifted everything after it, so pastePos must be mapped
-    // through the accumulated transform steps before it's resolved against
-    // tr.doc — otherwise it can point at the wrong logical spot.
-    // NOTE: dropPos is deliberately NOT mapped here — same latent gap exists
-    // there, but it's out of scope for this fix (pre-existing, untouched).
+    // Both pastePos and dropPos were captured in pre-deletion document
+    // coordinates. If a ghost inline image (blob:/data:) existed before either
+    // position, the tr.delete(...) calls above shifted everything after it, so
+    // each must be mapped through the accumulated transform steps before being
+    // resolved against tr.doc — otherwise it can point at the wrong logical spot.
     const mappedPastePos = pastePos !== null ? tr.mapping.map(pastePos) : null;
+    const mappedDropPos = dropPos !== null ? tr.mapping.map(dropPos) : null;
     const docSize = tr.doc.content.size;
     syncLog(
       'API:insertImage',
-      `pastePos=${pastePos} mappedPastePos=${mappedPastePos} dropPos=${dropPos} docSize=${docSize} origin=${opts.origin ?? ''}`
+      `pastePos=${pastePos} mappedPastePos=${mappedPastePos} dropPos=${dropPos} mappedDropPos=${mappedDropPos} docSize=${docSize} origin=${opts.origin ?? ''}`
     );
 
     const isPicker = opts.origin === 'picker';
+    const rawPos =
+      !isPicker && mappedPastePos !== null && mappedPastePos >= 0 && mappedPastePos <= docSize
+        ? mappedPastePos
+        : !isPicker && mappedDropPos !== null && mappedDropPos >= 0 && mappedDropPos <= docSize
+          ? mappedDropPos
+          : null;
+
     let insertPos: number;
-    if (!isPicker && mappedPastePos !== null && mappedPastePos >= 0 && mappedPastePos <= docSize) {
-      insertPos = computeCursorAwareInsertPos(tr.doc, mappedPastePos, figureType);
-      syncLog('API:insertImage', `cursor-aware insertPos=${insertPos} (from mappedPastePos=${mappedPastePos})`);
-    } else if (!isPicker && dropPos !== null && dropPos >= 0 && dropPos <= docSize) {
-      insertPos = dropPos;
+    if (rawPos !== null) {
+      insertPos = computeCursorAwareInsertPos(tr.doc, rawPos, figureType);
+      syncLog('API:insertImage', `cursor-aware insertPos=${insertPos} (from rawPos=${rawPos})`);
     } else {
       // Fallback: after current selection's top-level block. Reached whenever
       // there's no usable cursor-aware position — the picker path (expected),
@@ -959,7 +966,7 @@ export function insertImage(opts: {
       if (!isPicker) {
         syncLog(
           'API:insertImage',
-          `FALLBACK: no usable paste/drop position (pastePos=${pastePos} mappedPastePos=${mappedPastePos} dropPos=${dropPos}) — using after-current-block placement, cursor-aware positioning was lost`
+          `FALLBACK: no usable paste/drop position (pastePos=${pastePos} mappedPastePos=${mappedPastePos} dropPos=${dropPos} mappedDropPos=${mappedDropPos}) — using after-current-block placement, cursor-aware positioning was lost`
         );
       }
       try {

@@ -423,3 +423,23 @@ describe('computeCursorAwareInsertPos — table cells never split', () => {
     expect(top).toEqual(['table', 'FIGURE']);
   });
 });
+
+describe('computeCursorAwareInsertPos — depth-0 gap between top-level siblings (drop-position fix)', () => {
+  // Regression test for the "image drag-and-drop lands at the bottom of the
+  // document" bug (image-drag-drop-position plan, §1): the whitespace gap
+  // BETWEEN two top-level blocks resolves at depth 0 — it is already an
+  // unambiguous, valid top-level insertion point and must be used directly,
+  // not discarded in favor of doc-end (the pre-fix `handleDrop` behavior).
+  it('a raw position resolving at depth 0 is returned unchanged, not escalated to doc-end', () => {
+    const doc = schema.nodes.doc.create(null, [p('First paragraph'), p('Second paragraph')]);
+    const gapPos = doc.firstChild!.nodeSize; // gap immediately after the first paragraph's closing tag
+    const $pos = doc.resolve(gapPos);
+    expect($pos.depth).toBe(0); // sanity check: this really is the depth-0 case the fix targets
+
+    const insertPos = computeCursorAwareInsertPos(doc, gapPos, figureType);
+    expect(insertPos).toBe(gapPos);
+
+    const { top } = insertAndDescribe(doc, insertPos);
+    expect(top).toEqual(['p("First paragraph")', 'FIGURE', 'p("Second paragraph")']);
+  });
+});

@@ -97,6 +97,7 @@ import { blockSyncPlugin } from './block-sync-plugin';
 import { openCAYWPicker } from './cayw';
 import { citationPlugin } from './citation-plugin';
 import { restoreCitationLibrary } from './citation-search';
+import { dropCursorPlugin } from './drop-cursor-plugin';
 import {
   clearContentPushTimer,
   getContentHasBeenSet,
@@ -240,6 +241,7 @@ async function initEditor() {
       .use(selectionToolbarPlugin) // Selection toolbar (floating format bar)
       .use(selectionStatsPlugin) // Push selected text to Swift for status-bar selection word count
       .use(tableToolsPlugin) // Floating table toolbar (add/delete row & column, alignment)
+      .use(dropCursorPlugin) // Visible caret/line indicator tracking the mouse during drag-and-drop
       .use(slash)
       .create();
 

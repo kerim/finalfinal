@@ -260,6 +260,11 @@ body {
   border-radius: 2px;
 }
 
+.ff-dropcursor {
+  background-color: var(--accent-color, #007aff);
+  border-radius: 1px;
+}
+
 .figure-resize-handle {
   position: absolute;
   right: -4px;

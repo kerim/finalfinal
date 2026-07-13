@@ -633,9 +633,20 @@ const imagePasteDropPlugin = $prose(() => {
 
       handleDrop(view: EditorView, event: DragEvent): boolean {
         const files = event.dataTransfer?.files;
-        if (!files || files.length === 0) return false;
+        const imageFile = files ? Array.from(files).find((f) => f.type.startsWith('image/')) : undefined;
 
-        const imageFile = Array.from(files).find((f) => f.type.startsWith('image/'));
+        // Fix X: any drag whose gesture began inside this editor (a figure
+        // move, a text-range drag) sets view.dragging in ProseMirror's own
+        // dragstart handler (prosemirror-view/src/input.ts), cleared once the
+        // matching drop finishes. Bail out and let PM's own native drop
+        // handling (dropPoint()-based — already schema-correct) process it
+        // end-to-end, regardless of what event.dataTransfer.files also
+        // contains. Safe unconditionally: can only route MORE drags to PM's
+        // already-correct native path, never fewer; zero effect on genuine
+        // external file drops (view.dragging is guaranteed null there).
+        if (view.dragging) return false;
+
+        if (!files || files.length === 0) return false;
         if (!imageFile) return false;
 
         const now = Date.now();
@@ -649,18 +660,16 @@ const imagePasteDropPlugin = $prose(() => {
         event.preventDefault();
         event.stopPropagation();
 
-        // Capture drop position before async processing
+        // Capture drop position before async processing. Unlike the old
+        // pre-escalation logic (depth 0 -> discarded for docSizeAtDrop), the raw,
+        // clamped coords.pos is captured as-is — a depth-0 position (the gap
+        // between two top-level blocks) is already a valid insertion point.
+        // insertImage() (api-content.ts) routes this through
+        // computeCursorAwareInsertPos() before actually inserting, exactly like
+        // pastePos, so escalation for deeper/ambiguous positions happens there.
         const coords = view.posAtCoords({ left: event.clientX, top: event.clientY });
         const docSizeAtDrop = view.state.doc.content.size;
-        if (coords) {
-          try {
-            const $pos = view.state.doc.resolve(coords.pos);
-            // $pos.after(1) requires depth >= 1; at doc boundary depth may be 0
-            pendingDropPos = $pos.depth >= 1 ? $pos.after(1) : docSizeAtDrop;
-          } catch {
-            pendingDropPos = docSizeAtDrop;
-          }
-        }
+        pendingDropPos = coords ? Math.max(0, Math.min(coords.pos, docSizeAtDrop)) : docSizeAtDrop;
         // Mutual clearing: a drop supersedes any stale pending paste position,
         // preventing an orphaned paste from later hijacking this drop.
         pendingPastePos = null;
