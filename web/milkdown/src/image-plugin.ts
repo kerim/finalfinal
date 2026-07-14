@@ -9,16 +9,46 @@ import type { EditorView, NodeView as ProsemirrorNodeView } from '@milkdown/kit/
 import { $node, $prose, $remark } from '@milkdown/kit/utils';
 import type { Root } from 'mdast';
 import { visit } from 'unist-util-visit';
+import {
+  escapeAltAttr,
+  extractAltAttrValue,
+  extractWidthAttrValue,
+  isRecognizedAttrBlock,
+  unescapeOnce,
+} from '../../shared/image-caption-attrs';
 import { getBlockIdAtPos } from './block-id-plugin';
 import { isSourceModeEnabled } from './source-mode-plugin';
 import { syncLog } from './sync-debug';
+
+// ============================================================================
+// Caption/alt attribute helpers
+//
+// Current format: `![caption](media/x.png){alt="..." width=N%}` — bracket
+// text is the visible CAPTION, and the `alt="..."` attribute (emitted
+// UNCONDITIONALLY, even empty — see toMarkdown below) carries the real
+// accessibility alt text, separately. Its mere PRESENCE — not whether it's
+// non-empty — self-marks a fragment as this current format; its absence
+// self-marks a fragment as a pre-fix document, where bracket text is (as
+// before) the alt, and any caption lives in a preceding
+// `<!-- caption: ... -->` comment (see remarkFigurePlugin below).
+//
+// These helpers live in `../../shared/image-caption-attrs` so the CodeMirror
+// source-mode editor (`codemirror/src/image-preview-plugin.ts`,
+// `image-caption-popup.ts`, `api.ts`) reads/writes this exact same
+// self-marking format and escaping scheme instead of a drifting duplicate.
+// Re-exported here unchanged so existing imports of this module (and its
+// tests) keep working.
+// ============================================================================
+export { escapeAltAttr, extractAltAttrValue, extractWidthAttrValue, isRecognizedAttrBlock, unescapeOnce };
 
 // Remark plugin: convert standalone images with media/ URLs into figure nodes
 // In mdast, a standalone ![alt](src) line produces paragraph > image.
 // We detect paragraphs containing exactly one image child with media/ prefix
 // and replace them with a custom 'figure' node.
 const remarkFigurePlugin = $remark('figure', () => () => (tree: Root) => {
-  // Also handle <!-- caption: text --> comments before images
+  // Legacy-only: <!-- caption: text --> comments before images. Still
+  // recovered for documents saved before this fix (migration path); the new
+  // alt="..." self-marking signal below always takes precedence when present.
   const captionMap = new Map<number, string>();
   // Collect nodes to remove after visit completes (avoids splice-during-visit bug)
   const toRemove: { parent: any; index: number }[] = [];
@@ -33,47 +63,48 @@ const remarkFigurePlugin = $remark('figure', () => () => (tree: Root) => {
     }
 
     // Transform paragraphs containing an image with media/ URL
-    // With {width=N%} appended, remark parses as [image, text("{width=50%}")] = 2 children
+    // With {alt="..." width=N%} appended, remark parses as
+    // [image, text("{alt=\"...\" width=50%}")] = 2 children
     if (node.type === 'paragraph' && node.children?.length >= 1) {
       const child = node.children[0];
       if (child.type === 'image' && child.url?.startsWith('media/')) {
-        // Guard: only allow extra children that are {width=N%} attribute text
+        // Guard: only allow extra children that are a recognized {alt=.../width=N%} block
+        let attrsText = '';
         if (node.children.length > 1) {
           const extra = node.children.slice(1);
-          const allAttrs = extra.every(
-            (c: any) => c.type === 'text' && /^\s*\{[^}]*width=\d+%[^}]*\}\s*$/.test(c.value?.trim() ?? '')
-          );
+          const allAttrs = extra.every((c: any) => c.type === 'text' && isRecognizedAttrBlock(c.value ?? ''));
           if (!allAttrs) return; // Not a figure, skip
+          attrsText = extra.map((c: any) => c.value ?? '').join('');
         }
 
-        // Parse width from trailing attribute text node
-        let width: number | null = null;
-        if (node.children.length > 1) {
-          const lastChild = node.children[node.children.length - 1];
-          if (lastChild.type === 'text') {
-            const m = lastChild.value?.match(/\{[^}]*width=(\d+)%[^}]*\}/);
-            if (m) width = parseInt(m[1], 10);
-          }
-        }
+        const width = extractWidthAttrValue(attrsText);
+        const altAttrValue = extractAltAttrValue(attrsText);
+        const isNewFormat = altAttrValue !== null;
 
-        // Check for preceding caption comment
-        let caption = '';
-        if (index !== undefined && index > 0 && captionMap.has(index - 1)) {
-          caption = captionMap.get(index - 1) || '';
-          // Mark caption comment for removal after visit
-          if (parent?.children) {
-            toRemove.push({ parent, index: index - 1 });
+        let alt: string;
+        let caption: string;
+        if (isNewFormat) {
+          // Current format: bracket text is the caption, the attribute
+          // carries the real accessibility alt text.
+          caption = child.alt || '';
+          alt = altAttrValue;
+        } else {
+          // Pre-fix format: bracket text is the alt; recover any caption
+          // from a preceding <!-- caption: ... --> comment (migration path).
+          alt = child.alt || '';
+          caption = '';
+          if (index !== undefined && index > 0 && captionMap.has(index - 1)) {
+            caption = captionMap.get(index - 1) || '';
+            // Mark caption comment for removal after visit
+            if (parent?.children) {
+              toRemove.push({ parent, index: index - 1 });
+            }
           }
         }
 
         // Transform in place to custom figure node
         node.type = 'figure';
-        node.data = {
-          src: child.url,
-          alt: child.alt || '',
-          caption,
-          width,
-        };
+        node.data = { src: child.url, alt, caption, width };
         delete node.children;
       }
     }
@@ -158,31 +189,39 @@ const figureNode = $node('figure', () => ({
   toMarkdown: {
     match: (node: ProsemirrorNode) => node.type.name === 'figure',
     runner: (state: any, node: ProsemirrorNode) => {
-      // Emit caption comment before the image if present
       const caption = node.attrs.caption || '';
-      if (caption) {
-        state.addNode('html', undefined, undefined, {
-          value: `<!-- caption: ${caption} -->`,
-        });
-      }
+      const alt = node.attrs.alt || '';
 
       // Wrap image in paragraph to produce a flow-level mdast node.
       // Without this, `image` (phrasing content) at the root level
       // triggers remark-stringify's containerPhrasing for the ENTIRE
       // document, collapsing all \n\n block separators.
       state.openNode('paragraph');
+      // Bracket text is the CAPTION (not alt) — mdast-util-to-markdown's own
+      // image serializer already escapes whatever needs escaping (e.g. `]`)
+      // for safe round-tripping, so no manual escaping is applied here.
       state.addNode('image', undefined, undefined, {
         url: node.attrs.src || '',
-        alt: node.attrs.alt || '',
+        alt: caption,
         title: null,
       });
+      // Combined {alt="..." width=N%} attribute block. `alt=` is emitted
+      // UNCONDITIONALLY (even when empty) — its mere PRESENCE (not whether
+      // it's non-empty) is the self-marking signal that distinguishes this
+      // format from a pre-fix document on the next read (see
+      // remarkFigurePlugin above). Emitting it only when non-empty would
+      // make a captioned image with an empty alt round-trip ambiguously
+      // with a pre-fix bare-alt image — silently losing the typed caption.
+      // MUST be inside paragraph, before closeNode() — placing it after
+      // closeNode() would emit phrasing content at document root,
+      // collapsing all block separators.
+      const attrs = [`alt="${escapeAltAttr(alt)}"`];
       if (node.attrs.width) {
-        // MUST be inside paragraph, before closeNode() — placing it after closeNode()
-        // would emit phrasing content at document root, collapsing all block separators
-        state.addNode('text', undefined, undefined, {
-          value: `{width=${node.attrs.width}%}`,
-        });
+        attrs.push(`width=${node.attrs.width}%`);
       }
+      state.addNode('text', undefined, undefined, {
+        value: `{${attrs.join(' ')}}`,
+      });
       state.closeNode();
     },
   },
@@ -212,7 +251,8 @@ class FigureNodeView implements ProsemirrorNodeView {
     if (isSourceModeEnabled()) {
       this.dom = document.createElement('div');
       this.dom.className = 'figure-source-mode';
-      const base = `![${node.attrs.alt || ''}](${node.attrs.src || ''})`;
+      // Bracket text mirrors the persisted format: caption, not alt.
+      const base = `![${node.attrs.caption || ''}](${node.attrs.src || ''})`;
       this.dom.textContent = node.attrs.width ? `${base}{width=${node.attrs.width}%}` : base;
       this.img = document.createElement('img'); // placeholder, not displayed
       return;
@@ -468,7 +508,8 @@ class FigureNodeView implements ProsemirrorNodeView {
 
     // Source mode check
     if (isSourceModeEnabled()) {
-      const base = `![${node.attrs.alt || ''}](${node.attrs.src || ''})`;
+      // Bracket text mirrors the persisted format: caption, not alt.
+      const base = `![${node.attrs.caption || ''}](${node.attrs.src || ''})`;
       this.dom.textContent = node.attrs.width ? `${base}{width=${node.attrs.width}%}` : base;
       return true;
     }

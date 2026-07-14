@@ -99,9 +99,17 @@ extension ProjectDatabase {
                 }
                 // Preserve image metadata by imageSrc match
                 if block.blockType == .image, let src = block.imageSrc, !src.isEmpty {
-                    // Extract caption from markdown comment if present
+                    // Legacy migration only: recover a caption from a leading
+                    // <!-- caption: ... --> comment line, same guard as the gap-fill block
+                    // below (only if the parser hasn't already set imageCaption — new-format
+                    // fragments set it, even to "", via BlockParser.parseImageFragmentMeta) and
+                    // anchored (`^`) so this can only match a comment immediately preceding the
+                    // image, not one appearing anywhere else in the fragment.
                     let frag = block.markdownFragment.trimmingCharacters(in: .whitespacesAndNewlines)
-                    if let captionRange = frag.range(of: #"<!--\s*caption:\s*(.*?)\s*-->"#, options: .regularExpression) {
+                    if block.imageCaption == nil,
+                        let captionRange = frag.range(
+                            of: #"^<!--\s*caption:\s*(.*?)\s*-->"#, options: .regularExpression
+                        ) {
                         let fullMatch = String(frag[captionRange])
                         if let textRange = fullMatch.range(of: #"(?<=caption:\s).*?(?=\s*-->)"#, options: .regularExpression) {
                             block.imageCaption = String(fullMatch[textRange])
@@ -339,8 +347,17 @@ extension ProjectDatabase {
 
                 // 6. Preserve image metadata by imageSrc match
                 if block.blockType == .image, let src = block.imageSrc, !src.isEmpty {
+                    // Legacy migration only: recover a caption from a leading
+                    // <!-- caption: ... --> comment line, same guard as the gap-fill block
+                    // below (only if the parser hasn't already set imageCaption — new-format
+                    // fragments set it, even to "", via BlockParser.parseImageFragmentMeta) and
+                    // anchored (`^`) so this can only match a comment immediately preceding the
+                    // image, not one appearing anywhere else in the fragment.
                     let frag = block.markdownFragment.trimmingCharacters(in: .whitespacesAndNewlines)
-                    if let captionRange = frag.range(of: #"<!--\s*caption:\s*(.*?)\s*-->"#, options: .regularExpression) {
+                    if block.imageCaption == nil,
+                        let captionRange = frag.range(
+                            of: #"^<!--\s*caption:\s*(.*?)\s*-->"#, options: .regularExpression
+                        ) {
                         let fullMatch = String(frag[captionRange])
                         if let textRange = fullMatch.range(of: #"(?<=caption:\s).*?(?=\s*-->)"#, options: .regularExpression) {
                             block.imageCaption = String(fullMatch[textRange])

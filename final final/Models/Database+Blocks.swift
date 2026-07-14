@@ -465,16 +465,10 @@ extension ProjectDatabase {
 
                 // Auto-populate image metadata from markdown for image blocks
                 if blockType == .image {
-                    if let imageMatch = insertTrimmed.range(
-                        of: #"!\[([^\]]*)\]\(([^)]+)\)"#, options: .regularExpression
-                    ) {
-                        let matchStr = String(insertTrimmed[imageMatch])
-                        if let altRange = matchStr.range(of: #"(?<=!\[)[^\]]*(?=\])"#, options: .regularExpression),
-                           let srcRange = matchStr.range(of: #"(?<=\()[^)]+(?=\))"#, options: .regularExpression) {
-                            block.imageAlt = String(matchStr[altRange])
-                            block.imageSrc = String(matchStr[srcRange])
-                        }
-                    }
+                    let meta = BlockParser.parseImageFragmentMeta(from: insertTrimmed)
+                    block.imageSrc = meta.src
+                    block.imageAlt = meta.alt
+                    block.imageCaption = meta.caption
                     // Parse {width=N%} from Pandoc attributes
                     block.imageWidth = BlockParser.parseImageWidthPercent(from: insertTrimmed)
 
@@ -608,9 +602,18 @@ extension ProjectDatabase {
                                 DebugLog.log(.data, "[Blocks:edit:→paragraph:fromSectionBreak] block=\(id8) oldWC=\(oldWC) newWC=\(block.wordCount)")
                             }
                         }
-                        // Re-extract image width from updated fragment (unconditional: clears if removed)
+                        // Re-extract image width AND caption/alt from the updated fragment
+                        // (unconditional: clears if removed). This path fires for things like
+                        // ProseMirror undo/redo of a caption/alt edit, which doesn't go through
+                        // the dedicated "update image meta" message — export reads the
+                        // imageCaption/imageAlt DB columns (not live document text), so without
+                        // this an export could keep showing a stale caption/alt the editor no
+                        // longer displays.
                         if block.blockType == .image {
                             block.imageWidth = BlockParser.parseImageWidthPercent(from: trimmed)
+                            let meta = BlockParser.parseImageFragmentMeta(from: trimmed)
+                            block.imageAlt = meta.alt
+                            block.imageCaption = meta.caption
                         }
                     }
                     if let headingLevel = update.headingLevel {
@@ -635,6 +638,16 @@ extension ProjectDatabase {
                         }
                         if let markdownFragment = update.markdownFragment {
                             existingBlock.markdownFragment = markdownFragment
+                            // Re-derive image width/caption/alt alongside the generic .update
+                            // case above — see its comment for why (undo/redo etc. can reach
+                            // this merge path too, and export reads these DB columns directly).
+                            if existingBlock.blockType == .image {
+                                let trimmed = markdownFragment.trimmingCharacters(in: .whitespacesAndNewlines)
+                                existingBlock.imageWidth = BlockParser.parseImageWidthPercent(from: trimmed)
+                                let meta = BlockParser.parseImageFragmentMeta(from: trimmed)
+                                existingBlock.imageAlt = meta.alt
+                                existingBlock.imageCaption = meta.caption
+                            }
                         }
                         if let headingLevel = update.headingLevel {
                             existingBlock.headingLevel = headingLevel
@@ -655,6 +668,16 @@ extension ProjectDatabase {
                         }
                         if let markdownFragment = update.markdownFragment {
                             existingBlock.markdownFragment = markdownFragment
+                            // Re-derive image width/caption/alt — see the generic .update case
+                            // above for why (this defensive temp-id path can carry a caption/alt
+                            // edit too, and export reads these DB columns directly).
+                            if existingBlock.blockType == .image {
+                                let trimmed = markdownFragment.trimmingCharacters(in: .whitespacesAndNewlines)
+                                existingBlock.imageWidth = BlockParser.parseImageWidthPercent(from: trimmed)
+                                let meta = BlockParser.parseImageFragmentMeta(from: trimmed)
+                                existingBlock.imageAlt = meta.alt
+                                existingBlock.imageCaption = meta.caption
+                            }
                         }
                         if let headingLevel = update.headingLevel {
                             existingBlock.headingLevel = headingLevel

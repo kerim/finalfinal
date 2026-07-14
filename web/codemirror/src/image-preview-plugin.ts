@@ -1,13 +1,21 @@
 /**
  * Image preview plugin for CodeMirror 6
  *
- * Renders inline image previews below ![alt](media/...) lines.
- * Uses Decoration.widget with block: true to insert preview widgets
+ * Renders inline image previews below `![caption](media/...){alt="..."}`
+ * lines. Uses Decoration.widget with block: true to insert preview widgets
  * below image markdown lines. Images are served via projectmedia:// scheme.
  *
+ * Caption/alt format: see `../../shared/image-caption-attrs` for the
+ * self-marking format shared with the Milkdown editor — bracket text is the
+ * caption, a present `alt="..."` attribute carries accessibility alt text
+ * and marks the fragment as "current format"; absence of `alt=` falls back
+ * to the legacy `<!-- caption: text -->` comment format (bracket text is
+ * the alt in that case).
+ *
  * Supports:
- * - Caption display from preceding <!-- caption: text --> comments
- * - Caption comment hiding via Decoration.replace()
+ * - Caption display from the new self-marking format, with legacy
+ *   `<!-- caption: text -->` comment fallback for pre-fix documents
+ * - Caption comment hiding via Decoration.replace() (legacy format only)
  * - Click-to-edit captions via popup
  * - "Add caption" placeholder on hover for captionless images
  * - Images display at full width (max-width: 100%), matching Milkdown
@@ -24,6 +32,7 @@ import {
   isImageCaptionPopupOpen,
   showImageCaptionPopup,
 } from './image-caption-popup';
+import { parseImageLine } from './image-line-parser';
 
 // --- Image metadata StateEffect/StateField ---
 
@@ -54,10 +63,7 @@ export function setImageMeta(meta: Array<{ src: string; width?: number | null }>
 
 // --- Constants ---
 
-/** Matches image markdown: ![alt](media/filename.ext){width=N%} */
-const IMAGE_REGEX = /!\[([^\]]*)\]\((media\/[^)]+)\)(?:\s*\{[^}]*width=(\d+)%[^}]*\})?/;
-
-/** Matches caption comment: <!-- caption: text --> */
+/** Matches caption comment: <!-- caption: text --> (legacy format only) */
 const CAPTION_REGEX = /^<!--\s*caption:\s*(.+?)\s*-->$/;
 
 // --- Widget ---
@@ -172,42 +178,55 @@ function buildDecorations(state: EditorState): DecorationSet {
   // Iterate line-by-line to check for caption comments on preceding lines
   for (let i = 1; i <= doc.lines; i++) {
     const line = doc.line(i);
-    const imageMatch = IMAGE_REGEX.exec(line.text);
-    if (!imageMatch) continue;
+    const parsed = parseImageLine(line.text);
+    if (!parsed) continue;
 
-    const alt = imageMatch[1];
-    const src = imageMatch[2];
-    const regexWidth = imageMatch[3] ? parseInt(imageMatch[3], 10) : null;
-    const width = regexWidth ?? metaStore.get(src) ?? null;
+    const { bracketText, src, altAttrValue } = parsed;
+    // Presence of alt="..." (even alt="") self-marks the new format, where
+    // bracket text is the caption. Its absence means a pre-fix fragment,
+    // where bracket text is the alt and any caption lives in a preceding
+    // <!-- caption: ... --> comment (migration path). See
+    // ../../shared/image-caption-attrs for the shared detection rule.
+    const isNewFormat = altAttrValue !== null;
+    const width = parsed.width ?? metaStore.get(src) ?? null;
 
-    // Check preceding lines for caption comment, skipping blank lines
-    // Database-loaded images have a blank line between caption and image:
-    //   <!-- caption: text -->
-    //   (blank line)
-    //   ![alt](media/file.jpg)
-    // Popup-inserted captions have no blank line (degrades to i-1 check).
+    let alt: string;
     let caption = '';
     let captionLineNumber: number | null = null;
-    if (i > 1) {
-      let checkLineNum = i - 1;
-      const minLine = Math.max(1, i - 3);
-      while (checkLineNum >= minLine && doc.line(checkLineNum).text.trim() === '') {
-        checkLineNum--;
-      }
-      if (checkLineNum >= 1) {
-        const captionLine = doc.line(checkLineNum);
-        const captionMatch = CAPTION_REGEX.exec(captionLine.text.trim());
-        if (captionMatch) {
-          caption = captionMatch[1];
-          captionLineNumber = checkLineNum;
 
-          // Hide from caption line start through image line start
-          // This covers the caption comment and any intervening blank lines
-          decorations.push({
-            from: captionLine.from,
-            to: line.from,
-            deco: Decoration.replace({}),
-          });
+    if (isNewFormat) {
+      alt = altAttrValue;
+      caption = bracketText;
+    } else {
+      alt = bracketText;
+
+      // Check preceding lines for caption comment, skipping blank lines
+      // Database-loaded images have a blank line between caption and image:
+      //   <!-- caption: text -->
+      //   (blank line)
+      //   ![alt](media/file.jpg)
+      // Popup-inserted captions have no blank line (degrades to i-1 check).
+      if (i > 1) {
+        let checkLineNum = i - 1;
+        const minLine = Math.max(1, i - 3);
+        while (checkLineNum >= minLine && doc.line(checkLineNum).text.trim() === '') {
+          checkLineNum--;
+        }
+        if (checkLineNum >= 1) {
+          const captionLine = doc.line(checkLineNum);
+          const captionMatch = CAPTION_REGEX.exec(captionLine.text.trim());
+          if (captionMatch) {
+            caption = captionMatch[1];
+            captionLineNumber = checkLineNum;
+
+            // Hide from caption line start through image line start
+            // This covers the caption comment and any intervening blank lines
+            decorations.push({
+              from: captionLine.from,
+              to: line.from,
+              deco: Decoration.replace({}),
+            });
+          }
         }
       }
     }

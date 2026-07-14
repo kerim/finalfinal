@@ -207,10 +207,19 @@ actor ExportService {
             arguments.append(contentsOf: ["--resource-path", url.path])
         }
 
-        // PDF: engine + font variables
+        // PDF: engine + font variables + figure placement pinning (fixes drift at page
+        // breaks — see figure-placement.lua/float-package.tex). Both are optional: if the
+        // bundled resources are somehow missing, PDF export still proceeds without the
+        // placement fix rather than failing outright.
         if format == .pdf {
             arguments.append(contentsOf: pdfEngineArguments())
             arguments.append(contentsOf: fontArguments(for: processedContent))
+            if let figurePlacementLuaPath = ExportService.bundledFigurePlacementLuaPath {
+                arguments.append(contentsOf: ["--lua-filter", figurePlacementLuaPath])
+            }
+            if let floatPackagePath = ExportService.bundledFloatPackageTexPath {
+                arguments.append(contentsOf: ["--include-in-header", floatPackagePath])
+            }
         }
 
         // Reference document (DOCX/ODT only)
@@ -789,6 +798,18 @@ extension ExportService {
     /// Get path to bundled Lua script
     static var bundledLuaScriptPath: String? {
         Bundle.main.url(forResource: "zotero", withExtension: "lua", subdirectory: "Export")?.path
+    }
+
+    /// Get path to the bundled PDF-only figure-placement Lua filter (pins captioned figures
+    /// to `[H]` so they no longer float past following text at page breaks).
+    static var bundledFigurePlacementLuaPath: String? {
+        Bundle.main.url(forResource: "figure-placement", withExtension: "lua", subdirectory: "Export")?.path
+    }
+
+    /// Get path to the bundled `\usepackage{float}` header snippet required for the
+    /// `[H]` placement specifier applied by figure-placement.lua to compile.
+    static var bundledFloatPackageTexPath: String? {
+        Bundle.main.url(forResource: "float-package", withExtension: "tex", subdirectory: "Export")?.path
     }
 
     /// Get path to bundled reference document

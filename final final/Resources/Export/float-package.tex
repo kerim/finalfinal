@@ -1,0 +1,53 @@
+\usepackage{float}
+% Only images with a real typed caption become a LaTeX figure at all (see
+% figure-placement.lua / image-plugin.ts) -- uncaptioned images never get a
+% number. Pandoc's default template auto-numbers every figure, so a mix of
+% captioned/uncaptioned images produces misleading numbering (e.g. the 3rd
+% image showing as "Figure 2"). Redefining the core figure/table caption
+% macro below to drop its label argument removes the "Figure N:" prefix and
+% shows only the actual caption text, using only core LaTeX (no separate
+% package -- one isn't bundled in this app's TinyTeX distribution). The
+% default macro centers its output via an explicit hbox, not by inheriting
+% surrounding alignment (LaTeX's caption machinery resets alignment to
+% justified before calling this) -- an earlier version of this override
+% used the `center` environment to restore centering, but that environment
+% adds its own extra vertical spacing on top of the explicit skips below,
+% producing a gap noticeably bigger than normal paragraph spacing. This
+% version reproduces the real, unmodified default macro's own hbox-centering
+% approach (single-line captions centered via a full-width hbox with glue on
+% both sides; a caption too long to fit one line falls back to a plain
+% centered paragraph).
+%
+% Spacing: the stock default above/below skips (10pt/0pt) put a visibly large
+% gap between the image and its caption -- measured (via real PDF bounding
+% boxes, not guesswork) at roughly 7x a normal within-paragraph line gap.
+% Zeroing \abovecaptionskip lets natural box spacing take over there,
+% closely matching normal line spacing instead -- a deliberate, requested
+% deviation from stock LaTeX spacing, not an oversight.
+%
+% The gap AFTER the caption (before the next paragraph) is a separate
+% mechanism -- LaTeX's \intextsep, the space placed around an in-text/[H]
+% float -- and measured roughly 3x a normal paragraph-to-paragraph gap, most
+% of it from an implicit paragraph-start contribution that only applies on
+% this side (confirmed empirically: \intextsep alone is shared symmetrically
+% with the gap BEFORE the image, so reducing it directly would have pushed
+% that untouched, unrequested side toward overlapping the preceding text).
+% \belowcaptionskip only affects this side, so a small negative value here
+% (measured, not guessed) brings the after-caption gap down to match normal
+% paragraph spacing without touching \intextsep or the before-image gap at
+% all -- confirmed via real PDF bounding-box measurement that the image's
+% position is byte-for-byte unchanged by this value.
+\makeatletter
+\setlength{\abovecaptionskip}{0pt}
+\setlength{\belowcaptionskip}{-13.887pt}
+\long\def\@makecaption#1#2{%
+  \vskip\abovecaptionskip
+  \sbox\@tempboxa{#2}%
+  \ifdim \wd\@tempboxa >\hsize
+    \centering#2\par
+  \else
+    \global \@minipagefalse
+    \hb@xt@\hsize{\hfil\box\@tempboxa\hfil}%
+  \fi
+  \vskip\belowcaptionskip}
+\makeatother

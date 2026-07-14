@@ -338,8 +338,9 @@ struct Block: Codable, Identifiable, Equatable, Sendable, FetchableRecord, Mutab
     }
 
     /// Generate Pandoc-compatible markdown for export.
-    /// Uses `fig-alt` attribute to separate visible caption from accessibility alt text.
-    /// For non-image blocks, returns `markdownFragment` unchanged.
+    /// Uses the `alt` attribute (Pandoc's `link_attributes` extension) to separate the visible
+    /// caption from accessibility alt text. For non-image blocks, returns `markdownFragment`
+    /// unchanged.
     func markdownForExport() -> String {
         guard blockType == .image, let src = imageSrc else {
             return markdownFragment
@@ -348,21 +349,37 @@ struct Block: Codable, Identifiable, Equatable, Sendable, FetchableRecord, Mutab
         let alt = imageAlt ?? ""
         let caption = imageCaption ?? ""
 
-        // Visible text in ![...] is the caption (or alt as fallback)
-        let displayText: String
-        if !caption.isEmpty {
-            displayText = caption.replacingOccurrences(of: "]", with: "\\]")
-        } else {
-            displayText = alt.replacingOccurrences(of: "]", with: "\\]")
-        }
+        // Visible text in ![...] is the caption ONLY — an empty caption produces an empty
+        // bracket, NOT a fallback to alt. Pandoc's implicit_figures extension only wraps an
+        // image in a captioned <figure> when the bracket text is non-empty, so falling back to
+        // alt here (the pre-fix behavior) is exactly what caused every image's auto-filled
+        // filename (see MilkdownCoordinator+MessageHandlers.swift's insertion handlers) to show
+        // up as a visible "Figure N: filename.jpg" caption in every export.
+        //
+        // Backslash MUST be escaped before the delimiter (`]`) — same order as the JS side's
+        // escapeAltAttr (web/milkdown/src/image-plugin.ts) — because Pandoc's markdown reader
+        // treats a trailing unescaped backslash as escaping the character that follows it. A
+        // caption ending in an unescaped `\` would otherwise consume the closing `]` as an
+        // escaped literal instead of the bracket's terminator, producing malformed markdown that
+        // can make the whole image silently disappear from PDF/Word/ODT export.
+        let displayText = caption
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "]", with: "\\]")
 
         var result = "![\(displayText)](\(src))"
 
-        // Build {attributes} block if needed
+        // Build {attributes} block: `alt=` carries the real accessibility text, completely
+        // separate from the visible caption — confirmed via a real `pandoc --to latex`/`--to
+        // docx`/`--to odt` run that `alt="..."` (not `fig-alt`, which Pandoc doesn't recognize
+        // and silently drops) is the attribute Pandoc's link_attributes extension understands.
         var attrs: [String] = []
-        if !caption.isEmpty && !alt.isEmpty {
-            let escapedAlt = alt.replacingOccurrences(of: "\"", with: "\\\"")
-            attrs.append("fig-alt=\"\(escapedAlt)\"")
+        if !alt.isEmpty {
+            // Backslash escaped before the delimiter (`"`) for the same reason as displayText
+            // above — matches escapeAltAttr's order exactly.
+            let escapedAlt = alt
+                .replacingOccurrences(of: "\\", with: "\\\\")
+                .replacingOccurrences(of: "\"", with: "\\\"")
+            attrs.append("alt=\"\(escapedAlt)\"")
         }
         if let width = imageWidth {
             attrs.append("width=\(width)%")

@@ -9,6 +9,7 @@ import {
 } from '@codemirror/search';
 import { EditorState, Transaction } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
+import { escapeAltAttr } from '../../shared/image-caption-attrs';
 import { stripAnchors } from './anchor-plugin';
 import { hideCitationAddButton, mergeCitations } from './citations';
 import {
@@ -770,7 +771,11 @@ export function renumberFootnotes(mapping: Record<string, string>): void {
 
 /**
  * Insert an image at the current cursor position.
- * Inserts markdown: ![alt](src) with optional <!-- caption: text --> prefix.
+ * Inserts markdown: `![caption](src){alt="..."}` — bracket text is the
+ * caption, and `alt="..."` is emitted unconditionally (even empty) as the
+ * self-marking signal for the current format. See
+ * `../../shared/image-caption-attrs` for the format shared with the
+ * Milkdown editor.
  * Ensures blank lines before/after for proper block separation.
  */
 export function insertImage(opts: { src: string; alt?: string; caption?: string }): void {
@@ -789,12 +794,7 @@ export function insertImage(opts: { src: string; alt?: string; caption?: string 
   }
 
   // Build the markdown to insert
-  let markdown = `![${opts.alt || ''}](${opts.src})`;
-
-  // Add caption comment before image if present
-  if (opts.caption) {
-    markdown = `<!-- caption: ${opts.caption} -->\n${markdown}`;
-  }
+  const markdown = `![${opts.caption || ''}](${opts.src}){alt="${escapeAltAttr(opts.alt || '')}"}`;
 
   // Check if we need blank lines before/after
   const line = doc.lineAt(targetPos);

@@ -4,17 +4,22 @@
  * Singleton popup for editing image captions in source mode.
  * Pattern modeled on Milkdown's annotation-edit-popup.ts.
  *
- * Captions are stored as <!-- caption: text --> comments
- * on the line preceding the image markdown.
+ * Current format: bracket text is the caption, e.g.
+ * `![caption](media/x.png){alt="..." width=N%}` — committing an edit always
+ * (re-)writes this format, migrating a legacy `<!-- caption: text -->`
+ * fragment (bracket text = alt) to the new format on first edit, exactly
+ * mirroring the Milkdown editor's migrate-on-save behavior. See
+ * `../../shared/image-caption-attrs` for the shared self-marking format.
  */
 
 import type { EditorView } from '@codemirror/view';
+import { escapeAltAttr } from '../../shared/image-caption-attrs';
 import { positionPopup } from '../../shared/position-popup';
+import { parseImageLine } from './image-line-parser';
 
 // --- Constants ---
 
 const CAPTION_REGEX = /^<!--\s*caption:\s*(.+?)\s*-->$/;
-const IMAGE_REGEX = /!\[([^\]]*)\]\((media\/[^)]+)\)(?:\s*\{[^}]*width=(\d+)%[^}]*\})?/;
 
 // --- Module state (singleton) ---
 
@@ -109,60 +114,68 @@ function commitEdit(): void {
     return;
   }
   const imageLine = doc.line(imageLineNum);
-  if (!IMAGE_REGEX.test(imageLine.text)) {
+  const parsed = parseImageLine(imageLine.text);
+  if (!parsed) {
     dismissImageCaptionPopup();
     return;
+  }
+
+  const isNewFormat = parsed.altAttrValue !== null;
+  const hasExistingCaption = isNewFormat ? parsed.bracketText !== '' : editingCaptionLineNumber !== null;
+
+  // True no-op: nothing existing and nothing typed — avoid rewriting/
+  // migrating the fragment just from opening and dismissing the
+  // "Add caption..." popup without typing anything.
+  if (!hasExistingCaption && !newText) {
+    dismissImageCaptionPopup();
+    view.focus();
+    return;
+  }
+
+  // Legacy format: verify the caption comment line still matches before
+  // touching anything (mirrors the pre-fix safety check above).
+  let legacyCaptionLine: { from: number; to: number } | null = null;
+  if (!isNewFormat && editingCaptionLineNumber !== null) {
+    const captionLineNum = editingCaptionLineNumber;
+    if (captionLineNum < 1 || captionLineNum > doc.lines) {
+      dismissImageCaptionPopup();
+      return;
+    }
+    const captionLine = doc.line(captionLineNum);
+    if (!CAPTION_REGEX.test(captionLine.text.trim())) {
+      dismissImageCaptionPopup();
+      return;
+    }
+    legacyCaptionLine = captionLine;
   }
 
   isCommittingCaption = true;
 
   try {
-    if (editingCaptionLineNumber !== null) {
-      // Editing existing caption
-      const captionLineNum = editingCaptionLineNumber;
-      if (captionLineNum < 1 || captionLineNum > doc.lines) {
-        dismissImageCaptionPopup();
-        return;
-      }
-      const captionLine = doc.line(captionLineNum);
-      if (!CAPTION_REGEX.test(captionLine.text.trim())) {
-        dismissImageCaptionPopup();
-        return;
-      }
+    // Rewrite the image line's bracket text in place as the caption.
+    // Accessibility alt text and width are always preserved unchanged —
+    // only the caption (bracket text) changes here. A legacy fragment
+    // (bracket text = alt) migrates to the new format on this first edit,
+    // exactly mirroring the Milkdown editor's migrate-on-save behavior.
+    const currentAlt = parsed.altAttrValue !== null ? parsed.altAttrValue : parsed.bracketText;
+    const widthPart = parsed.width ? ` width=${parsed.width}%` : '';
+    const newFragment = `![${newText}](${parsed.src}){alt="${escapeAltAttr(currentAlt)}"${widthPart}}`;
 
-      if (newText) {
-        // Replace caption text
-        view.dispatch({
-          changes: {
-            from: captionLine.from,
-            to: captionLine.to,
-            insert: `<!-- caption: ${newText} -->`,
-          },
-        });
-      } else {
-        // Delete caption line (+ trailing newline if present)
-        const deleteTo = captionLine.to + 1 <= doc.length ? captionLine.to + 1 : captionLine.to;
-        view.dispatch({
-          changes: {
-            from: captionLine.from,
-            to: deleteTo,
-            insert: '',
-          },
-        });
-      }
-    } else {
-      // Adding new caption — insert before image line
-      if (newText) {
-        view.dispatch({
-          changes: {
-            from: imageLine.from,
-            to: imageLine.from,
-            insert: `<!-- caption: ${newText} -->\n`,
-          },
-        });
-      }
-      // Empty input on new caption = no-op
+    const matchStart = imageLine.from + parsed.matchIndex;
+    const matchEnd = matchStart + parsed.matchLength;
+    const changes: { from: number; to: number; insert: string }[] = [
+      { from: matchStart, to: matchEnd, insert: newFragment },
+    ];
+
+    if (legacyCaptionLine) {
+      // Remove the old <!-- caption: ... --> comment (+ trailing newline
+      // if present) now that its caption has migrated onto the image line.
+      const deleteTo = legacyCaptionLine.to + 1 <= doc.length ? legacyCaptionLine.to + 1 : legacyCaptionLine.to;
+      changes.push({ from: legacyCaptionLine.from, to: deleteTo, insert: '' });
     }
+
+    changes.sort((a, b) => a.from - b.from);
+    view.dispatch({ changes });
   } finally {
     isCommittingCaption = false;
   }
