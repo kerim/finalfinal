@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { EditorState } from '@codemirror/state';
 import { describe, expect, it } from 'vitest';
 import { reconcileResultsAfterEdit, type SpellcheckResult } from '../spellcheck-plugin';

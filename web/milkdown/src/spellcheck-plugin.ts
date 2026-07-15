@@ -42,7 +42,7 @@ export const spellcheckPluginKey = new PluginKey('spellcheck-decorations');
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const diagLog = (...args: unknown[]) => {
-  const msg = '[LT-DIAG:milkdown] ' + args.map((a) => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ');
+  const msg = `[LT-DIAG:milkdown] ${args.map((a) => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ')}`;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const handler = (window as any).webkit?.messageHandlers?.errorHandler;
   if (handler?.postMessage) handler.postMessage({ type: 'debug', message: msg });
