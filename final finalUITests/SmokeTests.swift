@@ -20,6 +20,10 @@ final class LaunchSmokeTests: XCTestCase {
         app.launchForTesting()
     }
 
+    override func tearDownWithError() throws {
+        app.terminate()
+    }
+
     func testAppLaunches() {
         // App should boot without crash and show either picker or editor within 10s
         let picker = app.groups["project-picker"]
@@ -52,14 +56,21 @@ final class EditorSmokeTests: XCTestCase {
     override func setUpWithError() throws {
         continueAfterFailure = false
 
+        // Defense-in-depth: terminate any leftover process from a prior test
+        // whose own tearDown never ran (e.g. a crash) before touching the
+        // fixture file below, so this test's fixture copy never races a
+        // still-open file handle from that leftover process.
+        app = XCUIApplication.targetApp()
+        app.terminate()
+
         // Copy committed fixture to /tmp/ for the app to open
         try TestFixtureHelper.setupFixture(from: self)
 
-        app = XCUIApplication.targetApp()
         app.launchForTesting(fixturePath: TestFixtureHelper.fixturePath)
     }
 
     override func tearDownWithError() throws {
+        app.terminate()
         TestFixtureHelper.cleanupFixture()
     }
 
@@ -100,6 +111,7 @@ final class EditorSmokeTests: XCTestCase {
         // Toggle sidebar off with Cmd+[
         // Note: On macOS, NavigationSplitView may keep the element in hierarchy
         // even when collapsed, so we check isHittable instead of exists
+        app.activateAndWaitForForeground()
         app.typeKey("[", modifierFlags: .command)
 
         // Wait a moment for animation
@@ -115,6 +127,7 @@ final class EditorSmokeTests: XCTestCase {
         }
 
         // Toggle sidebar back on
+        app.activateAndWaitForForeground()
         app.typeKey("[", modifierFlags: .command)
 
         // Verify sidebar is visible again
@@ -134,6 +147,7 @@ final class EditorSmokeTests: XCTestCase {
         XCTAssertTrue(statusBar.waitForExistence(timeout: 10), "Status bar should appear")
 
         // Enable focus mode with Cmd+Shift+F
+        app.activateAndWaitForForeground()
         app.typeKey("f", modifierFlags: [.command, .shift])
 
         // Status bar should disappear in focus mode
@@ -141,6 +155,7 @@ final class EditorSmokeTests: XCTestCase {
         XCTAssertTrue(disappearResult, "Status bar should disappear in focus mode")
 
         // Exit focus mode with Escape
+        app.activateAndWaitForForeground()
         app.typeKey(.escape, modifierFlags: [])
 
         // Status bar should reappear

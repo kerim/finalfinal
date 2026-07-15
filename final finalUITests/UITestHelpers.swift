@@ -20,16 +20,45 @@ extension XCUIApplication {
     /// Launches the app in UI testing mode without a fixture (shows picker)
     func launchForTesting() {
         Self.cleanSavedApplicationState()
+        // Defense-in-depth: Apple documents that `launch()` already terminates any
+        // running instance before starting fresh, so this call is expected to be a
+        // no-op in the common case. It costs nothing if redundant and closes the
+        // gap if that documented behavior ever doesn't hold in practice.
+        terminate()
         launchEnvironment["FF_UI_TESTING"] = "1"
         launch()
+        activateAndWaitForForeground()
     }
 
     /// Launches the app in UI testing mode with a fixture (shows editor)
     func launchForTesting(fixturePath: String) {
         Self.cleanSavedApplicationState()
+        terminate()
         launchEnvironment["FF_UI_TESTING"] = "1"
         launchEnvironment["FF_TEST_FIXTURE_PATH"] = fixturePath
         launch()
+        activateAndWaitForForeground()
+    }
+
+    /// Re-activates the app and waits for it to report the foreground state
+    /// before returning. `launch()`/`activate()` only guarantee foreground state
+    /// at the instant they return (per Apple's XCUIApplication.h) — nothing
+    /// guarantees focus is still there by the time a later keyboard-shortcut
+    /// action fires. Call this immediately before any `typeKey` call, not just
+    /// after launch, so a focus problem produces a clear, self-describing
+    /// failure instead of an unrelated-looking assertion failure downstream.
+    @discardableResult
+    func activateAndWaitForForeground(timeout: TimeInterval = 10, file: StaticString = #filePath, line: UInt = #line) -> Bool {
+        activate()
+        let result = wait(for: .runningForeground, timeout: timeout)
+        if !result {
+            XCTFail("""
+                App did not reach the foreground within \(timeout)s. This is a \
+                window-focus/process collision, not a real test failure — see \
+                "UI test environment requirements" in docs/guides/running-tests.md.
+                """, file: file, line: line)
+        }
+        return result
     }
 
     /// Remove saved window state so each test run starts fresh.
