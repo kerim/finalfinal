@@ -367,7 +367,11 @@ extension EditorViewState {
     }
 
     /// Comprehensive synchronous flush: blocks + section metadata + annotation positions.
-    func flushAllSync() {
+    /// This is the guaranteed-synchronous subset — completes fully before returning, with
+    /// no `async` suspension anywhere in its call chain. Callers that need that hard
+    /// guarantee (e.g. `applicationWillTerminate`'s force-quit safety net) must call this
+    /// directly rather than the async `flushAllSync()` below.
+    func flushAllSyncCore() {
         flushContentToDatabase()
         sectionSyncService?.syncNowSync(content)
         // Skip annotation sync when zoomed: content is a subset, and the reconciler
@@ -375,6 +379,36 @@ extension EditorViewState {
         if zoomedSectionId == nil {
             annotationSyncService?.syncNowSync(content)
         }
+    }
+
+    /// Bounded, concurrent flush of the two debounced services whose pending updates can
+    /// require a network round-trip (bibliography, via Zotero) or otherwise take a moment
+    /// to settle (footnotes) — so a hung Zotero fetch can't block quit/project-close
+    /// indefinitely. Best-effort beyond the ~3s bound: if it expires, whatever remained
+    /// pending is simply left for the next natural debounce fire or flush attempt.
+    func flushPendingBibliographyAndFootnoteSync() async {
+        await withTaskGroup(of: Void.self) { group in
+            group.addTask {
+                // Optional chaining through `?.` on an async call makes the initializer's
+                // type `Void?`, not `Void` — no explicit `: Void` annotation here (that
+                // would require an unwrap the plan's original snippet didn't do).
+                async let bib = self.bibliographySyncService?.flushPendingSync()
+                async let foot = self.footnoteSyncService?.flushPendingSync()
+                _ = await (bib, foot)
+            }
+            group.addTask { try? await Task.sleep(for: .seconds(3)) }
+            _ = await group.next()
+            group.cancelAll()
+        }
+    }
+
+    /// Full flush: the original synchronous three steps (`flushAllSyncCore()`), plus a
+    /// bounded flush of any pending bibliography/footnote sync. Only callable from an
+    /// async context that can actually await it — see `flushAllSyncCore()` for the
+    /// guaranteed-synchronous subset used where that isn't possible.
+    func flushAllSync() async {
+        flushAllSyncCore()
+        await flushPendingBibliographyAndFootnoteSync()
     }
 
     // MARK: - CodeMirror Flush

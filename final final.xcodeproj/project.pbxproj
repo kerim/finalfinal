@@ -122,6 +122,7 @@
 		790667B521454C125B0FE74B /* ColorScheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2AAD6FB6258FBF011A89ECFC /* ColorScheme.swift */; };
 		794FA71A2C16E2F386EF2430 /* SectionOperationsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 47F10F7A8749647836727D2D /* SectionOperationsTests.swift */; };
 		79C23EF8EBD0D2FB15865C37 /* AppearanceSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = E614BA7EFA79C8EAF96B80C0 /* AppearanceSettings.swift */; };
+		7A5A81AB388D2324FC2271D8 /* FootnoteSyncFlushTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C925EEF59057F22D282B5E0 /* FootnoteSyncFlushTests.swift */; };
 		7A7512A6633EB5C4AE56C249 /* AutoBackupServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 78926BF4B3C1DBA2A2E54E63 /* AutoBackupServiceTests.swift */; };
 		7A766FE31F56DB4FFCE73D8C /* VersionHistoryCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3BB70B8A6DD5904EC181116A /* VersionHistoryCoordinator.swift */; };
 		7ACE3361E6A474E6D99062E1 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02E925EEE027AE829C229AAA /* ContentView.swift */; };
@@ -378,6 +379,7 @@
 		6BDEEE9C10B3CB00393F7E53 /* VersionHistoryWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VersionHistoryWindow.swift; sourceTree = "<group>"; };
 		6C4FC97301C1F22A1D569F41 /* final final.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = "final final.entitlements"; sourceTree = "<group>"; };
 		6C65021F994002F139C1184C /* ExportService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportService.swift; sourceTree = "<group>"; };
+		6C925EEF59057F22D282B5E0 /* FootnoteSyncFlushTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FootnoteSyncFlushTests.swift; sourceTree = "<group>"; };
 		6D1C9C394433400E8BE7F59C /* Fixtures */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Fixtures; path = "final finalTests/Fixtures"; sourceTree = SOURCE_ROOT; };
 		6E07FED1E8BB1958EF4F04CF /* Database+Snapshots.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Database+Snapshots.swift"; sourceTree = "<group>"; };
 		6E8F8EC247BCC5E3E00BA145 /* ZoteroService+CAYW.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ZoteroService+CAYW.swift"; sourceTree = "<group>"; };
@@ -911,6 +913,7 @@
 				0339BF768D7EB53896A726B7 /* ExportAssemblyTests.swift */,
 				84490CBC1C7AF23477F1345A /* ExportFlushTests.swift */,
 				3A6EB161196F59018FF141DA /* ExportIntegrityTests.swift */,
+				6C925EEF59057F22D282B5E0 /* FootnoteSyncFlushTests.swift */,
 				C193BFD9D30D088D972DBBDB /* FootnoteSyncTests.swift */,
 				9C9F8C71DDD49F99B9BB6746 /* GettingStartedBaselineTests.swift */,
 				C1CFEDB8DA2CEAACE5CC6EF8 /* HierarchyEnforcementTests.swift */,
@@ -1230,6 +1233,7 @@
 				D3927D5FD341BF8E01C931A9 /* FixtureGeneratorTests.swift in Sources */,
 				567224468A31CDC730E15859 /* FocusModeTests.swift in Sources */,
 				DDA459135A870E3E47254E20 /* FootnoteExportRaceTests.swift in Sources */,
+				7A5A81AB388D2324FC2271D8 /* FootnoteSyncFlushTests.swift in Sources */,
 				C42F02F5BADB92B59FE2F91A /* FootnoteSyncTests.swift in Sources */,
 				574C36B911A207D626601AD1 /* FormattingBridgeTests.swift in Sources */,
 				8B84A55286FA2F144C0F57E9 /* GettingStartedBaselineTests.swift in Sources */,

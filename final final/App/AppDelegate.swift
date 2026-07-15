@@ -271,7 +271,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 editorState.content = freshContent
             }
 
-            editorState.flushAllSync()
+            await editorState.flushAllSync()
 
             // Create final auto-backup with timeout to avoid blocking termination
             await withTaskGroup(of: Void.self) { group in
@@ -293,7 +293,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         DebugLog.log(.lifecycle, "[AppDelegate] Application terminating")
         // Only flush if applicationShouldTerminate didn't already (safety net for force-quit)
         if !didFlushForQuit {
-            editorState?.flushAllSync()
+            editorState?.flushAllSyncCore()   // guaranteed synchronous — identical to today's behavior
+            if let editorState {
+                Task { @MainActor in
+                    await editorState.flushPendingBibliographyAndFootnoteSync()   // best-effort only
+                }
+            }
         }
         removeEscapeKeyMonitor()
     }

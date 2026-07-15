@@ -17,6 +17,17 @@ enum FootnoteSyncState: Sendable {
     case userEditPending
 }
 
+/// Snapshot captured when a debounced footnote update is scheduled but not yet consumed.
+/// The `generation` always travels with the rest of the snapshot — see `flushPendingSync()`
+/// and `handleImmediateInsertion` for why it must be the one captured at schedule time,
+/// not a freshly-read `syncGeneration`.
+private struct PendingFootnoteUpdate {
+    let refs: [String]
+    let projectId: String
+    let fullContent: String
+    let generation: Int
+}
+
 @MainActor
 @Observable
 final class FootnoteSyncService {
@@ -41,6 +52,12 @@ final class FootnoteSyncService {
 
     /// Debounce interval (3 seconds — longer than bibliography to let Notes edits settle)
     private let debounceInterval: TimeInterval = 3.0
+
+    /// Snapshot captured at the moment a debounced update was scheduled but not yet
+    /// consumed by `performFootnoteUpdate`. Cleared inside the debounce closure immediately
+    /// before it fires, so `pendingUpdate != nil` reliably means "there is unconsumed
+    /// scheduled work".
+    private var pendingUpdate: PendingFootnoteUpdate?
 
     // MARK: - Dependencies
 
@@ -225,6 +242,9 @@ final class FootnoteSyncService {
 
         // Debounce the update
         let scheduledGeneration = syncGeneration
+        pendingUpdate = PendingFootnoteUpdate(
+            refs: footnoteRefs, projectId: projectId, fullContent: fullContent, generation: scheduledGeneration
+        )
         debounceTask?.cancel()
         debounceTask = Task { [weak self] in
             guard !Task.isCancelled else { return }
@@ -232,6 +252,7 @@ final class FootnoteSyncService {
             try? await Task.sleep(nanoseconds: UInt64(3_000_000_000))
 
             guard !Task.isCancelled else { return }
+            self?.pendingUpdate = nil
             await self?.performFootnoteUpdate(
                 refs: footnoteRefs,
                 projectId: projectId,
@@ -239,6 +260,42 @@ final class FootnoteSyncService {
                 scheduledGeneration: scheduledGeneration
             )
         }
+    }
+
+    /// Force any already-scheduled (but not yet fired) debounced footnote update to run
+    /// immediately. Used on quit/project-close so the Notes section's footnote definitions
+    /// aren't left stale/mismatched behind the 3s debounce.
+    ///
+    /// If a natural debounce fire is already in flight (`state == .syncing`), waits for it
+    /// to finish rather than starting a second, overlapping update. After the wait (or
+    /// immediately, if nothing was in flight), re-checks for pending work rather than
+    /// unconditionally returning — a new update can become pending in the moments between
+    /// the in-flight run finishing and this method's poll loop waking up, and that update
+    /// must still be picked up rather than silently dropped right before the process quits.
+    ///
+    /// Replays using the STORED generation captured at schedule time, not a freshly-read
+    /// `syncGeneration` — this is what lets `performFootnoteUpdate`'s existing
+    /// `scheduledGeneration == syncGeneration` guard correctly reject a snapshot that
+    /// `handleImmediateInsertion` has since superseded (see its doc comment).
+    func flushPendingSync() async {
+        if state == .syncing {
+            let deadline = Date().addingTimeInterval(2.0)
+            while state == .syncing, Date() < deadline {
+                try? await Task.sleep(for: .milliseconds(100))
+            }
+        }
+
+        guard state == .idle, let pending = pendingUpdate else { return }
+
+        debounceTask?.cancel()
+        debounceTask = nil
+        pendingUpdate = nil
+        await performFootnoteUpdate(
+            refs: pending.refs,
+            projectId: pending.projectId,
+            fullContent: pending.fullContent,
+            scheduledGeneration: pending.generation
+        )
     }
 
     /// Push footnote definitions to the editor for tooltip display
@@ -280,6 +337,7 @@ final class FootnoteSyncService {
     func reset() {
         debounceTask?.cancel()
         debounceTask = nil
+        pendingUpdate = nil
         lastKnownRefs = []
         lastRenumberedHash = 0
         state = .idle

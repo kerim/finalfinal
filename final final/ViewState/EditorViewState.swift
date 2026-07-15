@@ -233,6 +233,12 @@ class EditorViewState {
     /// Annotation sync service reference (injected by ContentView)
     weak var annotationSyncService: AnnotationSyncService?
 
+    /// Bibliography sync service reference (injected by ContentView)
+    weak var bibliographySyncService: BibliographySyncService?
+
+    /// Footnote sync service reference (injected by ContentView)
+    weak var footnoteSyncService: FootnoteSyncService?
+
     /// Pending image metadata for CodeMirror to pick up during zoom/rebuild transitions
     var pendingImageMeta: [ContentView.ImageBlockMeta]?
 

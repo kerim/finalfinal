@@ -36,6 +36,15 @@ final class BibliographySyncService {
     /// Debounce interval (1 second for bibliography, longer than section sync's 500ms)
     private let debounceInterval: TimeInterval = 1.0
 
+    /// Citekeys captured at the moment a debounced update was scheduled but not yet
+    /// consumed by `performBibliographyUpdate`. Cleared inside the debounce closure
+    /// immediately before it fires, so `pendingCitekeys != nil` reliably means "there is
+    /// unconsumed scheduled work" — see `flushPendingSync()`.
+    private var pendingCitekeys: [String]?
+
+    /// Project id paired with `pendingCitekeys` (see above).
+    private var pendingProjectId: String?
+
     // MARK: - Configuration
 
     /// Whether auto-update is enabled (false if user has manually edited)
@@ -98,6 +107,8 @@ final class BibliographySyncService {
         guard currentSet != lastKnownCitekeys || isTransitioningToEmpty else { return }
 
         // Debounce the update
+        pendingCitekeys = currentCitekeys
+        pendingProjectId = projectId
         debounceTask?.cancel()
         debounceTask = Task { [weak self] in
             guard !Task.isCancelled else { return }
@@ -106,8 +117,38 @@ final class BibliographySyncService {
             try? await Task.sleep(for: .seconds(debounceInterval))
 
             guard !Task.isCancelled else { return }
+            self?.pendingCitekeys = nil
+            self?.pendingProjectId = nil
             await self?.performBibliographyUpdate(citekeys: currentCitekeys, projectId: projectId)
         }
+    }
+
+    /// Force any already-scheduled (but not yet fired) debounced bibliography update to
+    /// run immediately. Used on quit/project-close so the derived Bibliography section
+    /// isn't left stale behind the 1s debounce.
+    ///
+    /// If a natural debounce fire is already in flight (`state == .syncing`), waits for it
+    /// to finish rather than starting a second, overlapping update — `performBibliographyUpdate`
+    /// has no internal guard against two concurrent invocations. After the wait (or
+    /// immediately, if nothing was in flight), re-checks for pending work rather than
+    /// unconditionally returning: a new update can become pending in the moments between
+    /// the in-flight run finishing and this method's poll loop waking up, and that update
+    /// must still be picked up rather than silently dropped right before the process quits.
+    func flushPendingSync() async {
+        if state == .syncing {
+            let deadline = Date().addingTimeInterval(2.0)
+            while state == .syncing, Date() < deadline {
+                try? await Task.sleep(for: .milliseconds(100))
+            }
+        }
+
+        guard state == .idle, let citekeys = pendingCitekeys, let projectId = pendingProjectId else { return }
+
+        debounceTask?.cancel()
+        debounceTask = nil
+        pendingCitekeys = nil
+        pendingProjectId = nil
+        await performBibliographyUpdate(citekeys: citekeys, projectId: projectId)
     }
 
     /// Regenerate bibliography (manual trigger)
@@ -125,6 +166,8 @@ final class BibliographySyncService {
     func reset() {
         debounceTask?.cancel()
         debounceTask = nil
+        pendingCitekeys = nil
+        pendingProjectId = nil
         lastKnownCitekeys = []
         lastGeneratedHash = 0
         isAutoUpdateEnabled = true
