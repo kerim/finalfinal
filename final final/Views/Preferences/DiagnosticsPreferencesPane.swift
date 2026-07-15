@@ -41,6 +41,19 @@ struct DiagnosticsPreferencesPane: View {
                 .padding(8)
             }
 
+            GroupBox("Export Diagnostic Capture") {
+                VStack(alignment: .leading, spacing: 8) {
+                    Toggle("Enable export diagnostic capture", isOn: $settings.exportDiagnosticCaptureEnabled)
+                    Text("Saves a detailed snapshot (your document text, Pandoc arguments, and system "
+                       + "info) on every export, for investigating a specific still-open PDF export "
+                       + "bug — off by default. Saved under ~/Library/Caches, capped at the 20 most "
+                       + "recent exports.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(8)
+            }
+
             GroupBox("Diagnostic Report") {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Bundles the diagnostic log, a system-info snapshot, and your most recent "
@@ -92,12 +105,13 @@ struct DiagnosticsPreferencesPane: View {
         }
     }
 
-    /// Enabled and works regardless of the logging toggle's state. System info and recent
-    /// export-diagnostic captures are useful on their own (the export-reorder bug's data is
-    /// captured unconditionally today, independent of this toggle); blocking report generation
-    /// when logging is off would make the button confusing and would prevent using it for the
-    /// export bug when a user never turned logging on. When the toggle was off, the generated
-    /// `logs/` folder is simply empty with an explanatory README.txt instead of a log file.
+    /// Enabled and works regardless of the logging toggle's state. System info and any existing
+    /// export-diagnostic captures (whatever the "Export Diagnostic Capture" toggle above has
+    /// produced, if enabled) are useful on their own, independent of the logging toggle;
+    /// blocking report generation when logging is off would make the button confusing and would
+    /// prevent using it for the export bug when a user never turned logging on. When the logging
+    /// toggle was off, the generated `logs/` folder is simply empty with an explanatory
+    /// README.txt instead of a log file.
     private func generateReport() {
         let panel = NSSavePanel()
         panel.title = "Save Diagnostic Report"

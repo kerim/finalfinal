@@ -241,10 +241,13 @@ actor ExportService {
             warnings.append(contentsOf: citation.warnings)
         }
 
-        // DIAGNOSTIC (temporary — see docs/plans/mossy-tumbling-stroustrup.md, removed once
-        // the fix for the PDF page-1 reorder bug lands). Fires for every format so a
-        // PDF -> Word -> PDF reproduction sequence captures three side-by-side dumps.
-        let diagnostic = await dumpExportDiagnostics(
+        // DIAGNOSTIC (temporary, opt-in — see docs/plans/mossy-tumbling-stroustrup.md, removed
+        // once the fix for the PDF page-1 reorder bug lands). Off by default; gated by
+        // isDiagnosticCaptureEnabled (Preferences -> Diagnostics -> Export Diagnostic Capture).
+        // When enabled, fires for every format so a PDF -> Word -> PDF reproduction sequence
+        // captures three side-by-side dumps. Never contributes to `warnings` — a diagnostic
+        // dump succeeding or failing is not itself a user-facing export warning.
+        let diagnosticDirURL = await dumpExportDiagnostics(
             rawContent: content,
             inputURL: inputURL,
             pandocPath: pandocPath,
@@ -252,13 +255,12 @@ actor ExportService {
             format: format,
             projectURL: projectURL
         )
-        warnings.append(diagnostic.message)
 
         // Run Pandoc
         try await runPandoc(
             at: pandocPath,
             arguments: arguments,
-            stderrCaptureURL: diagnostic.dirURL?.appendingPathComponent("pandoc-stderr.log")
+            stderrCaptureURL: diagnosticDirURL?.appendingPathComponent("pandoc-stderr.log")
         )
 
         // Zotero warnings (after export — export still runs, warnings inform after)
@@ -404,33 +406,44 @@ actor ExportService {
     }
 }
 
-// MARK: - Export Diagnostics (temporary)
+// MARK: - Export Diagnostics (temporary, opt-in)
 //
 // DIAGNOSTIC CODE — see docs/plans/mossy-tumbling-stroustrup.md.
 // Investigates a PDF-only page-1 reordering bug. This whole extension, the
 // `stderrCaptureURL:` parameter on `runPandoc`, and its call site in `export(...)`
-// are removed once Step 3 of that plan lands a targeted fix. Not covered by tests
-// by design (throwaway diagnostic, not shipped behavior).
-
-/// Result of `dumpExportDiagnostics`. `dirURL` is `nil` only when the capture
-/// directory itself could not be created — in that case `message` is a failure
-/// warning rather than the path-of-capture success message.
-private struct DiagnosticDump: Sendable {
-    let dirURL: URL?
-    let message: String
-}
+// are removed once Step 3 of that plan lands a targeted fix. Off by default, gated by
+// `isDiagnosticCaptureEnabled` (Preferences -> Diagnostics -> Export Diagnostic Capture
+// toggle) — see ExportDiagnosticCaptureGatingTests.swift for the gating coverage.
 
 extension ExportService {
 
     static let diagnosticSubdirectory = "com.kerim.final-final/pdf-export-debug"
     private static let diagnosticRetentionLimit = 20
 
+    /// UserDefaults key backing the "Enable export diagnostic capture" toggle in
+    /// Preferences -> Diagnostics (see DiagnosticsSettings.exportDiagnosticCaptureEnabled).
+    static let diagnosticCaptureEnabledDefaultsKey = "com.kerim.final-final.exportDiagnosticCaptureEnabled"
+
+    /// Test seam: `ExportDiagnosticCaptureGatingTests` overrides this to a per-test isolated
+    /// `UserDefaults(suiteName:)` instance so tests never read/write the real
+    /// `com.kerim.final-final` defaults domain. Production code always leaves this at
+    /// `.standard`. `nonisolated(unsafe)` — same idiom as `DiagnosticLogFile.userDefaults` —
+    /// because static members of an actor are not actor-isolated by default.
+    nonisolated(unsafe) static var userDefaults: UserDefaults = .standard
+
+    static var isDiagnosticCaptureEnabled: Bool { userDefaults.bool(forKey: diagnosticCaptureEnabledDefaultsKey) }
+
     /// Captures everything needed to distinguish "GRDB returned a stale block list" from
     /// "a writer fired during the export window" from "assembly/pandoc/xelatex produced
     /// wrong bytes given identical input" — see the plan's Step 2 decision tree.
     ///
-    /// Fires for every export format (gate intentionally dropped — see plan). Writes into
+    /// Off by default, gated by `isDiagnosticCaptureEnabled`. When enabled, fires for every
+    /// export format and writes into
     /// `~/Library/Caches/com.kerim.final-final/pdf-export-debug/<timestamp>-<uuid8>/`.
+    ///
+    /// - Returns: The created dump directory URL on success; `nil` when gated off or on any
+    ///   internal failure. Failures are logged via `DebugLog` only and never surfaced to the
+    ///   user — a diagnostic capture failing is not itself an export warning.
     private func dumpExportDiagnostics(
         rawContent: String,
         inputURL: URL,
@@ -438,14 +451,14 @@ extension ExportService {
         arguments: [String],
         format: ExportFormat,
         projectURL: URL?
-    ) async -> DiagnosticDump {
+    ) async -> URL? {
+        guard Self.isDiagnosticCaptureEnabled else { return nil }
+
         let fm = FileManager.default
 
         guard let cachesDir = fm.urls(for: .cachesDirectory, in: .userDomainMask).first else {
-            return DiagnosticDump(
-                dirURL: nil,
-                message: "Export diagnostic failed to save: could not resolve caches directory"
-            )
+            DebugLog.log(.fileOps, "[ExportService] Export diagnostic failed to save: could not resolve caches directory")
+            return nil
         }
         let baseDir = cachesDir.appendingPathComponent(Self.diagnosticSubdirectory, isDirectory: true)
 
@@ -458,16 +471,14 @@ extension ExportService {
         let uuid8 = String(UUID().uuidString.prefix(8))
         let dirURL = baseDir.appendingPathComponent("\(timestamp)-\(uuid8)", isDirectory: true)
 
-        // Directory creation + the first artifact write must surface failures to the user —
-        // otherwise the export-success alert would point at an empty or missing directory.
+        // Directory creation + the first artifact write: failure aborts the capture (logged
+        // only — see the doc comment above on why this never surfaces to the user).
         do {
             try fm.createDirectory(at: dirURL, withIntermediateDirectories: true)
             try rawContent.write(to: dirURL.appendingPathComponent("input-raw.md"), atomically: true, encoding: .utf8)
         } catch {
-            return DiagnosticDump(
-                dirURL: nil,
-                message: "Export diagnostic failed to save: \(error.localizedDescription)"
-            )
+            DebugLog.log(.fileOps, "[ExportService] Export diagnostic failed to save: \(error.localizedDescription)")
+            return nil
         }
 
         // Begin observing GRDB writer activity as early as possible in the capture window.
@@ -532,10 +543,7 @@ extension ExportService {
 
         DebugLog.log(.fileOps, "[ExportService] Export diagnostic dump saved to \(dirURL.path)")
 
-        return DiagnosticDump(
-            dirURL: dirURL,
-            message: "Diagnostic data including your document markdown saved to: \(dirURL.path)"
-        )
+        return dirURL
     }
 
     /// Keep at most `limit` most-recent (lexicographically-descending, i.e. newest-first

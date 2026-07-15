@@ -44,6 +44,20 @@ struct DiagnosticsSettingsTests {
         }
     }
 
+    @Test func exportDiagnosticCaptureEnabledRoundTripsThroughUserDefaults() {
+        withIsolatedUserDefaults { testDefaults in
+            let settings = DiagnosticsSettings.shared
+            let originalValue = settings.exportDiagnosticCaptureEnabled
+            defer { settings.exportDiagnosticCaptureEnabled = originalValue }
+
+            settings.exportDiagnosticCaptureEnabled = true
+            #expect(testDefaults.bool(forKey: ExportService.diagnosticCaptureEnabledDefaultsKey) == true)
+
+            settings.exportDiagnosticCaptureEnabled = false
+            #expect(testDefaults.bool(forKey: ExportService.diagnosticCaptureEnabledDefaultsKey) == false)
+        }
+    }
+
     @Test func lastReportGeneratedAtRoundTripsAndClearsOnNil() {
         withIsolatedUserDefaults { testDefaults in
             let settings = DiagnosticsSettings.shared

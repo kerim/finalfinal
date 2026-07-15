@@ -28,6 +28,18 @@ final class DiagnosticsSettings {
         didSet { Self.userDefaults.set(loggingEnabled, forKey: DiagnosticLogFile.loggingEnabledDefaultsKey) }
     }
 
+    /// Off by default. Gates ExportService's diagnostic capture dump — a temporary
+    /// investigation aid for a still-open PDF export bug (see
+    /// docs/plans/mossy-tumbling-stroustrup.md), independent of `loggingEnabled` above.
+    var exportDiagnosticCaptureEnabled: Bool {
+        didSet {
+            Self.userDefaults.set(
+                exportDiagnosticCaptureEnabled,
+                forKey: ExportService.diagnosticCaptureEnabledDefaultsKey
+            )
+        }
+    }
+
     /// Display-only: "Last generated: <date>" in the pane. Nil until first report.
     var lastReportGeneratedAt: Date? {
         didSet {
@@ -45,6 +57,9 @@ final class DiagnosticsSettings {
 
     private init() {
         loggingEnabled = Self.userDefaults.bool(forKey: DiagnosticLogFile.loggingEnabledDefaultsKey)
+        exportDiagnosticCaptureEnabled = Self.userDefaults.bool(
+            forKey: ExportService.diagnosticCaptureEnabledDefaultsKey
+        )
         lastReportGeneratedAt = Self.userDefaults.object(forKey: Keys.lastReportGeneratedAt) as? Date
     }
 }
