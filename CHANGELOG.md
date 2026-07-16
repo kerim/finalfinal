@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Editing an image's position and then exporting right away (without closing and reopening the project first) could export it at its old position** — moving a block without changing its content wasn't picked up by the quick sync export normally relies on, so a mid-session export could show images (or other moved content) back where they used to be. Exporting now always re-syncs the whole document first, so moves are never missed.
+- **Pasting an image could land it in the wrong place** — pasting always dropped the image below whichever paragraph the cursor happened to be in, ignoring where the cursor actually was. It's now inserted exactly where the cursor is, matching how dragging an image in already worked.
+- **Dragging an image to a new spot could land it at the end of the document instead of where you dropped it** — roughly half the time, both dragging a file in from outside the app and moving an image within the document ignored the actual drop point. A visual drop indicator now also shows exactly where the image will land while you're dragging.
+- **Exported PDFs could show an image drifting away from the paragraph it belonged to, especially across a page break, and every image showed a "Figure N: filename.jpg" caption instead of the one you actually typed** — in PDF, Word, and ODT exports alike. Captions you write now show up correctly in all three formats, and images without a caption no longer drift or gain a fake one.
+- **Exporting could show an "Export Complete with Warnings" alert with no real warnings** — an internal diagnostic check used to investigate PDF export ordering ran on every export and could trigger the alert for no reason. It's now off by default, with an opt-in toggle under Preferences > Diagnostics for anyone who needs it.
+- **Citations and footnotes typed right before quitting, or right before switching to a different project, could be lost** — the bibliography and footnote list save a moment after you stop typing, and quitting or switching projects during that short window could discard the last few seconds of that work. Both are now saved before the app quits or switches projects.
+
 ## [0.2.110] - 2026-07-11
 
 ### Fixed
