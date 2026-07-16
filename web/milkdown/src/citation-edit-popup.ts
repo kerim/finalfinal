@@ -107,8 +107,8 @@ function createEditPopup(): HTMLElement {
   popup.style.cssText = `
     position: fixed;
     z-index: 10000;
-    background: var(--bg-primary, #fff);
-    border: 1px solid var(--border-color, #ccc);
+    background: var(--editor-bg, #fff);
+    border: 1px solid var(--editor-selection, #ccc);
     border-radius: 6px;
     padding: 8px;
     box-shadow: 0 4px 12px rgba(0,0,0,0.15);
@@ -125,12 +125,12 @@ function createEditPopup(): HTMLElement {
   input.style.cssText = `
     width: 100%;
     padding: 6px 8px;
-    border: 1px solid var(--border-color, #ccc);
+    border: 1px solid var(--editor-selection, #ccc);
     border-radius: 4px;
     font-family: monospace;
     font-size: 13px;
-    background: var(--bg-secondary, #f5f5f5);
-    color: var(--text-primary, #333);
+    background: var(--editor-bg, #f5f5f5);
+    color: var(--editor-text, #333);
     box-sizing: border-box;
   `;
 
@@ -140,10 +140,11 @@ function createEditPopup(): HTMLElement {
   preview.style.cssText = `
     margin-top: 6px;
     padding: 6px 8px;
-    background: var(--bg-tertiary, #eee);
+    background: var(--editor-bg, #fff);
+    border: 1px solid var(--editor-selection, #ccc);
     border-radius: 4px;
     font-size: 13px;
-    color: var(--text-secondary, #666);
+    color: var(--editor-text, #333);
   `;
 
   // Create hint element
@@ -153,7 +154,7 @@ function createEditPopup(): HTMLElement {
   hint.style.cssText = `
     margin-top: 6px;
     font-size: 11px;
-    color: var(--text-tertiary, #999);
+    color: var(--editor-muted, #999);
     text-align: center;
   `;
 
@@ -165,19 +166,19 @@ function createEditPopup(): HTMLElement {
     width: 100%;
     margin-top: 6px;
     padding: 6px 8px;
-    border: 1px solid var(--border-color, #ccc);
+    border: 1px solid var(--editor-selection, #ccc);
     border-radius: 4px;
-    background: var(--bg-secondary, #f5f5f5);
-    color: var(--text-primary, #333);
+    background: var(--editor-bg, #f5f5f5);
+    color: var(--editor-text, #333);
     cursor: pointer;
     font-size: 13px;
     font-weight: 500;
   `;
   addButton.addEventListener('mouseenter', () => {
-    addButton.style.background = 'var(--bg-tertiary, #e0e0e0)';
+    addButton.style.background = 'var(--editor-selection, #e0e0e0)';
   });
   addButton.addEventListener('mouseleave', () => {
-    addButton.style.background = 'var(--bg-secondary, #f5f5f5)';
+    addButton.style.background = 'var(--editor-bg, #f5f5f5)';
   });
   addButton.addEventListener('click', (e) => {
     e.preventDefault();
@@ -269,20 +270,22 @@ export function updateEditPreview(): void {
           suffix: parsed.suffix,
         });
         editPopupPreview.textContent = formatted;
-        editPopupPreview.style.color = 'var(--text-secondary, #666)';
+        editPopupPreview.style.color = 'var(--editor-text, #333)';
       } catch (_e) {
         editPopupPreview.textContent = `(${parsed.citekeys.join('; ')})`;
-        editPopupPreview.style.color = 'var(--text-secondary, #666)';
+        editPopupPreview.style.color = 'var(--editor-text, #333)';
       }
     } else {
       // Show unresolved keys with ?
       const display = parsed.citekeys.map((k) => (engine.hasItem(k) ? engine.getShortCitation(k) : `${k}?`)).join('; ');
       editPopupPreview.textContent = `(${display})`;
-      editPopupPreview.style.color = 'var(--warning-color, #c9a227)';
+      // No theme variable for warning color (mirrors math-edit-popup.ts's error-color handling)
+      editPopupPreview.style.color = '#c9a227';
     }
   } else {
     editPopupPreview.textContent = 'Invalid citation syntax';
-    editPopupPreview.style.color = 'var(--error-color, #c00)';
+    // No theme variable for error color (mirrors math-edit-popup.ts's error-color handling)
+    editPopupPreview.style.color = '#c00';
   }
 }
 
