@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.111] - 2026-07-16
+
 ### Fixed
 
 - **Editing an image's position and then exporting right away (without closing and reopening the project first) could export it at its old position** — moving a block without changing its content wasn't picked up by the quick sync export normally relies on, so a mid-session export could show images (or other moved content) back where they used to be. Exporting now always re-syncs the whole document first, so moves are never missed.
