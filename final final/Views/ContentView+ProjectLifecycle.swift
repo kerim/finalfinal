@@ -211,6 +211,14 @@ extension ContentView {
         // and flushing would overwrite restored content with stale pre-restore editor content.
         if !isRestore {
             await flushAllPendingContent()
+
+            // Flush pending debounced bibliography/footnote updates before the reset()
+            // calls below discard them. Runs independent of flushAllPendingContent()'s
+            // editor-content state (pending sync lives in the services themselves,
+            // captured at debounce-schedule time) and is bounded to ~3s via the same
+            // helper the quit path uses, so a hung Zotero/BBT fetch can't stall a
+            // project switch indefinitely.
+            await editorState.flushPendingBibliographyAndFootnoteSync()
         }
 
         // Stop remaining services
