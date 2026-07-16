@@ -162,6 +162,7 @@
 		9E8D8F33D47F7001D135296C /* ZoteroService.swift in Sources */ = {isa = PBXBuildFile; fileRef = E16909CB53D2BCFD8CC1B0BF /* ZoteroService.swift */; };
 		9E974BA85308BA7DC6FA11D2 /* BlockInsertHeadingParagraphOrderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F4ADB96FDD479B1D3377803 /* BlockInsertHeadingParagraphOrderTests.swift */; };
 		9E99C57C2D8101B560301BAE /* BlockParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0EE6A723C923D316B9CE89C /* BlockParser.swift */; };
+		9F49E78E3730003567A2393E /* FootnoteSyncService+Reconciliation.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB9EFE434687DB470EEFCAFE /* FootnoteSyncService+Reconciliation.swift */; };
 		9F8A84E5700503E3140BB6AC /* Database+Blocks.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3B8BDB22DF0AC3535250A72E /* Database+Blocks.swift */; };
 		A05325CD92CBB929824DD2D3 /* SQLiteReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 19D9D6FF0D1C77C27B991957 /* SQLiteReader.swift */; };
 		A27ED7C850192550DDFCD95B /* LinkTrailingTextTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 307DA2CD982351B53E2CE918 /* LinkTrailingTextTests.swift */; };
@@ -459,6 +460,7 @@
 		C7DACB449A648403C7CCDD3F /* GitInfo.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitInfo.swift; sourceTree = "<group>"; };
 		C8498B4341C08418634FB2AC /* VersionHistoryWindow+Restore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "VersionHistoryWindow+Restore.swift"; sourceTree = "<group>"; };
 		CB51F453D350DBA8D3632F22 /* SnapshotService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SnapshotService.swift; sourceTree = "<group>"; };
+		CB9EFE434687DB470EEFCAFE /* FootnoteSyncService+Reconciliation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "FootnoteSyncService+Reconciliation.swift"; sourceTree = "<group>"; };
 		CBEC345FCF94A399DA799342 /* SpellCheckService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpellCheckService.swift; sourceTree = "<group>"; };
 		CC5B8A956E441E29032AE5F9 /* AnnotationPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnnotationPanel.swift; sourceTree = "<group>"; };
 		CE36F17D91BD28DBE49E98F8 /* Typography.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Typography.swift; sourceTree = "<group>"; };
@@ -744,6 +746,7 @@
 				AC64ADE3296F154812601D6B /* ExportService+PandocResources.swift */,
 				0AAD4AA3FEF10B4394BAAAED /* ExportService+PDFImages.swift */,
 				FF34C45C645EA726101A81D6 /* FootnoteSyncService.swift */,
+				CB9EFE434687DB470EEFCAFE /* FootnoteSyncService+Reconciliation.swift */,
 				787A1493E6815DF1DA4E829D /* ImageImportService.swift */,
 				3E573D126ADEE441215EE597 /* KeychainHelper.swift */,
 				3A530A55D9265E47C5CF4EB3 /* LanguageToolProvider.swift */,
@@ -1356,6 +1359,7 @@
 				59E041D4F98FE5B1F9A13ED4 /* FindBarView.swift in Sources */,
 				270928CAC5EB8D7CEE22A39E /* FocusModeSettings.swift in Sources */,
 				D615E07DF0A19D4C4FBDCFC1 /* FocusPreferencesPane.swift in Sources */,
+				9F49E78E3730003567A2393E /* FootnoteSyncService+Reconciliation.swift in Sources */,
 				2A991A819263234EDC320A38 /* FootnoteSyncService.swift in Sources */,
 				802A2E3DC7C417EF81173AF8 /* FullScreenManager.swift in Sources */,
 				025311FF492B505FC913440D /* GitInfo.swift in Sources */,
