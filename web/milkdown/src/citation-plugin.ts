@@ -3,10 +3,12 @@
 // Renders as inline atomic nodes with formatted display
 
 import type { Ctx, MilkdownPlugin } from '@milkdown/kit/ctx';
+import { keymap } from '@milkdown/kit/prose/keymap';
 import type { Node } from '@milkdown/kit/prose/model';
-import { $node, $remark, $view } from '@milkdown/kit/utils';
+import { $node, $prose, $remark, $view } from '@milkdown/kit/utils';
 import type { Root } from 'mdast';
 import { visit } from 'unist-util-visit';
+import { buildCitationDeleteTransaction, CITATION_NODE_NAME } from './citation-delete';
 import { showCitationEditPopup } from './citation-edit-popup';
 import {
   type CitationAttrs,
@@ -333,12 +335,13 @@ const citationNodeView = $view(citationNode, (_ctx: Ctx) => {
 
       e.preventDefault();
       e.stopPropagation();
-      const pos = typeof getPos === 'function' ? getPos() : null;
-      if (pos !== null && pos !== undefined) {
-        const nodeAttrs = node.attrs as CitationAttrs;
-        // Always use in-app popup for editing citation attributes
-        showCitationEditPopup(pos, view, nodeAttrs);
-      }
+      if (typeof getPos !== 'function') return;
+      const nodeAttrs = node.attrs as CitationAttrs;
+      // Pass the live getPos closure itself (not a one-time-computed position
+      // snapshot) so the popup can re-resolve the citation's CURRENT position at
+      // the moment the user actually acts (commit/delete), even if a background
+      // resync (e.g. setContentWithBlockIds) shifted it since the popup opened.
+      showCitationEditPopup(getPos, view, nodeAttrs);
     });
 
     // Listen for citation library updates to re-render formatted display
@@ -379,9 +382,45 @@ const citationNodeView = $view(citationNode, (_ctx: Ctx) => {
   };
 });
 
+// Keymap for one-press citation deletion with whitespace cleanup.
+// Mirrors heading-nodeview-plugin.ts's headingBackspaceKeymap pattern: a $prose-wrapped
+// keymap() that only intercepts Backspace/Delete when the adjacent node is a citation atom,
+// falling through (return false) for every other case so normal editing is unaffected.
+const citationDeleteKeymap = $prose(() => {
+  return keymap({
+    Backspace: (state, dispatch) => {
+      const { $from, empty } = state.selection;
+      if (!empty) return false;
+
+      const before = $from.nodeBefore;
+      if (!before || before.type.name !== CITATION_NODE_NAME) return false;
+
+      const tr = buildCitationDeleteTransaction(state, $from.pos - before.nodeSize);
+      if (!tr) return false;
+
+      if (dispatch) dispatch(tr);
+      return true;
+    },
+    Delete: (state, dispatch) => {
+      const { $from, empty } = state.selection;
+      if (!empty) return false;
+
+      const after = $from.nodeAfter;
+      if (!after || after.type.name !== CITATION_NODE_NAME) return false;
+
+      const tr = buildCitationDeleteTransaction(state, $from.pos);
+      if (!tr) return false;
+
+      if (dispatch) dispatch(tr);
+      return true;
+    },
+  });
+});
+
 // Export the plugin array - node view MUST be in same array to maintain atom identity
 export const citationPlugin: MilkdownPlugin[] = [
   remarkCitationPlugin,
   citationNode,
   citationNodeView, // Node view included here, same file as node definition
+  citationDeleteKeymap,
 ].flat();

@@ -211,7 +211,13 @@ async function initEditor() {
       .use(zoomNotesMarkerPlugin) // Intercept <!-- ::zoom-notes:: --> before commonmark filters it
       .use(bibliographyPlugin) // Intercept <!-- ::auto-bibliography:: --> before commonmark filters it
       .use(annotationPlugin) // Intercept annotation comments before filtering
-      .use(citationPlugin) // Parse [@citekey] citations before commonmark
+      // Parse [@citekey] citations before commonmark. This ordering also gives
+      // citationDeleteKeymap (citation-plugin.ts) precedence over ProseMirror's/
+      // commonmark's default Backspace/Delete handling for one-press citation
+      // deletion — if this ordering ever changes, that behavior could silently
+      // regress (a test failure in citation-delete.test.ts/CitationDeleteTests.swift,
+      // not a compile error).
+      .use(citationPlugin)
       .use(mathPlugin) // Parse $...$ and $$...$$ math before commonmark
       .use(footnotePlugin) // Parse [^N] footnote references before commonmark
       .use(imagePlugin) // Parse ![alt](media/...) into figure nodes before commonmark
