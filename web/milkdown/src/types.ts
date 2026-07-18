@@ -151,6 +151,8 @@ declare global {
         hasEditor: boolean;
         docSize: number | null;
       };
+      // Insert a brand-new citation at the current cursor (native toolbar "Cite" button)
+      insertCitation: () => void;
       // Block-based API (Phase B)
       getBlockChanges: () => BlockChanges;
       applyBlocks: (blocks: Block[]) => void;

@@ -93,6 +93,22 @@ export function openCAYWPicker(cmdStart: number, cmdEnd: number): void {
 }
 
 /**
+ * Open the CAYW picker for a brand-new citation at the current cursor position.
+ * Shared trigger for the ⌘⇧K keyboard shortcut (main.ts) and the native toolbar
+ * "Cite" button (invoked via window.FinalFinal.insertCitation from Swift) — both
+ * insert fresh citations with no existing /cite text to replace, so start and end
+ * are the same.
+ */
+export function insertCitationAtCursor(): void {
+  const editorInstance = getEditorInstance();
+  if (!editorInstance) return;
+
+  const view = editorInstance.ctx.get(editorViewCtx);
+  const { from } = view.state.selection;
+  openCAYWPicker(from, from);
+}
+
+/**
  * Handle successful CAYW picker callback from Swift
  * Inserts citation node at the stored position range, or appends to existing citation in edit popup
  */

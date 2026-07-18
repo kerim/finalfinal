@@ -77,6 +77,9 @@ extension Notification.Name {
     static let toggleInlineCode = Notification.Name("toggleInlineCode")
     /// Posted to insert a link at the cursor
     static let insertLink = Notification.Name("insertLink")
+    /// Posted to insert a brand-new citation at the current cursor position, opening the
+    /// CAYW picker (Cmd+Shift+K keyboard shortcut + toolbar "Cite" button)
+    static let insertCitation = Notification.Name("insertCitation")
 
     /// Posted when zoom-out completes and contentState is back to idle
     /// Used to trigger bibliography sync after zoom-out (citations added during zoom)

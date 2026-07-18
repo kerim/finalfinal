@@ -16,15 +16,6 @@ enum BibliographySyncState: Sendable {
     case userEditPending
 }
 
-/// Snapshot captured when a debounced bibliography update is scheduled but not yet consumed.
-/// The `generation` always travels with the rest of the snapshot — see `flushPendingSync()`
-/// for why it must be the one captured at schedule time, not a freshly-read `syncGeneration`.
-private struct PendingBibliographyUpdate {
-    let citekeys: [String]
-    let projectId: String
-    let generation: Int
-}
-
 @MainActor
 @Observable
 final class BibliographySyncService {
@@ -45,17 +36,14 @@ final class BibliographySyncService {
     /// Debounce interval (1 second for bibliography, longer than section sync's 500ms)
     private let debounceInterval: TimeInterval = 1.0
 
-    /// Monotonic counter bumped by every scheduled debounce and by `regenerateBibliography`'s
-    /// immediate write. A debounced rebuild captures this at schedule time; if a newer
-    /// schedule or an immediate regeneration has bumped it since, the older debounced
-    /// rebuild is stale and must not run.
-    private var syncGeneration: Int = 0
-
-    /// Snapshot captured at the moment a debounced update was scheduled but not yet
+    /// Citekeys captured at the moment a debounced update was scheduled but not yet
     /// consumed by `performBibliographyUpdate`. Cleared inside the debounce closure
-    /// immediately before it fires, so `pendingUpdate != nil` reliably means "there is
+    /// immediately before it fires, so `pendingCitekeys != nil` reliably means "there is
     /// unconsumed scheduled work" — see `flushPendingSync()`.
-    private var pendingUpdate: PendingBibliographyUpdate?
+    private var pendingCitekeys: [String]?
+
+    /// Project id paired with `pendingCitekeys` (see above).
+    private var pendingProjectId: String?
 
     // MARK: - Configuration
 
@@ -119,11 +107,8 @@ final class BibliographySyncService {
         guard currentSet != lastKnownCitekeys || isTransitioningToEmpty else { return }
 
         // Debounce the update
-        syncGeneration += 1
-        let scheduledGeneration = syncGeneration
-        pendingUpdate = PendingBibliographyUpdate(
-            citekeys: currentCitekeys, projectId: projectId, generation: scheduledGeneration
-        )
+        pendingCitekeys = currentCitekeys
+        pendingProjectId = projectId
         debounceTask?.cancel()
         debounceTask = Task { [weak self] in
             guard !Task.isCancelled else { return }
@@ -132,10 +117,9 @@ final class BibliographySyncService {
             try? await Task.sleep(for: .seconds(debounceInterval))
 
             guard !Task.isCancelled else { return }
-            self?.pendingUpdate = nil
-            await self?.performBibliographyUpdate(
-                citekeys: currentCitekeys, projectId: projectId, scheduledGeneration: scheduledGeneration
-            )
+            self?.pendingCitekeys = nil
+            self?.pendingProjectId = nil
+            await self?.performBibliographyUpdate(citekeys: currentCitekeys, projectId: projectId)
         }
     }
 
@@ -144,16 +128,12 @@ final class BibliographySyncService {
     /// isn't left stale behind the 1s debounce.
     ///
     /// If a natural debounce fire is already in flight (`state == .syncing`), waits for it
-    /// to finish rather than starting a second, overlapping update. After the wait (or
+    /// to finish rather than starting a second, overlapping update — `performBibliographyUpdate`
+    /// has no internal guard against two concurrent invocations. After the wait (or
     /// immediately, if nothing was in flight), re-checks for pending work rather than
     /// unconditionally returning: a new update can become pending in the moments between
     /// the in-flight run finishing and this method's poll loop waking up, and that update
     /// must still be picked up rather than silently dropped right before the process quits.
-    ///
-    /// Replays using the STORED generation captured at schedule time, not a freshly-read
-    /// `syncGeneration` — this is what lets `performBibliographyUpdate`'s existing
-    /// `scheduledGeneration == syncGeneration` guard correctly reject a snapshot that a
-    /// newer `checkAndUpdateBibliography` call or `regenerateBibliography` has since superseded.
     func flushPendingSync() async {
         if state == .syncing {
             let deadline = Date().addingTimeInterval(2.0)
@@ -162,25 +142,19 @@ final class BibliographySyncService {
             }
         }
 
-        guard state == .idle, let pending = pendingUpdate else { return }
+        guard state == .idle, let citekeys = pendingCitekeys, let projectId = pendingProjectId else { return }
 
         debounceTask?.cancel()
         debounceTask = nil
-        pendingUpdate = nil
-        await performBibliographyUpdate(
-            citekeys: pending.citekeys, projectId: pending.projectId, scheduledGeneration: pending.generation
-        )
+        pendingCitekeys = nil
+        pendingProjectId = nil
+        await performBibliographyUpdate(citekeys: citekeys, projectId: projectId)
     }
 
     /// Regenerate bibliography (manual trigger)
     func regenerateBibliography(projectId: String, citekeys: [String]) async {
         isAutoUpdateEnabled = true
-        debounceTask?.cancel()
-        debounceTask = nil
-        syncGeneration += 1        // supersede any debounced rebuild scheduled before now
-        await performBibliographyUpdate(
-            citekeys: citekeys, projectId: projectId, scheduledGeneration: syncGeneration
-        )
+        await performBibliographyUpdate(citekeys: citekeys, projectId: projectId)
     }
 
     /// Mark bibliography as manually edited (disables auto-update)
@@ -192,7 +166,8 @@ final class BibliographySyncService {
     func reset() {
         debounceTask?.cancel()
         debounceTask = nil
-        pendingUpdate = nil
+        pendingCitekeys = nil
+        pendingProjectId = nil
         lastKnownCitekeys = []
         lastGeneratedHash = 0
         isAutoUpdateEnabled = true
@@ -201,19 +176,12 @@ final class BibliographySyncService {
 
     // MARK: - Private Methods
 
-    /// Internal (not private) so the race-condition guard can be unit-tested directly.
-    func performBibliographyUpdate(citekeys: [String], projectId: String, scheduledGeneration: Int) async {
+    private func performBibliographyUpdate(citekeys: [String], projectId: String) async {
         // Deduplicate citekeys early - a citation may appear multiple times in document
         var seen = Set<String>()
         let uniqueCitekeys = citekeys.filter { seen.insert($0).inserted }
 
         guard let database else { return }
-
-        // Execution-time mutual exclusion: a newer scheduled debounce or an immediate
-        // `regenerateBibliography` call may have bumped syncGeneration since this update was
-        // scheduled. A stale debounced rebuild must NOT run against its now-superseded
-        // citekeys snapshot.
-        guard !Task.isCancelled, scheduledGeneration == syncGeneration, state == .idle else { return }
 
         let zoteroService = ZoteroService.shared
         guard zoteroService.isConnected else { return }

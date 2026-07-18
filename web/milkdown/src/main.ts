@@ -94,7 +94,7 @@ import { autolinkPlugin } from './autolink-plugin';
 import { bibliographyPlugin } from './bibliography-plugin';
 import { blockIdPlugin, getAllBlockIds } from './block-id-plugin';
 import { blockSyncPlugin } from './block-sync-plugin';
-import { openCAYWPicker } from './cayw';
+import { insertCitationAtCursor } from './cayw';
 import { citationPlugin } from './citation-plugin';
 import { restoreCitationLibrary } from './citation-search';
 import { dropCursorPlugin } from './drop-cursor-plugin';
@@ -425,15 +425,7 @@ async function initEditor() {
       if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'k') {
         e.preventDefault();
         e.stopPropagation();
-
-        const currentEditor = getEditorInstance();
-        if (!currentEditor) return;
-
-        const currentView = currentEditor.ctx.get(editorViewCtx);
-        const { from } = currentView.state.selection;
-
-        // Open CAYW picker - no /cite text to replace, so start and end are the same
-        openCAYWPicker(from, from);
+        insertCitationAtCursor();
       }
     },
     true
@@ -504,6 +496,7 @@ window.FinalFinal = {
   citationPickerError,
   editCitationCallback,
   getCAYWDebugState,
+  insertCitation: insertCitationAtCursor,
   // Block-based API (Phase B)
   getBlockChanges: getBlockChangesApi,
   applyBlocks,

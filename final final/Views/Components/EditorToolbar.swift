@@ -53,7 +53,7 @@ struct EditorToolbar: ToolbarContent {
             // Inserts group — ControlGroup merges into one visual capsule
             ControlGroup {
                 Button {
-                    NotificationCenter.default.post(name: .refreshAllCitations, object: nil)
+                    NotificationCenter.default.post(name: .insertCitation, object: nil)
                 } label: {
                     Label {
                         Text("Cite")

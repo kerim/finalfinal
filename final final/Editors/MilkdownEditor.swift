@@ -315,6 +315,7 @@ struct MilkdownEditor: NSViewRepresentable {
         var toggleHighlightObserver: NSObjectProtocol?
         var citationLibraryObserver: NSObjectProtocol?
         var refreshAllCitationsObserver: NSObjectProtocol?
+        var insertCitationObserver: NSObjectProtocol?
         var editorModeObserver: NSObjectProtocol?
         var spellcheckStateObserver: NSObjectProtocol?
         var smartQuotesStateObserver: NSObjectProtocol?
@@ -608,6 +609,12 @@ struct MilkdownEditor: NSViewRepresentable {
                 forName: .insertLink, object: nil, queue: .main
             ) { [weak self] _ in self?.executeFormatting("insertLink") }
 
+            // Subscribe to insert citation notification (⌘⇧K / toolbar "Cite" button) —
+            // opens the CAYW picker for a brand-new citation at the current cursor.
+            insertCitationObserver = NotificationCenter.default.addObserver(
+                forName: .insertCitation, object: nil, queue: .main
+            ) { [weak self] _ in self?.executeFormatting("insertCitation") }
+
             // Subscribe to zoom footnote state changes
             zoomFootnoteStateObserver = NotificationCenter.default.addObserver(
                 forName: .setZoomFootnoteState,
@@ -719,7 +726,7 @@ struct MilkdownEditor: NSViewRepresentable {
             for observer in [toggleBoldObserver, toggleItalicObserver, toggleStrikethroughObserver,
                              setHeadingObserver, toggleBulletListObserver, toggleNumberListObserver,
                              toggleBlockquoteObserver, toggleCodeBlockObserver, toggleInlineCodeObserver,
-                             insertLinkObserver] {
+                             insertLinkObserver, insertCitationObserver] {
                 if let observer { NotificationCenter.default.removeObserver(observer) }
             }
         }
