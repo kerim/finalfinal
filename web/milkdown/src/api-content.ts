@@ -3,7 +3,7 @@
 import { editorViewCtx, parserCtx } from '@milkdown/kit/core';
 import type { NodeType, Node as ProsemirrorNode, ResolvedPos } from '@milkdown/kit/prose/model';
 import { Slice } from '@milkdown/kit/prose/model';
-import { Selection } from '@milkdown/kit/prose/state';
+import { Selection, type Transaction } from '@milkdown/kit/prose/state';
 import { getMarkdown } from '@milkdown/kit/utils';
 import {
   applyPendingConfirmations,
@@ -443,6 +443,231 @@ export function applyBlocks(blocks: Block[]): void {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Block-level LCS diff for setContentWithBlockIds
+//
+// setContentWithBlockIds() used to replace the ENTIRE document in a single
+// tr.replace(0, docSize, ...) step every time a background resync
+// (bibliography/notes/footnote regeneration, zoom in/out, project restore,
+// generic block rebuild, etc.) pushed new content. Per prosemirror-history's
+// position-mapping rules, one step spanning the whole document collapses
+// every earlier undo-history position to the boundary of that single step —
+// even for content that didn't actually change. That silently broke undo for
+// anything the user did shortly before a resync fired (e.g. deleting a
+// citation, then having the bibliography resync land ~1s later, before they
+// pressed Cmd+Z).
+//
+// The fix: diff the two documents' TOP-LEVEL blocks (paragraphs, headings,
+// etc. — depth-1 children of the doc root) using a standard LCS algorithm
+// with Node.eq() as the equality test, then replace only the specific block
+// ranges that actually differ, each via its own tr.replace() call within one
+// transaction. Blocks the LCS matches as unchanged keep their original
+// identity/position (shifted only by the size deltas of earlier-replaced
+// ranges, via tr.mapping) — so undo-history positions pointing into them
+// survive intact.
+// ---------------------------------------------------------------------------
+
+/** A single contiguous run of top-level blocks that differs between the old
+ * and new document, expressed as block INDICES (not document positions) into
+ * each document's top-level child array. `oldFrom`/`newFrom` are inclusive,
+ * `oldTo`/`newTo` are exclusive — the same convention as Array.slice. */
+export interface BlockChangeRange {
+  oldFrom: number;
+  oldTo: number;
+  newFrom: number;
+  newTo: number;
+}
+
+/** Document positions of every top-level block boundary, indexed by block
+ * index: starts[i] is the position immediately before block i, and
+ * starts[doc.childCount] is the position immediately after the last block
+ * (== doc.content.size). Translates the block-index ranges
+ * diffTopLevelBlocks() produces into document/Fragment-cut positions. */
+export function topLevelBlockStarts(doc: ProsemirrorNode): number[] {
+  const starts: number[] = [0];
+  let pos = 0;
+  doc.forEach((node) => {
+    pos += node.nodeSize;
+    starts.push(pos);
+  });
+  return starts;
+}
+
+/** Cap on DP table cells (rows * cols of the trimmed middle) above which we
+ * give up on finding the minimal diff and fall back to treating the entire
+ * trimmed middle as one changed range — still bounded to the region that
+ * actually differs (never the whole document), just not minimal within it.
+ * Sized to keep worst-case memory/time in the tens-of-MB / low-hundreds-of-ms
+ * range even for unusually large documents. */
+const DIFF_DP_CELL_CAP = 4_000_000;
+
+/**
+ * Diff the top-level blocks of `oldDoc` and `newDoc` and return the list of
+ * disjoint block-index ranges that differ, in document order.
+ *
+ * Uses the standard longest-common-subsequence algorithm (Node.eq() as the
+ * match predicate) over the top-level block arrays, after trimming any
+ * common prefix/suffix. This is what lets two separate edits on either side
+ * of an untouched block (e.g. a citation's own paragraph, unchanged by a
+ * resync that touches a paragraph before it AND one after it) come back as
+ * TWO disjoint ranges rather than one range spanning — and replacing —
+ * everything in between; that is the whole point of this fix (see the
+ * bibliography-resync regression test in __tests__/block-diff.test.ts).
+ *
+ * Returns an empty array when the two documents' top-level blocks are
+ * entirely `.eq()`-identical (nothing to replace).
+ *
+ * --- Accepted residual risk: content-identical duplicate blocks ---
+ * When several top-level blocks are fully `.eq()`-identical to each other
+ * (e.g. multiple paragraphs that each contain only the same citation
+ * `[@samekey]`, or repeated blank spacer paragraphs) AND a resync also
+ * changes how many such duplicates exist nearby, the LCS has no way to know
+ * — from content alone — which specific occurrence a stale undo-history
+ * position was pointing at; every duplicate is an equally valid match. The
+ * backtrack below resolves ties deterministically but arbitrarily with
+ * respect to "which occurrence" — it may sweep a duplicate a human would
+ * consider "the same one" into a replaced range instead of matching it. This
+ * is inherent to any purely content-based diff (there's no identity to
+ * disambiguate identical content) and isn't fixable by improving this
+ * algorithm specifically. The worst case is still strictly better than the
+ * pre-fix behavior: at most the ambiguous duplicate-block region's undo
+ * history is affected, never the whole document's. A test pins the current
+ * arbitrary-but-deterministic behavior so a future change can't silently
+ * regress it into sweeping in MORE blocks than necessary.
+ */
+export function diffTopLevelBlocks(oldDoc: ProsemirrorNode, newDoc: ProsemirrorNode): BlockChangeRange[] {
+  const oldBlocks: ProsemirrorNode[] = [];
+  oldDoc.forEach((node) => {
+    oldBlocks.push(node);
+  });
+  const newBlocks: ProsemirrorNode[] = [];
+  newDoc.forEach((node) => {
+    newBlocks.push(node);
+  });
+
+  // Trim common prefix.
+  let prefixLen = 0;
+  const maxCommon = Math.min(oldBlocks.length, newBlocks.length);
+  while (prefixLen < maxCommon && oldBlocks[prefixLen].eq(newBlocks[prefixLen])) {
+    prefixLen++;
+  }
+
+  // Trim common suffix, bounded so it never overlaps the already-trimmed prefix.
+  let suffixLen = 0;
+  const maxSuffix = maxCommon - prefixLen;
+  while (
+    suffixLen < maxSuffix &&
+    oldBlocks[oldBlocks.length - 1 - suffixLen].eq(newBlocks[newBlocks.length - 1 - suffixLen])
+  ) {
+    suffixLen++;
+  }
+
+  const oldMid = oldBlocks.slice(prefixLen, oldBlocks.length - suffixLen);
+  const newMid = newBlocks.slice(prefixLen, newBlocks.length - suffixLen);
+
+  if (oldMid.length === 0 && newMid.length === 0) {
+    return [];
+  }
+
+  const m = oldMid.length;
+  const n = newMid.length;
+
+  // Fallback for pathologically large middles: one range spanning the whole
+  // trimmed middle (== today's whole-document behavior, but bounded to the
+  // region that actually differs rather than the entire document).
+  if (m * n > DIFF_DP_CELL_CAP) {
+    return [
+      {
+        oldFrom: prefixLen,
+        oldTo: oldBlocks.length - suffixLen,
+        newFrom: prefixLen,
+        newTo: newBlocks.length - suffixLen,
+      },
+    ];
+  }
+
+  // dp[i][j] = length of the LCS of oldMid[i:] and newMid[j:].
+  const dp: Int32Array[] = new Array(m + 1);
+  for (let i = 0; i <= m; i++) dp[i] = new Int32Array(n + 1);
+  for (let i = m - 1; i >= 0; i--) {
+    for (let j = n - 1; j >= 0; j--) {
+      dp[i][j] = oldMid[i].eq(newMid[j]) ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+    }
+  }
+
+  // Backtrack to find the matched (unchanged) block index pairs, in order.
+  const matches: Array<{ oldIdx: number; newIdx: number }> = [];
+  {
+    let i = 0;
+    let j = 0;
+    while (i < m && j < n) {
+      if (oldMid[i].eq(newMid[j]) && dp[i][j] === dp[i + 1][j + 1] + 1) {
+        matches.push({ oldIdx: i, newIdx: j });
+        i++;
+        j++;
+      } else if (dp[i + 1][j] >= dp[i][j + 1]) {
+        i++;
+      } else {
+        j++;
+      }
+    }
+  }
+
+  // Convert the gaps between matches (plus before-the-first/after-the-last)
+  // into disjoint change ranges, offsetting back into full-document block
+  // indices (undoing the prefix trim).
+  const ranges: BlockChangeRange[] = [];
+  let prevOld = 0;
+  let prevNew = 0;
+  for (const match of matches) {
+    if (match.oldIdx > prevOld || match.newIdx > prevNew) {
+      ranges.push({
+        oldFrom: prefixLen + prevOld,
+        oldTo: prefixLen + match.oldIdx,
+        newFrom: prefixLen + prevNew,
+        newTo: prefixLen + match.newIdx,
+      });
+    }
+    prevOld = match.oldIdx + 1;
+    prevNew = match.newIdx + 1;
+  }
+  if (prevOld < m || prevNew < n) {
+    ranges.push({
+      oldFrom: prefixLen + prevOld,
+      oldTo: prefixLen + m,
+      newFrom: prefixLen + prevNew,
+      newTo: prefixLen + n,
+    });
+  }
+
+  return ranges;
+}
+
+/**
+ * Apply the block-level diff between `oldDoc` and `newDoc` to `tr` (which
+ * must currently be positioned at `oldDoc`), replacing only the block ranges
+ * that actually differ instead of the whole document. Each range is applied
+ * via its own tr.replace() call in document order; positions are mapped
+ * through `tr.mapping` before each call so earlier replacements in the same
+ * loop (which may have changed content length) don't throw off later ones.
+ */
+export function buildBlockLevelReplace(tr: Transaction, oldDoc: ProsemirrorNode, newDoc: ProsemirrorNode): Transaction {
+  const ranges = diffTopLevelBlocks(oldDoc, newDoc);
+  if (ranges.length === 0) return tr;
+
+  const oldStarts = topLevelBlockStarts(oldDoc);
+  const newStarts = topLevelBlockStarts(newDoc);
+
+  for (const range of ranges) {
+    const from = tr.mapping.map(oldStarts[range.oldFrom]);
+    const to = tr.mapping.map(oldStarts[range.oldTo]);
+    const slice = new Slice(newDoc.content.cut(newStarts[range.newFrom], newStarts[range.newTo]), 0, 0);
+    tr = tr.replace(from, to, slice);
+  }
+
+  return tr;
+}
+
 export function setContentWithBlockIds(
   markdown: string,
   blockIds: string[],
@@ -525,8 +750,7 @@ export function setContentWithBlockIds(
       }
 
       const { from } = view.state.selection;
-      const docSize = view.state.doc.content.size;
-      let tr = view.state.tr.replace(0, docSize, new Slice(doc.content, 0, 0));
+      let tr = buildBlockLevelReplace(view.state.tr, view.state.doc, doc);
 
       if (options?.scrollToStart) {
         tr = tr.setSelection(Selection.atStart(tr.doc));

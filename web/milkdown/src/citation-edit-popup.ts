@@ -8,6 +8,7 @@ import { buildCitationDeleteTransaction, CITATION_NODE_NAME } from './citation-d
 import type { CitationAttrs } from './citation-types';
 import { serializeCitation } from './citation-types';
 import { getCiteprocEngine } from './citeproc-engine';
+import { syncLog } from './sync-debug';
 
 // Parse edited citation text back to structured data
 function parseEditedCitation(text: string): {
@@ -108,7 +109,7 @@ let editingNode: Node | null = null;
 let editPopupBlurTimeout: ReturnType<typeof setTimeout> | null = null;
 
 function logClosingPopup(reason: string): void {
-  console.log(`[citation-edit-popup] closing popup: ${reason}`);
+  syncLog('citation-edit-popup', `closing popup: ${reason}`);
 }
 
 type CitationResolveFailure = 'unresolvable' | 'gone' | 'different';
@@ -322,9 +323,21 @@ function createEditPopup(): HTMLElement {
     deleteButton.style.background = 'var(--editor-bg, #fff)';
     deleteButton.style.color = '#c00';
   });
+  // Temporary diagnostic (investigating a live "Delete does nothing" report) — mirrors the
+  // mousedown/mouseup/dragstart capture-phase technique from the WebKit native-text-selection-
+  // drag-swallows-clicks pattern already fixed once on this exact button (user-select:none
+  // above). Confirms whether that fix is still holding or the gesture is being swallowed again.
+  deleteButton.addEventListener('mousedown', () => syncLog('citation-edit-popup', 'Delete: mousedown'), true);
+  deleteButton.addEventListener('mouseup', () => syncLog('citation-edit-popup', 'Delete: mouseup'), true);
+  deleteButton.addEventListener(
+    'dragstart',
+    () => syncLog('citation-edit-popup', 'Delete: dragstart (unexpected)'),
+    true
+  );
   deleteButton.addEventListener('click', (e) => {
     e.preventDefault();
     e.stopPropagation();
+    syncLog('citation-edit-popup', 'Delete button click received');
 
     // Cancel any pending blur commit first - mirrors addButton's click handler: clicking
     // any button blurs the input and would otherwise schedule a competing commitEdit() via
@@ -353,6 +366,7 @@ function createEditPopup(): HTMLElement {
         const tr = buildCitationDeleteTransaction(view.state, resolved.pos);
         if (tr) {
           view.dispatch(tr);
+          syncLog('citation-edit-popup', 'Delete: transaction dispatched successfully');
         } else {
           // Shouldn't happen — resolveLiveCitation already confirmed a
           // matching citation node is there — but leave the document

@@ -26,7 +26,7 @@ class BlockSyncService {
         guard let webView else { return nil }
         do {
             return try await withThrowingTaskGroup(of: String?.self) { group in
-                group.addTask { @MainActor in
+                group.addTask {
                     let result = try await webView.evaluateJavaScript(
                         "window.FinalFinal.getContent()"
                     )
