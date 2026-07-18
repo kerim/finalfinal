@@ -296,9 +296,9 @@ extension MilkdownEditor.Coordinator {
         }
 
         // Handle CAYW citation picker request from web editor
-        if message.name == "openCitationPicker", let cmdStart = message.body as? Int {
+        if message.name == "openCitationPicker", let requestId = message.body as? Int {
             Task { @MainActor in
-                await self.handleOpenCitationPicker(cmdStart: cmdStart)
+                await self.handleOpenCitationPicker(requestId: requestId)
             }
         }
 
@@ -572,7 +572,7 @@ extension MilkdownEditor.Coordinator {
     /// Handle CAYW citation picker request from web editor
     /// Opens Zotero's native citation picker, returns parsed citation + CSL items
     @MainActor
-    func handleOpenCitationPicker(cmdStart: Int) async {
+    func handleOpenCitationPicker(requestId: Int) async {
         guard let webView else {
             return
         }
@@ -584,7 +584,7 @@ extension MilkdownEditor.Coordinator {
                 title: "Zotero Not Running",
                 message: "Zotero is not running. Please open Zotero and try again."
             )
-            sendCitationPickerCancelled(webView: webView)
+            sendCitationPickerCancelled(webView: webView, requestId: requestId)
             return
         }
 
@@ -600,7 +600,7 @@ extension MilkdownEditor.Coordinator {
             encoder.outputFormatting = [.sortedKeys]
             let itemsData = try encoder.encode(items)
             guard let itemsJSON = String(data: itemsData, encoding: .utf8) else {
-                sendCitationPickerCancelled(webView: webView)
+                sendCitationPickerCancelled(webView: webView, requestId: requestId)
                 return
             }
 
@@ -611,12 +611,12 @@ extension MilkdownEditor.Coordinator {
                 "locators": parsed.locatorsJSON,
                 "prefix": parsed.entries.first?.prefix ?? "",
                 "suppressAuthor": parsed.entries.first?.suppressAuthor ?? false,
-                "cmdStart": cmdStart
+                "requestId": requestId
             ]
 
             guard let callbackJSON = try? JSONSerialization.data(withJSONObject: callbackData),
                   let callbackStr = String(data: callbackJSON, encoding: .utf8) else {
-                sendCitationPickerCancelled(webView: webView)
+                sendCitationPickerCancelled(webView: webView, requestId: requestId)
                 return
             }
 
@@ -629,39 +629,39 @@ extension MilkdownEditor.Coordinator {
         } catch ZoteroError.userCancelled {
             // User cancelled - bring app back to foreground, no error
             NSApp.activate(ignoringOtherApps: true)
-            sendCitationPickerCancelled(webView: webView)
+            sendCitationPickerCancelled(webView: webView, requestId: requestId)
         } catch ZoteroError.notRunning {
             NSApp.activate(ignoringOtherApps: true)
             showZoteroAlert(
                 title: "Zotero Connection Lost",
                 message: "Zotero is not running. Please open Zotero and try again."
             )
-            sendCitationPickerCancelled(webView: webView)
+            sendCitationPickerCancelled(webView: webView, requestId: requestId)
         } catch {
             NSApp.activate(ignoringOtherApps: true)
             showZoteroAlert(
                 title: "Citation Error",
                 message: error.localizedDescription
             )
-            sendCitationPickerCancelled(webView: webView)
+            sendCitationPickerCancelled(webView: webView, requestId: requestId)
         }
     }
 
     /// Send citation picker error to web editor
     @MainActor
-    func sendCitationPickerError(webView: WKWebView, message: String) {
+    func sendCitationPickerError(webView: WKWebView, message: String, requestId: Int) {
         // Note: Escapes " instead of ${ — different pattern from escapedForJSTemplateLiteral
         let escaped = message
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "`", with: "\\`")
             .replacingOccurrences(of: "\"", with: "\\\"")
-        webView.evaluateJavaScript("window.FinalFinal.citationPickerError(`\(escaped)`)") { _, _ in }
+        webView.evaluateJavaScript("window.FinalFinal.citationPickerError(`\(escaped)`, \(requestId))") { _, _ in }
     }
 
     /// Send citation picker cancelled to web editor
     @MainActor
-    func sendCitationPickerCancelled(webView: WKWebView) {
-        webView.evaluateJavaScript("window.FinalFinal.citationPickerCancelled()") { _, _ in }
+    func sendCitationPickerCancelled(webView: WKWebView, requestId: Int) {
+        webView.evaluateJavaScript("window.FinalFinal.citationPickerCancelled(\(requestId))") { _, _ in }
     }
 
     /// Handle lazy citation resolution request from web editor

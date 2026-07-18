@@ -78,9 +78,14 @@ declare global {
       toggleInlineCode: () => boolean;
       insertLink: () => boolean;
       // Citation API (CAYW picker callbacks)
+      // data.requestId (and the requestId passed to cancelled/error) is an opaque
+      // round-trip token identifying which pending /cite request this resolves — NOT a
+      // document position. The original command position can go stale during the async
+      // Zotero round-trip, so editor-state.ts tracks it separately (remapped across
+      // edits by cayw-remap-plugin.ts); this id is only used to look up that entry.
       citationPickerCallback: (data: any, items: any[]) => void;
-      citationPickerCancelled: () => void;
-      citationPickerError: (message: string) => void;
+      citationPickerCancelled: (requestId: number) => void;
+      citationPickerError: (message: string, requestId: number) => void;
       // Spellcheck API
       setSpellcheckResults: (
         requestId: number,

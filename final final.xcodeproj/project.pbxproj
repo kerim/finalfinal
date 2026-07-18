@@ -170,6 +170,7 @@
 		A27ED7C850192550DDFCD95B /* LinkTrailingTextTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 307DA2CD982351B53E2CE918 /* LinkTrailingTextTests.swift */; };
 		A36206EB02FE6CAD10AC3076 /* ZoteroService+CAYW.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6E8F8EC247BCC5E3E00BA145 /* ZoteroService+CAYW.swift */; };
 		A63A6CAA68FA3A786C2E8B9F /* EditorViewState+Zoom.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7CDE9D1D9ECA8A2C882564D /* EditorViewState+Zoom.swift */; };
+		A650AD87847159D1C38CB194 /* CAYWConcurrentInsertTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59C494C6F45F9B2C4EB019EB /* CAYWConcurrentInsertTests.swift */; };
 		A7328C5CF075FEF4898B1803 /* OutlineSidebar+Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = B590B43C3202D0C1BF230EFA /* OutlineSidebar+Models.swift */; };
 		A737ADF9EE432DAA3D2DB35B /* ImageCaptionExportTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D97184C2DDD54452177635B9 /* ImageCaptionExportTests.swift */; };
 		A7F047CACD5338BFF13C8336 /* OutlineNode.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF113F2ADAA8371F7C810BF0 /* OutlineNode.swift */; };
@@ -361,6 +362,7 @@
 		5903AE3511C621FF3093E3C9 /* AnnotationCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnnotationCardView.swift; sourceTree = "<group>"; };
 		594727DD6667897CC1A2A75A /* MilkdownCoordinator+MessageHandlers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "MilkdownCoordinator+MessageHandlers.swift"; sourceTree = "<group>"; };
 		598FADB0570E0F5DB6C94550 /* EditorToolbar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorToolbar.swift; sourceTree = "<group>"; };
+		59C494C6F45F9B2C4EB019EB /* CAYWConcurrentInsertTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CAYWConcurrentInsertTests.swift; sourceTree = "<group>"; };
 		5A1E8A83A78A7909AA1289DB /* OutlineParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutlineParser.swift; sourceTree = "<group>"; };
 		5A8A74453B2CB08623CDE2B4 /* HelpCommands.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HelpCommands.swift; sourceTree = "<group>"; };
 		5BE4605C3214124AFB7C06FB /* SectionSyncService+Parsing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SectionSyncService+Parsing.swift"; sourceTree = "<group>"; };
@@ -869,6 +871,7 @@
 			children = (
 				18247CD049B78F944DCB3676 /* AnnotationFilterTests.swift */,
 				D9C92ED5B2BE260D34B66182 /* BlockIdAlignmentHardeningLiveTests.swift */,
+				59C494C6F45F9B2C4EB019EB /* CAYWConcurrentInsertTests.swift */,
 				3C093D047A50B1700205B6D0 /* CitationDeleteTests.swift */,
 				5F2DCF084A58C8E4311F4D2B /* EditorModeSwitchTests.swift */,
 				5CA20F98EFC97B6FDEE93DFA /* ExportDiagnosticCaptureGatingTests.swift */,
@@ -1225,6 +1228,7 @@
 				B4A5A572F785E929B8D232AD /* BlockReorderIntegrityTests.swift in Sources */,
 				0E73A2CA77ADED759B79CD01 /* BlockRoundtripTests.swift in Sources */,
 				1F5CD824C3B255DA2D04B0E0 /* BlockSyncStaleGuardTests.swift in Sources */,
+				A650AD87847159D1C38CB194 /* CAYWConcurrentInsertTests.swift in Sources */,
 				21AD1F61417FF4B80E270C71 /* CitationDeleteTests.swift in Sources */,
 				51D43A91B1BFB2A3C21C5744 /* ContentStateMachineTests.swift in Sources */,
 				2A1CDD347A74D7F70F366AB6 /* DiagnosticLogFileTests.swift in Sources */,

@@ -1,8 +1,9 @@
 // CAYW (Cite-As-You-Write) integration and lazy citation resolution
 
 import { editorViewCtx } from '@milkdown/kit/core';
-import { Selection } from '@milkdown/kit/prose/state';
+import { Plugin, PluginKey, Selection } from '@milkdown/kit/prose/state';
 import type { EditorView } from '@milkdown/kit/prose/view';
+import { $prose } from '@milkdown/kit/utils';
 import {
   type CSLItem,
   citationNode,
@@ -58,13 +59,18 @@ export function requestCitationResolutionInternal(keys: string[]): void {
 
 // === CAYW (Cite-As-You-Write) Integration ===
 
-// Store the command range for CAYW callback (start = /cite position, end = cursor after /cite)
-let pendingCAYWRange: { start: number; end: number } | null = null;
+// Store the command range for each in-flight CAYW request, keyed by an opaque
+// requestId (not the raw position — see nextCAYWRequestId below). The Zotero
+// round-trip is a real async HTTP call that can take arbitrary time and is NOT
+// blocked by the app's own UI, so multiple requests can be in flight at once,
+// and a single module-level singleton can't track more than one without one
+// silently clobbering another's stored range.
+const pendingCAYWRequests = new Map<number, { start: number; end: number }>();
+let nextCAYWRequestId = 0;
 
 /** Delete the pending /cite command text from the editor, if the range is still valid */
-function deleteCAYWCommandText(view: EditorView): void {
-  if (!pendingCAYWRange) return;
-  const { start, end } = pendingCAYWRange;
+function deleteCAYWCommandText(view: EditorView, range: { start: number; end: number }): void {
+  const { start, end } = range;
   const docSize = view.state.doc.content.size;
   if (start < 0 || end > docSize || start > end) return;
   // Content-identity check: verify the range still contains slash command text.
@@ -81,14 +87,17 @@ function deleteCAYWCommandText(view: EditorView): void {
  * @param cmdEnd - Cursor position at end of /cite (where user stopped typing)
  */
 export function openCAYWPicker(cmdStart: number, cmdEnd: number): void {
-  pendingCAYWRange = { start: cmdStart, end: cmdEnd };
+  const requestId = nextCAYWRequestId++;
+  pendingCAYWRequests.set(requestId, { start: cmdStart, end: cmdEnd });
 
-  // Call Swift message handler (only pass cmdStart, Swift doesn't need end)
+  // Call Swift message handler with the opaque requestId (not the raw position —
+  // Swift echoes it back on the eventual callback so we can look up the right
+  // entry, even if the position has since been remapped by caywRemapPlugin).
   if (typeof (window as any).webkit?.messageHandlers?.openCitationPicker?.postMessage === 'function') {
-    (window as any).webkit.messageHandlers.openCitationPicker.postMessage(cmdStart);
+    (window as any).webkit.messageHandlers.openCitationPicker.postMessage(requestId);
   } else {
     // Fallback: no Swift bridge available (dev mode)
-    pendingCAYWRange = null;
+    pendingCAYWRequests.delete(requestId);
   }
 }
 
@@ -149,12 +158,17 @@ export function handleCAYWCallback(data: CAYWCallbackData, items: CSLItem[]): vo
     return;
   }
 
-  // Use stored range instead of querying cursor (cursor position unreliable after focus change)
-  if (!pendingCAYWRange) {
+  // Look up the stored range for this specific request instead of querying
+  // the cursor (cursor position unreliable after focus change). Absent means
+  // this request was already resolved/cancelled, or resetCAYWState() ran
+  // during the round-trip — silently no-op. This is a load-bearing safety
+  // property: no logging, no error, just skip the insertion.
+  const range = pendingCAYWRequests.get(data.requestId);
+  if (!range) {
     return;
   }
 
-  const { start, end } = pendingCAYWRange;
+  const { start, end } = range;
 
   // Update citeproc engine with the new items
   const engine = getCiteprocEngine();
@@ -181,7 +195,7 @@ export function handleCAYWCallback(data: CAYWCallbackData, items: CSLItem[]): vo
   // Validate range is within document bounds
   const docSize = view.state.doc.content.size;
   if (start < 0 || end > docSize || start > end) {
-    pendingCAYWRange = null;
+    pendingCAYWRequests.delete(data.requestId);
     return;
   }
 
@@ -199,33 +213,39 @@ export function handleCAYWCallback(data: CAYWCallbackData, items: CSLItem[]): vo
     // Citation insertion failed
   }
 
-  pendingCAYWRange = null;
+  pendingCAYWRequests.delete(data.requestId);
 }
 
 /**
  * Handle CAYW picker cancelled by user
  */
-export function handleCAYWCancelled(): void {
+export function handleCAYWCancelled(requestId: number): void {
+  const range = pendingCAYWRequests.get(requestId);
+  if (!range) return;
+  pendingCAYWRequests.delete(requestId);
+
   const editorInstance = getEditorInstance();
   if (editorInstance) {
     const view = editorInstance.ctx.get(editorViewCtx);
-    deleteCAYWCommandText(view);
+    deleteCAYWCommandText(view, range);
     view.focus();
   }
-  pendingCAYWRange = null;
 }
 
 /**
  * Handle CAYW picker error
  */
-export function handleCAYWError(_message: string): void {
+export function handleCAYWError(_message: string, requestId: number): void {
+  const range = pendingCAYWRequests.get(requestId);
+  if (!range) return;
+  pendingCAYWRequests.delete(requestId);
+
   const editorInstance = getEditorInstance();
   if (editorInstance) {
     const view = editorInstance.ctx.get(editorViewCtx);
-    deleteCAYWCommandText(view);
+    deleteCAYWCommandText(view, range);
     view.focus();
   }
-  pendingCAYWRange = null;
   // Error display handled by native NSAlert on Swift side.
   // JS alert() is silently swallowed in WKWebView (no WKUIDelegate).
 }
@@ -272,13 +292,13 @@ export function handleEditCitationCallback(data: EditCitationCallbackData, items
  * Get CAYW debug state for Swift to query
  */
 export function getCAYWDebugState(): {
-  pendingCAYWRange: { start: number; end: number } | null;
+  pendingCAYWRequests: Array<{ requestId: number; start: number; end: number }>;
   hasEditor: boolean;
   docSize: number | null;
 } {
   const editorInstance = getEditorInstance();
   return {
-    pendingCAYWRange,
+    pendingCAYWRequests: Array.from(pendingCAYWRequests, ([requestId, range]) => ({ requestId, ...range })),
     hasEditor: !!editorInstance,
     docSize: editorInstance ? editorInstance.ctx.get(editorViewCtx).state.doc.content.size : null,
   };
@@ -288,10 +308,52 @@ export function getCAYWDebugState(): {
  * Reset CAYW state (for project switch cleanup)
  */
 export function resetCAYWState(): void {
-  pendingCAYWRange = null;
+  // Deliberately NOT resetting nextCAYWRequestId here: it must stay monotonic
+  // for the entire lifetime of this JS module instance. If it were reset to 0,
+  // a stale callback for a request issued before this reset (already in-flight
+  // to Zotero, so still capable of resolving later) could arrive AFTER a new
+  // request is issued post-reset and collide with its id — letting the stale
+  // callback insert into the wrong (new) pending range. An ever-incrementing
+  // counter guarantees every requestId ever issued is unique for the module's
+  // lifetime, so cross-request id-reuse corruption can never happen.
+  pendingCAYWRequests.clear();
   pendingCitekeys.clear();
   if (resolutionTimer) {
     clearTimeout(resolutionTimer);
     resolutionTimer = null;
   }
 }
+
+/**
+ * Remaps every pending CAYW request's start/end range across doc-changing
+ * transactions. The Zotero round-trip is a real async HTTP call that can take
+ * arbitrary time and is NOT blocked by the app's own UI — if the user keeps
+ * editing while a request is pending, the raw offsets captured at open time go
+ * stale. This plugin keeps them accurate so the eventual insertion lands in
+ * the right place instead of corrupting or duplicating unrelated content.
+ *
+ * Bias: start maps with -1 (sticks to content before it — doesn't absorb text
+ * inserted exactly at start), end maps with +1 (sticks to content after it —
+ * DOES absorb text inserted exactly at end, so text typed inside the pending
+ * /cite range extends what gets replaced).
+ */
+export const caywRemapPlugin = $prose(
+  () =>
+    new Plugin({
+      key: new PluginKey('cayw-remap'),
+      state: {
+        init: () => null,
+        apply(tr) {
+          if (tr.docChanged && pendingCAYWRequests.size > 0) {
+            for (const [id, range] of pendingCAYWRequests) {
+              pendingCAYWRequests.set(id, {
+                start: tr.mapping.map(range.start, -1),
+                end: tr.mapping.map(range.end, 1),
+              });
+            }
+          }
+          return null;
+        },
+      },
+    })
+);

@@ -284,12 +284,12 @@ export function citationPickerCallback(data: CAYWCallbackData, items: CSLItem[])
   handleCAYWCallback(data, items);
 }
 
-export function citationPickerCancelled(): void {
-  handleCAYWCancelled();
+export function citationPickerCancelled(requestId: number): void {
+  handleCAYWCancelled(requestId);
 }
 
-export function citationPickerError(message: string): void {
-  handleCAYWError(message);
+export function citationPickerError(message: string, requestId: number): void {
+  handleCAYWError(message, requestId);
 }
 
 export function editCitationCallback(data: EditCitationCallbackData, items: CSLItem[]): void {
@@ -297,7 +297,7 @@ export function editCitationCallback(data: EditCitationCallbackData, items: CSLI
 }
 
 export function getCAYWDebugState(): {
-  pendingCAYWRange: { start: number; end: number } | null;
+  pendingCAYWRequests: Array<{ requestId: number; start: number; end: number }>;
   hasEditor: boolean;
   docSize: number | null;
 } {

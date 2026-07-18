@@ -37,13 +37,39 @@ export function setPendingSlashUndo(value: boolean): void {
 
 // --- Citation CAYW picker state ---
 
-let pendingCAYWRange: { start: number; end: number } | null = null;
+// Store the command range for each in-flight CAYW request, keyed by an opaque
+// requestId (not the raw position — see allocateCAYWRequestId below). The Zotero
+// round-trip is a real async HTTP call that can take arbitrary time and is NOT
+// blocked by the app's own UI, so multiple requests can be in flight at once,
+// and a single module-level singleton can't track more than one without one
+// silently clobbering another's stored range. Mirrors pendingCAYWRequests in
+// web/milkdown/src/cayw.ts. Positions are kept accurate across intervening edits
+// by cayw-remap-plugin.ts's ViewPlugin (registered in main.ts).
+const pendingCAYWRequests = new Map<number, { start: number; end: number }>();
+let nextCAYWRequestId = 0;
 
-export function getPendingCAYWRange(): { start: number; end: number } | null {
-  return pendingCAYWRange;
+/** Returns the live pending-requests map (callers mutate it directly via get/set/delete). */
+export function getPendingCAYWRequests(): Map<number, { start: number; end: number }> {
+  return pendingCAYWRequests;
 }
-export function setPendingCAYWRange(value: { start: number; end: number } | null): void {
-  pendingCAYWRange = value;
+
+/** Allocates and returns a new, never-reused requestId. */
+export function allocateCAYWRequestId(): number {
+  return nextCAYWRequestId++;
+}
+
+/**
+ * Clears all pending CAYW requests (for project-switch cleanup). Deliberately does NOT
+ * reset the requestId counter: it must stay monotonic for the entire lifetime of this JS
+ * module instance. If it were reset to 0, a stale callback for a request issued before this
+ * reset (already in-flight to Zotero, so still capable of resolving later) could arrive AFTER
+ * a new request is issued post-reset and collide with its id — letting the stale callback
+ * insert into the wrong (new) pending range. An ever-incrementing counter guarantees every
+ * requestId ever issued is unique for the module's lifetime, so cross-request id-reuse
+ * corruption can never happen.
+ */
+export function clearPendingCAYWRequests(): void {
+  pendingCAYWRequests.clear();
 }
 
 // --- Append mode state for adding citations to existing ones ---

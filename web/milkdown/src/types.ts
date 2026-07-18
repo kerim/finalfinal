@@ -65,7 +65,12 @@ export interface CAYWCallbackData {
   locators: string;
   prefix: string;
   suppressAuthor: boolean;
-  cmdStart: number;
+  /** Opaque round-trip token identifying which pending /cite request this
+   * callback resolves — NOT a document position. The original command
+   * position can go stale during the async Zotero round-trip, so cayw.ts
+   * tracks it separately (and remaps it across edits); this id is only used
+   * to look up that tracked entry. */
+  requestId: number;
 }
 
 // Interface for edit citation callback data from Swift
@@ -141,13 +146,13 @@ declare global {
       searchCitationsCallback: (items: CSLItem[]) => void;
       // CAYW picker callbacks
       citationPickerCallback: (data: CAYWCallbackData, items: CSLItem[]) => void;
-      citationPickerCancelled: () => void;
-      citationPickerError: (message: string) => void;
+      citationPickerCancelled: (requestId: number) => void;
+      citationPickerError: (message: string, requestId: number) => void;
       // Edit citation callback (for clicking existing citations)
       editCitationCallback: (data: EditCitationCallbackData, items: CSLItem[]) => void;
       // Debug API
       getCAYWDebugState: () => {
-        pendingCAYWRange: { start: number; end: number } | null;
+        pendingCAYWRequests: Array<{ requestId: number; start: number; end: number }>;
         hasEditor: boolean;
         docSize: number | null;
       };

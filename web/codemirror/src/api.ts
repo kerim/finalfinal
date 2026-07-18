@@ -13,6 +13,7 @@ import { escapeAltAttr } from '../../shared/image-caption-attrs';
 import { stripAnchors } from './anchor-plugin';
 import { hideCitationAddButton, mergeCitations } from './citations';
 import {
+  clearPendingCAYWRequests,
   getCitationAddButton,
   getCurrentMatchIndex,
   getCurrentSearchOptions,
@@ -23,13 +24,12 @@ import {
   getIsZoomMode,
   getPendingAppendMode,
   getPendingAppendRange,
-  getPendingCAYWRange,
+  getPendingCAYWRequests,
   setCurrentMatchIndex,
   setCurrentSearchOptions,
   setCurrentSearchQuery,
   setPendingAppendMode,
   setPendingAppendRange,
-  setPendingCAYWRange,
   setPendingSlashUndo,
   setZoomFootnoteState,
 } from './editor-state';
@@ -879,7 +879,7 @@ export function toggleHighlight(): boolean {
 export function citationPickerCallback(data: any, _items: any[]): void {
   const view = getEditorView();
   if (!view) {
-    setPendingCAYWRange(null);
+    getPendingCAYWRequests().delete(data.requestId);
     setPendingAppendMode(false);
     setPendingAppendRange(null);
     return;
@@ -904,14 +904,20 @@ export function citationPickerCallback(data: any, _items: any[]): void {
     return;
   }
 
-  // Normal insertion mode
-  const range = getPendingCAYWRange();
+  // Normal insertion mode — look up the stored range for this specific request instead
+  // of consulting a singleton (cursor position is unreliable after focus change, and a
+  // second /cite before the first resolves would otherwise clobber the first's range).
+  // Absent means this request was already resolved/cancelled, or resetForProjectSwitch()
+  // ran during the round-trip — silently no-op. This is a load-bearing safety property:
+  // no logging, no error, just skip the insertion.
+  const requestId = data.requestId as number;
+  const range = getPendingCAYWRequests().get(requestId);
   if (!range) {
     return;
   }
 
   const { start, end } = range;
-  setPendingCAYWRange(null);
+  getPendingCAYWRequests().delete(requestId);
 
   // Build Pandoc citation syntax: [@citekey1; @citekey2]
   const citekeys = data.citekeys as string[];
@@ -925,25 +931,40 @@ export function citationPickerCallback(data: any, _items: any[]): void {
   view.focus();
 }
 
-export function citationPickerCancelled(): void {
+export function citationPickerCancelled(requestId: number): void {
+  // Append-mode requests always use the reserved sentinel -1 (see handleAddCitationClick
+  // in citations.ts) and are never stored in pendingCAYWRequests — that map is exclusively
+  // for normal-mode /cite requests. Branch on the sentinel first so cancelling an unrelated
+  // normal-mode request can never wipe append-mode state out from under a still-pending
+  // append request. Mirrors the append-mode/normal-mode split in citationPickerCallback above.
+  if (requestId === -1) {
+    setPendingAppendMode(false);
+    setPendingAppendRange(null);
+    return;
+  }
+
+  // Normal-mode: look up the stored range for this specific request instead of consulting
+  // a singleton. Absent means this request was already resolved/cancelled, or
+  // resetForProjectSwitch() ran during the round-trip — silently no-op. This is a
+  // load-bearing safety property: no logging, no error, just skip the cleanup.
+  const range = getPendingCAYWRequests().get(requestId);
+  if (!range) {
+    return;
+  }
+  getPendingCAYWRequests().delete(requestId);
+
   const view = getEditorView();
   if (view) {
-    const range = getPendingCAYWRange();
-    if (range) {
-      const { start, end } = range;
-      const docLength = view.state.doc.length;
-      if (start >= 0 && end <= docLength && start <= end) {
-        const textAtRange = view.state.doc.sliceString(start, end);
-        if (textAtRange.startsWith('/')) {
-          view.dispatch({ changes: { from: start, to: end } });
-        }
+    const { start, end } = range;
+    const docLength = view.state.doc.length;
+    if (start >= 0 && end <= docLength && start <= end) {
+      const textAtRange = view.state.doc.sliceString(start, end);
+      if (textAtRange.startsWith('/')) {
+        view.dispatch({ changes: { from: start, to: end } });
       }
     }
     view.focus();
   }
-  setPendingCAYWRange(null);
-  setPendingAppendMode(false);
-  setPendingAppendRange(null);
 }
 
 // --- Table API ---
@@ -956,26 +977,42 @@ export function formatTable(): void {
   formatTableCommand();
 }
 
-export function citationPickerError(message: string): void {
+export function citationPickerError(message: string, requestId: number): void {
   console.error('[CodeMirror] citationPickerError:', message);
+
+  // Append-mode requests always use the reserved sentinel -1 (see handleAddCitationClick
+  // in citations.ts) and are never stored in pendingCAYWRequests — that map is exclusively
+  // for normal-mode /cite requests. Branch on the sentinel first so an error on an unrelated
+  // normal-mode request can never wipe append-mode state out from under a still-pending
+  // append request. Mirrors the append-mode/normal-mode split in citationPickerCallback above.
+  if (requestId === -1) {
+    setPendingAppendMode(false);
+    setPendingAppendRange(null);
+    return;
+  }
+
+  // Normal-mode: look up the stored range for this specific request instead of consulting
+  // a singleton. Absent means this request was already resolved/cancelled, or
+  // resetForProjectSwitch() ran during the round-trip — silently no-op. This is a
+  // load-bearing safety property: no logging, no error, just skip the cleanup.
+  const range = getPendingCAYWRequests().get(requestId);
+  if (!range) {
+    return;
+  }
+  getPendingCAYWRequests().delete(requestId);
+
   const view = getEditorView();
   if (view) {
-    const range = getPendingCAYWRange();
-    if (range) {
-      const { start, end } = range;
-      const docLength = view.state.doc.length;
-      if (start >= 0 && end <= docLength && start <= end) {
-        const textAtRange = view.state.doc.sliceString(start, end);
-        if (textAtRange.startsWith('/')) {
-          view.dispatch({ changes: { from: start, to: end } });
-        }
+    const { start, end } = range;
+    const docLength = view.state.doc.length;
+    if (start >= 0 && end <= docLength && start <= end) {
+      const textAtRange = view.state.doc.sliceString(start, end);
+      if (textAtRange.startsWith('/')) {
+        view.dispatch({ changes: { from: start, to: end } });
       }
     }
     view.focus();
   }
-  setPendingCAYWRange(null);
-  setPendingAppendMode(false);
-  setPendingAppendRange(null);
   // Error display handled by native NSAlert on Swift side.
 }
 
@@ -1149,7 +1186,7 @@ export function resetForProjectSwitch(): void {
   // Clear transient module-level state
   setPendingSlashUndo(false);
   setZoomFootnoteState(false, 0);
-  setPendingCAYWRange(null);
+  clearPendingCAYWRequests();
   setPendingAppendMode(false);
   setPendingAppendRange(null);
   setCurrentSearchQuery('');

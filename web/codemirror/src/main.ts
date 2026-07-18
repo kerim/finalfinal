@@ -66,6 +66,7 @@ import {
   toggleNumberList,
   toggleStrikethrough,
 } from './api-formatting';
+import { caywRemapPlugin } from './cayw-remap-plugin';
 import { updateCitationAddButton } from './citations';
 import {
   getEditorView,
@@ -127,6 +128,9 @@ function initEditor() {
     // Search extension - headless mode (no default keybindings, controlled via Swift)
     search({ top: false }),
     slashMenuPlugin,
+    // Remaps pending CAYW (/cite) requests' positions across intervening edits while
+    // the async Zotero round-trip is in flight — see cayw-remap-plugin.ts.
+    caywRemapPlugin,
     keymap.of([
       // Filter out Mod-/ (toggle comment) from default keymap to allow Swift to handle mode toggle
       ...defaultKeymap.filter((k) => k.key !== 'Mod-/'),

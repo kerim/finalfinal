@@ -400,9 +400,9 @@ extension CodeMirrorEditor.Coordinator {
         }
 
         // Handle CAYW citation picker request from web editor
-        if message.name == "openCitationPicker", let cmdStart = message.body as? Int {
+        if message.name == "openCitationPicker", let requestId = message.body as? Int {
             Task { @MainActor in
-                await self.handleOpenCitationPicker(cmdStart: cmdStart)
+                await self.handleOpenCitationPicker(requestId: requestId)
             }
         }
 
@@ -573,13 +573,13 @@ extension CodeMirrorEditor.Coordinator {
 
     /// Handle CAYW citation picker request from web editor
     @MainActor
-    func handleOpenCitationPicker(cmdStart: Int) async {
+    func handleOpenCitationPicker(requestId: Int) async {
         guard let webView else {
             DebugLog.log(.zotero, "[CodeMirrorEditor] handleOpenCitationPicker: webView is nil")
             return
         }
 
-        DebugLog.log(.zotero, "[CodeMirrorEditor] Opening CAYW picker, cmdStart: \(cmdStart)")
+        DebugLog.log(.zotero, "[CodeMirrorEditor] Opening CAYW picker, requestId: \(requestId)")
 
         // Pre-check: ping Zotero before opening the picker
         let isRunning = await ZoteroService.shared.ping()
@@ -588,7 +588,7 @@ extension CodeMirrorEditor.Coordinator {
                 title: "Zotero Not Running",
                 message: "Zotero is not running. Please open Zotero and try again."
             )
-            sendCitationPickerCancelled(webView: webView)
+            sendCitationPickerCancelled(webView: webView, requestId: requestId)
             return
         }
 
@@ -607,7 +607,7 @@ extension CodeMirrorEditor.Coordinator {
             let itemsData = try encoder.encode(items)
             guard let itemsJSON = String(data: itemsData, encoding: .utf8) else {
                 DebugLog.log(.zotero, "[CodeMirrorEditor] Failed to encode CSL items")
-                sendCitationPickerCancelled(webView: webView)
+                sendCitationPickerCancelled(webView: webView, requestId: requestId)
                 return
             }
 
@@ -618,13 +618,13 @@ extension CodeMirrorEditor.Coordinator {
                 "locators": parsed.locatorsJSON,
                 "prefix": parsed.entries.first?.prefix ?? "",
                 "suppressAuthor": parsed.entries.first?.suppressAuthor ?? false,
-                "cmdStart": cmdStart
+                "requestId": requestId
             ]
 
             guard let callbackJSON = try? JSONSerialization.data(withJSONObject: callbackData),
                   let callbackStr = String(data: callbackJSON, encoding: .utf8) else {
                 DebugLog.log(.zotero, "[CodeMirrorEditor] Failed to encode callback data")
-                sendCitationPickerCancelled(webView: webView)
+                sendCitationPickerCancelled(webView: webView, requestId: requestId)
                 return
             }
 
@@ -643,7 +643,7 @@ extension CodeMirrorEditor.Coordinator {
         } catch ZoteroError.userCancelled {
             NSApp.activate(ignoringOtherApps: true)
             DebugLog.log(.zotero, "[CodeMirrorEditor] CAYW cancelled by user")
-            sendCitationPickerCancelled(webView: webView)
+            sendCitationPickerCancelled(webView: webView, requestId: requestId)
         } catch ZoteroError.notRunning {
             NSApp.activate(ignoringOtherApps: true)
             DebugLog.log(.zotero, "[CodeMirrorEditor] Zotero not running")
@@ -651,7 +651,7 @@ extension CodeMirrorEditor.Coordinator {
                 title: "Zotero Connection Lost",
                 message: "Zotero is not running. Please open Zotero and try again."
             )
-            sendCitationPickerCancelled(webView: webView)
+            sendCitationPickerCancelled(webView: webView, requestId: requestId)
         } catch {
             NSApp.activate(ignoringOtherApps: true)
             DebugLog.log(.zotero, "[CodeMirrorEditor] CAYW error: \(error.localizedDescription)")
@@ -659,25 +659,25 @@ extension CodeMirrorEditor.Coordinator {
                 title: "Citation Error",
                 message: error.localizedDescription
             )
-            sendCitationPickerCancelled(webView: webView)
+            sendCitationPickerCancelled(webView: webView, requestId: requestId)
         }
     }
 
     /// Send citation picker error to web editor
     @MainActor
-    func sendCitationPickerError(webView: WKWebView, message: String) {
+    func sendCitationPickerError(webView: WKWebView, message: String, requestId: Int) {
         // Note: Escapes " instead of ${ — different pattern from escapedForJSTemplateLiteral
         let escaped = message
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "`", with: "\\`")
             .replacingOccurrences(of: "\"", with: "\\\"")
-        webView.evaluateJavaScript("window.FinalFinal.citationPickerError(`\(escaped)`)") { _, _ in }
+        webView.evaluateJavaScript("window.FinalFinal.citationPickerError(`\(escaped)`, \(requestId))") { _, _ in }
     }
 
     /// Send citation picker cancelled to web editor
     @MainActor
-    func sendCitationPickerCancelled(webView: WKWebView) {
-        webView.evaluateJavaScript("window.FinalFinal.citationPickerCancelled()") { _, _ in }
+    func sendCitationPickerCancelled(webView: WKWebView, requestId: Int) {
+        webView.evaluateJavaScript("window.FinalFinal.citationPickerCancelled(\(requestId))") { _, _ in }
     }
 
     /// Handle paint complete signal for zoom transitions

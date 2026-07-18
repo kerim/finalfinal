@@ -691,6 +691,11 @@ const imagePasteDropPlugin = $prose(() => {
         if (!imageFile) return false;
 
         const now = Date.now();
+        // Diagnostic only (no behavior change): log the gap since the last
+        // drop on every drop, not just the ones the 200ms guard below
+        // rejects. Needed to capture timing data if a legitimate-looking
+        // second `drop` DOM event ever arrives just outside the window.
+        syncLog('ImageDrop', `drop event, ${now - lastDropTime}ms since last drop`);
         if (now - lastDropTime < 200) {
           syncLog('ImageDrop', `DEDUP: ignoring duplicate drop (${now - lastDropTime}ms)`);
           event.preventDefault();

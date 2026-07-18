@@ -94,7 +94,7 @@ import { autolinkPlugin } from './autolink-plugin';
 import { bibliographyPlugin } from './bibliography-plugin';
 import { blockIdPlugin, getAllBlockIds } from './block-id-plugin';
 import { blockSyncPlugin } from './block-sync-plugin';
-import { insertCitationAtCursor } from './cayw';
+import { caywRemapPlugin, insertCitationAtCursor } from './cayw';
 import { citationPlugin } from './citation-plugin';
 import { restoreCitationLibrary } from './citation-search';
 import { dropCursorPlugin } from './drop-cursor-plugin';
@@ -218,6 +218,7 @@ async function initEditor() {
       // regress (a test failure in citation-delete.test.ts/CitationDeleteTests.swift,
       // not a compile error).
       .use(citationPlugin)
+      .use(caywRemapPlugin) // Remaps pending CAYW /cite request ranges across intervening edits during the async Zotero round-trip
       .use(mathPlugin) // Parse $...$ and $$...$$ math before commonmark
       .use(footnotePlugin) // Parse [^N] footnote references before commonmark
       .use(imagePlugin) // Parse ![alt](media/...) into figure nodes before commonmark
