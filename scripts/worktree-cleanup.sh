@@ -3,11 +3,11 @@
 # worktree-cleanup.sh — Safe, idempotent autodev worktree/branch/notes cleanup
 #
 # Classifies the current state of a `.claude/worktrees/<slug>` worktree (plus
-# its `autodev/<slug>` branch and `.claude/autodev/<slug>` run notes) and takes
+# its `autodev/<slug>` branch and `.claude/superdev/<slug>` run notes) and takes
 # the one action that state allows — or refuses and explains why.
 #
 # NOTE: this script performs destructive filesystem operations under
-# .claude/worktrees/<slug> and .claude/autodev/<slug>. When invoked from
+# .claude/worktrees/<slug> and .claude/superdev/<slug>. When invoked from
 # Claude Code, it MUST be run with the sandbox disabled
 # (dangerouslyDisableSandbox: true) — the sandboxed Bash filesystem-write
 # allowlist only covers pre-known paths, so a delete under an arbitrary
@@ -75,7 +75,7 @@ Exit codes:
 
 IMPORTANT — sandbox note:
   This script performs destructive filesystem operations under
-  .claude/worktrees/<slug> and .claude/autodev/<slug>. When invoked from
+  .claude/worktrees/<slug> and .claude/superdev/<slug>. When invoked from
   Claude Code, it MUST be run with the sandbox disabled
   (dangerouslyDisableSandbox: true) — the sandboxed Bash filesystem-write
   allowlist only covers pre-known paths, so a delete under an arbitrary
@@ -139,7 +139,7 @@ if [ ! -d "$repo" ]; then
 fi
 
 WT="$repo/.claude/worktrees/$slug"
-NOTES="$repo/.claude/autodev/$slug"
+NOTES="$repo/.claude/superdev/$slug"
 
 # ─────────────────────────────────────────────
 # Read-only classification (no sandbox needed for any of this)
