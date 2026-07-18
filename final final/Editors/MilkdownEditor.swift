@@ -12,6 +12,61 @@ import WebKit
 // Shared configuration for localStorage persistence across editor toggles
 private let sharedDataStore = WKWebsiteDataStore.default()
 
+/// Captures uncaught JS errors/unhandled rejections and forwards them to the
+/// native `errorHandler` message handler. Only ever needed for `MilkdownEditor`'s
+/// fresh-view path in `makeNSView` — the preloaded view already has it installed.
+private let errorCaptureScript = WKUserScript(
+    source: """
+        window.onerror = function(msg, url, line, col, error) {
+            window.webkit.messageHandlers.errorHandler.postMessage({
+                type: 'error',
+                message: msg,
+                url: url,
+                line: line,
+                column: col,
+                error: error ? error.toString() : null
+            });
+            return false;
+        };
+        window.addEventListener('unhandledrejection', function(e) {
+            window.webkit.messageHandlers.errorHandler.postMessage({
+                type: 'unhandledrejection',
+                message: 'Unhandled Promise Rejection: ' + e.reason,
+                url: '',
+                line: 0,
+                column: 0,
+                error: e.reason ? e.reason.toString() : null
+            });
+        });
+        console.log('[ErrorHandler] JS error capture installed');
+    """,
+    injectionTime: .atDocumentStart,
+    forMainFrameOnly: true
+)
+
+/// The JS→native message handler names both the preloaded-view and fresh-view
+/// paths in `MilkdownEditor.makeNSView` register identically — factored out to
+/// avoid keeping two copies of this list in sync by hand.
+private func registerMilkdownMessageHandlers(on controller: WKUserContentController, coordinator: MilkdownEditor.Coordinator) {
+    controller.add(coordinator, name: "contentChanged")
+    controller.add(coordinator, name: "sectionChanged")
+    controller.add(coordinator, name: "errorHandler")
+    controller.add(coordinator, name: "searchCitations")
+    controller.add(coordinator, name: "openCitationPicker")
+    controller.add(coordinator, name: "resolveCitekeys")
+    controller.add(coordinator, name: "paintComplete")
+    controller.add(coordinator, name: "openURL")
+    controller.add(coordinator, name: "spellcheck")
+    controller.add(coordinator, name: "navigateToFootnote")
+    controller.add(coordinator, name: "footnoteInserted")
+    controller.add(coordinator, name: "pasteImage")
+    controller.add(coordinator, name: "requestImagePicker")
+    controller.add(coordinator, name: "updateImageMeta")
+    controller.add(coordinator, name: "tableInsertTruncated")
+    controller.add(coordinator, name: "openEquationDialog")
+    controller.add(coordinator, name: "selectionChanged")
+}
+
 struct MilkdownEditor: NSViewRepresentable {
     @Binding var content: String
     @Binding var focusModeEnabled: Bool
@@ -57,24 +112,7 @@ struct MilkdownEditor: NSViewRepresentable {
         // Try to use preloaded WebView for faster startup
         if let preloaded = EditorPreloader.shared.claimMilkdownView() {
             // Re-register message handlers with this coordinator
-            let controller = preloaded.configuration.userContentController
-            controller.add(context.coordinator, name: "contentChanged")
-            controller.add(context.coordinator, name: "sectionChanged")
-            controller.add(context.coordinator, name: "errorHandler")
-            controller.add(context.coordinator, name: "searchCitations")
-            controller.add(context.coordinator, name: "openCitationPicker")
-            controller.add(context.coordinator, name: "resolveCitekeys")
-            controller.add(context.coordinator, name: "paintComplete")
-            controller.add(context.coordinator, name: "openURL")
-            controller.add(context.coordinator, name: "spellcheck")
-            controller.add(context.coordinator, name: "navigateToFootnote")
-            controller.add(context.coordinator, name: "footnoteInserted")
-            controller.add(context.coordinator, name: "pasteImage")
-            controller.add(context.coordinator, name: "requestImagePicker")
-            controller.add(context.coordinator, name: "updateImageMeta")
-            controller.add(context.coordinator, name: "tableInsertTruncated")
-            controller.add(context.coordinator, name: "openEquationDialog")
-            controller.add(context.coordinator, name: "selectionChanged")
+            registerMilkdownMessageHandlers(on: preloaded.configuration.userContentController, coordinator: context.coordinator)
 
             preloaded.navigationDelegate = context.coordinator
             context.coordinator.webView = preloaded
@@ -99,52 +137,8 @@ struct MilkdownEditor: NSViewRepresentable {
         configuration.setURLSchemeHandler(MediaSchemeHandler.shared, forURLScheme: "projectmedia")
 
         // === PHASE 4: Add error handler script to capture JS errors ===
-        let errorScript = WKUserScript(
-            source: """
-                window.onerror = function(msg, url, line, col, error) {
-                    window.webkit.messageHandlers.errorHandler.postMessage({
-                        type: 'error',
-                        message: msg,
-                        url: url,
-                        line: line,
-                        column: col,
-                        error: error ? error.toString() : null
-                    });
-                    return false;
-                };
-                window.addEventListener('unhandledrejection', function(e) {
-                    window.webkit.messageHandlers.errorHandler.postMessage({
-                        type: 'unhandledrejection',
-                        message: 'Unhandled Promise Rejection: ' + e.reason,
-                        url: '',
-                        line: 0,
-                        column: 0,
-                        error: e.reason ? e.reason.toString() : null
-                    });
-                });
-                console.log('[ErrorHandler] JS error capture installed');
-            """,
-            injectionTime: .atDocumentStart,
-            forMainFrameOnly: true
-        )
-        configuration.userContentController.addUserScript(errorScript)
-        configuration.userContentController.add(context.coordinator, name: "contentChanged")
-        configuration.userContentController.add(context.coordinator, name: "sectionChanged")
-        configuration.userContentController.add(context.coordinator, name: "errorHandler")
-        configuration.userContentController.add(context.coordinator, name: "searchCitations")
-        configuration.userContentController.add(context.coordinator, name: "openCitationPicker")
-        configuration.userContentController.add(context.coordinator, name: "resolveCitekeys")
-        configuration.userContentController.add(context.coordinator, name: "paintComplete")
-        configuration.userContentController.add(context.coordinator, name: "openURL")
-        configuration.userContentController.add(context.coordinator, name: "spellcheck")
-        configuration.userContentController.add(context.coordinator, name: "navigateToFootnote")
-        configuration.userContentController.add(context.coordinator, name: "footnoteInserted")
-        configuration.userContentController.add(context.coordinator, name: "pasteImage")
-        configuration.userContentController.add(context.coordinator, name: "requestImagePicker")
-        configuration.userContentController.add(context.coordinator, name: "updateImageMeta")
-        configuration.userContentController.add(context.coordinator, name: "tableInsertTruncated")
-        configuration.userContentController.add(context.coordinator, name: "openEquationDialog")
-        configuration.userContentController.add(context.coordinator, name: "selectionChanged")
+        configuration.userContentController.addUserScript(errorCaptureScript)
+        registerMilkdownMessageHandlers(on: configuration.userContentController, coordinator: context.coordinator)
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = context.coordinator
@@ -383,351 +377,56 @@ struct MilkdownEditor: NSViewRepresentable {
             self.onWebViewReady = onWebViewReady
             super.init()
 
-            // Subscribe to toggle notification - save cursor before editor switches
-            toggleObserver = NotificationCenter.default.addObserver(
-                forName: .willToggleEditorMode,
-                object: nil,
-                queue: .main
-            ) { [weak self] _ in
-                self?.saveAndNotify()
-            }
-
-            // Subscribe to insert section break notification
-            insertBreakObserver = NotificationCenter.default.addObserver(
-                forName: .insertSectionBreak,
-                object: nil,
-                queue: .main
-            ) { [weak self] _ in
-                self?.insertSectionBreak()
-            }
-
-            // Subscribe to annotation display modes change notification
-            annotationDisplayModesObserver = NotificationCenter.default.addObserver(
-                forName: .annotationDisplayModesChanged,
-                object: nil,
-                queue: .main
-            ) { [weak self] notification in
-                if let modes = notification.userInfo?["modes"] as? [AnnotationType: AnnotationDisplayMode] {
-                    let isPanelOnly = notification.userInfo?["isPanelOnly"] as? Bool ?? false
-                    let hideCompletedTasks = notification.userInfo?["hideCompletedTasks"] as? Bool ?? false
-                    self?.setAnnotationDisplayModes(modes, isPanelOnly: isPanelOnly, hideCompletedTasks: hideCompletedTasks)
-                }
-            }
-
-            // Subscribe to insert annotation notification (for keyboard shortcuts)
-            insertAnnotationObserver = NotificationCenter.default.addObserver(
-                forName: .insertAnnotation,
-                object: nil,
-                queue: .main
-            ) { [weak self] notification in
-                if let type = notification.userInfo?["type"] as? AnnotationType {
-                    self?.insertAnnotation(type: type)
-                }
-            }
-
-            // Subscribe to toggle highlight notification (Cmd+Shift+H)
-            toggleHighlightObserver = NotificationCenter.default.addObserver(
-                forName: .toggleHighlight,
-                object: nil,
-                queue: .main
-            ) { [weak self] _ in
-                self?.toggleHighlight()
-            }
-
-            // Subscribe to citation library updates from Zotero
-            citationLibraryObserver = NotificationCenter.default.addObserver(
-                forName: .citationLibraryChanged,
-                object: nil,
-                queue: .main
-            ) { [weak self] notification in
-                if let json = notification.userInfo?["json"] as? String {
-                    self?.setCitationLibrary(json)
-                }
-            }
-
-            // Subscribe to refresh all citations notification (Cmd+Shift+R)
-            refreshAllCitationsObserver = NotificationCenter.default.addObserver(
-                forName: .refreshAllCitations,
-                object: nil,
-                queue: .main
-            ) { [weak self] _ in
-                Task { @MainActor in
-                    await self?.refreshAllCitations()
-                }
-            }
-
-            // Subscribe to editor appearance mode changes (Phase C dual-appearance)
-            editorModeObserver = NotificationCenter.default.addObserver(
-                forName: .editorAppearanceModeChanged,
-                object: nil,
-                queue: .main
-            ) { [weak self] notification in
-                if let mode = notification.userInfo?["mode"] as? String {
-                    self?.setEditorAppearanceMode(mode)
-                }
-            }
-
-            // Subscribe to spellcheck toggle
-            spellcheckStateObserver = NotificationCenter.default.addObserver(
-                forName: .spellcheckStateChanged,
-                object: nil,
-                queue: .main
-            ) { [weak self] notification in
-                if let enabled = notification.userInfo?["enabled"] as? Bool {
-                    self?.setSpellcheck(enabled)
-                }
-            }
-
-            // Subscribe to smart quotes toggle
-            smartQuotesStateObserver = NotificationCenter.default.addObserver(
-                forName: .smartQuotesStateChanged,
-                object: nil,
-                queue: .main
-            ) { [weak self] notification in
-                if let enabled = notification.userInfo?["enabled"] as? Bool {
-                    self?.setSmartQuotes(enabled)
-                }
-            }
-
-            // Subscribe to proofing mode change (re-check with new mode)
-            proofingModeObserver = NotificationCenter.default.addObserver(
-                forName: .proofingModeChanged,
-                object: nil,
-                queue: .main
-            ) { [weak self] _ in
-                self?.triggerSpellcheck()
-            }
-
-            // Subscribe to proofing settings change (re-check with new settings)
-            proofingSettingsObserver = NotificationCenter.default.addObserver(
-                forName: .proofingSettingsChanged,
-                object: nil,
-                queue: .main
-            ) { [weak self] _ in
-                self?.triggerSpellcheck()
-            }
-
-            // Subscribe to footnote definitions updates (push to editor for tooltip display)
-            footnoteDefsObserver = NotificationCenter.default.addObserver(
-                forName: .footnoteDefinitionsReady,
-                object: nil,
-                queue: .main
-            ) { [weak self] notification in
-                if let defs = notification.userInfo?["definitions"] as? [String: String] {
-                    self?.setFootnoteDefinitions(defs)
-                }
-            }
-
-            // Subscribe to insert footnote notification (Cmd+Shift+N)
-            insertFootnoteObserver = NotificationCenter.default.addObserver(
-                forName: .insertFootnote,
-                object: nil,
-                queue: .main
-            ) { [weak self] _ in
-                self?.insertFootnoteAtCursor()
-            }
-
-            // Subscribe to renumber footnotes notification
-            renumberFootnotesObserver = NotificationCenter.default.addObserver(
-                forName: .renumberFootnotes,
-                object: nil,
-                queue: .main
-            ) { [weak self] notification in
-                if let mapping = notification.userInfo?["mapping"] as? [String: String] {
-                    self?.renumberFootnotes(mapping: mapping)
-                }
-            }
-
-            // Subscribe to scroll-to-footnote-definition notification
-            scrollToFootnoteDefObserver = NotificationCenter.default.addObserver(
-                forName: .scrollToFootnoteDefinition,
-                object: nil,
-                queue: .main
-            ) { [weak self] notification in
-                if let label = notification.userInfo?["label"] as? String {
-                    self?.scrollToFootnoteDefinition(label: label)
-                }
-            }
-
-            // Subscribe to BlockSyncService content push — sync lastPushedContent to prevent
-            // redundant updateNSView re-push that destroys block IDs.
-            // queue: nil → handler fires synchronously on posting thread (MainActor).
-            // This ensures lastPushedContent is updated BEFORE the Task body continues,
-            // preventing updateNSView from seeing a stale value and re-pushing without block IDs.
-            blockSyncPushObserver = NotificationCenter.default.addObserver(
-                forName: .blockSyncDidPushContent,
-                object: nil,
-                queue: nil
-            ) { [weak self] notification in
-                guard let markdown = notification.userInfo?["markdown"] as? String else { return }
-                self?.lastPushedContent = markdown
-                self?.lastPushTime = Date()
-            }
-
-            // Subscribe to formatting command notifications
-            toggleBoldObserver = NotificationCenter.default.addObserver(
-                forName: .toggleBold, object: nil, queue: .main
-            ) { [weak self] _ in self?.executeFormatting("toggleBold") }
-
-            toggleItalicObserver = NotificationCenter.default.addObserver(
-                forName: .toggleItalic, object: nil, queue: .main
-            ) { [weak self] _ in self?.executeFormatting("toggleItalic") }
-
-            toggleStrikethroughObserver = NotificationCenter.default.addObserver(
-                forName: .toggleStrikethrough, object: nil, queue: .main
-            ) { [weak self] _ in self?.executeFormatting("toggleStrikethrough") }
-
-            setHeadingObserver = NotificationCenter.default.addObserver(
-                forName: .setHeading, object: nil, queue: .main
-            ) { [weak self] notification in
-                if let level = notification.userInfo?["level"] as? Int {
-                    self?.executeFormatting("setHeading", argument: "\(level)")
-                }
-            }
-
-            toggleBulletListObserver = NotificationCenter.default.addObserver(
-                forName: .toggleBulletList, object: nil, queue: .main
-            ) { [weak self] _ in self?.executeFormatting("toggleBulletList") }
-
-            toggleNumberListObserver = NotificationCenter.default.addObserver(
-                forName: .toggleNumberList, object: nil, queue: .main
-            ) { [weak self] _ in self?.executeFormatting("toggleNumberList") }
-
-            toggleBlockquoteObserver = NotificationCenter.default.addObserver(
-                forName: .toggleBlockquote, object: nil, queue: .main
-            ) { [weak self] _ in self?.executeFormatting("toggleBlockquote") }
-
-            toggleCodeBlockObserver = NotificationCenter.default.addObserver(
-                forName: .toggleCodeBlock, object: nil, queue: .main
-            ) { [weak self] _ in self?.executeFormatting("toggleCodeBlock") }
-
-            toggleInlineCodeObserver = NotificationCenter.default.addObserver(
-                forName: .toggleInlineCode, object: nil, queue: .main
-            ) { [weak self] _ in self?.executeFormatting("toggleInlineCode") }
-
-            insertLinkObserver = NotificationCenter.default.addObserver(
-                forName: .insertLink, object: nil, queue: .main
-            ) { [weak self] _ in self?.executeFormatting("insertLink") }
-
-            // Subscribe to insert citation notification (⌘⇧K / toolbar "Cite" button) —
-            // opens the CAYW picker for a brand-new citation at the current cursor.
-            insertCitationObserver = NotificationCenter.default.addObserver(
-                forName: .insertCitation, object: nil, queue: .main
-            ) { [weak self] _ in self?.executeFormatting("insertCitation") }
-
-            // Subscribe to zoom footnote state changes
-            zoomFootnoteStateObserver = NotificationCenter.default.addObserver(
-                forName: .setZoomFootnoteState,
-                object: nil,
-                queue: .main
-            ) { [weak self] notification in
-                if let zoomed = notification.userInfo?["zoomed"] as? Bool,
-                   let maxLabel = notification.userInfo?["maxLabel"] as? Int {
-                    self?.setZoomFootnoteState(zoomed: zoomed, maxLabel: maxLabel)
-                }
-            }
-
-            // Subscribe to insert image notification (Insert > Image menu)
-            insertImageObserver = NotificationCenter.default.addObserver(
-                forName: .requestInsertImage,
-                object: nil,
-                queue: .main
-            ) { [weak self] _ in
-                self?.handleImagePicker()
-            }
-
-            // Subscribe to insert table notification (Insert > Table menu + toolbar button)
-            insertTableObserver = NotificationCenter.default.addObserver(
-                forName: .requestInsertTable,
-                object: nil,
-                queue: .main
-            ) { [weak self] _ in
-                guard let self, self.isEditorReady, !self.isCleanedUp else { return }
-                self.webView?.evaluateJavaScript("window.FinalFinal.insertTable(3, 2)") { _, _ in }
-            }
-
-            // Subscribe to insert equation notification (Insert > Equation menu + toolbar button)
-            insertEquationObserver = NotificationCenter.default.addObserver(
-                forName: .requestInsertEquation,
-                object: nil,
-                queue: .main
-            ) { [weak self] _ in
-                guard let self, self.isEditorReady, !self.isCleanedUp else { return }
-                self.webView?.evaluateJavaScript("window.FinalFinal.insertEquationDialog()") { _, _ in }
-            }
+            // Notification subscriptions are grouped by concern in
+            // MilkdownCoordinator+NotificationObservers.swift to keep this
+            // initializer's cyclomatic complexity low.
+            subscribeToEditorLifecycleNotifications()
+            subscribeToAnnotationNotifications()
+            subscribeToCitationNotifications()
+            subscribeToProofingNotifications()
+            subscribeToFootnoteNotifications()
+            subscribeToBlockSyncNotifications()
+            subscribeToFormattingCommandNotifications()
+            subscribeToMediaNotifications()
         }
 
         deinit {
             pollingTimer?.invalidate()
-            if let observer = toggleObserver {
-                NotificationCenter.default.removeObserver(observer)
-            }
-            if let observer = insertBreakObserver {
-                NotificationCenter.default.removeObserver(observer)
-            }
-            if let observer = annotationDisplayModesObserver {
-                NotificationCenter.default.removeObserver(observer)
-            }
-            if let observer = insertAnnotationObserver {
-                NotificationCenter.default.removeObserver(observer)
-            }
-            if let observer = toggleHighlightObserver {
-                NotificationCenter.default.removeObserver(observer)
-            }
-            if let observer = citationLibraryObserver {
-                NotificationCenter.default.removeObserver(observer)
-            }
-            if let observer = refreshAllCitationsObserver {
-                NotificationCenter.default.removeObserver(observer)
-            }
-            if let observer = editorModeObserver {
-                NotificationCenter.default.removeObserver(observer)
-            }
-            if let observer = spellcheckStateObserver {
-                NotificationCenter.default.removeObserver(observer)
-            }
-            if let observer = smartQuotesStateObserver {
-                NotificationCenter.default.removeObserver(observer)
-            }
-            if let observer = proofingModeObserver {
-                NotificationCenter.default.removeObserver(observer)
-            }
-            if let observer = proofingSettingsObserver {
-                NotificationCenter.default.removeObserver(observer)
-            }
-            if let observer = footnoteDefsObserver {
-                NotificationCenter.default.removeObserver(observer)
-            }
-            if let observer = insertFootnoteObserver {
-                NotificationCenter.default.removeObserver(observer)
-            }
-            if let observer = renumberFootnotesObserver {
-                NotificationCenter.default.removeObserver(observer)
-            }
-            if let observer = scrollToFootnoteDefObserver {
-                NotificationCenter.default.removeObserver(observer)
-            }
-            if let observer = blockSyncPushObserver {
-                NotificationCenter.default.removeObserver(observer)
-            }
-            if let observer = zoomFootnoteStateObserver {
-                NotificationCenter.default.removeObserver(observer)
-            }
-            if let observer = insertImageObserver {
-                NotificationCenter.default.removeObserver(observer)
-            }
-            if let observer = insertTableObserver {
-                NotificationCenter.default.removeObserver(observer)
-            }
-            if let observer = insertEquationObserver {
-                NotificationCenter.default.removeObserver(observer)
-            }
+
+            // Observer removal must happen directly inside deinit, not via a called-out
+            // method: deinit is always nonisolated even on this @MainActor type, and
+            // Swift's isolated-stored-property access exemption for deinit applies only
+            // to deinit's own body, not to a same-type method deinit merely calls.
+            // removeObserverIfPresent (MilkdownCoordinator+NotificationObservers.swift)
+            // is safe to call here because it only touches its own parameter.
+            removeObserverIfPresent(toggleObserver)
+            removeObserverIfPresent(insertBreakObserver)
+            removeObserverIfPresent(annotationDisplayModesObserver)
+            removeObserverIfPresent(insertAnnotationObserver)
+            removeObserverIfPresent(toggleHighlightObserver)
+            removeObserverIfPresent(citationLibraryObserver)
+            removeObserverIfPresent(refreshAllCitationsObserver)
+            removeObserverIfPresent(editorModeObserver)
+            removeObserverIfPresent(spellcheckStateObserver)
+            removeObserverIfPresent(smartQuotesStateObserver)
+            removeObserverIfPresent(proofingModeObserver)
+            removeObserverIfPresent(proofingSettingsObserver)
+            removeObserverIfPresent(footnoteDefsObserver)
+            removeObserverIfPresent(insertFootnoteObserver)
+            removeObserverIfPresent(renumberFootnotesObserver)
+            removeObserverIfPresent(scrollToFootnoteDefObserver)
+            removeObserverIfPresent(blockSyncPushObserver)
+            removeObserverIfPresent(zoomFootnoteStateObserver)
+            removeObserverIfPresent(insertImageObserver)
+            removeObserverIfPresent(insertTableObserver)
+            removeObserverIfPresent(insertEquationObserver)
+
             // Formatting command observers cleanup
             for observer in [toggleBoldObserver, toggleItalicObserver, toggleStrikethroughObserver,
                              setHeadingObserver, toggleBulletListObserver, toggleNumberListObserver,
                              toggleBlockquoteObserver, toggleCodeBlockObserver, toggleInlineCodeObserver,
                              insertLinkObserver, insertCitationObserver] {
-                if let observer { NotificationCenter.default.removeObserver(observer) }
+                removeObserverIfPresent(observer)
             }
         }
     }

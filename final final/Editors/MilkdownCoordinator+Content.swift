@@ -17,97 +17,50 @@ extension MilkdownEditor.Coordinator {
         spellcheckTask = nil
         pollingTimer?.invalidate()
         pollingTimer = nil
-        if let observer = toggleObserver {
-            NotificationCenter.default.removeObserver(observer)
-            toggleObserver = nil
-        }
-        if let observer = insertBreakObserver {
-            NotificationCenter.default.removeObserver(observer)
-            insertBreakObserver = nil
-        }
-        if let observer = annotationDisplayModesObserver {
-            NotificationCenter.default.removeObserver(observer)
-            annotationDisplayModesObserver = nil
-        }
-        if let observer = insertAnnotationObserver {
-            NotificationCenter.default.removeObserver(observer)
-            insertAnnotationObserver = nil
-        }
-        if let observer = toggleHighlightObserver {
-            NotificationCenter.default.removeObserver(observer)
-            toggleHighlightObserver = nil
-        }
-        if let observer = citationLibraryObserver {
-            NotificationCenter.default.removeObserver(observer)
-            citationLibraryObserver = nil
-        }
-        if let observer = refreshAllCitationsObserver {
-            NotificationCenter.default.removeObserver(observer)
-            refreshAllCitationsObserver = nil
-        }
-        if let observer = editorModeObserver {
-            NotificationCenter.default.removeObserver(observer)
-            editorModeObserver = nil
-        }
-        if let observer = spellcheckStateObserver {
-            NotificationCenter.default.removeObserver(observer)
-            spellcheckStateObserver = nil
-        }
-        if let observer = proofingModeObserver {
-            NotificationCenter.default.removeObserver(observer)
-            proofingModeObserver = nil
-        }
-        if let observer = proofingSettingsObserver {
-            NotificationCenter.default.removeObserver(observer)
-            proofingSettingsObserver = nil
-        }
-        if let observer = insertFootnoteObserver {
-            NotificationCenter.default.removeObserver(observer)
-            insertFootnoteObserver = nil
-        }
-        if let observer = renumberFootnotesObserver {
-            NotificationCenter.default.removeObserver(observer)
-            renumberFootnotesObserver = nil
-        }
-        if let observer = scrollToFootnoteDefObserver {
-            NotificationCenter.default.removeObserver(observer)
-            scrollToFootnoteDefObserver = nil
-        }
-        if let observer = footnoteDefsObserver {
-            NotificationCenter.default.removeObserver(observer)
-            footnoteDefsObserver = nil
-        }
-        if let observer = blockSyncPushObserver {
-            NotificationCenter.default.removeObserver(observer)
-            blockSyncPushObserver = nil
-        }
-        if let observer = zoomFootnoteStateObserver {
-            NotificationCenter.default.removeObserver(observer)
-            zoomFootnoteStateObserver = nil
-        }
-        if let observer = insertImageObserver {
-            NotificationCenter.default.removeObserver(observer)
-            insertImageObserver = nil
-        }
+
+        clearObserver(&toggleObserver)
+        clearObserver(&insertBreakObserver)
+        clearObserver(&annotationDisplayModesObserver)
+        clearObserver(&insertAnnotationObserver)
+        clearObserver(&toggleHighlightObserver)
+        clearObserver(&citationLibraryObserver)
+        clearObserver(&refreshAllCitationsObserver)
+        clearObserver(&editorModeObserver)
+        clearObserver(&spellcheckStateObserver)
+        clearObserver(&proofingModeObserver)
+        clearObserver(&proofingSettingsObserver)
+        clearObserver(&insertFootnoteObserver)
+        clearObserver(&renumberFootnotesObserver)
+        clearObserver(&scrollToFootnoteDefObserver)
+        clearObserver(&footnoteDefsObserver)
+        clearObserver(&blockSyncPushObserver)
+        clearObserver(&zoomFootnoteStateObserver)
+        clearObserver(&insertImageObserver)
+
         // Formatting command observers cleanup
-        for observer in [toggleBoldObserver, toggleItalicObserver, toggleStrikethroughObserver,
-                         setHeadingObserver, toggleBulletListObserver, toggleNumberListObserver,
-                         toggleBlockquoteObserver, toggleCodeBlockObserver, toggleInlineCodeObserver,
-                         insertLinkObserver, insertCitationObserver] {
-            if let observer { NotificationCenter.default.removeObserver(observer) }
-        }
-        toggleBoldObserver = nil
-        toggleItalicObserver = nil
-        toggleStrikethroughObserver = nil
-        setHeadingObserver = nil
-        toggleBulletListObserver = nil
-        toggleNumberListObserver = nil
-        toggleBlockquoteObserver = nil
-        toggleCodeBlockObserver = nil
-        toggleInlineCodeObserver = nil
-        insertLinkObserver = nil
-        insertCitationObserver = nil
+        clearObserver(&toggleBoldObserver)
+        clearObserver(&toggleItalicObserver)
+        clearObserver(&toggleStrikethroughObserver)
+        clearObserver(&setHeadingObserver)
+        clearObserver(&toggleBulletListObserver)
+        clearObserver(&toggleNumberListObserver)
+        clearObserver(&toggleBlockquoteObserver)
+        clearObserver(&toggleCodeBlockObserver)
+        clearObserver(&toggleInlineCodeObserver)
+        clearObserver(&insertLinkObserver)
+        clearObserver(&insertCitationObserver)
+
         webView = nil
+    }
+
+    /// Remove `observer` from NotificationCenter (if still registered) and nil out the
+    /// stored token. Used by `cleanup()`, which — unlike `deinit` — can run while the
+    /// instance is still alive, so the tokens must be cleared to avoid double-removal.
+    private func clearObserver(_ observer: inout NSObjectProtocol?) {
+        if let unwrapped = observer {
+            NotificationCenter.default.removeObserver(unwrapped)
+        }
+        observer = nil
     }
 
     /// Execute a formatting command via window.FinalFinal API
@@ -271,7 +224,13 @@ extension MilkdownEditor.Coordinator {
             let scrollFraction = dict["scrollFraction"] as? Double ?? 0
             let cursorIsVisible = dict["cursorIsVisible"] as? Bool ?? true
             let topLine = dict["topLine"] as? Double ?? 1.0
-            self?.onCursorPositionSaved(CursorPosition(line: line, column: column, scrollFraction: scrollFraction, cursorIsVisible: cursorIsVisible, topLine: topLine))
+            self?.onCursorPositionSaved(CursorPosition(
+                line: line,
+                column: column,
+                scrollFraction: scrollFraction,
+                cursorIsVisible: cursorIsVisible,
+                topLine: topLine
+            ))
         }
     }
 
@@ -347,7 +306,13 @@ extension MilkdownEditor.Coordinator {
                 let scrollFraction = dict["scrollFraction"] as? Double ?? 0
                 let cursorIsVisible = dict["cursorIsVisible"] as? Bool ?? true
                 let topLine = dict["topLine"] as? Double ?? 1.0
-                position = CursorPosition(line: line, column: column, scrollFraction: scrollFraction, cursorIsVisible: cursorIsVisible, topLine: topLine)
+                position = CursorPosition(
+                    line: line,
+                    column: column,
+                    scrollFraction: scrollFraction,
+                    cursorIsVisible: cursorIsVisible,
+                    topLine: topLine
+                )
             }
 
             DebugLog.log(.editor,
@@ -424,8 +389,8 @@ extension MilkdownEditor.Coordinator {
 
     func setSpellcheck(_ enabled: Bool) {
         guard isEditorReady, let webView else { return }
-        let fn = enabled ? "enableSpellcheck" : "disableSpellcheck"
-        webView.evaluateJavaScript("window.FinalFinal.\(fn)()") { _, _ in }
+        let jsFunctionName = enabled ? "enableSpellcheck" : "disableSpellcheck"
+        webView.evaluateJavaScript("window.FinalFinal.\(jsFunctionName)()") { _, _ in }
     }
 
     func triggerSpellcheck() {
@@ -435,8 +400,8 @@ extension MilkdownEditor.Coordinator {
 
     func setSmartQuotes(_ enabled: Bool) {
         guard isEditorReady, let webView else { return }
-        let fn = enabled ? "enableSmartQuotes" : "disableSmartQuotes"
-        webView.evaluateJavaScript("window.FinalFinal.\(fn)()") { _, _ in }
+        let jsFunctionName = enabled ? "enableSmartQuotes" : "disableSmartQuotes"
+        webView.evaluateJavaScript("window.FinalFinal.\(jsFunctionName)()") { _, _ in }
     }
 
     /// Applies the persisted spellcheck/smart-quotes toggle state to this editor instance.

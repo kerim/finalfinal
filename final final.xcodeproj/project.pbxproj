@@ -75,6 +75,7 @@
 		4C7E2457DC3A7DA2BCE893AB /* Database+BlocksReorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5902C341D97A143E13EC44CA /* Database+BlocksReorder.swift */; };
 		4C928D3A6E337665ED5BB7C1 /* SectionSyncService+Anchors.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F9E113796E1D22FF7D8AB97 /* SectionSyncService+Anchors.swift */; };
 		4D671DBFA718AA3F2C24DFE3 /* Database+Snapshots.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6E07FED1E8BB1958EF4F04CF /* Database+Snapshots.swift */; };
+		4FC6B4E94A7B36DBFBC73C85 /* MilkdownCoordinator+NotificationObservers.swift in Sources */ = {isa = PBXBuildFile; fileRef = 529BF9D37C40AB7A849CAEF9 /* MilkdownCoordinator+NotificationObservers.swift */; };
 		51055D83C24D331379EBD419 /* DocumentManager+GettingStarted.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3B4388FBF61DA9C85D7AB27E /* DocumentManager+GettingStarted.swift */; };
 		51B8B9C54EC8B405167BB9AD /* Block.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E15DA17E982BE8595CD07FE /* Block.swift */; };
 		51CF68A0E7897693CD345C23 /* ExportService+MarkdownExport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F7FD6062931497B7C3F148B /* ExportService+MarkdownExport.swift */; };
@@ -344,6 +345,7 @@
 		4DB38C1663B804694C7D3D31 /* EditorBridgeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorBridgeTests.swift; sourceTree = "<group>"; };
 		4E15DA17E982BE8595CD07FE /* Block.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Block.swift; sourceTree = "<group>"; };
 		519AC684B7CAA00763881EC9 /* ExportService+Fonts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ExportService+Fonts.swift"; sourceTree = "<group>"; };
+		529BF9D37C40AB7A849CAEF9 /* MilkdownCoordinator+NotificationObservers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "MilkdownCoordinator+NotificationObservers.swift"; sourceTree = "<group>"; };
 		5369B3C236049FDF4F30F677 /* LanguageToolProviderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LanguageToolProviderTests.swift; sourceTree = "<group>"; };
 		540DB80C2488D249796ABEAA /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		5448A9857645C4AEE8F5289B /* ImageWidthRoundtripTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageWidthRoundtripTests.swift; sourceTree = "<group>"; };
@@ -553,6 +555,7 @@
 				B671C3D65663EC23DB5F698C /* MediaSchemeHandler.swift */,
 				2892EEB9AB8A127B61B8B1D8 /* MilkdownCoordinator+Content.swift */,
 				594727DD6667897CC1A2A75A /* MilkdownCoordinator+MessageHandlers.swift */,
+				529BF9D37C40AB7A849CAEF9 /* MilkdownCoordinator+NotificationObservers.swift */,
 				7EEDC491836013F46E97FAE8 /* MilkdownEditor.swift */,
 				10BA92FC730511D06959AEDB /* StringExtensions.swift */,
 			);
@@ -1380,6 +1383,7 @@
 				6AD39A459C755DCB8507B3FB /* MediaSchemeHandler.swift in Sources */,
 				24E6DCFA94F75C5A30CF12D4 /* MilkdownCoordinator+Content.swift in Sources */,
 				ECA17134BABE98C9FC75300F /* MilkdownCoordinator+MessageHandlers.swift in Sources */,
+				4FC6B4E94A7B36DBFBC73C85 /* MilkdownCoordinator+NotificationObservers.swift in Sources */,
 				75D604E7143573D4BFD533FD /* MilkdownEditor.swift in Sources */,
 				CB678DCC05EA528F1C7CF6CF /* NativeToolbarButton.swift in Sources */,
 				83EF38E6AD012B11C741891D /* OutlineFilterBar.swift in Sources */,
