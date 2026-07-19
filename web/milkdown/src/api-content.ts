@@ -1201,7 +1201,56 @@ export function insertImage(opts: {
         insertPos = tr.doc.content.size;
       }
     }
+    // Detect whether this insert is about to split ONE ordered_list into two
+    // halves (e.g. pasting/dropping an image mid-list), as opposed to landing
+    // in a gap that does NOT split a single list — between two independent
+    // pre-existing lists, inside/after some other container, at the very top
+    // level, etc. Resolved against tr.doc BEFORE the insert happens, so
+    // $split.parent is the list as it stands whole, not yet split: a gap
+    // between two separate adjacent ordered_list nodes resolves its .parent
+    // to the containing doc/blockquote (not ordered_list), so that case is
+    // correctly excluded here without any special-casing.
+    //
+    // Only in the genuine mid-list-split case do we continue the tail half's
+    // numbering — a deliberately-started new list (manual list creation /
+    // input rules) is untouched: those always resolve to a fresh position
+    // whose $split.parent is never the SAME ordered_list with items on both
+    // sides, so `continuation` stays null and `order` keeps its normal
+    // default of 1.
+    const $split = tr.doc.resolve(insertPos);
+    const splitDepth = $split.depth;
+    let continuation: number | null = null;
+    if (
+      splitDepth > 0 &&
+      $split.parent.type === view.state.schema.nodes.ordered_list &&
+      $split.index(splitDepth) > 0 &&
+      $split.indexAfter(splitDepth) < $split.parent.childCount
+    ) {
+      const list = $split.parent;
+      const before = $split.index(splitDepth);
+      continuation = (list.attrs.order ?? 1) + before;
+    }
+
     tr = tr.insert(insertPos, node);
+
+    if (continuation !== null) {
+      // `insertPos` sat INSIDE the (still whole) list's own content, between
+      // two list items — not at a top-level boundary. To actually place a
+      // block-level figure there, ProseMirror's replace negotiation closes
+      // the list right after the earlier items (one "list close" token,
+      // ending the first half-list immediately before the figure) and opens
+      // a fresh list right after the figure (the second half-list starts
+      // there directly, with no further gap) — verified against the real
+      // editor pipeline (see repro-list-paste.test.ts). So the tail list
+      // begins one position past the figure, not directly at
+      // insertPos + node.nodeSize.
+      const tailPos = insertPos + 1 + node.nodeSize;
+      const tailList = tr.doc.nodeAt(tailPos);
+      if (tailList && tailList.type === view.state.schema.nodes.ordered_list) {
+        tr = tr.setNodeMarkup(tailPos, undefined, { ...tailList.attrs, order: continuation });
+      }
+    }
+
     view.dispatch(tr);
   } catch (e) {
     console.error('[Milkdown] insertImage failed:', e);
