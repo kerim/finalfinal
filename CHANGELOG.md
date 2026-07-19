@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.112] - 2026-07-19
+
 ### Fixed
 
 - **The toolbar's Cite button didn't insert a citation** — clicking it only refreshed the citations already in the document, and in the source editor it did nothing at all. It now inserts a citation at the cursor in both editing modes, behaving exactly like the `/cite` command and the ⌘⇧K shortcut.
