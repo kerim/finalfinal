@@ -593,6 +593,12 @@ let pendingPastePos: number | null = null;
 // The two events arrive within ~5ms; 200ms window safely catches them
 // without blocking legitimate successive drops by the user.
 let lastDropTime = 0;
+// Identity of the last drop that passed the 200ms guard — used by the
+// separate 3000ms identity guard below (same file re-delivered later, e.g. a
+// slower duplicate IPC delivery that lands outside the 200ms window).
+let lastDropFileName = '';
+let lastDropFileSize = 0;
+let lastDropFileLastModified = 0;
 export function consumePendingDropPos(): number | null {
   const pos = pendingDropPos;
   pendingDropPos = null;
@@ -695,13 +701,34 @@ const imagePasteDropPlugin = $prose(() => {
         // drop on every drop, not just the ones the 200ms guard below
         // rejects. Needed to capture timing data if a legitimate-looking
         // second `drop` DOM event ever arrives just outside the window.
-        syncLog('ImageDrop', `drop event, ${now - lastDropTime}ms since last drop`);
+        syncLog(
+          'ImageDrop',
+          `drop event, ${now - lastDropTime}ms since last drop file.name=${imageFile.name} file.size=${imageFile.size} file.lastModified=${imageFile.lastModified}`
+        );
         if (now - lastDropTime < 200) {
-          syncLog('ImageDrop', `DEDUP: ignoring duplicate drop (${now - lastDropTime}ms)`);
+          syncLog(
+            'ImageDrop',
+            `DEDUP: ignoring duplicate drop (${now - lastDropTime}ms) file.name=${imageFile.name} file.size=${imageFile.size} file.lastModified=${imageFile.lastModified}`
+          );
+          event.preventDefault();
+          return true;
+        }
+        const isSameFileAsLastDrop =
+          imageFile.name === lastDropFileName &&
+          imageFile.size === lastDropFileSize &&
+          imageFile.lastModified === lastDropFileLastModified;
+        if (isSameFileAsLastDrop && now - lastDropTime < 3000) {
+          syncLog(
+            'ImageDrop',
+            `DEDUP-IDENTITY: ignoring duplicate drop, same file ${imageFile.name} (${now - lastDropTime}ms since last matching drop)`
+          );
           event.preventDefault();
           return true;
         }
         lastDropTime = now;
+        lastDropFileName = imageFile.name;
+        lastDropFileSize = imageFile.size;
+        lastDropFileLastModified = imageFile.lastModified;
 
         event.preventDefault();
         event.stopPropagation();
