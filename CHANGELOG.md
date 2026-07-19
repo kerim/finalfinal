@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **The toolbar's Cite button didn't insert a citation** — clicking it only refreshed the citations already in the document, and in the source editor it did nothing at all. It now inserts a citation at the cursor in both editing modes, behaving exactly like the `/cite` command and the ⌘⇧K shortcut.
+- **Inserting citations in quick succession could duplicate or scramble a paragraph** — picking a citation from Zotero doesn't block the app, so you could start a second insertion (or keep editing) while the first was still waiting, and the app only kept track of one insertion spot at a time. Each pending citation now remembers its own spot and keeps it accurate while you edit, in both editing modes.
+- **Deleting a citation couldn't be undone** — the background bibliography refresh that runs after a citation change used to rewrite the whole document behind the scenes, which scrambled the undo history for anything you'd just edited. The refresh now only touches the parts of the document that actually changed, so undo works normally again.
+- **Deleting a citation was awkward and unpredictable** — the citation popup now has a Delete button, pressing Backspace or Delete next to a citation removes it cleanly in one press instead of behaving erratically, and the leftover double space is tidied up automatically. Also fixed: the popup's buttons could occasionally ignore a click if the mouse drifted slightly while clicking.
+- **The bibliography could silently end up out of date** — two background updates finishing out of order could let an older snapshot of your citations overwrite a newer, correct one, with no error shown. Updates now confirm they're still current before writing.
+- **The citation editing popup ignored dark mode** — it always appeared in light-mode colors, and in the Low Contrast Night theme its preview text was nearly unreadable. It now follows the app's theme, with readable text in all four themes.
+- **Dragging an image into the document could insert it twice** — macOS sometimes reports the same drop twice, a moment apart, and the app's existing protection only caught near-instant duplicates. A single drag now always inserts a single image.
+
 ## [0.2.111] - 2026-07-16
 
 ### Fixed
