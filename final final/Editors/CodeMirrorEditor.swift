@@ -316,6 +316,7 @@ struct CodeMirrorEditor: NSViewRepresentable {
         var toggleCodeBlockObserver: NSObjectProtocol?
         var toggleInlineCodeObserver: NSObjectProtocol?
         var insertLinkObserver: NSObjectProtocol?
+        var insertCitationObserver: NSObjectProtocol?
 
         /// Active spellcheck task (cancelled on new check or cleanup)
         var spellcheckTask: Task<Void, Never>?
@@ -565,6 +566,13 @@ struct CodeMirrorEditor: NSViewRepresentable {
             insertLinkObserver = NotificationCenter.default.addObserver(
                 forName: .insertLink, object: nil, queue: .main
             ) { [weak self] _ in self?.executeFormatting("insertLink") }
+
+            // Subscribe to insert citation notification (toolbar "Cite" button) — opens the
+            // CAYW picker for a brand-new citation at the current cursor. (Note: unlike
+            // Milkdown, ⌘⇧K is not wired in Source Mode.)
+            insertCitationObserver = NotificationCenter.default.addObserver(
+                forName: .insertCitation, object: nil, queue: .main
+            ) { [weak self] _ in self?.executeFormatting("insertCitation") }
         }
 
         deinit {
@@ -621,7 +629,7 @@ struct CodeMirrorEditor: NSViewRepresentable {
             for observer in [toggleBoldObserver, toggleItalicObserver, toggleStrikethroughObserver,
                              setHeadingObserver, toggleBulletListObserver, toggleNumberListObserver,
                              toggleBlockquoteObserver, toggleCodeBlockObserver, toggleInlineCodeObserver,
-                             insertLinkObserver] {
+                             insertLinkObserver, insertCitationObserver] {
                 if let observer { NotificationCenter.default.removeObserver(observer) }
             }
         }

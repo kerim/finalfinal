@@ -4,8 +4,8 @@
 import { type EditorView, ViewPlugin, type ViewUpdate } from '@codemirror/view';
 import '../../shared/slash-menu.css';
 import { insertEquationDialog } from '../../shared/equation-dialog';
-import { insertFootnoteReplacingRange } from './api';
-import { allocateCAYWRequestId, getPendingCAYWRequests, setPendingSlashUndo } from './editor-state';
+import { insertFootnoteReplacingRange, openCAYWPicker } from './api';
+import { setPendingSlashUndo } from './editor-state';
 
 /** Route diagnostic messages through the WKWebView errorHandler bridge.
  *  JS console.log/error are NOT bridged to Xcode — this is the only visible channel. */
@@ -160,17 +160,7 @@ const slashCommands: SlashCommand[] = [
     label: '/cite',
     description: 'Insert citation from Zotero',
     apply: (_view, from, to) => {
-      // Track this request's range by an opaque requestId (not the raw position — see
-      // editor-state.ts's pendingCAYWRequests for the full rationale) so overlapping
-      // /cite requests and continued editing during the async Zotero round-trip can't
-      // corrupt or duplicate content.
-      const requestId = allocateCAYWRequestId();
-      getPendingCAYWRequests().set(requestId, { start: from, end: to });
-      if ((window as any).webkit?.messageHandlers?.openCitationPicker) {
-        (window as any).webkit.messageHandlers.openCitationPicker.postMessage(requestId);
-      } else {
-        getPendingCAYWRequests().delete(requestId);
-      }
+      openCAYWPicker(from, to);
     },
   },
   {

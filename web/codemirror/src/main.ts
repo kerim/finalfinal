@@ -31,6 +31,7 @@ import {
   insertAnnotation,
   insertAtCursor,
   insertBreak,
+  insertCitationAtCursor,
   insertEquation,
   insertEquationDialog,
   insertFootnote,
@@ -411,6 +412,8 @@ window.FinalFinal = {
   citationPickerCallback,
   citationPickerCancelled,
   citationPickerError,
+  // Insert a brand-new citation at the current cursor (native toolbar "Cite" button)
+  insertCitation: insertCitationAtCursor,
   // Footnote API
   setFootnoteDefinitions: (_defs: Record<string, string>) => {
     // CodeMirror shows raw markdown — no popup needed, but API must exist for Swift calls

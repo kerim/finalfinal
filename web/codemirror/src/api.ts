@@ -13,6 +13,7 @@ import { escapeAltAttr } from '../../shared/image-caption-attrs';
 import { stripAnchors } from './anchor-plugin';
 import { hideCitationAddButton, mergeCitations } from './citations';
 import {
+  allocateCAYWRequestId,
   clearPendingCAYWRequests,
   getCitationAddButton,
   getCurrentMatchIndex,
@@ -875,6 +876,37 @@ export function toggleHighlight(): boolean {
 }
 
 // --- Citation picker callbacks ---
+
+/**
+ * Open Zotero's native CAYW citation picker via Swift bridge, for the range [start, end).
+ * Tracks the request by an opaque requestId (not the raw position — see editor-state.ts's
+ * pendingCAYWRequests for the full rationale) so overlapping requests and continued editing
+ * during the async Zotero round-trip can't corrupt or duplicate content.
+ * Mirrors Milkdown's function of the same name in cayw.ts.
+ */
+export function openCAYWPicker(start: number, end: number): void {
+  const requestId = allocateCAYWRequestId();
+  getPendingCAYWRequests().set(requestId, { start, end });
+  if ((window as any).webkit?.messageHandlers?.openCitationPicker) {
+    (window as any).webkit.messageHandlers.openCitationPicker.postMessage(requestId);
+  } else {
+    getPendingCAYWRequests().delete(requestId);
+  }
+}
+
+/**
+ * Open the CAYW picker for a brand-new citation at the current cursor position.
+ * Shared trigger for the native toolbar "Cite" button (invoked via
+ * window.FinalFinal.insertCitation from Swift) — a fresh citation with no existing
+ * /cite text to replace, so start and end are the same. Mirrors Milkdown's function
+ * of the same name in cayw.ts.
+ */
+export function insertCitationAtCursor(): void {
+  const view = getEditorView();
+  if (!view) return;
+  const { from } = view.state.selection.main;
+  openCAYWPicker(from, from);
+}
 
 export function citationPickerCallback(data: any, _items: any[]): void {
   const view = getEditorView();

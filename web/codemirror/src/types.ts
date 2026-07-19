@@ -86,6 +86,8 @@ declare global {
       citationPickerCallback: (data: any, items: any[]) => void;
       citationPickerCancelled: (requestId: number) => void;
       citationPickerError: (message: string, requestId: number) => void;
+      // Insert a brand-new citation at the current cursor (native toolbar "Cite" button)
+      insertCitation: () => void;
       // Spellcheck API
       setSpellcheckResults: (
         requestId: number,
