@@ -12,7 +12,7 @@
 //  payload captured from the actual JS pipeline — see
 //  web/milkdown/src/__tests__/repro-list-paste.test.ts for the JS-side
 //  equivalent), then the SEPARATE full-document-reparse path used by
-//  flushContentToDatabase()/flushForExport() (BlockParser.parse() against
+//  flushContentToDatabase()/flushLiveContentToDatabase() (BlockParser.parse() against
 //  Milkdown's own getMarkdown() serialization, captured from a real editor
 //  instance -- NOT the custom nodeToMarkdownFragment serializer block-sync
 //  itself uses for incremental diffs).
@@ -111,13 +111,13 @@ struct BlockListSplitPasteExportTests {
         #expect(pairs.count == 5, "Expected 5 alignment slots (no incorrect list merge), got \(pairs.count): \(pairs.map { $0.id.prefix(8) })")
     }
 
-    // MARK: - Full re-parse path (flushContentToDatabase / flushForExport)
+    // MARK: - Full re-parse path (flushContentToDatabase / flushLiveContentToDatabase)
 
     /// Captures the REAL getMarkdown() (Milkdown's own remark-based serializer,
     /// via getContent() in api-content.ts) output for the identical list-split
     /// scenario above -- this is what flushContentToDatabase() actually re-parses
     /// via BlockParser.parse() before every export (see
-    /// EditorViewState+Zoom.swift's flushForExport). Captured verbatim from a
+    /// EditorViewState+Zoom.swift's flushLiveContentToDatabase). Captured verbatim from a
     /// real Milkdown editor instance (commonmark+gfm presets, real imagePlugin,
     /// real blockIdPlugin/blockSyncPlugin) -- NOT hand-constructed -- so this
     /// test exercises the actual text BlockParser must correctly split.
@@ -196,7 +196,7 @@ struct BlockListSplitPasteExportTests {
     /// UPDATE correctly overwrites Item2's row to hold both items, and that nothing
     /// permanently deletes Item3's now-redundant row's content from a full
     /// export before this update lands (i.e. exportBlocks always reruns
-    /// flushForExport first, which fully re-parses from the STILL-CORRECT
+    /// flushLiveContentToDatabase first, which fully re-parses from the STILL-CORRECT
     /// live doc, so the orphan is fixed on every export, not compounded).
     @Test("Orphaned merged-list-slot row does not cause permanent content loss across a second full reparse")
     func orphanedRowSelfHealsOnNextFullReparse() throws {
@@ -222,7 +222,7 @@ struct BlockListSplitPasteExportTests {
         // Now simulate a SECOND flushContentToDatabase() (e.g. a second export,
         // or export after further edits) using the SAME live-doc markdown
         // (nothing changed on the JS side -- the live ProseMirror doc was never
-        // touched by the DB-side orphaning, per flushForExport's contract of
+        // touched by the DB-side orphaning, per flushLiveContentToDatabase's contract of
         // only READING via getContent(), never writing back into the WebView).
         let secondParse = BlockParser.parse(markdown: realGetContentOutput, projectId: realPid)
         try db.replaceBlocks(secondParse, for: realPid)

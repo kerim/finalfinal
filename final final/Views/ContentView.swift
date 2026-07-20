@@ -275,10 +275,10 @@ struct ContentView: View {
             AppDelegate.shared?.autoBackupService = autoBackupService
             DocumentManager.shared.flushBeforeExport = { [weak editorState] in
                 guard let editorState else { return }
-                // See EditorViewState+Zoom.swift's flushForExport(currentContent:) for
-                // why a full re-parse (not the incremental block-sync diff) is needed
+                // See EditorViewState+Zoom.swift's flushLiveContentToDatabase(currentContent:)
+                // for why a full re-parse (not the incremental block-sync diff) is needed
                 // here -- it silently drops pure block moves.
-                await editorState.flushForExport {
+                await editorState.flushLiveContentToDatabase {
                     await editorState.blockSyncService?.fetchContentFromWebView()
                 }
             }

@@ -36,6 +36,10 @@ final class AutoBackupService {
     private weak var database: ProjectDatabase?
     private var projectId: String?
 
+    /// Live editor state, used to flush fresh WebView content before an idle-timeout
+    /// auto-backup reads the block table. Weak: this service doesn't own the editor's lifecycle.
+    weak var editorState: EditorViewState?
+
     // MARK: - Configuration
 
     /// Configure the service for a specific project
@@ -94,10 +98,18 @@ final class AutoBackupService {
         await createBackupIfNeeded(reason: "project switch")
     }
 
-    // MARK: - Private Methods
+    // MARK: - Backup Creation
+    // `createBackupIfNeeded`/`createAutoBackup` are `internal` (not `private`) so tests can
+    // drive the idle-timeout path directly, matching `SnapshotService`'s create methods.
 
-    /// Create a backup if conditions are met
-    private func createBackupIfNeeded(reason: String) async {
+    /// Create a backup if conditions are met.
+    /// - Parameter needsLiveFlush: When true (the idle-timeout path only), flushes fresh
+    ///   WebView content into the block table before snapshotting -- see
+    ///   `EditorViewState.flushLiveContentToDatabase(currentContent:)`. Placed after the
+    ///   guards below so an idle timeout with nothing to back up doesn't pay a gratuitous
+    ///   WebView round-trip. The lifecycle callers (close/quit/switch) default this to
+    ///   false because each already has an equivalent flush upstream in its own caller.
+    func createBackupIfNeeded(reason: String, needsLiveFlush: Bool = false) async {
         guard hasUnsavedChanges else {
             DebugLog.log(.backup, "[AutoBackupService] No unsaved changes, skipping backup on \(reason)")
             return
@@ -108,7 +120,7 @@ final class AutoBackupService {
             return
         }
 
-        await createAutoBackup(reason: reason)
+        await createAutoBackup(reason: reason, needsLiveFlush: needsLiveFlush)
     }
 
     /// Check if enough time has passed since last backup
@@ -118,10 +130,16 @@ final class AutoBackupService {
     }
 
     /// Actually create the auto-backup
-    private func createAutoBackup(reason: String) async {
+    func createAutoBackup(reason: String, needsLiveFlush: Bool = false) async {
         guard let service = snapshotService else {
             DebugLog.log(.backup, "[AutoBackupService] No snapshot service configured")
             return
+        }
+
+        if needsLiveFlush, let editorState {
+            await editorState.flushLiveContentToDatabase {
+                await editorState.blockSyncService?.fetchContentFromWebView()
+            }
         }
 
         do {
@@ -146,7 +164,7 @@ final class AutoBackupService {
             do {
                 try await Task.sleep(for: .seconds(idleTimeout))
                 guard !Task.isCancelled else { return }
-                await createBackupIfNeeded(reason: "idle timeout")
+                await createBackupIfNeeded(reason: "idle timeout", needsLiveFlush: true)
                 // Prune old backups only on idle path to avoid slowing project switch/quit
                 try? snapshotService?.pruneAutoBackups()
             } catch {

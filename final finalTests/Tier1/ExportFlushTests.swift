@@ -184,14 +184,15 @@ struct ExportFlushTests {
         editorState.content = "# Title\n\nPara A.\n\n![alt](media/img.png)\n\nPara B."
 
         // Drives the SAME production method ContentView.swift wires flushBeforeExport
-        // to (EditorViewState+Zoom.swift's flushForExport(currentContent:)) -- not a
-        // hand-rolled stand-in -- with a stubbed content provider in place of a live
-        // WebView fetch, returning the post-move markdown (image now after the second
-        // paragraph) that a real fetchContentFromWebView() would have returned after
-        // the drag. This makes the test a genuine regression guard: if flushForExport
-        // were reverted to the old poll-only behavior, this test would fail.
+        // to (EditorViewState+Zoom.swift's flushLiveContentToDatabase(currentContent:))
+        // -- not a hand-rolled stand-in -- with a stubbed content provider in place of a
+        // live WebView fetch, returning the post-move markdown (image now after the
+        // second paragraph) that a real fetchContentFromWebView() would have returned
+        // after the drag. This makes the test a genuine regression guard: if
+        // flushLiveContentToDatabase were reverted to the old poll-only behavior, this
+        // test would fail.
         DocumentManager.shared.flushBeforeExport = {
-            await editorState.flushForExport {
+            await editorState.flushLiveContentToDatabase {
                 "# Title\n\nPara A.\n\nPara B.\n\n![alt](media/img.png)"
             }
         }

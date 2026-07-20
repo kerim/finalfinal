@@ -325,7 +325,7 @@ final class DocumentManager {
     }
 
     /// Hook invoked before any export reads blocks from the database.
-    /// Wired by ContentView to `EditorViewState.flushForExport(currentContent:)`,
+    /// Wired by ContentView to `EditorViewState.flushLiveContentToDatabase(currentContent:)`,
     /// which fetches fresh content from the live WebView, does a full block
     /// re-parse (`flushContentToDatabase()`), and re-syncs block ids
     /// (`pushBlockIds(for:)`) -- so exports see live editor edits, including pure

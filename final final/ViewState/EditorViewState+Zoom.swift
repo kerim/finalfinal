@@ -501,15 +501,18 @@ extension EditorViewState {
         }
     }
 
-    // MARK: - Export Flush
+    // MARK: - Live Content Flush
 
-    /// Flush the freshest possible content to the database before an export reads
+    /// Flush the freshest possible content to the database before something reads
     /// blocks, then re-sync the editor's block ids so subsequent edits still land.
+    /// Shared by export, manual/auto version snapshots, and idle-triggered
+    /// auto-backup -- anywhere the block table must reflect live editor state
+    /// before it's read, not just what's landed via the incremental sync poll.
     ///
     /// block-sync-plugin.ts's incremental `detectChanges()` silently drops a pure
     /// block move (same id, same content, different position) when the ProseMirror
     /// node reference is unchanged -- so the incremental diff alone (as used by
-    /// `pollBlockChangesNow()`) can't be trusted before export. This does a full
+    /// `pollBlockChangesNow()`) can't be trusted before these reads. This does a full
     /// re-parse via `flushContentToDatabase()` instead, which re-derives every
     /// block's sortOrder from document order.
     ///
@@ -524,7 +527,7 @@ extension EditorViewState {
     /// from the DB's new ids -- otherwise the next incremental edit updates a row
     /// that no longer exists and is silently lost. Same pairing already used by the
     /// `zoomToSection` and `handleZoomedFootnoteInsertion` call sites.
-    func flushForExport(currentContent: () async -> String?) async {
+    func flushLiveContentToDatabase(currentContent: () async -> String?) async {
         // Guard mirrors AppDelegate.swift's applicationShouldTerminate: skip the
         // assignment on a failed/empty fetch rather than clobbering known-good
         // content with nothing.

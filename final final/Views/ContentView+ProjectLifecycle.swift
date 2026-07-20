@@ -37,6 +37,7 @@ extension ContentView {
         bibliographySyncService.configure(database: db, projectId: pid)
         footnoteSyncService.configure(database: db, projectId: pid)
         autoBackupService.configure(database: db, projectId: pid)
+        autoBackupService.editorState = editorState
 
         // Inject sectionSyncService reference for zoom sourceContent updates
         editorState.sectionSyncService = sectionSyncService
@@ -367,6 +368,14 @@ extension ContentView {
               let pid = documentManager.projectId else {
             DebugLog.log(.lifecycle, "[ContentView] Cannot save version: no project open")
             return
+        }
+
+        // Flush the freshest possible WebView content into the block table before the
+        // snapshot reads it -- the same staleness gap fixed for export (incremental
+        // block-sync diff alone can silently drop a pure block move). See
+        // EditorViewState+Zoom.swift's flushLiveContentToDatabase(currentContent:).
+        await editorState.flushLiveContentToDatabase {
+            await editorState.blockSyncService?.fetchContentFromWebView()
         }
 
         // Ensure sections are synced before snapshot (debounce may not have fired yet).
