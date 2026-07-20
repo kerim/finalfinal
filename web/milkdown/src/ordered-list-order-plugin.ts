@@ -13,9 +13,14 @@
 //   Fixed to spread `{ start: node.attrs.order }` instead.
 // - `toMarkdown` hardcoded `start: 1` unconditionally. Fixed to serialize
 //   `node.attrs.order` (still defaulting sensibly if unset).
+// - `parseMarkdown`'s runner never read mdast's `node.start` (the real
+//   starting number CommonMark parsed, e.g. `2.` → start: 2) into the
+//   `order` attr, so `order` silently reset to the schema default of 1 on
+//   every re-parse. Fixed to read `node.start` when present.
 //
-// Both bugs previously swallowed the fix in api-content.ts's insertImage(),
-// which needs a *real* `order` attribute to continue a split ordered list's
+// All three bugs previously swallowed (or, for parseMarkdown, would silently
+// re-swallow on reload) the fix in api-content.ts's insertImage(), which
+// needs a *real* `order` attribute to continue a split ordered list's
 // numbering correctly (see the "split vs. deliberate restart" logic there).
 //
 // Registered by id via $node('ordered_list', ...): Milkdown's node registry
@@ -29,8 +34,11 @@
 // `orderedListAttr` context slice this schema still relies on for its HTML
 // attributes is already populated by the time our replacement's `toDOM` runs.
 //
-// content/attrs/parseDOM/parseMarkdown below are copied verbatim from the
-// built-in schema; only toDOM/toMarkdown differ (the two bug fixes above).
+// content/attrs/parseDOM below are copied verbatim from the built-in schema;
+// toDOM/toMarkdown/parseMarkdown all deliberately diverge from upstream (the
+// three bug fixes above) — do NOT "helpfully" re-sync parseMarkdown with
+// upstream (which drops `start` entirely) to look more like the other two
+// blocks; that would silently reintroduce the reload-resets-numbering bug.
 
 import { orderedListAttr } from '@milkdown/kit/preset/commonmark';
 import type { Node as ProsemirrorNode } from '@milkdown/kit/prose/model';
@@ -71,7 +79,13 @@ export const orderedListOrderPlugin = $node('ordered_list', (ctx) => ({
     match: ({ type, ordered }: any) => type === 'list' && !!ordered,
     runner: (state: any, node: any, type: any) => {
       const spread = node.spread != null ? `${node.spread}` : 'true';
-      state.openNode(type, { spread }).next(node.children).closeNode();
+      // mdast's `node.start` is the actual starting number CommonMark parsed
+      // (e.g. `2.` → start: 2). Without reading it here, `order` silently
+      // falls back to the schema default of 1 on every re-parse — undoing
+      // insertImage()'s split-continuation fix (api-content.ts) the moment a
+      // document with a continued list is closed and reopened.
+      const order = typeof node.start === 'number' ? node.start : 1;
+      state.openNode(type, { spread, order }).next(node.children).closeNode();
     },
   },
   toMarkdown: {
