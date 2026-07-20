@@ -177,7 +177,10 @@ final class ExportViewModel {
 
     // MARK: - Alerts
 
-    private func showPandocNotFoundAlert() {
+    /// Shows the standard "Pandoc Not Found" alert. Not private: reused by
+    /// `PrintOperations.handlePrintFormatted()` so the Print > Formatted... path shows
+    /// the exact same alert as "Export as PDF..." instead of a duplicate.
+    func showPandocNotFoundAlert() {
         let alert = NSAlert()
         alert.messageText = "Pandoc Not Found"
         alert.informativeText = PandocLocator.installInstructions

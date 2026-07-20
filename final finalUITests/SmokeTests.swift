@@ -46,6 +46,35 @@ final class LaunchSmokeTests: XCTestCase {
         XCTAssertTrue(newButton.waitForExistence(timeout: 5), "New Project button should exist")
         XCTAssertTrue(openButton.exists, "Open Project button should exist")
     }
+
+    func testPrintMenuItemsExist() {
+        // File > Print is a Commands-level menu (scene-wide), so it should exist and be
+        // enabled even without an open project. This only navigates the menu hierarchy
+        // to confirm the items are present -- it never clicks "Formatted..." or "Raw
+        // Markdown..." themselves, since that would open the real system print panel.
+        app.activateAndWaitForForeground()
+
+        let fileMenuBarItem = app.menuBars.menuBarItems["File"]
+        XCTAssertTrue(fileMenuBarItem.waitForExistence(timeout: 5), "File menu should exist")
+        fileMenuBarItem.click()
+
+        let printMenuItem = app.menuItems["Print"]
+        XCTAssertTrue(printMenuItem.waitForExistence(timeout: 5), "File > Print submenu should exist")
+        printMenuItem.click()
+
+        let formattedItem = app.menuItems["Formatted..."]
+        let rawMarkdownItem = app.menuItems["Raw Markdown..."]
+
+        XCTAssertTrue(formattedItem.waitForExistence(timeout: 5), "File > Print > Formatted... should exist")
+        XCTAssertTrue(formattedItem.isEnabled, "File > Print > Formatted... should be enabled")
+
+        XCTAssertTrue(rawMarkdownItem.exists, "File > Print > Raw Markdown... should exist")
+        XCTAssertTrue(rawMarkdownItem.isEnabled, "File > Print > Raw Markdown... should be enabled")
+
+        // Dismiss the menu hierarchy without invoking either print action.
+        app.typeKey(.escape, modifierFlags: [])
+        app.typeKey(.escape, modifierFlags: [])
+    }
 }
 
 // MARK: - Editor Smoke Tests (fixture required)

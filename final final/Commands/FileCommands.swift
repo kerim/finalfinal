@@ -105,6 +105,19 @@ struct FileCommands: Commands {
                 NotificationCenter.default.post(name: .showExportPreferences, object: nil)
             }
         }
+
+        CommandGroup(replacing: .printItem) {
+            Menu("Print") {
+                Button("Formatted...") {
+                    NotificationCenter.default.post(name: .printFormatted, object: nil)
+                }
+                .keyboardShortcut("p", modifiers: .command)
+
+                Button("Raw Markdown...") {
+                    NotificationCenter.default.post(name: .printRawMarkdown, object: nil)
+                }
+            }
+        }
     }
 }
 
