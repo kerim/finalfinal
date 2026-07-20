@@ -223,4 +223,105 @@ struct LanguageToolProviderTests {
         #expect(parsed.results.first?.from == 57)  // segment.from (50) + localOffset (7)
         #expect(parsed.results.first?.to == 59)
     }
+
+    // MARK: - splitOversizedSegments: chunk-splitting for over-limit documents
+
+    @Test func splitOversizedSegmentsLeavesNormalSizedSegmentsUntouched() {
+        // "no mid-segment splits for normal-sized segments" — anything at or under
+        // the limit must pass through byte-for-byte identical, not merely
+        // equivalent.
+        let segments = [
+            SpellCheckService.TextSegment(text: "A short segment.", from: 0, to: 17, blockId: 0),
+            SpellCheckService.TextSegment(text: "Another short one.", from: 20, to: 39, blockId: 1),
+        ]
+        let provider = LanguageToolProvider()
+        let result = provider.splitOversizedSegments(segments, limit: 1_000)
+        #expect(result.count == 2)
+        #expect(result.map(\.text) == segments.map(\.text))
+        #expect(result.map(\.from) == segments.map(\.from))
+        #expect(result.map(\.to) == segments.map(\.to))
+    }
+
+    @Test func splitOversizedSegmentsPrefersSentenceBoundary() {
+        // "AAAA. " (6 chars) + "BBBBBBBBBB" (10 chars) = 16 chars, at limit 12:
+        // the last sentence boundary (". ") within budget lands right after
+        // index 5, giving a clean sentence-level cut instead of a boundary-blind
+        // cut deeper into "BBBBBBBBBB" (which alone fits under 12, so it isn't
+        // split further either — exactly two pieces).
+        let text = "AAAA. BBBBBBBBBB"
+        let segment = SpellCheckService.TextSegment(text: text, from: 0, to: text.utf16.count, blockId: 0)
+        let provider = LanguageToolProvider()
+        let pieces = provider.splitOversizedSegments([segment], limit: 12)
+
+        #expect(pieces.map(\.text).joined() == text)  // reconstructs exactly
+        #expect(pieces.map(\.text) == ["AAAA. ", "BBBBBBBBBB"])
+    }
+
+    @Test func splitOversizedSegmentsPrefersWhitespaceBoundaryWhenNoSentenceBoundary() {
+        // No '.', '!', or '?' anywhere, so the cut must fall back to the last
+        // whitespace run within budget rather than a hard mid-word cut.
+        let text = "aaaa bbbb cccc dddd"
+        let segment = SpellCheckService.TextSegment(text: text, from: 0, to: text.utf16.count, blockId: 0)
+        let provider = LanguageToolProvider()
+        let pieces = provider.splitOversizedSegments([segment], limit: 9)
+
+        #expect(pieces.map(\.text).joined() == text)
+        #expect(pieces.first?.text == "aaaa ")  // cut right after the last whitespace within budget
+        #expect(pieces.allSatisfy { !$0.text.isEmpty })
+    }
+
+    @Test func splitOversizedSegmentsRespectsBudgetForEveryPiece() {
+        // "budget respected" — every emitted piece's own UTF-16 length must be
+        // at or under the requested limit.
+        let text = String(repeating: "word ", count: 40)  // 200 UTF-16 units, no sentence boundary
+        let segment = SpellCheckService.TextSegment(text: text, from: 0, to: text.utf16.count, blockId: 0)
+        let provider = LanguageToolProvider()
+        let limit = 37
+        let pieces = provider.splitOversizedSegments([segment], limit: limit)
+
+        #expect(pieces.count > 1)
+        #expect(pieces.allSatisfy { $0.text.utf16.count <= limit })
+        #expect(pieces.map(\.text).joined() == text)
+    }
+
+    @Test func splitOversizedSegmentsSetsToToActualSubSegmentExtent() {
+        // Closes the offset-tracking gap a prior review round flagged: every
+        // piece's `to - from` must equal its own text's UTF-16 length (not some
+        // proportional slice of the original range), and the pieces must chain
+        // together to reconstruct the original segment's full `to`.
+        let text = String(repeating: "0123456789", count: 5)  // 50 chars, from:100 to:150
+        #expect(text.utf16.count == 50)
+        let segment = SpellCheckService.TextSegment(text: text, from: 100, to: 150, blockId: 3)
+        let provider = LanguageToolProvider()
+        let pieces = provider.splitOversizedSegments([segment], limit: 13)
+
+        #expect(pieces.count > 1)
+        for piece in pieces {
+            #expect(piece.to - piece.from == piece.text.utf16.count)
+            #expect(piece.blockId == 3)
+        }
+        #expect(pieces.first?.from == 100)
+        #expect(pieces.last?.to == 150)
+        #expect(pieces.map(\.text).joined() == text)
+    }
+
+    @Test func hardCutNeverSplitsAstralCharacter() {
+        // No whitespace and no sentence-ending punctuation anywhere in this
+        // string, so every cut is forced through the grapheme-safe hard-cut
+        // path. The emoji is 2 UTF-16 code units (a surrogate pair) — a naive
+        // UTF-16-offset cut could land inside it and corrupt it.
+        let text = "aaaa😀bbbb"
+        let segment = SpellCheckService.TextSegment(text: text, from: 0, to: text.utf16.count, blockId: nil)
+        let provider = LanguageToolProvider()
+        let pieces = provider.splitOversizedSegments([segment], limit: 5)
+
+        #expect(pieces.count > 1)
+        #expect(pieces.map(\.text).joined() == text)  // reconstructs exactly
+        let piecesContainingEmoji = pieces.filter { $0.text.contains("😀") }
+        #expect(piecesContainingEmoji.count == 1)
+        #expect(piecesContainingEmoji.first?.text.contains("😀") == true)  // intact, not split
+        for piece in pieces {
+            #expect(piece.to - piece.from == piece.text.utf16.count)
+        }
+    }
 }

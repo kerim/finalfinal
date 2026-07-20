@@ -127,7 +127,6 @@ import './link-click-handler';
 import { insertEquation, insertEquationDialog } from './api-math';
 import { linkTooltipPlugin, openLinkEdit } from './link-tooltip';
 import { mathPlugin } from './math-plugin';
-import { orderedListOrderPlugin } from './ordered-list-order-plugin';
 import { searchPlugin } from './search-plugin';
 import { sectionBreakPlugin } from './section-break-plugin';
 import { selectionStatsPlugin } from './selection-stats-plugin';
@@ -228,7 +227,6 @@ async function initEditor() {
       .config((ctx) => {
         ctx.update(remarkGFMPlugin.options.key, () => ({ tablePipeAlign: false }));
       })
-      .use(orderedListOrderPlugin) // Replaces built-in ordered_list schema to fix start/order rendering — AFTER commonmark so orderedListAttr ctx slice exists
       .use(autolinkPlugin) // Auto-link bare URLs on space - AFTER commonmark for link schema
       .use(markdownLinkPlugin) // Convert [text](url) to link mark on ) keypress - AFTER commonmark for link schema
       .use(smartQuotesPlugin) // Context-aware curly quote conversion (balanced open/close)

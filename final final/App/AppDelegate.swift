@@ -132,24 +132,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
         }
 
-        // Handle print notifications (same reasoning as export above: AppDelegate
-        // always exists, so Print menu items work even with zero windows)
-        NotificationCenter.default.addObserver(
-            forName: .printFormatted, object: nil, queue: .main
-        ) { _ in
-            Task { @MainActor in
-                await PrintOperations.handlePrintFormatted()
-            }
-        }
-
-        NotificationCenter.default.addObserver(
-            forName: .printRawMarkdown, object: nil, queue: .main
-        ) { _ in
-            Task { @MainActor in
-                await PrintOperations.handlePrintRawMarkdown()
-            }
-        }
-
         // Capture main window for Cmd-W interception
         // Use async to allow SwiftUI to create the window first
         DispatchQueue.main.async { [weak self] in
