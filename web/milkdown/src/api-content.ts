@@ -1217,6 +1217,21 @@ export function insertImage(opts: {
     // whose $split.parent is never the SAME ordered_list with items on both
     // sides, so `continuation` stays null and `order` keeps its normal
     // default of 1.
+    // Depth-agnostic by construction: `$split.parent` is whatever node
+    // directly contains position `insertPos` at ITS OWN depth, resolved
+    // dynamically — so this works identically whether the split list is a
+    // top-level ordered_list or one nested many levels deep inside other
+    // lists/blockquotes. There is no hardcoded depth to keep in sync with
+    // nesting.
+    //
+    // Do NOT extend this to walk up past a `paragraph` parent to catch the
+    // mid-text-paste case (pasting inside an item's text, not at an item
+    // boundary). That case is intentionally excluded: `list_item`'s content
+    // model is `"paragraph block*"`, which unconditionally absorbs a pasted
+    // figure as an extra block child of the SAME item, without ever
+    // splitting the list. There is nothing to continue numbering for —
+    // walking up to find an ordered_list ancestor there would misidentify a
+    // non-split as a split.
     const $split = tr.doc.resolve(insertPos);
     const splitDepth = $split.depth;
     let continuation: number | null = null;
