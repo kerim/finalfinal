@@ -119,6 +119,7 @@ import {
 } from './footnote-plugin';
 import { headingNodeViewPlugin } from './heading-nodeview-plugin';
 import { highlightPlugin } from './highlight-plugin';
+import { imageNodeRewritePlugin } from './image-node-rewrite-plugin';
 import { imagePlugin } from './image-plugin';
 import { inlineCodeCursorPlugin } from './inline-code-cursor';
 import { linkCursorPlugin } from './link-cursor';
@@ -229,6 +230,7 @@ async function initEditor() {
         ctx.update(remarkGFMPlugin.options.key, () => ({ tablePipeAlign: false }));
       })
       .use(orderedListOrderPlugin) // Replaces built-in ordered_list schema to fix start/order rendering — AFTER commonmark so orderedListAttr ctx slice exists
+      .use(imageNodeRewritePlugin) // Replaces built-in image schema so a plain (non-figure) inline image gets the media/... rewrite too — AFTER commonmark so it wins over commonmark's own image registration
       .use(autolinkPlugin) // Auto-link bare URLs on space - AFTER commonmark for link schema
       .use(markdownLinkPlugin) // Convert [text](url) to link mark on ) keypress - AFTER commonmark for link schema
       .use(smartQuotesPlugin) // Context-aware curly quote conversion (balanced open/close)

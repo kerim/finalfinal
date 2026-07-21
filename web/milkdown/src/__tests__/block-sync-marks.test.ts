@@ -171,6 +171,13 @@ const testSchema = new Schema({
       attrs: { latex: { default: '' } },
       toDOM: (node: any) => ['span', { 'data-latex': node.attrs.latex }, `$${node.attrs.latex}$`],
     },
+    image: {
+      group: 'inline',
+      inline: true,
+      atom: true,
+      attrs: { src: { default: '' }, alt: { default: '' }, title: { default: '' } },
+      toDOM: (node: any) => ['img', { src: node.attrs.src, alt: node.attrs.alt }],
+    },
   },
   marks: {
     link: {
@@ -213,6 +220,23 @@ function blockquote(...paragraphs: ReturnType<typeof para>[]) {
 function bulletList(...items: Array<Parameters<typeof para>>) {
   const listItems = items.map((contents) => testSchema.nodes.list_item!.create({}, [para(...contents)]));
   return testSchema.nodes.bullet_list!.create({}, listItems);
+}
+
+/** Builds a paragraph with a plain (non-figure) inline `image` node mixed
+ * into surrounding text — `para()` only accepts text/mark descriptors, with
+ * no room for a non-text child, so this is a separate, direct construction
+ * matching the file's existing direct-construction style (see `heading`/
+ * `blockquote` above). */
+function paraWithImage(before: string, attrs: { src: string; alt?: string; title?: string }, after: string) {
+  // ProseMirror disallows empty TextNodes, so an empty before/after (the
+  // bracket-escaping and title-only cases below have no surrounding text)
+  // must be omitted from the child list entirely, not passed as ''.
+  const children = [
+    ...(before ? [testSchema.text(before)] : []),
+    testSchema.nodes.image!.create(attrs),
+    ...(after ? [testSchema.text(after)] : []),
+  ];
+  return testSchema.nodes.paragraph!.create({}, children);
 }
 
 // MARK: - Table builder helpers
@@ -370,6 +394,50 @@ describe('nodeToMarkdownFragment — per-block-type', () => {
   it('bullet list item with link', () => {
     const node = bulletList([{ text: 'See ' }, { text: 'here', marks: ['link'], linkHref: 'u' }]);
     expect(nodeToMarkdownFragment(node)).toBe('- See [here](u)');
+  });
+});
+
+// ----------------------------------------------------------------------------
+// image (plain inline node) persistence serializer — guards the BLOCKING
+// data-loss finding from plan review: a plain (non-figure) `image` node has
+// no explicit case in serializeInlineContent()'s dispatch chain before the
+// async-image-corruption fix, so it fell through to the generic fallback
+// (`child.textContent`, which returns '' for any leaf atom — see the
+// footnote_def comment in block-sync-plugin.ts), silently dropping the
+// image's `![alt](media/...)` reference from the block's persisted
+// markdownFragment. These assertions prove the persisted fragment is the
+// CANONICAL, un-rewritten `media/...` value by construction — this
+// hand-rolled testSchema's `toDOM` is never touched by any display rewrite
+// (that mechanism only exists in the real Milkdown schema from
+// image-node-rewrite-plugin.ts, absent here) — exactly what the BLOCKING
+// finding requires coverage for.
+// ----------------------------------------------------------------------------
+describe('nodeToMarkdownFragment — image (plain inline node)', () => {
+  it('plain paragraph: a mid-text image retains its canonical media/... url', () => {
+    const node = paraWithImage('before ', { src: 'media/x.png', alt: 'a' }, ' after');
+    expect(nodeToMarkdownFragment(node)).toBe('before ![a](media/x.png) after');
+  });
+
+  it('list item: the same, nested — survives the list-item recursion path', () => {
+    const node = testSchema.nodes.bullet_list!.create({}, [
+      testSchema.nodes.list_item!.create({}, [paraWithImage('before ', { src: 'media/x.png', alt: 'a' }, ' after')]),
+    ]);
+    expect(nodeToMarkdownFragment(node)).toBe('- before ![a](media/x.png) after');
+  });
+
+  it('alt text containing [ ] is escaped (mirrors link text bracket-escaping)', () => {
+    const node = paraWithImage('', { src: 'media/x.png', alt: '[bracketed]' }, '');
+    expect(nodeToMarkdownFragment(node)).toBe('![\\[bracketed\\]](media/x.png)');
+  });
+
+  it('a title attribute is preserved in the emitted markdown when present', () => {
+    const node = paraWithImage('', { src: 'media/x.png', alt: 'a', title: 'a title' }, '');
+    expect(nodeToMarkdownFragment(node)).toBe('![a](media/x.png "a title")');
+  });
+
+  it('no title attribute produces no trailing quoted-title segment', () => {
+    const node = paraWithImage('', { src: 'media/x.png', alt: 'a' }, '');
+    expect(nodeToMarkdownFragment(node)).toBe('![a](media/x.png)');
   });
 });
 

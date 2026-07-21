@@ -41,6 +41,24 @@ import { syncLog } from './sync-debug';
 // ============================================================================
 export { escapeAltAttr, extractAltAttrValue, extractWidthAttrValue, isRecognizedAttrBlock, unescapeOnce };
 
+/**
+ * media/file.png → projectmedia://file.png — the display-URL rewrite every
+ * live-rendered image (figure or plain inline image) needs, since the raw
+ * `media/...` path stored in the document isn't itself a resolvable URL
+ * scheme for WKWebView. Anything not `media/`-prefixed (`blob:`, `data:`,
+ * already-`projectmedia://`, external `https://` URLs) passes through
+ * unchanged. Extracted from `FigureNodeView`'s former private `rewriteUrl`
+ * method so `image-node-rewrite-plugin.ts` can reuse the identical, single
+ * source of truth for the plain `image` node's schema-level `toDOM`.
+ */
+export function rewriteMediaUrl(src: string): string {
+  // media/file.png → projectmedia://file.png
+  if (src.startsWith('media/')) {
+    return `projectmedia://${src.slice(6)}`;
+  }
+  return src;
+}
+
 // Remark plugin: convert standalone images with media/ URLs into figure nodes
 // In mdast, a standalone ![alt](src) line produces paragraph > image.
 // We detect paragraphs containing exactly one image child with media/ prefix
@@ -264,7 +282,7 @@ class FigureNodeView implements ProsemirrorNodeView {
 
     // Image
     this.img = document.createElement('img');
-    const displaySrc = this.rewriteUrl(node.attrs.src || '');
+    const displaySrc = rewriteMediaUrl(node.attrs.src || '');
     this.img.src = displaySrc;
     this.img.alt = node.attrs.alt || '';
     if (node.attrs.width) {
@@ -322,14 +340,6 @@ class FigureNodeView implements ProsemirrorNodeView {
       return getBlockIdAtPos(pos) || '';
     }
     return '';
-  }
-
-  private rewriteUrl(src: string): string {
-    // media/file.png → projectmedia://file.png
-    if (src.startsWith('media/')) {
-      return `projectmedia://${src.slice(6)}`;
-    }
-    return src;
   }
 
   private onResizeStart = (e: MouseEvent) => {
@@ -515,7 +525,7 @@ class FigureNodeView implements ProsemirrorNodeView {
     }
 
     // Update image
-    const displaySrc = this.rewriteUrl(node.attrs.src || '');
+    const displaySrc = rewriteMediaUrl(node.attrs.src || '');
     if (this.img.src !== displaySrc) {
       this.img.src = displaySrc;
     }

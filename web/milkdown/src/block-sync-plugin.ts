@@ -447,6 +447,32 @@ function serializeInlineContent(node: Node): string {
         closeAllActive();
         parts.push('<br>');
         awaitingFirstEmit = false;
+      } else if (child.type.name === 'image') {
+        closeAllActive();
+        // Plain (non-figure) inline image, reachable whenever an image lands
+        // somewhere remarkFigurePlugin doesn't promote to `figure` (e.g. a
+        // mid-paragraph paste/drop). Emit the CANONICAL src (node.attrs.src,
+        // the raw media/... path) — never the display-rewritten
+        // projectmedia:// value the live DOM shows (node.attrs.src is never
+        // itself rewritten; see image-node-rewrite-plugin.ts's toDOM/data-src
+        // split) — so markdownFragment stays a portable reference. Without
+        // this case the generic fallback below silently produces '' for this
+        // leaf atom (see the footnote_def comment above), dropping the image
+        // from the database entirely.
+        const alt = (child.attrs.alt as string) || '';
+        const src = (child.attrs.src as string) || '';
+        // Optional title, using the same escapeTitle helper (and the same
+        // "only emit when present" idiom) the link mark's own closeFor()
+        // uses above — ![alt](src "title") round-trips through the real
+        // image schema's toMarkdown/parseMarkdown (image-node-rewrite-plugin.ts,
+        // copied verbatim from upstream), so dropping it here would silently
+        // lose a title a user's markdown source actually had.
+        const title = (child.attrs.title as string) || '';
+        const titleSuffix = title ? ` "${escapeTitle(title)}"` : '';
+        parts.push(
+          `![${escapeInlineText(alt, { insideLink: true, applyLeadingEscape: false })}](${src}${titleSuffix})`
+        );
+        awaitingFirstEmit = false;
       } else {
         closeAllActive();
         parts.push(child.textContent);
