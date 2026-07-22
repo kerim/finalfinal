@@ -22,22 +22,14 @@ interface LinkRange {
 /**
  * Find the full range of a link mark at a given position.
  * Walks the parent node's children to find contiguous text covered by the same link href.
- * Exported for testing.
  */
-export function findLinkMarkRange(view: EditorView, pos: number): LinkRange | null {
+function findLinkMarkRange(view: EditorView, pos: number): LinkRange | null {
   const $pos = view.state.doc.resolve(pos);
   const parent = $pos.parent;
   const parentOffset = pos - $pos.parentOffset;
 
-  // `$pos.index()` legitimately returns `parent.childCount` when pos sits exactly at the
-  // end of the parent's content — there is no child at that index. ProseMirror's own
-  // `nodeAfter` getter guards this same case before indexing; mirror it here to avoid
-  // Fragment.child() throwing a RangeError.
-  const index = $pos.index();
-  if (index >= parent.childCount) return null;
-
   // Find link mark at this position
-  const marks = parent.child(index).marks;
+  const marks = parent.child($pos.index()).marks;
   const linkMark = marks.find((m: Mark) => m.type.name === 'link');
   if (!linkMark) return null;
 

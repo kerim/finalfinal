@@ -335,16 +335,16 @@ function assertExpectedMarksRegistered(schema: { marks: Record<string, unknown> 
  * is emitted by its PARENT list, not by recursing into the item itself), so
  * the plain container walk is correct for it.
  *
- * `blockquote` is NOT in this set, and that is a KNOWN, PRE-EXISTING GAP,
- * not a validated-correct exclusion: `blockquote` has the exact same shape
- * of marker-generation logic (`> ` line-prefixing, applied only in
- * `nodeToMarkdownFragment`'s top-level `case 'blockquote'`) that
- * `bullet_list`/`ordered_list` just got added to this set for. A blockquote
- * nested inside a list item (or inside another blockquote) would hit the
- * identical failure this diff just fixed for lists — silently losing its
- * `> ` marker on re-save via this serializer. This is pre-existing behavior,
- * unrelated to the numbering bug this diff addresses, and is deferred as a
- * separate follow-up rather than fixed here.
+ * `blockquote` and `heading` are in this set for the identical reason:
+ * `blockquote` has its own marker-generation logic (`> ` line-prefixing,
+ * applied only in `nodeToMarkdownFragment`'s top-level `case 'blockquote'`),
+ * and `heading` has its own (`'#'.repeat(level) + ' '`, applied only in the
+ * top-level `case 'heading'`). Neither of those prefixes is reproduced by the
+ * generic recursive container walk below, so without this dispatch a
+ * blockquote or heading nested inside a list item (or inside another
+ * blockquote) would hit the identical failure this set exists to prevent for
+ * lists — silently losing its `> ` or `#` marker on re-save via this
+ * serializer.
  */
 const NESTED_BLOCK_ATOM_TYPES: ReadonlySet<string> = new Set([
   'figure',
@@ -355,6 +355,8 @@ const NESTED_BLOCK_ATOM_TYPES: ReadonlySet<string> = new Set([
   'section_break',
   'bullet_list',
   'ordered_list',
+  'blockquote',
+  'heading',
 ]);
 
 /**

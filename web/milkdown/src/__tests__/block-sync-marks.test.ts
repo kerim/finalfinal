@@ -391,6 +391,12 @@ describe('nodeToMarkdownFragment — per-block-type', () => {
     expect(nodeToMarkdownFragment(node)).toBe('> Visit [site](x)');
   });
 
+  it('heading nested inside a blockquote (routed through NESTED_BLOCK_ATOM_TYPES)', () => {
+    const nestedHeading = heading(2, { text: 'Nested heading' });
+    const node = testSchema.nodes.blockquote!.create({}, [nestedHeading]);
+    expect(nodeToMarkdownFragment(node)).toBe('> ## Nested heading');
+  });
+
   it('bullet list item with link', () => {
     const node = bulletList([{ text: 'See ' }, { text: 'here', marks: ['link'], linkHref: 'u' }]);
     expect(nodeToMarkdownFragment(node)).toBe('- See [here](u)');
@@ -426,6 +432,31 @@ describe('nodeToMarkdownFragment — nested list as a list_item second child', (
     const outerItem = testSchema.nodes.list_item!.create({}, [para({ text: 'Outer' }), nestedBullet]);
     const node = testSchema.nodes.ordered_list!.create({}, [outerItem]);
     expect(nodeToMarkdownFragment(node)).toBe('1. Outer\n   - Nested A\n   - Nested B');
+  });
+});
+
+// ----------------------------------------------------------------------------
+// Nested blockquote/heading serialization — regression guard for
+// NESTED_BLOCK_ATOM_TYPES omitting blockquote/heading. Before the fix, a
+// list_item's second child being a blockquote or heading took the plain
+// container-recursion fallback and lost its `> ` / `#` marker entirely, since
+// only the top-level `case 'blockquote'`/`case 'heading'` in
+// `nodeToMarkdownFragment` know how to generate them. These assert the exact
+// marker/indentation output string, not just substring containment.
+// ----------------------------------------------------------------------------
+describe('nodeToMarkdownFragment — nested blockquote/heading as a list_item second child', () => {
+  it('bullet list item containing a nested blockquote as its second child', () => {
+    const nestedQuote = blockquote(para({ text: 'Quoted' }));
+    const outerItem = testSchema.nodes.list_item!.create({}, [para({ text: 'Outer' }), nestedQuote]);
+    const node = testSchema.nodes.bullet_list!.create({}, [outerItem]);
+    expect(nodeToMarkdownFragment(node)).toBe('- Outer\n  > Quoted');
+  });
+
+  it('bullet list item containing a nested heading as its second child', () => {
+    const nestedHeading = heading(2, { text: 'Nested heading' });
+    const outerItem = testSchema.nodes.list_item!.create({}, [para({ text: 'Outer' }), nestedHeading]);
+    const node = testSchema.nodes.bullet_list!.create({}, [outerItem]);
+    expect(nodeToMarkdownFragment(node)).toBe('- Outer\n  ## Nested heading');
   });
 });
 
