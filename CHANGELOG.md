@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **Print command** — File > Print now offers two options: Formatted (⌘P) prints the document the same way it would export to PDF, and Raw Markdown prints the literal markdown source text.
+
+### Fixed
+
+- **Numbered lists split by a pasted or dropped image could restart at 1 instead of continuing** — inserting an image in the middle of a numbered list didn't carry the numbering across it, and even once that part was fixed, simply reopening the document afterward could still reset the count back to 1. Both are now fixed, so a numbered list keeps counting correctly through an inserted image, before and after reopening the document.
+- **Nested lists, quoted text, and headings could silently lose their formatting on the next save** — a numbered or bulleted list, a blockquote, or a heading nested inside a list item could have its marker stripped the next time anything in that block was saved, even from an unrelated edit, turning it back into plain text. They now keep their formatting through every save.
+- **Dropping an image into the middle of a nested list could turn it into plain text and merge the list back together** — if a nested list was split by a dropped image with no blank line around it, the app could misread the image as ordinary text on the next save, silently demoting it and rejoining the two halves of the list.
+- **Images dropped or pasted into the middle of a paragraph could end up permanently broken, and could vanish from the saved document entirely** — after such an image was reparsed on a later save, it could show a broken-image icon that never recovered, and in some cases its reference could be silently dropped from the document's saved data too. Both are now fixed.
+- **Grammar and style checking silently gave up partway through longer documents** — LanguageTool has its own size limit per request, and a document whose text passed that limit went unchecked past that point, with no indication anything was wrong. Long documents are now automatically split into multiple checks and the results merged back together, so checking now covers documents of any length.
+- **Manual snapshots (⌘⇧S), automatic snapshots, and background auto-backups could capture a block at its old position** — if a block had been moved in the editor without otherwise being edited, these could save it at its previous location instead of where you'd actually moved it to, the same issue already fixed for exporting. All three now always capture your latest changes.
+- **Editing a link right at the end of a line could crash the app** — clicking a link, or pressing ⌘K to add or edit one, could crash the app if the cursor landed exactly at the end of a heading, paragraph, or list item's text.
+
 ## [0.2.112] - 2026-07-19
 
 ### Fixed
