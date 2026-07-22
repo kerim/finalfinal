@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.113] - 2026-07-22
+
 ### Added
 
 - **Print command** — File > Print now offers two options: Formatted (⌘P) prints the document the same way it would export to PDF, and Raw Markdown prints the literal markdown source text.
