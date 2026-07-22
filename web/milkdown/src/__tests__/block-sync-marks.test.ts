@@ -398,6 +398,38 @@ describe('nodeToMarkdownFragment — per-block-type', () => {
 });
 
 // ----------------------------------------------------------------------------
+// Nested sub-list serialization — regression guard for NESTED_BLOCK_ATOM_TYPES
+// omitting bullet_list/ordered_list. Before the fix, a list_item's second
+// child being itself a nested list took the plain container-recursion
+// fallback (same path exercised by the plain-image-nesting case above) and
+// lost its markers entirely, since only the top-level `case 'bullet_list'`/
+// `case 'ordered_list'` in `nodeToMarkdownFragment` know how to generate
+// them. These assert the exact marker/indentation output string, not just
+// substring containment.
+// ----------------------------------------------------------------------------
+describe('nodeToMarkdownFragment — nested list as a list_item second child', () => {
+  it('bullet list item containing a nested ordered list as its second child', () => {
+    const nestedOrdered = testSchema.nodes.ordered_list!.create({}, [
+      testSchema.nodes.list_item!.create({}, [para({ text: 'Nested 1' })]),
+      testSchema.nodes.list_item!.create({}, [para({ text: 'Nested 2' })]),
+    ]);
+    const outerItem = testSchema.nodes.list_item!.create({}, [para({ text: 'Outer' }), nestedOrdered]);
+    const node = testSchema.nodes.bullet_list!.create({}, [outerItem]);
+    expect(nodeToMarkdownFragment(node)).toBe('- Outer\n  1. Nested 1\n  2. Nested 2');
+  });
+
+  it('ordered list item containing a nested bullet list as its second child', () => {
+    const nestedBullet = testSchema.nodes.bullet_list!.create({}, [
+      testSchema.nodes.list_item!.create({}, [para({ text: 'Nested A' })]),
+      testSchema.nodes.list_item!.create({}, [para({ text: 'Nested B' })]),
+    ]);
+    const outerItem = testSchema.nodes.list_item!.create({}, [para({ text: 'Outer' }), nestedBullet]);
+    const node = testSchema.nodes.ordered_list!.create({}, [outerItem]);
+    expect(nodeToMarkdownFragment(node)).toBe('1. Outer\n   - Nested A\n   - Nested B');
+  });
+});
+
+// ----------------------------------------------------------------------------
 // image (plain inline node) persistence serializer — guards the BLOCKING
 // data-loss finding from plan review: a plain (non-figure) `image` node has
 // no explicit case in serializeInlineContent()'s dispatch chain before the

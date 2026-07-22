@@ -312,10 +312,39 @@ function assertExpectedMarksRegistered(schema: { marks: Record<string, unknown> 
  * item (the deliberate "insert at end of item" placement in
  * `computeCursorAwareInsertPos`/`insert-pos.test.ts` produces exactly this
  * shape — a `figure` as a `list_item`'s second child, sibling to its
- * mandatory-first paragraph). NOT list_item/bullet_list/ordered_list/
- * blockquote themselves — those must stay on the recursive container path
- * (nested lists, list-inside-blockquote, etc. — unchanged, pre-existing
- * behavior).
+ * mandatory-first paragraph).
+ *
+ * `bullet_list`/`ordered_list` ARE in this set (unlike `list_item`, which
+ * correctly stays on the recursive container path below): a nested sub-list
+ * has its own marker-generation logic (bullet marker / ordered-list
+ * numbering, including the `order`-attribute-driven start number — see
+ * `ordered-list-order-plugin.ts`) that only the top-level
+ * `case 'bullet_list'`/`case 'ordered_list'` in `nodeToMarkdownFragment`
+ * implements; the generic recursive fallback below has none of that and
+ * would silently emit the nested list's items with no `-`/`1.` markers at
+ * all — this destroyed nested-list numbering/markers on ANY re-save of the
+ * containing block, not just an image-paste split. This exclusion was never
+ * actually validated against this serialization path: it predates the
+ * `order`-attribute plumbing (introduced in commits `5f53c23`, `a85b571`),
+ * and every prior "nested lists work" verification
+ * (`repro-list-paste.test.ts`) exercised Milkdown's own stock
+ * `getMarkdown()`/`toMarkdown` serializers, never `nodeToMarkdownFragment`
+ * (this file's hand-rolled serializer — the one that actually persists to
+ * SQLite via `getBlockChanges()`). `list_item` genuinely belongs on the
+ * recursive path: it has no marker-generation logic of its own (its marker
+ * is emitted by its PARENT list, not by recursing into the item itself), so
+ * the plain container walk is correct for it.
+ *
+ * `blockquote` is NOT in this set, and that is a KNOWN, PRE-EXISTING GAP,
+ * not a validated-correct exclusion: `blockquote` has the exact same shape
+ * of marker-generation logic (`> ` line-prefixing, applied only in
+ * `nodeToMarkdownFragment`'s top-level `case 'blockquote'`) that
+ * `bullet_list`/`ordered_list` just got added to this set for. A blockquote
+ * nested inside a list item (or inside another blockquote) would hit the
+ * identical failure this diff just fixed for lists — silently losing its
+ * `> ` marker on re-save via this serializer. This is pre-existing behavior,
+ * unrelated to the numbering bug this diff addresses, and is deferred as a
+ * separate follow-up rather than fixed here.
  */
 const NESTED_BLOCK_ATOM_TYPES: ReadonlySet<string> = new Set([
   'figure',
@@ -324,6 +353,8 @@ const NESTED_BLOCK_ATOM_TYPES: ReadonlySet<string> = new Set([
   'horizontal_rule',
   'math_display',
   'section_break',
+  'bullet_list',
+  'ordered_list',
 ]);
 
 /**
@@ -571,9 +602,11 @@ export function nodeToMarkdownFragment(node: Node): string {
       return items.join('\n');
     }
     case 'ordered_list': {
+      const rawOrder = node.attrs.order;
+      const start = typeof rawOrder === 'number' && Number.isFinite(rawOrder) ? rawOrder : 1;
       const oItems: string[] = [];
       node.forEach((child, _offset, index) => {
-        const marker = `${index + 1}. `;
+        const marker = `${start + index}. `;
         const itemText = serializeInlineContent(child);
         oItems.push(`${marker}${indentContinuationLines(itemText, ' '.repeat(marker.length))}`);
       });

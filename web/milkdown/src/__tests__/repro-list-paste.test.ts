@@ -26,6 +26,7 @@ import {
   blockSyncPlugin,
   flushPendingBlockChanges,
   getBlockChanges,
+  nodeToMarkdownFragment,
   resetAndSnapshot,
   resetBlockSyncState,
 } from '../block-sync-plugin';
@@ -698,5 +699,233 @@ describe('REAL pipeline: ordered_list numbering across a split vs. a deliberate 
       return true;
     });
     expect(figureSrc).toBe('media/test.png');
+  });
+});
+
+// Regression suite for the bug fixed in this commit: `nodeToMarkdownFragment`
+// (this file's hand-rolled serializer — the one that actually persists to
+// SQLite via `getBlockChanges()`, NOT Milkdown's own `getMarkdown()`) used to
+// omit `bullet_list`/`ordered_list` from `NESTED_BLOCK_ATOM_TYPES`, so a
+// nested sub-list took the generic recursive fallback (no marker-generation
+// logic of its own) whenever its containing block was re-saved through THIS
+// serializer — silently stripping every `-`/`1.` marker from the nested
+// list on persistence, even with no image paste or split involved at all.
+// Every prior "nested lists work" test (the describe block above,
+// `insert-pos.test.ts`, etc.) exercised Milkdown's stock `getMarkdown()`
+// path instead, so none of them could have caught this.
+//
+// These tests build the top-level list node via the REAL Milkdown pipeline
+// (parsing markdown through `makeEditor`, exactly like the suites above),
+// serialize ONLY that node with `nodeToMarkdownFragment` (bypassing
+// `getMarkdown()` entirely), then reparse the resulting fragment ALONE in a
+// fresh editor instance and assert on the resulting document's STRUCTURE
+// (nesting depth / parent-child node types / child counts) — not just
+// substring matching on the output text — to prove the fix survives a real
+// serialize → reparse round trip, not just an in-memory read of the
+// fragment string.
+describe('nodeToMarkdownFragment — nested list structural round-trip (bug: NESTED_BLOCK_ATOM_TYPES omitted lists)', () => {
+  afterEach(() => {
+    setEditorInstance(null);
+    resetBlockSyncState();
+    resetBlockIdState();
+  });
+
+  /** Returns the first top-level `bullet_list`/`ordered_list` child of a doc
+   * built by parsing `markdown` through the real Milkdown pipeline. */
+  async function topLevelListNode(markdown: string): Promise<any> {
+    const editor = await makeEditor(markdown);
+    const view = editor.ctx.get(editorViewCtx);
+    let node: any = null;
+    view.state.doc.forEach((child: any) => {
+      if (!node && (child.type.name === 'bullet_list' || child.type.name === 'ordered_list')) node = child;
+    });
+    if (!node) throw new Error('topLevelListNode: no top-level list found in parsed doc');
+    return node;
+  }
+
+  /** Walks up from the (unique) text node matching `text` and returns the
+   * chain of ancestor type names from the document's top-level block down to
+   * (and including) the immediate textblock parent — e.g.
+   * `['bullet_list', 'list_item', 'ordered_list', 'list_item', 'paragraph']`
+   * for a bullet item's nested ordered sub-item. Used to assert exact
+   * nesting depth and parent/child node types, not just text content. */
+  function ancestorChainTypeNames(doc: any, text: string): string[] {
+    const pos = findTextPos(doc, text);
+    const $pos = doc.resolve(pos);
+    const chain: string[] = [];
+    for (let d = 1; d <= $pos.depth; d++) {
+      chain.push($pos.node(d).type.name);
+    }
+    return chain;
+  }
+
+  const BULLET_OVER_ORDERED_MD = ['- Outer A', '  1. Inner 1', '  2. Inner 2', '- Outer B'].join('\n');
+  const ORDERED_OVER_BULLET_MD = ['1. Outer A', '   - Inner 1', '   - Inner 2', '2. Outer B'].join('\n');
+
+  // 3-level nesting, both directions — confirms the fix works at arbitrary
+  // depth, not just one level.
+  const BULLET_OVER_ORDERED_OVER_BULLET_MD = [
+    '- Outer A',
+    '  1. Middle 1',
+    '     - Leaf 1',
+    '     - Leaf 2',
+    '  2. Middle 2',
+    '- Outer B',
+  ].join('\n');
+  const ORDERED_OVER_BULLET_OVER_ORDERED_MD = [
+    '1. Outer A',
+    '   - Middle 1',
+    '     1. Leaf 1',
+    '     2. Leaf 2',
+    '   - Middle 2',
+    '2. Outer B',
+  ].join('\n');
+
+  it('2-level: bullet_list containing a nested ordered_list — structure survives serialize → reparse', async () => {
+    const listNode = await topLevelListNode(BULLET_OVER_ORDERED_MD);
+    const fragment = nodeToMarkdownFragment(listNode);
+    const reloaded = await reparse(fragment);
+
+    expect(countNodesOfType(reloaded, 'bullet_list')).toBe(1);
+    expect(countNodesOfType(reloaded, 'ordered_list')).toBe(1);
+    expect(ancestorChainTypeNames(reloaded, 'Inner 1')).toEqual([
+      'bullet_list',
+      'list_item',
+      'ordered_list',
+      'list_item',
+      'paragraph',
+    ]);
+    expect(nearestAncestorOfType(reloaded, 'Outer A', 'bullet_list').childCount).toBe(2);
+    const inner = nearestAncestorOfType(reloaded, 'Inner 1', 'ordered_list');
+    expect(inner.childCount).toBe(2);
+    expect(inner.attrs.order).toBe(1);
+  });
+
+  it('2-level: ordered_list containing a nested bullet_list — structure survives serialize → reparse', async () => {
+    const listNode = await topLevelListNode(ORDERED_OVER_BULLET_MD);
+    const fragment = nodeToMarkdownFragment(listNode);
+    const reloaded = await reparse(fragment);
+
+    expect(countNodesOfType(reloaded, 'ordered_list')).toBe(1);
+    expect(countNodesOfType(reloaded, 'bullet_list')).toBe(1);
+    expect(ancestorChainTypeNames(reloaded, 'Inner 1')).toEqual([
+      'ordered_list',
+      'list_item',
+      'bullet_list',
+      'list_item',
+      'paragraph',
+    ]);
+    expect(nearestAncestorOfType(reloaded, 'Outer A', 'ordered_list').childCount).toBe(2);
+    expect(nearestAncestorOfType(reloaded, 'Outer A', 'ordered_list').attrs.order).toBe(1);
+    expect(nearestAncestorOfType(reloaded, 'Inner 1', 'bullet_list').childCount).toBe(2);
+  });
+
+  it('3-level: bullet > ordered > bullet — structure survives serialize → reparse at arbitrary depth', async () => {
+    const listNode = await topLevelListNode(BULLET_OVER_ORDERED_OVER_BULLET_MD);
+    const fragment = nodeToMarkdownFragment(listNode);
+    const reloaded = await reparse(fragment);
+
+    expect(ancestorChainTypeNames(reloaded, 'Leaf 1')).toEqual([
+      'bullet_list',
+      'list_item',
+      'ordered_list',
+      'list_item',
+      'bullet_list',
+      'list_item',
+      'paragraph',
+    ]);
+    expect(nearestAncestorOfType(reloaded, 'Outer A', 'bullet_list').childCount).toBe(2);
+    const middle = nearestAncestorOfType(reloaded, 'Middle 1', 'ordered_list');
+    expect(middle.childCount).toBe(2);
+    expect(middle.attrs.order).toBe(1);
+    expect(nearestAncestorOfType(reloaded, 'Leaf 1', 'bullet_list').childCount).toBe(2);
+  });
+
+  it('3-level: ordered > bullet > ordered — structure survives serialize → reparse at arbitrary depth', async () => {
+    const listNode = await topLevelListNode(ORDERED_OVER_BULLET_OVER_ORDERED_MD);
+    const fragment = nodeToMarkdownFragment(listNode);
+    const reloaded = await reparse(fragment);
+
+    expect(ancestorChainTypeNames(reloaded, 'Leaf 1')).toEqual([
+      'ordered_list',
+      'list_item',
+      'bullet_list',
+      'list_item',
+      'ordered_list',
+      'list_item',
+      'paragraph',
+    ]);
+    expect(nearestAncestorOfType(reloaded, 'Outer A', 'ordered_list').childCount).toBe(2);
+    const middle = nearestAncestorOfType(reloaded, 'Middle 1', 'bullet_list');
+    expect(middle.childCount).toBe(2);
+    const leaf = nearestAncestorOfType(reloaded, 'Leaf 1', 'ordered_list');
+    expect(leaf.childCount).toBe(2);
+    expect(leaf.attrs.order).toBe(1);
+  });
+
+  // Mirrors the existing "(b) nested split" case above (a nested ordered
+  // list interrupted mid-list by a dropped image), but exercised through
+  // `nodeToMarkdownFragment` directly instead of `getMarkdown()` — proving
+  // the numbering fix holds for the hand-rolled persistence serializer in
+  // the same split scenario the stock-serializer suite above already covers.
+  it('split-list case: nested ordered list interrupted by a dropped image — numbers stay sequential after reparse (no restart)', async () => {
+    const NESTED_ORDERED_LIST_MD = ['1. Outer 1', '   1. Inner 1', '   2. Inner 2', '   3. Inner 3', '2. Outer 2'].join(
+      '\n'
+    );
+    const editor = await makeEditor(NESTED_ORDERED_LIST_MD);
+    setEditorInstance(editor);
+    const view = editor.ctx.get(editorViewCtx);
+
+    const inner2Pos = findTextPos(view.state.doc, 'Inner 2');
+    view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, inner2Pos)));
+
+    const handled = view.someProp('handlePaste', (f) => f(view, fakePasteEvent(), undefined as any));
+    expect(handled).toBe(true);
+
+    insertImage({ src: 'media/test.png', alt: '', caption: '', width: null, blockId: 'temp-test-block' });
+
+    // The whole document is a single top-level ordered_list (no surrounding
+    // paragraphs in NESTED_ORDERED_LIST_MD), so it alone is what gets
+    // persisted via nodeToMarkdownFragment for this block.
+    let topNode: any = null;
+    view.state.doc.forEach((child: any) => {
+      if (!topNode) topNode = child;
+    });
+    const fragment = nodeToMarkdownFragment(topNode);
+
+    // Sanity: nodeToMarkdownFragment itself must emit numbered markers for
+    // BOTH split halves of the nested list. Pre-fix, bullet_list/ordered_list
+    // were excluded from NESTED_BLOCK_ATOM_TYPES, so the nested lists took
+    // the plain recursive fallback and serialized with NO markers at all
+    // ("Inner 1"/"Inner 2"/"Inner 3" as bare lines) — destroying the nested
+    // numbering entirely, not just miscounting it.
+    expect(fragment).toMatch(/1\.\s+Inner 1/);
+    expect(fragment).toMatch(/2\.\s+Inner 2/);
+    expect(fragment).toMatch(/3\.\s+Inner 3/);
+
+    const reloaded = await reparse(fragment);
+
+    // Known, accepted, out-of-scope limitation (pre-existing, NOT introduced
+    // by this fix): the dropped image may demote from a `figure` node to a
+    // plain inline image, and the two split list fragments may re-merge into
+    // a single nested list on reparse, because the container-recursion
+    // branch's plain `parts.join('\n')` (serializeInlineContent) doesn't
+    // insert a blank-line separator between a list_item's block children —
+    // this is pre-existing behavior affecting all six original
+    // NESTED_BLOCK_ATOM_TYPES members equally, not something this numbering
+    // fix introduces. The actual reported bug — numbering corruption — does
+    // not occur: re-serializing the reloaded doc still shows the numbers
+    // sequential and correct, never restarting at 1.
+    let reloadedTopNode: any = null;
+    reloaded.forEach((child: any) => {
+      if (!reloadedTopNode) reloadedTopNode = child;
+    });
+    const reloadedFragment = nodeToMarkdownFragment(reloadedTopNode);
+    expect(reloadedFragment).toMatch(/1\.\s+Inner 1/);
+    expect(reloadedFragment).toMatch(/2\.\s+Inner 2/);
+    expect(reloadedFragment).toMatch(/3\.\s+Inner 3/);
+
+    flushPendingBlockChanges();
+    expect(getBlockChanges().deletes).toEqual([]);
   });
 });
