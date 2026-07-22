@@ -518,19 +518,34 @@ function serializeInlineContent(node: Node): string {
     return parts.join('');
   }
   // Container nodes (list_item, blockquote children): recurse.
+  //
+  // Adjacent children are normally joined with a single '\n', but whenever
+  // either neighbor is a NESTED_BLOCK_ATOM_TYPES member (delegated to
+  // nodeToMarkdownFragment below) they must be separated by a blank line
+  // ('\n\n') instead. Without that blank line, CommonMark's lazy-continuation
+  // rule reads the delegated child's markdown as a continuation of whatever
+  // came before it on reparse — e.g. a nested list interrupted mid-list by a
+  // dropped image with no blank line has the image swallowed back into list
+  // content (demoted from `figure` to inline image) and the two split list
+  // fragments re-merge into one list. This applies to every
+  // NESTED_BLOCK_ATOM_TYPES member, not just lists.
   const parts: string[] = [];
+  const isAtomPart: boolean[] = [];
   node.forEach((child) => {
-    if (NESTED_BLOCK_ATOM_TYPES.has(child.type.name)) {
-      // Delegate to the top-level dispatcher (nodeToMarkdownFragment is
-      // defined below and already handles all of these correctly) instead of
-      // recursing — see NESTED_BLOCK_ATOM_TYPES for why recursing here would
-      // silently drop the content.
-      parts.push(nodeToMarkdownFragment(child));
-    } else {
-      parts.push(serializeInlineContent(child));
-    }
+    const isAtom = NESTED_BLOCK_ATOM_TYPES.has(child.type.name);
+    // Delegate atom-type children to the top-level dispatcher
+    // (nodeToMarkdownFragment is defined below and already handles all of
+    // these correctly) instead of recursing — see NESTED_BLOCK_ATOM_TYPES for
+    // why recursing here would silently drop the content.
+    const rendered = isAtom ? nodeToMarkdownFragment(child) : serializeInlineContent(child);
+    parts.push(rendered.replace(/\n+$/, '')); // defensive trim; no current case ends in '\n'
+    isAtomPart.push(isAtom);
   });
-  return parts.join('\n');
+  let result = parts[0] ?? '';
+  for (let i = 1; i < parts.length; i++) {
+    result += (isAtomPart[i - 1] || isAtomPart[i] ? '\n\n' : '\n') + parts[i];
+  }
+  return result;
 }
 
 /**
@@ -544,10 +559,15 @@ function serializeInlineContent(node: Node): string {
  */
 function indentContinuationLines(text: string, pad: string): string {
   if (!text.includes('\n')) return text;
-  return text
-    .split('\n')
-    .map((line, i) => (i === 0 ? line : `${pad}${line}`))
-    .join('\n');
+  return (
+    text
+      .split('\n')
+      // Skip padding blank lines so the blank-line separator between
+      // NESTED_BLOCK_ATOM_TYPES siblings (see serializeInlineContent) stays
+      // genuinely empty instead of becoming whitespace-only once indented.
+      .map((line, i) => (i === 0 || line === '' ? line : `${pad}${line}`))
+      .join('\n')
+  );
 }
 
 /**

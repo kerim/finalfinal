@@ -905,17 +905,20 @@ describe('nodeToMarkdownFragment — nested list structural round-trip (bug: NES
 
     const reloaded = await reparse(fragment);
 
-    // Known, accepted, out-of-scope limitation (pre-existing, NOT introduced
-    // by this fix): the dropped image may demote from a `figure` node to a
-    // plain inline image, and the two split list fragments may re-merge into
-    // a single nested list on reparse, because the container-recursion
-    // branch's plain `parts.join('\n')` (serializeInlineContent) doesn't
-    // insert a blank-line separator between a list_item's block children —
-    // this is pre-existing behavior affecting all six original
-    // NESTED_BLOCK_ATOM_TYPES members equally, not something this numbering
-    // fix introduces. The actual reported bug — numbering corruption — does
-    // not occur: re-serializing the reloaded doc still shows the numbers
-    // sequential and correct, never restarting at 1.
+    // Fixed: the container-recursion branch of serializeInlineContent now
+    // inserts a blank-line separator ('\n\n') between adjacent children
+    // whenever either neighbor is a NESTED_BLOCK_ATOM_TYPES member, so the
+    // dropped image no longer demotes from `figure` to a plain inline image,
+    // and the two split nested-list fragments no longer re-merge into one
+    // list on reparse. Assert the actual structure, not just that the
+    // numbers stay sequential.
+    expect(countNodesOfType(reloaded, 'figure')).toBe(1);
+    expect(countNodesOfType(reloaded, 'image')).toBe(0);
+    expect(countNodesOfType(reloaded, 'ordered_list')).toBe(3); // outer list + 2 split nested-list fragments
+    expect(nearestAncestorOfType(reloaded, 'Inner 1', 'ordered_list')).not.toBe(
+      nearestAncestorOfType(reloaded, 'Inner 2', 'ordered_list')
+    );
+
     let reloadedTopNode: any = null;
     reloaded.forEach((child: any) => {
       if (!reloadedTopNode) reloadedTopNode = child;
@@ -927,5 +930,136 @@ describe('nodeToMarkdownFragment — nested list structural round-trip (bug: NES
 
     flushPendingBlockChanges();
     expect(getBlockChanges().deletes).toEqual([]);
+  });
+
+  // Plain tight nested list (list_item: paragraph + nested list, NO split, NO
+  // blank line) — proves the blank-line-insertion fix above does not visibly
+  // change output for the common, unsplit case: getMarkdown() on the
+  // reloaded doc must be byte-identical to getMarkdown() on the original.
+  it('plain tight nested list (no split): serialize → reparse round-trips getMarkdown() identically', async () => {
+    const editor = await makeEditor(BULLET_OVER_ORDERED_MD);
+    setEditorInstance(editor);
+
+    const originalMarkdown = getMarkdown()(editor.ctx);
+
+    let topNode: any = null;
+    editor.ctx.get(editorViewCtx).state.doc.forEach((child: any) => {
+      if (!topNode) topNode = child;
+    });
+    const fragment = nodeToMarkdownFragment(topNode);
+    const reloadedEditor = await makeEditor(fragment);
+    const reloadedMarkdown = getMarkdown()(reloadedEditor.ctx);
+
+    expect(reloadedMarkdown).toBe(originalMarkdown);
+  });
+
+  // Blockquote containing a paragraph + a nested ordered_list as its second
+  // child, split with NO blank line — built via direct schema node
+  // constructors (mirrors the "ghost inline image" pattern above: real
+  // schema nodes, no markdown parsing involved in construction). Proves the
+  // fix generalizes to blockquote, not just list_item.
+  //
+  // The nested list deliberately starts at `order: 2`, not 1: CommonMark's
+  // list-interrupts-paragraph rule lets an ordered list starting at exactly
+  // 1 interrupt an open paragraph even with no blank line, which would make
+  // this test pass identically whether or not the fix is applied (no real
+  // discriminating power). A list starting at 2 can NOT interrupt a
+  // paragraph without a blank line, so this only reparses as one blockquote
+  // containing an intact nested list because serializeInlineContent now
+  // inserts that blank line — verified empirically by reverting the fix and
+  // confirming this test fails.
+  it('blockquote containing a paragraph + nested ordered_list, split with no blank line, is not split by the fix', async () => {
+    const editor = await makeEditor('placeholder');
+    const view = editor.ctx.get(editorViewCtx);
+    const schema = view.state.schema;
+
+    const innerList = schema.nodes.ordered_list!.create({ order: 2 }, [
+      schema.nodes.list_item!.create({}, [schema.nodes.paragraph!.create({}, schema.text('Inner 1'))]),
+      schema.nodes.list_item!.create({}, [schema.nodes.paragraph!.create({}, schema.text('Inner 2'))]),
+    ]);
+    const quote = schema.nodes.blockquote!.create({}, [
+      schema.nodes.paragraph!.create({}, schema.text('Quoted intro')),
+      innerList,
+    ]);
+
+    const fragment = nodeToMarkdownFragment(quote);
+    const reloaded = await reparse(fragment);
+
+    expect(countNodesOfType(reloaded, 'blockquote')).toBe(1);
+    expect(nearestAncestorOfType(reloaded, 'Inner 1', 'blockquote')).not.toBeNull();
+    expect(nearestAncestorOfType(reloaded, 'Inner 1', 'ordered_list')).not.toBeNull();
+  });
+
+  // Genericity spot-checks: the same "split mid-list, no blank line" shape,
+  // but with a code_block / table standing in for the dropped image — proves
+  // the fix applies to NESTED_BLOCK_ATOM_TYPES generically, not just
+  // figure/list. (horizontal_rule is deliberately excluded: its real schema
+  // node name is `hr`, not `horizontal_rule`, so NESTED_BLOCK_ATOM_TYPES can
+  // never actually match it — a separate, pre-existing, out-of-scope issue.)
+  it('genericity: nested ordered list split by a code_block (no blank line) stays split on reparse', async () => {
+    const editor = await makeEditor('placeholder');
+    const view = editor.ctx.get(editorViewCtx);
+    const schema = view.state.schema;
+
+    const innerList1 = schema.nodes.ordered_list!.create({ order: 1 }, [
+      schema.nodes.list_item!.create({}, [schema.nodes.paragraph!.create({}, schema.text('Inner 1'))]),
+    ]);
+    const codeBlock = schema.nodes.code_block!.create({ language: '' }, schema.text('const x = 1;'));
+    const innerList2 = schema.nodes.ordered_list!.create({ order: 2 }, [
+      schema.nodes.list_item!.create({}, [schema.nodes.paragraph!.create({}, schema.text('Inner 2'))]),
+    ]);
+    const outerItem = schema.nodes.list_item!.create({}, [
+      schema.nodes.paragraph!.create({}, schema.text('Outer 1')),
+      innerList1,
+      codeBlock,
+      innerList2,
+    ]);
+    const outerList = schema.nodes.ordered_list!.create({ order: 1 }, [outerItem]);
+
+    const fragment = nodeToMarkdownFragment(outerList);
+    const reloaded = await reparse(fragment);
+
+    expect(countNodesOfType(reloaded, 'code_block')).toBe(1);
+    expect(countNodesOfType(reloaded, 'ordered_list')).toBe(3); // outer list + 2 split nested-list fragments
+    expect(nearestAncestorOfType(reloaded, 'Inner 1', 'ordered_list')).not.toBe(
+      nearestAncestorOfType(reloaded, 'Inner 2', 'ordered_list')
+    );
+  });
+
+  it('genericity: nested ordered list split by a table (no blank line) stays split on reparse', async () => {
+    const editor = await makeEditor('placeholder');
+    const view = editor.ctx.get(editorViewCtx);
+    const schema = view.state.schema;
+
+    const innerList1 = schema.nodes.ordered_list!.create({ order: 1 }, [
+      schema.nodes.list_item!.create({}, [schema.nodes.paragraph!.create({}, schema.text('Inner 1'))]),
+    ]);
+    const table = schema.nodes.table!.create({}, [
+      schema.nodes.table_header_row!.create({}, [
+        schema.nodes.table_header!.create({}, schema.nodes.paragraph!.create({}, schema.text('H'))),
+      ]),
+      schema.nodes.table_row!.create({}, [
+        schema.nodes.table_cell!.create({}, schema.nodes.paragraph!.create({}, schema.text('C'))),
+      ]),
+    ]);
+    const innerList2 = schema.nodes.ordered_list!.create({ order: 2 }, [
+      schema.nodes.list_item!.create({}, [schema.nodes.paragraph!.create({}, schema.text('Inner 2'))]),
+    ]);
+    const outerItem = schema.nodes.list_item!.create({}, [
+      schema.nodes.paragraph!.create({}, schema.text('Outer 1')),
+      innerList1,
+      table,
+      innerList2,
+    ]);
+    const outerList = schema.nodes.ordered_list!.create({ order: 1 }, [outerItem]);
+
+    const fragment = nodeToMarkdownFragment(outerList);
+    const reloaded = await reparse(fragment);
+
+    expect(countNodesOfType(reloaded, 'table')).toBe(1);
+    expect(countNodesOfType(reloaded, 'ordered_list')).toBe(3); // outer list + 2 split nested-list fragments
+    expect(nearestAncestorOfType(reloaded, 'Inner 1', 'ordered_list')).not.toBe(
+      nearestAncestorOfType(reloaded, 'Inner 2', 'ordered_list')
+    );
   });
 });

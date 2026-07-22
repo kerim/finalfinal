@@ -421,7 +421,7 @@ describe('nodeToMarkdownFragment — nested list as a list_item second child', (
     ]);
     const outerItem = testSchema.nodes.list_item!.create({}, [para({ text: 'Outer' }), nestedOrdered]);
     const node = testSchema.nodes.bullet_list!.create({}, [outerItem]);
-    expect(nodeToMarkdownFragment(node)).toBe('- Outer\n  1. Nested 1\n  2. Nested 2');
+    expect(nodeToMarkdownFragment(node)).toBe('- Outer\n\n  1. Nested 1\n  2. Nested 2');
   });
 
   it('ordered list item containing a nested bullet list as its second child', () => {
@@ -431,7 +431,7 @@ describe('nodeToMarkdownFragment — nested list as a list_item second child', (
     ]);
     const outerItem = testSchema.nodes.list_item!.create({}, [para({ text: 'Outer' }), nestedBullet]);
     const node = testSchema.nodes.ordered_list!.create({}, [outerItem]);
-    expect(nodeToMarkdownFragment(node)).toBe('1. Outer\n   - Nested A\n   - Nested B');
+    expect(nodeToMarkdownFragment(node)).toBe('1. Outer\n\n   - Nested A\n   - Nested B');
   });
 });
 
@@ -449,14 +449,14 @@ describe('nodeToMarkdownFragment — nested blockquote/heading as a list_item se
     const nestedQuote = blockquote(para({ text: 'Quoted' }));
     const outerItem = testSchema.nodes.list_item!.create({}, [para({ text: 'Outer' }), nestedQuote]);
     const node = testSchema.nodes.bullet_list!.create({}, [outerItem]);
-    expect(nodeToMarkdownFragment(node)).toBe('- Outer\n  > Quoted');
+    expect(nodeToMarkdownFragment(node)).toBe('- Outer\n\n  > Quoted');
   });
 
   it('bullet list item containing a nested heading as its second child', () => {
     const nestedHeading = heading(2, { text: 'Nested heading' });
     const outerItem = testSchema.nodes.list_item!.create({}, [para({ text: 'Outer' }), nestedHeading]);
     const node = testSchema.nodes.bullet_list!.create({}, [outerItem]);
-    expect(nodeToMarkdownFragment(node)).toBe('- Outer\n  ## Nested heading');
+    expect(nodeToMarkdownFragment(node)).toBe('- Outer\n\n  ## Nested heading');
   });
 });
 
