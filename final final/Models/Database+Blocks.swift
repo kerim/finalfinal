@@ -571,6 +571,60 @@ extension ProjectDatabase {
                                 let id8 = String(block.id.prefix(8))
                                 DebugLog.log(.data, "[Blocks:edit:→sectionBreak] block=\(id8) oldWC=\(oldWC) newWC=\(block.wordCount)")
                             }
+                        } else if block.blockType == .paragraph,
+                                  trimmed.range(of: "^[-*_]{3,}$", options: .regularExpression) != nil {
+                            // paragraph → horizontal_rule in-place conversion (typing "---"
+                            // character-by-character into an EXISTING paragraph reaches here as
+                            // an UPDATE, not an INSERT — see block-id-plugin.ts phase1CanClaim: hr
+                            // is not in ATOMIC_BLOCK_TYPES and the block count doesn't change, so
+                            // the exact-offset claim keeps the paragraph's existing block ID.
+                            // Without this branch the row silently stayed a paragraph with
+                            // markdownFragment '---' and the next sync minted a duplicate hr insert.
+                            //
+                            // Scope, confirmed (see review notes on this branch, superdev
+                            // hr-block-sync-types round 2):
+                            // - Paragraph-only by construction (the `block.blockType == .paragraph`
+                            //   guard above): a code_block's markdownFragment is always fence-wrapped
+                            //   ("```lang\n…\n```", see nodeToMarkdownFragment in
+                            //   block-sync-plugin.ts) so it could never trim down to bare dashes
+                            //   even without this guard — the explicit check is defensive
+                            //   belt-and-suspenders against a future serializer change, and it also
+                            //   protects blockquote/list/table/heading/image/math rows the same way.
+                            // - Escape handling matches BlockParser.swift's own thematic-break
+                            //   detector (line ~396, identical `^[-*_]{3,}$` pattern) exactly — ANY
+                            //   leading backslash (e.g. `\---`) fails the anchored match on both
+                            //   sides, so literal escaped dashes are never misread as a rule. This
+                            //   branch deliberately does not invent different escape semantics.
+                            //   (Separately: block-sync-plugin.ts's escapeInlineText only
+                            //   re-escapes a leading `#`/`[^N]:` on round-trip, not leading `-`/`*`/
+                            //   `_` — so a paragraph whose true text content is exactly "---" is
+                            //   already ambiguous with a real rule before it reaches Swift at all.
+                            //   That ambiguity is pre-existing on both the old BlockParser.swift
+                            //   detector and this branch equally; not a regression introduced here.)
+                            // - All three CommonMark thematic-break characters (-, *, _) are
+                            //   covered — same `{3,}` character class as BlockParser.swift, not a
+                            //   narrower "---"-only pattern.
+                            // - WYSIWYG-only: this whole applyBlockChangesFromEditor() function is
+                            //   reached only via BlockSyncService.applyChanges(), which is fed by
+                            //   the Milkdown webview's getBlockChanges() poll —
+                            //   BlockSyncService.configure(webView:) is wired up exclusively from
+                            //   MilkdownEditor's onWebViewReady (ContentView+ContentRebuilding.swift),
+                            //   never from CodeMirrorEditor's. Source Mode content instead flows
+                            //   through flushContentToDatabase() → BlockParser.parse() (a full
+                            //   document reparse using the same pre-existing detector referenced
+                            //   above), a completely different path this branch cannot see. So a
+                            //   YAML-frontmatter "---" delimiter or mid-typing source text can never
+                            //   reach this specific branch — only a WYSIWYG paragraph whose full
+                            //   trimmed content is already exactly "---"/"***"/"___" does.
+                            block.blockType = .horizontalRule
+                            block.headingLevel = nil
+                            block.textContent = ""
+                            let oldWC = block.wordCount
+                            block.recalculateWordCount()
+                            if oldWC != block.wordCount {
+                                let id8 = String(block.id.prefix(8))
+                                DebugLog.log(.data, "[Blocks:edit:→horizontalRule] block=\(id8) oldWC=\(oldWC) newWC=\(block.wordCount)")
+                            }
                         } else if block.blockType == .heading {
                             // Was heading but no longer has heading syntax
                             block.blockType = .paragraph
@@ -581,6 +635,18 @@ extension ProjectDatabase {
                             if oldWC != block.wordCount {
                                 let id8 = String(block.id.prefix(8))
                                 DebugLog.log(.data, "[Blocks:edit:→paragraph] block=\(id8) oldWC=\(oldWC) newWC=\(block.wordCount)")
+                            }
+                        } else if block.blockType == .horizontalRule {
+                            // Defensive symmetry with the heading/sectionBreak reverse cases above:
+                            // user backspaces into an existing hr row, turning "---" back into
+                            // plain text that no longer matches the thematic-break pattern.
+                            block.blockType = .paragraph
+                            block.headingLevel = nil
+                            let oldWC = block.wordCount
+                            block.recalculateWordCount()
+                            if oldWC != block.wordCount {
+                                let id8 = String(block.id.prefix(8))
+                                DebugLog.log(.data, "[Blocks:edit:→paragraph:fromHorizontalRule] block=\(id8) oldWC=\(oldWC) newWC=\(block.wordCount)")
                             }
                         } else if block.blockType == .sectionBreak {
                             // Defensive symmetry: a section_break block is a leaf node with no
@@ -638,11 +704,32 @@ extension ProjectDatabase {
                         }
                         if let markdownFragment = update.markdownFragment {
                             existingBlock.markdownFragment = markdownFragment
+                            let trimmed = markdownFragment.trimmingCharacters(in: .whitespacesAndNewlines)
+                            // paragraph ↔ horizontal_rule in-place conversion, mirrored from the
+                            // primary update branch above. A temp-ID block can hit THIS merge path
+                            // instead of that one when its permanent-ID confirmation races an
+                            // in-flight "---" edit (see the "Fix 1 (JS remap) and Fix 2 (Swift
+                            // resolution)" comment on the stale-temp-id branch below). Same scope
+                            // as the primary branch: paragraph-only guard, identical
+                            // BlockParser.swift-matching regex (all 3 rule chars, no special
+                            // escape handling), WYSIWYG-only (this whole function is never reached
+                            // from Source Mode/CodeMirror) — see the primary branch's doc comment
+                            // above for the full analysis.
+                            if existingBlock.blockType == .paragraph,
+                               trimmed.range(of: "^[-*_]{3,}$", options: .regularExpression) != nil {
+                                existingBlock.blockType = .horizontalRule
+                                existingBlock.headingLevel = nil
+                                existingBlock.textContent = ""
+                                existingBlock.recalculateWordCount()
+                            } else if existingBlock.blockType == .horizontalRule {
+                                existingBlock.blockType = .paragraph
+                                existingBlock.headingLevel = nil
+                                existingBlock.recalculateWordCount()
+                            }
                             // Re-derive image width/caption/alt alongside the generic .update
                             // case above — see its comment for why (undo/redo etc. can reach
                             // this merge path too, and export reads these DB columns directly).
                             if existingBlock.blockType == .image {
-                                let trimmed = markdownFragment.trimmingCharacters(in: .whitespacesAndNewlines)
                                 existingBlock.imageWidth = BlockParser.parseImageWidthPercent(from: trimmed)
                                 let meta = BlockParser.parseImageFragmentMeta(from: trimmed)
                                 existingBlock.imageAlt = meta.alt
@@ -668,11 +755,26 @@ extension ProjectDatabase {
                         }
                         if let markdownFragment = update.markdownFragment {
                             existingBlock.markdownFragment = markdownFragment
+                            let trimmed = markdownFragment.trimmingCharacters(in: .whitespacesAndNewlines)
+                            // paragraph ↔ horizontal_rule in-place conversion — see the identical
+                            // branch on the "already inserted" merge path above for why a temp-ID
+                            // block can reach this defensive path too. Same paragraph-only guard
+                            // and scope as the primary branch (see its doc comment above).
+                            if existingBlock.blockType == .paragraph,
+                               trimmed.range(of: "^[-*_]{3,}$", options: .regularExpression) != nil {
+                                existingBlock.blockType = .horizontalRule
+                                existingBlock.headingLevel = nil
+                                existingBlock.textContent = ""
+                                existingBlock.recalculateWordCount()
+                            } else if existingBlock.blockType == .horizontalRule {
+                                existingBlock.blockType = .paragraph
+                                existingBlock.headingLevel = nil
+                                existingBlock.recalculateWordCount()
+                            }
                             // Re-derive image width/caption/alt — see the generic .update case
                             // above for why (this defensive temp-id path can carry a caption/alt
                             // edit too, and export reads these DB columns directly).
                             if existingBlock.blockType == .image {
-                                let trimmed = markdownFragment.trimmingCharacters(in: .whitespacesAndNewlines)
                                 existingBlock.imageWidth = BlockParser.parseImageWidthPercent(from: trimmed)
                                 let meta = BlockParser.parseImageFragmentMeta(from: trimmed)
                                 existingBlock.imageAlt = meta.alt

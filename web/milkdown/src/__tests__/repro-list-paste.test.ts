@@ -20,7 +20,7 @@ import { gfm } from '@milkdown/kit/preset/gfm';
 import { TextSelection } from '@milkdown/kit/prose/state';
 import { getMarkdown } from '@milkdown/kit/utils';
 import { afterEach, describe, expect, it } from 'vitest';
-import { insertImage } from '../api-content';
+import { confirmBlockIdsApi, insertImage } from '../api-content';
 import { blockIdPlugin, getAllBlockIds, resetBlockIdState, setBlockIdsForTopLevel } from '../block-id-plugin';
 import {
   blockSyncPlugin,
@@ -991,11 +991,9 @@ describe('nodeToMarkdownFragment — nested list structural round-trip (bug: NES
   });
 
   // Genericity spot-checks: the same "split mid-list, no blank line" shape,
-  // but with a code_block / table standing in for the dropped image — proves
-  // the fix applies to NESTED_BLOCK_ATOM_TYPES generically, not just
-  // figure/list. (horizontal_rule is deliberately excluded: its real schema
-  // node name is `hr`, not `horizontal_rule`, so NESTED_BLOCK_ATOM_TYPES can
-  // never actually match it — a separate, pre-existing, out-of-scope issue.)
+  // but with a code_block / table / hr standing in for the dropped image —
+  // proves the fix applies to NESTED_BLOCK_ATOM_TYPES generically, not just
+  // figure/list.
   it('genericity: nested ordered list split by a code_block (no blank line) stays split on reparse', async () => {
     const editor = await makeEditor('placeholder');
     const view = editor.ctx.get(editorViewCtx);
@@ -1061,5 +1059,256 @@ describe('nodeToMarkdownFragment — nested list structural round-trip (bug: NES
     expect(nearestAncestorOfType(reloaded, 'Inner 1', 'ordered_list')).not.toBe(
       nearestAncestorOfType(reloaded, 'Inner 2', 'ordered_list')
     );
+  });
+
+  it('genericity: nested ordered list split by an hr (no blank line) stays split on reparse', async () => {
+    const editor = await makeEditor('placeholder');
+    const view = editor.ctx.get(editorViewCtx);
+    const schema = view.state.schema;
+
+    const innerList1 = schema.nodes.ordered_list!.create({ order: 1 }, [
+      schema.nodes.list_item!.create({}, [schema.nodes.paragraph!.create({}, schema.text('Inner 1'))]),
+    ]);
+    const hrNode = schema.nodes.hr!.create();
+    const innerList2 = schema.nodes.ordered_list!.create({ order: 2 }, [
+      schema.nodes.list_item!.create({}, [schema.nodes.paragraph!.create({}, schema.text('Inner 2'))]),
+    ]);
+    const outerItem = schema.nodes.list_item!.create({}, [
+      schema.nodes.paragraph!.create({}, schema.text('Outer 1')),
+      innerList1,
+      hrNode,
+      innerList2,
+    ]);
+    const outerList = schema.nodes.ordered_list!.create({ order: 1 }, [outerItem]);
+
+    const fragment = nodeToMarkdownFragment(outerList);
+    const reloaded = await reparse(fragment);
+
+    expect(countNodesOfType(reloaded, 'hr')).toBe(1);
+    expect(countNodesOfType(reloaded, 'ordered_list')).toBe(3); // outer list + 2 split nested-list fragments
+    expect(nearestAncestorOfType(reloaded, 'Inner 1', 'ordered_list')).not.toBe(
+      nearestAncestorOfType(reloaded, 'Inner 2', 'ordered_list')
+    );
+  });
+});
+
+// ----------------------------------------------------------------------------
+// hr (horizontal_rule) — real schema block-sync/block-id integration.
+//
+// Regression suite for the block-sync-plugin.ts / block-id-plugin.ts fix
+// mapping the real ProseMirror node name `hr` (Milkdown's thematic-break
+// node) to the Swift-facing `blockType` string `horizontal_rule`. Every case
+// below uses the REAL commonmark schema via this file's own `makeEditor`
+// (not the hand-rolled `testSchema` in block-sync-marks.test.ts, which has
+// no `hr` node at all).
+// ----------------------------------------------------------------------------
+describe('hr (horizontal_rule) — real schema block-sync/block-id integration', () => {
+  afterEach(() => {
+    setEditorInstance(null);
+    resetBlockSyncState();
+    resetBlockIdState();
+  });
+
+  it('serializer unit pin: nodeToMarkdownFragment(hr) === "---"', async () => {
+    const editor = await makeEditor('placeholder');
+    const view = editor.ctx.get(editorViewCtx);
+    const schema = view.state.schema;
+    expect(nodeToMarkdownFragment(schema.nodes.hr!.create())).toBe('---');
+  });
+
+  it('outbound payload: inserting an hr node produces an INSERT with blockType="horizontal_rule" and markdownFragment="---"', async () => {
+    const editor = await makeEditor('Existing paragraph.');
+    setEditorInstance(editor);
+    const view = editor.ctx.get(editorViewCtx);
+
+    resetBlockIdState();
+    setBlockIdsForTopLevel(['id-para'], view.state.doc);
+    resetAndSnapshot(view.state.doc);
+
+    const hrNode = view.state.schema.nodes.hr!.create();
+    const insertTr = view.state.tr.insert(view.state.doc.content.size, hrNode);
+    view.dispatch(insertTr);
+
+    flushPendingBlockChanges();
+    const changes = getBlockChanges();
+
+    const hrInsert = changes.inserts.find((i) => i.blockType === 'horizontal_rule');
+    expect(hrInsert).toBeDefined();
+    expect(hrInsert?.markdownFragment).toBe('---');
+    expect(hrInsert?.afterBlockId).toBe('id-para');
+  });
+
+  // REQUIRED EXTRA VERIFICATION A (superdev plan, round-2 review): a real
+  // input-rule test, not just a synthetic node insertion. Drives Milkdown's
+  // ACTUAL `insertHrInputRule` (from @milkdown/preset-commonmark, wired in
+  // automatically by `.use(commonmark)` in makeEditor) via
+  // `view.someProp('handleTextInput', ...)` — the exact same technique this
+  // file already uses for `handlePaste` above, generalized to
+  // `handleTextInput`. prosemirror-inputrules registers its match-and-replace
+  // logic as a `handleTextInput` view prop (verified by reading
+  // node_modules/prosemirror-inputrules's source directly), so this drives
+  // the real transaction/dispatch path a live keystroke would — not a
+  // hand-built replica and not direct document-tree manipulation.
+  //
+  // CORRECTED SCOPE (round-3 review): this test's paragraph-creation and
+  // "---"-typing land in ONE synchronous block-sync debounce window (no
+  // flush between them), which collapses two separate real async debounce
+  // windows into one. That happens to be the ONLY shape where this scenario
+  // is reported as an INSERT — block-sync's insert-detection loop reads the
+  // node's ALREADY-CONVERTED blockType directly off the current snapshot, so
+  // it never routes through the UPDATE-merge code path at all. This is a
+  // real (fast-typing) scenario worth covering, but it is NOT the dominant
+  // real-world one and it CANNOT catch the bug the round-3 fix addresses —
+  // see the "already-synced paragraph" test below for that.
+  it('fast-typing burst (no flush between Enter and "---"): reported as a single INSERT with blockType="horizontal_rule"', async () => {
+    const editor = await makeEditor('Existing paragraph.');
+    setEditorInstance(editor);
+    const view = editor.ctx.get(editorViewCtx);
+
+    resetBlockIdState();
+    setBlockIdsForTopLevel(['id-para'], view.state.doc);
+    resetAndSnapshot(view.state.doc);
+
+    const emptyPara = view.state.schema.nodes.paragraph!.create();
+    const insertPos = view.state.doc.content.size;
+    view.dispatch(view.state.tr.insert(insertPos, emptyPara));
+
+    const cursorPos = insertPos + 1;
+    const handled = view.someProp('handleTextInput', (f) => f(view, cursorPos, cursorPos, '---'));
+    expect(handled).toBe(true);
+
+    const top = describeDoc(view.state.doc);
+    expect(top[0]).toBe('paragraph("Existing paragraph.")');
+    expect(top[1]).toBe('hr("")');
+
+    flushPendingBlockChanges();
+    const changes = getBlockChanges();
+
+    const hrInsert = changes.inserts.find((i) => i.blockType === 'horizontal_rule');
+    expect(hrInsert).toBeDefined();
+    expect(hrInsert?.markdownFragment).toBe('---');
+    expect(hrInsert?.afterBlockId).toBe('id-para');
+  });
+
+  // THE DOMINANT REAL-WORLD SCENARIO (round-3 review finding 1): a user
+  // creates a paragraph, it flushes and gets CONFIRMED to a permanent id
+  // (a real, earlier debounce window that already completed) — THEN, in a
+  // genuinely separate later edit, the user types "---" into that
+  // already-existing, already-synced block. block-id's phase1CanClaim keeps
+  // the paragraph's existing (now-permanent) id for the converted hr node
+  // (neither type is atomic, block count unchanged), so block-sync reports
+  // this as an UPDATE, never an INSERT.
+  //
+  // The bug this fix addresses lives on the SWIFT side (BlockUpdate has no
+  // blockType field, and Swift's update-handling chain had no case detecting
+  // "---" content — see Database+Blocks.swift), so this JS-only test cannot
+  // observe the DB row directly. What it CAN and must pin is the JS-side
+  // contract that fix depends on: this scenario produces an UPDATE keyed by
+  // the PERMANENT id, carrying markdownFragment "---", and NOT a fresh
+  // INSERT (an insert here would mean a duplicate/orphan row on the Swift
+  // side, since the paragraph row would never get cleaned up). The old
+  // single-burst test above cannot make this distinction — it only ever hits
+  // the INSERT path, regardless of whether the Swift-side UPDATE handling
+  // is fixed or still broken.
+  it('typing --- into an ALREADY-SYNCED existing paragraph (separate debounce windows, permanent id): reported as an UPDATE, not an INSERT', async () => {
+    const editor = await makeEditor('Existing paragraph.');
+    setEditorInstance(editor);
+    const view = editor.ctx.get(editorViewCtx);
+
+    resetBlockIdState();
+    setBlockIdsForTopLevel(['id-para'], view.state.doc);
+    resetAndSnapshot(view.state.doc);
+
+    // Step (a): create an empty paragraph and let it flush as a real INSERT
+    // first — modeling "press Enter", wait for the sync poll to pick it up
+    // and Swift to assign+confirm a permanent id, all before the user types
+    // anything into it.
+    const emptyPara = view.state.schema.nodes.paragraph!.create();
+    const insertPos = view.state.doc.content.size;
+    view.dispatch(view.state.tr.insert(insertPos, emptyPara));
+
+    flushPendingBlockChanges();
+    const firstChanges = getBlockChanges();
+    const paraInsert = firstChanges.inserts.find((i) => i.blockType === 'paragraph' && i.tempId !== 'id-para');
+    expect(paraInsert).toBeDefined();
+    const tempId = paraInsert!.tempId;
+
+    // Simulate Swift's real confirmation round-trip via the SAME production
+    // glue main.ts wires to window.FinalFinal.confirmBlockIds — re-keys
+    // BOTH block-id-plugin's live id map AND block-sync's lastSnapshot,
+    // exactly like a real poll-driven confirmation would. Without this step,
+    // the block would still carry its temp id and this test would silently
+    // fall back to exercising the INSERT path again.
+    const permanentId = 'confirmed-permanent-id';
+    confirmBlockIdsApi({ [tempId]: permanentId });
+
+    // Step (b): AS A SEPARATE STEP, simulating the user typing into that
+    // now-existing, already-synced paragraph, fire the real "---" input rule.
+    const cursorPos = insertPos + 1;
+    const handled = view.someProp('handleTextInput', (f) => f(view, cursorPos, cursorPos, '---'));
+    expect(handled).toBe(true);
+
+    const top = describeDoc(view.state.doc);
+    expect(top[0]).toBe('paragraph("Existing paragraph.")');
+    expect(top[1]).toBe('hr("")');
+
+    // Step (c): flush again. These JS-side assertions hold regardless of the
+    // Swift-side fix (the JS output shape for this scenario was already
+    // correct — the bug this round fixes is entirely in how Swift interprets
+    // this exact UPDATE payload). Their value is pinning the contract the
+    // Swift fix depends on and guarding against ever re-collapsing this
+    // scenario into the single-burst INSERT shape the old test above covers,
+    // which cannot tell "fixed" from "still broken" on the Swift side.
+    flushPendingBlockChanges();
+    const secondChanges = getBlockChanges();
+
+    expect(secondChanges.inserts.length).toBe(0); // no duplicate/orphan row
+    const hrUpdate = secondChanges.updates.find((u) => u.id === permanentId);
+    expect(hrUpdate).toBeDefined();
+    expect(hrUpdate?.markdownFragment).toBe('---');
+  });
+
+  // Round-3 review finding 2: the merge-into-pending-insert path in
+  // detectChanges (block-sync-plugin.ts) previously copied textContent,
+  // markdownFragment, and headingLevel from the newer node onto a still-
+  // pending BlockInsert, but NOT blockType — so a block that changed type
+  // (paragraph → hr) WHILE its own insert was still waiting to flush kept
+  // reporting its STALE original blockType even though markdownFragment had
+  // already moved on to "---". Models: create a paragraph (INSERT stays
+  // pending, never flushed to Swift), then type "---" into it before that
+  // insert is ever flushed — both changes must merge into ONE insert with
+  // the FINAL (hr) blockType, not a stale "paragraph" insert.
+  it('an update landing before its own pending INSERT is flushed merges blockType, not just content', async () => {
+    const editor = await makeEditor('Existing paragraph.');
+    setEditorInstance(editor);
+    const view = editor.ctx.get(editorViewCtx);
+
+    resetBlockIdState();
+    setBlockIdsForTopLevel(['id-para'], view.state.doc);
+    resetAndSnapshot(view.state.doc);
+
+    // Cycle 1: create a new empty paragraph and run change-detection ONLY
+    // (flushPendingBlockChanges, not getBlockChanges) — the resulting
+    // INSERT stays pending and unflushed, exactly like a real insert that
+    // hasn't been picked up by Swift's poll yet.
+    const emptyPara = view.state.schema.nodes.paragraph!.create();
+    const insertPos = view.state.doc.content.size;
+    view.dispatch(view.state.tr.insert(insertPos, emptyPara));
+    flushPendingBlockChanges();
+
+    // Cycle 2: BEFORE that insert is ever flushed to Swift, type "---" into
+    // the still-pending block, converting it in place to an hr.
+    const cursorPos = insertPos + 1;
+    const handled = view.someProp('handleTextInput', (f) => f(view, cursorPos, cursorPos, '---'));
+    expect(handled).toBe(true);
+    flushPendingBlockChanges();
+
+    const changes = getBlockChanges();
+
+    expect(changes.updates.length).toBe(0); // fully merged, no separate update
+    const hrInsert = changes.inserts.find((i) => i.tempId !== 'id-para');
+    expect(hrInsert).toBeDefined();
+    expect(hrInsert?.blockType).toBe('horizontal_rule'); // was stale "paragraph" before the fix
+    expect(hrInsert?.markdownFragment).toBe('---');
   });
 });

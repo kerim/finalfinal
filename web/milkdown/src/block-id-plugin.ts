@@ -19,7 +19,7 @@ const BLOCK_TYPES = new Set([
   'ordered_list',
   'blockquote',
   'code_block',
-  'horizontal_rule',
+  'hr',
   'section_break',
   'table',
   'figure',
@@ -326,9 +326,10 @@ export function isBlockType(node: Node): boolean {
  * BlockParser.alignmentPairs on the Swift side, which never emits an id/meta pair for them). */
 export function pmTypeForBlockType(blockType: string): string | undefined {
   if (blockType === 'image') return 'figure';
+  if (blockType === 'horizontal_rule') return 'hr';
   if (blockType === 'list_item' || blockType === 'bibliography') return undefined;
   return blockType; // paragraph, heading, bullet_list, ordered_list, blockquote, code_block,
-  // horizontal_rule, section_break, table, math_display — same name both sides
+  // section_break, table, math_display — same name both sides
 }
 
 /**

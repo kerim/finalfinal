@@ -31,7 +31,7 @@ const schema = new Schema({
     list_item: { content: 'paragraph block*', toDOM: () => ['li', 0] },
     blockquote: { group: 'block', content: 'paragraph+', toDOM: () => ['blockquote', 0] },
     code_block: { group: 'block', content: 'text*', marks: '', code: true, toDOM: () => ['pre', ['code', 0]] },
-    horizontal_rule: { group: 'block', toDOM: () => ['hr'] },
+    hr: { group: 'block', toDOM: () => ['hr'] },
     section_break: { group: 'block', toDOM: () => ['div', { class: 'section-break' }] },
     table: { group: 'block', content: 'table_row+', toDOM: () => ['table', 0] },
     table_row: { content: 'table_cell+', toDOM: () => ['tr', 0] },
@@ -171,7 +171,9 @@ describe('setBlockIdsForTopLevel — cross-language nonEmpty pin (every block ty
       // "```\ncode line\n```" → fence markers stripped, code content kept → nonEmpty.
       { node: codeBlock('code line'), expected: { blockType: 'code_block', nonEmpty: true } },
       // "---" → extractTextContent forces text="" for .horizontalRule → nonEmpty FALSE both sides.
-      { node: schema.nodes.horizontal_rule.create(), expected: { blockType: 'horizontal_rule', nonEmpty: false } },
+      // Real schema node name is `hr`; `blockType` stays the Swift-side vocabulary word
+      // `horizontal_rule` — pmTypeForBlockType('horizontal_rule') maps it to 'hr' for comparison.
+      { node: schema.nodes.hr.create(), expected: { blockType: 'horizontal_rule', nonEmpty: false } },
       // "<!-- ::break:: -->" → extractTextContent forces text="" for .sectionBreak → nonEmpty FALSE both sides.
       { node: schema.nodes.section_break.create(), expected: { blockType: 'section_break', nonEmpty: false } },
       // "|1|2|" → default branch, no table-specific stripping → real cell text remains → nonEmpty.

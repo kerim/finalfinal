@@ -21,7 +21,7 @@ const SYNC_BLOCK_TYPES = new Set([
   'ordered_list',
   'blockquote',
   'code_block',
-  'horizontal_rule',
+  'hr',
   'section_break',
   'table',
   'figure',
@@ -350,7 +350,7 @@ const NESTED_BLOCK_ATOM_TYPES: ReadonlySet<string> = new Set([
   'figure',
   'table',
   'code_block',
-  'horizontal_rule',
+  'hr',
   'math_display',
   'section_break',
   'bullet_list',
@@ -634,7 +634,7 @@ export function nodeToMarkdownFragment(node: Node): string {
       });
       return oItems.join('\n');
     }
-    case 'horizontal_rule':
+    case 'hr':
       return '---';
     case 'section_break':
       return '<!-- ::break:: -->';
@@ -739,7 +739,13 @@ export function snapshotBlocks(doc: Node): Map<string, BlockSnapshot> {
       if (blockId) {
         // Detect heading syntax in paragraphs (paste creates paragraphs, not headings)
         const headingMatch = node.type.name === 'paragraph' ? node.textContent.match(/^(#{1,6})\s/) : null;
-        const effectiveType = headingMatch ? 'heading' : node.type.name === 'figure' ? 'image' : node.type.name;
+        const effectiveType = headingMatch
+          ? 'heading'
+          : node.type.name === 'figure'
+            ? 'image'
+            : node.type.name === 'hr'
+              ? 'horizontal_rule'
+              : node.type.name;
         const effectiveLevel = headingMatch
           ? headingMatch[1].length
           : node.type.name === 'heading'
@@ -826,6 +832,7 @@ export function detectChanges(
         const existing = state.pendingInserts.get(id)!;
         state.pendingInserts.set(id, {
           ...existing,
+          blockType: newBlock.blockType,
           textContent: newBlock.textContent,
           markdownFragment: getMarkdownFragment(newBlock),
           headingLevel: newBlock.headingLevel,

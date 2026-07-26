@@ -56,7 +56,7 @@ function findNodeInMdLines(node: Node, mdLines: string[], startIdx: number): { m
     const found = scanForward(mdLines, idx, (line) => line.trim() === '<!-- ::break:: -->');
     return { mdLine: found, linesConsumed: 1 };
   }
-  if (typeName === 'horizontal_rule') {
+  if (typeName === 'hr') {
     const found = scanForward(mdLines, idx, (line) => /^(-{3,}|\*{3,}|_{3,})$/.test(line.trim()));
     return { mdLine: found, linesConsumed: 1 };
   }

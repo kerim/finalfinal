@@ -1,7 +1,13 @@
 // @vitest-environment jsdom
 import { type Node, Schema } from '@milkdown/kit/prose/model';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { getAllBlockIds, getBlockIdAtPos, resetBlockIdState, setBlockIdsForTopLevel } from '../block-id-plugin';
+import {
+  getAllBlockIds,
+  getBlockIdAtPos,
+  pmTypeForBlockType,
+  resetBlockIdState,
+  setBlockIdsForTopLevel,
+} from '../block-id-plugin';
 import type { ExpectedBlockMeta } from '../types';
 
 // Regression guard for docs/plans/single-source-splice.md.
@@ -31,6 +37,10 @@ const schema = new Schema({
       attrs: { src: { default: '' } },
       toDOM: () => ['div', { class: 'figure-stub' }],
     },
+    // Mirrors the real thematic-break node's essential shape (block, no content) — see
+    // @milkdown/preset-commonmark's hrSchema. The real PM node name is `hr`, not
+    // `horizontal_rule` (that's the Swift-facing BlockType.rawValue string only).
+    hr: { group: 'block', toDOM: () => ['hr'] },
     text: { group: 'inline' },
   },
 });
@@ -45,6 +55,10 @@ function heading(text: string, level = 1): Node {
 
 function figure(): Node {
   return schema.nodes.figure.create();
+}
+
+function hr(): Node {
+  return schema.nodes.hr.create();
 }
 
 describe('setBlockIdsForTopLevel (doc and ID array agree)', () => {
@@ -142,6 +156,56 @@ describe('setBlockIdsForTopLevel — expected (3rd arg) alignment check', () => 
     setBlockIdsForTopLevel(orderedIds, doc, expected);
 
     expect(getBlockIdAtPos(0)).toBe('fig-id');
+  });
+
+  // Pins the hr (thematic-break) type-name fix: BlockType.rawValue for a
+  // horizontal-rule block is "horizontal_rule", but the real ProseMirror node
+  // name is "hr". Before the fix, BLOCK_TYPES (the set isBlockType() checks)
+  // listed 'horizontal_rule' instead of 'hr', so a real hr node never
+  // satisfied isBlockType() at all — it failed the
+  // `if (isBlockType(node) && index < orderedIds.length)` guard in
+  // setBlockIdsForTopLevel's doc.forEach and was skipped outright.
+  // `index++` lives INSIDE that same guarded block, so a fully-skipped node
+  // also skips the increment — unlike an ordinary withheld/mismatched id
+  // (type or content check fails but isBlockType() still passed), where
+  // index++ still runs and positional accounting stays in lockstep. Because
+  // the hr node's slot never advanced the counter, every id after it in the
+  // ordered array was consumed by the WRONG node — a genuine off-by-one
+  // shift — corrupting block identity for the rest of the document. (A mere
+  // withheld id, by contrast, never causes a shift: the id is dropped but
+  // index still ticks, so later nodes stay aligned with their own ids.)
+  // pmTypeForBlockType('horizontal_rule') also needed its own fix (see the
+  // next test) since it gates a *second*, independent type-name comparison
+  // once a node has already passed isBlockType(). This test documents that
+  // pmTypeForBlockType now returns 'hr' and reproduces the exact
+  // [paragraph, hr, paragraph] shape end-to-end: no id should be withheld.
+  it('pmTypeForBlockType maps "horizontal_rule" (Swift BlockType.rawValue) to the real PM node name "hr"', () => {
+    expect(pmTypeForBlockType('horizontal_rule')).toBe('hr');
+  });
+
+  it('hr sitting between two paragraphs: none of the three ids are withheld (regression guard for the off-by-one shift)', () => {
+    const p1 = para('Before the rule.');
+    const rule = hr();
+    const p2 = para('After the rule.');
+    const doc = schema.nodes.doc.create(null, [p1, rule, p2]);
+    const orderedIds = ['id-before', 'id-rule', 'id-after'];
+    const expected: ExpectedBlockMeta[] = [
+      { blockType: 'paragraph', nonEmpty: true },
+      { blockType: 'horizontal_rule', nonEmpty: false },
+      { blockType: 'paragraph', nonEmpty: true },
+    ];
+
+    setBlockIdsForTopLevel(orderedIds, doc, expected);
+
+    const ids = getAllBlockIds();
+    expect(ids.size).toBe(3); // zero withheld
+
+    const p1Offset = 0;
+    const ruleOffset = p1.nodeSize;
+    const p2Offset = ruleOffset + rule.nodeSize;
+    expect(getBlockIdAtPos(p1Offset)).toBe('id-before');
+    expect(getBlockIdAtPos(ruleOffset)).toBe('id-rule');
+    expect(getBlockIdAtPos(p2Offset)).toBe('id-after');
   });
 
   it('directionality: expected.nonEmpty=false but actual node is non-blank → NO mismatch (one-directional by design)', () => {

@@ -55,9 +55,11 @@
 		31EE4F7EA3B0C9163BEF4206 /* ZoomWordCountSyncTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 354FD04A50F29512BEE6C1ED /* ZoomWordCountSyncTests.swift */; };
 		340253991038A90C28898154 /* DocumentPreviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 944062D49633F32557CC7161 /* DocumentPreviewView.swift */; };
 		34A75521A78071D5E5FE842C /* DiagnosticsSettingsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A4947E787A1E091BE060589 /* DiagnosticsSettingsTests.swift */; };
+		3582DD8E230F9B9BD2A8B640 /* HrTypedConversionE2ETests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0AE40566D0E6548A9523CDBE /* HrTypedConversionE2ETests.swift */; };
 		35FA3CC0FED14ED1D7FD9000 /* TagPillView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65E7386521E240F08687F38B /* TagPillView.swift */; };
 		37689163B83F075ACE336B7D /* DiagnosticLogFile.swift in Sources */ = {isa = PBXBuildFile; fileRef = A16D6EF04AEDE5D94E278E47 /* DiagnosticLogFile.swift */; };
 		3809CA424F5F60778B029882 /* UITestHelpers.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA881EDD8E51F372A2C980A5 /* UITestHelpers.swift */; };
+		38BDEEBEB04DF8722581A825 /* HrInPlaceConversionScopeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E444B9FCD4CD86DB59341F6 /* HrInPlaceConversionScopeTests.swift */; };
 		394CD20D9003533C2C81707B /* AnnotationSyncTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B202551DBA627192B20FC1A0 /* AnnotationSyncTests.swift */; };
 		3957C98BBCB2699A33E2C288 /* FileCommands.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9B422289970724FBD8F8FFDC /* FileCommands.swift */; };
 		3A2937E444DC748F0C1DA94C /* SectionMetadataTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 68F200750F8B56BA3448474F /* SectionMetadataTests.swift */; };
@@ -298,6 +300,7 @@
 		07DB82121B58A51D0946666A /* ContentView+ProjectLifecycle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ContentView+ProjectLifecycle.swift"; sourceTree = "<group>"; };
 		0A26D1428B222E2AB83B024F /* ImageCaptionAltSeparationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageCaptionAltSeparationTests.swift; sourceTree = "<group>"; };
 		0AAD4AA3FEF10B4394BAAAED /* ExportService+PDFImages.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ExportService+PDFImages.swift"; sourceTree = "<group>"; };
+		0AE40566D0E6548A9523CDBE /* HrTypedConversionE2ETests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HrTypedConversionE2ETests.swift; sourceTree = "<group>"; };
 		0CEC9B25AB24040A17CC1589 /* HashBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HashBar.swift; sourceTree = "<group>"; };
 		0E843650744C2F13D1618667 /* FinalFinalTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FinalFinalTests.swift; sourceTree = "<group>"; };
 		0F398C30DDF6EB57FF14A96D /* ContentView+SectionManagement.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ContentView+SectionManagement.swift"; sourceTree = "<group>"; };
@@ -381,6 +384,7 @@
 		5BE4605C3214124AFB7C06FB /* SectionSyncService+Parsing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SectionSyncService+Parsing.swift"; sourceTree = "<group>"; };
 		5CA20F98EFC97B6FDEE93DFA /* ExportDiagnosticCaptureGatingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportDiagnosticCaptureGatingTests.swift; sourceTree = "<group>"; };
 		5D62806B985E3D32F9ECB468 /* DiagnosticLogFileTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticLogFileTests.swift; sourceTree = "<group>"; };
+		5E444B9FCD4CD86DB59341F6 /* HrInPlaceConversionScopeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HrInPlaceConversionScopeTests.swift; sourceTree = "<group>"; };
 		5F2DCF084A58C8E4311F4D2B /* EditorModeSwitchTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorModeSwitchTests.swift; sourceTree = "<group>"; };
 		5F9E113796E1D22FF7D8AB97 /* SectionSyncService+Anchors.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SectionSyncService+Anchors.swift"; sourceTree = "<group>"; };
 		5FD87E27CB1257814D589880 /* Database+Sections.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Database+Sections.swift"; sourceTree = "<group>"; };
@@ -865,6 +869,7 @@
 			isa = PBXGroup;
 			children = (
 				AE0C4913B4292CB7BA3EDFB5 /* E2EAsyncImageCorruptionTests.swift */,
+				0AE40566D0E6548A9523CDBE /* HrTypedConversionE2ETests.swift */,
 				3E3F86A7641CD90C91A5E47B /* LanguageToolChunkingE2ETests.swift */,
 				76EEC509BC7AF369375D20F9 /* ListNumberingE2ETests.swift */,
 				659E0ABC40A672E8ECBC7A5A /* NestedListE2ETests.swift */,
@@ -957,6 +962,7 @@
 				C193BFD9D30D088D972DBBDB /* FootnoteSyncTests.swift */,
 				9C9F8C71DDD49F99B9BB6746 /* GettingStartedBaselineTests.swift */,
 				C1CFEDB8DA2CEAACE5CC6EF8 /* HierarchyEnforcementTests.swift */,
+				5E444B9FCD4CD86DB59341F6 /* HrInPlaceConversionScopeTests.swift */,
 				0A26D1428B222E2AB83B024F /* ImageCaptionAltSeparationTests.swift */,
 				5448A9857645C4AEE8F5289B /* ImageWidthRoundtripTests.swift */,
 				72B46A3F6BAEBE5FA095D0AE /* LanguageToolProviderDedupTests.swift */,
@@ -1284,6 +1290,7 @@
 				8B84A55286FA2F144C0F57E9 /* GettingStartedBaselineTests.swift in Sources */,
 				984866CF052348E17EF80B2F /* HeadingParagraphExportOrderTests.swift in Sources */,
 				D5263E1D1C2CC98AF64E4D84 /* HierarchyEnforcementTests.swift in Sources */,
+				38BDEEBEB04DF8722581A825 /* HrInPlaceConversionScopeTests.swift in Sources */,
 				CB9E4720BDAA3DBAE3C2D501 /* ImageCaptionAltSeparationTests.swift in Sources */,
 				A737ADF9EE432DAA3D2DB35B /* ImageCaptionExportTests.swift in Sources */,
 				ED09710A150F3AB39B5C7AA3 /* ImageImportServiceTests.swift in Sources */,
@@ -1324,6 +1331,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				285B36F89EB24DC54F98B30C /* E2EAsyncImageCorruptionTests.swift in Sources */,
+				3582DD8E230F9B9BD2A8B640 /* HrTypedConversionE2ETests.swift in Sources */,
 				EE94D75F29A89CEF4ABDEC6A /* LanguageToolChunkingE2ETests.swift in Sources */,
 				F56895492DB034121086712A /* ListNumberingE2ETests.swift in Sources */,
 				8608CD92AB07E621BFAC1799 /* NestedListE2ETests.swift in Sources */,

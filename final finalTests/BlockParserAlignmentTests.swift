@@ -204,6 +204,26 @@ struct BlockParserAlignmentTests {
         #expect(pairs[3].meta.nonEmpty == true)
     }
 
+    @Test func alignmentPairsProducesCorrectMetaForHorizontalRule() {
+        // Mirrors the JS-side cross-language fixture at
+        // block-id-alignment-cross-language.test.ts's `schema.nodes.hr.create()` case:
+        // real schema node name is `hr`, but the Swift-side vocabulary word stays
+        // `horizontal_rule` (pmTypeForBlockType('horizontal_rule') maps it to 'hr' for
+        // the JS↔Swift comparison). extractTextContent forces text="" for .horizontalRule,
+        // so nonEmpty must be false.
+        let blocks = [
+            Block(id: "hr1", projectId: "p1", sortOrder: 1, blockType: .horizontalRule,
+                  textContent: "", markdownFragment: "---"),
+        ]
+
+        let pairs = BlockParser.alignmentPairs(blocks)
+
+        #expect(pairs.count == 1)
+        #expect(pairs[0].id == "hr1")
+        #expect(pairs[0].meta.blockType == "horizontal_rule")
+        #expect(pairs[0].meta.nonEmpty == false)
+    }
+
     @Test func alignmentPairsCollapsesConsecutiveSameTypeListBlocksIntoOneEntry() {
         // Mirrors emptyFilterAndListMergingCoexist's fixture shape above.
         let blocks = [
@@ -308,6 +328,23 @@ struct BlockParserAlignmentTests {
         #expect(pairs[1].meta.nonEmpty == true)
     }
 
+    // MARK: - detectBlockType (via the public parse() entry point — detectBlockType itself
+    // is `private`, so @testable import cannot reach it directly; parse() is the real
+    // production path that exercises it anyway.)
+
+    @Test func parseDetectsThematicBreakAsHorizontalRule() {
+        let blocks = BlockParser.parse(markdown: "---", projectId: "p1")
+
+        #expect(blocks.count == 1)
+        #expect(blocks.first?.blockType == .horizontalRule)
+    }
+
+    @Test func parseDetectsAsteriskAndUnderscoreThematicBreaksAsHorizontalRule() {
+        // The same `^[-*_]{3,}$` pattern also matches *** and ___ variants.
+        #expect(BlockParser.parse(markdown: "***", projectId: "p1").first?.blockType == .horizontalRule)
+        #expect(BlockParser.parse(markdown: "___", projectId: "p1").first?.blockType == .horizontalRule)
+    }
+
     // MARK: - Cross-language pin (mirrors block-id-alignment-cross-language.test.ts)
 
     /// Computes `alignmentPairs` over markdown parsed through the REAL BlockParser.parse
@@ -335,5 +372,8 @@ struct BlockParserAlignmentTests {
         #expect(nonEmpty(for: "[^1]: real text") == true)
         // "[^2]: " (footnote-def, blank) → TS: nonEmpty false
         #expect(nonEmpty(for: "[^2]: ") == false)
+        // "---" (thematic break) → TS: schema.nodes.hr.create() → nonEmpty false
+        // (extractTextContent forces text="" for .horizontalRule, same as .sectionBreak)
+        #expect(nonEmpty(for: "---") == false)
     }
 }

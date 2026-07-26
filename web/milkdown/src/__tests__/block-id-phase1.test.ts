@@ -92,10 +92,8 @@ describe('phase1CanClaim — legitimate in-place input-rule conversions', () => 
     expect(phase1CanClaim('paragraph', 'table', 'id-a', NO_CLAIMED, false, IRRELEVANT_OLD, IRRELEVANT_NEW)).toBe(true);
   });
 
-  it('horizontal_rule at paragraph offset (--- input rule) → true', () => {
-    expect(
-      phase1CanClaim('horizontal_rule', 'paragraph', 'id-a', NO_CLAIMED, false, IRRELEVANT_OLD, IRRELEVANT_NEW)
-    ).toBe(true);
+  it('hr at paragraph offset (--- input rule) → true', () => {
+    expect(phase1CanClaim('hr', 'paragraph', 'id-a', NO_CLAIMED, false, IRRELEVANT_OLD, IRRELEVANT_NEW)).toBe(true);
   });
 
   it('byte-identical text passes even when structureChanged is true', () => {
