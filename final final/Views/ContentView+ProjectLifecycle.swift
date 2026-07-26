@@ -35,48 +35,6 @@ extension ContentView {
         annotationSyncService.configure(database: db, contentId: cid)
         annotationSyncService.editorState = editorState
         bibliographySyncService.configure(database: db, projectId: pid)
-        bibliographySyncService.flushLiveEditorContentToBlocks = { [weak editorState] scheduledForProjectId in
-            // Same three guards as the sibling debounced re-parse this flush stands in for
-            // (ViewNotificationModifiers.swift's blockReparseTask, contentState/editorMode/
-            // zoomedSectionId check): both do the same wholesale replaceBlocks() write, so
-            // both must refuse to run mid-transition (drag reorder, zoom, project switch,
-            // editor-mode switch) against stale or partial editorState.content.
-            guard let editorState,
-                  editorState.contentState == .idle,
-                  editorState.editorMode == .source,
-                  editorState.zoomedSectionId == nil else { return }
-            // Hardening: verify this update is still for the currently-open project. Checked
-            // against editorState.currentProjectId specifically -- not
-            // documentManager.projectId -- because currentProjectId (together with
-            // editorState.projectDatabase) is exactly what flushContentToDatabase() itself
-            // reads; guarding on a different property here could diverge from what the flush
-            // actually operates on during a project switch.
-            // (final final has no document concept distinct from project -- one project IS
-            // one document, DocumentManager.openProject is the only switch mechanism -- so
-            // this also covers the "document switch" case.) Making this explicit rather than
-            // relying on ordering of state resets during a project switch.
-            guard editorState.currentProjectId == scheduledForProjectId else { return }
-            // editorState.content is already fresh here -- CodeMirror pushes via a 50ms
-            // debounce and the bibliography debounce is scheduled from the same onChange
-            // handler that sets editorState.content, so it can never be scheduled from
-            // stale content. flushContentToDatabase() also cancels the pending debounced
-            // re-parse task, closing the other half of the race.
-            //
-            // Deliberately does NOT call pushBlockIds(for:) afterward, unlike
-            // flushLiveContentToDatabase's other callers (see EditorViewState+Zoom.swift's doc
-            // comment on that method): that follow-up exists to keep BlockSyncService's
-            // incremental block-id tracking in sync with the fresh ids a full re-parse
-            // assigns. BlockSyncService's WebView is only ever assigned to the Milkdown
-            // editor, so Source Mode has no JS-side block-id tracking for it to update --
-            // there is nothing for pushBlockIds to re-sync here.
-            //
-            // Logged here rather than in BibliographySyncService.performBibliographyUpdate:
-            // this is the one place that actually knows a flush is happening (past all the
-            // guards above) -- logging at the call site there would fire unconditionally,
-            // including on the WYSIWYG path where this closure no-ops.
-            DebugLog.log(.bib, "[BibSync] flushing live editor content to blocks before bibliography write")
-            editorState.flushContentToDatabase()
-        }
         footnoteSyncService.configure(database: db, projectId: pid)
         autoBackupService.configure(database: db, projectId: pid)
         autoBackupService.editorState = editorState
@@ -330,19 +288,6 @@ extension ContentView {
             }
         } else {
             editorState.isResettingContent = false
-            if editorState.editorMode == .source {
-                // Mirrors the WYSIWYG branch's explicit window.scrollTo({top: 0}) reset above.
-                // Before setContent()'s diff-based rewrite, Source Mode's whole-document
-                // replace incidentally reset scroll to the top on every project switch, as a
-                // side effect of CodeMirror mapping any selection inside a fully-replaced
-                // range to position 0. The minimal-diff push no longer guarantees that when
-                // the old and new project's content happen to share a leading prefix, so make
-                // the reset explicit. Reuses the same editorState.scrollToOffset mechanism
-                // already wired for annotation/footnote jump-to-offset requests --
-                // CodeMirrorEditor.swift's updateNSView applies it right after the content
-                // push, in the same pass, once isResettingContent flips back to false above.
-                editorState.scrollToOffset = 0
-            }
         }
     }
 

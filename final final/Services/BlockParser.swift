@@ -51,32 +51,11 @@ enum BlockParser {
             // apply uniformly. Initial value 0 is overwritten before append.
 
             // Check for special flags
-            // The configured header name (normally read via the @MainActor
-            // ExportSettingsManager.shared.bibliographyHeaderName, e.g. a user-set "Works
-            // Cited") must be recognized alongside the built-in References/Bibliography
-            // literals: in Source Mode the <!-- ::auto-bibliography:: --> marker is already
-            // stripped out of editorState.content before this parse ever sees it (see
-            // ContentView+ContentRebuilding.swift), so a custom header name falling through to
-            // "ordinary heading" here would silently drop isBibliography from every entry
-            // paragraph below it -- the heading itself gets re-flagged by title match in
-            // Database+BlocksReorder.swift's replaceBlocks, but the entries don't, leaving stale
-            // entries stranded as duplicate body text on the very next bibliography write.
-            // BlockParser.parse() is a nonisolated static func called from both @MainActor
-            // production call sites AND non-@MainActor test contexts (e.g.
-            // TestFixtureFactory.createFixture, called from Tier1 tests with no @MainActor
-            // annotation) -- MainActor.assumeIsolated crashed there. ExportSettings.load() is
-            // the plain, non-actor-isolated struct method the manager itself is built on (its
-            // `update()` calls `settings.save()` synchronously, so UserDefaults is always in
-            // sync with the manager's cached value): reading straight from UserDefaults here is
-            // thread-safe and avoids threading an @MainActor read through every call site.
-            let configuredHeaderName = ExportSettings.load().bibliographyHeaderName
             let isBibliographyHeading = trimmed.contains("<!-- ::auto-bibliography:: -->") ||
                                          trimmed == "# References" ||
                                          trimmed == "## References" ||
                                          trimmed == "# Bibliography" ||
-                                         trimmed == "## Bibliography" ||
-                                         trimmed == "# \(configuredHeaderName)" ||
-                                         trimmed == "## \(configuredHeaderName)"
+                                         trimmed == "## Bibliography"
             if isBibliographyHeading {
                 inBibliographySection = true
             } else if inBibliographySection && blockType == .heading {

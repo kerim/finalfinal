@@ -66,30 +66,6 @@ final class BibliographySyncService {
 
     weak var database: ProjectDatabase?
 
-    /// Hook invoked at the start of every bibliography update, BEFORE any bibliography row
-    /// is written, so the block table reflects the live editor's current text.
-    ///
-    /// Wired unconditionally by ContentView (both editor modes) to a closure that calls
-    /// `EditorViewState.flushContentToDatabase()`, but the closure itself gates on
-    /// `editorMode == .source` and self-guards to a no-op in WYSIWYG, where
-    /// `BlockSyncService`'s incremental poll already keeps the block table current.
-    ///
-    /// Exists because in Source Mode the ONLY writer of live editor text into the block
-    /// table is a 1s-debounced re-parse whose fire-time guard silently drops the write --
-    /// and this update is about to make that guard false. `BlockSyncService.pollBlockChangesNow()`,
-    /// which the bibliography rebuild relies on for the same purpose, is inert in Source Mode
-    /// (its WebView is only ever assigned to the Milkdown editor).
-    ///
-    /// Same targeted per-consumer-flush pattern already shipped for export
-    /// (`DocumentManager.flushBeforeExport`) and snapshot/auto-backup
-    /// (`EditorViewState.flushLiveContentToDatabase`).
-    ///
-    /// The closure receives the projectId this bibliography update was scheduled for
-    /// (captured at schedule time) and must verify it still matches the live editor's
-    /// current project before flushing -- protects against a project switch landing
-    /// between scheduling and this update actually running. Bails (no-ops) on mismatch.
-    var flushLiveEditorContentToBlocks: ((_ scheduledForProjectId: String) async -> Void)?
-
     // MARK: - Static Helpers
 
     /// Pre-compiled regex for citekey extraction
@@ -244,29 +220,6 @@ final class BibliographySyncService {
 
         state = .syncing
         defer { state = .idle }
-
-        // Flush the live editor's text into the block table before writing anything.
-        // MUST run BEFORE both write branches below: the Source-Mode flush is a wholesale
-        // delete-and-reinsert of every block parsed from the live editor content, so running
-        // it afterwards would re-parse the editor's now-stale bibliography text and clobber
-        // the fresh rows this update is about to write.
-        // Safe to place here: this function never reads block/body content itself -- it
-        // derives the bibliography purely from the citekey snapshot -- and the markdown that
-        // actually reaches the editor is assembled later, elsewhere (ContentView's
-        // handleBibliographySectionChanged -> fetchBlocksWithIds), from a fresh block read.
-        // Not logged here: the closure is always wired (both editor modes -- see the property's
-        // doc comment above) and self-guards to a no-op in WYSIWYG, so a log statement at this
-        // call site would fire unconditionally and misleadingly claim a flush happened even when
-        // the closure's own guards skipped it. The actual flush is logged from inside the
-        // closure itself (ContentView+ProjectLifecycle.swift), right before it calls
-        // flushContentToDatabase() -- the one place that knows whether a flush is really occurring.
-        if let flush = flushLiveEditorContentToBlocks {
-            await flush(projectId)
-        }
-
-        // The flush is the first suspension point since the staleness guard above. Re-check
-        // that a manual regenerateBibliography() hasn't superseded this snapshot while it ran.
-        guard scheduledGeneration == syncGeneration else { return }
 
         // Update last known citekeys
         lastKnownCitekeys = Set(uniqueCitekeys)

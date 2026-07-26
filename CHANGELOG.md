@@ -8,7 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
-- **In the source editor, inserting a citation could revert back to the literal `/cite` text a second or two later, and jump the document back to the top** — picking a reference from Zotero showed the citation correctly at first, but a background bibliography refresh could then overwrite it with stale text and reset your scroll position. Citations now stay put, and the document no longer jumps to the top when the bibliography updates in the background.
+- **Citing a reference from a shared Zotero library could fail with a "Citation Error" saying the reference wasn't found** — citations from your personal library always worked, but the same reference in a group or shared library could be rejected even though Zotero clearly had it. Citing from a shared library now works the same as citing from your own library, including exporting to PDF and reopening a document later.
 
 ## [0.2.113] - 2026-07-22
 
