@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.114] - 2026-07-26
+
 ### Fixed
 
 - **In the source editor, inserting a citation could revert back to the literal `/cite` text a second or two later, and jump the document back to the top** — picking a reference from Zotero showed the citation correctly at first, but a background bibliography refresh could then overwrite it with stale text and reset your scroll position. Citations now stay put, and the document no longer jumps to the top when the bibliography updates in the background.
