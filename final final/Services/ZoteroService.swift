@@ -155,9 +155,7 @@ private struct JSONRPCResponse: Decodable {
     let error: JSONRPCError?
 }
 
-// Not `private`: also decoded by `GroupsRPCResponse` in ZoteroService+LibraryScope.swift, a
-// different file — Swift's `private` doesn't extend to extensions/types in other files.
-struct JSONRPCError: Decodable {
+private struct JSONRPCError: Decodable {
     let code: Int
     let message: String
 }
@@ -203,14 +201,6 @@ final class ZoteroService {
 
     /// CSL items indexed by citekey (populated by search results)
     private var itemsByKey: [String: CSLItem] = [:]
-
-    /// Session cache of library IDs known to Better BibTeX (from `user.groups`) — the
-    /// personal library plus every group/shared library the user belongs to. Populated
-    /// lazily by `fetchLibraryIDs()`; pass `forceRefresh: true` there to bypass this cache
-    /// (a group could be joined/left mid-session). No automatic polling.
-    /// Not `private`: `fetchLibraryIDs()` lives in `ZoteroService+LibraryScope.swift`, a
-    /// different file, and Swift's `private` doesn't extend to extensions in other files.
-    var cachedLibraryIDs: [Int]?
 
     // MARK: - API Methods
 
@@ -320,58 +310,9 @@ final class ZoteroService {
         }
     }
 
-    /// Fetch items by citekey, decoded into `CSLItem`, scoped in two phases so items in
-    /// shared/group libraries resolve correctly. See `ZoteroService+LibraryScope.swift` for
-    /// the full two-phase design (`resolveRawViaPandocFilter`) shared with
-    /// `fetchRawItemsForCitekeys` below.
-    ///
-    /// Throws `ZoteroError.invalidResponse("BBT error: not found in any library: ...")` (or
-    /// `"ambiguous across libraries: ..."`, naming only the unresolved keys) if any requested
-    /// citekey never resolves — this must surface, not be silently dropped, since it's the
-    /// only visible sign of a real typo or deleted Zotero item (the exact "Citation Error"
-    /// alert from the original bug report). Whatever DID resolve is cached before the throw,
-    /// so a caller that retries later doesn't re-fetch citekeys that already succeeded.
-    ///
-    /// If the two-phase resolution path fails for ANY reason — network/transport failure,
-    /// non-200, malformed JSON-RPC envelope, a JSON-RPC error object, or a `CSLItem` decode
-    /// throw — falls back to the old unscoped `item.export` call (`fetchItemsForCitekeysViaExport`),
-    /// logged with the reason. A `CancellationError`/cancelled `URLError` is rethrown directly,
-    /// never treated as "the new path failed."
+    /// Fetch items by citekey using BBT item.export
+    /// Unlike search(), this fetches specific citekeys from Zotero
     func fetchItemsForCitekeys(_ citekeys: [String]) async throws -> [CSLItem] {
-        guard !citekeys.isEmpty else { return [] }
-        let requested = Self.orderedUniqueCitekeys(citekeys)
-
-        let outcome: PandocFilterRawOutcome
-        var items: [CSLItem] = []
-        do {
-            outcome = try await resolveRawViaPandocFilter(requested)
-            items = try outcome.items.values.map { try Self.decodeCSLItem(from: $0) }
-        } catch {
-            if Self.isCancellation(error) { throw error }
-            DebugLog.log(
-                .zotero,
-                "[ZoteroService] item.pandoc_filter resolution failed (\(error)) — falling back to unscoped item.export"
-            )
-            return try await fetchItemsForCitekeysViaExport(requested)
-        }
-
-        for item in items {
-            itemsByKey[item.citekey] = item
-        }
-        isConnected = true
-        connectionError = nil
-
-        if !outcome.notFoundKeys.isEmpty || !outcome.ambiguousKeys.isEmpty {
-            throw Self.notFoundOrAmbiguousError(notFound: outcome.notFoundKeys, ambiguous: outcome.ambiguousKeys)
-        }
-
-        return items
-    }
-
-    /// Fetch items by citekey using BBT's `item.export` — unscoped, so BBT searches only the
-    /// personal library ("My Library"). This is the pre-fix behavior, kept as the fallback for
-    /// when `item.pandoc_filter` resolution (`resolveRawViaPandocFilter`) fails.
-    private func fetchItemsForCitekeysViaExport(_ citekeys: [String]) async throws -> [CSLItem] {
         guard !citekeys.isEmpty else { return [] }
         guard let url = URL(string: "\(baseURL)/better-bibtex/json-rpc") else {
             throw ZoteroError.invalidResponse("Invalid URL")
@@ -380,7 +321,6 @@ final class ZoteroService {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.timeoutInterval = Self.itemExportTimeout
 
         // item.export returns CSL-JSON for specified citekeys
         // Note: BBT requires the full translator name "Better CSL JSON" (not "csljson")

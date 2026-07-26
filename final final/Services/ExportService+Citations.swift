@@ -33,29 +33,47 @@ extension ExportService {
         }
     }
 
-    /// Fetch bibliography as raw CSL-JSON string from Zotero/BBT for the given citekeys, for
-    /// pandoc's `--bibliography` argument.
-    ///
-    /// Routes through `ZoteroService.fetchRawItemsForCitekeys()` — the shared, library-scoped,
-    /// RAW (undecoded) resolver — instead of making its own raw `item.export` JSON-RPC call
-    /// (which used to be unscoped, silently "My Library"-only, the same defect as the old
-    /// citekey resolver, so PDF export silently dropped group-library citations) and instead
-    /// of the typed `fetchItemsForCitekeys()`/`CSLItem` resolver: `CSLItem` only models a
-    /// subset of CSL-JSON fields, and re-encoding through it would silently drop every field
-    /// it doesn't know about (translator, edition, collection-title, chapter-number, genre,
-    /// original-date, etc.) — fields the bundled `chicago-author-date.csl` style actually
-    /// uses. The raw resolver shares the exact same two-phase (personal-then-group) resolution
-    /// and `item.pandoc_filter`-with-fallback behavior as CAYW/autocomplete, just without the
-    /// lossy round trip.
+    /// Fetch bibliography as raw CSL-JSON string from Zotero/BBT for the given citekeys.
+    /// Uses the same JSON-RPC endpoint as ZoteroService.fetchItemsForCitekeys()
+    /// but returns the raw JSON string for pandoc to consume directly.
     func fetchBibliographyJSON(for citekeys: [String]) async -> String? {
         guard !citekeys.isEmpty else { return nil }
 
-        do {
-            let items = try await ZoteroService.shared.fetchRawItemsForCitekeys(citekeys)
-            guard !items.isEmpty else { return nil }
+        let url = URL(string: "http://127.0.0.1:23119/better-bibtex/json-rpc")!
 
-            let data = try JSONSerialization.data(withJSONObject: items)
-            return String(data: data, encoding: .utf8)
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = 10
+
+        let body: [String: Any] = [
+            "jsonrpc": "2.0",
+            "method": "item.export",
+            "params": [citekeys, "Better CSL JSON"]
+        ]
+
+        do {
+            request.httpBody = try JSONSerialization.data(withJSONObject: body)
+            let (data, response) = try await URLSession.shared.data(for: request)
+
+            guard let httpResponse = response as? HTTPURLResponse,
+                  httpResponse.statusCode == 200 else {
+                return nil
+            }
+
+            // item.export returns JSON-RPC wrapper; extract the result
+            guard let jsonObj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                return nil
+            }
+
+            // Result may be a JSON string or an array
+            if let resultString = jsonObj["result"] as? String, !resultString.isEmpty {
+                return resultString
+            } else if let resultArray = jsonObj["result"] as? [[String: Any]], !resultArray.isEmpty {
+                let resultData = try JSONSerialization.data(withJSONObject: resultArray)
+                return String(data: resultData, encoding: .utf8)
+            }
+            return nil
         } catch {
             DebugLog.log(.fileOps, "[ExportService] Failed to fetch bibliography JSON: \(error)")
             return nil

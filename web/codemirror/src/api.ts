@@ -38,6 +38,7 @@ import { setFocusModeEffect, setFocusModeEnabled } from './focus-mode-plugin';
 import { dismissImageCaptionPopup } from './image-caption-popup';
 import { installLineHeightFix, invalidateHeadingMetricsCache } from './line-height-fix';
 import { formatTableCommand, insertTableCommand } from './table-format';
+import { computeMinimalChange } from './text-diff';
 import type { AnnotationType, FindOptions, FindResult, ParsedAnnotation, SearchState } from './types';
 
 // --- Pending drop position for image drops ---
@@ -119,11 +120,32 @@ export function setContent(markdown: string, options?: { scrollToStart?: boolean
 
   dismissImageCaptionPopup();
 
-  const prevLen = view.state.doc.length;
-  view.dispatch({
-    changes: { from: 0, to: prevLen, insert: markdown },
-    annotations: Transaction.addToHistory.of(false),
-  });
+  // Confine the change to the span that actually differs instead of always doing a
+  // whole-document replace. See text-diff.ts's computeMinimalChange doc comment for
+  // why: CodeMirror maps any selection inside a fully-replaced range to the START of
+  // the replacement, so replacing everything silently teleported the cursor (and
+  // scroll anchor) to position 0 on every derived-content push (e.g. a
+  // bibliography-section resync after a citation insert).
+  const current = view.state.doc.toString();
+  const change = computeMinimalChange(current, markdown);
+
+  // scrollToStart is the zoom-transition path: it deliberately resets to the top,
+  // which the old whole-document replace achieved as a side effect of position
+  // mapping. Pin that behavior explicitly now that the change no longer spans the
+  // cursor. Every other caller intentionally passes no selection, so CodeMirror's
+  // own mapping keeps the cursor (and scroll anchor) wherever it was for any change
+  // that doesn't span it -- the whole point of this fix.
+  //
+  // Accepted residual: if the cursor happens to sit INSIDE the specific span that
+  // changed, it now maps to the start of that span rather than jumping to document
+  // position 0. Strictly better than today.
+  if (change || options?.scrollToStart) {
+    view.dispatch({
+      ...(change ? { changes: change } : {}),
+      ...(options?.scrollToStart ? { selection: { anchor: 0 } } : {}),
+      annotations: Transaction.addToHistory.of(false),
+    });
+  }
 
   // Force CodeMirror to re-measure line heights after content change.
   // Heading decorations change font-size on heading lines, but only for
