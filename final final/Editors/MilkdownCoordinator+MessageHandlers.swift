@@ -574,8 +574,11 @@ extension MilkdownEditor.Coordinator {
     @MainActor
     func handleOpenCitationPicker(requestId: Int) async {
         guard let webView else {
+            DebugLog.log(.zotero, "[MilkdownEditor] handleOpenCitationPicker: webView is nil")
             return
         }
+
+        DebugLog.log(.zotero, "[MilkdownEditor] Opening CAYW picker, requestId: \(requestId)")
 
         // Pre-check: ping Zotero before opening the picker
         let isRunning = await ZoteroService.shared.ping()
@@ -595,11 +598,14 @@ extension MilkdownEditor.Coordinator {
             // Bring app back to foreground after Zotero picker closes
             NSApp.activate(ignoringOtherApps: true)
 
+            DebugLog.log(.zotero, "[MilkdownEditor] CAYW returned citekeys: \(parsed.citekeys)")
+
             // Encode CSL items as JSON for web
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.sortedKeys]
             let itemsData = try encoder.encode(items)
             guard let itemsJSON = String(data: itemsData, encoding: .utf8) else {
+                DebugLog.log(.zotero, "[MilkdownEditor] Failed to encode CSL items")
                 sendCitationPickerCancelled(webView: webView, requestId: requestId)
                 return
             }
@@ -616,6 +622,7 @@ extension MilkdownEditor.Coordinator {
 
             guard let callbackJSON = try? JSONSerialization.data(withJSONObject: callbackData),
                   let callbackStr = String(data: callbackJSON, encoding: .utf8) else {
+                DebugLog.log(.zotero, "[MilkdownEditor] Failed to encode callback data")
                 sendCitationPickerCancelled(webView: webView, requestId: requestId)
                 return
             }
@@ -625,13 +632,21 @@ extension MilkdownEditor.Coordinator {
             let escapedItems = itemsJSON.escapedForJSTemplateLiteral
 
             let script = "window.FinalFinal.citationPickerCallback(JSON.parse(`\(escapedCallback)`), JSON.parse(`\(escapedItems)`))"
-            webView.evaluateJavaScript(script) { _, _ in }
+            webView.evaluateJavaScript(script) { _, error in
+                if let error {
+                    DebugLog.log(.zotero, "[MilkdownEditor] citationPickerCallback error: \(error)")
+                } else {
+                    DebugLog.log(.zotero, "[MilkdownEditor] citationPickerCallback succeeded")
+                }
+            }
         } catch ZoteroError.userCancelled {
             // User cancelled - bring app back to foreground, no error
             NSApp.activate(ignoringOtherApps: true)
+            DebugLog.log(.zotero, "[MilkdownEditor] CAYW cancelled by user")
             sendCitationPickerCancelled(webView: webView, requestId: requestId)
         } catch ZoteroError.notRunning {
             NSApp.activate(ignoringOtherApps: true)
+            DebugLog.log(.zotero, "[MilkdownEditor] Zotero not running")
             showZoteroAlert(
                 title: "Zotero Connection Lost",
                 message: "Zotero is not running. Please open Zotero and try again."
@@ -639,6 +654,7 @@ extension MilkdownEditor.Coordinator {
             sendCitationPickerCancelled(webView: webView, requestId: requestId)
         } catch {
             NSApp.activate(ignoringOtherApps: true)
+            DebugLog.log(.zotero, "[MilkdownEditor] CAYW error: \(error.localizedDescription)")
             showZoteroAlert(
                 title: "Citation Error",
                 message: error.localizedDescription
