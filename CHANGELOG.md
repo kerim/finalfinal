@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.115] - 2026-07-27
+
 ### Fixed
 
 - **Typing `---` to make a horizontal divider line worked at first but vanished when you reopened the document** — the divider was never saved. Worse, opening a document that already contained one could throw the whole document out of alignment internally, so edits after that point could be saved to the wrong paragraph. Divider lines now save and reload correctly, whether you type them or the document arrives with them already in place.
