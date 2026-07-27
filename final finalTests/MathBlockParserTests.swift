@@ -129,4 +129,39 @@ struct MathBlockParserTests {
         #expect(blocks[0].blockType == .codeBlock)
         #expect(blocks.filter { $0.blockType == .mathDisplay }.isEmpty)
     }
+
+    // MARK: - Table-then-fence guard regression (reverse-direction sibling of the above)
+
+    @Test func tableImmediatelyFollowedByCodeFenceClosesTableFirst() {
+        // A markdown table with NO blank line before an opening code fence must
+        // close the table cleanly and let the fence start a fresh code block —
+        // not glue the fence onto the table's fragment (mis-typing it) and leave
+        // inTable stuck true, which used to corrupt every block after it.
+        let markdown = """
+        | Name | Age |
+        |---|---|
+        | Alice | 30 |
+        ```
+        let x = 1
+        ```
+
+        Next paragraph.
+        """
+        let blocks = BlockParser.parse(markdown: markdown, projectId: "test")
+        #expect(blocks.count == 3)
+
+        #expect(blocks[0].blockType == .table)
+        #expect(blocks[0].markdownFragment.contains("| Alice | 30 |"))
+        // The fence must NOT have been absorbed into the table's fragment.
+        #expect(!blocks[0].markdownFragment.contains("```"))
+
+        #expect(blocks[1].blockType == .codeBlock)
+        #expect(blocks[1].markdownFragment.contains("let x = 1"))
+        // The fence must still be present to open the code block.
+        #expect(blocks[1].markdownFragment.hasPrefix("```"))
+
+        // Content after the fence must parse as an ordinary, uncorrupted paragraph.
+        #expect(blocks[2].blockType == .paragraph)
+        #expect(blocks[2].textContent == "Next paragraph.")
+    }
 }
