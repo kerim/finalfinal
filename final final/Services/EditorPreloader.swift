@@ -55,10 +55,28 @@ final class EditorPreloader: NSObject, WKNavigationDelegate, WKScriptMessageHand
             source: """
                 window.onerror = function(msg, url, line, col, error) {
                     console.error('[Milkdown JS ERROR]', msg, 'at', url, line, col, error);
+                    window.webkit?.messageHandlers?.errorHandler?.postMessage({
+                        type: 'error',
+                        message: '[Milkdown] ' + msg,
+                        url: url,
+                        line: line,
+                        column: col,
+                        error: error ? error.toString() : null,
+                        phase: 'preload'
+                    });
                     return false;
                 };
                 window.addEventListener('unhandledrejection', function(e) {
                     console.error('[Milkdown JS REJECTION]', e.reason);
+                    window.webkit?.messageHandlers?.errorHandler?.postMessage({
+                        type: 'unhandledrejection',
+                        message: '[Milkdown] Unhandled Promise Rejection: ' + e.reason,
+                        url: '',
+                        line: 0,
+                        column: 0,
+                        error: e.reason ? e.reason.toString() : null,
+                        phase: 'preload'
+                    });
                 });
             """,
             injectionTime: .atDocumentStart,
@@ -100,10 +118,28 @@ final class EditorPreloader: NSObject, WKNavigationDelegate, WKScriptMessageHand
             source: """
                 window.onerror = function(msg, url, line, col, error) {
                     console.error('[CodeMirror JS ERROR]', msg, 'at', url, line, col, error);
+                    window.webkit?.messageHandlers?.errorHandler?.postMessage({
+                        type: 'error',
+                        message: '[CodeMirror] ' + msg,
+                        url: url,
+                        line: line,
+                        column: col,
+                        error: error ? error.toString() : null,
+                        phase: 'preload'
+                    });
                     return false;
                 };
                 window.addEventListener('unhandledrejection', function(e) {
                     console.error('[CodeMirror JS REJECTION]', e.reason);
+                    window.webkit?.messageHandlers?.errorHandler?.postMessage({
+                        type: 'unhandledrejection',
+                        message: '[CodeMirror] Unhandled Promise Rejection: ' + e.reason,
+                        url: '',
+                        line: 0,
+                        column: 0,
+                        error: e.reason ? e.reason.toString() : null,
+                        phase: 'preload'
+                    });
                 });
             """,
             injectionTime: .atDocumentStart,
@@ -206,7 +242,12 @@ final class EditorPreloader: NSObject, WKNavigationDelegate, WKScriptMessageHand
         guard message.name == "errorHandler", let body = message.body as? [String: Any] else { return }
         let msgType = body["type"] as? String ?? "unknown"
         let msg = body["message"] as? String ?? "unknown"
-        let prefix = "[EditorPreloader]"
+        // window.onerror/unhandledrejection payloads (see errorScript above) tag themselves
+        // with phase: 'preload' so a DebugLog line can be told apart from the same error
+        // shape logged post-claim via MilkdownCoordinator+MessageHandlers.swift /
+        // CodeMirrorCoordinator+Handlers.swift (which never set this field).
+        let phase = body["phase"] as? String
+        let prefix = phase == "preload" ? "[EditorPreloader][Preload]" : "[EditorPreloader]"
 
         switch msgType {
         case "sync-diag":
