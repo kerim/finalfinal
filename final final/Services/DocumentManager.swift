@@ -430,11 +430,22 @@ final class DocumentManager {
         try db.updateDocumentGoal(goal: goal, goalType: goalType, excludeBibliography: excludeBibliography)
     }
 
+    /// The project's document-level word-goal configuration.
+    struct DocumentGoalSettings {
+        let goal: Int?
+        let goalType: GoalType
+        let excludeBibliography: Bool
+    }
+
     /// Load document goal settings from the current project
-    func loadDocumentGoalSettings() throws -> (goal: Int?, goalType: GoalType, excludeBibliography: Bool)? {
+    func loadDocumentGoalSettings() throws -> DocumentGoalSettings? {
         guard let db = projectDatabase else { return nil }
         guard let project = try db.fetchProject() else { return nil }
-        return (project.documentGoal, project.documentGoalType, project.excludeBibliography)
+        return DocumentGoalSettings(
+            goal: project.documentGoal,
+            goalType: project.documentGoalType,
+            excludeBibliography: project.excludeBibliography
+        )
     }
 
     // MARK: - Embedded Citations

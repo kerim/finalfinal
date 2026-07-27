@@ -123,6 +123,7 @@
 		72BC27601E99F37F134C760E /* AnnotationSyncService+Markdown.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4C0F17548A3E883FD14975A0 /* AnnotationSyncService+Markdown.swift */; };
 		7399B661D4788F2227D1EC00 /* TableBridgeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E8CFBF7223E370C384997AA /* TableBridgeTests.swift */; };
 		75790D7B6D72084958166485 /* DiagnosticReportGenerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 621214D7AF8029CB872C0562 /* DiagnosticReportGenerator.swift */; };
+		75D0CDF70CD28B13DBB84C21 /* BlockParser+Assembly.swift in Sources */ = {isa = PBXBuildFile; fileRef = F6F416FB7DADDC6E7E5C1D49 /* BlockParser+Assembly.swift */; };
 		75D604E7143573D4BFD533FD /* MilkdownEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7EEDC491836013F46E97FAE8 /* MilkdownEditor.swift */; };
 		762C4F8744B0DB84218E14EF /* Database+Sections.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5FD87E27CB1257814D589880 /* Database+Sections.swift */; };
 		774B66FA849C81200342BDAE /* PrintCommands.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E3E70DE1F4B25DDFF033A33 /* PrintCommands.swift */; };
@@ -163,6 +164,7 @@
 		90566734810E75E47CEF710E /* MarkdownUtils.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C20C6E92294CD47FFE7539F /* MarkdownUtils.swift */; };
 		914908877FE1D091C7241247 /* TestFixtureFactory.swift in Sources */ = {isa = PBXBuildFile; fileRef = 93141FCBB4923D0F28E8C236 /* TestFixtureFactory.swift */; };
 		91DF49BFF5C5AD124AE4A15E /* Export in Resources */ = {isa = PBXBuildFile; fileRef = 8C997BC2679C3F7349B8B7E8 /* Export */; };
+		92C94AB7BDFA6D2F61712B2D /* BlockParser+Images.swift in Sources */ = {isa = PBXBuildFile; fileRef = FAD8FFDABECD9BD823A0CA42 /* BlockParser+Images.swift */; };
 		92F44EAF2040D7CE3568BA8C /* EditorPreloader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1EC960E239AB6BAACD5BC0A3 /* EditorPreloader.swift */; };
 		935EE522B76AA7CB3B141E6B /* SectionSyncService+Parsing.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5BE4605C3214124AFB7C06FB /* SectionSyncService+Parsing.swift */; };
 		95DA16BD31941C5CD424F43D /* ProjectRepairService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 437CEEF39F4832F82656EC15 /* ProjectRepairService.swift */; };
@@ -227,6 +229,7 @@
 		E13B46ACDA5F14689B1B3F67 /* ExportService+PandocResources.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC64ADE3296F154812601D6B /* ExportService+PandocResources.swift */; };
 		E24F860E7538A80ED50DF123 /* QuickLook Extension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = AEA97EE7FBB6B6E21D5FA0F0 /* QuickLook Extension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		E2936B1395E60EDCD0D14969 /* CodeMirrorCoordinator+Handlers.swift in Sources */ = {isa = PBXBuildFile; fileRef = 47F42FEEB5EFB471BDEDB2DB /* CodeMirrorCoordinator+Handlers.swift */; };
+		E405022033898171C8C866EE /* BlockParser+Splitting.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86A46F4701A4F13FB110CE54 /* BlockParser+Splitting.swift */; };
 		E443BC85E2B4EF03816FCCAE /* SectionReconcilerPseudoSectionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C3F35649A1295E3E3636E9B /* SectionReconcilerPseudoSectionTests.swift */; };
 		E46A01D58B8F56C1034EB422 /* Snapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = 87F00396843D1E0300C1624A /* Snapshot.swift */; };
 		E46F3ED58DA8FEDB5213C283 /* AnnotationCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5903AE3511C621FF3093E3C9 /* AnnotationCardView.swift */; };
@@ -433,6 +436,7 @@
 		80D86FAB5657E30D2DC86655 /* editor */ = {isa = PBXFileReference; lastKnownFileType = folder; name = editor; path = "final final/Resources/editor"; sourceTree = SOURCE_ROOT; };
 		84490CBC1C7AF23477F1345A /* ExportFlushTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportFlushTests.swift; sourceTree = "<group>"; };
 		84C5212CE3DA7F15153B8897 /* PreferencesView+Presets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "PreferencesView+Presets.swift"; sourceTree = "<group>"; };
+		86A46F4701A4F13FB110CE54 /* BlockParser+Splitting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "BlockParser+Splitting.swift"; sourceTree = "<group>"; };
 		87026C4D0F2AEB394A0A85D9 /* PreferencesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreferencesView.swift; sourceTree = "<group>"; };
 		8787EE28839E44DAAF698741 /* Database+BlocksObservation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Database+BlocksObservation.swift"; sourceTree = "<group>"; };
 		87F00396843D1E0300C1624A /* Snapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Snapshot.swift; sourceTree = "<group>"; };
@@ -529,8 +533,10 @@
 		ED9246FEA41F18BA08135B2F /* BibliographySyncService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BibliographySyncService.swift; sourceTree = "<group>"; };
 		F37D8109D489C3EF73C167C0 /* RadixScales+Custom.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "RadixScales+Custom.swift"; sourceTree = "<group>"; };
 		F56781FE0EE291AAD9AE24E8 /* FocusModeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FocusModeTests.swift; sourceTree = "<group>"; };
+		F6F416FB7DADDC6E7E5C1D49 /* BlockParser+Assembly.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "BlockParser+Assembly.swift"; sourceTree = "<group>"; };
 		FA8E40231CCB32EC98E3B48F /* ProjectPickerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectPickerView.swift; sourceTree = "<group>"; };
 		FAB8A912FFF326FE24A67328 /* E2ESectionReconcilerPseudoSectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = E2ESectionReconcilerPseudoSectionTests.swift; sourceTree = "<group>"; };
+		FAD8FFDABECD9BD823A0CA42 /* BlockParser+Images.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "BlockParser+Images.swift"; sourceTree = "<group>"; };
 		FB77BD6B3DD5AF1E074B30A4 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		FDA7C9F1CFBE9EDB2C4D818C /* OutlineParserTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutlineParserTests.swift; sourceTree = "<group>"; };
 		FE24C13995368C23BC470A26 /* FinalFinalApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FinalFinalApp.swift; sourceTree = "<group>"; };
@@ -767,6 +773,9 @@
 				2B7205FC48760A149A8B0BF8 /* AutoBackupService.swift */,
 				ED9246FEA41F18BA08135B2F /* BibliographySyncService.swift */,
 				A0EE6A723C923D316B9CE89C /* BlockParser.swift */,
+				F6F416FB7DADDC6E7E5C1D49 /* BlockParser+Assembly.swift */,
+				FAD8FFDABECD9BD823A0CA42 /* BlockParser+Images.swift */,
+				86A46F4701A4F13FB110CE54 /* BlockParser+Splitting.swift */,
 				4BE2C3C3ABC2BC1990C2AC24 /* BlockSyncService.swift */,
 				DDC98D54901B8744835E5EF4 /* BuiltInProvider.swift */,
 				621214D7AF8029CB872C0562 /* DiagnosticReportGenerator.swift */,
@@ -1365,6 +1374,9 @@
 				CE292E2BCF5617C406CA10FB /* AutoBackupService.swift in Sources */,
 				8CC3FFE851C758FAF0E7DE9B /* BibliographySyncService.swift in Sources */,
 				51B8B9C54EC8B405167BB9AD /* Block.swift in Sources */,
+				75D0CDF70CD28B13DBB84C21 /* BlockParser+Assembly.swift in Sources */,
+				92C94AB7BDFA6D2F61712B2D /* BlockParser+Images.swift in Sources */,
+				E405022033898171C8C866EE /* BlockParser+Splitting.swift in Sources */,
 				9E99C57C2D8101B560301BAE /* BlockParser.swift in Sources */,
 				230D53A0B012FF234621652E /* BlockSyncService.swift in Sources */,
 				21E9D0A73D4F1709F165CC1E /* BuiltInProvider.swift in Sources */,

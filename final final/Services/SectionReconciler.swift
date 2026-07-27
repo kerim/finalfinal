@@ -82,7 +82,8 @@ struct SectionReconciler: Sendable {
             // needs investigating; it can't distinguish that from an ordinary
             // user-initiated deletion on its own, but this is a correlation key,
             // not a verdict.
-            DebugLog.log(.sync, "[SectionReconciler] Deleted id=\(section.id.prefix(8)) order=\(section.sortOrder) pseudo=\(section.isPseudoSection) status=\(section.status)")
+            DebugLog.log(.sync, "[SectionReconciler] Deleted id=\(section.id.prefix(8)) " +
+                "order=\(section.sortOrder) pseudo=\(section.isPseudoSection) status=\(section.status)")
         }
 
         return changes

@@ -261,7 +261,10 @@ Intro paragraph for section A.
         // programmatically): confirms the doctoring above really landed
         // before it's relied on as the "before" state.
         let preEditStatuses = try Self.queryStatuses(fixturePath: TestFixtureHelper.fixturePath, ids: [break1Id, break2Id, break3Id])
-        XCTAssertEqual(preEditStatuses, ["writing", "review", "final_"], "Doctored statuses should be in place before the edit. Got: \(preEditStatuses)")
+        XCTAssertEqual(
+            preEditStatuses, ["writing", "review", "final_"],
+            "Doctored statuses should be in place before the edit. Got: \(preEditStatuses)"
+        )
 
         // DIAGNOSTIC (coordinator-requested, 2026-07-27 failure investigation):
         // full byte-exact state of ALL THREE break rows -- sortOrder, title,
@@ -341,7 +344,8 @@ Intro paragraph for section A.
         let survivorId = try Self.querySingleId(fixturePath: TestFixtureHelper.fixturePath, contentContains: "gamma three")
         XCTAssertEqual(
             survivorId, break3Id,
-            "BUG: the surviving row should be break 3's OWN database row (id \(break3Id)), not a different row. Got id \(survivorId). All pseudo-sections: \(survivors)"
+            "BUG: the surviving row should be break 3's OWN database row (id \(break3Id)), " +
+            "not a different row. Got id \(survivorId). All pseudo-sections: \(survivors)"
         )
 
         // Expected raw DB value is "final" here, NOT "final_", despite the row
@@ -468,7 +472,9 @@ Intro paragraph for section A.
     private static func queryPseudoSections(fixturePath: String) throws -> [String] {
         let dbPath = fixturePath + "/content.sqlite"
         let sentinel = "###ROWEND###"
-        let sql = "SELECT id || '|' || status || '|' || markdownContent || '\(sentinel)' FROM section WHERE isPseudoSection = 1 AND isBibliography = 0 AND isNotes = 0 ORDER BY sortOrder;"
+        let sql = "SELECT id || '|' || status || '|' || markdownContent || '\(sentinel)' " +
+            "FROM section WHERE isPseudoSection = 1 AND isBibliography = 0 AND isNotes = 0 " +
+            "ORDER BY sortOrder;"
         let stdout = try runSqliteRead(dbPath: dbPath, sql: sql)
         return stdout.components(separatedBy: "\(sentinel)\n").filter { !$0.isEmpty }
     }
@@ -527,7 +533,9 @@ Intro paragraph for section A.
         let dbPath = fixturePath + "/content.sqlite"
         let sentinel = "###ROWEND###"
         return try ids.map { id in
-            let sql = "SELECT id || '|' || sortOrder || '|' || status || '|' || title || '|' || replace(markdownContent, char(10), '\\n') || '\(sentinel)' FROM section WHERE id = '\(sqlEscape(id))';"
+            let sql = "SELECT id || '|' || sortOrder || '|' || status || '|' || title || '|' || " +
+                "replace(markdownContent, char(10), '\\n') || '\(sentinel)' " +
+                "FROM section WHERE id = '\(sqlEscape(id))';"
             let stdout = try runSqliteRead(dbPath: dbPath, sql: sql)
             let rows = stdout.components(separatedBy: "\(sentinel)\n").filter { !$0.isEmpty }
             return rows.first ?? "<missing: \(id)>"

@@ -7,6 +7,12 @@ import Foundation
 
 // MARK: - Recent Projects
 
+/// Coding keys for `DocumentManager.RecentProjectEntry`'s hand-written decoder.
+/// MUST match the entry's stored property names, which drive its synthesized encoder.
+private enum RecentProjectCodingKeys: String, CodingKey {
+    case id, title, bookmarkData, lastOpenedAt, path
+}
+
 extension DocumentManager {
 
     /// Entry for a recent project with bookmark data
@@ -25,12 +31,11 @@ extension DocumentManager {
             self.path = path
         }
 
-        private enum CodingKeys: String, CodingKey {
-            case id, title, bookmarkData, lastOpenedAt, path
-        }
-
+        // Decoding keys live at file scope (RecentProjectCodingKeys) rather than nested
+        // here, so this type stays one level deep. Encoding is still synthesized, from
+        // the stored property names — which are exactly these same five keys.
         init(from decoder: Decoder) throws {
-            let container = try decoder.container(keyedBy: CodingKeys.self)
+            let container = try decoder.container(keyedBy: RecentProjectCodingKeys.self)
             id = try container.decode(String.self, forKey: .id)
             title = try container.decode(String.self, forKey: .title)
             bookmarkData = try container.decode(Data.self, forKey: .bookmarkData)
@@ -232,7 +237,8 @@ extension DocumentManager {
                 }
 
                 guard let resolvedURL else {
-                    DebugLog.log(.lifecycle, "[DocumentManager] Dropping recent project '\(entry.title)' (path: \(entry.path)): file missing and bookmark failed to resolve")
+                    DebugLog.log(.lifecycle, "[DocumentManager] Dropping recent project " +
+                        "'\(entry.title)' (path: \(entry.path)): file missing and bookmark failed to resolve")
                     return nil
                 }
 
