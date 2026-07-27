@@ -238,21 +238,6 @@ enum BlockParser {
 
             // Check for code fence
             if line.hasPrefix("```") {
-                if inTable {
-                    // A table with no blank line before a code-fence opener: close
-                    // the table first (same "ending a table" logic as below) before
-                    // entering code-block state. Without this, the fence line gets
-                    // glued onto the table's own currentBlock (mis-typing it and
-                    // corrupting its fragment) and inTable stays stuck true while
-                    // inCodeBlock also becomes true, which then spuriously "ends the
-                    // table" again on the fence's first content line, splitting the
-                    // code block apart. Reverse-direction sibling of the !inCodeBlock
-                    // guards below, which stop table/math syntax INSIDE a fence from
-                    // being misdetected as starting a new block.
-                    blocks.append(currentBlock)
-                    currentBlock = ""
-                    inTable = false
-                }
                 inCodeBlock.toggle()
                 inFootnoteDef = false
                 currentBlock += line + "\n"
