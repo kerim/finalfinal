@@ -7,10 +7,6 @@
 //  maps parsed headers to database sections. Proximity mismatch silently
 //  reassigns section metadata (status, goals, tags) to wrong sections.
 //
-//  Pseudo-section-specific matching tests live in
-//  SectionReconcilerPseudoSectionTests.swift (split out to keep this file
-//  under SwiftLint's file_length limit).
-//
 
 import Testing
 import Foundation
@@ -153,6 +149,27 @@ struct SectionReconcilerTests {
         if case .update(_, let updates) = resultsUpdate! {
             #expect(updates.sortOrder == 0, "Results should move to position 0")
         }
+    }
+
+    @Test("Pseudo-sections skip title matching — avoids false matches")
+    func pseudoSectionsSkipTitleMatch() {
+        // Two pseudo-sections with similar generated titles at different positions
+        let headers = [
+            makeHeader(position: 0, title: "Section Break", isPseudoSection: true),
+            makeHeader(position: 1, title: "Section Break", isPseudoSection: true)
+        ]
+        let dbSections = [
+            makeSection(id: "ps1", sortOrder: 0, title: "Section Break", isPseudoSection: true),
+            makeSection(id: "ps2", sortOrder: 1, title: "Section Break", isPseudoSection: true)
+        ]
+
+        let changes = reconciler.reconcile(headers: headers, dbSections: dbSections, projectId: projectId)
+
+        // Should match by position (Tier 1), not create duplicates
+        let inserts = changes.filter { if case .insert = $0 { return true }; return false }
+        let deletes = changes.filter { if case .delete = $0 { return true }; return false }
+        #expect(inserts.isEmpty)
+        #expect(deletes.isEmpty)
     }
 
     // MARK: - Tier 3: Closest Position (Proximity)
@@ -400,6 +417,100 @@ struct SectionReconcilerTests {
             #expect(cUpdate.1.sortOrder == 1, "C should move to its new position 1")
             #expect(cUpdate.1.title == "D", "C's title should update to D")
         }
+    }
+
+    @Test("Tier 3 pseudo-section batch shift: reattaches by content, not raw proximity")
+    func tier3PseudoSectionBatchShift() {
+        // A pseudo-section is deleted, shifting a later pseudo-section's position,
+        // and that surviving pseudo-section's own auto-derived title has also
+        // drifted because a trailing sentence was appended to its body (pseudo
+        // titles are derived from content, so an edited body plausibly changes the
+        // title too). The header's title is therefore deliberately DIFFERENT from
+        // sP2's stored title -- only `contentRelated`'s prefix check (the header's
+        // body is sP2's stored body plus an appended sentence) can put sP2 into
+        // Tier 3's `related` set. Pseudo-sections skip Tier 2 (Tier 2 explicitly
+        // excludes them), so Tier 3 is their only fallback path. Must not
+        // misattribute the surviving pseudo-section's identity to the deleted
+        // one's now-closer old slot.
+        let headers = [
+            makeHeader(position: 0, title: "A"),
+            makeHeader(
+                position: 1,
+                title: "§ Knights and castles guard the border, ever vigilant through the night",
+                isPseudoSection: true,
+                markdownContent: "<!-- ::break:: -->\nKnights and castles guard the border tirelessly. Ever vigilant through the night."
+            )
+        ]
+        let dbSections = [
+            makeSection(id: "sA", sortOrder: 0, title: "A"),
+            makeSection(
+                id: "sP1", sortOrder: 1, title: "§ Wizards and dragons roam this land",
+                isPseudoSection: true,
+                markdownContent: "<!-- ::break:: -->\nWizards and dragons roam this land in peace."
+            ),
+            makeSection(
+                id: "sP2", sortOrder: 2, title: "§ Knights and castles guard the border",
+                isPseudoSection: true,
+                markdownContent: "<!-- ::break:: -->\nKnights and castles guard the border tirelessly."
+            )
+        ]
+
+        let changes = reconciler.reconcile(headers: headers, dbSections: dbSections, projectId: projectId)
+
+        let deletes = Set(changes.compactMap { change -> String? in if case .delete(let id) = change { return id }; return nil })
+        let updates = changes.compactMap { change -> (String, SectionUpdates)? in
+            if case .update(let id, let update) = change { return (id, update) }; return nil
+        }
+
+        #expect(deletes == ["sP1"], "The genuinely-deleted pseudo-section (sP1) should be deleted")
+        let p2Update = updates.first { $0.0 == "sP2" }
+        #expect(p2Update != nil, "sP2 should survive matched to its own content, not stolen by sP1's old slot")
+        if let p2Update {
+            #expect(p2Update.1.sortOrder == 1, "sP2 should move to its new position 1")
+            #expect(
+                p2Update.1.title == "§ Knights and castles guard the border, ever vigilant through the night",
+                "sP2's title should update to the header's new (content-derived) title"
+            )
+        }
+    }
+
+    @Test("Tier 3 pseudo-sections with empty content still degrade to proximity fallback")
+    func tier3PseudoSectionsEmptyContentFallsBackToProximity() {
+        // Fresh skeleton pseudo-sections with empty markdownContent (no
+        // distinguishing body at all) and titles that all genuinely differ from
+        // one another and from the reparsed header. Neither title equality nor
+        // `contentRelated` (which returns false whenever either side is empty) can
+        // put ANY candidate into Tier 3's `related` set here, so this genuinely
+        // exercises the `related.isEmpty` fallback branch -- proximity alone,
+        // exactly as Tier 3 behaved before the content-relatedness gate was added.
+        // The header also deliberately does NOT land on a same-titled row's exact
+        // sortOrder, so Tier 1's gate doesn't resolve this directly either.
+        let headers = [
+            makeHeader(position: 0, title: "A"),
+            makeHeader(position: 1, title: "§ Section Break", isPseudoSection: true)
+        ]
+        let dbSections = [
+            makeSection(id: "sA", sortOrder: 0, title: "A"),
+            makeSection(id: "sP1", sortOrder: 1, title: "§ Fragment One", isPseudoSection: true),
+            makeSection(id: "sP2", sortOrder: 2, title: "§ Fragment Two", isPseudoSection: true)
+        ]
+
+        let changes = reconciler.reconcile(headers: headers, dbSections: dbSections, projectId: projectId)
+
+        let inserts = changes.filter { if case .insert = $0 { return true }; return false }
+        #expect(inserts.isEmpty, "Should still match via proximity fallback, not insert a new section")
+
+        let updates = changes.compactMap { change -> (String, SectionUpdates)? in
+            if case .update(let id, let update) = change { return (id, update) }; return nil
+        }
+        let deletes = Set(changes.compactMap { change -> String? in if case .delete(let id) = change { return id }; return nil })
+
+        let p1Update = updates.first { $0.0 == "sP1" }
+        #expect(
+            p1Update != nil,
+            "Closest candidate (sP1) should be matched via the pure-proximity fallback since neither title nor content offers any evidence"
+        )
+        #expect(deletes.contains("sP2"), "Farther candidate (sP2) should be left unmatched and deleted, not stolen")
     }
 
     // MARK: - Unmatched Sections

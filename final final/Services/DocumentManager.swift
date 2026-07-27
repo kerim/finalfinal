@@ -9,26 +9,6 @@
 import Foundation
 import AppKit
 
-// MARK: - Path Normalization
-
-extension URL {
-    /// Normalized path used to decide whether two URLs refer to the same project on disk.
-    ///
-    /// Resolves symlinks (in addition to standardizing `.`/`..` components), so a project
-    /// reached via a symlinked path compares equal to the same project reached via its real
-    /// path. This is the single normalization both the "is this project already open" check
-    /// (below) and the Recent Projects de-duplication logic (`DocumentManager+RecentProjects`)
-    /// use — they used to disagree (`standardizedFileURL` there vs. `resolvingSymlinksInPath()`
-    /// here), which could produce a duplicate Recent Projects entry, or a false "not already
-    /// open" result, for a project reachable via a symlinked path.
-    ///
-    /// If the path doesn't exist on disk, `resolvingSymlinksInPath()` falls back to a purely
-    /// lexical standardization, so this remains safe to call on not-yet-verified paths.
-    var normalizedProjectPath: String {
-        resolvingSymlinksInPath().path
-    }
-}
-
 /// Manages the current project and recent projects list
 @MainActor
 @Observable
@@ -196,7 +176,7 @@ final class DocumentManager {
     @discardableResult
     func openProject(at url: URL) throws -> String {
         // Skip if this exact project is already open
-        if projectURL?.normalizedProjectPath == url.normalizedProjectPath {
+        if projectURL?.resolvingSymlinksInPath() == url.resolvingSymlinksInPath() {
             DebugLog.log(.lifecycle, "[DocumentManager] Project already open, skipping: \(url.lastPathComponent)")
             return projectId ?? ""
         }

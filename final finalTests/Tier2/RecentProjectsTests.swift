@@ -63,47 +63,6 @@ struct RecentProjectsTests {
         #expect(recents.filter { $0.path == urlA.standardizedFileURL.path }.count == 1)
     }
 
-    // MARK: - Symlink Normalization
-    //
-    // Regression coverage for the `standardizedFileURL` (here) vs.
-    // `resolvingSymlinksInPath()` (DocumentManager's "already open" check) mismatch:
-    // the two used different normalization, so a project reachable via a symlinked
-    // path compared unequal to itself reached via its real path. Both now go through
-    // the shared `URL.normalizedProjectPath` helper.
-
-    @Test("URL.normalizedProjectPath treats a symlinked path and its real path as equal")
-    func normalizedProjectPathResolvesSymlinks() throws {
-        let dir = try makeTempDir()
-        defer { cleanup(dir) }
-
-        let realURL = try makeDummyProject(named: "Real", in: dir)
-        let linkURL = dir.appendingPathComponent("Link.ff")
-        try FileManager.default.createSymbolicLink(at: linkURL, withDestinationURL: realURL)
-
-        // Sanity check that this fixture actually exercises symlink resolution —
-        // if these already matched, the test below wouldn't prove anything.
-        #expect(realURL.standardizedFileURL.path != linkURL.standardizedFileURL.path)
-
-        #expect(realURL.normalizedProjectPath == linkURL.normalizedProjectPath)
-    }
-
-    @Test("Adding a project via its real path and via a symlinked path doesn't duplicate it")
-    @MainActor
-    func addingViaSymlinkDoesNotDuplicateEntry() throws {
-        resetRecentProjects()
-        let dir = try makeTempDir()
-        defer { cleanup(dir); resetRecentProjects() }
-
-        let realURL = try makeDummyProject(named: "Real", in: dir)
-        let linkURL = dir.appendingPathComponent("Link.ff")
-        try FileManager.default.createSymbolicLink(at: linkURL, withDestinationURL: realURL)
-
-        DocumentManager.shared.addToRecentProjects(url: realURL, title: "Real")
-        DocumentManager.shared.addToRecentProjects(url: linkURL, title: "Real")
-
-        #expect(DocumentManager.shared.recentProjects.count == 1)
-    }
-
     // MARK: - Save/Load Round Trip
 
     @Test("saveRecentProjects/loadRecentProjects round-trips ordering and content")

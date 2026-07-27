@@ -9,6 +9,7 @@ import type { Node } from '@milkdown/kit/prose/model';
 import { $node, $remark, $view } from '@milkdown/kit/utils';
 import type { Root } from 'mdast';
 import { visit } from 'unist-util-visit';
+import { getAnnotationDisplayModes } from './annotation-display-plugin';
 import { showAnnotationEditPopup } from './annotation-edit-popup';
 import { isSourceModeEnabled } from './source-mode-plugin';
 
@@ -229,6 +230,14 @@ const annotationNodeView = $view(annotationNode, (_ctx: Ctx) => {
     if (attrs.type === 'task') {
       markerSpan.style.cursor = 'pointer';
       markerSpan.addEventListener('click', (e) => {
+        // When collapsed, the text span is hidden (display: none) so the marker is
+        // the annotation's ONLY visible/clickable surface. Don't let it swallow the
+        // click for a completion toggle in that case — fall through (no
+        // preventDefault/stopPropagation) so the click bubbles to dom's listener
+        // below and opens the edit popup instead, matching what a click on this
+        // same annotation would do when expanded (click the visible text to edit).
+        if (getAnnotationDisplayModes()[attrs.type] === 'collapsed') return;
+
         e.preventDefault();
         e.stopPropagation();
         const pos = typeof getPos === 'function' ? getPos() : null;
@@ -253,8 +262,12 @@ const annotationNodeView = $view(annotationNode, (_ctx: Ctx) => {
 
     // Click handler to open edit popup (skip if click was on marker for task toggle)
     dom.addEventListener('click', (e) => {
-      // Don't open popup if marker was clicked (task toggle handles it)
-      if (markerSpan.contains(e.target as HTMLElement)) return;
+      const isCollapsed = getAnnotationDisplayModes()[attrs.type] === 'collapsed';
+      // Don't open popup if marker was clicked (task toggle handles it) — UNLESS
+      // collapsed, where the marker is the only visible surface and click-to-edit
+      // must work from it (see the collapsed early-return in the marker's own
+      // click listener above, which lets this handler run instead of toggling).
+      if (!isCollapsed && markerSpan.contains(e.target as HTMLElement)) return;
       // Don't open popup in source mode
       if (isSourceModeEnabled()) return;
 

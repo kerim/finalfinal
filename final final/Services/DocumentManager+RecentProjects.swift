@@ -49,7 +49,7 @@ extension DocumentManager {
                 includingResourceValuesForKeys: nil,
                 relativeTo: nil
             )
-            let path = url.normalizedProjectPath
+            let path = url.standardizedFileURL.path
 
             // Check if already in list — compare plain paths, not resolved bookmarks,
             // so a transient bookmark-resolution hiccup can't cause a duplicate entry.
@@ -216,7 +216,7 @@ extension DocumentManager {
                 if entry.path.isEmpty {
                     resolvedURL = resolveBookmark(entry.bookmarkData)
                     if let resolvedURL {
-                        entry.path = resolvedURL.normalizedProjectPath
+                        entry.path = resolvedURL.standardizedFileURL.path
                         needsResave = true
                     }
                 }
@@ -240,7 +240,7 @@ extension DocumentManager {
                 // was moved or renamed since this entry was saved) — update the stored
                 // path to the new location so future dedup doesn't compare against a
                 // permanently stale path.
-                entry.path = resolvedURL.normalizedProjectPath
+                entry.path = resolvedURL.standardizedFileURL.path
                 needsResave = true
 
                 return entry
