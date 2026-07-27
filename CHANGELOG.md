@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Typing `---` to make a horizontal divider line worked at first but vanished when you reopened the document** — the divider was never saved. Worse, opening a document that already contained one could throw the whole document out of alignment internally, so edits after that point could be saved to the wrong paragraph. Divider lines now save and reload correctly, whether you type them or the document arrives with them already in place.
+- **A code block placed directly beneath a table, with no blank line between them, could scramble everything after it** — the app read the code block as part of the table and lost track of where each piece of the document started and ended. A table and a code block can now sit back to back safely.
+- **Documents with more than one section break could mix up the information attached to them** — a section's status, tags, and word goal could jump to a different section, and one section could disappear from the outline entirely. Each section break is now identified by its actual content rather than by its generic name, so they no longer get confused with one another.
+- **Clicking a collapsed comment, reference, or task did nothing useful** — you couldn't open it for editing, and clicking a collapsed task ticked it off as complete instead. Clicking any collapsed annotation now opens the same edit popup you get when it's expanded, and ticking a task off still works normally when it's expanded.
+- **A project opened through a linked or aliased folder path could appear twice in Recent Projects, or open a second window instead of switching to the window already showing it** — the app was comparing two different spellings of the same folder. Both checks now use the same one.
+
 ## [0.2.114] - 2026-07-26
 
 ### Fixed
