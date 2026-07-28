@@ -136,20 +136,11 @@ describe('setContent() selection/scroll-anchor preservation', () => {
     resetForProjectSwitch();
     expect(v.state.selection.main.head).toBe(0);
 
-    const newDoc = 'Completely unrelated new project document text, nothing shared with the old one.';
-    setContent(newDoc);
+    setContent('Completely unrelated new project document text, nothing shared with the old one.');
 
-    expect(v.state.doc.toString()).toBe(newDoc);
-    // The property this test's name actually promises ("ends up with the right
-    // content") includes the selection staying sane too, not just the text. Since
-    // resetForProjectSwitch() already zeroed the selection and the pushed document
-    // shares no prefix with the old one, computeMinimalChange degrades to a
-    // whole-document replace starting at 0 -- so the already-zeroed cursor has
-    // nothing to preserve and correctly stays at 0. A prior version of this test
-    // stopped checking selection after resetForProjectSwitch() and never re-checked
-    // it here, so it would have missed a regression that left the selection
-    // somewhere other than 0 after this setContent() call.
-    expect(v.state.selection.main.head).toBe(0);
+    expect(v.state.doc.toString()).toBe(
+      'Completely unrelated new project document text, nothing shared with the old one.'
+    );
   });
 
   // ---- 4 & 5: the REAL diff-related regression surface for project switch ----
