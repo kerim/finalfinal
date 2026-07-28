@@ -17,12 +17,20 @@ extension ContentView {
         let src: String?
     }
 
+    /// Assembled content for an atomic content+ID push: the markdown plus everything the
+    /// editor needs to stay aligned with it. Every call site reads these by label, so this
+    /// replaced the original five-member return tuple without touching any of them.
+    struct BlockFetchResult {
+        let markdown: String
+        let blockIds: [String]
+        let imageMeta: [ImageBlockMeta]
+        let bibBoundaryIndex: Int?
+        let expectedBlocks: [BlockParser.BlockAlignmentMeta]
+    }
+
     /// Fetch blocks from DB and return assembled markdown + ordered block IDs + image metadata
     /// Used for atomic content+ID pushes (bibliography rebuild, etc.)
-    func fetchBlocksWithIds() -> (
-        markdown: String, blockIds: [String], imageMeta: [ImageBlockMeta],
-        bibBoundaryIndex: Int?, expectedBlocks: [BlockParser.BlockAlignmentMeta]
-    )? {
+    func fetchBlocksWithIds() -> BlockFetchResult? {
         guard let db = documentManager.projectDatabase,
               let pid = documentManager.projectId else { return nil }
 
@@ -54,9 +62,12 @@ extension ContentView {
 
             let bibBoundaryIndex = BlockParser.firstBibliographyNodeIndex(sorted)
 
-            DebugLog.log(.bib, "[fetchBlocksWithIds] bibBoundaryIndex=\(String(describing: bibBoundaryIndex)) blockCount=\(sorted.count) idCount=\(ids.count)")
+            DebugLog.log(.bib, "[fetchBlocksWithIds] bibBoundaryIndex=\(String(describing: bibBoundaryIndex)) "
+                + "blockCount=\(sorted.count) idCount=\(ids.count)")
 
-            return (markdown, ids, imageMeta, bibBoundaryIndex, expectedBlocks)
+            return BlockFetchResult(
+                markdown: markdown, blockIds: ids, imageMeta: imageMeta,
+                bibBoundaryIndex: bibBoundaryIndex, expectedBlocks: expectedBlocks)
         } catch {
             return nil
         }
@@ -96,6 +107,21 @@ extension ContentView {
         Self.filterBlocksForZoomStatic(blocks, zoomedIds: zoomedIds, zoomedBlockRange: zoomedBlockRange)
     }
 
+    /// Range-based zoom filtering: keep the non-bibliography blocks whose sortOrder falls inside
+    /// the zoomed range. Split out of `filterBlocksForZoomStatic` so that function's branch count
+    /// stays under the complexity limit; behaviour is unchanged.
+    private static func blocksInZoomRange(
+        _ blocks: [Block],
+        range: (start: Double, end: Double?)
+    ) -> [Block] {
+        blocks.sorted { $0.sortOrder < $1.sortOrder }.filter { block in
+            guard !block.isBibliography else { return false }
+            guard block.sortOrder >= range.start else { return false }
+            if let end = range.end { guard block.sortOrder < end else { return false } }
+            return true
+        }
+    }
+
     /// Static version of filterBlocksForZoom for use from static methods.
     /// Prefers range-based filtering when available (handles new sections created during zoom).
     /// Falls back to ID-based filtering when range is not available.
@@ -106,12 +132,7 @@ extension ContentView {
     ) -> [Block] {
         // Prefer range-based filtering when available (handles new sections during zoom)
         if let range = zoomedBlockRange {
-            return blocks.sorted { $0.sortOrder < $1.sortOrder }.filter { block in
-                guard !block.isBibliography else { return false }
-                guard block.sortOrder >= range.start else { return false }
-                if let end = range.end { guard block.sortOrder < end else { return false } }
-                return true
-            }
+            return blocksInZoomRange(blocks, range: range)
         }
 
         // Fall back to ID-based filtering
