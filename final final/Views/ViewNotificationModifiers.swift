@@ -125,8 +125,7 @@ extension View {
         editorState: EditorViewState,
         syncService: SectionSyncService,
         onOpened: @escaping (_ isRestore: Bool) async -> Void,
-        onClosed: @escaping () -> Void,
-        onIntegrityError: @escaping (IntegrityReport, URL) -> Void
+        onClosed: @escaping () -> Void
     ) -> some View {
         self
             // Note: .closeProject, .newProject, .openProject are handled at FinalFinalApp level
@@ -165,12 +164,6 @@ extension View {
             }
             .onReceive(NotificationCenter.default.publisher(for: .projectDidClose)) { _ in
                 onClosed()
-            }
-            .onReceive(NotificationCenter.default.publisher(for: .projectIntegrityError)) { notification in
-                if let report = notification.userInfo?["report"] as? IntegrityReport,
-                   let url = notification.userInfo?["url"] as? URL {
-                    onIntegrityError(report, url)
-                }
             }
     }
 
