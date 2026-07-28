@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **The equation dialog's Display mode now accepts multi-line LaTeX** — the LaTeX box only ever allowed a single line, so multi-line math like `\begin{aligned}...\end{aligned}` couldn't be typed when inserting an equation. Display mode now shows a resizable, scrollable text box for multi-line entry (Inline mode stays single-line, as before), and pressing Return now adds a new line instead of accidentally submitting the dialog early.
+
+### Fixed
+
+- **Opening a corrupted or missing project file could fail with no explanation** — if no project was already open, double-clicking a `.ff` file in Finder, choosing File > Open, launching the app by opening a file, or picking it from Open Recent could all silently do nothing when the file's database was corrupted or missing, with no indication anything had gone wrong. All of these now show the same clear error alert.
+- **A paragraph that merely mentioned the section-break marker text could be mistaken for an actual section break** — writing about the marker in a sentence, rather than using it to actually mark a break, could get it misclassified as a real section boundary. It's now only treated as a break when it's the whole line or sits at the very start of one.
+
 ## [0.2.115] - 2026-07-27
 
 ### Fixed
