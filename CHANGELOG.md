@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **New comments didn't start folded up, even with "collapse annotations" already turned on** — you had to switch the setting off and back on again before a newly inserted comment would behave. Any editor opened after the setting was already set — a fresh document, or switching between the formatted and source views — never picked the setting up, because the app only told the editor about it at the moment it changed. New comments now appear folded straight away.
+
 ## [0.2.116] - 2026-07-28
 
 ### Added
