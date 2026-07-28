@@ -112,6 +112,24 @@ enum MarkdownUtils {
         }
 
         // Remove section break markers: <!-- ::break:: -->
+        // Deliberately a substring removal (matches the marker ANYWHERE in
+        // `content`), not an exact/first-line equality check like
+        // BlockParser.isSectionBreakMarker uses for classification. The two
+        // are answering different questions over different-shaped input:
+        // this strips marker syntax out of already-composed, heterogeneous
+        // text (a whole `section.markdownContent` spanning marker + body,
+        // or a single pre-split display paragraph) purely for word-count/
+        // preview display, regardless of where the marker sits in that
+        // string. BlockParser's check instead classifies ONE raw block's
+        // own text as section-break-or-not, where a marker appearing
+        // mid-sentence must NOT count (see
+        // BlockParserSectionBreakClassificationTests.swift for that
+        // distinction). Confirmed by
+        // tracing every call site (BlockParser.extractTextContent,
+        // MarkdownContentView.parseTextBlock, DocumentPreviewView) — none of
+        // them feed this function a value that's supposed to answer the
+        // classification question, so this pattern intentionally stays a
+        // plain substring strip.
         let breakPattern = "<!--\\s*::break::\\s*-->"
         if let regex = try? NSRegularExpression(pattern: breakPattern, options: []) {
             let range = NSRange(result.startIndex..., in: result)

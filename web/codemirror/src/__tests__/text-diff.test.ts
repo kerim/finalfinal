@@ -58,24 +58,51 @@ describe('computeMinimalChange', () => {
   });
 
   // ---- Surrogate pairs ----
-  // 'a😀b' -> 'a😀c': shared prefix is 'a😀', shared suffix is '' (b != c). Neither
-  // boundary should land inside the 😀 surrogate pair.
-  it('does not split a surrogate pair when only the trailing character changes', () => {
-    const oldText = 'a😀b';
-    const newText = 'a😀c';
+  // Both tests below use two astral characters that share the SAME leading (high)
+  // surrogate and differ only in the trailing (low) surrogate: U+1F600 (😀) and
+  // U+1F601 (😁). That's the only construction that makes the
+  // *naive* forward prefix scan walk INTO a surrogate pair before it finds a
+  // difference: the scan matches the shared high surrogate, then stops at the
+  // differing low surrogate, landing `from` between the two halves of oldText's
+  // emoji. That's exactly the case the `from` nudge in computeMinimalChange
+  // (text-diff.ts) exists to pull back -- without it, `from` would split the pair.
+  // (A prior version of these two tests used emoji from DIFFERENT rows -- e.g. 😀 vs
+  // 🎉 -- which have different high surrogates, so the scan stops at the first
+  // surrogate without ever entering the pair; the nudge branch was never reached and
+  // both tests passed regardless of whether the nudge existed.)
+
+  it('does not split a surrogate pair when the emoji itself changes', () => {
+    const highSurrogate = '\uD83D'; // shared by both emoji below
+    const oldText = `a${highSurrogate}\uDE00`; // 'a😀'
+    const newText = `a${highSurrogate}\uDE01`; // 'a😁'
     const change = computeMinimalChange(oldText, newText);
     expect(change).not.toBeNull();
     assertNoSurrogateSplit(oldText, newText, change!);
+    // Pin the exact boundary: `from` must land BEFORE the shared high surrogate (1),
+    // not after it (2). Without the nudge, `from` would be 2 -- splitting oldText's
+    // emoji between its high and low surrogate halves -- which assertNoSurrogateSplit
+    // above would also catch, but this pins the precise expected value too.
+    expect(change!.from).toBe(1);
+    expect(change!.to).toBe(oldText.length);
   });
 
-  // 'a😀b' -> 'a🎉b': the emoji itself changes; prefix/suffix must not straddle either
-  // surrogate pair.
-  it('does not split a surrogate pair when the emoji itself changes', () => {
-    const oldText = 'a😀b';
-    const newText = 'a🎉b';
+  // Same shared-high-surrogate mechanism as above, but with unrelated text after the
+  // emoji that must stay OUT of the change -- proving the nudge doesn't degrade into
+  // over-widening the diff to the rest of the document.
+  it('does not split a surrogate pair when the emoji changes and unrelated trailing text is preserved', () => {
+    const highSurrogate = '\uD83D';
+    const tail = 'tail-unchanged';
+    const oldText = `a${highSurrogate}\uDE00${tail}`; // 'a😀tail-unchanged'
+    const newText = `a${highSurrogate}\uDE01${tail}`; // 'a😁tail-unchanged'
     const change = computeMinimalChange(oldText, newText);
     expect(change).not.toBeNull();
     assertNoSurrogateSplit(oldText, newText, change!);
+    // `from` is nudged back to 1 (before the shared high surrogate); `to` lands right
+    // after the emoji (3), so the unchanged tail is captured by the suffix instead of
+    // being swept into the replacement.
+    expect(change!.from).toBe(1);
+    expect(change!.to).toBe(3);
+    expect(change!.insert).toBe(`${highSurrogate}\uDE01`);
   });
 
   // Exercises the boundary assertNoSurrogateSplit previously never checked: the END of

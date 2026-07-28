@@ -101,7 +101,12 @@ struct ProjectPickerView: View {
                 onProjectOpened()
             } catch {
                 DebugLog.log(.lifecycle, "[ProjectPickerView] Failed to open recent project: \(error)")
-                showErrorAlert(error)
+                // Prefer the actually-resolved URL, since it's now user-visible (the
+                // sheet renders it) and Repair/Open Anyway would act on it -- only
+                // fall back to the synthesized entry.path when resolution itself
+                // failed, in which case there is no resolved URL to use anyway.
+                let displayURL = documentManager.resolveBookmark(entry.bookmarkData) ?? URL(fileURLWithPath: entry.path)
+                ProjectOpenErrorState.shared.report(error, url: displayURL)
             }
         }
     }
@@ -127,6 +132,9 @@ struct ProjectPickerView: View {
                     onProjectOpened()
                 } catch {
                     DebugLog.log(.lifecycle, "[ProjectPickerView] Failed to create project: \(error)")
+                    // Project *creation* (not open) is outside the project-open-error-alert
+                    // funnel's scope -- the plan only routes handleOpenProject/openRecentProject.
+                    // Unchanged from before this plan.
                     showErrorAlert(error)
                 }
             }
@@ -153,15 +161,17 @@ struct ProjectPickerView: View {
                     onProjectOpened()
                 } catch {
                     DebugLog.log(.lifecycle, "[ProjectPickerView] Failed to open project: \(error)")
-                    showErrorAlert(error)
+                    ProjectOpenErrorState.shared.report(error, url: url)
                 }
             }
         }
     }
 
+    /// Used only by handleNewProject() -- project *creation* failures are outside
+    /// the project-open-error-alert funnel's scope (see the comment there).
     private func showErrorAlert(_ error: Error) {
         let alert = NSAlert()
-        alert.messageText = "Could Not Open Project"
+        alert.messageText = "Could Not Create Project"
         alert.informativeText = error.localizedDescription
         alert.alertStyle = .warning
         alert.addButton(withTitle: "OK")

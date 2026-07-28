@@ -22,12 +22,18 @@ struct IntegrityAlertModel {
     }
 
     var message: String {
+        // Name the file explicitly: with one always-mounted host (rather than a
+        // sheet scoped to the editor) this can appear over an unrelated open
+        // project -- e.g. a broken Finder-open URL surfacing over the project
+        // that was restored on launch -- so the generic sentence alone would
+        // leave the user unable to tell which document is being complained about.
+        let namedFile = "\u{201C}\(report.packageURL.lastPathComponent)\u{201D} could not be opened. "
         if report.hasCriticalIssues {
-            return "Critical issues were found that prevent this project from opening."
+            return namedFile + "Critical issues were found that prevent this project from opening."
         } else if report.hasErrors {
-            return "Some issues were found that may affect your project."
+            return namedFile + "Some issues were found that may affect your project."
         } else {
-            return "Minor issues were detected in this project."
+            return namedFile + "Minor issues were detected in this project."
         }
     }
 
@@ -112,48 +118,6 @@ struct IntegrityAlertView: View {
         }
         .padding()
         .frame(minWidth: 400, maxWidth: 500)
-    }
-}
-
-/// Wrapper to make IntegrityReport identifiable for sheet presentation
-struct IntegrityReportWrapper: Identifiable {
-    let report: IntegrityReport
-    var id: String { report.packageURL.path }
-}
-
-extension View {
-    /// Present an integrity alert sheet
-    @ViewBuilder
-    func integrityAlert(
-        report: Binding<IntegrityReport?>,
-        onRepair: @escaping (IntegrityReport) -> Void,
-        onOpenAnyway: @escaping (IntegrityReport) -> Void,
-        onCancel: @escaping () -> Void
-    ) -> some View {
-        self.sheet(
-            isPresented: Binding(
-                get: { report.wrappedValue != nil },
-                set: { if !$0 { report.wrappedValue = nil } }
-            )
-        ) {
-            if let currentReport = report.wrappedValue {
-                IntegrityAlertView(
-                    model: IntegrityAlertModel(report: currentReport),
-                    onRepair: {
-                        onRepair(currentReport)
-                        report.wrappedValue = nil
-                    },
-                    onOpenAnyway: {
-                        onOpenAnyway(currentReport)
-                        report.wrappedValue = nil
-                    },
-                    onCancel: {
-                        onCancel()
-                        report.wrappedValue = nil
-                    }
-                )
-            }
-        }
     }
 }
 
