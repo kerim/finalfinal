@@ -369,493 +369,436 @@ extension ProjectDatabase {
                 arguments: [projectId]) ?? 0) + 1.0
 
             // Process deletes first
-            try processEditorDeletes(db: db, deletes: changes.deletes)
+            for id in changes.deletes {
+                // Safety net: Notes and Bibliography rows are machine-managed by their sync
+                // services (FootnoteSyncService / BibliographySyncService), which perform their
+                // own deletions inside their own transactions. A delete arriving via the editor
+                // diff for one of these rows is a stale-diff artifact — reject it.
+                if let existing = try Block.fetchOne(db, key: id), existing.isBibliography || existing.isNotes {
+                    DebugLog.log(.data, "[Database+Blocks] Rejecting editor-diff delete of \(existing.isNotes ? "notes" : "bibliography") block: \(id.prefix(8))")
+                    continue
+                }
+                try Block.deleteOne(db, key: id)
+            }
+
+            // Track image sources inserted within this batch to prevent duplicates
+            // (catches the race condition where multiple inserts of the same image arrive in one sync cycle)
+            var insertedImageSources: [String: String] = [:]  // imageSrc -> permanentId
 
             // Process inserts BEFORE updates — so idMapping is populated when
             // a temp-ID update arrives for a block that was also inserted
-            try processEditorInserts(db: db, inserts: changes.inserts, projectId: projectId, nextSortOrder: &nextSortOrder, idMapping: &idMapping)
+            for insert in changes.inserts {
+                // Calculate sort order based on afterBlockId
+                var sortOrder: Double
+                let resolvedAfterId = insert.afterBlockId.map { idMapping[$0] ?? $0 }
+                if let afterId = resolvedAfterId,
+                   let afterBlock = try Block.fetchOne(db, key: afterId) {
+                    // Find the next block to calculate midpoint
+                    let nextBlock = try Block
+                        .filter(Block.Columns.projectId == projectId)
+                        .filter(Block.Columns.sortOrder > afterBlock.sortOrder)
+                        .order(Block.Columns.sortOrder)
+                        .fetchOne(db)
+
+                    if let next = nextBlock {
+                        sortOrder = (afterBlock.sortOrder + next.sortOrder) / 2.0
+                    } else {
+                        sortOrder = afterBlock.sortOrder + 1.0
+                    }
+                } else if resolvedAfterId == nil, insert.atDocumentStart == true {
+                    // Block is literal ProseMirror doc position 0 — anchor it before the
+                    // current first block instead of falling through to append-at-end.
+                    let firstBlock = try Block
+                        .filter(Block.Columns.projectId == projectId)
+                        .order(Block.Columns.sortOrder)
+                        .fetchOne(db)
+                    if let first = firstBlock {
+                        sortOrder = first.sortOrder / 2.0
+                    } else {
+                        sortOrder = 1.0
+                    }
+                } else {
+                    // No afterBlockId (and not atDocumentStart), or afterBlockId present but
+                    // unresolvable — use the shared running counter
+                    sortOrder = nextSortOrder
+                    nextSortOrder += 1.0
+                }
+
+                // Detect heading from markdown content (belt-and-suspenders with JS detection)
+                let blockType: BlockType
+                let effectiveHeadingLevel: Int?
+                let insertTrimmed = insert.markdownFragment.trimmingCharacters(in: .whitespacesAndNewlines)
+                if let hMatch = insertTrimmed.range(of: "^(#{1,6})\\s+", options: .regularExpression) {
+                    blockType = .heading
+                    effectiveHeadingLevel = insertTrimmed[hMatch].filter({ $0 == "#" }).count
+                } else {
+                    blockType = BlockType(rawValue: insert.blockType) ?? .paragraph
+                    effectiveHeadingLevel = insert.headingLevel
+                }
+
+                let permanentId = UUID().uuidString
+                let insertTextContent = blockType == .heading
+                    ? BlockParser.extractTextContent(from: insertTrimmed, blockType: .heading)
+                    : insert.textContent
+
+                var block = Block(
+                    id: permanentId,
+                    projectId: projectId,
+                    sortOrder: sortOrder,
+                    blockType: blockType,
+                    textContent: insertTextContent,
+                    markdownFragment: insert.markdownFragment,
+                    headingLevel: effectiveHeadingLevel,
+                    // A genuinely new section_break block (the /break "text before" / "text
+                    // after" / "split" cases all insert one) must be flagged as a pseudo-section
+                    // here — observeOutlineBlocks and fetchOutlineBlocks filter on isPseudoSection,
+                    // not blockType, so without this the block silently never appears in the
+                    // outline sidebar despite being correctly typed as .sectionBreak.
+                    isPseudoSection: blockType == .sectionBreak
+                )
+                block.recalculateWordCount()
+
+                // Mark footnote definitions as isNotes (safety net for editor-created blocks)
+                if insertTrimmed.range(of: #"^\[\^\d+\]:\s*"#, options: .regularExpression) != nil {
+                    block.isNotes = true
+                }
+
+                // Auto-populate image metadata from markdown for image blocks
+                if blockType == .image {
+                    let meta = BlockParser.parseImageFragmentMeta(from: insertTrimmed)
+                    block.imageSrc = meta.src
+                    block.imageAlt = meta.alt
+                    block.imageCaption = meta.caption
+                    // Parse {width=N%} from Pandoc attributes
+                    block.imageWidth = BlockParser.parseImageWidthPercent(from: insertTrimmed)
+
+                    // Within-batch dedup: skip duplicate image inserts in the same sync cycle
+                    if let src = block.imageSrc, !src.isEmpty {
+                        if let existingId = insertedImageSources[src] {
+                            idMapping[insert.tempId] = existingId
+                            DebugLog.log(.data, "[Blocks] Skipped duplicate image insert: \(src)")
+                            continue
+                        }
+                    }
+                }
+
+                try block.insert(db)
+
+                // Record image source for within-batch dedup
+                if blockType == .image, let src = block.imageSrc, !src.isEmpty {
+                    insertedImageSources[src] = permanentId
+                }
+
+                // Record the mapping from temp ID to permanent ID
+                idMapping[insert.tempId] = permanentId
+            }
 
             // Process updates (after inserts so idMapping is available for temp-ID lookups)
-            try processEditorUpdates(db: db, updates: changes.updates, idMapping: idMapping)
+            for update in changes.updates {
+                if var block = try Block.fetchOne(db, key: update.id) {
+                    // Safety net: never overwrite bibliography blocks via editor sync
+                    // Bibliography content is machine-generated by BibliographySyncService
+                    if block.isBibliography {
+                        DebugLog.log(.data, "[Database+Blocks] Rejecting update to bibliography block: \(update.id.prefix(8))")
+                        continue
+                    }
+                    // Safety net: never let a stale editor diff revert or destroy a Notes row's
+                    // footnote label. Legitimate definition-text edits (label unchanged) are allowed —
+                    // the forced-flush pipeline in handleFootnoteInsertedImmediate depends on them.
+                    // A label change here means JS held a pre-rename view (reconcileNotesBlocks renames
+                    // labels in place, keeping the same block id), so reject it.
+                    // Note: a user manually retyping an existing Notes row's label in place is
+                    // indistinguishable from this stale-rename-revert signature and will also be
+                    // silently rejected — accepted trade-off, same category as the manual-deletion
+                    // callout below.
+                    // (Checked: this guard cannot be bypassed via a markdownFragment == nil,
+                    // textContent-only update. block-sync-plugin.ts's detectChanges always sets
+                    // markdownFragment via getMarkdownFragment(newBlock) — a non-optional string —
+                    // whenever it enqueues a pendingUpdate, so the editor diff never omits it.)
+                    if block.isNotes, let incomingFragment = update.markdownFragment {
+                        let currentLabel = FootnoteSyncService.parseNotesLabel(from: block.markdownFragment)?.label
+                        let incomingLabel = FootnoteSyncService.parseNotesLabel(from: incomingFragment)?.label
+                        if incomingLabel != currentLabel {
+                            DebugLog.log(.data, "[Database+Blocks] Rejecting label-changing update to notes block: \(update.id.prefix(8)) (\(currentLabel ?? "nil")→\(incomingLabel ?? "nil"))")
+                            continue
+                        }
+                    }
+                    // Block found - apply updates
+                    if let textContent = update.textContent {
+                        block.textContent = textContent
+                        let oldWC = block.wordCount
+                        block.recalculateWordCount()
+                        if oldWC != block.wordCount {
+                            let id8 = String(block.id.prefix(8))
+                            DebugLog.log(.data, "[Blocks:edit] block=\(id8) oldWC=\(oldWC) newWC=\(block.wordCount)")
+                        }
+                    }
+                    if let markdownFragment = update.markdownFragment {
+                        block.markdownFragment = markdownFragment
+                        // Detect block type changes from content (e.g., paragraph → heading from paste)
+                        let trimmed = markdownFragment.trimmingCharacters(in: .whitespacesAndNewlines)
+                        if let match = trimmed.range(of: "^(#{1,6})\\s+", options: .regularExpression),
+                           !MarkdownUtils.isGhostImageMarkdown(String(trimmed[match.upperBound...])) {
+                            let hashes = trimmed[match].filter { $0 == "#" }
+                            block.blockType = .heading
+                            block.headingLevel = hashes.count
+                            block.isPseudoSection = false
+                            // Strip heading prefix from textContent for sidebar display
+                            if let textContent = update.textContent, textContent.hasPrefix("#") {
+                                block.textContent = BlockParser.extractTextContent(from: trimmed, blockType: .heading)
+                                let oldWC = block.wordCount
+                                block.recalculateWordCount()
+                                if oldWC != block.wordCount {
+                                    let id8 = String(block.id.prefix(8))
+                                    DebugLog.log(.data, "[Blocks:edit:→heading] block=\(id8) oldWC=\(oldWC) newWC=\(block.wordCount)")
+                                }
+                            }
+                        } else if trimmed.contains("<!-- ::break:: -->") {
+                            // paragraph → section_break in-place conversion (bare /break on an
+                            // empty paragraph reaches here as an UPDATE, not an INSERT — see
+                            // block-id-plugin.ts phase1CanClaim: section_break is not in
+                            // ATOMIC_BLOCK_TYPES, so the exact-offset claim keeps the paragraph's
+                            // existing block ID). Without isPseudoSection=true here, the block
+                            // never satisfies observeOutlineBlocks'/fetchOutlineBlocks' filter and
+                            // silently never appears in the outline sidebar.
+                            block.blockType = .sectionBreak
+                            block.headingLevel = nil
+                            block.isPseudoSection = true
+                            block.textContent = ""
+                            let oldWC = block.wordCount
+                            block.recalculateWordCount()
+                            if oldWC != block.wordCount {
+                                let id8 = String(block.id.prefix(8))
+                                DebugLog.log(.data, "[Blocks:edit:→sectionBreak] block=\(id8) oldWC=\(oldWC) newWC=\(block.wordCount)")
+                            }
+                        } else if block.blockType == .paragraph,
+                                  trimmed.range(of: "^[-*_]{3,}$", options: .regularExpression) != nil {
+                            // paragraph → horizontal_rule in-place conversion (typing "---"
+                            // character-by-character into an EXISTING paragraph reaches here as
+                            // an UPDATE, not an INSERT — see block-id-plugin.ts phase1CanClaim: hr
+                            // is not in ATOMIC_BLOCK_TYPES and the block count doesn't change, so
+                            // the exact-offset claim keeps the paragraph's existing block ID.
+                            // Without this branch the row silently stayed a paragraph with
+                            // markdownFragment '---' and the next sync minted a duplicate hr insert.
+                            //
+                            // Scope, confirmed (see review notes on this branch, superdev
+                            // hr-block-sync-types round 2):
+                            // - Paragraph-only by construction (the `block.blockType == .paragraph`
+                            //   guard above): a code_block's markdownFragment is always fence-wrapped
+                            //   ("```lang\n…\n```", see nodeToMarkdownFragment in
+                            //   block-sync-plugin.ts) so it could never trim down to bare dashes
+                            //   even without this guard — the explicit check is defensive
+                            //   belt-and-suspenders against a future serializer change, and it also
+                            //   protects blockquote/list/table/heading/image/math rows the same way.
+                            // - Escape handling matches BlockParser.swift's own thematic-break
+                            //   detector (line ~396, identical `^[-*_]{3,}$` pattern) exactly — ANY
+                            //   leading backslash (e.g. `\---`) fails the anchored match on both
+                            //   sides, so literal escaped dashes are never misread as a rule. This
+                            //   branch deliberately does not invent different escape semantics.
+                            //   (Separately: block-sync-plugin.ts's escapeInlineText only
+                            //   re-escapes a leading `#`/`[^N]:` on round-trip, not leading `-`/`*`/
+                            //   `_` — so a paragraph whose true text content is exactly "---" is
+                            //   already ambiguous with a real rule before it reaches Swift at all.
+                            //   That ambiguity is pre-existing on both the old BlockParser.swift
+                            //   detector and this branch equally; not a regression introduced here.)
+                            // - All three CommonMark thematic-break characters (-, *, _) are
+                            //   covered — same `{3,}` character class as BlockParser.swift, not a
+                            //   narrower "---"-only pattern.
+                            // - WYSIWYG-only: this whole applyBlockChangesFromEditor() function is
+                            //   reached only via BlockSyncService.applyChanges(), which is fed by
+                            //   the Milkdown webview's getBlockChanges() poll —
+                            //   BlockSyncService.configure(webView:) is wired up exclusively from
+                            //   MilkdownEditor's onWebViewReady (ContentView+ContentRebuilding.swift),
+                            //   never from CodeMirrorEditor's. Source Mode content instead flows
+                            //   through flushContentToDatabase() → BlockParser.parse() (a full
+                            //   document reparse using the same pre-existing detector referenced
+                            //   above), a completely different path this branch cannot see. So a
+                            //   YAML-frontmatter "---" delimiter or mid-typing source text can never
+                            //   reach this specific branch — only a WYSIWYG paragraph whose full
+                            //   trimmed content is already exactly "---"/"***"/"___" does.
+                            block.blockType = .horizontalRule
+                            block.headingLevel = nil
+                            block.textContent = ""
+                            let oldWC = block.wordCount
+                            block.recalculateWordCount()
+                            if oldWC != block.wordCount {
+                                let id8 = String(block.id.prefix(8))
+                                DebugLog.log(.data, "[Blocks:edit:→horizontalRule] block=\(id8) oldWC=\(oldWC) newWC=\(block.wordCount)")
+                            }
+                        } else if block.blockType == .heading {
+                            // Was heading but no longer has heading syntax
+                            block.blockType = .paragraph
+                            block.headingLevel = nil
+                            // Type changed: recalculate against the new type's rules
+                            let oldWC = block.wordCount
+                            block.recalculateWordCount()
+                            if oldWC != block.wordCount {
+                                let id8 = String(block.id.prefix(8))
+                                DebugLog.log(.data, "[Blocks:edit:→paragraph] block=\(id8) oldWC=\(oldWC) newWC=\(block.wordCount)")
+                            }
+                        } else if block.blockType == .horizontalRule {
+                            // Defensive symmetry with the heading/sectionBreak reverse cases above:
+                            // user backspaces into an existing hr row, turning "---" back into
+                            // plain text that no longer matches the thematic-break pattern.
+                            block.blockType = .paragraph
+                            block.headingLevel = nil
+                            let oldWC = block.wordCount
+                            block.recalculateWordCount()
+                            if oldWC != block.wordCount {
+                                let id8 = String(block.id.prefix(8))
+                                DebugLog.log(.data, "[Blocks:edit:→paragraph:fromHorizontalRule] block=\(id8) oldWC=\(oldWC) newWC=\(block.wordCount)")
+                            }
+                        } else if block.blockType == .sectionBreak {
+                            // Defensive symmetry: a section_break block is a leaf node with no
+                            // editable content in the ProseMirror schema, so this branch is
+                            // believed unreachable via normal editing; kept defensively —
+                            // reachability via deleting the sole/last section_break, causing
+                            // ProseMirror to backfill an empty paragraph at the same offset
+                            // (which could claim the section_break's block id via the normal
+                            // UPDATE path, since section_break isn't in ATOMIC_BLOCK_TYPES and
+                            // meaningfulTextOverlap treats empty↔empty as a valid claim), is
+                            // plausible but unverified. Kept so isPseudoSection can never drift
+                            // out of sync with blockType if that path exists.
+                            block.blockType = .paragraph
+                            block.isPseudoSection = false
+                            let oldWC = block.wordCount
+                            block.recalculateWordCount()
+                            if oldWC != block.wordCount {
+                                let id8 = String(block.id.prefix(8))
+                                DebugLog.log(.data, "[Blocks:edit:→paragraph:fromSectionBreak] block=\(id8) oldWC=\(oldWC) newWC=\(block.wordCount)")
+                            }
+                        }
+                        // Re-extract image width AND caption/alt from the updated fragment
+                        // (unconditional: clears if removed). This path fires for things like
+                        // ProseMirror undo/redo of a caption/alt edit, which doesn't go through
+                        // the dedicated "update image meta" message — export reads the
+                        // imageCaption/imageAlt DB columns (not live document text), so without
+                        // this an export could keep showing a stale caption/alt the editor no
+                        // longer displays.
+                        if block.blockType == .image {
+                            block.imageWidth = BlockParser.parseImageWidthPercent(from: trimmed)
+                            let meta = BlockParser.parseImageFragmentMeta(from: trimmed)
+                            block.imageAlt = meta.alt
+                            block.imageCaption = meta.caption
+                        }
+                    }
+                    if let headingLevel = update.headingLevel {
+                        block.headingLevel = headingLevel
+                    }
+
+                    block.updatedAt = Date()
+                    try block.update(db)
+                } else if update.id.hasPrefix("temp-") {
+                    // Check if this temp ID was already inserted (and assigned a permanent ID)
+                    if let permanentId = idMapping[update.id],
+                       var existingBlock = try Block.fetchOne(db, key: permanentId) {
+                        // Update the already-inserted block with newer content
+                        if let textContent = update.textContent {
+                            existingBlock.textContent = textContent
+                            let oldWC = existingBlock.wordCount
+                            existingBlock.recalculateWordCount()
+                            if oldWC != existingBlock.wordCount {
+                                let id8 = String(existingBlock.id.prefix(8))
+                                DebugLog.log(.data, "[Blocks:edit:merged] block=\(id8) oldWC=\(oldWC) newWC=\(existingBlock.wordCount)")
+                            }
+                        }
+                        if let markdownFragment = update.markdownFragment {
+                            existingBlock.markdownFragment = markdownFragment
+                            let trimmed = markdownFragment.trimmingCharacters(in: .whitespacesAndNewlines)
+                            // paragraph ↔ horizontal_rule in-place conversion, mirrored from the
+                            // primary update branch above. A temp-ID block can hit THIS merge path
+                            // instead of that one when its permanent-ID confirmation races an
+                            // in-flight "---" edit (see the "Fix 1 (JS remap) and Fix 2 (Swift
+                            // resolution)" comment on the stale-temp-id branch below). Same scope
+                            // as the primary branch: paragraph-only guard, identical
+                            // BlockParser.swift-matching regex (all 3 rule chars, no special
+                            // escape handling), WYSIWYG-only (this whole function is never reached
+                            // from Source Mode/CodeMirror) — see the primary branch's doc comment
+                            // above for the full analysis.
+                            if existingBlock.blockType == .paragraph,
+                               trimmed.range(of: "^[-*_]{3,}$", options: .regularExpression) != nil {
+                                existingBlock.blockType = .horizontalRule
+                                existingBlock.headingLevel = nil
+                                existingBlock.textContent = ""
+                                existingBlock.recalculateWordCount()
+                            } else if existingBlock.blockType == .horizontalRule {
+                                existingBlock.blockType = .paragraph
+                                existingBlock.headingLevel = nil
+                                existingBlock.recalculateWordCount()
+                            }
+                            // Re-derive image width/caption/alt alongside the generic .update
+                            // case above — see its comment for why (undo/redo etc. can reach
+                            // this merge path too, and export reads these DB columns directly).
+                            if existingBlock.blockType == .image {
+                                existingBlock.imageWidth = BlockParser.parseImageWidthPercent(from: trimmed)
+                                let meta = BlockParser.parseImageFragmentMeta(from: trimmed)
+                                existingBlock.imageAlt = meta.alt
+                                existingBlock.imageCaption = meta.caption
+                            }
+                        }
+                        if let headingLevel = update.headingLevel {
+                            existingBlock.headingLevel = headingLevel
+                        }
+                        existingBlock.updatedAt = Date()
+                        try existingBlock.update(db)
+                        DebugLog.log(.data, "[Database+Blocks] Merged temp update into insert: \(update.id) → \(permanentId)")
+                    } else if var existingBlock = try Block.fetchOne(db, key: update.id) {
+                        // Block exists with temp ID (defensive)
+                        if let textContent = update.textContent {
+                            existingBlock.textContent = textContent
+                            let oldWC = existingBlock.wordCount
+                            existingBlock.recalculateWordCount()
+                            if oldWC != existingBlock.wordCount {
+                                let id8 = String(existingBlock.id.prefix(8))
+                                DebugLog.log(.data, "[Blocks:edit:defensive] block=\(id8) oldWC=\(oldWC) newWC=\(existingBlock.wordCount)")
+                            }
+                        }
+                        if let markdownFragment = update.markdownFragment {
+                            existingBlock.markdownFragment = markdownFragment
+                            let trimmed = markdownFragment.trimmingCharacters(in: .whitespacesAndNewlines)
+                            // paragraph ↔ horizontal_rule in-place conversion — see the identical
+                            // branch on the "already inserted" merge path above for why a temp-ID
+                            // block can reach this defensive path too. Same paragraph-only guard
+                            // and scope as the primary branch (see its doc comment above).
+                            if existingBlock.blockType == .paragraph,
+                               trimmed.range(of: "^[-*_]{3,}$", options: .regularExpression) != nil {
+                                existingBlock.blockType = .horizontalRule
+                                existingBlock.headingLevel = nil
+                                existingBlock.textContent = ""
+                                existingBlock.recalculateWordCount()
+                            } else if existingBlock.blockType == .horizontalRule {
+                                existingBlock.blockType = .paragraph
+                                existingBlock.headingLevel = nil
+                                existingBlock.recalculateWordCount()
+                            }
+                            // Re-derive image width/caption/alt — see the generic .update case
+                            // above for why (this defensive temp-id path can carry a caption/alt
+                            // edit too, and export reads these DB columns directly).
+                            if existingBlock.blockType == .image {
+                                existingBlock.imageWidth = BlockParser.parseImageWidthPercent(from: trimmed)
+                                let meta = BlockParser.parseImageFragmentMeta(from: trimmed)
+                                existingBlock.imageAlt = meta.alt
+                                existingBlock.imageCaption = meta.caption
+                            }
+                        }
+                        if let headingLevel = update.headingLevel {
+                            existingBlock.headingLevel = headingLevel
+                        }
+                        existingBlock.updatedAt = Date()
+                        try existingBlock.update(db)
+                    } else {
+                        // Stale temp ID — block was already confirmed to a permanent ID
+                        // in a previous poll cycle. Drop the update safely.
+                        // This fires only if both Fix 1 (JS remap) and Fix 2 (Swift resolution) failed.
+                        DebugLog.log(.data, "[Database+Blocks] Dropping stale temp update: \(update.id) (no matching block)")
+                    }
+                } else {
+                    DebugLog.log(.data, "[Database+Blocks] Warning: Block not found for update: \(update.id)")
+                }
+            }
         }
 
         return idMapping
-    }
-
-    // MARK: - applyBlockChangesFromEditor Helpers
-
-    /// Deletes editor-diff-requested blocks, rejecting stale deletes of machine-managed rows.
-    private func processEditorDeletes(db: Database, deletes: [String]) throws {
-        for id in deletes {
-            // Safety net: Notes and Bibliography rows are machine-managed by their sync
-            // services (FootnoteSyncService / BibliographySyncService), which perform their
-            // own deletions inside their own transactions. A delete arriving via the editor
-            // diff for one of these rows is a stale-diff artifact — reject it.
-            if let existing = try Block.fetchOne(db, key: id), existing.isBibliography || existing.isNotes {
-                DebugLog.log(.data, "[Database+Blocks] Rejecting editor-diff delete of \(existing.isNotes ? "notes" : "bibliography") block: \(id.prefix(8))")
-                continue
-            }
-            try Block.deleteOne(db, key: id)
-        }
-    }
-
-    /// Inserts editor-created blocks (sort order, image dedup) and records each temp-ID →
-    /// permanent-ID mapping.
-    private func processEditorInserts(
-        db: Database,
-        inserts: [BlockInsert],
-        projectId: String,
-        nextSortOrder: inout Double,
-        idMapping: inout [String: String]
-    ) throws {
-        // Track image sources inserted within this batch to prevent duplicates
-        // (catches the race condition where multiple inserts of the same image arrive in one sync cycle)
-        var insertedImageSources: [String: String] = [:]  // imageSrc -> permanentId
-
-        for insert in inserts {
-            let sortOrder = try calculateInsertSortOrder(
-                db: db, insert: insert, projectId: projectId, idMapping: idMapping, nextSortOrder: &nextSortOrder
-            )
-            var block = buildInsertedBlock(insert: insert, projectId: projectId, sortOrder: sortOrder)
-            let permanentId = block.id
-
-            // Within-batch dedup: skip duplicate image inserts in the same sync cycle
-            if block.blockType == .image {
-                if let src = block.imageSrc, !src.isEmpty {
-                    if let existingId = insertedImageSources[src] {
-                        idMapping[insert.tempId] = existingId
-                        DebugLog.log(.data, "[Blocks] Skipped duplicate image insert: \(src)")
-                        continue
-                    }
-                }
-            }
-
-            try block.insert(db)
-
-            // Record image source for within-batch dedup
-            if block.blockType == .image, let src = block.imageSrc, !src.isEmpty {
-                insertedImageSources[src] = permanentId
-            }
-
-            // Record the mapping from temp ID to permanent ID
-            idMapping[insert.tempId] = permanentId
-        }
-    }
-
-    /// Resolves sort order: midpoint after `afterBlockId`, anchored before the first block for
-    /// a literal doc-start insert, or the shared running counter when neither applies.
-    private func calculateInsertSortOrder(
-        db: Database,
-        insert: BlockInsert,
-        projectId: String,
-        idMapping: [String: String],
-        nextSortOrder: inout Double
-    ) throws -> Double {
-        let resolvedAfterId = insert.afterBlockId.map { idMapping[$0] ?? $0 }
-        if let afterId = resolvedAfterId,
-           let afterBlock = try Block.fetchOne(db, key: afterId) {
-            // Find the next block to calculate midpoint
-            let nextBlock = try Block
-                .filter(Block.Columns.projectId == projectId)
-                .filter(Block.Columns.sortOrder > afterBlock.sortOrder)
-                .order(Block.Columns.sortOrder)
-                .fetchOne(db)
-
-            if let next = nextBlock {
-                return (afterBlock.sortOrder + next.sortOrder) / 2.0
-            } else {
-                return afterBlock.sortOrder + 1.0
-            }
-        } else if resolvedAfterId == nil, insert.atDocumentStart == true {
-            // Block is literal ProseMirror doc position 0 — anchor it before the
-            // current first block instead of falling through to append-at-end.
-            let firstBlock = try Block
-                .filter(Block.Columns.projectId == projectId)
-                .order(Block.Columns.sortOrder)
-                .fetchOne(db)
-            if let first = firstBlock {
-                return first.sortOrder / 2.0
-            } else {
-                return 1.0
-            }
-        } else {
-            // No afterBlockId (and not atDocumentStart), or afterBlockId present but
-            // unresolvable — use the shared running counter
-            let sortOrder = nextSortOrder
-            nextSortOrder += 1.0
-            return sortOrder
-        }
-    }
-
-    /// Builds the Block row for an editor insert: detects heading syntax (belt-and-suspenders
-    /// with JS detection), marks footnote-definition/image blocks, and recalculates word count.
-    private func buildInsertedBlock(insert: BlockInsert, projectId: String, sortOrder: Double) -> Block {
-        // Detect heading from markdown content (belt-and-suspenders with JS detection)
-        let blockType: BlockType
-        let effectiveHeadingLevel: Int?
-        let insertTrimmed = insert.markdownFragment.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let hMatch = insertTrimmed.range(of: "^(#{1,6})\\s+", options: .regularExpression) {
-            blockType = .heading
-            effectiveHeadingLevel = insertTrimmed[hMatch].filter({ $0 == "#" }).count
-        } else {
-            blockType = BlockType(rawValue: insert.blockType) ?? .paragraph
-            effectiveHeadingLevel = insert.headingLevel
-        }
-
-        let permanentId = UUID().uuidString
-        let insertTextContent = blockType == .heading
-            ? BlockParser.extractTextContent(from: insertTrimmed, blockType: .heading)
-            : insert.textContent
-
-        var block = Block(
-            id: permanentId,
-            projectId: projectId,
-            sortOrder: sortOrder,
-            blockType: blockType,
-            textContent: insertTextContent,
-            markdownFragment: insert.markdownFragment,
-            headingLevel: effectiveHeadingLevel,
-            // A genuinely new section_break block (the /break "text before" / "text
-            // after" / "split" cases all insert one) must be flagged as a pseudo-section
-            // here — observeOutlineBlocks and fetchOutlineBlocks filter on isPseudoSection,
-            // not blockType, so without this the block silently never appears in the
-            // outline sidebar despite being correctly typed as .sectionBreak.
-            isPseudoSection: blockType == .sectionBreak
-        )
-        block.recalculateWordCount()
-
-        // Mark footnote definitions as isNotes (safety net for editor-created blocks)
-        if insertTrimmed.range(of: #"^\[\^\d+\]:\s*"#, options: .regularExpression) != nil {
-            block.isNotes = true
-        }
-
-        // Auto-populate image metadata from markdown for image blocks
-        if blockType == .image {
-            let meta = BlockParser.parseImageFragmentMeta(from: insertTrimmed)
-            block.imageSrc = meta.src
-            block.imageAlt = meta.alt
-            block.imageCaption = meta.caption
-            // Parse {width=N%} from Pandoc attributes
-            block.imageWidth = BlockParser.parseImageWidthPercent(from: insertTrimmed)
-        }
-
-        return block
-    }
-
-    /// Applies editor-diff updates: existing blocks are patched, temp-ID blocks are resolved via idMapping, and unmatched updates are logged.
-    private func processEditorUpdates(db: Database, updates: [BlockUpdate], idMapping: [String: String]) throws {
-        for update in updates {
-            if var block = try Block.fetchOne(db, key: update.id) {
-                try applyUpdateToExistingBlock(db: db, block: &block, update: update)
-            } else if update.id.hasPrefix("temp-") {
-                try applyUpdateToTempIdBlock(db: db, update: update, idMapping: idMapping)
-            } else {
-                DebugLog.log(.data, "[Database+Blocks] Warning: Block not found for update: \(update.id)")
-            }
-        }
-    }
-
-    /// Applies an editor update to an already-fetched block: rejects bibliography/notes
-    /// safety-net updates, then patches text content, type transitions, and heading level.
-    private func applyUpdateToExistingBlock(db: Database, block: inout Block, update: BlockUpdate) throws {
-        // Safety net: never overwrite bibliography blocks via editor sync
-        // Bibliography content is machine-generated by BibliographySyncService
-        if block.isBibliography {
-            DebugLog.log(.data, "[Database+Blocks] Rejecting update to bibliography block: \(update.id.prefix(8))")
-            return
-        }
-        // Safety net: never let a stale editor diff revert or destroy a Notes row's
-        // footnote label. Legitimate definition-text edits (label unchanged) are allowed —
-        // the forced-flush pipeline in handleFootnoteInsertedImmediate depends on them.
-        // A label change here means JS held a pre-rename view (reconcileNotesBlocks renames
-        // labels in place, keeping the same block id), so reject it.
-        // Note: a user manually retyping an existing Notes row's label in place is
-        // indistinguishable from this stale-rename-revert signature and will also be
-        // silently rejected — accepted trade-off, same category as the manual-deletion
-        // callout below.
-        // (Checked: this guard cannot be bypassed via a markdownFragment == nil,
-        // textContent-only update. block-sync-plugin.ts's detectChanges always sets
-        // markdownFragment via getMarkdownFragment(newBlock) — a non-optional string —
-        // whenever it enqueues a pendingUpdate, so the editor diff never omits it.)
-        if block.isNotes, let incomingFragment = update.markdownFragment {
-            let currentLabel = FootnoteSyncService.parseNotesLabel(from: block.markdownFragment)?.label
-            let incomingLabel = FootnoteSyncService.parseNotesLabel(from: incomingFragment)?.label
-            if incomingLabel != currentLabel {
-                DebugLog.log(.data, "[Database+Blocks] Rejecting label-changing update to notes block: \(update.id.prefix(8)) (\(currentLabel ?? "nil")→\(incomingLabel ?? "nil"))")
-                return
-            }
-        }
-        // Block found - apply updates
-        if let textContent = update.textContent {
-            block.textContent = textContent
-            let oldWC = block.wordCount
-            block.recalculateWordCount()
-            logWordCountChange(block: block, oldWordCount: oldWC)
-        }
-        if let markdownFragment = update.markdownFragment {
-            applyMarkdownFragmentTransition(block: &block, markdownFragment: markdownFragment, update: update)
-        }
-        if let headingLevel = update.headingLevel {
-            block.headingLevel = headingLevel
-        }
-
-        block.updatedAt = Date()
-        try block.update(db)
-    }
-
-    /// Applies the block-type transition implied by an updated fragment (new heading/section
-    /// break/hr, or a revert away from one), then re-derives image metadata unconditionally.
-    private func applyMarkdownFragmentTransition(block: inout Block, markdownFragment: String, update: BlockUpdate) {
-        block.markdownFragment = markdownFragment
-        // Detect block type changes from content (e.g., paragraph → heading from paste)
-        let trimmed = markdownFragment.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        if !applyDetectedTypeFromContent(block: &block, trimmed: trimmed, update: update) {
-            applyTypeReversionIfNoLongerMatches(block: &block)
-        }
-
-        // Re-extract image width AND caption/alt from the updated fragment
-        // (unconditional: clears if removed). This path fires for things like
-        // ProseMirror undo/redo of a caption/alt edit, which doesn't go through
-        // the dedicated "update image meta" message — export reads the
-        // imageCaption/imageAlt DB columns (not live document text), so without
-        // this an export could keep showing a stale caption/alt the editor no
-        // longer displays.
-        if block.blockType == .image {
-            block.imageWidth = BlockParser.parseImageWidthPercent(from: trimmed)
-            let meta = BlockParser.parseImageFragmentMeta(from: trimmed)
-            block.imageAlt = meta.alt
-            block.imageCaption = meta.caption
-        }
-    }
-
-    /// Detects a paragraph → heading/section-break/horizontal-rule transition and applies it. Returns true if applied.
-    private func applyDetectedTypeFromContent(block: inout Block, trimmed: String, update: BlockUpdate) -> Bool {
-        if let match = trimmed.range(of: "^(#{1,6})\\s+", options: .regularExpression),
-           !MarkdownUtils.isGhostImageMarkdown(String(trimmed[match.upperBound...])) {
-            let hashes = trimmed[match].filter { $0 == "#" }
-            block.blockType = .heading
-            block.headingLevel = hashes.count
-            block.isPseudoSection = false
-            // Strip heading prefix from textContent for sidebar display
-            if let textContent = update.textContent, textContent.hasPrefix("#") {
-                block.textContent = BlockParser.extractTextContent(from: trimmed, blockType: .heading)
-                let oldWC = block.wordCount
-                block.recalculateWordCount()
-                logWordCountChange(block: block, oldWordCount: oldWC, tag: "→heading")
-            }
-            return true
-        } else if BlockParser.isSectionBreakMarker(trimmed) {
-            // paragraph → section_break in-place conversion (bare /break on an
-            // empty paragraph reaches here as an UPDATE, not an INSERT — see
-            // block-id-plugin.ts phase1CanClaim: section_break is not in
-            // ATOMIC_BLOCK_TYPES, so the exact-offset claim keeps the paragraph's
-            // existing block ID). Without isPseudoSection=true here, the block
-            // never satisfies observeOutlineBlocks'/fetchOutlineBlocks' filter and
-            // silently never appears in the outline sidebar.
-            //
-            // isSectionBreakMarker (not `trimmed ==`) matches the marker as the
-            // block's first line too, not only the marker alone — see its doc
-            // comment in BlockParser.swift for why a marker-then-body shape on
-            // one block/node is real and reachable, not hypothetical.
-            block.blockType = .sectionBreak
-            block.headingLevel = nil
-            block.isPseudoSection = true
-            block.textContent = ""
-            let oldWC = block.wordCount
-            block.recalculateWordCount()
-            logWordCountChange(block: block, oldWordCount: oldWC, tag: "→sectionBreak")
-            return true
-        } else if block.blockType == .paragraph,
-                  trimmed.range(of: "^[-*_]{3,}$", options: .regularExpression) != nil {
-            // paragraph → horizontal_rule in-place conversion (typing "---"
-            // character-by-character into an EXISTING paragraph reaches here as
-            // an UPDATE, not an INSERT — see block-id-plugin.ts phase1CanClaim: hr
-            // is not in ATOMIC_BLOCK_TYPES and the block count doesn't change, so
-            // the exact-offset claim keeps the paragraph's existing block ID.
-            // Without this branch the row silently stayed a paragraph with
-            // markdownFragment '---' and the next sync minted a duplicate hr insert.
-            //
-            // Scope, confirmed (see review notes on this branch, superdev
-            // hr-block-sync-types round 2):
-            // - Paragraph-only by construction (the `block.blockType == .paragraph`
-            //   guard above): a code_block's markdownFragment is always fence-wrapped
-            //   ("```lang\n…\n```", see nodeToMarkdownFragment in
-            //   block-sync-plugin.ts) so it could never trim down to bare dashes
-            //   even without this guard — the explicit check is defensive
-            //   belt-and-suspenders against a future serializer change, and it also
-            //   protects blockquote/list/table/heading/image/math rows the same way.
-            // - Escape handling matches BlockParser.swift's own thematic-break
-            //   detector (line ~396, identical `^[-*_]{3,}$` pattern) exactly — ANY
-            //   leading backslash (e.g. `\---`) fails the anchored match on both
-            //   sides, so literal escaped dashes are never misread as a rule. This
-            //   branch deliberately does not invent different escape semantics.
-            //   (Separately: block-sync-plugin.ts's escapeInlineText only
-            //   re-escapes a leading `#`/`[^N]:` on round-trip, not leading `-`/`*`/
-            //   `_` — so a paragraph whose true text content is exactly "---" is
-            //   already ambiguous with a real rule before it reaches Swift at all.
-            //   That ambiguity is pre-existing on both the old BlockParser.swift
-            //   detector and this branch equally; not a regression introduced here.)
-            // - All three CommonMark thematic-break characters (-, *, _) are
-            //   covered — same `{3,}` character class as BlockParser.swift, not a
-            //   narrower "---"-only pattern.
-            // - WYSIWYG-only: this whole applyBlockChangesFromEditor() function is
-            //   reached only via BlockSyncService.applyChanges(), which is fed by
-            //   the Milkdown webview's getBlockChanges() poll —
-            //   BlockSyncService.configure(webView:) is wired up exclusively from
-            //   MilkdownEditor's onWebViewReady (ContentView+ContentRebuilding.swift),
-            //   never from CodeMirrorEditor's. Source Mode content instead flows
-            //   through flushContentToDatabase() → BlockParser.parse() (a full
-            //   document reparse using the same pre-existing detector referenced
-            //   above), a completely different path this branch cannot see. So a
-            //   YAML-frontmatter "---" delimiter or mid-typing source text can never
-            //   reach this specific branch — only a WYSIWYG paragraph whose full
-            //   trimmed content is already exactly "---"/"***"/"___" does.
-            block.blockType = .horizontalRule
-            block.headingLevel = nil
-            block.textContent = ""
-            let oldWC = block.wordCount
-            block.recalculateWordCount()
-            logWordCountChange(block: block, oldWordCount: oldWC, tag: "→horizontalRule")
-            return true
-        }
-        return false
-    }
-
-    /// Reverts a block to a plain paragraph when its fragment no longer matches its current
-    /// specialized type (heading/horizontal-rule/section-break).
-    private func applyTypeReversionIfNoLongerMatches(block: inout Block) {
-        if block.blockType == .heading {
-            // Was heading but no longer has heading syntax
-            block.blockType = .paragraph
-            block.headingLevel = nil
-            // Type changed: recalculate against the new type's rules
-            let oldWC = block.wordCount
-            block.recalculateWordCount()
-            logWordCountChange(block: block, oldWordCount: oldWC, tag: "→paragraph")
-        } else if block.blockType == .horizontalRule {
-            // Defensive symmetry with the heading/sectionBreak reverse cases above:
-            // user backspaces into an existing hr row, turning "---" back into
-            // plain text that no longer matches the thematic-break pattern.
-            block.blockType = .paragraph
-            block.headingLevel = nil
-            let oldWC = block.wordCount
-            block.recalculateWordCount()
-            logWordCountChange(block: block, oldWordCount: oldWC, tag: "→paragraph:fromHorizontalRule")
-        } else if block.blockType == .sectionBreak {
-            // Defensive symmetry: a section_break block is a leaf node with no
-            // editable content in the ProseMirror schema, so this branch is
-            // believed unreachable via normal editing; kept defensively —
-            // reachability via deleting the sole/last section_break, causing
-            // ProseMirror to backfill an empty paragraph at the same offset
-            // (which could claim the section_break's block id via the normal
-            // UPDATE path, since section_break isn't in ATOMIC_BLOCK_TYPES and
-            // meaningfulTextOverlap treats empty↔empty as a valid claim), is
-            // plausible but unverified. Kept so isPseudoSection can never drift
-            // out of sync with blockType if that path exists.
-            block.blockType = .paragraph
-            block.isPseudoSection = false
-            let oldWC = block.wordCount
-            block.recalculateWordCount()
-            logWordCountChange(block: block, oldWordCount: oldWC, tag: "→paragraph:fromSectionBreak")
-        }
-    }
-
-    /// Handles a temp-ID update: merges into a block inserted earlier this batch, applies a
-    /// defensive update if the temp ID still names a row, or drops it as stale.
-    private func applyUpdateToTempIdBlock(db: Database, update: BlockUpdate, idMapping: [String: String]) throws {
-        // Check if this temp ID was already inserted (and assigned a permanent ID)
-        if let permanentId = idMapping[update.id],
-           var existingBlock = try Block.fetchOne(db, key: permanentId) {
-            try mergeUpdateIntoInsertedBlock(db: db, existingBlock: &existingBlock, update: update, permanentId: permanentId)
-        } else if var existingBlock = try Block.fetchOne(db, key: update.id) {
-            // Block exists with temp ID (defensive)
-            try applyDefensiveTempIdUpdate(db: db, existingBlock: &existingBlock, update: update)
-        } else {
-            // Stale temp ID — block was already confirmed to a permanent ID
-            // in a previous poll cycle. Drop the update safely.
-            // This fires only if both Fix 1 (JS remap) and Fix 2 (Swift resolution) failed.
-            DebugLog.log(.data, "[Database+Blocks] Dropping stale temp update: \(update.id) (no matching block)")
-        }
-    }
-
-    /// Update the already-inserted block with newer content
-    private func mergeUpdateIntoInsertedBlock(db: Database, existingBlock: inout Block, update: BlockUpdate, permanentId: String) throws {
-        if let textContent = update.textContent {
-            existingBlock.textContent = textContent
-            let oldWC = existingBlock.wordCount
-            existingBlock.recalculateWordCount()
-            logWordCountChange(block: existingBlock, oldWordCount: oldWC, tag: "merged")
-        }
-        if let markdownFragment = update.markdownFragment {
-            existingBlock.markdownFragment = markdownFragment
-            let trimmed = markdownFragment.trimmingCharacters(in: .whitespacesAndNewlines)
-            // paragraph ↔ horizontal_rule conversion + image-meta re-derivation — see
-            // applyHorizontalRuleToggleAndImageMeta's doc comment for the shared logic. This
-            // merge path is hit instead of the primary update path when a temp-ID block's
-            // permanent-ID confirmation races an in-flight "---" edit (see the "Fix 1 (JS
-            // remap) and Fix 2 (Swift resolution)" comment on the stale-temp-id branch above).
-            applyHorizontalRuleToggleAndImageMeta(block: &existingBlock, trimmed: trimmed)
-        }
-        if let headingLevel = update.headingLevel {
-            existingBlock.headingLevel = headingLevel
-        }
-        existingBlock.updatedAt = Date()
-        try existingBlock.update(db)
-        DebugLog.log(.data, "[Database+Blocks] Merged temp update into insert: \(update.id) → \(permanentId)")
-    }
-
-    /// Block exists with temp ID (defensive)
-    private func applyDefensiveTempIdUpdate(db: Database, existingBlock: inout Block, update: BlockUpdate) throws {
-        if let textContent = update.textContent {
-            existingBlock.textContent = textContent
-            let oldWC = existingBlock.wordCount
-            existingBlock.recalculateWordCount()
-            logWordCountChange(block: existingBlock, oldWordCount: oldWC, tag: "defensive")
-        }
-        if let markdownFragment = update.markdownFragment {
-            existingBlock.markdownFragment = markdownFragment
-            let trimmed = markdownFragment.trimmingCharacters(in: .whitespacesAndNewlines)
-            // paragraph ↔ horizontal_rule conversion + image-meta re-derivation — see the
-            // merge path above for why a temp-ID block can reach this defensive path too.
-            applyHorizontalRuleToggleAndImageMeta(block: &existingBlock, trimmed: trimmed)
-        }
-        if let headingLevel = update.headingLevel {
-            existingBlock.headingLevel = headingLevel
-        }
-        existingBlock.updatedAt = Date()
-        try existingBlock.update(db)
-    }
-
-    /// Paragraph ↔ horizontal-rule conversion plus image-meta re-derivation, shared by the
-    /// merge/defensive update paths (their bodies were textually identical before this split).
-    private func applyHorizontalRuleToggleAndImageMeta(block: inout Block, trimmed: String) {
-        if block.blockType == .paragraph,
-           trimmed.range(of: "^[-*_]{3,}$", options: .regularExpression) != nil {
-            block.blockType = .horizontalRule
-            block.headingLevel = nil
-            block.textContent = ""
-            block.recalculateWordCount()
-        } else if block.blockType == .horizontalRule {
-            block.blockType = .paragraph
-            block.headingLevel = nil
-            block.recalculateWordCount()
-        }
-        if block.blockType == .image {
-            block.imageWidth = BlockParser.parseImageWidthPercent(from: trimmed)
-            let meta = BlockParser.parseImageFragmentMeta(from: trimmed)
-            block.imageAlt = meta.alt
-            block.imageCaption = meta.caption
-        }
-    }
-
-    /// Logs a `[Blocks:edit...]` word-count change when recalculation altered the block's
-    /// count, mirroring the log line each type-transition branch above used to emit inline.
-    private func logWordCountChange(block: Block, oldWordCount: Int, tag: String = "") {
-        guard oldWordCount != block.wordCount else { return }
-        let id8 = String(block.id.prefix(8))
-        let label = tag.isEmpty ? "[Blocks:edit]" : "[Blocks:edit:\(tag)]"
-        DebugLog.log(.data, "\(label) block=\(id8) oldWC=\(oldWordCount) newWC=\(block.wordCount)")
     }
 
     // MARK: - Image Deduplication

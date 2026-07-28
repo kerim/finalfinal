@@ -66,7 +66,7 @@ enum BlockParser {
                 opensSection: trimmed.lowercased() == "# notes",
                 blockType: blockType
             )
-            let isPseudoSection = isSectionBreakMarker(trimmed)
+            let isPseudoSection = trimmed.contains("<!-- ::break:: -->")
 
             // Look up existing metadata for this heading/section break if available
             let preserved = preservedMetadata(
@@ -197,39 +197,10 @@ enum BlockParser {
         // Horizontal rule: ---, ***, ___
         if trimmed.range(of: "^[-*_]{3,}$", options: .regularExpression) != nil { return .horizontalRule }
         // Section break: <!-- ::break:: -->
-        if isSectionBreakMarker(trimmed) { return .sectionBreak }
+        if trimmed.contains("<!-- ::break:: -->") { return .sectionBreak }
         // Blockquote: starts with >
         if trimmed.hasPrefix(">") { return .blockquote }
         return nil
-    }
-
-    /// Whether `trimmed` (an already-whitespace-trimmed raw block string) IS a
-    /// section-break marker: either the marker alone, or the marker as the
-    /// block's FIRST LINE with body content on the line(s) after it.
-    ///
-    /// Why first-line, not whole-string equality: `RawBlockSplitter`
-    /// (BlockParser+Splitting.swift) only forces a block boundary right after
-    /// the marker when the very next line looks like a list item (its
-    /// "list interrupts non-list content" guard). A marker followed
-    /// immediately by ordinary prose — no blank line, not a list — is NOT
-    /// split there, so it reaches this check as ONE combined string, e.g.
-    /// `"<!-- ::break:: -->\nBody text"`. `assembleMarkdown` always rejoins
-    /// blocks with `"\n\n"`, so that shape can't come from a DB round-trip —
-    /// but it's exactly what raw typing/paste/import in Source Mode produces
-    /// (confirmed by tracing editorState.content's onChange handler in
-    /// ViewNotificationModifiers.swift, which re-parses the whole document
-    /// via `BlockParser.parse` on every CodeMirror edit), so it's a real,
-    /// reachable shape, not a hypothetical one.
-    ///
-    /// Why not a substring/`.contains` check either: that was this fix's
-    /// original bug — a marker appearing mid-sentence inside unrelated prose
-    /// (e.g. "...text <!-- ::break:: --> more text...") must NOT match, since
-    /// it isn't a section break at all. Anchoring to the first line rejects
-    /// that case (the marker isn't at the very start) while still accepting
-    /// the marker followed by its own body content on subsequent lines.
-    static func isSectionBreakMarker(_ trimmed: String) -> Bool {
-        let marker = "<!-- ::break:: -->"
-        return trimmed == marker || trimmed.hasPrefix(marker + "\n")
     }
 
     /// List, table, image and bibliography types, falling back to `.paragraph`.
