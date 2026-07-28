@@ -325,6 +325,28 @@ extension ContentView {
         }
     }
 
+    /// Builds the JSON payload for `window.FinalFinal.setAnnotationDisplayModes()`, matching
+    /// the shape `MilkdownCoordinator+Content.swift`'s `setAnnotationDisplayModes()` sends.
+    ///
+    /// Needed because a freshly-created WKWebView (WYSIWYG/Source mode switch, or a fresh
+    /// instance claimed from `EditorPreloader`) starts its JS module state at the hardcoded
+    /// defaults (all types "inline") — `annotationDisplayModesChanged` is only posted on
+    /// `.onChange` of the preference, so an editor that already matches the current
+    /// preference (nothing "changed" from SwiftUI's perspective) never receives it. Without
+    /// this catch-up push, annotations created in that editor render inline until the user
+    /// happens to toggle the setting again.
+    private func annotationDisplayModesJSON(_ editorState: EditorViewState) -> String? {
+        var modeDict: [String: String] = [:]
+        for (type, mode) in editorState.annotationDisplayModes {
+            modeDict[type.rawValue] = mode.rawValue
+        }
+        modeDict["__panelOnly"] = editorState.isPanelOnlyMode ? "true" : "false"
+        modeDict["__hideCompletedTasks"] = editorState.hideCompletedTasks ? "true" : "false"
+        guard let jsonData = try? JSONSerialization.data(withJSONObject: modeDict),
+              let jsonString = String(data: jsonData, encoding: .utf8) else { return nil }
+        return jsonString
+    }
+
     @ViewBuilder
     var editorView: some View {
         // Wait for preload to complete before showing editor
@@ -377,6 +399,11 @@ extension ContentView {
                     },
                     onWebViewReady: { webView in
                         findBarState.activeWebView = webView
+                        // Sync current annotation display state - see annotationDisplayModesJSON's
+                        // doc comment for why this fresh WebView wouldn't otherwise learn it.
+                        if let json = annotationDisplayModesJSON(editorState) {
+                            webView.evaluateJavaScript("window.FinalFinal.setAnnotationDisplayModes(\(json))") { _, _ in }
+                        }
                         // Configure BlockSyncService with the WebView
                         if let db = documentManager.projectDatabase,
                            let pid = documentManager.projectId {
@@ -446,6 +473,11 @@ extension ContentView {
                     },
                     onWebViewReady: { webView in
                         findBarState.activeWebView = webView
+                        // Sync current annotation display state - see annotationDisplayModesJSON's
+                        // doc comment for why this fresh WebView wouldn't otherwise learn it.
+                        if let json = annotationDisplayModesJSON(editorState) {
+                            webView.evaluateJavaScript("window.FinalFinal.setAnnotationDisplayModes(\(json))") { _, _ in }
+                        }
                         // Push image metadata for width display in CodeMirror previews
                         if let result = fetchBlocksWithIds() {
                             let metaArray = result.imageMeta.compactMap { meta -> [String: Any]? in
