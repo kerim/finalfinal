@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.116] - 2026-07-28
+
 ### Added
 
 - **The equation dialog's Display mode now accepts multi-line LaTeX** — the LaTeX box only ever allowed a single line, so multi-line math like `\begin{aligned}...\end{aligned}` couldn't be typed when inserting an equation. Display mode now shows a resizable, scrollable text box for multi-line entry (Inline mode stays single-line, as before), and pressing Return now adds a new line instead of accidentally submitting the dialog early.
