@@ -62,13 +62,6 @@ struct FinalFinalApp: App {
             .environment(ThemeManager.shared)
             .environment(GoalColorSettingsManager.shared)
             .environment(versionHistoryCoordinator)
-            // Placement relative to the .environment(...) calls above does NOT
-            // matter for correctness: ProjectOpenErrorHost.swift injects
-            // .environment(ThemeManager.shared) directly on the sheet's presented
-            // content (IntegrityAlertView reads @Environment(ThemeManager.self)),
-            // rather than relying on modifier-chain ordering here -- which would
-            // silently break again if this chain were ever reordered.
-            .projectOpenErrorHost()
             .task {
                 await determineInitialState()
             }
@@ -216,13 +209,11 @@ struct FinalFinalApp: App {
                 appViewState = .editor
                 return
             } catch {
-                ProjectOpenErrorState.shared.report(error, url: url)
-                // Fall through to the normal flow: your previous session still opens
-                // (or Getting Started, or the picker), and the always-mounted host
-                // above this state switch shows the failure over whatever we land on.
-                // No modal runs on this path -- the failure is recorded as SwiftUI
-                // state, not announced via NSAlert.runModal(), which would deadlock
-                // inside this .task's async context.
+                DebugLog.log(.lifecycle, "[FinalFinalApp] Failed to open Finder URL: \(error)")
+                // Fall through to normal flow (picker).
+                // Cannot show NSAlert here — runModal() deadlocks inside .task async context.
+                // User will see the picker and can try opening the file from there,
+                // which goes through FileOperations with proper error handling.
             }
         }
 
@@ -251,15 +242,7 @@ struct FinalFinalApp: App {
     @MainActor
     private func handleProjectOpened() {
         guard documentManager.hasOpenProject else { return }
-        // Deliberately does NOT clear ProjectOpenErrorState.shared.pending here.
-        // .projectDidOpen fires for every successful open -- including ones
-        // completely unrelated to any currently-shown failure (e.g. a Version
-        // History snapshot restore) -- so clearing it unconditionally would
-        // silently dismiss a fresh, unseen error notice as a side effect of an
-        // unrelated action. Persisting an unacknowledged error until the user
-        // actually addresses it (Cancel/OK, or a Repair/Open Anyway that resolves
-        // THIS failure -- see ProjectOpenErrorHost's own explicit clear() calls)
-        // is the intended design.
+
         if documentManager.isGettingStartedProject {
             appViewState = .gettingStarted
         } else {

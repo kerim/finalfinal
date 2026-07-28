@@ -407,13 +407,31 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             try DocumentManager.shared.openProject(at: url)
             DebugLog.always("[FINDER-OPEN] openProject succeeded, posting .projectDidOpen")
             NotificationCenter.default.post(name: .projectDidOpen, object: nil)
-        } catch {
+        } catch let error as IntegrityError {
             // openProject() validates before closing, so current project is preserved.
-            // Record the failure for the always-mounted host to render; no modal runs
-            // here, so this can never race with (or be dropped by) a state change.
+            // Show integrity error UI without posting projectDidClose.
+            if let report = error.integrityReport {
+                NotificationCenter.default.post(
+                    name: .projectIntegrityError, object: nil,
+                    userInfo: ["report": report, "url": url]
+                )
+            } else {
+                showFinderOpenError(error)
+            }
+        } catch {
+            // Current project preserved — just show the error
             DebugLog.log(.lifecycle, "[AppDelegate] Failed to open from Finder: \(error)")
-            ProjectOpenErrorState.shared.report(error, url: url)
+            showFinderOpenError(error)
         }
+    }
+
+    private func showFinderOpenError(_ error: Error) {
+        let alert = NSAlert()
+        alert.messageText = "Could Not Open Project"
+        alert.informativeText = error.localizedDescription
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
     }
 
     // MARK: - NSWindowDelegate
