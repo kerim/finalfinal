@@ -2,7 +2,6 @@
 *.xcodeproj/project.xcworkspace/
 *.xcodeproj/xcuserdata/
 DerivedData/
-.derivedData/
 *.xcuserstate
 *.xcscmblueprint
 

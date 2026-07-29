@@ -18,7 +18,7 @@ import {
 import { setCitationLibrary } from './citation-search';
 import { getCiteprocEngine } from './citeproc-engine';
 import { getEditorInstance } from './editor-state';
-import type { CAYWCallbackData } from './types';
+import type { CAYWCallbackData, EditCitationCallbackData } from './types';
 
 // === Lazy Citation Resolution ===
 // Debounced batch resolution of unresolved citekeys
@@ -248,6 +248,44 @@ export function handleCAYWError(_message: string, requestId: number): void {
   }
   // Error display handled by native NSAlert on Swift side.
   // JS alert() is silently swallowed in WKWebView (no WKUIDelegate).
+}
+
+/**
+ * Handle edit citation callback from Swift
+ * Updates an existing citation node at the specified position
+ */
+export function handleEditCitationCallback(data: EditCitationCallbackData, items: CSLItem[]): void {
+  const editorInstance = getEditorInstance();
+  if (!editorInstance) {
+    return;
+  }
+
+  // Add items to citeproc engine (use addItems with array, not addItem)
+  const engine = getCiteprocEngine();
+  engine.addItems(items);
+
+  const view = editorInstance.ctx.get(editorViewCtx);
+  const pos = data.pos;
+
+  // Verify node at position is a citation
+  const node = view.state.doc.nodeAt(pos);
+  if (!node || node.type.name !== 'citation') {
+    return;
+  }
+
+  // Update the citation node with new attributes
+  const citekeyStr = data.citekeys.join(',');
+  const tr = view.state.tr.setNodeMarkup(pos, undefined, {
+    citekeys: citekeyStr,
+    locators: data.locators,
+    prefix: data.prefix,
+    suffix: '',
+    suppressAuthor: data.suppressAuthor,
+    rawSyntax: data.rawSyntax,
+  });
+
+  view.dispatch(tr);
+  view.focus();
 }
 
 /**
