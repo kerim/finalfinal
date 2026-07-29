@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **Hovering a collapsed comment, task, reference, or a footnote showed a cramped pop-up box, even when there was plenty of room to make it wider, and could occasionally show two pop-ups at once** — both are now sized properly to the text they're showing, match each other's text size (and stay proportional if you change your body text size), and each disappears the instant you start typing instead of getting stuck on screen.
+- **In rare cases, typing at the very start of a zoomed-in section could land your text at the very start of the whole document instead** — a split-second timing gap right after zooming into a section (or right after reordering sections by dragging, or switching between the formatted and source editors while zoomed in) could briefly confuse the app about where "the start" actually was. That gap is now closed.
 - **New comments didn't start folded up, even with "collapse annotations" already turned on** — you had to switch the setting off and back on again before a newly inserted comment would behave. Any editor opened after the setting was already set — a fresh document, or switching between the formatted and source views — never picked the setting up, because the app only told the editor about it at the moment it changed. New comments now appear folded straight away.
 
 ## [0.2.116] - 2026-07-28
