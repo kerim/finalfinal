@@ -2,8 +2,9 @@
 import { defaultValueCtx, Editor, editorViewCtx, rootCtx } from '@milkdown/kit/core';
 import { commonmark } from '@milkdown/kit/preset/commonmark';
 import { gfm } from '@milkdown/kit/preset/gfm';
-import { afterEach, describe, expect, it } from 'vitest';
-import { blockIdPlugin, getAllBlockIds, setBlockIdZoomMode } from '../block-id-plugin';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { setContentWithBlockIds } from '../api-content';
+import { blockIdPlugin, getAllBlockIds, getBlockIdZoomMode, setBlockIdZoomMode } from '../block-id-plugin';
 import { blockSyncPlugin, flushPendingBlockChanges, getBlockChanges, resetBlockSyncState } from '../block-sync-plugin';
 import { setEditorInstance } from '../editor-state';
 import { highlightPlugin } from '../highlight-plugin';
@@ -124,5 +125,132 @@ describe('detectChanges — atDocumentStart flag on position-0 inserts', () => {
     expect(trailingInsert).toBeDefined();
     expect(trailingInsert?.afterBlockId).toBe(existingId);
     expect(trailingInsert?.atDocumentStart).toBeFalsy();
+  });
+});
+
+// Regression tests for the zoom-entry "atDocumentStart" flag race window.
+//
+// setContentWithBlockIds() unconditionally cleared blockIdZoomMode to false —
+// even when the caller was pushing zoomed content (e.g. zoom entry) — and the
+// flag only flipped back to true later, via an AWAITED Swift round-trip
+// (pushBlockIds()/syncBlockIds()). Between those two points, a position-0
+// insert into the zoomed section was misclassified atDocumentStart: true, as
+// if it were a true document-start insert.
+//
+// The fix threads an explicit `zoomMode` option through setContentWithBlockIds
+// so zoom-entry callers can flip the flag SYNCHRONOUSLY, in the same call that
+// pushes the zoomed content — closing the window instead of narrowing it.
+describe('setContentWithBlockIds zoomMode option — closes the zoom-entry atDocumentStart race', () => {
+  afterEach(async () => {
+    // Safety net, NOT the primary flush: if a test's own assertion throws
+    // partway through (e.g. the very first test below is EXPECTED to fail
+    // red against unpatched code), any RAF it scheduled via
+    // setContentWithBlockIds's deferredSnapshotAndUnpause would otherwise be
+    // abandoned mid-flight by vi.useRealTimers() below — leaving syncPaused
+    // stuck `true` and leaking into whichever test runs next (since
+    // getEditorInstance() is a shared global, not per-test). Flushing here,
+    // unconditionally, keeps every test in this file hermetic regardless of
+    // how its body exits.
+    if (vi.isFakeTimers()) {
+      await vi.runOnlyPendingTimersAsync();
+    }
+    vi.useRealTimers();
+    setEditorInstance(null);
+    resetBlockSyncState();
+    setBlockIdZoomMode(false);
+  });
+
+  async function makeEditor(markdown: string): Promise<Editor> {
+    const div = document.createElement('div');
+    document.body.appendChild(div);
+    const editor = await Editor.make()
+      .config((ctx) => {
+        ctx.set(rootCtx, div);
+        ctx.set(defaultValueCtx, markdown);
+      })
+      .use(commonmark)
+      .use(gfm)
+      .use(highlightPlugin)
+      .use(blockIdPlugin)
+      .use(blockSyncPlugin)
+      .create();
+    return editor;
+  }
+
+  it('setContentWithBlockIds(..., { zoomMode: true }) flips getBlockIdZoomMode() synchronously — no RAF/timer involved', async () => {
+    const editor = await makeEditor('Old unrelated content.');
+    setEditorInstance(editor);
+
+    vi.useFakeTimers();
+
+    setContentWithBlockIds('# Zoomed Section\n\nBody text.', ['id-heading', 'id-body'], {
+      zoomMode: true,
+    });
+
+    expect(getBlockIdZoomMode()).toBe(true);
+  });
+
+  it('race: a position-0 insert that lands before the Swift round-trip is NOT misclassified atDocumentStart when zoomMode is supplied synchronously', async () => {
+    const editor = await makeEditor('Old unrelated content.');
+    setEditorInstance(editor);
+
+    vi.useFakeTimers();
+
+    // Zoom entry: content + block IDs pushed atomically, WITH zoomMode supplied
+    // synchronously — simulates the fixed zoomToSection() call site. Deliberately
+    // never simulate the follow-up pushBlockIds()/syncBlockIds() Swift round-trip
+    // at all, proving correctness no longer depends on its timing.
+    setContentWithBlockIds('# Zoomed Section\n\nBody text.', ['id-heading', 'id-body'], {
+      zoomMode: true,
+      scrollToStart: true,
+    });
+
+    // setContentWithBlockIds pauses block-sync change detection (syncPaused)
+    // while it settles, then unpauses via a RAF-deferred callback — flush that
+    // RAF first so the plugin is actually listening again by the time our own
+    // transaction dispatches below (this is NOT the race under test; it's the
+    // ordinary "content push has settled" step that precedes it in the real app).
+    await vi.runOnlyPendingTimersAsync();
+
+    const view = editor.ctx.get(editorViewCtx);
+    const schema = view.state.schema;
+    const headingNode = schema.nodes.heading!.create({ level: 2 }, schema.text('New lead heading'));
+    const insertTr = view.state.tr.insert(0, headingNode);
+    view.dispatch(insertTr);
+
+    // Let the 100ms block-sync detect debounce fire.
+    await vi.advanceTimersByTimeAsync(100);
+
+    const changes = getBlockChanges();
+    const headingInsert = changes.inserts.find((i) => i.textContent === 'New lead heading');
+    expect(headingInsert).toBeDefined();
+    expect(headingInsert?.atDocumentStart).toBeFalsy();
+  });
+
+  it('regression: zoomMode omitted still clears the flag and produces atDocumentStart=true for a genuine non-zoomed load', async () => {
+    const editor = await makeEditor('Old unrelated content.');
+    setEditorInstance(editor);
+
+    vi.useFakeTimers();
+
+    // Non-zoomed full-document load — no zoomMode option at all, matching every
+    // existing call site untouched by this fix.
+    setContentWithBlockIds('Existing paragraph.', ['id-para'], { scrollToStart: true });
+
+    // Flush the RAF-deferred unpause (see comment in the race test above).
+    await vi.runOnlyPendingTimersAsync();
+
+    const view = editor.ctx.get(editorViewCtx);
+    const schema = view.state.schema;
+    const headingNode = schema.nodes.heading!.create({ level: 2 }, schema.text('New Section'));
+    const insertTr = view.state.tr.insert(0, headingNode);
+    view.dispatch(insertTr);
+
+    await vi.advanceTimersByTimeAsync(100);
+
+    const changes = getBlockChanges();
+    const headingInsert = changes.inserts.find((i) => i.textContent === 'New Section');
+    expect(headingInsert).toBeDefined();
+    expect(headingInsert?.atDocumentStart).toBe(true);
   });
 });
