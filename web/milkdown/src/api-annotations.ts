@@ -13,6 +13,7 @@ import {
   handleCAYWCallback,
   handleCAYWCancelled,
   handleCAYWError,
+  handleEditCitationCallback,
   requestCitationResolutionInternal,
 } from './cayw';
 import type { CSLItem } from './citation-plugin';
@@ -21,7 +22,7 @@ import { getCitationLibrary, getCitationLibrarySize, setCitationLibrary } from '
 import { getCiteprocEngine } from './citeproc-engine';
 import { getEditorInstance } from './editor-state';
 import { highlightMark } from './highlight-plugin';
-import type { CAYWCallbackData } from './types';
+import type { CAYWCallbackData, EditCitationCallbackData } from './types';
 
 export function setAnnotationDisplayModes(modes: Record<string, string>): void {
   setDisplayModes(modes);
@@ -289,6 +290,10 @@ export function citationPickerCancelled(requestId: number): void {
 
 export function citationPickerError(message: string, requestId: number): void {
   handleCAYWError(message, requestId);
+}
+
+export function editCitationCallback(data: EditCitationCallbackData, items: CSLItem[]): void {
+  handleEditCitationCallback(data, items);
 }
 
 export function getCAYWDebugState(): {

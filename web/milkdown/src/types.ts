@@ -73,6 +73,16 @@ export interface CAYWCallbackData {
   requestId: number;
 }
 
+// Interface for edit citation callback data from Swift
+export interface EditCitationCallbackData {
+  pos: number; // Position of the citation node to update
+  rawSyntax: string;
+  citekeys: string[];
+  locators: string;
+  prefix: string;
+  suppressAuthor: boolean;
+}
+
 declare global {
   interface Window {
     FinalFinal: {
@@ -138,6 +148,8 @@ declare global {
       citationPickerCallback: (data: CAYWCallbackData, items: CSLItem[]) => void;
       citationPickerCancelled: (requestId: number) => void;
       citationPickerError: (message: string, requestId: number) => void;
+      // Edit citation callback (for clicking existing citations)
+      editCitationCallback: (data: EditCitationCallbackData, items: CSLItem[]) => void;
       // Debug API
       getCAYWDebugState: () => {
         pendingCAYWRequests: Array<{ requestId: number; start: number; end: number }>;
@@ -160,14 +172,6 @@ declare global {
           cursorBoundary?: number;
           detectPausedEdits?: boolean;
           expected?: ExpectedBlockMeta[];
-          // Whether the pushed content represents a zoomed subset of the document
-          // rather than the full document. Sets blockIdZoomMode SYNCHRONOUSLY,
-          // in the same call that pushes the content — closing the race window
-          // where a caller previously had to wait for a separate, awaited
-          // syncBlockIds()/pushBlockIds() round-trip to flip the flag back on
-          // after this function unconditionally cleared it. Defaults to false,
-          // matching every pre-existing (non-zoom) call site untouched by this.
-          zoomMode?: boolean;
         }
       ) => void;
       scrollToBlock: (blockId: string) => void;
@@ -197,16 +201,9 @@ declare global {
       enableSpellcheck: () => void;
       disableSpellcheck: () => void;
       triggerSpellcheck: () => void;
-      /** Read-only: current spellcheck module-flag state (for regression tests
-       *  verifying applyPersistedToggleStates re-applied a persisted preference
-       *  to a fresh editor instance — see Swift-side ToggleStateRegressionTests). */
-      isSpellcheckEnabled: () => boolean;
       // Smart quotes API
       enableSmartQuotes: () => void;
       disableSmartQuotes: () => void;
-      /** Read-only: current smart-quotes module-flag state (same purpose as
-       *  isSpellcheckEnabled above). */
-      isSmartQuotesEnabled: () => boolean;
       // Footnote API
       setFootnoteDefinitions: (defs: Record<string, string>) => void;
       insertFootnote: (atPosition?: number) => string | null;

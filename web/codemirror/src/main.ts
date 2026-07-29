@@ -90,13 +90,11 @@ import {
   disableSmartQuotes,
   enableSmartQuotes,
   handleBeforeInput,
-  isSmartQuotesEnabled,
   smartQuotesInputHandler,
 } from './smart-quotes-plugin';
 import {
   disableSpellcheck,
   enableSpellcheck,
-  isSpellcheckEnabled,
   setSpellcheckResults,
   spellcheckPlugin,
   triggerSpellcheck,
@@ -455,12 +453,10 @@ window.FinalFinal = {
   enableSpellcheck,
   disableSpellcheck,
   triggerSpellcheck,
-  isSpellcheckEnabled,
 
   // Smart quotes API
   enableSmartQuotes,
   disableSmartQuotes,
-  isSmartQuotesEnabled,
   find,
   findNext: apiFindNext,
   findPrevious: apiFindPrevious,
