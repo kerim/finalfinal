@@ -95,16 +95,6 @@ export function disableSpellcheck(): void {
   }
 }
 
-/** Read-only getter for the module's current toggle state — mirrors
- *  isSmartQuotesEnabled() in smart-quotes-plugin.ts. Exposed on window.FinalFinal
- *  so Swift-side tests can verify applyPersistedToggleStates() actually propagated
- *  a persisted UserDefaults preference into a freshly-created editor instance,
- *  rather than assuming the JS module started in whatever state the toggle call
- *  implies. */
-export function isSpellcheckEnabled(): boolean {
-  return enabled;
-}
-
 // --- Decoration helpers ---
 
 function buildDecorationSet(results: SpellcheckResult[], doc: Node): DecorationSet {
