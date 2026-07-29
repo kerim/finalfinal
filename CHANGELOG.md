@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.117] - 2026-07-29
+
 ### Fixed
 
 - **Hovering a collapsed comment, task, reference, or a footnote showed a cramped pop-up box, even when there was plenty of room to make it wider, and could occasionally show two pop-ups at once** — both are now sized properly to the text they're showing, match each other's text size (and stay proportional if you change your body text size), and each disappears the instant you start typing instead of getting stuck on screen.
