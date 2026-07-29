@@ -105,9 +105,16 @@ declare global {
       enableSpellcheck: () => void;
       disableSpellcheck: () => void;
       triggerSpellcheck: () => void;
+      /** Read-only: current spellcheck module-flag state (for regression tests
+       *  verifying applyPersistedToggleStates re-applied a persisted preference
+       *  to a fresh editor instance — see Swift-side ToggleStateRegressionTests). */
+      isSpellcheckEnabled: () => boolean;
       // Smart quotes API
       enableSmartQuotes: () => void;
       disableSmartQuotes: () => void;
+      /** Read-only: current smart-quotes module-flag state (same purpose as
+       *  isSpellcheckEnabled above). */
+      isSmartQuotesEnabled: () => boolean;
       // Footnote API
       setFootnoteDefinitions: (defs: Record<string, string>) => void;
       insertFootnote: (atPosition?: number) => string | null;
