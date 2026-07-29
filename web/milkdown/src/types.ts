@@ -73,6 +73,16 @@ export interface CAYWCallbackData {
   requestId: number;
 }
 
+// Interface for edit citation callback data from Swift
+export interface EditCitationCallbackData {
+  pos: number; // Position of the citation node to update
+  rawSyntax: string;
+  citekeys: string[];
+  locators: string;
+  prefix: string;
+  suppressAuthor: boolean;
+}
+
 declare global {
   interface Window {
     FinalFinal: {
@@ -138,6 +148,8 @@ declare global {
       citationPickerCallback: (data: CAYWCallbackData, items: CSLItem[]) => void;
       citationPickerCancelled: (requestId: number) => void;
       citationPickerError: (message: string, requestId: number) => void;
+      // Edit citation callback (for clicking existing citations)
+      editCitationCallback: (data: EditCitationCallbackData, items: CSLItem[]) => void;
       // Debug API
       getCAYWDebugState: () => {
         pendingCAYWRequests: Array<{ requestId: number; start: number; end: number }>;
