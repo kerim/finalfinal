@@ -16,7 +16,6 @@ import {
   citationPickerCallback,
   citationPickerCancelled,
   citationPickerError,
-  editCitationCallback,
   getAllCitekeys,
   getAnnotations,
   getBibliographyCitekeys,
@@ -501,7 +500,6 @@ window.FinalFinal = {
   citationPickerCallback,
   citationPickerCancelled,
   citationPickerError,
-  editCitationCallback,
   getCAYWDebugState,
   insertCitation: insertCitationAtCursor,
   // Block-based API (Phase B)
