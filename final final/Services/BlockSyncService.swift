@@ -243,7 +243,8 @@ class BlockSyncService {
         imageMeta: [ContentView.ImageBlockMeta] = [],
         cursorBoundary: Int? = nil,
         detectPausedEdits: Bool = false,
-        expectedBlocks: [BlockParser.BlockAlignmentMeta] = []
+        expectedBlocks: [BlockParser.BlockAlignmentMeta] = [],
+        zoomMode: Bool = false
     ) async {
         guard let webView else { return }
 
@@ -300,6 +301,9 @@ class BlockSyncService {
                     .replacingOccurrences(of: "${", with: "\\${")
                 optionParts.append("expected: JSON.parse(`\(escapedExpected)`)")
             }
+        }
+        if zoomMode {
+            optionParts.append("zoomMode: true")
         }
         let options = optionParts.isEmpty ? "" : ", {\(optionParts.joined(separator: ", "))}"
         let js = "window.FinalFinal.setContentWithBlockIds(`\(escapedMarkdown)`, JSON.parse(`\(escapedIds)`)\(options))"
