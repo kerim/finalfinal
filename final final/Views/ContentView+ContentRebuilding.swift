@@ -93,7 +93,8 @@ extension ContentView {
                 blockIds: result.blockIds,
                 imageMeta: result.imageMeta,
                 cursorBoundary: result.bibBoundaryIndex,
-                expectedBlocks: result.expectedBlocks)
+                expectedBlocks: result.expectedBlocks,
+                zoomMode: editorState.zoomedSectionIds != nil)
             editorState.isResettingContent = false
         }
     }
@@ -439,7 +440,8 @@ extension ContentView {
                                         markdown: result.markdown, blockIds: result.blockIds,
                                         imageMeta: result.imageMeta,
                                         cursorBoundary: result.bibBoundaryIndex,
-                                        expectedBlocks: result.expectedBlocks)
+                                        expectedBlocks: result.expectedBlocks,
+                                        zoomMode: editorState.zoomedSectionIds != nil)
                                     // Always sync editorState.content to DB-assembled markdown.
                                     // Without this, updateNSView sees editorState.content (e.g. 1748 chars)
                                     // ≠ lastPushedContent (1747 chars) and re-pushes WITHOUT block IDs,
