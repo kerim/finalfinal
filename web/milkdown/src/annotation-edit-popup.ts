@@ -39,7 +39,7 @@ function createAnnotationEditPopup(): HTMLElement {
     border-radius: 6px;
     padding: 8px;
     box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-    min-width: 280px;
+    min-width: 250px;
     max-width: min(400px, calc(100vw - 16px));
     display: none;
   `;
@@ -101,7 +101,6 @@ function createAnnotationEditPopup(): HTMLElement {
     resize: vertical;
     max-height: 150px;
     overflow-y: auto;
-    overflow-wrap: anywhere;
     font-family: inherit;
   `;
   editPopupInput = textarea;

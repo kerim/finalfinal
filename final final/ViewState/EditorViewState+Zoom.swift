@@ -185,7 +185,7 @@ extension EditorViewState {
             await blockSyncService?.setContentWithBlockIds(
                 markdown: zoomedContent, blockIds: zoomedBlockIds,
                 scrollToStart: true, imageMeta: zoomedImageMeta,
-                expectedBlocks: zoomedExpectedBlocks, zoomMode: true)
+                expectedBlocks: zoomedExpectedBlocks)
             content = zoomedContent
             pendingImageMeta = zoomedImageMeta
             isResettingContent = false

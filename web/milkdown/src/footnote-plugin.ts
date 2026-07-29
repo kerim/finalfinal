@@ -26,9 +26,8 @@ export function setFootnoteDefinitions(defs: Record<string, string>): void {
   for (const [label, text] of Object.entries(defs)) {
     footnoteDefinitions.set(label, text);
   }
-  // No dispatch needed: hover-tooltip.ts reads straight from
-  // getFootnoteDefinitions() at hover time, so updates here are picked up on
-  // the next hover with no separate change notification required.
+  // Dispatch event so existing NodeViews can update their tooltips
+  document.dispatchEvent(new CustomEvent('footnote-definitions-updated'));
 }
 
 /**
@@ -376,16 +375,37 @@ const footnoteRefNodeView = $view(footnoteRefNode, (_ctx: Ctx) => {
     dom.className = 'ff-footnote-ref';
     dom.dataset.label = attrs.label;
 
-    // Hover tooltip (definition preview) is now handled entirely by
-    // hover-tooltip.ts's single delegated mouseover/mouseout listener on the
-    // editor root, which matches `.ff-footnote-ref` via .closest() and reads
-    // the current definition straight from getFootnoteDefinitions() at hover
-    // time. No per-node listeners or in-DOM tooltip child here anymore —
-    // ProseMirror recreates this NodeView's DOM constantly, and per-node
-    // listeners would leak across re-renders. (The old showTooltip() already
-    // read `footnoteDefinitions.get(attrs.label)` fresh on every hover, so it
-    // never showed stale content — this change is about listener lifecycle,
-    // not content freshness.)
+    // Tooltip element (created lazily on hover)
+    let tooltip: HTMLDivElement | null = null;
+    let hideTimeout: ReturnType<typeof setTimeout> | null = null;
+
+    const showTooltip = () => {
+      if (isSourceModeEnabled()) return;
+      if (hideTimeout) {
+        clearTimeout(hideTimeout);
+        hideTimeout = null;
+      }
+
+      const defText = footnoteDefinitions.get(attrs.label);
+      if (!defText) return;
+
+      if (!tooltip) {
+        tooltip = document.createElement('div');
+        tooltip.className = 'ff-footnote-tooltip';
+        dom.appendChild(tooltip);
+      }
+
+      tooltip.textContent = defText;
+      tooltip.classList.add('ff-footnote-tooltip-visible');
+    };
+
+    const hideTooltip = () => {
+      if (tooltip) {
+        hideTimeout = setTimeout(() => {
+          if (tooltip) tooltip.classList.remove('ff-footnote-tooltip-visible');
+        }, 150);
+      }
+    };
 
     const updateDisplay = () => {
       if (isSourceModeEnabled()) {
@@ -470,6 +490,16 @@ const footnoteRefNodeView = $view(footnoteRefNode, (_ctx: Ctx) => {
       }
     });
 
+    // Hover handlers for tooltip
+    dom.addEventListener('mouseenter', showTooltip);
+    dom.addEventListener('mouseleave', hideTooltip);
+
+    // Listen for definition updates to refresh tooltip content
+    const onDefsUpdated = () => {
+      // Tooltip content refreshed on next hover
+    };
+    document.addEventListener('footnote-definitions-updated', onDefsUpdated);
+
     // Initial render
     updateDisplay();
 
@@ -487,6 +517,14 @@ const footnoteRefNodeView = $view(footnoteRefNode, (_ctx: Ctx) => {
         attrs.label = updatedNode.attrs.label as string;
         updateDisplay();
         return true;
+      },
+      destroy: () => {
+        document.removeEventListener('footnote-definitions-updated', onDefsUpdated);
+        if (hideTimeout) clearTimeout(hideTimeout);
+        if (tooltip) {
+          tooltip.remove();
+          tooltip = null;
+        }
       },
       stopEvent: () => false,
       ignoreMutation: () => true,
