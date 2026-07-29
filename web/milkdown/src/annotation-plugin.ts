@@ -146,6 +146,20 @@ const annotationNode = $node('annotation', () => ({
       .filter(Boolean)
       .join(' ');
 
+    // Collapsed annotations already show a hover tooltip driven by data-text
+    // (hover-tooltip.ts's single delegated listener, matching the
+    // `.ff-annotation-collapsed` class this element gets from
+    // annotation-display-plugin.ts's decoration). Also setting the native
+    // `title` attribute would pop up the browser's OWN tooltip on top of it
+    // after ~1s hover — two overlapping tooltips for the same annotation.
+    // Omit `title` in that case, and expose the text via `role="img"` +
+    // `aria-label` instead so collapsed annotations still have an accessible
+    // name (the JS-driven tooltip is only in the DOM while actually hovered,
+    // same accessibility-tree gap the old CSS-only bubble had). See
+    // applyAnnotationAccessibilityAttrs() below for the equivalent logic used
+    // by the live NodeView.
+    const isCollapsed = getAnnotationDisplayModes()[type] === 'collapsed';
+
     // Atomic structure: marker + static text span (no content hole)
     return [
       'span',
@@ -154,7 +168,7 @@ const annotationNode = $node('annotation', () => ({
         'data-type': type,
         'data-text': text,
         'data-completed': String(isCompleted),
-        title: text,
+        ...(isCollapsed ? { role: 'img', 'aria-label': text } : { title: text }),
       },
       // Marker span (non-editable)
       ['span', { class: 'ff-annotation-marker', contenteditable: 'false' }, marker],
@@ -198,6 +212,32 @@ const annotationNode = $node('annotation', () => ({
   },
 }));
 
+// Set the attributes that give an annotation wrapper its accessible name.
+// Collapsed annotations already show a hover tooltip driven by data-text
+// (hover-tooltip.ts's single delegated listener, matching the
+// `.ff-annotation-collapsed` class) — leaving the native `title` attribute in
+// place too would pop up the browser's OWN tooltip on top of it after ~1s
+// hover, so the same annotation would show two overlapping tooltips at once.
+// Omit `title` for collapsed annotations to avoid that. But the JS-driven
+// tooltip is only ever added to the DOM while actually hovered, which excludes
+// it from the accessibility tree, so a `title`-less span would otherwise have
+// NO accessible name at all for screen readers. Collapsed annotations get
+// `role="img"` + `aria-label` instead — a role is needed because `aria-label`
+// on a bare element with no ARIA role (a `span` implies none) is exposed
+// inconsistently by assistive tech.
+function applyAnnotationAccessibilityAttrs(dom: HTMLElement, type: AnnotationType, text: string): void {
+  const isCollapsed = getAnnotationDisplayModes()[type] === 'collapsed';
+  if (isCollapsed) {
+    dom.removeAttribute('title');
+    dom.setAttribute('role', 'img');
+    dom.setAttribute('aria-label', text || '');
+  } else {
+    dom.removeAttribute('role');
+    dom.removeAttribute('aria-label');
+    dom.title = text || '';
+  }
+}
+
 // NodeView for atomic annotation rendering with click-to-edit popup
 const annotationNodeView = $view(annotationNode, (_ctx: Ctx) => {
   return (node, view, getPos) => {
@@ -214,7 +254,7 @@ const annotationNodeView = $view(annotationNode, (_ctx: Ctx) => {
     dom.dataset.type = attrs.type;
     dom.dataset.completed = String(attrs.isCompleted);
     dom.dataset.text = attrs.text || '';
-    dom.title = attrs.text || '';
+    applyAnnotationAccessibilityAttrs(dom, attrs.type, attrs.text);
 
     // Create the marker span (non-editable)
     const markerSpan = document.createElement('span');
@@ -314,7 +354,7 @@ const annotationNodeView = $view(annotationNode, (_ctx: Ctx) => {
         dom.dataset.type = newAttrs.type;
         dom.dataset.completed = String(newAttrs.isCompleted);
         dom.dataset.text = newAttrs.text || '';
-        dom.title = newAttrs.text || '';
+        applyAnnotationAccessibilityAttrs(dom, newAttrs.type, newAttrs.text);
         dom.className = [
           'ff-annotation',
           `ff-annotation-${newAttrs.type}`,
