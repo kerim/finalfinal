@@ -677,19 +677,30 @@ export function setContentWithBlockIds(
     cursorBoundary?: number;
     detectPausedEdits?: boolean;
     expected?: ExpectedBlockMeta[];
+    // Whether the pushed content is a zoomed subset of the document. See the
+    // matching doc comment on window.FinalFinal.setContentWithBlockIds in
+    // types.ts for the race this closes. Defaults to false (full-document load).
+    zoomMode?: boolean;
   }
 ): void {
   clearContentPushTimer(); // Cancel stale timers before document replacement
   syncLog(
     'API:setContentWithBlockIds',
-    `entry len=${markdown.length} blocks=${blockIds.length} scrollToStart=${options?.scrollToStart ?? false}`
+    `entry len=${markdown.length} blocks=${blockIds.length} scrollToStart=${options?.scrollToStart ?? false} zoomMode=${options?.zoomMode ?? false}`
   );
   // [SYNC-DIAG Round 2] First-few IDs so we can tie Swift's id-array to the parsed DOM
   if (SYNC_DIAG_DETAIL) {
     const firstFew = blockIds.slice(0, 5).map((id) => id.slice(0, 8));
     syncLog('API:setContentWithBlockIds', `firstFewIds=[${firstFew.join(',')}]`);
   }
-  setBlockIdZoomMode(false); // Clear zoom mode when loading full content
+  // Set zoom mode SYNCHRONOUSLY from the caller-supplied option (defaults to
+  // false, matching the old unconditional-clear behavior for every call site
+  // that doesn't pass it). Previously this always cleared to false and relied
+  // on a LATER, separately-awaited syncBlockIds()/pushBlockIds() Swift
+  // round-trip to flip it back on for zoom entry — leaving a window where a
+  // position-0 insert into the zoomed section was misclassified
+  // atDocumentStart: true. See block-sync-document-start.test.ts.
+  setBlockIdZoomMode(options?.zoomMode ?? false);
   setContentHasBeenSet(true);
   const editorInstance = getEditorInstance();
   if (!editorInstance) {

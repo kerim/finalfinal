@@ -356,7 +356,6 @@ body {
 /* Collapsed mode - marker only, hide text */
 .ff-annotation-collapsed {
   opacity: 0.6;
-  position: relative;
   background: transparent;
   padding: 0;
 }
@@ -371,56 +370,17 @@ body {
   margin-right: 0;
 }
 
-/* Tooltip for collapsed annotations - shows full text on hover */
-.ff-annotation-collapsed::after {
-  content: attr(data-text);
-  position: absolute;
-  left: 50%;
-  bottom: 100%;
-  transform: translateX(-50%);
-  padding: 6px 10px;
-  background: var(--tooltip-bg, #1f2937);
-  color: var(--tooltip-text, #f3f4f6);
-  font-size: 12px;
-  line-height: 1.4;
-  border-radius: 6px;
-  white-space: pre-wrap;
-  max-width: 280px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
-  opacity: 0;
-  visibility: hidden;
-  transition:
-    opacity 0.15s ease,
-    visibility 0.15s ease;
-  z-index: 1000;
-  pointer-events: none;
-  margin-bottom: 4px;
-}
-
-/* Arrow for tooltip */
-.ff-annotation-collapsed::before {
-  content: "";
-  position: absolute;
-  left: 50%;
-  bottom: 100%;
-  transform: translateX(-50%);
-  border: 5px solid transparent;
-  border-top-color: var(--tooltip-bg, #1f2937);
-  opacity: 0;
-  visibility: hidden;
-  transition:
-    opacity 0.15s ease,
-    visibility 0.15s ease;
-  z-index: 1001;
-  margin-bottom: -1px;
-}
-
-/* Show tooltip on hover */
-.ff-annotation-collapsed:hover::after,
-.ff-annotation-collapsed:hover::before {
-  opacity: 1;
-  visibility: visible;
-}
+/* Hover tooltip for collapsed annotations is now .ff-hover-tooltip (see
+   "Shared Hover Tooltip" below) — a JS-positioned singleton driven by
+   hover-tooltip.ts, not a CSS ::after pseudo-element. The old ::after/::before
+   pseudo-element approach (position: absolute; left: 50%; transform:
+   translateX(-50%), no explicit width) rendered too narrow in real WebKit:
+   its containing block was this tiny (~5px) collapsed marker, so shrink-to-fit
+   resolved to min-content width (the longest unbreakable word) before
+   max-width ever got a chance to bind — verified by direct measurement, not
+   a guess. A pseudo-element also can't be measured/positioned by JS, so it
+   can't be viewport-clamped the way the shared tooltip is via
+   positionPopup(). */
 
 /* Hover states */
 .ff-annotation:hover {
@@ -508,7 +468,6 @@ mark.ff-highlight {
   font-weight: 600;
   vertical-align: super;
   line-height: 0;
-  position: relative;
   padding: 0 2px;
   border-radius: 3px;
   transition: background 0.15s ease;
@@ -518,37 +477,18 @@ mark.ff-highlight {
   background: rgba(0, 122, 255, 0.12);
 }
 
-/* Footnote tooltip (real DOM element for scrollable multi-paragraph content) */
-.ff-footnote-tooltip {
-  opacity: 0;
-  visibility: hidden;
-  transition:
-    opacity 0.15s ease,
-    visibility 0.15s ease;
-  position: absolute;
-  bottom: 100%;
-  left: 50%;
-  transform: translateX(-50%);
-  max-width: 320px;
-  max-height: 200px;
-  overflow-y: auto;
-  padding: 8px 12px;
-  background: var(--tooltip-bg, #1f2937);
-  color: var(--tooltip-text, #f3f4f6);
-  border-radius: 6px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
-  font-size: 0.9rem;
-  line-height: 1.4;
-  z-index: 100;
-  pointer-events: none;
-  white-space: pre-wrap;
-  margin-bottom: 4px;
-}
-
-.ff-footnote-tooltip-visible {
-  opacity: 1;
-  visibility: visible;
-}
+/* Footnote hover-preview tooltip is now .ff-hover-tooltip--footnote (see
+   "Shared Hover Tooltip" below) — the same JS-positioned singleton the
+   collapsed-annotation tooltip uses, driven by hover-tooltip.ts. The old
+   .ff-footnote-tooltip was a real DOM child of the <sup> anchor using the same
+   `left: 50%; transform: translateX(-50%)` positioning as the annotation
+   tooltip's ::after, and rendered too narrow for the identical reason: its
+   containing block was the tiny <sup> reference itself, so shrink-to-fit
+   resolved to min-content width before max-width ever got a chance to bind
+   (verified by direct measurement, not a guess). Losing the "hover into the
+   tooltip to scroll a long footnote" capability (overflow-y: auto) in exchange
+   for the width fix is an accepted trade-off — the shared tooltip clamps
+   height instead of scrolling; see .ff-hover-tooltip--footnote's max-height. */
 
 /* Footnote definition pill */
 .ff-footnote-def {
@@ -611,6 +551,71 @@ mark.ff-highlight {
   user-select: none;
   filter: none;
   transform: none;
+}
+
+/* === Shared Hover Tooltip === */
+/* JS-positioned singleton (hover-tooltip.ts) shared by collapsed annotations
+   and footnote references — replaces the old .ff-annotation-collapsed::after
+   pseudo-element and .ff-footnote-tooltip in-DOM child, both of which used
+   `position: absolute; left: 50%; transform: translateX(-50%)` with no
+   explicit `width`. Per CSS 2.1 §10.4, `max-width` DOES apply to shrink-to-fit
+   boxes in general — what actually happened is their containing block was a
+   tiny (~5px) anchor (the collapsed marker / the footnote's <sup> reference),
+   so the shrink-to-fit algorithm resolved to min-content width (the longest
+   unbreakable word) long before `max-width` ever got a chance to bind
+   (verified by direct measurement, not a guess — two prior "fixes" to the old
+   CSS rule both passed jsdom and were both wrong). `width: max-content` below
+   is the actual fix: it gives the box an explicit width basis so `max-width`
+   can finally clamp it. (`position: fixed` + JS-computed top/left via
+   positionPopup() only solves viewport-edge clamping — a separate problem —
+   it does not by itself avoid the shrink-to-fit sizing issue; `position: fixed`
+   with `width: auto` would shrink-to-fit against the viewport just the same.)
+   No arrow/caret: once the box can shift sideways to stay in the viewport, a
+   fixed-position arrow would point at the wrong place — the click-to-edit
+   popups in this codebase don't use one either. */
+.ff-hover-tooltip {
+  position: fixed;
+  pointer-events: none;
+  width: max-content;
+  /* Floor so a one-word annotation doesn't render a sliver-sized tooltip. */
+  min-width: 160px;
+  max-width: min(420px, 90vw);
+  overflow-wrap: anywhere;
+  padding: 6px 10px;
+  background: var(--tooltip-bg, #1f2937);
+  color: var(--tooltip-text, #f3f4f6);
+  /* Scale off the user's body-text size (set at runtime by Swift via
+     setTheme) rather than a hardcoded px or a rem tied to the browser's
+     default root size — keeps this in sync with the user's actual font
+     preference, and matches .ff-hover-tooltip--footnote below (which
+     inherits this instead of declaring its own). */
+  font-size: calc(var(--font-size-body) * 0.85);
+  line-height: 1.4;
+  border-radius: 6px;
+  white-space: pre-wrap;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+  z-index: 1000;
+  /* Default hidden state; hover-tooltip.ts toggles visibility/opacity inline
+     (not display:none) specifically so this transition can animate. */
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    opacity 0.15s ease,
+    visibility 0.15s ease;
+}
+
+/* Footnote variant: slightly larger padding than the annotation-marker
+   tooltip (footnote definitions are user-authored prose, often longer than
+   an annotation's label), but the SAME font-size — inherited from the base
+   .ff-hover-tooltip rule above rather than redeclared, so the two tooltip
+   kinds always render at visually identical type size. max-height replaces
+   the old overflow-y: auto scrolling — a pathologically long footnote clips
+   rather than scrolls, an accepted trade-off for the width fix (see the
+   note in the Footnote Styles section above). */
+.ff-hover-tooltip--footnote {
+  padding: 8px 12px;
+  max-height: min(400px, 60vh);
+  overflow: hidden;
 }
 
 /* === Auto-Bibliography Markers === */

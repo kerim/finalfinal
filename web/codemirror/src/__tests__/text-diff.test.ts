@@ -105,6 +105,57 @@ describe('computeMinimalChange', () => {
     expect(change!.insert).toBe(`${highSurrogate}\uDE01`);
   });
 
+  // ---- Mirror construction: SUFFIX-boundary nudge ----
+  // The two tests above reach the PREFIX nudge (`prefix--` in computeMinimalChange) via
+  // two emoji sharing a HIGH surrogate but differing in the LOW surrogate, which forces
+  // the forward common-prefix scan into the pair. The SUFFIX nudge (the `suffix--`,
+  // keyed on isLowSurrogate at the `to` boundary) is a separate site in the same function
+  // and needs the mirror-image construction to be reached the same way: two characters
+  // sharing the SAME LOW surrogate but differing in the HIGH surrogate, so the
+  // common-suffix scan -- which walks backwards from the end of the string -- matches the
+  // shared low surrogate first, then stops at the differing high surrogate, landing `to`
+  // between the two halves of oldText's pair unless the nudge pulls it back.
+  // (The "does not split...newText" test further below also happens to exercise this same
+  // suffix nudge as a side effect of its own, differently-motivated construction -- see its
+  // comment -- but it never pins the exact `from`/`to` boundary values the way the pair
+  // below does, and it has no shared leading text to prove the nudge doesn't also reach
+  // backwards past an independently-computed prefix.)
+
+  it('does not split a surrogate pair when the emoji itself changes (suffix direction)', () => {
+    const lowSurrogate = '\uDE00'; // shared trailing half of both pairs below
+    const oldText = `\uD83D${lowSurrogate}b`; // a pair, then unrelated 'b'
+    const newText = `\uD83C${lowSurrogate}b`; // a different pair sharing the same low surrogate
+    const change = computeMinimalChange(oldText, newText);
+    expect(change).not.toBeNull();
+    assertNoSurrogateSplit(oldText, newText, change!);
+    // Pin the exact boundary: `to` must land AFTER the shared low surrogate (2), not
+    // before it (1). Without the nudge, `to` would be 1 -- splitting oldText's pair
+    // between its high and low surrogate halves -- which assertNoSurrogateSplit above
+    // would also catch, but this pins the precise expected value too.
+    expect(change!.from).toBe(0);
+    expect(change!.to).toBe(2);
+  });
+
+  // Same shared-low-surrogate mechanism as above, but with unrelated text BEFORE the pair
+  // that must stay OUT of the change -- proving the suffix-side nudge doesn't reach
+  // backwards past the (independently computed) shared prefix.
+  it('does not split a surrogate pair when the emoji changes and unrelated leading text is preserved (suffix direction)', () => {
+    const lowSurrogate = '\uDE00';
+    const head = 'head-unchanged';
+    const oldText = `${head}\uD83D${lowSurrogate}`;
+    const newText = `${head}\uD83C${lowSurrogate}`;
+    const change = computeMinimalChange(oldText, newText);
+    expect(change).not.toBeNull();
+    assertNoSurrogateSplit(oldText, newText, change!);
+    // `from` stays at head.length (the unchanged head is captured by the prefix instead
+    // of being swept into the replacement); `to` lands at oldText.length because nothing
+    // is left over to carve into a suffix once the accidental low-surrogate match is
+    // rejected.
+    expect(change!.from).toBe(head.length);
+    expect(change!.to).toBe(oldText.length);
+    expect(change!.insert).toBe(`\uD83C${lowSurrogate}`);
+  });
+
   // Exercises the boundary assertNoSurrogateSplit previously never checked: the END of
   // the insert in newText (as opposed to `to` in oldText). Old and new share a suffix
   // that starts with the low-surrogate half of an emoji; the character immediately

@@ -16,7 +16,6 @@ import {
   citationPickerCallback,
   citationPickerCancelled,
   citationPickerError,
-  editCitationCallback,
   getAllCitekeys,
   getAnnotations,
   getBibliographyCitekeys,
@@ -119,6 +118,7 @@ import {
 } from './footnote-plugin';
 import { headingNodeViewPlugin } from './heading-nodeview-plugin';
 import { highlightPlugin } from './highlight-plugin';
+import { hoverTooltipPlugin } from './hover-tooltip';
 import { imageNodeRewritePlugin } from './image-node-rewrite-plugin';
 import { imagePlugin } from './image-plugin';
 import { inlineCodeCursorPlugin } from './inline-code-cursor';
@@ -147,6 +147,7 @@ import { isSourceModeEnabled, sourceModePlugin } from './source-mode-plugin';
 import {
   disableSpellcheck as disableSpellcheckImpl,
   enableSpellcheck as enableSpellcheckImpl,
+  isSpellcheckEnabled,
   setSpellcheckResults as setSpellcheckResultsImpl,
   spellcheckPlugin,
   triggerSpellcheck as triggerSpellcheckImpl,
@@ -249,6 +250,7 @@ async function initEditor() {
       .use(searchPlugin) // Search highlighting decorations
       .use(spellcheckPlugin) // Spellcheck/grammar decorations via NSSpellChecker
       .use(linkTooltipPlugin) // Custom link preview/edit tooltips (no Vue dependency)
+      .use(hoverTooltipPlugin) // Shared hover tooltip for collapsed annotations + footnote refs
       .use(selectionToolbarPlugin) // Selection toolbar (floating format bar)
       .use(selectionStatsPlugin) // Push selected text to Swift for status-bar selection word count
       .use(tableToolsPlugin) // Floating table toolbar (add/delete row & column, alignment)
@@ -499,7 +501,6 @@ window.FinalFinal = {
   citationPickerCallback,
   citationPickerCancelled,
   citationPickerError,
-  editCitationCallback,
   getCAYWDebugState,
   insertCitation: insertCitationAtCursor,
   // Block-based API (Phase B)
@@ -527,9 +528,11 @@ window.FinalFinal = {
   enableSpellcheck: enableSpellcheckImpl,
   disableSpellcheck: disableSpellcheckImpl,
   triggerSpellcheck: triggerSpellcheckImpl,
+  isSpellcheckEnabled,
   // Smart quotes API
   enableSmartQuotes: enableSmartQuotesImpl,
   disableSmartQuotes: disableSmartQuotesImpl,
+  isSmartQuotesEnabled,
   // Footnote API
   setFootnoteDefinitions,
   insertFootnote,
