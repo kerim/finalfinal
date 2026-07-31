@@ -135,19 +135,7 @@ body {
 .ProseMirror p {
   margin: 0.75em 0;
   line-height: var(--line-height-body);
-  /* Deliberately no `text-wrap` here (the `pretty` value used to be set).
-     WebKit's "pretty" line-breaking optimizes the WHOLE paragraph at once to
-     avoid a short orphan last line. While actively typing, a paragraph that
-     has JUST wrapped onto a second line has only that one break to work with,
-     so it was observed in WebKit as of 2026-07 to render as two roughly
-     half-width lines instead of filling the first line greedily -- reads as
-     wrapping far too early. The effect faded as the paragraph grew (more
-     lines gave the optimizer more slack to distribute), which is why it
-     looked like it "self-corrected" on further typing or re-layout. Verified
-     in real WebKit (both the early-break and the self-correction) before
-     removing this. `text-wrap: balance` on headings above is untouched and
-     out of scope for this fix -- whether headings have the same underlying
-     issue has not been investigated. */
+  text-wrap: pretty;
 }
 
 /* Code */

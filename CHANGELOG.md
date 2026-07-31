@@ -6,10 +6,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-### Fixed
-
-- **Text could wrap into oddly short lines while actively typing a paragraph, then "fix itself" once the paragraph grew longer** — a paragraph that had just wrapped onto a second line could get its two lines forced to roughly half-width each instead of filling the first line normally. This no longer happens; paragraphs wrap normally while you type.
-
 ## [0.2.117] - 2026-07-29
 
 ### Fixed
