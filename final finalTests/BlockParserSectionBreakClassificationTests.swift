@@ -94,6 +94,16 @@ struct BlockParserSectionBreakClassificationTests {
         #expect(!BlockParser.isSectionBreakMarker("<!-- ::break:: -->extra"))
     }
 
+    @Test func markerWithTrailingWhitespaceBeforeBodyIsASectionBreak() {
+        // A straggling space after the marker but before the newline -- only
+        // reachable via Source-Mode hand-editing/paste, never via the app's
+        // own slash-command insertion. Must classify the same way
+        // SectionReconciler.strippingLeadingBreakMarker treats it (which
+        // also trims the marker line before comparing), or the two silently
+        // disagree on whether this is a section break.
+        #expect(BlockParser.isSectionBreakMarker("<!-- ::break:: --> \nBody"))
+    }
+
     @Test func emptyStringIsNotASectionBreak() {
         #expect(!BlockParser.isSectionBreakMarker(""))
     }

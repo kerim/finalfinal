@@ -246,8 +246,23 @@ enum BlockParser {
     /// it isn't a section break at all. Anchoring to the first line rejects
     /// that case (the marker isn't at the very start) while still accepting
     /// the marker followed by its own body content on subsequent lines.
+    ///
+    /// The marker's own line is trimmed of surrounding whitespace before the
+    /// comparison, so straggling whitespace around it (e.g.
+    /// `"<!-- ::break:: --> \nBody"`, one trailing space before the newline)
+    /// still counts as the marker. This isn't a hypothetical: it's only
+    /// reachable via Source-Mode hand-editing or pasting text shaped that
+    /// way (the app's own slash-command marker insertion never produces it),
+    /// but when it IS reached, this must agree with
+    /// `SectionReconciler.strippingLeadingBreakMarker`, which trims the same
+    /// way — otherwise the two would classify the identical shape
+    /// differently and silently disagree on whether it's a section break.
     static func isSectionBreakMarker(_ trimmed: String) -> Bool {
-        trimmed == sectionBreakMarker || trimmed.hasPrefix(sectionBreakMarker + "\n")
+        guard let newline = trimmed.firstIndex(of: "\n") else {
+            return trimmed.trimmingCharacters(in: .whitespaces) == sectionBreakMarker
+        }
+        return trimmed[trimmed.startIndex..<newline]
+            .trimmingCharacters(in: .whitespaces) == sectionBreakMarker
     }
 
     /// List, table, image and bibliography types, falling back to `.paragraph`.
