@@ -115,8 +115,8 @@
 //  swap's async cursor-save callback chain necessarily finishes. This file's
 //  mitigation is (a) a generous settle wait after the toggle, (b) an explicit
 //  click into the editor pane before Cmd+A/Cmd+V (focuses whichever editor is
-//  actually showing), and (c) LanguageToolChunkingE2ETests.swift's proven
-//  "verify the word count actually changed, retry once if not" pattern -- not
+//  actually showing), and (c) the "verify the status-bar word count actually
+//  changed, retry the paste once if it did not" guard in step 3 below -- not
 //  a guarantee. If the paste genuinely lands in the wrong editor, the
 //  assertions below fail loudly with a diagnostic DB dump, rather than passing
 //  vacuously.
@@ -194,13 +194,12 @@ Intro paragraph for section A.
 
         // Record where the persistent diagnostic log currently ends, so
         // later reads only see lines THIS run produced (never truncates or
-        // deletes the real, shared log -- mirrors
-        // LanguageToolChunkingE2ETests.swift's convention exactly).
+        // deletes the real, shared log -- see the diagnostic log helpers at
+        // the bottom of this file).
         Self.recordDiagnosticLogStartOffsets()
 
         // Turn on persistent diagnostic logging via the NSUserDefaults
-        // launch-argument domain (same mechanism LanguageToolChunkingE2ETests.swift
-        // uses) so SectionReconciler's `.sync`-category "Deleted id=... order=...
+        // launch-argument domain, so SectionReconciler's `.sync`-category "Deleted id=... order=...
         // pseudo=... status=..." line -- emitted for every unmatched DB row the
         // reconciler hard-deletes -- actually reaches the on-disk file this test
         // can read from the XCUITest runner process, independent of whichever
@@ -542,9 +541,9 @@ Intro paragraph for section A.
         }
     }
 
-    // MARK: - Diagnostic log helpers (copied from LanguageToolChunkingE2ETests.swift's
-    // proven pattern -- reads only bytes appended to the persistent DiagnosticLogFile
-    // during THIS test run, never truncates/deletes the real shared log)
+    // MARK: - Diagnostic log helpers (reads only bytes appended to the persistent
+    // DiagnosticLogFile during THIS test run, never truncates/deletes the real
+    // shared log)
 
     private static func diagnosticLogCandidateURLs() -> [URL] {
         let relativePath = "Library/Application Support/com.kerim.final-final/Diagnostics"
