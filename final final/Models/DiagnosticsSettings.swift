@@ -18,11 +18,9 @@ final class DiagnosticsSettings {
 
     /// Test seam: `DiagnosticsSettingsTests` overrides this to a per-test isolated
     /// `UserDefaults(suiteName:)` instance so tests never read/write the real
-    /// `com.kerim.final-final` defaults domain through the shared singleton. Defaults to
-    /// `AppDefaults.store` — `.standard` in production, an isolated test-only suite while any
-    /// kind of test is running — so a unit test run that never overrides this seam still can't
-    /// wipe the real domain's `lastReportGeneratedAt` key via `TestMode.clearTestState()`.
-    static var userDefaults: UserDefaults = AppDefaults.store
+    /// `com.kerim.final-final` defaults domain through the shared singleton. Production code
+    /// always leaves this at `.standard`.
+    static var userDefaults: UserDefaults = .standard
 
     /// Off by default. Gates DiagnosticLogFile writes (all 17+1 DebugLog categories),
     /// independent of DebugLog's existing #if DEBUG console path.

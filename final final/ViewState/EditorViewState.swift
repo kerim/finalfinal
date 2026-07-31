@@ -22,9 +22,9 @@ class EditorViewState {
     }
 
     /// Focus mode state - persists across app launches via UserDefaults
-    var focusModeEnabled: Bool = AppDefaults.store.bool(forKey: "focusModeEnabled") {
+    var focusModeEnabled: Bool = UserDefaults.standard.bool(forKey: "focusModeEnabled") {
         didSet {
-            AppDefaults.store.set(focusModeEnabled, forKey: "focusModeEnabled")
+            UserDefaults.standard.set(focusModeEnabled, forKey: "focusModeEnabled")
         }
     }
 
@@ -54,11 +54,11 @@ class EditorViewState {
     /// Pre-initialized from settings when focusModeEnabled is persisted to prevent
     /// toolbar/status bar flash on app relaunch (~500ms gap before enterFocusMode runs)
     var focusModeHidesToolbar: Bool = {
-        guard AppDefaults.store.bool(forKey: "focusModeEnabled") else { return false }
+        guard UserDefaults.standard.bool(forKey: "focusModeEnabled") else { return false }
         return FocusModeSettingsManager.shared.hideToolbar
     }()
     var focusModeHidesStatusBar: Bool = {
-        guard AppDefaults.store.bool(forKey: "focusModeEnabled") else { return false }
+        guard UserDefaults.standard.bool(forKey: "focusModeEnabled") else { return false }
         return FocusModeSettingsManager.shared.hideStatusBar
     }()
 

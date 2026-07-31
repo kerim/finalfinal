@@ -37,14 +37,11 @@ final class DiagnosticLogFile: @unchecked Sendable {
 
     /// Test seam: `DiagnosticLogFileTests` overrides this to a per-test isolated
     /// `UserDefaults(suiteName:)` instance so tests never read/write the real
-    /// `com.kerim.final-final` defaults domain. Defaults to `AppDefaults.store` — `.standard`
-    /// in production, an isolated test-only suite while any kind of test is running — so a
-    /// unit test run that never overrides this seam still can't wipe the real domain's
-    /// `loggingEnabled` key via `TestMode.clearTestState()`. `nonisolated(unsafe)` because
-    /// `isEnabled` (like the rest of this type) must remain readable from arbitrary threads;
-    /// `UserDefaults` itself is thread-safe, and only single-threaded, `.serialized` tests
-    /// ever write to this property.
-    nonisolated(unsafe) static var userDefaults: UserDefaults = AppDefaults.store
+    /// `com.kerim.final-final` defaults domain. Production code always leaves this at
+    /// `.standard`. `nonisolated(unsafe)` because `isEnabled` (like the rest of this type)
+    /// must remain readable from arbitrary threads; `UserDefaults` itself is thread-safe, and
+    /// only single-threaded, `.serialized` tests ever write to this property.
+    nonisolated(unsafe) static var userDefaults: UserDefaults = .standard
 
     static var isEnabled: Bool { userDefaults.bool(forKey: loggingEnabledDefaultsKey) }
 

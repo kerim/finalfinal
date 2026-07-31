@@ -149,15 +149,6 @@ final class ProjectOpenErrorE2ETests: XCTestCase {
         try? FileManager.default.removeItem(atPath: recentPath)
         try FileManager.default.copyItem(atPath: TestFixtureHelper.fixturePath, toPath: recentPath)
 
-        // This test deliberately places its fixture under NSTemporaryDirectory() and relies
-        // on the real openProject -> addToRecentProjects flow to register it so File > Open
-        // Recent lists it below. That path falls under DocumentManager's default
-        // excludedRecentProjectRoots (system temp), which addToRecentProjects otherwise skips.
-        // Set the narrow, test-only opt-out env var -- ONLY here, not via the shared
-        // FF_UI_TESTING flag every UI test sets -- so the exclusion stays active (and
-        // testably provable) for every other UI test. See
-        // TestMode.isUITestingWithScratchRecentProjectsAllowed.
-        app.launchEnvironment["FF_UI_TESTING_ALLOW_SCRATCH_RECENT_PROJECTS"] = "1"
         app.launchForTesting(fixturePath: recentPath)
 
         let editorArea = app.groups["editor-area"]

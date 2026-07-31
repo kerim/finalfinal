@@ -200,11 +200,9 @@ struct FinalFinalApp: App {
         }
 
         // Unit test mode: skip normal flow (no project restoration, no Getting Started).
-        // clearTestState() is intentionally not called on this path — not for the old safety
-        // reason (unit tests no longer share the real UserDefaults.standard domain;
-        // clearTestState() now targets the isolated AppDefaults.store while any kind of test
-        // is running, see AppDefaults.swift), but because this path has no leftover test
-        // state to clear before showing the picker.
+        // Do NOT call clearTestState() here — unit tests share the real user's
+        // UserDefaults.standard, so clearing would permanently delete the user's
+        // last-project bookmark and recent projects list.
         if TestMode.isUnitTesting {
             appViewState = .picker
             return

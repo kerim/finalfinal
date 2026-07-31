@@ -28,26 +28,19 @@ struct FocusModeSettings: Codable, Sendable {
 
     // MARK: - Persistence
 
-    /// Load settings from UserDefaults.
-    ///
-    /// Routed through `AppDefaults.store` (`.standard` in production, an isolated test-only
-    /// suite while any kind of test is running) rather than `UserDefaults.standard` directly —
-    /// `com.kerim.final-final.focusModeSettings` is one of the eight keys
-    /// `TestMode.clearTestState()` resets, and reading it straight from `.standard` would mean
-    /// a unit test run reads (and, via `save()` below, could overwrite) the real user's
-    /// persisted focus mode preferences. See `AppDefaults.swift`.
+    /// Load settings from UserDefaults
     static func load() -> FocusModeSettings {
-        guard let data = AppDefaults.store.data(forKey: Keys.settingsKey),
+        guard let data = UserDefaults.standard.data(forKey: Keys.settingsKey),
               let settings = try? JSONDecoder().decode(FocusModeSettings.self, from: data) else {
             return .default
         }
         return settings
     }
 
-    /// Save settings to UserDefaults. See `load()` for why this goes through `AppDefaults.store`.
+    /// Save settings to UserDefaults
     func save() {
         if let data = try? JSONEncoder().encode(self) {
-            AppDefaults.store.set(data, forKey: Keys.settingsKey)
+            UserDefaults.standard.set(data, forKey: Keys.settingsKey)
         }
     }
 }
