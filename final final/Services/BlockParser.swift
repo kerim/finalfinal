@@ -203,23 +203,42 @@ enum BlockParser {
         return nil
     }
 
+    /// The exact literal `RawBlockSplitter` (BlockParser+Splitting.swift) and
+    /// `isSectionBreakMarker` both compare against. Deliberately EXACT spacing —
+    /// no whitespace tolerance — so the splitter's flush guard and this
+    /// classifier can never disagree about what counts as "the marker line".
+    /// (A separate, more permissive whitespace-tolerant regex exists in
+    /// MarkdownUtils.swift for a different purpose — stripping the marker out
+    /// of already-composed display text — and must stay separate; see that
+    /// call site's comment.)
+    static let sectionBreakMarker = "<!-- ::break:: -->"
+
     /// Whether `trimmed` (an already-whitespace-trimmed raw block string) IS a
     /// section-break marker: either the marker alone, or the marker as the
     /// block's FIRST LINE with body content on the line(s) after it.
     ///
-    /// Why first-line, not whole-string equality: `RawBlockSplitter`
-    /// (BlockParser+Splitting.swift) only forces a block boundary right after
-    /// the marker when the very next line looks like a list item (its
-    /// "list interrupts non-list content" guard). A marker followed
-    /// immediately by ordinary prose — no blank line, not a list — is NOT
-    /// split there, so it reaches this check as ONE combined string, e.g.
-    /// `"<!-- ::break:: -->\nBody text"`. `assembleMarkdown` always rejoins
-    /// blocks with `"\n\n"`, so that shape can't come from a DB round-trip —
-    /// but it's exactly what raw typing/paste/import in Source Mode produces
-    /// (confirmed by tracing editorState.content's onChange handler in
-    /// ViewNotificationModifiers.swift, which re-parses the whole document
-    /// via `BlockParser.parse` on every CodeMirror edit), so it's a real,
-    /// reachable shape, not a hypothetical one.
+    /// Why first-line, not whole-string equality: this predicate is shared by
+    /// two different call sites with two different input shapes.
+    ///
+    /// On the `parse()` path (BlockParser.swift's `parse()`/`detectBlockType()`),
+    /// `RawBlockSplitter` (BlockParser+Splitting.swift) now ALSO flushes the
+    /// marker as its own block the moment it sees the marker line sitting alone
+    /// in `currentBlock`, before appending whatever content line comes next —
+    /// so `<!-- ::break:: -->\nBody text` (no blank line) splits into TWO raw
+    /// blocks there, and this predicate only ever sees the marker by itself on
+    /// that path. (It used to reach here as one combined string; the fix for
+    /// the "combined block's text gets wiped to empty" bug moved that split
+    /// earlier, into the splitter, rather than patching it after the fact here.)
+    ///
+    /// On the separate editor-sync path (`Database+Blocks.swift`'s
+    /// `applyDetectedTypeFromContent`, NOT touched by that fix), `trimmed` is a
+    /// single already-existing ProseMirror block's own serialized markdown
+    /// fragment being checked for an in-place paragraph → section-break
+    /// conversion. That fragment can genuinely be marker-plus-body as ONE
+    /// string — it isn't multi-block raw markdown running through
+    /// `RawBlockSplitter` at all, so the splitter's new guard never sees it,
+    /// and first-line matching (not whole-string equality) is still needed
+    /// there to classify it correctly.
     ///
     /// Why not a substring/`.contains` check either: that was this fix's
     /// original bug — a marker appearing mid-sentence inside unrelated prose
@@ -228,8 +247,7 @@ enum BlockParser {
     /// that case (the marker isn't at the very start) while still accepting
     /// the marker followed by its own body content on subsequent lines.
     static func isSectionBreakMarker(_ trimmed: String) -> Bool {
-        let marker = "<!-- ::break:: -->"
-        return trimmed == marker || trimmed.hasPrefix(marker + "\n")
+        trimmed == sectionBreakMarker || trimmed.hasPrefix(sectionBreakMarker + "\n")
     }
 
     /// List, table, image and bibliography types, falling back to `.paragraph`.
