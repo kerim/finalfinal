@@ -57,7 +57,7 @@
 import Testing
 @testable import final_final
 
-struct BlockParserSectionBreakClassificationTests {
+struct BlockParserSectionBreakTests {
 
     // MARK: - isSectionBreakMarker (the shared classification predicate)
 
@@ -124,7 +124,10 @@ struct BlockParserSectionBreakClassificationTests {
         let markdown = "# Heading\n\n<!-- ::break:: -->\nBody text"
         let blocks = BlockParser.parse(markdown: markdown, projectId: "p1")
 
-        #expect(blocks.count == 3, "Expected heading + marker + paragraph as three separate blocks. Got: \(blocks.map { ($0.blockType, $0.markdownFragment) })")
+        #expect(
+            blocks.count == 3,
+            "Expected heading + marker + paragraph as three separate blocks. Got: \(blocks.map { ($0.blockType, $0.markdownFragment) })"
+        )
 
         let breakBlock = blocks[1]
         #expect(breakBlock.blockType == .sectionBreak)
@@ -213,7 +216,10 @@ struct BlockParserSectionBreakClassificationTests {
         let markdown = "<!-- ::break:: -->\n- alpha one"
         let blocks = BlockParser.parse(markdown: markdown, projectId: "p1")
 
-        #expect(blocks.count == 2, "Expected the marker and the list item as separate blocks. Got: \(blocks.map { ($0.blockType, $0.markdownFragment) })")
+        #expect(
+            blocks.count == 2,
+            "Expected the marker and the list item as separate blocks. Got: \(blocks.map { ($0.blockType, $0.markdownFragment) })"
+        )
 
         #expect(blocks[0].blockType == .sectionBreak)
         #expect(blocks[0].isPseudoSection == true)
@@ -243,7 +249,10 @@ struct BlockParserSectionBreakClassificationTests {
         let markdown = "[^1]: note text\n<!-- ::break:: -->\nSome paragraph text\n\n    indented line"
         let blocks = BlockParser.parse(markdown: markdown, projectId: "p1")
 
-        #expect(blocks.count == 4, "Expected footnote-def + marker + paragraph + indented-line as four separate blocks. Got: \(blocks.map { ($0.blockType, $0.markdownFragment) })")
+        #expect(
+            blocks.count == 4,
+            "Expected footnote-def + marker + paragraph + indented-line as 4 blocks. Got: \(blocks.map { ($0.blockType, $0.markdownFragment) })"
+        )
 
         #expect(blocks[0].markdownFragment == "[^1]: note text")
         #expect(blocks[0].textContent == "note text")
@@ -254,7 +263,10 @@ struct BlockParserSectionBreakClassificationTests {
         #expect(blocks[2].markdownFragment == "Some paragraph text")
         #expect(blocks[2].textContent == "Some paragraph text")
 
-        #expect(blocks[3].markdownFragment == "indented line", "The indented line must stay its own block, not merged with the paragraph above via a wrongly-absorbed blank line.")
+        #expect(
+            blocks[3].markdownFragment == "indented line",
+            "The indented line must stay its own block, not merged with the paragraph above via a wrongly-absorbed blank line."
+        )
     }
 
     // MARK: - Must-fix (this branch's own review round): the reverse-case guard in
@@ -273,7 +285,10 @@ struct BlockParserSectionBreakClassificationTests {
         let markdown = "- Item one\n  <!-- ::break:: -->\n- Item two"
         let blocks = BlockParser.parse(markdown: markdown, projectId: "p1")
 
-        #expect(blocks.count == 1, "An indented marker inside a list item must not split the list. Got: \(blocks.map { ($0.blockType, $0.markdownFragment) })")
+        #expect(
+            blocks.count == 1,
+            "An indented marker inside a list item must not split the list. Got: \(blocks.map { ($0.blockType, $0.markdownFragment) })"
+        )
 
         #expect(blocks[0].blockType == .bulletList)
         #expect(blocks[0].markdownFragment == "- Item one\n  <!-- ::break:: -->\n- Item two")
@@ -297,7 +312,10 @@ struct BlockParserSectionBreakClassificationTests {
         let markdown = "[^1]: note text\n- list item\n\n    indented line"
         let blocks = BlockParser.parse(markdown: markdown, projectId: "p1")
 
-        #expect(blocks.count == 3, "Expected footnote-def + list item + indented-line as three separate blocks. Got: \(blocks.map { ($0.blockType, $0.markdownFragment) })")
+        #expect(
+            blocks.count == 3,
+            "Expected footnote-def + list item + indented-line as three separate blocks. Got: \(blocks.map { ($0.blockType, $0.markdownFragment) })"
+        )
 
         #expect(blocks[0].markdownFragment == "[^1]: note text")
         #expect(blocks[0].textContent == "note text")
@@ -305,6 +323,9 @@ struct BlockParserSectionBreakClassificationTests {
         #expect(blocks[1].blockType == .bulletList)
         #expect(blocks[1].markdownFragment == "- list item")
 
-        #expect(blocks[2].markdownFragment == "indented line", "The indented line must stay its own block, not merged with the list item above via a wrongly-absorbed blank line.")
+        #expect(
+            blocks[2].markdownFragment == "indented line",
+            "The indented line must stay its own block, not merged with the list item above via a wrongly-absorbed blank line."
+        )
     }
 }
