@@ -92,28 +92,6 @@ extension ExportService {
         return await pandocLocator.locate()
     }
 
-    // MARK: - Export Preprocessing
-
-    /// Preprocess raw markdown content before handing it to Pandoc: strips annotation HTML
-    /// comments (only when the user has opted out via `ExportSettings.includeAnnotations`)
-    /// and always strips `==highlight==` markers. Highlight *rendering* isn't implemented
-    /// for exported documents, so a raw `==` marker surviving into PDF/DOCX/ODT output is
-    /// meaningless literal punctuation, not preserved formatting — that strip runs
-    /// unconditionally, regardless of `includeAnnotations` (a different concept: authoring
-    /// comments, not text formatting). See `MarkdownUtils.stripHighlightMarkers` for the
-    /// full rationale and known gaps.
-    ///
-    /// Factored out of `export()` (its only call site) so a test can exercise this exact
-    /// preprocessing step directly — proving the strip actually fires from the real
-    /// pipeline — instead of re-declaring the same regex in isolation.
-    func preprocessContentForExport(_ content: String, settings: ExportSettings) -> String {
-        var result = content
-        if !settings.includeAnnotations {
-            result = stripAnnotations(from: result)
-        }
-        return MarkdownUtils.stripHighlightMarkers(from: result)
-    }
-
     // MARK: - Export
 
     /// Export markdown content to the specified format
@@ -136,10 +114,11 @@ extension ExportService {
             throw ExportError.noContent
         }
 
-        // Strip annotations (if not including them) and highlight markers before handing
-        // content to Pandoc. Factored into one function so it can be exercised directly by
-        // tests (see ExportIntegrityTests.swift) as well as by this real call site.
-        var processedContent = preprocessContentForExport(content, settings: settings)
+        // Strip annotations if not including them
+        var processedContent = content
+        if !settings.includeAnnotations {
+            processedContent = stripAnnotations(from: content)
+        }
 
         // Check Pandoc availability
         guard let pandocPath = await pandocLocator.getPath() else {
