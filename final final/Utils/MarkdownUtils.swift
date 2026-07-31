@@ -170,6 +170,154 @@ enum MarkdownUtils {
         return result
     }
 
+    /// Strip `==highlight==` markers from markdown content, reducing highlighted text to
+    /// plain text. Highlight *rendering* is not implemented for exported documents
+    /// (PDF/DOCX/ODT) — see `ExportService.preprocessContentForExport(_:settings:)`, the
+    /// only call site — so a raw `==` marker surviving into that output is meaningless
+    /// literal punctuation, not preserved formatting, and gets stripped unconditionally
+    /// regardless of `ExportSettings.includeAnnotations` (a different concept: authoring
+    /// comments, not text formatting).
+    ///
+    /// Implementation is a SINGLE regex pass over one alternation: each match is either
+    /// (a) a "protected" region — a fenced code block (``` or ~~~), inline code, display
+    /// math (`$$...$$`), or inline math (`$...$`) — copied through completely unchanged,
+    /// or (b) a highlight marker, replaced by its inner text (dropping the `==` delimiters).
+    /// Alternation order tries protected regions before the highlight alternative, but
+    /// that ONLY resolves a tie when a protected region and a highlight would otherwise
+    /// start matching at the exact same offset — it provides NO protection when a
+    /// highlight's opening `==` sits to the LEFT of a protected region's start. E.g.
+    /// `` ==this is `x==y` important== `` still lets the highlight's inner match swallow
+    /// into the code span and corrupt its content (see the KNOWN GAPS list below).
+    ///
+    /// `toggleHighlight()` in the CodeMirror source editor (web/codemirror/src/api.ts)
+    /// wraps a raw selection — verbatim, with no newline check — in `==...==`, and
+    /// Milkdown's own highlight-parsing regex accepts embedded newlines too, so
+    /// `==foo\nbar==` is a real, reachable highlight shape in this app, not a
+    /// hypothetical. The highlight alternative —
+    /// `((?<!=)==(?!=)((?:(?!==)[\s\S])+?)==)` — therefore allows the inner text to span
+    /// multiple lines and to start or end with whitespace (both reachable via an ordinary
+    /// double-click/drag-select that catches a leading or trailing space before applying
+    /// the mark). What it rejects is an opening `==` that sits anywhere inside a run of
+    /// three-or-more `=` characters — the shape of a setext heading underline
+    /// (`Title\n=====`) — via a pair of one-character guards directly on the opening
+    /// marker: `(?<!=)` refuses to start a match immediately after another `=` (so the
+    /// regex engine can't retry two characters into the same run and succeed there
+    /// instead — which is exactly how an EARLIER version of this guard, a single
+    /// `(?!=*==)` lookahead with no lookbehind, still leaked `==` on a 5-`=` underline:
+    /// the attempt at the run's first `=` correctly failed, but the engine simply retried
+    /// starting two characters later, inside the same run, and that retry succeeded), and
+    /// `(?!=)` refuses to start a match when the character immediately after the opening
+    /// `==` is itself `=` (closing the remaining hole the lookbehind alone leaves open: on
+    /// a 3-`=` underline exactly ONE `=` is left over after consuming the opening `==`,
+    /// and the old `(?!=*==)` lookahead only fired when that leftover run connected
+    /// *directly* to another `==` with nothing in between — so the single leftover `=`
+    /// was accepted as ordinary inner text and the match swallowed forward through
+    /// newlines and prose looking for the next `==` it could find, which could be a wholly
+    /// unrelated real highlight later in the document). Together the two guards mean the
+    /// only valid opening `==` in a pure `=` run is one immediately preceded AND followed
+    /// by non-`=` characters, which never happens inside a run of 3 OR MORE `=` — so a
+    /// setext underline of 3+ characters (`Title\n===`, `Title\n=====`, ...) is protected
+    /// regardless of length. A 2-character underline (`Title\n==`) is NOT protected by
+    /// these guards — it IS a bare `==`, indistinguishable from an ordinary highlight
+    /// marker, so it falls into the document-wide ambiguity gap documented below rather
+    /// than being specially recognized as a heading underline. An unmatched/unbalanced
+    /// single `==` (no closing pair anywhere in the document) never matches at all and is
+    /// left untouched rather than deleted.
+    ///
+    /// KNOWN GAPS (this is regex-based text substitution, not a real markdown parser —
+    /// accepted, intentionally not fixed this round):
+    /// - Two independent, unrelated `==` occurrences ANYWHERE in the document — not
+    ///   confined to one line, or even one paragraph — can pair up across paragraph and
+    ///   blank-line boundaries and collapse ambiguously into a single stripped span,
+    ///   because the inner group can't tell, from the raw markers alone, where one
+    ///   highlight ends and the next (or a stray non-highlight `==`) begins. This can
+    ///   silently corrupt everything in between, and can even swallow a REAL
+    ///   `==...==` highlight that happens to sit between the two stray markers — leaking
+    ///   that highlight's own closing `==` into the output, i.e. reintroducing the exact
+    ///   bug this function exists to fix. `x==y and p==q` colliding on one line is the
+    ///   simplest case, but `value==threshold` in one paragraph pairing with an unrelated
+    ///   `a==b` two paragraphs later behaves identically — this is inherent to the
+    ///   `==...==` syntax, not a bug specific to one scope, and not a bug here — Pandoc's
+    ///   own `mark` extension has the identical limitation.
+    ///   Bounding the highlight's inner match to a single paragraph (rejecting a match
+    ///   whose inner text crosses a blank line) was considered as a narrower fix, but was
+    ///   rejected: it isn't just theoretically unsound, it's confirmed-unreachable-safe to
+    ///   assume highlights stay within one paragraph. `toggleHighlight()` in the
+    ///   CodeMirror source editor (web/codemirror/src/api.ts) wraps whatever text is
+    ///   selected verbatim, with no check for a blank line in the selection, and
+    ///   Milkdown's own toggle (web/milkdown/src/api-annotations.ts, wired to the shared
+    ///   selection toolbar's Highlight button and ⌘⇧H) applies the mark via
+    ///   `tr.addMark(from, to, …)`, which ProseMirror happily applies across multiple
+    ///   paragraph nodes in one selection. So a highlight spanning a blank line is a real,
+    ///   reachable shape in both editors, not a hypothetical — bounding by paragraph would
+    ///   turn that legitimate case into an unstripped `==` leak instead, trading one gap
+    ///   for another rather than closing it. See
+    ///   `stripHighlightMarkersAmbiguousMultipleOnOneLineIsADocumentedGap` and
+    ///   `stripHighlightMarkersAmbiguousMultipleAcrossParagraphsIsADocumentedGap` in
+    ///   ExportIntegrityTests.swift for the exact (documented) resulting output.
+    /// - A highlight whose opening `==` sits to the left of a protected region's start,
+    ///   e.g. `` ==this is `x==y` important== ``, can have its inner match swallow into
+    ///   the code span and alter its content, because alternation order only disambiguates
+    ///   same-offset ties (see above).
+    /// - Indented (4-space) code blocks are NOT in the protected-region list — only
+    ///   fenced (``` / ~~~) blocks are — so `==` inside an indented code block still gets
+    ///   stripped as if it were prose.
+    /// - Two-or-more `==` pairs inside a URL or base64 data URI on one line (e.g. a data
+    ///   URI's base64 padding, or two `==`-separated query-string values) can get
+    ///   corrupted, since the mechanism has no way to distinguish these from ordinary
+    ///   prose highlights.
+    static func stripHighlightMarkers(from markdown: String) -> String {
+        guard markdown.contains("==") else { return markdown }
+
+        // Group numbers (used below to decide verbatim-copy vs. strip-to-inner-text):
+        //   1 = fenced code block (```)      2 = fenced code block (~~~)
+        //   3 = inline code (`...`)          4 = display math ($$...$$)
+        //   5 = inline math ($...$)          6 = full highlight match (==...==)
+        //   7 = highlight inner text (captured content between the == markers)
+        let pattern = #"""
+        (```[\s\S]*?```)|(~~~[\s\S]*?~~~)|(`[^`]+`)|(\$\$[\s\S]+?\$\$)|((?<![A-Za-z0-9$])\$(?=\S)[^\$\n]+?(?<=\S)\$(?![A-Za-z0-9$]))|((?<!=)==(?!=)((?:(?!==)[\s\S])+?)==)
+        """#
+
+        // Pattern is a compile-time constant string; a compile failure here would be a
+        // programming error (a typo in the pattern), not a runtime condition worth
+        // silently swallowing — matches this file's `try!` convention for the
+        // precompiled patterns in `stripForWordCount` below.
+        let regex = try! NSRegularExpression(pattern: pattern)
+
+        let nsMarkdown = markdown as NSString
+        let fullRange = NSRange(location: 0, length: nsMarkdown.length)
+        var result = ""
+        var lastEnd = 0
+
+        regex.enumerateMatches(in: markdown, options: [], range: fullRange) { match, _, _ in
+            guard let match else { return }
+
+            // Copy any text between the previous match and this one through unchanged.
+            if match.range.location > lastEnd {
+                result += nsMarkdown.substring(
+                    with: NSRange(location: lastEnd, length: match.range.location - lastEnd)
+                )
+            }
+
+            let highlightInner = match.range(at: 7)
+            if highlightInner.location != NSNotFound {
+                // Highlight marker: keep only the inner text, dropping the `==` delimiters.
+                result += nsMarkdown.substring(with: highlightInner)
+            } else {
+                // Protected region (code/math): copy through completely unchanged.
+                result += nsMarkdown.substring(with: match.range)
+            }
+
+            lastEnd = match.range.location + match.range.length
+        }
+
+        if lastEnd < nsMarkdown.length {
+            result += nsMarkdown.substring(with: NSRange(location: lastEnd, length: nsMarkdown.length - lastEnd))
+        }
+
+        return result
+    }
+
     /// Strip annotation HTML comments from content
     /// Annotations follow the pattern: <!-- ::type:: content -->
     /// where type is task, comment, reference, or break

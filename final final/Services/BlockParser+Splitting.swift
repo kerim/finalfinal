@@ -187,64 +187,6 @@ private struct RawBlockSplitter {
     /// A non-blank line either opens a footnote definition, interrupts the current
     /// block with a list marker, or is simply appended to the current block.
     private mutating func consumeContentLine(line: String, trimmedLine: String) {
-        // Section-break marker boundary, both directions. Without this, a marker
-        // sitting immediately next to prose with NO blank line in between — on
-        // either side — gets glued into ONE raw block string alongside that prose.
-        // detectBlockType/isSectionBreakMarker still classifies that combined string
-        // as `.sectionBreak` (its own first-line check matches), but
-        // extractTextContent forces textContent="" for EVERY `.sectionBreak` block
-        // regardless of what body text the fragment actually holds — so the prose
-        // is still sitting right there in markdownFragment, yet silently vanishes
-        // from textContent (word counts, previews, search, the outline sidebar).
-        // Splitting the marker into its own block here, at the source, means the
-        // prose becomes an ordinary `.paragraph` block with its textContent
-        // extracted normally — nothing downstream needs to special-case a
-        // section-break fragment that also happens to carry text.
-        let accumulatedIsMarkerAlone =
-            currentBlock.trimmingCharacters(in: .whitespacesAndNewlines) == BlockParser.sectionBreakMarker
-        if accumulatedIsMarkerAlone {
-            // Forward case: `<!-- ::break:: -->\nBody text`. The marker line was
-            // accumulated alone last time through, and now the body's first line
-            // has arrived right behind it. Flush the marker as its own complete
-            // block before this new line starts accumulating into a fresh one.
-            // Reset inFootnoteDef same as every other flush site in this file —
-            // otherwise a footnote def flushed at the marker boundary leaves the
-            // flag stuck true, and the next blank line is wrongly absorbed as a
-            // footnote-continuation blank, merging two blocks that should stay
-            // separate. See BlockParserSectionBreakClassificationTests.swift.
-            flushCurrentBlockIfNotBlank()
-            inFootnoteDef = false
-        } else if line == BlockParser.sectionBreakMarker,
-                  !currentBlock.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            // Reverse case: `Prose\n<!-- ::break:: -->`. Ordinary content was
-            // already accumulating and the marker line itself has now arrived with
-            // no blank line before it. Flush what came before so the marker still
-            // becomes its own `.sectionBreak` block instead of getting appended
-            // onto the end of a `.paragraph`-typed block — which would silently
-            // drop the section break from the outline sidebar (still no text-wipe
-            // there, since the combined block stays typed `.paragraph`, but a real
-            // Swift/JS block-count mismatch against ProseMirror's 2-node parse of
-            // the same markdown).
-            //
-            // Deliberately `line`, NOT `trimmedLine`, here — unlike the forward
-            // case above. `sectionBreakMarker`'s own doc comment (BlockParser.swift)
-            // insists on exact, unindented spacing so the splitter's guards and
-            // isSectionBreakMarker can never disagree about what counts as "the
-            // marker line"; an indented marker (e.g. inside a list item, `"-
-            // Item\n  <!-- ::break:: -->"`) is a comment INSIDE that item, not a
-            // section break interrupting it, and must stay glued to the
-            // surrounding list so it parses as ONE block — matching ProseMirror,
-            // which keeps an HTML comment inside a list item as part of the same
-            // bullet_list node. Matching on `trimmedLine` here would wrongly slice
-            // that one list block into three (list/marker/list). The forward case
-            // doesn't need this restriction: there `currentBlock` already IS just
-            // the (possibly indented) marker alone — accepted at any indentation —
-            // and flushing it as its own block there is correct and intentional.
-            // Same inFootnoteDef reset as the forward case above, for the same reason.
-            flushCurrentBlockIfNotBlank()
-            inFootnoteDef = false
-        }
-
         let lineRange = NSRange(line.startIndex..., in: line)
         if Self.footnoteDefStartPattern.firstMatch(in: line, range: lineRange) != nil {
             // Flush previous block before starting footnote def
@@ -295,11 +237,6 @@ private struct RawBlockSplitter {
                 "currentBlock tail=\"\(currentBlock.suffix(80))\" newLine=\"\(line.prefix(80))\"")
             blocks.append(currentBlock)
             currentBlock = ""
-            // Same reset as every other flush site in this file (see the two
-            // marker-boundary flushes above) — a list interrupting a still-open
-            // footnote definition would otherwise leave inFootnoteDef stuck true
-            // past this flush, corrupting the next blank line's handling.
-            inFootnoteDef = false
         }
         currentBlock += line + "\n"
     }

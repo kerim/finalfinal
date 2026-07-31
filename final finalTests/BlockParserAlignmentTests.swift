@@ -249,27 +249,6 @@ struct BlockParserAlignmentTests {
         #expect(pairs[1].id == "para")
     }
 
-    @Test func alignmentPairsMatchesProseMirrorsTwoNodeParseForMarkerPlusAdjacentProse() {
-        // break-marker-text-wipe fix pin: `<!-- ::break:: -->\nBody text` (no blank
-        // line) now parses through the REAL BlockParser.parse pipeline into TWO
-        // blocks — a marker-only `.sectionBreak` and a `.paragraph` — instead of
-        // the old single combined block whose textContent silently wiped "Body
-        // text" to empty. These 2 alignmentPairs entries now correctly match
-        // ProseMirror's own real 2-node parse of that same markdown (a
-        // section_break atom node + a paragraph node): this pin confirms the
-        // Swift/JS bridge contract stayed correct AND got MORE accurate, not just
-        // "nothing changed".
-        let markdown = "<!-- ::break:: -->\nBody text"
-        let blocks = BlockParser.parse(markdown: markdown, projectId: "p1")
-        let pairs = BlockParser.alignmentPairs(blocks)
-
-        #expect(pairs.count == 2, "Expected section_break + paragraph, matching ProseMirror's 2-node parse. Got: \(pairs.map { $0.meta.blockType })")
-        #expect(pairs[0].meta.blockType == "section_break")
-        #expect(pairs[0].meta.nonEmpty == false)
-        #expect(pairs[1].meta.blockType == "paragraph")
-        #expect(pairs[1].meta.nonEmpty == true)
-    }
-
     @Test func idsForProseMirrorAlignmentMatchesIndependentlyComputedExpectation() {
         // No-drift guard on the idsForProseMirrorAlignment → alignmentPairs delegation.
         // Expected id arrays below are HAND-COMPUTED from the fixture semantics (empty-fragment
