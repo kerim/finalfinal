@@ -37,324 +37,76 @@ export const completedTaskMarker = '☑';
 export const annotationRegex = /^<!--\s*::(\w+)::\s*(.*?)\s*-->$/s;
 export const taskCheckboxRegex = /^\s*\[([ xX])\]\s*(.*)$/s;
 
-// Same shape as annotationRegex, but NOT anchored to end-of-string ($). Used
-// to find an annotation comment at the START of a longer string, without
-// requiring the whole string to be just that one comment. The non-greedy
-// '.*?' with no trailing '$' means the match stops at the FIRST '-->' it
-// finds, not the last -- this is what lets it isolate one leading comment
-// even when more text (prose, or another annotation) follows on the same
-// line.
-//
-// `^\s{0,3}` tolerates up to 3 leading whitespace characters before the
-// `<!--` -- matching CommonMark's own indented-code threshold (4+ spaces of
-// indentation makes it a DIFFERENT block type entirely, so a real HTML
-// comment can legally sit at 0-3 spaces of indentation and still land here
-// as one 'html' node). Without this, an indented leading annotation
-// (`   <!-- ::task:: [ ] a --> prose`) never matches, and reproduces the
-// original whole-line garble unfixed.
-const leadingAnnotationRegex = /^\s{0,3}<!--\s*::(\w+)::\s*(.*?)\s*-->/s;
+// Remark plugin to convert HTML comments to annotation nodes
+const remarkAnnotationPlugin = $remark('annotation', () => () => (tree: Root) => {
+  // Track nodes that need to be wrapped in paragraphs (can't mutate during visit)
+  const nodesToWrap: Array<{ parent: any; index: number }> = [];
 
-// Parse one already-isolated `<!-- ::type:: content -->` comment string into
-// annotation attributes, or null if it isn't a valid annotation comment.
-// Shared by the main html-node visitor below and by splitLeadingAnnotations,
-// so both agree on exactly what counts as a valid annotation.
-function parseAnnotationComment(rawComment: string): AnnotationAttrs | null {
-  const value = rawComment?.trim();
-  if (!value) return null;
+  visit(tree, 'html', (node: any, index: number | undefined, parent: any) => {
+    const value = node.value?.trim();
+    if (!value) return;
 
-  // Normalize Unicode whitespace and invisible characters
-  const normalizedValue = value
-    .replace(/\u00A0/g, ' ') // Non-breaking space → regular space
-    .replace(/[\u200B-\u200D\uFEFF]/g, '') // Zero-width spaces
-    .replace(/\u2003/g, ' ') // Em space
-    .replace(/\u2002/g, ' ') // En space
-    .replace(/\r\n/g, '\n') // Windows line endings
-    .replace(/\r/g, '\n') // Old Mac line endings
-    .trim();
+    // Normalize Unicode whitespace and invisible characters
+    const normalizedValue = value
+      .replace(/\u00A0/g, ' ') // Non-breaking space → regular space
+      .replace(/[\u200B-\u200D\uFEFF]/g, '') // Zero-width spaces
+      .replace(/\u2003/g, ' ') // Em space
+      .replace(/\u2002/g, ' ') // En space
+      .replace(/\r\n/g, '\n') // Windows line endings
+      .replace(/\r/g, '\n') // Old Mac line endings
+      .trim();
 
-  const match = normalizedValue.match(annotationRegex);
-  if (!match) return null;
-
-  const [, typeStr, content] = match;
-
-  // Validate type before type assertion
-  if (!['task', 'comment', 'reference'].includes(typeStr)) return null;
-  const type = typeStr as AnnotationType;
-
-  let text = content;
-  let isCompleted = false;
-
-  // Parse task checkbox
-  if (type === 'task') {
-    const checkboxMatch = content.match(taskCheckboxRegex);
-    if (checkboxMatch) {
-      isCompleted = checkboxMatch[1].toLowerCase() === 'x';
-      text = checkboxMatch[2];
+    const match = normalizedValue.match(annotationRegex);
+    if (!match) {
+      return;
     }
-  }
 
-  return { type, isCompleted, text: text.trim() };
-}
+    const [, typeStr, content] = match;
 
-// Build the mdast 'annotation' node shape (atomic, text stored in `data`),
-// matching what the visit() callback below assigns onto a converted html node.
-function makeAnnotationNode(attrs: AnnotationAttrs): any {
-  return {
-    type: 'annotation',
-    data: {
-      annotationType: attrs.type,
-      isCompleted: attrs.isCompleted,
-      text: attrs.text,
-    },
-    children: [],
-  };
-}
+    // Validate type before type assertion
+    if (!['task', 'comment', 'reference'].includes(typeStr)) return;
+    const type = typeStr as AnnotationType;
 
-// CommonMark's HTML-block rule (type 2, `<!-- -->`) ends AT the line
-// containing the closing '-->' -- NOT at the next blank line. Verified
-// directly: `<!-- ::task:: [ ] lead --> Prose line one.
-// more prose line two.` (a real line break between them) parses with the
-// html node covering ONLY "<!-- ::task:: [ ] lead --> Prose line one." --
-// line two is already its own separate paragraph node. So the bug this
-// repairs only happens when a leading annotation's closing '-->' and the
-// prose (and possibly another annotation) that follows all sit on the SAME
-// line with no line break in between: CommonMark then has no choice but to
-// fold the entire line into one 'html' node, and the regex above only
-// recognizes a node as an annotation when its ENTIRE value is exactly one
-// annotation comment -- so that whole line, prose and all, was being
-// swallowed as the text of one giant annotation.
-//
-// This peels off each leading annotation comment (there can be more than
-// one back-to-back) and returns what's left, so the caller can re-parse the
-// remainder as ordinary prose. A malformed/pathological match that fails to
-// shorten the string can't spin the loop forever (progress guard below).
-function splitLeadingAnnotations(value: string): {
-  annotations: AnnotationAttrs[];
-  gaps: string[];
-  remainder: string;
-} {
-  const annotations: AnnotationAttrs[] = [];
-  const gaps: string[] = [];
-  let rest = value;
+    let text = content;
+    let isCompleted = false;
 
-  while (true) {
-    const match = rest.match(leadingAnnotationRegex);
-    if (!match) break;
-
-    const parsed = parseAnnotationComment(match[0]);
-    if (!parsed) break;
-
-    const afterComment = rest.slice(match[0].length);
-    // Progress guard: a real match always consumes at least the literal
-    // `<!--...-->`, so this shouldn't be reachable -- but a malformed or
-    // pathological marker must never be able to spin this loop forever.
-    if (afterComment.length >= rest.length) break;
-
-    // The whitespace between this annotation and whatever comes next
-    // (another annotation, or prose) is not part of the comment itself, but
-    // it IS load-bearing: micromark strips a paragraph's own leading
-    // whitespace, and remark-stringify never inserts a space between
-    // adjacent inline nodes. If this gap isn't re-injected as its own text
-    // node when the tree is reassembled, a later markdown round-trip welds
-    // the annotation directly onto whatever follows (`-->Prose...`).
-    const gapMatch = afterComment.match(/^[ \t]*/);
-    const gap = gapMatch ? gapMatch[0] : '';
-
-    annotations.push(parsed);
-    gaps.push(gap);
-    rest = afterComment.slice(gap.length);
-  }
-
-  return { annotations, gaps, remainder: rest };
-}
-
-// Minimal shape we need from the unified Processor: enough to re-parse the
-// remainder of a repaired line through the SAME configured parser (so GFM
-// tables, math, etc. all still apply inside it) without taking a hard
-// dependency on the `unified` package's own types.
-interface MarkdownParser {
-  parse: (value: string) => Root;
-}
-
-// `this.parse(remainder)` parses `remainder` as if it were its own
-// standalone document, so every node it returns has line/column/offset
-// relative to the START of `remainder` -- NOT to the real document. That
-// matters because milkdown's built-in remarkMarker transformer (registered
-// later in the same pipeline, see @milkdown/preset-commonmark) reads
-// `file.value.charAt(node.position.start.offset)` against the WHOLE
-// document's source text to recover which character (`*` vs `_`) was used
-// to write a `strong`/`emphasis` node. Splicing in a subtree with
-// remainder-local offsets makes it read the wrong character entirely --
-// confirmed: `<!-- ::comment:: x --> **bold** tail` saves as
-// `<!-- ::comment:: x --> <<bold<< tail`, and gets WORSE on every further
-// save because the corrupted `<<`/`<` markers shift the offsets again next
-// round. remarkMarker also dereferences `node.position.start` unguarded, so
-// deleting `position` instead of fixing it would just trade a silent
-// corruption for a crash.
-//
-// This walks every node in a freshly reparsed subtree and shifts its
-// position onto the real document's coordinate space:
-// - `offsetShift` moves every absolute offset by however many characters of
-//   the ORIGINAL html node's value were consumed before `remainder` began
-//   (the peeled annotation(s), any gap whitespace, and up to 3 characters of
-//   leading indentation) plus the html node's own starting offset.
-// - Only line 1 of the reparsed subtree is a continuation of a partial line
-//   in the real document (everything on `remainder`'s own line 2+ already
-//   starts at real column 1, same as it does locally), so the column shift
-//   only applies there; `lineShift` still applies to every line.
-function rebaseParsedPositions(
-  root: Root,
-  shift: { offsetShift: number; lineShift: number; firstLineColumnShift: number }
-): void {
-  visit(root, (node: any) => {
-    if (!node.position) return;
-    for (const key of ['start', 'end'] as const) {
-      const point = node.position[key];
-      if (!point) continue;
-      if (point.line === 1 && typeof point.column === 'number') {
-        point.column += shift.firstLineColumnShift;
+    // Parse task checkbox
+    if (type === 'task') {
+      const checkboxMatch = content.match(taskCheckboxRegex);
+      if (checkboxMatch) {
+        isCompleted = checkboxMatch[1].toLowerCase() === 'x';
+        text = checkboxMatch[2];
       }
-      if (typeof point.line === 'number') {
-        point.line += shift.lineShift;
-      }
-      if (typeof point.offset === 'number') {
-        point.offset += shift.offsetShift;
-      }
+    }
+
+    // Transform to annotation node with text stored in data (for atom node)
+    node.type = 'annotation';
+    node.data = {
+      annotationType: type,
+      isCompleted,
+      text: text.trim(),
+    };
+    // No children for atomic node
+    node.children = [];
+    delete node.value;
+
+    // If annotation is a direct child of root (block-level), mark it for wrapping
+    // Inline nodes can't be direct children of doc in ProseMirror
+    if (parent && parent.type === 'root' && typeof index === 'number') {
+      nodesToWrap.push({ parent, index });
     }
   });
-}
 
-// Remark plugin to convert HTML comments to annotation nodes.
-//
-// The outer factory below returns a plain `function` (not an arrow function)
-// specifically so it can be invoked as `attacher.call(processor, ...)` by
-// unified's plugin-freezing machinery -- an arrow function would silently
-// ignore that `this` binding. The returned transformer is itself an arrow
-// function, which is fine: it only needs to READ `this` (inherited from the
-// enclosing function's binding), not receive its own.
-const remarkAnnotationPlugin = $remark('annotation', () => {
-  return function (this: MarkdownParser) {
-    return (tree: Root) => {
-      // Repair pass -- must run BEFORE the visit() below, which only
-      // recognizes a node as an annotation when its ENTIRE value is exactly
-      // one annotation comment. Only root-level 'html' nodes are candidates:
-      // that's where CommonMark HTML blocks land (see splitLeadingAnnotations
-      // above for why one can contain leading annotations plus real prose).
-      for (let i = tree.children.length - 1; i >= 0; i--) {
-        const node = tree.children[i] as any;
-        if (node.type !== 'html' || typeof node.value !== 'string') continue;
-
-        const { annotations, gaps, remainder } = splitLeadingAnnotations(node.value);
-        if (annotations.length === 0) continue;
-
-        // How many characters of the original html node's value were
-        // consumed before `remainder` began -- covers the peeled
-        // annotation(s), every gap, AND any leading indentation
-        // (leadingAnnotationRegex now tolerates 0-3 leading spaces), however
-        // the mix breaks down, since `remainder` is always a plain suffix of
-        // `node.value` (only ever produced by slicing off the front, never
-        // by rebuilding the string). Needed to rebase the reparsed
-        // remainder's positions back onto the real document -- see
-        // rebaseParsedPositions above.
-        const consumedLength = node.value.length - remainder.length;
-
-        // Re-parse the remainder through the SAME processor (before
-        // building anything else) so every registered micromark/remark
-        // extension (math, GFM, etc.) still applies to it, exactly as if it
-        // had been its own paragraph from the start.
-        let remainderChildren: any[] = [];
-        if (remainder !== '') {
-          const reparsed = this.parse(remainder);
-          const first = reparsed.children[0] as any;
-          if (first && first.type === 'paragraph') {
-            const start = node.position?.start;
-            if (start) {
-              rebaseParsedPositions(reparsed, {
-                offsetShift: (start.offset ?? 0) + consumedLength,
-                lineShift: (start.line ?? 1) - 1,
-                firstLineColumnShift: (start.column ?? 1) - 1 + consumedLength,
-              });
-            }
-            remainderChildren = first.children;
-          } else if (remainder.trim() !== '') {
-            // The remainder didn't come back as a paragraph -- CommonMark
-            // parsed it as some OTHER block type standalone (a heading,
-            // list item, blockquote, thematic break, ...). Stringifying it
-            // here would be lossy in two ways: it escapes emphasis/strong
-            // markers into literal backslash-escaped asterisks
-            // (`**bold**` -> `\*\*bold\*\*`), and it turns any further
-            // HTML-comment-like content in the remainder (a second real
-            // annotation, or an unrelated `<!-- ::break:: -->` marker) into
-            // escaped literal text, destroying it. The pre-repair-pass
-            // behavior for this whole line was byte-safe (garbled display,
-            // but round-tripped to markdown untouched) -- bail out of the
-            // repair for this node entirely, same as if no leading
-            // annotation had been found, so this specific shape stays at
-            // least that safe rather than getting worse.
-            continue;
-          }
-          // Else: remainder is pure whitespace -- nothing to add, same as
-          // before.
-        }
-
-        // Land every peeled annotation as a child of ONE new paragraph node
-        // that replaces the original root-level html node in place -- never
-        // as a new root-level sibling, or the nodesToWrap step below would
-        // wrap it in its OWN separate paragraph, splitting what should be a
-        // single visible paragraph into two.
-        const children: any[] = [];
-        annotations.forEach((attrs, idx) => {
-          children.push(makeAnnotationNode(attrs));
-          const isLast = idx === annotations.length - 1;
-          const gap = gaps[idx];
-          // Keep the gap after this annotation only if something follows it:
-          // another annotation, or (for the last one) real remainder prose.
-          if (gap && (!isLast || remainder !== '')) {
-            children.push({ type: 'text', value: gap });
-          }
-        });
-        children.push(...remainderChildren);
-
-        tree.children[i] = { type: 'paragraph', children };
-      }
-
-      // Track nodes that need to be wrapped in paragraphs (can't mutate during visit)
-      const nodesToWrap: Array<{ parent: any; index: number }> = [];
-
-      visit(tree, 'html', (node: any, index: number | undefined, parent: any) => {
-        const attrs = parseAnnotationComment(node.value);
-        if (!attrs) return;
-
-        // Transform to annotation node with text stored in data (for atom node)
-        node.type = 'annotation';
-        node.data = {
-          annotationType: attrs.type,
-          isCompleted: attrs.isCompleted,
-          text: attrs.text,
-        };
-        // No children for atomic node
-        node.children = [];
-        delete node.value;
-
-        // If annotation is a direct child of root (block-level), mark it for wrapping
-        // Inline nodes can't be direct children of doc in ProseMirror
-        if (parent && parent.type === 'root' && typeof index === 'number') {
-          nodesToWrap.push({ parent, index });
-        }
-      });
-
-      // Wrap standalone annotations in paragraphs (process in reverse to preserve indices)
-      for (let i = nodesToWrap.length - 1; i >= 0; i--) {
-        const { parent, index } = nodesToWrap[i];
-        const annotationNode = parent.children[index];
-        // Wrap the annotation in a paragraph
-        parent.children[index] = {
-          type: 'paragraph',
-          children: [annotationNode],
-        };
-      }
+  // Wrap standalone annotations in paragraphs (process in reverse to preserve indices)
+  for (let i = nodesToWrap.length - 1; i >= 0; i--) {
+    const { parent, index } = nodesToWrap[i];
+    const annotationNode = parent.children[index];
+    // Wrap the annotation in a paragraph
+    parent.children[index] = {
+      type: 'paragraph',
+      children: [annotationNode],
     };
-  };
+  }
 });
 
 // Define the annotation node as atomic (non-editable, text stored in attrs)
