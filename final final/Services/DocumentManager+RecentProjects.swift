@@ -47,6 +47,15 @@ extension DocumentManager {
 
     /// Add a project to the recent projects list
     func addToRecentProjects(url: URL, title: String) {
+        let path = url.normalizedProjectPath
+
+        // Never persist scratch/dev locations (system temp, DerivedData, ...) into the
+        // user's real Recent Projects list. See `excludedRecentProjectRoots`.
+        if isExcludedFromRecentProjects(path: path) {
+            DebugLog.log(.lifecycle, "[DocumentManager] Skipping Recent Projects entry under excluded root: \(path)")
+            return
+        }
+
         do {
             // Create security-scoped bookmark
             let bookmarkData = try url.bookmarkData(
@@ -54,7 +63,6 @@ extension DocumentManager {
                 includingResourceValuesForKeys: nil,
                 relativeTo: nil
             )
-            let path = url.normalizedProjectPath
 
             // Check if already in list — compare plain paths, not resolved bookmarks,
             // so a transient bookmark-resolution hiccup can't cause a duplicate entry.
@@ -82,6 +90,31 @@ extension DocumentManager {
         } catch {
             DebugLog.log(.lifecycle, "[DocumentManager] Failed to create bookmark for \(url.path): \(error)")
         }
+    }
+
+    /// Whether `path` lives under one of `excludedRecentProjectRoots`.
+    ///
+    /// Compares resolved-symlink path *components*, not a raw string prefix — a raw prefix
+    /// check would wrongly match e.g. `/private/tmpfoo` against a `/private/tmp` root. Both
+    /// sides are resolved before comparing because `FileManager.default.temporaryDirectory`
+    /// hands back the unresolved `/var/folders/...` form, while stored Recent Projects paths
+    /// (via `normalizedProjectPath`) are already resolved to `/private/var/folders/...` — a
+    /// raw-string comparison between the two forms would silently never match.
+    func isExcludedFromRecentProjects(path: String) -> Bool {
+        guard !path.isEmpty else { return false }
+        // Narrow, test-only opt-out -- see TestMode.isUITestingWithScratchRecentProjectsAllowed.
+        // Only ProjectOpenErrorE2ETests's launch sets the env var that flips this on; every
+        // other caller (other UI tests, unit tests, and real usage) keeps this filter active.
+        if TestMode.isUITestingWithScratchRecentProjectsAllowed { return false }
+        let candidateComponents = URL(fileURLWithPath: path).resolvingSymlinksInPath().pathComponents
+        for root in excludedRecentProjectRoots where !root.isEmpty {
+            let rootComponents = URL(fileURLWithPath: root).resolvingSymlinksInPath().pathComponents
+            guard !rootComponents.isEmpty, candidateComponents.count >= rootComponents.count else { continue }
+            if Array(candidateComponents.prefix(rootComponents.count)) == rootComponents {
+                return true
+            }
+        }
+        return false
     }
 
     /// Remove a project from the recent projects list
@@ -142,8 +175,8 @@ extension DocumentManager {
 
     /// Stored bookmark data for the last opened project
     var lastProjectBookmark: Data? {
-        get { UserDefaults.standard.data(forKey: lastProjectBookmarkKey) }
-        set { UserDefaults.standard.set(newValue, forKey: lastProjectBookmarkKey) }
+        get { AppDefaults.store.data(forKey: lastProjectBookmarkKey) }
+        set { AppDefaults.store.set(newValue, forKey: lastProjectBookmarkKey) }
     }
 
     /// Save a project URL as the last opened project (for restore on launch)
@@ -204,7 +237,7 @@ extension DocumentManager {
     // MARK: - Recent Projects Persistence
 
     func loadRecentProjects() {
-        guard let data = UserDefaults.standard.data(forKey: recentProjectsKey) else {
+        guard let data = AppDefaults.store.data(forKey: recentProjectsKey) else {
             recentProjects = []
             return
         }
@@ -227,27 +260,37 @@ extension DocumentManager {
                 }
 
                 // Cheap check first — no security-scope access needed.
-                if FileManager.default.fileExists(atPath: entry.path) {
-                    return entry
+                if !FileManager.default.fileExists(atPath: entry.path) {
+                    // Fall back to bookmark resolution (reuse the result above if we already tried).
+                    if resolvedURL == nil {
+                        resolvedURL = resolveBookmark(entry.bookmarkData)
+                    }
+
+                    guard let resolvedURL else {
+                        DebugLog.log(.lifecycle, "[DocumentManager] Dropping recent project " +
+                            "'\(entry.title)' (path: \(entry.path)): file missing and bookmark failed to resolve")
+                        return nil
+                    }
+
+                    // fileExists failed but the bookmark still resolved (e.g. the project
+                    // was moved or renamed since this entry was saved) — update the stored
+                    // path to the new location so future dedup doesn't compare against a
+                    // permanently stale path.
+                    entry.path = resolvedURL.normalizedProjectPath
+                    needsResave = true
                 }
 
-                // Fall back to bookmark resolution (reuse the result above if we already tried).
-                if resolvedURL == nil {
-                    resolvedURL = resolveBookmark(entry.bookmarkData)
-                }
-
-                guard let resolvedURL else {
-                    DebugLog.log(.lifecycle, "[DocumentManager] Dropping recent project " +
-                        "'\(entry.title)' (path: \(entry.path)): file missing and bookmark failed to resolve")
+                // Prune scratch/dev-only entries (system temp, DerivedData, ...) that should
+                // never have been persisted — either added before this filter existed, or
+                // leaked in from a test/dev run. This self-heals the user's list: dropped
+                // here, and `needsResave` below writes the pruned list back so it doesn't
+                // reappear on the next launch.
+                if isExcludedFromRecentProjects(path: entry.path) {
+                    DebugLog.log(.lifecycle, "[DocumentManager] Pruning Recent Projects entry " +
+                        "under excluded root: '\(entry.title)' (path: \(entry.path))")
+                    needsResave = true
                     return nil
                 }
-
-                // fileExists failed but the bookmark still resolved (e.g. the project
-                // was moved or renamed since this entry was saved) — update the stored
-                // path to the new location so future dedup doesn't compare against a
-                // permanently stale path.
-                entry.path = resolvedURL.normalizedProjectPath
-                needsResave = true
 
                 return entry
             }
@@ -274,7 +317,7 @@ extension DocumentManager {
     func saveRecentProjects() {
         do {
             let data = try JSONEncoder().encode(recentProjects)
-            UserDefaults.standard.set(data, forKey: recentProjectsKey)
+            AppDefaults.store.set(data, forKey: recentProjectsKey)
         } catch {
             DebugLog.log(.lifecycle, "[DocumentManager] Failed to save recent projects: \(error)")
         }

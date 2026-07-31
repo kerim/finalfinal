@@ -37,10 +37,14 @@ extension ExportService {
 
     /// Test seam: `ExportDiagnosticCaptureGatingTests` overrides this to a per-test isolated
     /// `UserDefaults(suiteName:)` instance so tests never read/write the real
-    /// `com.kerim.final-final` defaults domain. Production code always leaves this at
-    /// `.standard`. `nonisolated(unsafe)` — same idiom as `DiagnosticLogFile.userDefaults` —
-    /// because static members of an actor are not actor-isolated by default.
-    nonisolated(unsafe) static var userDefaults: UserDefaults = .standard
+    /// `com.kerim.final-final` defaults domain. Defaults to `AppDefaults.store` — `.standard`
+    /// in production, an isolated test-only suite while any kind of test is running — so a
+    /// unit test run that never overrides this seam still shares the same domain as
+    /// `DiagnosticsSettings.userDefaults` (both back `exportDiagnosticCaptureEnabled`) instead
+    /// of silently reading/writing two different `UserDefaults` instances.
+    /// `nonisolated(unsafe)` — same idiom as `DiagnosticLogFile.userDefaults` — because static
+    /// members of an actor are not actor-isolated by default.
+    nonisolated(unsafe) static var userDefaults: UserDefaults = AppDefaults.store
 
     static var isDiagnosticCaptureEnabled: Bool { userDefaults.bool(forKey: diagnosticCaptureEnabledDefaultsKey) }
 

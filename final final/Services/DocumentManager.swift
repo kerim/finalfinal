@@ -78,6 +78,31 @@ final class DocumentManager {
     /// UserDefaults key for last opened project bookmark
     let lastProjectBookmarkKey = "com.kerim.final-final.lastProjectBookmark"
 
+    /// Default filesystem roots excluded from Recent Projects: internal scratch/test/dev-tool
+    /// locations, not places a user would keep a real project. Unit and UI tests create
+    /// throwaway `.ff` packages under system temp directories and (before this existed) would
+    /// leak them into the user's real Recent Projects list via `addToRecentProjects`.
+    ///
+    /// Trade-off (accepted): a real `.ff` file a user legitimately opens from one of these
+    /// locations — a Mail attachment, an archive extracted to `/tmp`, etc. — will silently
+    /// never appear in Recent Projects. Judged preferable to a fragile filename-based
+    /// heuristic. See `isExcludedFromRecentProjects(path:)` for the matching rule.
+    static let defaultExcludedRecentProjectRoots: [String] = {
+        let fm = FileManager.default
+        return [
+            fm.temporaryDirectory.path,
+            "/private/tmp",
+            "/private/var/folders",
+            fm.homeDirectoryForCurrentUser
+                .appendingPathComponent("Library/Developer/Xcode/DerivedData").path
+        ]
+    }()
+
+    /// Filesystem roots currently excluded from Recent Projects. Settable so tests whose
+    /// fixtures deliberately live under one of the default roots (e.g. `/tmp/claude`) can
+    /// override this to `[]` for the test's duration and restore it via `defer`.
+    var excludedRecentProjectRoots: [String] = DocumentManager.defaultExcludedRecentProjectRoots
+
     /// UserDefaults key for last seen app version (for Getting Started)
     private let lastSeenVersionKey = "com.kerim.final-final.lastSeenVersion"
 
@@ -123,8 +148,8 @@ final class DocumentManager {
 
     /// The last version the user has seen Getting Started for
     var lastSeenVersion: String? {
-        get { UserDefaults.standard.string(forKey: lastSeenVersionKey) }
-        set { UserDefaults.standard.set(newValue, forKey: lastSeenVersionKey) }
+        get { AppDefaults.store.string(forKey: lastSeenVersionKey) }
+        set { AppDefaults.store.set(newValue, forKey: lastSeenVersionKey) }
     }
 
     /// The current app version from the bundle

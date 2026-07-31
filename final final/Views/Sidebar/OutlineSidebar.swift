@@ -148,7 +148,7 @@ struct OutlineSidebar: View {
     /// Uses Task.sleep for proper async lifecycle management
     private func maybeShowSubtreeDragHint(for sectionId: String) {
         // Only show if hasn't seen hint before
-        guard !UserDefaults.standard.bool(forKey: hasSeenSubtreeDragHintKey) else {
+        guard !AppDefaults.store.bool(forKey: hasSeenSubtreeDragHintKey) else {
             return
         }
 
@@ -165,7 +165,7 @@ struct OutlineSidebar: View {
             try? await Task.sleep(for: .seconds(3))
             guard !Task.isCancelled else { return }
             showSubtreeDragHint = false
-            UserDefaults.standard.set(true, forKey: hasSeenSubtreeDragHintKey)
+            AppDefaults.store.set(true, forKey: hasSeenSubtreeDragHintKey)
         }
     }
 
