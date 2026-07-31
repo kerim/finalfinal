@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **The Recent Projects list, and other remembered settings, could be permanently wiped out by a routine app update** — every release build ran the app's test suite first, and that test suite was accidentally sharing the same storage as your real Recent Projects list, last-opened project, and a few other preferences, clearing all of it out as a side effect. Testing now uses its own separate, disposable storage, so updating the app can no longer touch your real settings. Internal test and scratch files also no longer appear in your Recent Projects list.
+
 ## [0.2.117] - 2026-07-29
 
 ### Fixed

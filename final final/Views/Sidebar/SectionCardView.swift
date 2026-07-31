@@ -43,7 +43,6 @@ struct SectionCardView: View {
                 .foregroundColor(themeManager.currentTheme.sidebarText)
                 .lineLimit(2)
                 .italic(section.isPseudoSection)
-                .accessibilityLabel(accessibleTitle)
                 // Tooltip handled by OutlineSidebar overlay for instant display
 
             if section.isBibliography {
@@ -93,19 +92,6 @@ struct SectionCardView: View {
                     .padding(.vertical, 4)
             }
         }
-    }
-
-    /// Accessible name for the card's title text, used by VoiceOver and XCUITest to
-    /// locate a section card by its section name.
-    /// `section.title` is always populated by construction (headings fall back to
-    /// "(Untitled)", section breaks to "§ Section Break" or "§ <excerpt>" — see
-    /// `Block.outlineTitle` and `SectionSyncService+Parsing.extractPseudoSectionTitle`),
-    /// but this guards defensively in case an empty title ever reaches the view.
-    private var accessibleTitle: String {
-        guard !section.title.isEmpty else {
-            return section.isPseudoSection ? "Section break" : "Untitled section"
-        }
-        return section.title
     }
 
     private var backgroundColor: Color {

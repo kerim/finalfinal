@@ -47,8 +47,21 @@ struct RecentProjectsTests {
     @MainActor
     func reopeningSameProjectBumpsToTop() throws {
         resetRecentProjects()
+        // These fixtures live under /tmp/claude, which falls under the default
+        // `excludedRecentProjectRoots` (system temp) — disable the scratch-path filter for
+        // this test's duration so these still-valid regression tests keep exercising real
+        // add/save/load behavior instead of being silently filtered. Restored via defer.
+        let originalExcludedRoots = DocumentManager.shared.excludedRecentProjectRoots
+        // Register the restoring `defer` before the throwing `makeTempDir()` call below —
+        // if that call threw before the `defer` was registered, `excludedRecentProjectRoots`
+        // would stay disabled (`[]`) on the shared singleton for the rest of the test process.
+        defer { DocumentManager.shared.excludedRecentProjectRoots = originalExcludedRoots }
+        DocumentManager.shared.excludedRecentProjectRoots = []
         let dir = try makeTempDir()
-        defer { cleanup(dir); resetRecentProjects() }
+        defer {
+            cleanup(dir)
+            resetRecentProjects()
+        }
 
         let urlA = try makeDummyProject(named: "A", in: dir)
         let urlB = try makeDummyProject(named: "B", in: dir)
@@ -91,8 +104,21 @@ struct RecentProjectsTests {
     @MainActor
     func addingViaSymlinkDoesNotDuplicateEntry() throws {
         resetRecentProjects()
+        // These fixtures live under /tmp/claude, which falls under the default
+        // `excludedRecentProjectRoots` (system temp) — disable the scratch-path filter for
+        // this test's duration so these still-valid regression tests keep exercising real
+        // add/save/load behavior instead of being silently filtered. Restored via defer.
+        let originalExcludedRoots = DocumentManager.shared.excludedRecentProjectRoots
+        // Register the restoring `defer` before the throwing `makeTempDir()` call below —
+        // if that call threw before the `defer` was registered, `excludedRecentProjectRoots`
+        // would stay disabled (`[]`) on the shared singleton for the rest of the test process.
+        defer { DocumentManager.shared.excludedRecentProjectRoots = originalExcludedRoots }
+        DocumentManager.shared.excludedRecentProjectRoots = []
         let dir = try makeTempDir()
-        defer { cleanup(dir); resetRecentProjects() }
+        defer {
+            cleanup(dir)
+            resetRecentProjects()
+        }
 
         let realURL = try makeDummyProject(named: "Real", in: dir)
         let linkURL = dir.appendingPathComponent("Link.ff")
@@ -110,8 +136,21 @@ struct RecentProjectsTests {
     @MainActor
     func saveLoadRoundTrip() throws {
         resetRecentProjects()
+        // These fixtures live under /tmp/claude, which falls under the default
+        // `excludedRecentProjectRoots` (system temp) — disable the scratch-path filter for
+        // this test's duration so these still-valid regression tests keep exercising real
+        // add/save/load behavior instead of being silently filtered. Restored via defer.
+        let originalExcludedRoots = DocumentManager.shared.excludedRecentProjectRoots
+        // Register the restoring `defer` before the throwing `makeTempDir()` call below —
+        // if that call threw before the `defer` was registered, `excludedRecentProjectRoots`
+        // would stay disabled (`[]`) on the shared singleton for the rest of the test process.
+        defer { DocumentManager.shared.excludedRecentProjectRoots = originalExcludedRoots }
+        DocumentManager.shared.excludedRecentProjectRoots = []
         let dir = try makeTempDir()
-        defer { cleanup(dir); resetRecentProjects() }
+        defer {
+            cleanup(dir)
+            resetRecentProjects()
+        }
 
         let urlA = try makeDummyProject(named: "A", in: dir)
         let urlB = try makeDummyProject(named: "B", in: dir)
@@ -136,8 +175,21 @@ struct RecentProjectsTests {
     @MainActor
     func trimsToMaxCount() throws {
         resetRecentProjects()
+        // These fixtures live under /tmp/claude, which falls under the default
+        // `excludedRecentProjectRoots` (system temp) — disable the scratch-path filter for
+        // this test's duration so these still-valid regression tests keep exercising real
+        // add/save/load behavior instead of being silently filtered. Restored via defer.
+        let originalExcludedRoots = DocumentManager.shared.excludedRecentProjectRoots
+        // Register the restoring `defer` before the throwing `makeTempDir()` call below —
+        // if that call threw before the `defer` was registered, `excludedRecentProjectRoots`
+        // would stay disabled (`[]`) on the shared singleton for the rest of the test process.
+        defer { DocumentManager.shared.excludedRecentProjectRoots = originalExcludedRoots }
+        DocumentManager.shared.excludedRecentProjectRoots = []
         let dir = try makeTempDir()
-        defer { cleanup(dir); resetRecentProjects() }
+        defer {
+            cleanup(dir)
+            resetRecentProjects()
+        }
 
         let max = DocumentManager.shared.maxRecentProjects
         let urls = try (0..<(max + 3)).map { try makeDummyProject(named: "Project\($0)", in: dir) }
@@ -156,8 +208,21 @@ struct RecentProjectsTests {
     @MainActor
     func keepsEntryWithValidPathButBadBookmark() throws {
         resetRecentProjects()
+        // These fixtures live under /tmp/claude, which falls under the default
+        // `excludedRecentProjectRoots` (system temp) — disable the scratch-path filter for
+        // this test's duration so these still-valid regression tests keep exercising real
+        // add/save/load behavior instead of being silently filtered. Restored via defer.
+        let originalExcludedRoots = DocumentManager.shared.excludedRecentProjectRoots
+        // Register the restoring `defer` before the throwing `makeTempDir()` call below —
+        // if that call threw before the `defer` was registered, `excludedRecentProjectRoots`
+        // would stay disabled (`[]`) on the shared singleton for the rest of the test process.
+        defer { DocumentManager.shared.excludedRecentProjectRoots = originalExcludedRoots }
+        DocumentManager.shared.excludedRecentProjectRoots = []
         let dir = try makeTempDir()
-        defer { cleanup(dir); resetRecentProjects() }
+        defer {
+            cleanup(dir)
+            resetRecentProjects()
+        }
 
         let url = try makeDummyProject(named: "StillHere", in: dir)
         let badEntry = DocumentManager.RecentProjectEntry(
@@ -180,8 +245,21 @@ struct RecentProjectsTests {
     @MainActor
     func updatesStalePathWhenBookmarkResolvesToNewLocation() throws {
         resetRecentProjects()
+        // These fixtures live under /tmp/claude, which falls under the default
+        // `excludedRecentProjectRoots` (system temp) — disable the scratch-path filter for
+        // this test's duration so these still-valid regression tests keep exercising real
+        // add/save/load behavior instead of being silently filtered. Restored via defer.
+        let originalExcludedRoots = DocumentManager.shared.excludedRecentProjectRoots
+        // Register the restoring `defer` before the throwing `makeTempDir()` call below —
+        // if that call threw before the `defer` was registered, `excludedRecentProjectRoots`
+        // would stay disabled (`[]`) on the shared singleton for the rest of the test process.
+        defer { DocumentManager.shared.excludedRecentProjectRoots = originalExcludedRoots }
+        DocumentManager.shared.excludedRecentProjectRoots = []
         let dir = try makeTempDir()
-        defer { cleanup(dir); resetRecentProjects() }
+        defer {
+            cleanup(dir)
+            resetRecentProjects()
+        }
 
         let originalURL = try makeDummyProject(named: "Original", in: dir)
         let bookmarkData = try originalURL.bookmarkData(
@@ -211,5 +289,120 @@ struct RecentProjectsTests {
         #expect(DocumentManager.shared.recentProjects.count == 1)
         #expect(DocumentManager.shared.recentProjects.first?.path == movedURL.standardizedFileURL.path)
         #expect(DocumentManager.shared.recentProjects.first?.path != originalURL.standardizedFileURL.path)
+    }
+
+    // MARK: - Scratch-Path Exclusion
+    //
+    // Regression coverage for internal dev/scratch `.ff` packages (created by unit/UI tests
+    // and other tooling under system temp directories) leaking into the user's real Recent
+    // Projects list. These tests deliberately use the DEFAULT `excludedRecentProjectRoots`
+    // (unlike the tests above, which override it to `[]`) since they exercise the exclusion
+    // itself.
+
+    @Test("addToRecentProjects skips a project under the default excluded (system temp) root")
+    @MainActor
+    func addToRecentProjectsSkipsScratchRoot() throws {
+        resetRecentProjects()
+        defer { resetRecentProjects() }
+
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("RecentProjectsScratchTest-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let scratchURL = try makeDummyProject(named: "Scratch", in: dir)
+        DocumentManager.shared.addToRecentProjects(url: scratchURL, title: "Scratch")
+
+        #expect(DocumentManager.shared.recentProjects.isEmpty)
+    }
+
+    @Test("loadRecentProjects prunes a previously-persisted entry under an excluded root, and the prune persists")
+    @MainActor
+    func loadRecentProjectsPrunesScratchEntry() throws {
+        resetRecentProjects()
+        defer { resetRecentProjects() }
+
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("RecentProjectsScratchLoadTest-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let scratchURL = try makeDummyProject(named: "Scratch", in: dir)
+        let bookmarkData = try scratchURL.bookmarkData(
+            options: [.withSecurityScope],
+            includingResourceValuesForKeys: nil,
+            relativeTo: nil
+        )
+        // Simulate an entry already persisted (e.g. by a pre-fix build) that bypassed
+        // addToRecentProjects's own — also fixed — filter.
+        let leakedEntry = DocumentManager.RecentProjectEntry(
+            title: "Scratch",
+            bookmarkData: bookmarkData,
+            path: scratchURL.normalizedProjectPath
+        )
+
+        DocumentManager.shared.recentProjects = [leakedEntry]
+        DocumentManager.shared.saveRecentProjects()
+        DocumentManager.shared.recentProjects = []
+
+        DocumentManager.shared.loadRecentProjects()
+        #expect(DocumentManager.shared.recentProjects.isEmpty)
+
+        // Confirm the prune actually persisted (needsResave fired) rather than only
+        // filtering in-memory for this one load — the list should self-heal permanently.
+        DocumentManager.shared.recentProjects = []
+        DocumentManager.shared.loadRecentProjects()
+        #expect(DocumentManager.shared.recentProjects.isEmpty)
+    }
+
+    @Test("isExcludedFromRecentProjects matches by path component, not raw string prefix")
+    @MainActor
+    func excludedRootsMatchByComponentNotRawPrefix() throws {
+        let originalRoots = DocumentManager.shared.excludedRecentProjectRoots
+        defer { DocumentManager.shared.excludedRecentProjectRoots = originalRoots }
+
+        // Real, existing directories — not fabricated non-existent path strings.
+        // `resolvingSymlinksInPath()` special-cases well-known system directories (/tmp,
+        // /var, /etc) and folds their `/private/...` form back to the convenience form only
+        // when the full path actually resolves on disk, so a non-existent leaf under
+        // `/private/tmp` behaves inconsistently with a real one. Using real directories here
+        // keeps this test about the component-boundary logic under test, not that quirk.
+        let base = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ComponentBoundaryTest-\(UUID().uuidString)", isDirectory: true)
+        let root = base.appendingPathComponent("root", isDirectory: true)
+        let insideRoot = root.appendingPathComponent("foo.ff", isDirectory: true)
+        // Shares the string prefix "root" but is a sibling directory, not a child of `root`
+        // — a raw `hasPrefix` string check would wrongly treat it as excluded.
+        let siblingWithSharedPrefix = base.appendingPathComponent("rootfoo", isDirectory: true)
+        let insideSibling = siblingWithSharedPrefix.appendingPathComponent("bar.ff", isDirectory: true)
+
+        try FileManager.default.createDirectory(at: insideRoot, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: insideSibling, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: base) }
+
+        DocumentManager.shared.excludedRecentProjectRoots = [root.path]
+
+        #expect(DocumentManager.shared.isExcludedFromRecentProjects(path: insideRoot.normalizedProjectPath))
+        #expect(!DocumentManager.shared.isExcludedFromRecentProjects(path: insideSibling.normalizedProjectPath))
+    }
+
+    @Test("isExcludedFromRecentProjects resolves symlinks on both sides before comparing")
+    @MainActor
+    func excludedRootsResolveSymlinksBeforeComparing() throws {
+        let originalRoots = DocumentManager.shared.excludedRecentProjectRoots
+        defer { DocumentManager.shared.excludedRecentProjectRoots = originalRoots }
+
+        // `FileManager.default.temporaryDirectory` returns the unresolved `/var/folders/...`
+        // form; `normalizedProjectPath` (and hence any real stored Recent Projects path)
+        // resolves symlinks, landing on `/private/var/folders/...` instead. An unresolved
+        // root must still match a resolved candidate.
+        DocumentManager.shared.excludedRecentProjectRoots = [FileManager.default.temporaryDirectory.path]
+
+        let resolvedCandidate = FileManager.default.temporaryDirectory
+            .appendingPathComponent("some-project.ff")
+            .resolvingSymlinksInPath()
+            .path
+
+        #expect(DocumentManager.shared.isExcludedFromRecentProjects(path: resolvedCandidate))
     }
 }
