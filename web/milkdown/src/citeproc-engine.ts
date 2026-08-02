@@ -62,6 +62,22 @@ export interface CitationOptions {
   suffix?: string; // Applies to last citation in cluster
 }
 
+// Resolve the key to store/look up an item under.
+// Prefer the CSL `id` (Better BibTeX's canonical KeyManager key, the field BBT actually
+// resolves/matches by); fall back to citation-key/citationKey only when `id` is absent or
+// empty. This mirrors the Swift-side fix (ZoteroService / ZoteroService+LibraryScope): BBT
+// can report a stale `citation-key` (from a legacy `Citation Key:` line in the item's Zotero
+// Extra field) that differs from its own `id` for the same item.
+// Note: bracket notation for hyphenated JSON key from Swift encoding.
+//
+// Exported so every place in the app that reads/writes/caches an item "by its citekey" (the
+// citation search/insert popup, pending-resolution bookkeeping, etc.) shares this exact
+// precedence instead of re-deriving it with the wrong order.
+export function resolveKey(item: CSLItem): string | undefined {
+  const key = item.id || (item as any)['citation-key'] || item.citationKey;
+  return key || undefined;
+}
+
 class CiteprocEngine {
   private engine: any;
   private items: Map<string, CSLItem> = new Map();
@@ -77,7 +93,7 @@ class CiteprocEngine {
   private initEngine() {
     const sys: CiteprocSys = {
       retrieveLocale: () => this.localeXML,
-      retrieveItem: (id: string) => this.items.get(id),
+      retrieveItem: (id: string) => this.items.get(id.toLowerCase()),
     };
 
     try {
@@ -88,14 +104,20 @@ class CiteprocEngine {
     }
   }
 
+  // Lookups/storage are case-insensitive: BBT's `id` casing can differ from the casing used
+  // in the document (e.g. `Friedman2010` vs `friedman2010`).
+  private static normalize(key: string): string {
+    return key.toLowerCase();
+  }
+
   // Set the bibliography items
   setBibliography(items: CSLItem[]): void {
     this.items.clear();
     items.forEach((item) => {
-      // Use citationKey if available, otherwise id
-      // Note: bracket notation for hyphenated JSON key from Swift encoding
-      const key = (item as any)['citation-key'] || item.citationKey || item.id;
-      this.items.set(key, { ...item, id: key });
+      const key = resolveKey(item);
+      if (!key) return;
+      const normalizedKey = CiteprocEngine.normalize(key);
+      this.items.set(normalizedKey, { ...item, id: normalizedKey });
     });
 
     // Update engine with new item IDs
@@ -112,9 +134,10 @@ class CiteprocEngine {
   // Add items to the bibliography without replacing existing ones
   addItems(items: CSLItem[]): void {
     items.forEach((item) => {
-      // Use citationKey if available, otherwise id
-      const key = (item as any)['citation-key'] || item.citationKey || item.id;
-      this.items.set(key, { ...item, id: key });
+      const key = resolveKey(item);
+      if (!key) return;
+      const normalizedKey = CiteprocEngine.normalize(key);
+      this.items.set(normalizedKey, { ...item, id: normalizedKey });
     });
 
     // Update engine with all item IDs
@@ -130,20 +153,20 @@ class CiteprocEngine {
 
   // Check if an item exists in the bibliography
   hasItem(citekey: string): boolean {
-    return this.items.has(citekey);
+    return this.items.has(CiteprocEngine.normalize(citekey));
   }
 
   // Get an item by citekey
   getItem(citekey: string): CSLItem | undefined {
-    return this.items.get(citekey);
+    return this.items.get(CiteprocEngine.normalize(citekey));
   }
 
   // Format a single citation (e.g., "(Smith, 2023)")
   formatCitation(citekeys: string[], options?: CitationOptions): string {
     if (citekeys.length === 0) return '';
 
-    // Filter to only existing citekeys
-    const validKeys = citekeys.filter((key) => this.items.has(key));
+    // Filter to only existing citekeys (case-insensitive)
+    const validKeys = citekeys.filter((key) => this.hasItem(key));
     if (validKeys.length === 0) {
       // Return unresolved indicator
       return citekeys.map((k) => `${k}?`).join('; ');
@@ -152,7 +175,7 @@ class CiteprocEngine {
     try {
       // Build citation cluster with per-citation options
       const citationItems = validKeys.map((key, index) => ({
-        id: key,
+        id: CiteprocEngine.normalize(key),
         ...(options?.suppressAuthors?.[index] ? { 'suppress-author': true } : {}),
         ...(options?.locators?.[index] ? { locator: options.locators[index] } : {}),
         ...(index === 0 && options?.prefix ? { prefix: options.prefix } : {}),
@@ -182,8 +205,10 @@ class CiteprocEngine {
   // Generate formatted bibliography entries
   generateBibliography(citekeys?: string[]): string[] {
     try {
-      // If specific citekeys provided, update items to only those
-      const keysToUse = citekeys?.filter((k) => this.items.has(k)) || Array.from(this.items.keys());
+      // If specific citekeys provided, update items to only those (case-insensitive)
+      const keysToUse = citekeys
+        ? citekeys.filter((k) => this.hasItem(k)).map((k) => CiteprocEngine.normalize(k))
+        : Array.from(this.items.keys());
 
       if (keysToUse.length === 0) {
         return [];
@@ -254,7 +279,7 @@ class CiteprocEngine {
   // Get short citation for display (without citeproc processing)
   // Used as fallback when full processing isn't needed
   getShortCitation(citekey: string): string {
-    const item = this.items.get(citekey);
+    const item = this.getItem(citekey);
     if (!item) {
       return `${citekey}?`;
     }

@@ -33,12 +33,14 @@ private struct GroupsRPCResponse: Decodable {
 
 /// Raw (undecoded) outcome of a single `item.pandoc_filter` call.
 ///
-/// `items` is keyed by BBT's own canonical citation-key for each resolved item — which can
-/// differ in case from the originally-requested citekey when BBT's "case-insensitive
-/// citekeys" preference is on. `notFoundKeys`/`ambiguousKeys` are keyed by the exact citekey
-/// strings that were requested: BBT always echoes the literal request string in `errors`
-/// (`result.errors[citationKey] = found.length` in BBT's own `json-rpc.ts`), never a canonical
-/// form, so those two sets need no case reconciliation.
+/// `items` is keyed by each resolved item's own CSL `id` field (re-keyed from BBT's raw
+/// response by `parsePandocFilterResponseRaw` — see that function's doc comment for why: BBT's
+/// own dict key is the item's `citation-key`, not the `id` it actually matched the request
+/// against). This canonical key can differ in case from the originally-requested citekey when
+/// BBT's "case-insensitive citekeys" preference is on. `notFoundKeys`/`ambiguousKeys` are keyed
+/// by the exact citekey strings that were requested: BBT always echoes the literal request
+/// string in `errors` (`result.errors[citationKey] = found.length` in BBT's own `json-rpc.ts`),
+/// never a canonical form, so those two sets need no case reconciliation.
 struct PandocFilterRawOutcome {
     var items: [String: [String: Any]]
     /// Citekeys with zero matches in the libraries this call queried.
@@ -147,6 +149,18 @@ extension ZoteroService {
     /// use doesn't need to round-trip through a typed model here. Throws on a JSON-RPC error
     /// object, a malformed envelope, or a missing `result`; every failure here is meant to be
     /// caught by the caller and treated as "the new path failed, fall back to item.export."
+    ///
+    /// BBT's `result.items` object is keyed by each item's `citation-key` field — but BBT
+    /// internally *resolves/matches* items by its own KeyManager key and stores that matched
+    /// key in the item's CSL `id` field, which is not necessarily the same string as
+    /// `citation-key`. This diverges when a legacy `Citation Key:` line lingers in an item's
+    /// Zotero "Extra" field from pre-Zotero-8 Better BibTeX — `citation-key` reflects that
+    /// stale Extra-field value while `id` reflects what BBT actually matched against. Trusting
+    /// BBT's own dict key (`citation-key`) here means such an item comes back keyed under a
+    /// name nothing else in this resolution pipeline can trace back to the request, producing a
+    /// false "not found in any library." So every item is re-keyed by its own `id` field below;
+    /// only when `id` is absent or empty (shouldn't happen for a real BBT response, but keeps
+    /// this defensive) does the original dict key survive as a fallback.
     nonisolated static func parsePandocFilterResponseRaw(_ data: Data) throws -> PandocFilterRawOutcome {
         guard let envelope = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw ZoteroError.invalidResponse("Invalid JSON-RPC response")
@@ -169,7 +183,16 @@ extension ZoteroService {
             }
         }
 
-        let items = (result["items"] as? [String: [String: Any]]) ?? [:]
+        let rawItems = (result["items"] as? [String: [String: Any]]) ?? [:]
+        var items: [String: [String: Any]] = [:]
+        items.reserveCapacity(rawItems.count)
+        for (bbtDictKey, item) in rawItems {
+            if let id = item["id"] as? String, !id.isEmpty {
+                items[id] = item
+            } else {
+                items[bbtDictKey] = item
+            }
+        }
 
         return PandocFilterRawOutcome(items: items, notFoundKeys: notFoundKeys, ambiguousKeys: ambiguousKeys)
     }
@@ -204,8 +227,9 @@ extension ZoteroService {
 
     /// Merge phase 1 (personal) and phase 2 (group) raw outcomes.
     ///
-    /// Resolved items are matched back to the requested citekeys CASE-INSENSITIVELY: BBT's
-    /// `items` dict is keyed by each item's own canonical citation-key, which can differ in
+    /// Resolved items are matched back to the requested citekeys CASE-INSENSITIVELY: `items` on
+    /// each outcome is keyed by each item's own CSL `id` (re-keyed from BBT's raw
+    /// `citation-key`-keyed response by `parsePandocFilterResponseRaw`), which can differ in
     /// case from the exact string requested when BBT's "case-insensitive citekeys" preference
     /// is on. Re-indexing by exact string here would silently drop a genuinely-resolved item.
     ///

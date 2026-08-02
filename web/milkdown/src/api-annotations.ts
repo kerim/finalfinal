@@ -18,7 +18,7 @@ import {
 import type { CSLItem } from './citation-plugin';
 import { clearPendingResolution } from './citation-plugin';
 import { getCitationLibrary, getCitationLibrarySize, setCitationLibrary } from './citation-search';
-import { getCiteprocEngine } from './citeproc-engine';
+import { getCiteprocEngine, resolveKey } from './citeproc-engine';
 import { getEditorInstance } from './editor-state';
 import { highlightMark } from './highlight-plugin';
 import type { CAYWCallbackData } from './types';
@@ -264,8 +264,10 @@ export function addCitationItems(items: CSLItem[]): void {
   getCiteprocEngine().addItems(items);
   // Update the citation library cache
   setCitationLibrary([...getCitationLibrary(), ...items]);
-  // Clear pending resolution state for these keys
-  const resolvedKeys = items.map((item) => (item as any)['citation-key'] || item.citationKey || item.id);
+  // Clear pending resolution state for these keys. `id` first — see resolveKey() in
+  // citeproc-engine.ts; currently inert since hasItem() short-circuits before this path is
+  // reached, but keep it aligned with the same precedence so it stays correct if that changes.
+  const resolvedKeys = items.map((item) => resolveKey(item) ?? '');
   clearPendingResolution(resolvedKeys);
   // Trigger re-render of all citations
   document.dispatchEvent(new CustomEvent('citation-library-updated'));

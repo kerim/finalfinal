@@ -4,7 +4,7 @@
 
 import { Selection } from '@milkdown/kit/prose/state';
 import type { EditorView } from '@milkdown/kit/prose/view';
-import { type CSLItem, getCiteprocEngine } from './citeproc-engine';
+import { type CSLItem, getCiteprocEngine, resolveKey } from './citeproc-engine';
 
 // localStorage key for citation library persistence across editor toggles
 const CITATION_CACHE_KEY = 'ff-citation-library';
@@ -195,8 +195,9 @@ function createResultItem(item: CSLItem, index: number, isSelected: boolean): HT
   // Year
   const year = item.issued?.['date-parts']?.[0]?.[0] || item.issued?.raw?.match(/\d{4}/)?.[0] || 'n.d.';
 
-  // Citekey (use bracket notation for hyphenated JSON key from Swift encoding)
-  const citekey = (item as any)['citation-key'] || item.citationKey || item.id;
+  // Citekey: `id` first (BBT's canonical KeyManager key), falling back to citation-key/citationKey
+  // only when `id` is absent. Mirrors citeproc-engine.ts's resolveKey() — see that function for why.
+  const citekey = resolveKey(item) ?? '';
 
   // Title
   const title = document.createElement('div');
@@ -293,8 +294,8 @@ function selectItem(index: number): void {
   if (index < 0 || index >= filteredResults.length) return;
 
   const item = filteredResults[index];
-  // Use bracket notation for hyphenated JSON key from Swift encoding
-  const citekey = (item as any)['citation-key'] || item.citationKey || item.id;
+  // `id` first (BBT's canonical KeyManager key) — see resolveKey() in citeproc-engine.ts.
+  const citekey = resolveKey(item) ?? '';
 
   insertCitation(citekey);
 }

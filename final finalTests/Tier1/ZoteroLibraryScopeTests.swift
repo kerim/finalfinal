@@ -99,6 +99,34 @@ struct ZoteroLibraryScopeTests {
         #expect(outcome.notFoundKeys.isEmpty)
     }
 
+    @Test("An item whose citation-key differs from its id is re-keyed by id, not by BBT's raw items-dict key")
+    func itemsDictIsReKeyedByIdNotByCitationKey() throws {
+        // Synthesized: reproduces a legacy `Citation Key:` line left in the item's Zotero
+        // Extra field from pre-Zotero-8 Better BibTeX. BBT internally resolves/matches items by
+        // its own KeyManager key (surfaced as CSL `id`) but its `item.pandoc_filter` response
+        // keys the `items` object by the item's `citation-key` field, which can be a stale,
+        // unrelated string left over from that legacy Extra-field line. Before the fix, this
+        // left the item reachable only under "oldLegacyKey2010" — a name nothing in the
+        // resolution pipeline can trace back to the request — producing a false
+        // "not found in any library."
+        let json = """
+        {"jsonrpc":"2.0","result":{"errors":{},"items":{"oldLegacyKey2010":{"id":"friedman2010",\
+        "citation-key":"oldLegacyKey2010","type":"chapter","title":"Entering the Mountains"}}},"id":11}
+        """
+
+        let outcome = try ZoteroService.parsePandocFilterResponseRaw(Data(json.utf8))
+
+        #expect(outcome.items.count == 1)
+        #expect(
+            outcome.items["friedman2010"] != nil,
+            "items dict must be re-keyed by the item's CSL id, not left keyed by BBT's raw citation-key dict key"
+        )
+        #expect(
+            outcome.items["oldLegacyKey2010"] == nil,
+            "The stale citation-key must not survive as the dict key once a non-empty id is present"
+        )
+    }
+
     // MARK: - item.pandoc_filter request body
 
     @Test("pandocFilterRequestBody always includes a library scope, with library IDs as JSON strings")
@@ -361,6 +389,88 @@ struct ZoteroLibraryScopeTests {
             // suite has no DebugLog-capture rig; verified by reading ZoteroService.swift's
             // fetchItemsForCitekeys catch block.
         }
+    }
+
+    @Test(
+        """
+        citation-key, id, and the requested citekey are all three different strings — the item \
+        still resolves (no false not-found) and is cached under the REQUESTED key, so getItem/getItems/ \
+        cslJSONForCitekeys (called with the document's citekey) find it
+        """
+    )
+    @MainActor
+    func citationKeyIdAndRequestedKeyAllDifferStillResolvesAndCaches() async throws {
+        try await ZoteroNetworkTestLock.shared.run {
+            MockBBTURLProtocol.reset()
+            // Three distinct strings exercised at once, matching the real bug report:
+            //   requested    = "Friedman2010"       — typed in the document; differs in CASE from id
+            //   id           = "friedman2010"       — BBT's canonical KeyManager match key
+            //   citation-key = "oldLegacyKey2010"   — stale legacy Extra-field value; BBT's raw
+            //                                          items-dict key
+            // swiftlint:disable line_length
+            let itemJSON = """
+            {"jsonrpc":"2.0","result":{"errors":{},"items":{"oldLegacyKey2010":{"id":"friedman2010","citation-key":"oldLegacyKey2010","type":"chapter","title":"Entering the Mountains"}}},"id":12}
+            """
+            // swiftlint:enable line_length
+            MockBBTURLProtocol.responses["item.pandoc_filter"] = (200, Data(itemJSON.utf8))
+            URLProtocol.registerClass(MockBBTURLProtocol.self)
+            defer { URLProtocol.unregisterClass(MockBBTURLProtocol.self) }
+
+            let service = ZoteroService()
+            let items = try await service.fetchItemsForCitekeys(["Friedman2010"])
+
+            #expect(items.count == 1, "Must resolve, not throw a false \"not found in any library\"")
+            #expect(items.first?.title == "Entering the Mountains")
+
+            // getItem/getItems/cslJSONForCitekeys must all find the item under the REQUESTED
+            // key ("Friedman2010") — proving the cache is keyed by what was asked for, not by
+            // CSLItem.citekey (== citationKey ?? id), which here would resolve to
+            // "oldLegacyKey2010" and never be found by a lookup for "Friedman2010".
+            #expect(service.getItem(citekey: "Friedman2010") != nil)
+            #expect(service.hasItem(citekey: "Friedman2010"))
+            #expect(service.getItems(citekeys: ["Friedman2010"]).count == 1)
+
+            let cslJSON = service.cslJSONForCitekeys(["Friedman2010"])
+            #expect(
+                cslJSON.contains("Entering the Mountains"),
+                "cslJSONForCitekeys must return the item's CSL JSON for the requested key, not \"[]\""
+            )
+        }
+    }
+
+    @Test(
+        """
+        loadItem (the loadEmbeddedCitations/offline path, reading a document's bundled \
+        references/citations.json) caches by id, not by citation-key, so getItem/getItems find \
+        the item under the id — the same key the document's citations actually use post-fix
+        """
+    )
+    @MainActor
+    func loadItemCachesByIdNotCitationKey() throws {
+        // Same shape as the fixture above: citation-key ("oldLegacyKey2010") differs from id
+        // ("friedman2010"). loadItem is called directly here to simulate
+        // DocumentManager.loadEmbeddedCitations(from:), which decodes CSLItem straight from a
+        // bundled citations.json (no network, no MockBBTURLProtocol involved).
+        let itemJSON = """
+        {"id":"friedman2010","citation-key":"oldLegacyKey2010","type":"chapter","title":"Entering the Mountains"}
+        """
+        let item = try JSONDecoder().decode(CSLItem.self, from: Data(itemJSON.utf8))
+        #expect(item.citekey == "oldLegacyKey2010", "Sanity check: citekey falls back to citation-key, not id")
+
+        let service = ZoteroService()
+        service.loadItem(item)
+
+        // Must be found under the id ("friedman2010") — the key the document's own citations
+        // reference post-fix — not under citekey ("oldLegacyKey2010"), which would reproduce
+        // the "not found" / red placeholder symptom offline.
+        #expect(service.getItem(citekey: "friedman2010") != nil)
+        #expect(service.hasItem(citekey: "friedman2010"))
+        #expect(service.getItems(citekeys: ["friedman2010"]).count == 1)
+        #expect(service.getItem(citekey: "friedman2010")?.title == "Entering the Mountains")
+
+        // Must NOT be reachable under citation-key — proves the cache key changed, not just
+        // that a second copy got added under id.
+        #expect(service.getItem(citekey: "oldLegacyKey2010") == nil)
     }
 }
 

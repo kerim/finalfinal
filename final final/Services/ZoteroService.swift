@@ -301,9 +301,13 @@ final class ZoteroService {
 
             let items = rpcResponse.result ?? []
 
-            // Cache results by citekey for later lookup
+            // Cache results by `id` (BBT's KeyManager key), not `item.citekey`
+            // (== `citationKey ?? id`) — same rationale as `fetchItemsForCitekeys`/`loadItem`.
+            // Falls back to `citekey` only if `id` is empty. (No known call sites — kept
+            // correct rather than left as a landmine.)
             for item in items {
-                itemsByKey[item.citekey] = item
+                let key = item.id.isEmpty ? item.citekey : item.id
+                itemsByKey[key] = item
             }
 
             isConnected = true
@@ -337,6 +341,26 @@ final class ZoteroService {
     /// throw — falls back to the old unscoped `item.export` call (`fetchItemsForCitekeysViaExport`),
     /// logged with the reason. A `CancellationError`/cancelled `URLError` is rethrown directly,
     /// never treated as "the new path failed."
+    /// Caches each of `items` under whichever requested citekey it matches (case-insensitively
+    /// against the item's CSL `id`), not under `item.citekey` (== `citationKey ?? id`). BBT
+    /// resolves items by its own KeyManager key (surfaced as CSL `id`) but can report a
+    /// different `citation-key` for the same item (e.g. a stale legacy `Citation Key:` line
+    /// left in the item's Zotero Extra field from pre-Zotero-8 Better BibTeX) — caching under
+    /// `citationKey` would store the item under a name `getItem`/`getItems`/`cslJSONForCitekeys`
+    /// never look it up by, since those are called with the citekey the document/editor
+    /// actually asked for. Shared by both fetch paths below.
+    private func cacheItems(_ items: [CSLItem], forRequestedCitekeys requested: [String]) {
+        var itemsByID: [String: CSLItem] = [:]
+        for item in items where itemsByID[item.id.lowercased()] == nil {
+            itemsByID[item.id.lowercased()] = item
+        }
+        for key in requested {
+            if let item = itemsByID[key.lowercased()] {
+                itemsByKey[key] = item
+            }
+        }
+    }
+
     func fetchItemsForCitekeys(_ citekeys: [String]) async throws -> [CSLItem] {
         guard !citekeys.isEmpty else { return [] }
         let requested = Self.orderedUniqueCitekeys(citekeys)
@@ -355,9 +379,17 @@ final class ZoteroService {
             return try await fetchItemsForCitekeysViaExport(requested)
         }
 
-        for item in items {
-            itemsByKey[item.citekey] = item
-        }
+        // Cache by the citekey string actually REQUESTED (matched case-insensitively against
+        // each item's CSL `id`), not by `item.citekey` (== `citationKey ?? id`). BBT resolves
+        // items by its own KeyManager key (surfaced as CSL `id`) but can report a different
+        // `citation-key` for the same item (e.g. a stale legacy `Citation Key:` line left in
+        // the item's Zotero Extra field from pre-Zotero-8 Better BibTeX) — caching under
+        // `citationKey` would store the item under a name `getItem`/`getItems`/
+        // `cslJSONForCitekeys` never look it up by, since those are called with the citekey the
+        // document/editor actually asked for. `outcome.items` is keyed by `id` (see
+        // `parsePandocFilterResponseRaw`), so match each decoded item back to its raw `id` to
+        // find which requested key(s) it resolved.
+        cacheItems(items, forRequestedCitekeys: requested)
         isConnected = true
         connectionError = nil
 
@@ -438,10 +470,11 @@ final class ZoteroService {
                 throw ZoteroError.invalidResponse("Unexpected result format in item.export")
             }
 
-            // Cache results
-            for item in items {
-                itemsByKey[item.citekey] = item
-            }
+            // Cache by the citekey string actually REQUESTED (matched case-insensitively against
+            // each item's CSL `id`), not by `item.citekey` (== `citationKey ?? id`) — same
+            // rationale as `fetchItemsForCitekeys` above: BBT resolves by its own KeyManager key
+            // (surfaced as CSL `id`) but can report a different `citation-key` for the same item.
+            cacheItems(items, forRequestedCitekeys: citekeys)
 
             isConnected = true
             connectionError = nil
@@ -511,8 +544,14 @@ final class ZoteroService {
     }
 
     /// Load a pre-resolved CSL item into the cache (for embedded citations)
+    ///
+    /// Caches by the CSL `id` (BBT's KeyManager key), not `item.citekey`
+    /// (== `citationKey ?? id`) — same rationale as `fetchItemsForCitekeys` above: BBT
+    /// resolves items by `id`, so that's the key `getItem`/`getItems`/`cslJSONForCitekeys`
+    /// look up later. Falls back to `citekey` only if `id` is empty.
     func loadItem(_ item: CSLItem) {
-        itemsByKey[item.citekey] = item
+        let key = item.id.isEmpty ? item.citekey : item.id
+        itemsByKey[key] = item
     }
 
     /// Clear cached data
