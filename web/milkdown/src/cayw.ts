@@ -103,10 +103,13 @@ export function openCAYWPicker(cmdStart: number, cmdEnd: number): void {
 
 /**
  * Open the CAYW picker for a brand-new citation at the current cursor position.
- * Shared trigger for the ⌘⇧K keyboard shortcut (main.ts) and the native toolbar
- * "Cite" button (invoked via window.FinalFinal.insertCitation from Swift) — both
- * insert fresh citations with no existing /cite text to replace, so start and end
- * are the same.
+ * Shared trigger for the native toolbar "Cite" button and the native Insert >
+ * Citation... menu item's ⌘⇧K (EditorCommands.swift posts .insertCitation,
+ * which both editors observe identically) — both reach here via
+ * window.FinalFinal.insertCitation from Swift. main.ts no longer has its own
+ * ⌘⇧K keydown listener; that would double-fire alongside the native menu
+ * shortcut. Both call paths insert fresh citations with no existing /cite
+ * text to replace, so start and end are the same.
  */
 export function insertCitationAtCursor(): void {
   const editorInstance = getEditorInstance();
