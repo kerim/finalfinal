@@ -38,6 +38,16 @@ private struct ImageMeta {
     let imageWidth: Int?
 }
 
+/// A single existing heading's id + metadata, queued by title so duplicate-titled headings
+/// are matched by occurrence index (1st old "Notes" -> 1st new "Notes", 2nd -> 2nd, ...)
+/// instead of every same-titled heading colliding on one scalar slot. See the FIFO-queue
+/// usage below for why: absolute position would churn every downstream id when a paragraph
+/// is inserted above a heading, so occurrence-within-title is the stable key instead.
+private struct PreservedHeading {
+    let id: String
+    let metadata: HeadingMetadata
+}
+
 // MARK: - ProjectDatabase Block Reorder/Replace
 
 extension ProjectDatabase {
@@ -51,17 +61,24 @@ extension ProjectDatabase {
                 .order(Block.Columns.sortOrder)
                 .fetchAll(db)
 
-            var idByTitle: [String: String] = [:]
-            var metadataByTitle: [String: HeadingMetadata] = [:]
+            // Queue existing headings by title, in existing-document order. A duplicate title
+            // (two headings both named "Notes", say) gets a queue of length > 1; consuming the
+            // new parse in order pops the front of the matching title's queue, so the nth
+            // heading titled T in the new parse inherits id+metadata from the nth heading
+            // titled T in the old rows — not just the first (id) and last (metadata) as before,
+            // which churned ids and cross-contaminated metadata on every duplicate title.
+            var headingsByTitle: [String: [PreservedHeading]] = [:]
             for block in existingBlocks where block.blockType == .heading {
-                if idByTitle[block.textContent] == nil {
-                    idByTitle[block.textContent] = block.id
-                }
-                metadataByTitle[block.textContent] = HeadingMetadata(
-                    status: block.status, tags: block.tags,
-                    wordGoal: block.wordGoal, goalType: block.goalType,
-                    aggregateGoal: block.aggregateGoal, aggregateGoalType: block.aggregateGoalType,
-                    isBibliography: block.isBibliography, isNotes: block.isNotes
+                headingsByTitle[block.textContent, default: []].append(
+                    PreservedHeading(
+                        id: block.id,
+                        metadata: HeadingMetadata(
+                            status: block.status, tags: block.tags,
+                            wordGoal: block.wordGoal, goalType: block.goalType,
+                            aggregateGoal: block.aggregateGoal, aggregateGoalType: block.aggregateGoalType,
+                            isBibliography: block.isBibliography, isNotes: block.isNotes
+                        )
+                    )
                 )
             }
 
@@ -83,19 +100,24 @@ extension ProjectDatabase {
             try Block.filter(Block.Columns.projectId == projectId).deleteAll(db)
 
             for var block in blocks {
-                if block.blockType == .heading, let preservedId = idByTitle[block.textContent] {
-                    block.id = preservedId
-                    idByTitle.removeValue(forKey: block.textContent)
-                }
-                if block.blockType == .heading, let meta = metadataByTitle[block.textContent] {
-                    block.status = meta.status
-                    block.tags = meta.tags
-                    block.wordGoal = meta.wordGoal
-                    block.goalType = meta.goalType
-                    block.aggregateGoal = meta.aggregateGoal
-                    block.aggregateGoalType = meta.aggregateGoalType
-                    if meta.isBibliography { block.isBibliography = true }
-                    if meta.isNotes { block.isNotes = true }
+                // Preserve heading ID and metadata by occurrence-indexed title match: pop the
+                // front of this title's queue and apply id + metadata from that SAME popped
+                // entry in one branch (not two separate lookups), so they can never come from
+                // two different existing occurrences of the same title. A unique title has a
+                // one-element queue, which behaves exactly like the old first-match-wins.
+                if block.blockType == .heading,
+                   var queue = headingsByTitle[block.textContent], !queue.isEmpty {
+                    let preserved = queue.removeFirst()
+                    headingsByTitle[block.textContent] = queue
+                    block.id = preserved.id
+                    block.status = preserved.metadata.status
+                    block.tags = preserved.metadata.tags
+                    block.wordGoal = preserved.metadata.wordGoal
+                    block.goalType = preserved.metadata.goalType
+                    block.aggregateGoal = preserved.metadata.aggregateGoal
+                    block.aggregateGoalType = preserved.metadata.aggregateGoalType
+                    if preserved.metadata.isBibliography { block.isBibliography = true }
+                    if preserved.metadata.isNotes { block.isNotes = true }
                 }
                 // Preserve image metadata by imageSrc match
                 if block.blockType == .image, let src = block.imageSrc, !src.isEmpty {
@@ -152,23 +174,72 @@ extension ProjectDatabase {
             }
             let existingBlocks = try existingQuery.order(Block.Columns.sortOrder).fetchAll(db)
 
-            // Build metadata lookup by title for heading blocks
-            var metadataByTitle: [String: HeadingMetadata] = [:]
-            // Build ID lookup by title for heading blocks (preserves zoomedSectionId across re-parses)
-            var idByTitle: [String: String] = [:]
+            // Count how many NEW headings share each title — this is how many old
+            // occurrences of that title the pop queue below will actually reach (the 1st new
+            // heading titled T claims the 1st old occurrence titled T, the 2nd new claims the
+            // 2nd old, ...). Used below to decide, per OLD occurrence, whether its own slot
+            // will ever be popped.
+            var newHeadingCountByTitle: [String: Int] = [:]
+            for block in newBlocks where block.blockType == .heading {
+                newHeadingCountByTitle[block.textContent, default: 0] += 1
+            }
+
+            // Group existing headings by title, in existing-range order (preserves
+            // zoomedSectionId across re-parses), then split each title's occurrences into
+            // protectedHeadingIds (never deleted, never eligible to be popped) vs.
+            // headingsByTitle (the pop queue consumed below). A duplicate title gets a queue
+            // of length > 1; consuming the new parse in order pops the front of the matching
+            // title's queue, so the nth heading titled T in the new parse inherits
+            // id+metadata from the nth QUEUED heading titled T in the old rows —
+            // occurrence-index matching, not absolute position (position would churn every
+            // downstream id when a paragraph is inserted above a heading).
+            //
+            // Real invariant this provides: a machine-managed (isNotes/isBibliography) old
+            // heading is protected specifically when ITS OWN occurrence slot — its position
+            // among old headings sharing its title — falls at or beyond
+            // newHeadingCountByTitle for that title, i.e. no new heading will ever reach it
+            // to pop it. A title wholly absent from newBlocks has zero consumable slots, so
+            // every occurrence of it is protected — the common case, unchanged from before.
+            // The fix only changes behavior on a COUNT MISMATCH: e.g. a plain user heading
+            // that collides in title with the machine "Notes" heading used to strip
+            // protection from every "Notes"-titled occurrence (title-only check), including
+            // the machine one, even when the machine heading's own queue slot was never
+            // going to be reached by the single colliding new heading — silently deleting
+            // the machine section with nothing to bring it back. Because protected
+            // occurrences are excluded from headingsByTitle entirely, they are never
+            // candidates to be popped in the first place; a still-protected heading's queue
+            // slot can never be popped, but that was never the actual bug — the bug was
+            // protection LAPSING (a title leaving the protected set) despite the specific
+            // machine occurrence's slot remaining unreachable. See the must-fix tests below
+            // (title-collision-with-protected-heading) for the exact scenario this guards.
+            var existingHeadingsByTitle: [String: [Block]] = [:]
             for block in existingBlocks where block.blockType == .heading {
-                metadataByTitle[block.textContent] = HeadingMetadata(
-                    status: block.status,
-                    tags: block.tags,
-                    wordGoal: block.wordGoal,
-                    goalType: block.goalType,
-                    aggregateGoal: block.aggregateGoal,
-                    aggregateGoalType: block.aggregateGoalType,
-                    isBibliography: block.isBibliography,
-                    isNotes: block.isNotes
-                )
-                if idByTitle[block.textContent] == nil {
-                    idByTitle[block.textContent] = block.id
+                existingHeadingsByTitle[block.textContent, default: []].append(block)
+            }
+            var protectedHeadingIds: Set<String> = []
+            var headingsByTitle: [String: [PreservedHeading]] = [:]
+            for (title, occurrences) in existingHeadingsByTitle {
+                let consumable = newHeadingCountByTitle[title, default: 0]
+                for (index, block) in occurrences.enumerated() {
+                    if (block.isNotes || block.isBibliography) && index >= consumable {
+                        protectedHeadingIds.insert(block.id)
+                        continue
+                    }
+                    headingsByTitle[title, default: []].append(
+                        PreservedHeading(
+                            id: block.id,
+                            metadata: HeadingMetadata(
+                                status: block.status,
+                                tags: block.tags,
+                                wordGoal: block.wordGoal,
+                                goalType: block.goalType,
+                                aggregateGoal: block.aggregateGoal,
+                                aggregateGoalType: block.aggregateGoalType,
+                                isBibliography: block.isBibliography,
+                                isNotes: block.isNotes
+                            )
+                        )
+                    )
                 }
             }
 
@@ -194,17 +265,12 @@ extension ProjectDatabase {
             // The "# Notes"/"# Bibliography" HEADING itself needs a different rule than the
             // paragraph rows above: it normally survives via the delete-then-reinsert-by-title-
             // match flow below (which already preserves its id/metadata safely), but that only
-            // works if newBlocks actually contains a heading with the same title to trigger the
-            // reinsert. When newBlocks omits it entirely (the same mini-Notes-stripped scenario),
-            // unconditionally deleting it here would orphan it with nothing to bring it back —
-            // so it must be excluded from the delete query in that case specifically.
-            let newHeadingTitles = Set(newBlocks.filter { $0.blockType == .heading }.map { $0.textContent })
-            let protectedHeadingIds = Set(
-                existingBlocks
-                    .filter { $0.blockType == .heading && ($0.isNotes || $0.isBibliography) }
-                    .filter { !newHeadingTitles.contains($0.textContent) }
-                    .map { $0.id }
-            )
+            // works if its own occurrence slot actually gets popped by a same-titled newBlocks
+            // heading (see protectedHeadingIds, computed above alongside the queue). When it
+            // doesn't — newBlocks omits the title entirely (the mini-Notes-stripped scenario),
+            // or a colliding duplicate title consumes an earlier slot and leaves this
+            // occurrence's slot unreached — protectedHeadingIds already excludes it from the
+            // delete query below, so unconditionally deleting it here can no longer orphan it.
 
             // Every row the delete-then-reinsert logic below will NOT touch: preserved
             // (undeleted) non-heading isNotes/isBibliography rows, plus a protected
@@ -327,22 +393,24 @@ extension ProjectDatabase {
                     }
                 }
 
-                // 4. Preserve heading ID by title match (first-match-wins)
-                if block.blockType == .heading, let preservedId = idByTitle[block.textContent] {
-                    block.id = preservedId
-                    idByTitle.removeValue(forKey: block.textContent)
-                }
-
-                // 5. Restore heading metadata by title match
-                if block.blockType == .heading, let meta = metadataByTitle[block.textContent] {
-                    block.status = meta.status
-                    block.tags = meta.tags
-                    block.wordGoal = meta.wordGoal
-                    block.goalType = meta.goalType
-                    block.aggregateGoal = meta.aggregateGoal
-                    block.aggregateGoalType = meta.aggregateGoalType
-                    if meta.isBibliography { block.isBibliography = true }
-                    if meta.isNotes { block.isNotes = true }
+                // 4 & 5. Preserve heading ID and metadata by occurrence-indexed title match: pop
+                // the front of this title's queue and apply id + metadata from that SAME popped
+                // entry in one branch, so they can never come from two different existing
+                // occurrences of the same title. A unique title has a one-element queue, which
+                // behaves exactly like the old first-match-wins.
+                if block.blockType == .heading,
+                   var queue = headingsByTitle[block.textContent], !queue.isEmpty {
+                    let preserved = queue.removeFirst()
+                    headingsByTitle[block.textContent] = queue
+                    block.id = preserved.id
+                    block.status = preserved.metadata.status
+                    block.tags = preserved.metadata.tags
+                    block.wordGoal = preserved.metadata.wordGoal
+                    block.goalType = preserved.metadata.goalType
+                    block.aggregateGoal = preserved.metadata.aggregateGoal
+                    block.aggregateGoalType = preserved.metadata.aggregateGoalType
+                    if preserved.metadata.isBibliography { block.isBibliography = true }
+                    if preserved.metadata.isNotes { block.isNotes = true }
                 }
 
                 // 6. Preserve image metadata by imageSrc match
