@@ -135,7 +135,7 @@ struct EditorCommands: Commands {
                 Button("Inline Code") {
                     NotificationCenter.default.post(name: .toggleInlineCode, object: nil)
                 }
-                .keyboardShortcut("c", modifiers: [.command, .shift])
+                .keyboardShortcut("`", modifiers: [.command, .option])
 
                 Divider()
 
@@ -150,14 +150,22 @@ struct EditorCommands: Commands {
                 Button("Section Break") {
                     NotificationCenter.default.post(name: .insertSectionBreak, object: nil)
                 }
+                .keyboardShortcut(.return, modifiers: [.command, .shift])
 
                 Button("Highlight") {
                     NotificationCenter.default.post(name: .toggleHighlight, object: nil)
                 }
+                .keyboardShortcut("h", modifiers: [.command, .shift])
+
+                Button("Citation...") {
+                    NotificationCenter.default.post(name: .insertCitation, object: nil)
+                }
+                .keyboardShortcut("k", modifiers: [.command, .shift])
 
                 Button("Footnote") {
                     NotificationCenter.default.post(name: .insertFootnote, object: nil)
                 }
+                .keyboardShortcut("n", modifiers: [.command, .shift])
 
                 Button("Task") {
                     NotificationCenter.default.post(
@@ -166,6 +174,7 @@ struct EditorCommands: Commands {
                         userInfo: ["type": AnnotationType.task]
                     )
                 }
+                .keyboardShortcut("t", modifiers: [.command, .shift])
 
                 Button("Comment") {
                     NotificationCenter.default.post(
@@ -174,6 +183,7 @@ struct EditorCommands: Commands {
                         userInfo: ["type": AnnotationType.comment]
                     )
                 }
+                .keyboardShortcut("c", modifiers: [.command, .shift])
 
                 Button("Reference") {
                     NotificationCenter.default.post(
@@ -182,18 +192,22 @@ struct EditorCommands: Commands {
                         userInfo: ["type": AnnotationType.reference]
                     )
                 }
+                .keyboardShortcut("r", modifiers: [.command, .shift])
 
                 Button("Image...") {
                     NotificationCenter.default.post(name: .requestInsertImage, object: nil)
                 }
+                .keyboardShortcut("i", modifiers: [.command, .shift])
 
                 Button("Table") {
                     NotificationCenter.default.post(name: .requestInsertTable, object: nil)
                 }
+                .keyboardShortcut("d", modifiers: [.command, .shift])
 
                 Button("Equation...") {
                     NotificationCenter.default.post(name: .requestInsertEquation, object: nil)
                 }
+                .keyboardShortcut("e", modifiers: [.command, .shift])
 
                 Divider()
 
@@ -234,6 +248,7 @@ extension Notification.Name {
     static let proofingSettingsChanged = Notification.Name("proofingSettingsChanged")
     static let openProofingPreferences = Notification.Name("openProofingPreferences")
     static let proofingConnectionStatusChanged = Notification.Name("proofingConnectionStatusChanged")
+    /// Posted to insert a section break at the cursor (Insert > Section Break menu, Cmd+Shift+Return)
     static let insertSectionBreak = Notification.Name("insertSectionBreak")
     static let insertDocumentAnnotation = Notification.Name("insertDocumentAnnotation")
 

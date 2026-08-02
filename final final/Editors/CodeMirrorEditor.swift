@@ -567,9 +567,11 @@ struct CodeMirrorEditor: NSViewRepresentable {
                 forName: .insertLink, object: nil, queue: .main
             ) { [weak self] _ in self?.executeFormatting("insertLink") }
 
-            // Subscribe to insert citation notification (toolbar "Cite" button) — opens the
-            // CAYW picker for a brand-new citation at the current cursor. (Note: unlike
-            // Milkdown, ⌘⇧K is not wired in Source Mode.)
+            // Subscribe to insert citation notification (toolbar "Cite" button, or the
+            // native Insert > Citation... menu item's ⌘⇧K) — opens the CAYW picker for a
+            // brand-new citation at the current cursor. The native menu shortcut now
+            // works in Source Mode too (EditorCommands.swift posts .insertCitation, which
+            // both editors observe identically).
             insertCitationObserver = NotificationCenter.default.addObserver(
                 forName: .insertCitation, object: nil, queue: .main
             ) { [weak self] _ in self?.executeFormatting("insertCitation") }
