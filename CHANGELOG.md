@@ -14,6 +14,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed
 
 - **Most of the Insert menu's keyboard shortcuts never actually worked, in either editor** — Task, Comment, Reference, Citation, Footnote, and Image were all advertised in the Getting Started guide with shortcuts that did nothing, because the menu items had never been wired up to respond to a key press. Section Break and Highlight had the same problem. All of them work now, in both the formatted and source editors. Citation, which used to work only in the formatted editor, now works in the source editor too. Inline Code has moved from ⌘⇧C to ⌘⌥` (Option and the backtick key), so ⌘⇧C now inserts a comment the way the Insert menu and Getting Started guide always said it would.
+- **A second heading with the same title as an earlier one could lose its identity every time the document was re-parsed** — its tags, status, and other metadata could jump onto the first heading with that title instead, and a plain heading that happened to share a title with the built-in Notes or Bibliography section could delete that section's identity outright. Duplicate-titled headings now keep their own identity across edits.
+- **Citing a reference from Zotero could fail with a "not found" error or show a red, broken citation placeholder** when that reference's citation key didn't match its underlying Zotero ID — which happens with older references carrying a legacy "Citation Key" entry in Zotero's Extra field. Citation lookup, caching, and insertion now match on the correct underlying ID throughout, so these references cite correctly.
 
 ## [0.2.118] - 2026-07-31
 
