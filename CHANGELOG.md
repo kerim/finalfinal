@@ -6,15 +6,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-### Added
-
-- A new **Citation…** item in the Insert menu.
-- Table and Equation get keyboard shortcuts for the first time (⌘⇧D and ⌘⇧E).
-
-### Fixed
-
-- **Most of the Insert menu's keyboard shortcuts never actually worked, in either editor** — Task, Comment, Reference, Citation, Footnote, and Image were all advertised in the Getting Started guide with shortcuts that did nothing, because the menu items had never been wired up to respond to a key press. Section Break and Highlight had the same problem. All of them work now, in both the formatted and source editors. Citation, which used to work only in the formatted editor, now works in the source editor too. Inline Code has moved from ⌘⇧C to ⌘⌥` (Option and the backtick key), so ⌘⇧C now inserts a comment the way the Insert menu and Getting Started guide always said it would.
-
 ## [0.2.118] - 2026-07-31
 
 ### Fixed

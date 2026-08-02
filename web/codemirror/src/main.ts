@@ -183,6 +183,11 @@ function initEditor() {
           return true;
         },
       },
+      // Cmd+Shift+E: Inline Code (redundant with Swift menu shortcut, fallback for web-only dev)
+      {
+        key: 'Mod-Shift-e',
+        run: () => toggleInlineCode(),
+      },
     ]),
     EditorView.lineWrapping,
     EditorView.theme({

@@ -425,10 +425,18 @@ async function initEditor() {
     }
   });
 
-  // NOTE: Cmd+Shift+K citation insertion is handled by the macOS menu command
-  // (EditorCommands.swift), which posts .insertCitation — observed by both editors
-  // (MilkdownCoordinator+NotificationObservers.swift, CodeMirrorEditor.swift).
-  // No JS keydown handler needed here — it would double-fire with the native menu.
+  // Add keyboard shortcut: Cmd+Shift+K opens citation picker
+  document.addEventListener(
+    'keydown',
+    (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'k') {
+        e.preventDefault();
+        e.stopPropagation();
+        insertCitationAtCursor();
+      }
+    },
+    true
+  );
 
   // NOTE: Cmd+Shift+N footnote insertion is handled by the macOS menu command
   // (EditorCommands.swift), which calls evaluateJavaScript("insertFootnote()").

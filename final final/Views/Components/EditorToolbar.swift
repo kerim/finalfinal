@@ -89,14 +89,14 @@ struct EditorToolbar: ToolbarContent {
             } label: {
                 Label("Table", systemImage: "tablecells")
             }
-            .help("Insert table (⌘⇧D)")
+            .help("Insert table")
 
             Button {
                 NotificationCenter.default.post(name: .requestInsertEquation, object: nil)
             } label: {
                 Label("Math", systemImage: "function")
             }
-            .help("Insert equation (⌘⇧E)")
+            .help("Insert equation")
         }
 
         ToolbarItemGroup(placement: .primaryAction) {

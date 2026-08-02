@@ -73,7 +73,7 @@ extension Notification.Name {
     static let toggleBlockquote = Notification.Name("toggleBlockquote")
     /// Posted to toggle code block on current block
     static let toggleCodeBlock = Notification.Name("toggleCodeBlock")
-    /// Posted to toggle inline code on selected text (Cmd+Option+`)
+    /// Posted to toggle inline code on selected text
     static let toggleInlineCode = Notification.Name("toggleInlineCode")
     /// Posted to insert a link at the cursor
     static let insertLink = Notification.Name("insertLink")
@@ -94,11 +94,11 @@ extension Notification.Name {
     static let scrollToFootnoteDefinition = Notification.Name("scrollToFootnoteDefinition")
     /// Posted to set zoom footnote state in JS editors (isZoomMode + max label)
     static let setZoomFootnoteState = Notification.Name("setZoomFootnoteState")
-    /// Posted to request image picker dialog (Insert > Image menu, Cmd+Shift+I)
+    /// Posted to request image picker dialog (Insert > Image menu)
     static let requestInsertImage = Notification.Name("requestInsertImage")
-    /// Posted to insert a new 3×2 table at the cursor (Insert > Table menu + toolbar button, Cmd+Shift+D)
+    /// Posted to insert a new 3×2 table at the cursor (Insert > Table menu + toolbar button)
     static let requestInsertTable = Notification.Name("requestInsertTable")
-    /// Posted to open the equation dialog (Insert > Equation menu + toolbar button, Cmd+Shift+E)
+    /// Posted to open the equation dialog (Insert > Equation menu + toolbar button)
     static let requestInsertEquation = Notification.Name("requestInsertEquation")
 }
 
