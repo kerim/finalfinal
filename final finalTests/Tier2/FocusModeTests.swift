@@ -19,9 +19,12 @@ struct FocusModeTests {
     /// Creates a fresh EditorViewState with test state cleared.
     /// CRITICAL: clearTestState() MUST be called BEFORE creating EditorViewState,
     /// because focusModeEnabled reads UserDefaults at property init time.
+    /// Also resets FullScreenManager's static state so no observer/watchdog/pending
+    /// intent leaks in from a previous test.
     @MainActor
     private func makeSUT() -> EditorViewState {
         TestMode.clearTestState()
+        FullScreenManager.resetForTesting()
         return EditorViewState()
     }
 
@@ -31,8 +34,9 @@ struct FocusModeTests {
     @MainActor
     func enterSetsFocusModeEnabled() async {
         let sut = makeSUT()
+        defer { FullScreenManager.resetForTesting() }  // also reset after, not just before (makeSUT) -- protects the next suite
 
-        await sut.enterFocusMode()
+        sut.enterFocusMode()
 
         #expect(sut.focusModeEnabled == true)
     }
@@ -41,9 +45,10 @@ struct FocusModeTests {
     @MainActor
     func enterCapturesSnapshot() async {
         let sut = makeSUT()
+        defer { FullScreenManager.resetForTesting() }  // also reset after, not just before (makeSUT) -- protects the next suite
         #expect(sut.preFocusModeState == nil)
 
-        await sut.enterFocusMode()
+        sut.enterFocusMode()
 
         #expect(sut.preFocusModeState != nil)
     }
@@ -52,11 +57,12 @@ struct FocusModeTests {
     @MainActor
     func enterHidesSidebars() async {
         let sut = makeSUT()
+        defer { FullScreenManager.resetForTesting() }  // also reset after, not just before (makeSUT) -- protects the next suite
         sut.isOutlineSidebarVisible = true
         sut.isAnnotationPanelVisible = true
 
         // Default settings hide both sidebars
-        await sut.enterFocusMode()
+        sut.enterFocusMode()
 
         #expect(sut.isOutlineSidebarVisible == false)
         #expect(sut.isAnnotationPanelVisible == false)
@@ -68,13 +74,14 @@ struct FocusModeTests {
     @MainActor
     func exitRestoresSidebars() async {
         let sut = makeSUT()
+        defer { FullScreenManager.resetForTesting() }  // also reset after, not just before (makeSUT) -- protects the next suite
         sut.isOutlineSidebarVisible = true
         sut.isAnnotationPanelVisible = true
 
-        await sut.enterFocusMode()
+        sut.enterFocusMode()
         #expect(sut.isOutlineSidebarVisible == false)
 
-        await sut.exitFocusMode()
+        sut.exitFocusMode()
         #expect(sut.isOutlineSidebarVisible == true)
         #expect(sut.isAnnotationPanelVisible == true)
     }
@@ -83,11 +90,12 @@ struct FocusModeTests {
     @MainActor
     func exitClearsSnapshot() async {
         let sut = makeSUT()
+        defer { FullScreenManager.resetForTesting() }  // also reset after, not just before (makeSUT) -- protects the next suite
 
-        await sut.enterFocusMode()
+        sut.enterFocusMode()
         #expect(sut.preFocusModeState != nil)
 
-        await sut.exitFocusMode()
+        sut.exitFocusMode()
         #expect(sut.preFocusModeState == nil)
     }
 
@@ -95,11 +103,12 @@ struct FocusModeTests {
     @MainActor
     func exitDisablesFocusMode() async {
         let sut = makeSUT()
+        defer { FullScreenManager.resetForTesting() }  // also reset after, not just before (makeSUT) -- protects the next suite
 
-        await sut.enterFocusMode()
+        sut.enterFocusMode()
         #expect(sut.focusModeEnabled == true)
 
-        await sut.exitFocusMode()
+        sut.exitFocusMode()
         #expect(sut.focusModeEnabled == false)
     }
 
@@ -109,13 +118,14 @@ struct FocusModeTests {
     @MainActor
     func roundTripPreservesSidebarState() async {
         let sut = makeSUT()
+        defer { FullScreenManager.resetForTesting() }  // also reset after, not just before (makeSUT) -- protects the next suite
 
         // Start with custom sidebar state: left visible, right hidden
         sut.isOutlineSidebarVisible = true
         sut.isAnnotationPanelVisible = false
 
-        await sut.enterFocusMode()
-        await sut.exitFocusMode()
+        sut.enterFocusMode()
+        sut.exitFocusMode()
 
         #expect(sut.isOutlineSidebarVisible == true, "Left sidebar should be restored")
         // Right sidebar was already hidden, focus mode should not have captured it
@@ -130,12 +140,13 @@ struct FocusModeTests {
     @MainActor
     func enterWhenAlreadyInFocusModeIsNoOp() async {
         let sut = makeSUT()
+        defer { FullScreenManager.resetForTesting() }  // also reset after, not just before (makeSUT) -- protects the next suite
 
-        await sut.enterFocusMode()
+        sut.enterFocusMode()
         let snapshotAfterFirst = sut.preFocusModeState
 
         // Second enter should be guarded — snapshot should not change
-        await sut.enterFocusMode()
+        sut.enterFocusMode()
         #expect(sut.preFocusModeState?.wasInFullScreen == snapshotAfterFirst?.wasInFullScreen)
         #expect(sut.preFocusModeState?.outlineSidebarVisible == snapshotAfterFirst?.outlineSidebarVisible)
     }
@@ -144,10 +155,11 @@ struct FocusModeTests {
     @MainActor
     func exitWhenNotInFocusModeIsNoOp() async {
         let sut = makeSUT()
+        defer { FullScreenManager.resetForTesting() }  // also reset after, not just before (makeSUT) -- protects the next suite
         #expect(sut.focusModeEnabled == false)
 
         // Should not crash or change state
-        await sut.exitFocusMode()
+        sut.exitFocusMode()
         #expect(sut.focusModeEnabled == false)
         #expect(sut.preFocusModeState == nil)
     }
@@ -158,8 +170,9 @@ struct FocusModeTests {
     @MainActor
     func enterSetsToolbarStatusBarFlags() async {
         let sut = makeSUT()
+        defer { FullScreenManager.resetForTesting() }  // also reset after, not just before (makeSUT) -- protects the next suite
 
-        await sut.enterFocusMode()
+        sut.enterFocusMode()
 
         // Default settings hide both
         #expect(sut.focusModeHidesToolbar == true)
@@ -170,9 +183,10 @@ struct FocusModeTests {
     @MainActor
     func exitClearsToolbarStatusBarFlags() async {
         let sut = makeSUT()
+        defer { FullScreenManager.resetForTesting() }  // also reset after, not just before (makeSUT) -- protects the next suite
 
-        await sut.enterFocusMode()
-        await sut.exitFocusMode()
+        sut.enterFocusMode()
+        sut.exitFocusMode()
 
         #expect(sut.focusModeHidesToolbar == false)
         #expect(sut.focusModeHidesStatusBar == false)

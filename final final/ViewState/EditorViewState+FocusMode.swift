@@ -9,37 +9,39 @@ import SwiftUI
 
 extension EditorViewState {
 
-    /// Simple toggle for legacy callers (synchronous wrapper)
+    /// Simple toggle for legacy callers
     func toggleFocusMode() {
-        Task {
-            if focusModeEnabled {
-                await exitFocusMode()
-            } else {
-                await enterFocusMode()
-            }
+        if focusModeEnabled {
+            exitFocusMode()
+        } else {
+            enterFocusMode()
         }
     }
 
     /// Enter focus mode with configurable UI hiding based on preferences
-    func enterFocusMode() async {
+    func enterFocusMode() {
         guard !focusModeEnabled else { return }
 
         let settings = FocusModeSettingsManager.shared
 
-        // 1. Capture pre-focus state — only for elements that will be modified
+        // 1. Capture pre-focus state — only for elements that will be modified.
+        // wasInFullScreen deliberately uses isSettledFullScreen(), NOT isEffectivelyFullScreen():
+        // an .entering phase here might be a still-unresolved request from an earlier,
+        // already-ended Focus Mode session (e.g. one interrupted mid-transition), not a real
+        // pre-existing full-screen state the user set independently. Treating that as "already
+        // full screen" is what stranded users in full screen after exiting Focus Mode, having
+        // never asked for native full screen at all. See FullScreenTransitionModel.isSettledFullScreen().
         preFocusModeState = FocusModeSnapshot(
-            wasInFullScreen: FullScreenManager.isInFullScreen(),
+            wasInFullScreen: FullScreenManager.isSettledFullScreen(),
             outlineSidebarVisible: settings.hideLeftSidebar ? isOutlineSidebarVisible : nil,
             annotationPanelVisible: settings.hideRightSidebar ? isAnnotationPanelVisible : nil,
             annotationDisplayModes: settings.hideRightSidebar ? annotationDisplayModes : nil
         )
 
-        // 2. Enter full screen (if not already)
-        if !FullScreenManager.isInFullScreen() {
-            FullScreenManager.enterFullScreen()
-            // Wait for full screen animation to complete (~500ms, use 600ms for safety)
-            try? await Task.sleep(nanoseconds: 600_000_000)
-        }
+        // 2. Enter full screen. FullScreenManager coalesces this against any transition
+        // already in flight, so it's always safe to call unconditionally — no need to check
+        // current state first, and no need to wait for the animation here.
+        FullScreenManager.request(.fullScreen)
 
         // 3. Conditionally hide sidebars with animation
         withAnimation(.easeInOut(duration: 0.3)) {
@@ -66,7 +68,7 @@ extension EditorViewState {
     }
 
     /// Exit focus mode, restoring only the elements that were modified on entry
-    func exitFocusMode() async {
+    func exitFocusMode() {
         guard focusModeEnabled else { return }
 
         guard let snapshot = preFocusModeState else {
@@ -78,10 +80,8 @@ extension EditorViewState {
         }
 
         // 1. Exit full screen ONLY if focus mode entered it (respect user's original state)
-        if FullScreenManager.isInFullScreen() && !snapshot.wasInFullScreen {
-            FullScreenManager.exitFullScreen()
-            // Wait for full screen exit animation to complete
-            try? await Task.sleep(nanoseconds: 600_000_000)
+        if !snapshot.wasInFullScreen {
+            FullScreenManager.request(.windowed)
         }
 
         // 2. Restore only elements that were captured (non-nil)

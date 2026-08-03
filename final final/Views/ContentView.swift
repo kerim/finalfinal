@@ -264,13 +264,15 @@ struct ContentView: View {
             }
             await initializeProject()
 
-            // Restore focus mode from previous session if needed
-            // Wait 500ms for window to stabilize before entering full screen
+            // Restore focus mode from previous session if needed. The launch race between
+            // this and FullScreenManager.bootstrap(window:) is now structural, not timing-based:
+            // whichever runs first, the requested full-screen intent survives (see
+            // FullScreenManager.request(_:)'s "no window yet" path), so no artificial delay
+            // is needed here.
             if editorState.focusModeEnabled && editorState.preFocusModeState == nil {
-                try? await Task.sleep(nanoseconds: 500_000_000)
                 // Re-enter focus mode to capture fresh pre-state and apply full screen
                 editorState.focusModeEnabled = false  // Reset first
-                await editorState.enterFocusMode()
+                editorState.enterFocusMode()
             }
         }
     }

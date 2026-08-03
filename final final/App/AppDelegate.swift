@@ -21,8 +21,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// Reference to auto-backup service for quit-time snapshot
     weak var autoBackupService: AutoBackupService?
 
-    /// Reference to main window for close interception
-    private var mainWindow: NSWindow?
+    /// Reference to main window for close interception. Read (not written) by
+    /// `FullScreenManager`, which resolves the window to act on via `AppDelegate.shared?.mainWindow`.
+    private(set) var mainWindow: NSWindow?
 
     /// UserDefaults key for the manually-persisted main window frame. Not private: read by
     /// `FinalFinalApp`'s `.defaultWindowPlacement` too, so the window is created at the saved
@@ -172,6 +173,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     "[AppDelegate] Set window delegate for Cmd-W interception; "
                         + "actual frame at launch=\(window.frame), saved frame=\(savedFrame)"
                 )
+                FullScreenManager.bootstrap(window: window)
                 self?.restoreFullScreenIfNeeded(window)
 
                 // If macOS restored the window to fullscreen (Saved Application State),
@@ -210,6 +212,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                         if let window = NSApp.windows.first, self?.mainWindow == nil {
                             self?.mainWindow = window
                             window.delegate = self
+                            FullScreenManager.bootstrap(window: window)
                             self?.restoreFullScreenIfNeeded(window)
                         }
                     }
@@ -246,7 +249,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
               !window.styleMask.contains(.fullScreen) else { return }
 
         DebugLog.log(.lifecycle, "[AppDelegate] Restoring full screen")
-        window.toggleFullScreen(nil)
+        FullScreenManager.request(.fullScreen)
     }
 
     /// Set up NSEvent local monitor for Esc key to exit focus mode
@@ -259,10 +262,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 return event  // Pass through if not Esc or not in focus mode
             }
 
-            // Exit focus mode
-            Task { @MainActor in
-                await editorState.exitFocusMode()
-            }
+            // Exit focus mode. This monitor closure already runs on the main actor (its
+            // enclosing class is @MainActor and NSEvent.addLocalMonitorForEvents's handler
+            // parameter isn't @Sendable, so Swift infers the closure's isolation from context)
+            // and exitFocusMode() is synchronous, so call it directly. Deferring via Task here
+            // used to let a rapid next keystroke's synchronous toggleFocusMode() run BEFORE
+            // this exit actually applied, ordering the two by main-queue scheduling instead of
+            // by keypress order.
+            editorState.exitFocusMode()
 
             // Consume the event to prevent other handlers
             return nil
@@ -448,6 +455,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if !TestMode.isTesting, (notification.object as? NSWindow) === mainWindow {
             UserDefaults.standard.set(false, forKey: Self.mainWindowWasFullScreenDefaultsKey)
         }
+    }
+
+    /// No `did*` notification follows a failed transition, so without this FullScreenManager's
+    /// watchdog would eventually fire and resync toward the wrong side (it trusts an unconfirmed
+    /// transition probably succeeded) — see `FullScreenManager.notifyTransitionFailed()`.
+    func windowDidFailToEnterFullScreen(_ window: NSWindow) {
+        FullScreenManager.notifyTransitionFailed()
+    }
+
+    /// See `windowDidFailToEnterFullScreen(_:)`.
+    func windowDidFailToExitFullScreen(_ window: NSWindow) {
+        FullScreenManager.notifyTransitionFailed()
     }
 
     func windowDidResize(_ notification: Notification) {
