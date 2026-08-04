@@ -25,9 +25,14 @@ struct DiagnosticLogFileTests {
     private func withLoggingEnabled(_ enabled: Bool, _ body: () -> Void) {
         let suiteName = "com.kerim.final-final.tests.\(UUID().uuidString)"
         let testDefaults = UserDefaults(suiteName: suiteName)!
+        // Write the key BEFORE swapping the seam, not after: swapping `userDefaults` invalidates
+        // `enabledCache` (see its setter), so any read that lands between the swap and the write
+        // below would re-cache a fresh-but-wrong `false` (the key is absent in `testDefaults`
+        // until we write it) -- and nothing would invalidate that cache again before `body()`
+        // reads it.
+        testDefaults.set(enabled, forKey: DiagnosticLogFile.loggingEnabledDefaultsKey)
         let originalUserDefaults = DiagnosticLogFile.userDefaults
         DiagnosticLogFile.userDefaults = testDefaults
-        testDefaults.set(enabled, forKey: DiagnosticLogFile.loggingEnabledDefaultsKey)
         defer {
             DiagnosticLogFile.userDefaults = originalUserDefaults
             testDefaults.removePersistentDomain(forName: suiteName)
@@ -121,6 +126,97 @@ struct DiagnosticLogFileTests {
             contentsOf: destinationDir.appendingPathComponent("diagnostic.log"), encoding: .utf8
         )
         #expect(activeContents?.contains("line 4") == true)
+    }
+
+    /// `isEnabled` caches its UserDefaults read (see `DiagnosticLogFile.enabledCache`).
+    /// Swapping the `userDefaults` seam must invalidate that cache, so a value cached against
+    /// the old store is never returned for the new one.
+    ///
+    /// Note: deliberately does NOT assert the reverse ("without a swap, the cached value stays
+    /// stuck") -- `TestMode.clearTestState()` calls `DiagnosticLogFile.invalidateEnabledCache()`
+    /// and is invoked from setup helpers across many other test suites (e.g.
+    /// `Tier2/FocusModeTests`, `Tier2/ProjectLifecycleTests`, `AppDefaultsTests`). Swift Testing
+    /// runs suites in parallel and `.serialized` here only orders this suite against itself, so
+    /// a concurrent suite's `clearTestState()` call could invalidate the process-global cache
+    /// mid-test and flip such an assertion. This test only relies on values it itself wrote
+    /// being observable after ITS OWN seam swap, which holds regardless of any concurrent
+    /// invalidation elsewhere.
+    @Test func seamSwapInvalidatesEnabledCache() {
+        let suiteNameA = "com.kerim.final-final.tests.\(UUID().uuidString)"
+        let suiteNameB = "com.kerim.final-final.tests.\(UUID().uuidString)"
+        let defaultsA = UserDefaults(suiteName: suiteNameA)!
+        let defaultsB = UserDefaults(suiteName: suiteNameB)!
+        defaultsA.set(false, forKey: DiagnosticLogFile.loggingEnabledDefaultsKey)
+        defaultsB.set(true, forKey: DiagnosticLogFile.loggingEnabledDefaultsKey)
+
+        let originalUserDefaults = DiagnosticLogFile.userDefaults
+        defer {
+            DiagnosticLogFile.userDefaults = originalUserDefaults
+            defaultsA.removePersistentDomain(forName: suiteNameA)
+            defaultsB.removePersistentDomain(forName: suiteNameB)
+        }
+
+        DiagnosticLogFile.userDefaults = defaultsA
+        #expect(DiagnosticLogFile.isEnabled == false)
+
+        // Swapping the seam must invalidate the cache -- if it didn't, this would still read
+        // the cached `false` from defaultsA instead of defaultsB's `true`.
+        DiagnosticLogFile.userDefaults = defaultsB
+        #expect(DiagnosticLogFile.isEnabled == true)
+    }
+
+    /// With the seam held fixed on one store, flipping the underlying key in place is only
+    /// observed once `invalidateEnabledCache()` is called.
+    @Test func invalidateEnabledCachePicksUpAnInPlaceKeyChange() {
+        let suiteName = "com.kerim.final-final.tests.\(UUID().uuidString)"
+        let testDefaults = UserDefaults(suiteName: suiteName)!
+        testDefaults.set(false, forKey: DiagnosticLogFile.loggingEnabledDefaultsKey)
+
+        let originalUserDefaults = DiagnosticLogFile.userDefaults
+        DiagnosticLogFile.userDefaults = testDefaults
+        defer {
+            DiagnosticLogFile.userDefaults = originalUserDefaults
+            testDefaults.removePersistentDomain(forName: suiteName)
+        }
+
+        #expect(DiagnosticLogFile.isEnabled == false)
+
+        testDefaults.set(true, forKey: DiagnosticLogFile.loggingEnabledDefaultsKey)
+        DiagnosticLogFile.invalidateEnabledCache()
+
+        #expect(DiagnosticLogFile.isEnabled == true)
+    }
+
+    /// `TestMode.clearTestState()` is a third production call site that invalidates
+    /// `enabledCache` (alongside the `userDefaults` seam swap above and
+    /// `DiagnosticsSettings.loggingEnabled`'s didSet, covered in
+    /// `DiagnosticsSettingsTests.loggingEnabledDidSetInvalidatesDiagnosticLogFileCache`) --
+    /// deleting its `invalidateEnabledCache()` call would pass the rest of this suite
+    /// unchanged, so it needs its own direct coverage.
+    ///
+    /// Unlike every other test above, this one can't route through a private isolated
+    /// `UserDefaults` suite: `clearTestState()` always operates on `AppDefaults.store` directly,
+    /// not through the `DiagnosticLogFile.userDefaults` seam. So this points the seam AT
+    /// `AppDefaults.store` itself (its default value during a unit test run, but pinned
+    /// explicitly here so the test doesn't depend on no other suite having it mid-swap) rather
+    /// than a throwaway suite. `AppDefaults.store` is a single domain shared by the whole test
+    /// process and `clearTestState()` is called from setup helpers across many other suites
+    /// (see the note on `seamSwapInvalidatesEnabledCache` above) -- like those existing
+    /// cross-suite-invalidation risks, this test only relies on the value it itself wrote being
+    /// observable immediately after its own `set`/prime/`clearTestState()` sequence, not on the
+    /// key staying untouched for the test's full duration.
+    @Test func clearTestStateInvalidatesEnabledCache() {
+        let originalUserDefaults = DiagnosticLogFile.userDefaults
+        DiagnosticLogFile.userDefaults = AppDefaults.store
+        defer { DiagnosticLogFile.userDefaults = originalUserDefaults }
+
+        AppDefaults.store.set(true, forKey: DiagnosticLogFile.loggingEnabledDefaultsKey)
+        DiagnosticLogFile.invalidateEnabledCache()
+        #expect(DiagnosticLogFile.isEnabled == true)  // primes the cache with the pre-clear value
+
+        TestMode.clearTestState()
+
+        #expect(DiagnosticLogFile.isEnabled == false)
     }
 
     @Test func copyLogFilesReturnsEmptyWhenNoLogsExistYetCreatesDestinationDirectory() {

@@ -8,6 +8,7 @@
 //
 
 import Foundation
+import os
 
 /// Appends `DebugLog` lines to disk at
 /// `~/Library/Application Support/com.kerim.final-final/Diagnostics/diagnostic.log`,
@@ -25,7 +26,8 @@ import Foundation
 /// `PipeDataAccumulator` in `ExportService.swift`. `isEnabled` deliberately reads the raw
 /// UserDefaults key directly (thread-safe for reads) instead of going through the `@MainActor`
 /// `DiagnosticsSettings` singleton, so gating a background-thread log call never forces an
-/// actor hop or an `async` `DebugLog.log()`.
+/// actor hop or an `async` `DebugLog.log()`. That read is cached (`enabledCache`, an
+/// `OSAllocatedUnfairLock`) rather than hitting UserDefaults on every call — see `isEnabled`.
 ///
 /// **Write mechanism:** `append(_:)` uses `FileHandle.write(contentsOf:)` — an unbuffered
 /// call straight to the `write(2)` syscall. The kernel has the bytes before the call returns,
@@ -42,11 +44,70 @@ final class DiagnosticLogFile: @unchecked Sendable {
     /// unit test run that never overrides this seam still can't wipe the real domain's
     /// `loggingEnabled` key via `TestMode.clearTestState()`. `nonisolated(unsafe)` because
     /// `isEnabled` (like the rest of this type) must remain readable from arbitrary threads;
-    /// `UserDefaults` itself is thread-safe, and only single-threaded, `.serialized` tests
-    /// ever write to this property.
-    nonisolated(unsafe) static var userDefaults: UserDefaults = AppDefaults.store
+    /// `UserDefaults` itself is thread-safe. Today only `DiagnosticLogFileTests` and
+    /// `DiagnosticsSettingsTests` write this property, each `.serialized` within itself — but
+    /// `.serialized` only orders a suite against its own tests, not against other suites, which
+    /// Swift Testing runs concurrently by default. That gives no protection between those two
+    /// suites, or against a future suite that also writes this property; any such suite needs
+    /// the same single-writer-at-a-time discipline, not a false sense of safety from
+    /// `.serialized` alone. Swapping this seam invalidates `enabledCache` below (via the
+    /// setter), so a test that points it at a different store never observes a value cached from
+    /// the previous one.
+    nonisolated(unsafe) private static var _userDefaults: UserDefaults = AppDefaults.store
+    static var userDefaults: UserDefaults {
+        get { _userDefaults }
+        set {
+            _userDefaults = newValue
+            invalidateEnabledCache()
+        }
+    }
 
-    static var isEnabled: Bool { userDefaults.bool(forKey: loggingEnabledDefaultsKey) }
+    /// Backing cache for `isEnabled`. `nil` means "not cached, next read must hit UserDefaults".
+    private static let enabledCache = OSAllocatedUnfairLock<Bool?>(initialState: nil)
+
+    /// Whether diagnostic logging is enabled. **Cached**, not a live UserDefaults read on every
+    /// call: `append()` below is invoked from arbitrary threads at high frequency (the 500ms
+    /// BlockSyncService polling loop, etc.), and a Time Profiler-verified investigation (see
+    /// `AppDelegate.flushWindowFrame`'s doc comment) found that a `UserDefaults.bool(forKey:)`
+    /// read immediately after a write to the same UserDefaults domain reliably triggers a
+    /// multi-second cfprefsd hang — exactly the failure mode a "just read it every time, it's
+    /// cheap" approach walks into. The cache is refreshed only by `invalidateEnabledCache()`,
+    /// called from this app's own known writers of the underlying key or the `userDefaults`
+    /// seam: the `DiagnosticsSettings.loggingEnabled` setter, `TestMode.clearTestState()`, and
+    /// the `userDefaults` seam's own setter above (used by tests) — never on a timer or read
+    /// count. An external change to the same UserDefaults domain that doesn't go through one of
+    /// those three (e.g. `defaults write` from Terminal, or any other process writing this
+    /// app's UserDefaults domain directly) is NOT observed until one of them happens to run
+    /// afterward and invalidate the cache.
+    ///
+    /// **Non-recursion invariant:** the UserDefaults read below runs *inside* `enabledCache`'s
+    /// lock, and on this process's first-ever access to `userDefaults` also triggers `AppDefaults
+    /// .store`'s lazy initialization (see its own doc comment). `enabledCache`'s lock is not
+    /// recursive, so nothing reachable from `AppDefaults.store`'s init path, and nothing reachable
+    /// from `TestMode.isTesting` (which that init path reads), may ever call `DebugLog.log()` or
+    /// `isEnabled` itself — that would deadlock this thread against itself. Not a bug today
+    /// (verified: neither does), but an invariant a future change to either path must preserve.
+    static var isEnabled: Bool {
+        enabledCache.withLock { cached in
+            if let cached { return cached }
+            // The UserDefaults read MUST happen inside the lock, not before it: reading outside
+            // and only storing the result inside would let a descheduled reader resume after a
+            // concurrent invalidate+flip and clobber the cache with its own now-stale value,
+            // latching the wrong answer until the next invalidation (which may never come).
+            let value = userDefaults.bool(forKey: loggingEnabledDefaultsKey)
+            cached = value
+            return value
+        }
+    }
+
+    /// Forces the next `isEnabled` read to re-fetch from UserDefaults instead of returning the
+    /// cached value. Callers MUST invoke this AFTER the underlying value has actually changed
+    /// (the UserDefaults write has landed, or the `userDefaults` seam has been swapped) — never
+    /// before. Invalidating first, then writing, reopens the same stale-cache race described on
+    /// `isEnabled`: a reader could repopulate the cache from the pre-write value in the gap.
+    static func invalidateEnabledCache() {
+        enabledCache.withLock { $0 = nil }
+    }
 
     static let defaultLogDirectory: URL = {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -77,7 +138,8 @@ final class DiagnosticLogFile: @unchecked Sendable {
         self.maxRotatedFiles = maxRotatedFiles
     }
 
-    /// Appends one line, timestamped. No-op (cheap UserDefaults read) when disabled.
+    /// Appends one line, timestamped. No-op (cached-enabled check, not a live UserDefaults read
+    /// — see `isEnabled`) when disabled.
     func append(_ line: String) {
         guard Self.isEnabled else { return }
         lock.lock(); defer { lock.unlock() }

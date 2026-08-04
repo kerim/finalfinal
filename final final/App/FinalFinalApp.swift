@@ -108,9 +108,8 @@ struct FinalFinalApp: App {
             // *primary* screen's height, since that's what anchors AppKit's global coordinate
             // space (the screen whose origin is (0, 0), not necessarily `.screens.first`).
             if !TestMode.isTesting,
-               let frameString = UserDefaults.standard.string(forKey: AppDelegate.mainWindowFrameDefaultsKey),
+               let savedFrame = WindowFrameStore.load(),
                let primaryScreenHeight = (NSScreen.screens.first(where: { $0.frame.origin == .zero }) ?? NSScreen.screens.first)?.frame.height {
-                let savedFrame = NSRectFromString(frameString)
                 if NSScreen.screens.contains(where: { $0.frame.intersects(savedFrame) }) {
                     let flippedY = primaryScreenHeight - savedFrame.origin.y - savedFrame.height
                     return WindowPlacement(CGPoint(x: savedFrame.origin.x, y: flippedY), size: savedFrame.size)

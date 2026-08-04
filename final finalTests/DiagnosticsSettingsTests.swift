@@ -44,6 +44,37 @@ struct DiagnosticsSettingsTests {
         }
     }
 
+    /// `loggingEnabledRoundTripsThroughUserDefaults` above only proves `DiagnosticsSettings`
+    /// writes the right key into its own seam -- it never touches `DiagnosticLogFile.isEnabled`,
+    /// so it wouldn't catch a deleted or misplaced `invalidateEnabledCache()` call in the
+    /// `loggingEnabled` didSet. This test proves that call actually wires through end-to-end:
+    /// `DiagnosticsSettings.userDefaults` and `DiagnosticLogFile.userDefaults` are two distinct
+    /// statics, so it points BOTH at the SAME isolated suite -- a test that swapped only one of
+    /// them could not observe the other side's read.
+    @Test func loggingEnabledDidSetInvalidatesDiagnosticLogFileCache() {
+        let suiteName = "com.kerim.final-final.tests.\(UUID().uuidString)"
+        let testDefaults = UserDefaults(suiteName: suiteName)!
+        let originalSettingsDefaults = DiagnosticsSettings.userDefaults
+        let originalLogFileDefaults = DiagnosticLogFile.userDefaults
+        DiagnosticsSettings.userDefaults = testDefaults
+        DiagnosticLogFile.userDefaults = testDefaults
+        defer {
+            DiagnosticsSettings.userDefaults = originalSettingsDefaults
+            DiagnosticLogFile.userDefaults = originalLogFileDefaults
+            testDefaults.removePersistentDomain(forName: suiteName)
+        }
+
+        let settings = DiagnosticsSettings.shared
+        let originalValue = settings.loggingEnabled
+        defer { settings.loggingEnabled = originalValue }
+
+        settings.loggingEnabled = true
+        #expect(DiagnosticLogFile.isEnabled == true)
+
+        settings.loggingEnabled = false
+        #expect(DiagnosticLogFile.isEnabled == false)
+    }
+
     @Test func exportDiagnosticCaptureEnabledRoundTripsThroughUserDefaults() {
         withIsolatedUserDefaults { testDefaults in
             let settings = DiagnosticsSettings.shared

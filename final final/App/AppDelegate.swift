@@ -45,6 +45,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// Whether applicationShouldTerminate already flushed content (prevents redundant flush in applicationWillTerminate)
     private var didFlushForQuit = false
 
+    /// Coalesces window-frame writes across a resize/move gesture's many per-tick notifications
+    /// down to a single pending value. See `WindowFrameCoalescer` and `scheduleFrameFlush()`.
+    /// Not private: read/written from `AppDelegate+WindowFramePersistence.swift`, and Swift's
+    /// `private` is file-scoped.
+    var frameCoalescer = WindowFrameCoalescer()
+
+    /// Debounce timer for flushing the coalesced window frame to UserDefaults. See
+    /// `scheduleFrameFlush()` for why it deliberately stays off `.common` run loop mode.
+    /// Not private: read/written from `AppDelegate+WindowFramePersistence.swift`, and Swift's
+    /// `private` is file-scoped.
+    var frameFlushTimer: Timer?
+
     /// URL passed by Finder double-click; consumed by determineInitialState()
     var finderOpenURL: URL?
 
@@ -167,6 +179,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if let window = NSApp.windows.first {
                 self?.mainWindow = window
                 window.delegate = self
+                self?.disableFrameAutosave(for: window)
                 let savedFrame = UserDefaults.standard.string(forKey: Self.mainWindowFrameDefaultsKey) ?? "nil"
                 DebugLog.log(
                     .lifecycle,
@@ -212,6 +225,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                         if let window = NSApp.windows.first, self?.mainWindow == nil {
                             self?.mainWindow = window
                             window.delegate = self
+                            self?.disableFrameAutosave(for: window)
                             FullScreenManager.bootstrap(window: window)
                             self?.restoreFullScreenIfNeeded(window)
                         }
@@ -316,6 +330,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         DebugLog.log(.lifecycle, "[AppDelegate] Application terminating")
+
+        // Unconditional and NOT gated on didFlushForQuit: that flag only tracks whether editor
+        // content was already flushed by applicationShouldTerminate, and has no bearing on
+        // whether a coalesced window-frame write is pending. It also isn't reliably set --
+        // applicationShouldTerminate returns .terminateNow early, without ever setting it, when
+        // there's no editorState or its content is empty (see above). So the frame flush has to
+        // sit outside and independent of that gate, and run on every termination path, not just
+        // the ones that happen to set didFlushForQuit.
+        flushWindowFrame(trigger: "terminate")
+
         // Only flush if applicationShouldTerminate didn't already (safety net for force-quit)
         if !didFlushForQuit {
             editorState?.flushAllSyncCore()   // guaranteed synchronous — identical to today's behavior
@@ -469,26 +493,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         FullScreenManager.notifyTransitionFailed()
     }
 
-    func windowDidResize(_ notification: Notification) {
-        saveMainWindowFrame(from: notification, trigger: "resize")
-    }
-
-    func windowDidMove(_ notification: Notification) {
-        saveMainWindowFrame(from: notification, trigger: "move")
-    }
-
-    /// Explicitly saves the main window's frame to UserDefaults on every move/resize.
-    /// See `restoreFullScreenIfNeeded` for why frame persistence bypasses AppKit's frame-autosave APIs
-    /// entirely rather than using `saveFrame(usingName:)`.
-    private func saveMainWindowFrame(from notification: Notification, trigger: String) {
-        guard !TestMode.isTesting else { return }
-        guard let window = notification.object as? NSWindow, window === mainWindow else { return }
-        // Entering/exiting full screen fires resize/move with the screen's own bounds — not a
-        // real windowed frame. Skip so the last genuine windowed frame is left untouched;
-        // full-screen state itself is tracked separately (see windowDidEnterFullScreen).
-        guard !window.styleMask.contains(.fullScreen) else { return }
-
-        UserDefaults.standard.set(NSStringFromRect(window.frame), forKey: Self.mainWindowFrameDefaultsKey)
-        DebugLog.log(.lifecycle, "[AppDelegate] Saved main window frame (trigger: \(trigger)): \(window.frame)")
-    }
+    // Resize/move persistence, the debounced flush, and applicationDidResignActive's flush
+    // trigger live in AppDelegate+WindowFramePersistence.swift.
 }

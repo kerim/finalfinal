@@ -58,5 +58,9 @@ enum TestMode {
         defaults.removeObject(forKey: "hasSeenSubtreeDragHint")
         defaults.removeObject(forKey: DiagnosticLogFile.loggingEnabledDefaultsKey)
         defaults.removeObject(forKey: "com.kerim.final-final.diagnosticsLastReportGeneratedAt")
+        // Must come AFTER the removeObject above -- invalidating first would leave a window
+        // where a concurrent isEnabled read on another thread could repopulate the cache with
+        // the pre-removal value. See DiagnosticLogFile.invalidateEnabledCache's doc comment.
+        DiagnosticLogFile.invalidateEnabledCache()
     }
 }

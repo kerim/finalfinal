@@ -27,7 +27,13 @@ final class DiagnosticsSettings {
     /// Off by default. Gates DiagnosticLogFile writes (all 17+1 DebugLog categories),
     /// independent of DebugLog's existing #if DEBUG console path.
     var loggingEnabled: Bool {
-        didSet { Self.userDefaults.set(loggingEnabled, forKey: DiagnosticLogFile.loggingEnabledDefaultsKey) }
+        didSet {
+            Self.userDefaults.set(loggingEnabled, forKey: DiagnosticLogFile.loggingEnabledDefaultsKey)
+            // Must come AFTER the write above -- invalidating first would leave a window where a
+            // concurrent isEnabled read on another thread could repopulate the cache with the
+            // pre-write value. See DiagnosticLogFile.invalidateEnabledCache's doc comment.
+            DiagnosticLogFile.invalidateEnabledCache()
+        }
     }
 
     /// Off by default. Gates ExportService's diagnostic capture dump — a temporary
