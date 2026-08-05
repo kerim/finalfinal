@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Entering Focus Mode (⌘⇧F) paused for about half a second before the side panels moved** — the delay came from two hard-coded waits meant to outlast a system animation, but they didn't reliably match how long that animation actually took. Focus Mode now enters and exits instantly.
+- **Pressing Esc while the window was still animating into or out of full screen could leave it stuck in full screen with Focus Mode turned off** — macOS silently discards a request to exit full screen if it arrives while the previous transition is still in progress, with no indication anything went wrong. A request that arrives mid-transition is now held and applied once the transition finishes, instead of being lost.
+- **Dragging a window's corner to resize it could feel sluggish** — every tiny movement during the drag was being saved to disk immediately. The window's position is now saved once per drag instead of on every pixel of movement, and is still saved reliably if you quit while mid-drag.
+- **The app's settings file could balloon to thousands of stale entries over time, gradually slowing down window dragging and tab switching, and causing a brief spinner when entering Focus Mode** — the app was generating a new, disposable internal bookkeeping entry for its main window and sidebar on every relaunch, without ever cleaning up the old ones. The main window and sidebar now reuse the same entry across relaunches, and any old orphaned entries left behind by past versions are cleaned up automatically.
+
 ## [0.2.119] - 2026-08-03
 
 ### Added
