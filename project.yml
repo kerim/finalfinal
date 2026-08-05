@@ -21,6 +21,18 @@ schemes:
       executable: final final
     test:
       config: Debug
+      # Forwards TEST_RUNNER_FF_E2E_SHOT_DIR (a build-setting override
+      # `vmtest run` passes on the xcodebuild command line — see
+      # scripts/vmtest/guest/run.sh) into the XCUITest RUNNER process's own
+      # environment as FF_E2E_SHOT_DIR. This is NOT automatic: xcodebuild
+      # forwarding a TEST_RUNNER_-prefixed build setting only reaches the
+      # runner if the scheme's Test Action explicitly references it here —
+      # found live (Verification 5) that the "e2e-shots" scratch screenshot
+      # landed in E2EShotDir's fallback (NSTemporaryDirectory()) instead of
+      # the intended container path, because this entry didn't exist yet and
+      # the runner process never actually saw FF_E2E_SHOT_DIR at all.
+      environmentVariables:
+        FF_E2E_SHOT_DIR: $(TEST_RUNNER_FF_E2E_SHOT_DIR)
       targets:
         # parallelizable: false is pinned explicitly (xcodegen's own default) —
         # a dropped/flipped value here previously caused flaky isHittable UI

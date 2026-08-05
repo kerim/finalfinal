@@ -2,8 +2,17 @@
 #
 # merge-check.sh — Merge-readiness gate
 #
-# Runs Tier 1 (Silent Killers) + Tier 2 (Visible Breakage) tests sequentially.
-# Exit 0 = READY, Exit 1 = NOT READY.
+# Runs Tier 1 (Silent Killers, host unit tests) + Tier 2 (Visible Breakage,
+# macOS UI tests) sequentially. Exit 0 = READY, Exit 1 = NOT READY.
+#
+# The UI step runs through vmtest — macOS UI tests run in a disposable VM
+# now, not on this screen (see scripts/vmtest/README.md). It calls `vmtest
+# run` WITHOUT --detach, which blocks until the whole suite finishes
+# (several minutes). That is fine from your own terminal but WILL exceed the
+# Bash tool's 600s cap if Claude runs this script directly — this script's
+# full form is for the user's own terminal. From Claude, use
+# `scripts/vmtest/vmtest run --detach` plus `vmtest wait`/`vmtest status`
+# instead of invoking this script for the UI step.
 #
 # Usage: ./scripts/merge-check.sh
 #
@@ -110,24 +119,18 @@ else
 fi
 
 # ─────────────────────────────────────────────
-# Step 3: Tier 2 — UI Tests (Visible Breakage)
+# Step 3: Tier 2 — UI Tests (Visible Breakage), via vmtest
 # ─────────────────────────────────────────────
-print_header "Step 3/3: Tier 2 — UI Tests (Visible Breakage)"
+print_header "Step 3/3: Tier 2 — UI Tests (Visible Breakage) — vmtest"
 
 cd "$PROJECT_DIR"
 start_time=$(date +%s)
-if xcodebuild test \
-    -scheme "$SCHEME" \
-    -destination "$DESTINATION" \
-    -only-testing "final finalUITests" \
-    CODE_SIGN_IDENTITY="-" CODE_SIGN_STYLE=Manual \
-    -quiet \
-    2>&1 | tail -5; then
+if "$PROJECT_DIR/scripts/vmtest/vmtest" run --scope "final finalUITests" 2>&1 | tail -20; then
     end_time=$(date +%s)
-    print_result "UI tests (final finalUITests)" "pass" "$((end_time - start_time))s"
+    print_result "UI tests (final finalUITests, via vmtest)" "pass" "$((end_time - start_time))s"
 else
     end_time=$(date +%s)
-    print_result "UI tests (final finalUITests)" "fail" "$((end_time - start_time))s"
+    print_result "UI tests (final finalUITests, via vmtest)" "fail" "$((end_time - start_time))s"
 fi
 
 # ─────────────────────────────────────────────

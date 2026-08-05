@@ -122,6 +122,53 @@ extension XCUIElement {
     }
 }
 
+// MARK: - Screenshot Evidence Helpers
+
+enum E2EShotDir {
+    /// Where a disposable e2e test should write its screenshot evidence.
+    ///
+    /// Reads `FF_E2E_SHOT_DIR` from the process environment — set by
+    /// `vmtest` (as `TEST_RUNNER_FF_E2E_SHOT_DIR`, which xcodebuild forwards
+    /// to the runner process with the prefix stripped) or directly by the
+    /// `e2e-verify` skill for a host run.
+    ///
+    /// Three cases, deliberately distinct:
+    /// - Unset → `NSTemporaryDirectory()`, which the runner can always write
+    ///   to (already relied on by `TestFixtureHelper.fixturePath` above).
+    ///   This is the safe default when nobody wired anything up.
+    /// - Set to an absolute path (starts with "/") → used as-is. This is the
+    ///   host case: `e2e-verify`/superdev pass an explicit run-notes folder.
+    /// - Set to a bare relative name → resolved against `NSHomeDirectory()`
+    ///   **at runtime, inside this process**. This is the VM-guest case:
+    ///   `vmtest` cannot know the runner's container path in advance (it
+    ///   contains a UUID chosen when the runner launches), so it passes a
+    ///   relative name and lets the sandboxed process resolve its own home —
+    ///   which the POC proved is the one writable location in the guest, and
+    ///   which matches `export-evidence.sh`'s existing container-glob
+    ///   discovery (`Containers/*xctrunner/Data/e2e-shots`).
+    ///
+    /// Never a *bare* `NSHomeDirectory()` default — outside a VM the runner's
+    /// home can be the user's real home, and a silent default there would
+    /// grow an unpruned `~/e2e-shots/`. Here it is only ever reached when
+    /// `vmtest` deliberately opts in with a relative value.
+    static var path: String {
+        guard let dir = ProcessInfo.processInfo.environment["FF_E2E_SHOT_DIR"], !dir.isEmpty else {
+            return NSTemporaryDirectory() + "ff-e2e-shots"
+        }
+        if dir.hasPrefix("/") {
+            return dir
+        }
+        return NSHomeDirectory() + "/" + dir
+    }
+
+    /// `path` as a URL, creating the directory if it does not exist yet.
+    static var url: URL {
+        let url = URL(fileURLWithPath: path)
+        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
+    }
+}
+
 // MARK: - Fixture Helpers
 
 enum TestFixtureHelper {

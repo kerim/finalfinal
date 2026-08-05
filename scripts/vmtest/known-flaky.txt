@@ -1,0 +1,11 @@
+# Test identifiers whose failure is expected and does not trip the circuit
+# breaker (see scripts/vmtest/README.md and the plan's §3).
+#
+# One fully-qualified test identifier per line, exactly as it appears in
+# xcresult's failing-test output (Target/Class/method). Blank lines and lines
+# starting with # are ignored.
+#
+# Widening this file mid-crisis (any streak non-zero) is refused by `vmtest`
+# and by the uitest-ready-gate hook — see the plan's §3 and §4.
+
+final finalUITests/ListNumberingE2ETests/testDeliberateNewListRestartsAtOne

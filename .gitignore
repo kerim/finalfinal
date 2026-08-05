@@ -37,6 +37,7 @@ temp/
 .claude/worktrees/
 .claude/autodev/
 .claude/superdev/
+.claude/vmtest-runs/
 .claude/settings.local.json
 .claude/settings.json.bak.*
 .claude/debug/
