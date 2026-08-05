@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.120] - 2026-08-05
+
 ### Fixed
 
 - **Entering Focus Mode (⌘⇧F) paused for about half a second before the side panels moved** — the delay came from two hard-coded waits meant to outlast a system animation, but they didn't reliably match how long that animation actually took. Focus Mode now enters and exits instantly.
