@@ -57,7 +57,7 @@ struct FinalFinalApp: App {
     }
 
     var body: some Scene {
-        WindowGroup {
+        WindowGroup(id: SceneID.mainWindow) {
             rootView
             .environment(ThemeManager.shared)
             .environment(GoalColorSettingsManager.shared)

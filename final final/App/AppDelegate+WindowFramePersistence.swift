@@ -35,9 +35,132 @@ extension AppDelegate {
     /// unlike that one-shot check, it runs unconditionally on every launch, so it stays useful
     /// as an ongoing signal that this mechanism is still active (e.g. if a future macOS/SwiftUI
     /// change stops setting an autosave name here, or starts setting a different one).
-    func disableFrameAutosave(for window: NSWindow) {
-        DebugLog.log(.lifecycle, "[AppDelegate] window.frameAutosaveName before clearing: '\(window.frameAutosaveName)'")
+    /// Returns the bare autosave name captured off `window` before it's cleared, so callers can
+    /// thread it into the dead-key sweep's protected-name set (see
+    /// `AppDelegate+AutosaveKeyTracking.swift`). Empty string if AppKit hadn't assigned one.
+    @discardableResult
+    func disableFrameAutosave(for window: NSWindow) -> String {
+        let capturedName = window.frameAutosaveName
+        DebugLog.log(
+            .lifecycle,
+            "[AppDelegate] window.frameAutosaveName before clearing: '\(capturedName)', "
+                + "window.identifier: '\(window.identifier?.rawValue ?? "nil")'"
+        )
         _ = window.setFrameAutosaveName("")
+        return capturedName
+    }
+
+    /// Shared core of the two `mainWindow` capture sites in `applicationDidFinishLaunching`
+    /// (the primary launch path and the FB15577018 recovery fallback) -- extracted so neither
+    /// call site has to repeat it, and so `applicationDidFinishLaunching` itself stays under
+    /// SwiftLint's cyclomatic-complexity limit. Each caller still does its own site-specific
+    /// follow-up afterward (the primary path additionally logs the saved-frame comparison and
+    /// handles the fullscreen-space-switch; the fallback has neither).
+    func captureMainWindow(_ window: NSWindow) {
+        mainWindow = window
+        window.delegate = self
+        // A launch-time Finder/`open(1)` double-click delivers its "open documents"
+        // Apple Event around the same time as this capture, and the order between
+        // the two is not guaranteed (see closeSpuriousFinderOpenWindows's doc comment).
+        // application(_:open:) already calls closeSpuriousFinderOpenWindows() itself, but
+        // that call no-ops via its `guard let mainWindow` when it happens to run BEFORE
+        // this capture -- mainWindow isn't captured yet, so it can't tell the real window
+        // from the spurious one, and (having already run) never gets a second chance to
+        // clean up once mainWindow does exist. Sweeping again here, now that mainWindow
+        // is finally known, closes that gap regardless of which of the two ran first.
+        closeSpuriousFinderOpenWindows()
+        capturedWindowFrameAutosaveName = disableFrameAutosave(for: window)
+        if !TestMode.isTesting {
+            SplitViewAutosaveNaming.stabilize(for: window)
+        }
+        scheduleAutosaveKeySweep()
+        FullScreenManager.bootstrap(window: window)
+        restoreFullScreenIfNeeded(window)
+    }
+
+    /// Closes the extra window AppKit spawns for every Finder/`open(1)`-delivered "open documents"
+    /// event on this app. Root cause (confirmed via targeted window-count instrumentation): declaring
+    /// `.ff` as an "Editor"-role `CFBundleDocumentTypes` entry, combined with using a plain
+    /// `WindowGroup` (not `DocumentGroup`), makes AppKit create a brand-new WindowGroup window scene
+    /// for every incoming open-document Apple Event — entirely independent of this method's own
+    /// single-window state handling via `mainWindow`. Same cleanup pattern already used above for
+    /// macOS-restored "version-history" windows.
+    ///
+    /// Timing relative to `application(_:open:)` is NOT reliable in either direction. It was once
+    /// assumed the spurious window always exists by the time that method runs; CONFIRMED false via
+    /// repeated same-app-instance `open`-while-running probes (CGWindowList, `onscreen=true`
+    /// persisting for seconds): the window for a given Apple Event can just as easily materialize
+    /// a moment AFTER `application(_:open:)`'s immediate call to this method already ran and found
+    /// nothing. That's why `application(_:open:)` also schedules a short delayed re-sweep, not just
+    /// the immediate one — see its call site.
+    ///
+    /// Also no-ops (by design, via the `guard let mainWindow` below) until `mainWindow` is
+    /// captured — it can't tell the real window from a spurious one before then. That capture
+    /// happens asynchronously (see `applicationDidFinishLaunching`'s `DispatchQueue.main.async`
+    /// block and its FB15577018 recovery fallback), so a launch-time Finder double-click can call
+    /// this method before `mainWindow` exists — CONFIRMED via a cold `open -a`-launched instance
+    /// leaving 2 persistent windows (CGWindowList-verified) back when `application(_:open:)` was
+    /// this method's only call site. Both `mainWindow`-capture sites now call this again right
+    /// after setting `mainWindow`, so whichever ordering occurs, the second call (from a capture
+    /// site, or from `application(_:open:)`, whichever runs with `mainWindow` already non-nil)
+    /// catches the spurious window.
+    ///
+    /// Calling this repeatedly (immediate + delayed + both capture sites, across possibly several
+    /// Finder-open events in a row) is safe: `window.close()` on an already-hidden spurious window
+    /// is a harmless no-op, and observed evidence is that a closed spurious `NSWindow` stays
+    /// enumerable in `NSApp.windows` (just `onscreen=false`) rather than being removed outright —
+    /// so re-finding and re-closing the same one on a later sweep is expected, not a sign of a
+    /// leak or a new duplicate.
+    ///
+    /// Not `private` -- called from `application(_:open:)` in `AppDelegate.swift`.
+    func closeSpuriousFinderOpenWindows() {
+        guard let mainWindow else {
+            DebugLog.log(.lifecycle, "[FINDER-OPEN][DIAG] closeSpuriousFinderOpenWindows: mainWindow is nil, no-op")
+            return
+        }
+        let allWindows = NSApp.windows
+        // Building the summary needs a multi-line `.map`/`.joined`, which can't be written as a
+        // single `@autoclosure` expression -- so gate it explicitly with `isEnabled` (exactly
+        // what that API is for per its own doc comment: skipping work done OUTSIDE a log() call)
+        // rather than paying for the map/joined on every sweep in every build.
+        if DebugLog.isEnabled(.lifecycle) {
+            let summary = allWindows.map { window in
+                "(id=\(window.identifier?.rawValue ?? "nil") isMain=\(window === mainWindow) "
+                    + "isVisible=\(window.isVisible) frame=\(window.frame) num=\(window.windowNumber))"
+            }.joined(separator: ", ")
+            DebugLog.log(.lifecycle, "[FINDER-OPEN][DIAG] sweep: \(allWindows.count) window(s): \(summary)")
+        }
+
+        for window in allWindows where window !== mainWindow
+            && window.identifier?.rawValue.contains(SceneID.mainWindow) == true {
+            let visibleBefore = window.isVisible
+            DebugLog.always(
+                "[FINDER-OPEN] Closing spurious duplicate window: id=\(window.identifier?.rawValue ?? "nil") "
+                    + "visibleBefore=\(visibleBefore) frame=\(window.frame) "
+                    + "releasedWhenClosed=\(window.isReleasedWhenClosed)"
+            )
+            // Plain `close()` is sufficient -- CONFIRMED (CGWindowList, matched by windowNumber,
+            // plus the Window menu's own item list) that once this runs the window is not
+            // user-perceivable: `isVisible` flips to false immediately, and the WindowServer's
+            // on-screen bounds for it collapse to zero width/height (mathematically nothing to
+            // render), even though CGWindowList's raw on-screen flag keeps reporting it as
+            // present -- a harmless zero-area registration this app has no control over, not a
+            // second visible window. An earlier attempt to also clear that raw registration via
+            // `orderOut(nil)` and forcing `isReleasedWhenClosed = true` before closing was tried
+            // and DISPROVEN (identical 0x0-but-registered outcome either way) -- removed rather
+            // than left in, since `isReleasedWhenClosed = true` is actively dangerous here:
+            // SwiftUI's WindowGroup deliberately keeps `isReleasedWhenClosed = false` because it
+            // still holds and uses these windows for its own scene bookkeeping, and forcing
+            // manual release while SwiftUI may still reference the same object risks a crash
+            // later (next Finder open, window restoration, app termination) with no obvious link
+            // back to this code.
+            window.close()
+            DebugLog.log(
+                .lifecycle,
+                "[FINDER-OPEN][DIAG] after close(): id=\(window.identifier?.rawValue ?? "nil") "
+                    + "visibleAfter=\(window.isVisible) frameAfter=\(window.frame)"
+            )
+        }
     }
 
     func windowDidResize(_ notification: Notification) {

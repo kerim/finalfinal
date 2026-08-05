@@ -21,9 +21,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// Reference to auto-backup service for quit-time snapshot
     weak var autoBackupService: AutoBackupService?
 
-    /// Reference to main window for close interception. Read (not written) by
-    /// `FullScreenManager`, which resolves the window to act on via `AppDelegate.shared?.mainWindow`.
-    private(set) var mainWindow: NSWindow?
+    /// Reference to main window for close interception. Read by `FullScreenManager`, which
+    /// resolves the window to act on via `AppDelegate.shared?.mainWindow`. Written only from
+    /// `captureMainWindow` (`AppDelegate+WindowFramePersistence.swift`) -- not `private(set)`
+    /// because that extraction lives in a sibling file, and Swift's `private` does not cross
+    /// file boundaries even between extensions of the same type.
+    var mainWindow: NSWindow?
 
     /// UserDefaults key for the manually-persisted main window frame. Not private: read by
     /// `FinalFinalApp`'s `.defaultWindowPlacement` too, so the window is created at the saved
@@ -59,6 +62,17 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     /// URL passed by Finder double-click; consumed by determineInitialState()
     var finderOpenURL: URL?
+
+    /// Bare AppKit frame-autosave name captured off the main window BEFORE
+    /// `disableFrameAutosave` clears it. Read by the one-time dead-key sweep in
+    /// `AppDelegate+AutosaveKeyTracking.swift` to build its protected-name set. Not private:
+    /// read/written from that extension file, and Swift's `private` is file-scoped.
+    var capturedWindowFrameAutosaveName: String?
+
+    /// Guards `scheduleAutosaveKeySweep()` against scheduling more than once — it's called from
+    /// both places `disableFrameAutosave` is (the normal launch path and the FB15577018 recovery
+    /// fallback). Not private: read/written from `AppDelegate+AutosaveKeyTracking.swift`.
+    var autosaveKeySweepScheduled = false
 
     func applicationWillFinishLaunching(_ notification: Notification) {
         // In test mode, clean saved application state from the CORRECT path.
@@ -177,17 +191,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
             // Now capture the main window (after closing restored secondary windows)
             if let window = NSApp.windows.first {
-                self?.mainWindow = window
-                window.delegate = self
-                self?.disableFrameAutosave(for: window)
+                self?.captureMainWindow(window)
                 let savedFrame = UserDefaults.standard.string(forKey: Self.mainWindowFrameDefaultsKey) ?? "nil"
                 DebugLog.log(
                     .lifecycle,
                     "[AppDelegate] Set window delegate for Cmd-W interception; "
                         + "actual frame at launch=\(window.frame), saved frame=\(savedFrame)"
                 )
-                FullScreenManager.bootstrap(window: window)
-                self?.restoreFullScreenIfNeeded(window)
 
                 // If macOS restored the window to fullscreen (Saved Application State),
                 // ensure we switch to that Space immediately
@@ -223,11 +233,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     // Capture window delegate after recovery
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
                         if let window = NSApp.windows.first, self?.mainWindow == nil {
-                            self?.mainWindow = window
-                            window.delegate = self
-                            self?.disableFrameAutosave(for: window)
-                            FullScreenManager.bootstrap(window: window)
-                            self?.restoreFullScreenIfNeeded(window)
+                            // See captureMainWindow's doc comment for what this covers and why.
+                            self?.captureMainWindow(window)
                         }
                     }
                 }
@@ -255,7 +262,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// likely because `windowShouldClose` unconditionally returns `false` here (Cmd-W is
     /// intercepted to show the project picker instead of closing), and AppKit's autosave commit
     /// appears to be tied to the window actually closing, which never happens.
-    private func restoreFullScreenIfNeeded(_ window: NSWindow) {
+    ///
+    /// Not `private` -- called from `captureMainWindow` in
+    /// `AppDelegate+WindowFramePersistence.swift`, a sibling-file extension.
+    func restoreFullScreenIfNeeded(_ window: NSWindow) {
         // Tests run against the same bundle ID as the real app (see TestMode.clearTestState()),
         // so restoring/saving here would let test runs clobber the user's real saved state.
         guard !TestMode.isTesting else { return }
@@ -370,10 +380,34 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 + "hasCompletedInitialOpen=\(DocumentManager.shared.hasCompletedInitialOpen)"
         )
 
-        // AppKit spawns an extra WindowGroup window for this event before this method even
-        // runs (see closeSpuriousFinderOpenWindows doc comment) — clean it up regardless of
-        // which branch below fires. No-ops safely if mainWindow isn't captured yet.
+        // AppKit spawns an extra WindowGroup window for this event (see
+        // closeSpuriousFinderOpenWindows's doc comment) — clean it up regardless of which
+        // branch below fires. No-ops safely if mainWindow isn't captured yet.
+        //
+        // The immediate call catches it when AppKit's spurious window already exists by now
+        // (the common case for a launch-time open, and for a later event cleaning up an
+        // EARLIER event's straggler). But CONFIRMED via repeated `open`-while-running probes
+        // (CGWindowList, onscreen=true persisting for seconds): AppKit does NOT reliably create
+        // THIS event's own spurious window before this line runs — sometimes it materializes a
+        // moment later, and for a request that returns early with no further work (e.g.
+        // openProjectFromFinder's "same project already open" no-op below), nothing else ever
+        // gets a second chance to sweep it. The staggered delayed re-sweeps below close that gap.
+        // A single 0.5s retry was empirically sufficient in 5/5 repeated trials (including 3
+        // rapid-fire same-project reopens) against the exact regression this fixes, but one
+        // earlier trial (same code path, before this was instrumented to confirm why) still left
+        // a visible duplicate past 4s with only that one retry -- unexplained, and not
+        // reproduced since. Three staggered retries, not one, is deliberate insurance against
+        // whatever that was: each is an idempotent no-op if there's nothing left to close (see
+        // closeSpuriousFinderOpenWindows's doc comment), so the extra calls cost nothing when the
+        // first retry already worked.
+        DebugLog.log(.lifecycle, "[FINDER-OPEN][DIAG] immediate sweep")
         closeSpuriousFinderOpenWindows()
+        for delay in [0.5, 1.5, 3.0] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                DebugLog.log(.lifecycle, "[FINDER-OPEN][DIAG] delayed sweep fired (scheduled +\(delay)s)")
+                self?.closeSpuriousFinderOpenWindows()
+            }
+        }
 
         // If app is still launching (no project open yet), stash URL for
         // determineInitialState() to consume — avoids race where
@@ -398,21 +432,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         openProjectFromFinder(at: url)
     }
 
-    /// Closes the extra window AppKit spawns for every Finder/`open(1)`-delivered "open documents"
-    /// event on this app. Root cause (confirmed via targeted window-count instrumentation): declaring
-    /// `.ff` as an "Editor"-role `CFBundleDocumentTypes` entry, combined with using a plain
-    /// `WindowGroup` (not `DocumentGroup`), makes AppKit create a brand-new WindowGroup window scene
-    /// for every incoming open-document Apple Event *before* `application(_:open:)` even runs —
-    /// entirely independent of this method's own single-window state handling via `mainWindow`.
-    /// Same cleanup pattern already used above for macOS-restored "version-history" windows.
-    private func closeSpuriousFinderOpenWindows() {
-        guard let mainWindow else { return }
-        for window in NSApp.windows where window !== mainWindow
-            && window.identifier?.rawValue.contains("AppWindow") == true {
-            DebugLog.always("[FINDER-OPEN] Closing spurious duplicate window: id=\(window.identifier?.rawValue ?? "nil")")
-            window.close()
-        }
-    }
+    // closeSpuriousFinderOpenWindows() lives in AppDelegate+WindowFramePersistence.swift,
+    // next to captureMainWindow (its main caller) -- moved there to keep this class's body
+    // under SwiftLint's type_body_length limit.
 
     func application(_ sender: NSApplication, openFile filename: String) -> Bool {
         let url = URL(fileURLWithPath: filename)
@@ -459,6 +481,21 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // Return false to prevent window from actually closing
         // The project picker will be shown instead
         return false
+    }
+
+    /// Retries `SplitViewAutosaveNaming.stabilize(for:)` on every key-becomes event for the main
+    /// window, until it succeeds. The first attempt (at window-capture time, alongside
+    /// `disableFrameAutosave`) runs while `appViewState` is still `.loading` — before
+    /// `NavigationSplitView` is anywhere in the view hierarchy — so it reliably finds zero split
+    /// views and no-ops. `windowDidBecomeKey` fires again once editor content has loaded and the
+    /// user is actually interacting with the window, by which point the split view exists. Once
+    /// stabilization has taken effect (current name already equals `stableName`), this is a
+    /// cheap no-op read on every subsequent call.
+    func windowDidBecomeKey(_ notification: Notification) {
+        guard !TestMode.isTesting else { return }
+        guard let window = notification.object as? NSWindow, window === mainWindow else { return }
+        guard SplitViewAutosaveNaming.currentTopLevelAutosaveName(in: window) != SplitViewAutosaveNaming.stableName else { return }
+        SplitViewAutosaveNaming.stabilize(for: window)
     }
 
     func windowDidEnterFullScreen(_ notification: Notification) {
