@@ -29,68 +29,13 @@ extension ContentView {
             return
         }
 
-        configureSyncServices(db: db, pid: pid, cid: cid)
-
-        runProjectMaintenance(db: db, pid: pid)
-
-        // Start reactive observation (now uses blocks internally)
-        editorState.startObserving(database: db, projectId: pid)
-        editorState.startObservingAnnotations(database: db, contentId: cid)
-
-        applyDocumentGoalSettings()
-
-        loadInitialContent(db: db, pid: pid)
-
-        // Populate section table from loaded content so version history has fresh data.
-        // For Getting Started, this pre-round-trip programmatic sync intentionally does NOT
-        // count as `fromEditorChange` — the Getting Started baseline is instead captured
-        // lazily from the first genuinely editor-settled `contentChanged` event (see
-        // DocumentManager.checkGettingStartedEdited), because Milkdown reformats content when
-        // it re-serializes and this string predates that round-trip.
-        if !editorState.content.isEmpty {
-            await sectionSyncService.syncNow(editorState.content)
-        }
-
-        // Connect to Zotero (just verify it's available - search is on-demand)
-        Task {
-            await connectToZotero()
-        }
-
-    }
-
-    /// Configure sync services with the database, and wire up their editorState
-    /// callbacks. Must run before the caller (`configureForCurrentProject`) calls
-    /// `startObserving*` -- the callbacks assigned here (`flushLiveEditorContentToBlocks`,
-    /// `onSectionsUpdated`) need to be in place before observation can fire them.
-    private func configureSyncServices(db: ProjectDatabase, pid: String, cid: String) {
         // Configure sync services with database
         sectionSyncService.configure(database: db, projectId: pid)
         sectionSyncService.editorState = editorState
         annotationSyncService.configure(database: db, contentId: cid)
         annotationSyncService.editorState = editorState
         bibliographySyncService.configure(database: db, projectId: pid)
-        bibliographySyncService.flushLiveEditorContentToBlocks = makeBibliographyFlushHandler()
-        footnoteSyncService.configure(database: db, projectId: pid)
-        autoBackupService.configure(database: db, projectId: pid)
-        autoBackupService.editorState = editorState
-
-        // Inject sectionSyncService reference for zoom sourceContent updates
-        editorState.sectionSyncService = sectionSyncService
-
-        // Inject blockSyncService for atomic content+blockID pushes (hierarchy enforcement)
-        editorState.blockSyncService = blockSyncService
-        editorState.annotationSyncService = annotationSyncService
-        editorState.bibliographySyncService = bibliographySyncService
-        editorState.footnoteSyncService = footnoteSyncService
-
-        // Wire up hierarchy enforcement after sections are updated from database
-        // This ensures slash commands that create new headings trigger rebalancing
-        editorState.onSectionsUpdated = makeSectionsUpdatedHandler()
-    }
-
-    /// Builds the closure assigned to `bibliographySyncService.flushLiveEditorContentToBlocks`.
-    private func makeBibliographyFlushHandler() -> (_ scheduledForProjectId: String) async -> Void {
-        { [weak editorState] scheduledForProjectId in
+        bibliographySyncService.flushLiveEditorContentToBlocks = { [weak editorState] scheduledForProjectId in
             // Same three guards as the sibling debounced re-parse this flush stands in for
             // (ViewNotificationModifiers.swift's blockReparseTask, contentState/editorMode/
             // zoomedSectionId check): both do the same wholesale replaceBlocks() write, so
@@ -132,19 +77,26 @@ extension ContentView {
             DebugLog.log(.bib, "[BibSync] flushing live editor content to blocks before bibliography write")
             editorState.flushContentToDatabase()
         }
-    }
+        footnoteSyncService.configure(database: db, projectId: pid)
+        autoBackupService.configure(database: db, projectId: pid)
+        autoBackupService.editorState = editorState
 
-    /// Builds the closure assigned to `editorState.onSectionsUpdated`.
-    private func makeSectionsUpdatedHandler() -> () -> Void {
-        { [weak editorState, weak sectionSyncService] in
+        // Inject sectionSyncService reference for zoom sourceContent updates
+        editorState.sectionSyncService = sectionSyncService
+
+        // Inject blockSyncService for atomic content+blockID pushes (hierarchy enforcement)
+        editorState.blockSyncService = blockSyncService
+        editorState.annotationSyncService = annotationSyncService
+        editorState.bibliographySyncService = bibliographySyncService
+        editorState.footnoteSyncService = footnoteSyncService
+
+        // Wire up hierarchy enforcement after sections are updated from database
+        // This ensures slash commands that create new headings trigger rebalancing
+        editorState.onSectionsUpdated = { [weak editorState, weak sectionSyncService, weak blockSyncService] in
             guard let editorState = editorState,
                   let sectionSyncService = sectionSyncService else { return }
 
-            if DebugLog.isEnabled(.outline) {
-                let hasViolations = Self.hasHierarchyViolations(in: editorState.sections)
-                DebugLog.log(.outline, "[onSectionsUpdated] contentState=\(editorState.contentState), "
-                    + "zoomed=\(editorState.zoomedSectionIds != nil), hasViolations=\(hasViolations)")
-            }
+            DebugLog.log(.outline, "[onSectionsUpdated] contentState=\(editorState.contentState), zoomed=\(editorState.zoomedSectionIds != nil), hasViolations=\(Self.hasHierarchyViolations(in: editorState.sections))")
 
             // Skip during content transitions (drag, zoom, etc.)
             guard editorState.contentState == .idle else { return }
@@ -165,20 +117,14 @@ extension ContentView {
                 }
             }
         }
-    }
 
-    /// Sort-order normalization, image-block dedup, and word-count recompute.
-    /// Must run before `startObserving*` -- see the sort-order comment below.
-    private func runProjectMaintenance(db: ProjectDatabase, pid: String) {
         // Check and normalize duplicate sort orders BEFORE starting observation
         do {
             let existingBlocks = try db.fetchBlocks(projectId: pid)
             if !existingBlocks.isEmpty {
                 let sortOrders = existingBlocks.map { $0.sortOrder }
-                let uniqueCount = Set(sortOrders).count
-                if uniqueCount < sortOrders.count {
-                    let detail = "(\(sortOrders.count) blocks, \(uniqueCount) unique)"
-                    DebugLog.log(.lifecycle, "[ContentView] Duplicate sortOrders detected \(detail). Normalizing...")
+                if Set(sortOrders).count < sortOrders.count {
+                    DebugLog.log(.lifecycle, "[ContentView] Duplicate sortOrders detected (\(sortOrders.count) blocks, \(Set(sortOrders).count) unique). Normalizing...")
                     try db.normalizeSortOrders(projectId: pid)
                 }
             }
@@ -207,19 +153,19 @@ extension ContentView {
         } catch {
             DebugLog.always("[WordCount] recompute failed: \(error)")
         }
-    }
 
-    /// Load document goal settings into editorState.
-    private func applyDocumentGoalSettings() {
+        // Start reactive observation (now uses blocks internally)
+        editorState.startObserving(database: db, projectId: pid)
+        editorState.startObservingAnnotations(database: db, contentId: cid)
+
+        // Load document goal settings
         if let goalSettings = try? documentManager.loadDocumentGoalSettings() {
             editorState.documentGoal = goalSettings.goal
             editorState.documentGoalType = goalSettings.goalType
             editorState.excludeBibliography = goalSettings.excludeBibliography
         }
-    }
 
-    /// Load content from blocks (or fall back to legacy content table).
-    private func loadInitialContent(db: ProjectDatabase, pid: String) {
+        // Load content from blocks (or fall back to legacy content table)
         do {
             // Clean up orphaned footnote definitions from previous sessions before assembling
             try db.write { database in
@@ -264,6 +210,22 @@ extension ContentView {
         } catch {
             DebugLog.log(.lifecycle, "[ContentView] Failed to load content: \(error.localizedDescription)")
         }
+
+        // Populate section table from loaded content so version history has fresh data.
+        // For Getting Started, this pre-round-trip programmatic sync intentionally does NOT
+        // count as `fromEditorChange` — the Getting Started baseline is instead captured
+        // lazily from the first genuinely editor-settled `contentChanged` event (see
+        // DocumentManager.checkGettingStartedEdited), because Milkdown reformats content when
+        // it re-serializes and this string predates that round-trip.
+        if !editorState.content.isEmpty {
+            await sectionSyncService.syncNow(editorState.content)
+        }
+
+        // Connect to Zotero (just verify it's available - search is on-demand)
+        Task {
+            await connectToZotero()
+        }
+
     }
 
     /// Connect to Zotero (via Better BibTeX) - just verifies availability
