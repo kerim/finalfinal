@@ -5,7 +5,9 @@
 //  Tier 1: Silent Killers
 //  Split out of the "Duplicate-Titled Headings" section of ZoomDataIntegrityTests.swift
 //  (via ZoomDataIntegrityDuplicateHeadingTests.swift) to stay under SwiftLint's
-//  type_body_length cap — same suite, same test names/counts, just a third file.
+//  type_body_length cap. The suite lives across four files — ZoomDataIntegrityTests.swift
+//  plus this one, ...DuplicateHeadingTests.swift, and ...NotesTests.swift —
+//  same suite, same test names/counts.
 //
 
 import Testing
