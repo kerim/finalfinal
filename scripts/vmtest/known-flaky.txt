@@ -8,4 +8,12 @@
 # Widening this file mid-crisis (any streak non-zero) is refused by `vmtest`
 # and by the uitest-ready-gate hook — see the plan's §3 and §4.
 
+# Re-added 2026-08-06 after test-isolation fixes (t-2d6b4898) ruled out
+# fixture pollution as the cause: a 4th full-suite validation run reproduced
+# a genuine failure with a real block-id dump attached (headings instead of
+# an ordered_list, IDs never seen before -- not stale/leftover state). This
+# is believed to be the app-level race filed as t-3904c457 (mode-toggle
+# flush not paired with pushBlockIds), not a test-infrastructure bug. Keep
+# this quarantined until that root cause is fixed, or it will keep re-arming
+# the circuit breaker (see t-5f48547e).
 final finalUITests/ListNumberingE2ETests/testDeliberateNewListRestartsAtOne
