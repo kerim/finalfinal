@@ -492,18 +492,30 @@ final class ZoteroService {
     }
 
     /// Get a single item by citekey (from cache)
+    ///
+    /// Tries an exact match first, then falls back to a case-insensitive scan (a `.lowercased()`
+    /// comparison — the same technique `cacheItems()` above uses at cache-write time). The
+    /// fallback matters for the offline embedded-citations path (`loadItem` below): unlike
+    /// `cacheItems()`, which caches a fetched item under the exact citekey string the document
+    /// requested, `loadItem` caches by the CSL `id` as authored in citations.json, with no
+    /// "requested" citekey available at write time to align casing with. A document citekey
+    /// differing only in case from that `id` would otherwise miss here.
     func getItem(citekey: String) -> CSLItem? {
-        itemsByKey[citekey]
+        if let exact = itemsByKey[citekey] {
+            return exact
+        }
+        let normalized = citekey.lowercased()
+        return itemsByKey.first { $0.key.lowercased() == normalized }?.value
     }
 
-    /// Check if a citekey exists in the cache
+    /// Check if a citekey exists in the cache (case-insensitively — see `getItem`)
     func hasItem(citekey: String) -> Bool {
-        itemsByKey[citekey] != nil
+        getItem(citekey: citekey) != nil
     }
 
-    /// Get multiple items by citekeys (from cache)
+    /// Get multiple items by citekeys (from cache, case-insensitively — see `getItem`)
     func getItems(citekeys: [String]) -> [CSLItem] {
-        citekeys.compactMap { itemsByKey[$0] }
+        citekeys.compactMap { getItem(citekey: $0) }
     }
 
     /// Generate CSL-JSON string for the given citekeys (for web citeproc)
@@ -548,7 +560,10 @@ final class ZoteroService {
     /// Caches by the CSL `id` (BBT's KeyManager key), not `item.citekey`
     /// (== `citationKey ?? id`) — same rationale as `fetchItemsForCitekeys` above: BBT
     /// resolves items by `id`, so that's the key `getItem`/`getItems`/`cslJSONForCitekeys`
-    /// look up later. Falls back to `citekey` only if `id` is empty.
+    /// look up later. Falls back to `citekey` only if `id` is empty. A document citekey
+    /// differing only in case from this `id` still resolves — `getItem`'s case-insensitive
+    /// fallback (see above) covers it, since this offline path (unlike `cacheItems()`) has no
+    /// "requested" citekey available here to align casing with up front.
     func loadItem(_ item: CSLItem) {
         let key = item.id.isEmpty ? item.citekey : item.id
         itemsByKey[key] = item

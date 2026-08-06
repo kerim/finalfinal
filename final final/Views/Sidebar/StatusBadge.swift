@@ -130,7 +130,6 @@ private class RightClickView: NSView {
                 let isCtrlClick = event.type == .leftMouseDown && event.modifierFlags.contains(.control)
 
                 guard isRightClick || isCtrlClick else { return event }
-                guard event.window === self.window else { return event }
                 guard let superview = self.superview else { return event }
 
                 let locationInWindow = event.locationInWindow
