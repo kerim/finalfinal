@@ -247,28 +247,14 @@ struct FileOperations {
         DebugLog.log(.fileOps, "[FileOperations] handleCloseProject() called")
         let dm = DocumentManager.shared
 
-        // Check if this is the Getting Started project with modifications
-        if dm.isGettingStartedProject && dm.isGettingStartedModified() {
-            let alert = NSAlert()
-            alert.messageText = "Changes Not Saved"
-            alert.informativeText = "Changes to Getting Started aren't saved. Create a new project to keep your work."
-            alert.alertStyle = .warning
-            alert.addButton(withTitle: "Discard")
-            alert.addButton(withTitle: "Create New Project")
-
-            let response = alert.runModal()
-            switch response {
-            case .alertFirstButtonReturn:
-                // Discard - just close
-                dm.closeProject()
-                DebugLog.log(.fileOps, "[FileOperations] Posting .projectDidClose notification (Getting Started discard)")
-                NotificationCenter.default.post(name: .projectDidClose, object: nil)
-            case .alertSecondButtonReturn:
-                // Create New Project - show save panel
-                handleCreateFromGettingStarted()
-            default:
-                break
-            }
+        // Getting Started is an ephemeral playground with nothing to save -- always close
+        // cleanly, no confirmation. (See t-fa000add: the previous "changes not saved" alert
+        // fired inconsistently in both directions; edit awareness now surfaces as an
+        // in-editor toast instead, via SectionSyncService's checkGettingStartedEdited.)
+        if dm.isGettingStartedProject {
+            dm.closeProject()
+            DebugLog.log(.fileOps, "[FileOperations] Posting .projectDidClose notification (Getting Started)")
+            NotificationCenter.default.post(name: .projectDidClose, object: nil)
             return
         }
 
@@ -303,39 +289,6 @@ struct FileOperations {
             dm.closeProject()
             DebugLog.log(.fileOps, "[FileOperations] Posting .projectDidClose notification (no changes)")
             NotificationCenter.default.post(name: .projectDidClose, object: nil)
-        }
-    }
-
-    /// Handle "Create New Project" from Getting Started
-    private static func handleCreateFromGettingStarted() {
-        let dm = DocumentManager.shared
-
-        // Get current content before closing
-        let currentContent = (try? dm.getCurrentContent()) ?? ""
-
-        let savePanel = NSSavePanel()
-        savePanel.title = "Save Your Work"
-        savePanel.nameFieldLabel = "Project Name:"
-        savePanel.nameFieldStringValue = "Untitled"
-        savePanel.allowedContentTypes = [.init(exportedAs: "com.kerim.final-final.document")]
-        savePanel.canCreateDirectories = true
-
-        savePanel.begin { response in
-            guard response == .OK, let url = savePanel.url else { return }
-
-            // Explicitly close the panel before async work
-            savePanel.orderOut(nil)
-
-            Task { @MainActor in
-                do {
-                    let title = url.deletingPathExtension().lastPathComponent
-                    try dm.newProject(at: url, title: title, initialContent: currentContent)
-                    // Notify that a new project was created
-                    NotificationCenter.default.post(name: .projectDidCreate, object: nil)
-                } catch {
-                    DebugLog.log(.fileOps, "[FileOperations] Failed to create project from Getting Started: \(error)")
-                }
-            }
         }
     }
 

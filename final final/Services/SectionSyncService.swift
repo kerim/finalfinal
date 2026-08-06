@@ -286,7 +286,19 @@ class SectionSyncService {
         // Back on MainActor
         lastSyncedContent = markdown
         if fromEditorChange {
+            // Detect the false -> true transition specifically (not "is it edited"), so the
+            // toast fires exactly once per Getting Started session rather than re-posting on
+            // every subsequent settle after the first real edit.
+            let wasModified = DocumentManager.shared.isGettingStartedModified()
             DocumentManager.shared.checkGettingStartedEdited(currentMarkdown: markdown)
+            if !wasModified && DocumentManager.shared.isGettingStartedModified() {
+                // Posted rather than calling editorState directly: even though SectionSyncService
+                // does hold a weak back-reference to EditorViewState (assigned in
+                // ContentView+ProjectLifecycle.swift for the block-reparse flush), toast state
+                // is a UI-layer concern and this sync service shouldn't reach into it directly --
+                // NotificationCenter keeps that boundary decoupled.
+                NotificationCenter.default.post(name: .gettingStartedEdited, object: nil)
+            }
         }
     }
 

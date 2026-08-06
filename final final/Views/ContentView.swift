@@ -26,13 +26,15 @@ struct CursorPosition: Equatable {
     static let start = CursorPosition(line: 1, column: 0, scrollFraction: 0, cursorIsVisible: true, topLine: 1.0)
 }
 
-/// Toast notification shown when entering focus mode, auto-dismisses after 3 seconds
-struct FocusModeToast: View {
+/// Toast notification with a fixed message, auto-dismisses after 3 seconds.
+/// Shared by focus mode entry and the Getting Started first-edit notice.
+struct EditorToast: View {
+    let message: String
     @Binding var isShowing: Bool
 
     var body: some View {
         if isShowing {
-            Text("Press Esc or Cmd+Shift+F to exit focus mode")
+            Text(message)
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 16)
@@ -69,9 +71,6 @@ struct ContentView: View {
     /// Version history dialog state
     @State internal var showSaveVersionDialog = false
     @State internal var saveVersionName = ""
-
-    /// Getting Started close alert state
-    @State internal var showGettingStartedCloseAlert = false
 
     /// Editor preload ready state - blocks editor display until WebView is ready
     @State internal var isEditorPreloadReady = false
@@ -201,17 +200,6 @@ struct ContentView: View {
             } message: {
                 Text("Enter a name for this version:")
             }
-            .alert("Changes Not Saved", isPresented: $showGettingStartedCloseAlert) {
-                Button("Discard") {
-                    documentManager.closeProject()
-                    onProjectClosed?()
-                }
-                Button("Create New Project") {
-                    handleCreateFromGettingStarted()
-                }
-            } message: {
-                Text("Changes to Getting Started aren't saved. Create a new project to keep your work.")
-            }
     }
 
     @ViewBuilder
@@ -234,8 +222,17 @@ struct ContentView: View {
                 sidebarVisibility: $sidebarVisibility
             )
             .overlay(alignment: .top) {
-                FocusModeToast(isShowing: $editorState.showFocusModeToast)
-                    .padding(.top, 60)
+                VStack(spacing: 8) {
+                    EditorToast(
+                        message: "Press Esc or Cmd+Shift+F to exit focus mode",
+                        isShowing: $editorState.showFocusModeToast
+                    )
+                    EditorToast(
+                        message: "Changes to the Getting Started guide aren't saved.",
+                        isShowing: $editorState.showGettingStartedToast
+                    )
+                }
+                .padding(.top, 60)
             }
     }
 

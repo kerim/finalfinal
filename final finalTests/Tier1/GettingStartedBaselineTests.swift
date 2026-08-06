@@ -73,10 +73,14 @@ struct GettingStartedBaselineTests {
         let savedIsGS = dm.isGettingStartedProject
         let savedHash = dm.gettingStartedLoadedHash
         let savedEdited = dm.gettingStartedUserEdited
+        let savedWindow = dm.gettingStartedBaselineWindow
+        let savedCapturedAt = dm.gettingStartedBaselineCapturedAt
         defer {
             dm.isGettingStartedProject = savedIsGS
             dm.gettingStartedLoadedHash = savedHash
             dm.gettingStartedUserEdited = savedEdited
+            dm.gettingStartedBaselineWindow = savedWindow
+            dm.gettingStartedBaselineCapturedAt = savedCapturedAt
         }
 
         dm.isGettingStartedProject = true
@@ -84,9 +88,54 @@ struct GettingStartedBaselineTests {
         dm.gettingStartedUserEdited = false
 
         dm.checkGettingStartedEdited(currentMarkdown: "settled A")
+        // Disable the baseline noise window -- these two calls happen back-to-back with no
+        // elapsed time, and this test is specifically about a genuine edit being flagged,
+        // not about the noise-window widening covered by
+        // withinWindowDifferingSettleIsNotAnEdit below.
+        dm.gettingStartedBaselineWindow = 0
         dm.checkGettingStartedEdited(currentMarkdown: "settled A plus user words")
 
         #expect(dm.isGettingStartedModified() == true, "Content differing from the settled baseline must flag a real edit")
+    }
+
+    @Test("A differing settle within the baseline window is noise, not an edit")
+    @MainActor
+    func withinWindowDifferingSettleIsNotAnEdit() {
+        let dm = DocumentManager.shared
+        let savedIsGS = dm.isGettingStartedProject
+        let savedHash = dm.gettingStartedLoadedHash
+        let savedEdited = dm.gettingStartedUserEdited
+        let savedWindow = dm.gettingStartedBaselineWindow
+        let savedCapturedAt = dm.gettingStartedBaselineCapturedAt
+        defer {
+            dm.isGettingStartedProject = savedIsGS
+            dm.gettingStartedLoadedHash = savedHash
+            dm.gettingStartedUserEdited = savedEdited
+            dm.gettingStartedBaselineWindow = savedWindow
+            dm.gettingStartedBaselineCapturedAt = savedCapturedAt
+        }
+
+        dm.isGettingStartedProject = true
+        dm.gettingStartedLoadedHash = nil
+        dm.gettingStartedUserEdited = false
+        dm.gettingStartedBaselineWindow = 2.0
+
+        dm.checkGettingStartedEdited(currentMarkdown: "settled A")
+        // Simulate a second settle within the window (e.g. Milkdown's second
+        // re-serialization pass) that differs from the first -- this is baseline noise,
+        // not a user edit, and must be re-adopted as the new baseline rather than flagged.
+        dm.checkGettingStartedEdited(currentMarkdown: "settled A (reformatted)")
+
+        #expect(
+            dm.isGettingStartedModified() == false,
+            "A differing settle within the baseline window must be absorbed as noise, not flagged as an edit"
+        )
+
+        // The next settle after the window closes must still correctly flag a real edit.
+        dm.gettingStartedBaselineWindow = 0
+        dm.checkGettingStartedEdited(currentMarkdown: "settled A (reformatted) plus a real user edit")
+
+        #expect(dm.isGettingStartedModified() == true, "A settle after the noise window closes must still flag a genuine edit")
     }
 
     @Test("Non-GS project is inert")
@@ -127,10 +176,14 @@ struct GettingStartedBaselineTests {
         let savedIsGS = dm.isGettingStartedProject
         let savedHash = dm.gettingStartedLoadedHash
         let savedEdited = dm.gettingStartedUserEdited
+        let savedWindow = dm.gettingStartedBaselineWindow
+        let savedCapturedAt = dm.gettingStartedBaselineCapturedAt
         defer {
             dm.isGettingStartedProject = savedIsGS
             dm.gettingStartedLoadedHash = savedHash
             dm.gettingStartedUserEdited = savedEdited
+            dm.gettingStartedBaselineWindow = savedWindow
+            dm.gettingStartedBaselineCapturedAt = savedCapturedAt
         }
 
         let baseline = "# Getting Started\n\nOriginal settled content."
@@ -149,7 +202,10 @@ struct GettingStartedBaselineTests {
         #expect(dm.isGettingStartedModified() == false, "First settled sync must adopt the baseline, not flag an edit")
 
         // User edits, then immediately triggers Save Version before the 500ms debounce fires —
-        // handleSaveVersion's syncNow(fromEditorChange: true) must still flag it.
+        // handleSaveVersion's syncNow(fromEditorChange: true) must still flag it. Disable the
+        // baseline noise window: these two syncs happen back-to-back with no elapsed time, and
+        // this test is about a genuine edit being flagged, not the noise-window widening.
+        dm.gettingStartedBaselineWindow = 0
         let edited = "# Getting Started\n\nOriginal settled content, plus a user edit."
         await syncService.syncNow(edited, fromEditorChange: true)
 
