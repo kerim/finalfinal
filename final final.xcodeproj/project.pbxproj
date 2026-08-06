@@ -1295,7 +1295,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "# Remove old DerivedData directories that cause duplicate QL extension registrations.\n# Each xcodegen run creates a new project hash → new DerivedData dir → new .appex copy.\nfor dd in ~/Library/Developer/Xcode/DerivedData/final_final-*/; do\n  if [ \"$dd\" != \"${BUILD_DIR%Build/*}\" ]; then\n    rm -rf \"$dd\" 2>/dev/null || true\n  fi\ndone\n";
+			shellScript = "# See scripts/clean-stale-deriveddata.sh for what this does and why.\n# (Extracted to a script file because the concurrency-safe version is\n# too long to stay legible as an inline YAML script fragment.)\n\"${SRCROOT}/scripts/clean-stale-deriveddata.sh\"\n";
 		};
 		BCCA5E97A6A2744B41788F3B /* Build web editors if missing */ = {
 			isa = PBXShellScriptBuildPhase;
