@@ -75,77 +75,91 @@ func parsePandocCitation(_ pandoc: String) -> ParsedCitation? {
     let inner = String(trimmed.dropFirst().dropLast())
     guard inner.contains("@") else { return nil }
 
-    var entries: [CitationEntry] = []
-
     // Split by semicolon for multiple citations
     let parts = inner.components(separatedBy: ";").map { $0.trimmingCharacters(in: .whitespaces) }
 
-    for part in parts {
-        // Find the @ symbol
-        guard let atIndex = part.firstIndex(of: "@") else { continue }
-
-        // Check for prefix before @
-        let beforeAt = String(part[..<atIndex]).trimmingCharacters(in: .whitespaces)
-        let prefix: String?
-        let suppressAuthor: Bool
-
-        if beforeAt == "-" {
-            prefix = nil
-            suppressAuthor = true
-        } else if beforeAt.isEmpty {
-            prefix = nil
-            suppressAuthor = false
-        } else if beforeAt.hasSuffix("-") {
-            // "see -@key" pattern
-            prefix = String(beforeAt.dropLast()).trimmingCharacters(in: .whitespaces)
-            suppressAuthor = true
-        } else {
-            prefix = beforeAt.isEmpty ? nil : beforeAt
-            suppressAuthor = false
-        }
-
-        // Parse citekey and locator after @
-        let afterAt = String(part[part.index(after: atIndex)...])
-
-        // Match citekey (alphanumeric, :, ., -)
-        var citekey = ""
-        var remainder = afterAt
-
-        for char in afterAt {
-            if char.isLetter || char.isNumber || char == ":" || char == "." || char == "-" || char == "_" {
-                citekey.append(char)
-            } else {
-                break
-            }
-        }
-
-        guard !citekey.isEmpty else { continue }
-
-        remainder = String(afterAt.dropFirst(citekey.count))
-
-        // Check for locator after comma
-        var locator: String?
-        let suffix: String? = nil
-
-        if remainder.hasPrefix(",") {
-            let locatorPart = String(remainder.dropFirst()).trimmingCharacters(in: .whitespaces)
-            if !locatorPart.isEmpty {
-                locator = locatorPart
-            }
-        }
-
-        entries.append(CitationEntry(
-            citekey: citekey,
-            prefix: prefix,
-            locator: locator,
-            suffix: suffix,
-            suppressAuthor: suppressAuthor
-        ))
-    }
+    let entries = parts.compactMap { parseCitationEntry(from: $0) }
 
     guard !entries.isEmpty else { return nil }
 
     return ParsedCitation(rawSyntax: trimmed, entries: entries)
+}
+
+/// Parse a single semicolon-delimited part of a Pandoc citation bracket into a `CitationEntry`.
+/// Returns `nil` when the part has no `@` or the citekey after `@` is empty — both map to the
+/// `continue` in the original inline loop, silently skipping the part.
+private func parseCitationEntry(from part: String) -> CitationEntry? {
+    // Find the @ symbol
+    guard let atIndex = part.firstIndex(of: "@") else { return nil }
+
+    // Check for prefix before @
+    let beforeAt = String(part[..<atIndex]).trimmingCharacters(in: .whitespaces)
+    let (prefix, suppressAuthor) = citationPrefixAndSuppression(beforeAt: beforeAt)
+
+    // Parse citekey and locator after @
+    let afterAt = String(part[part.index(after: atIndex)...])
+
+    let citekey = leadingCitekey(in: afterAt)
+    guard !citekey.isEmpty else { return nil }
+
+    let remainder = String(afterAt.dropFirst(citekey.count))
+
+    // Check for locator after comma
+    var locator: String?
+    let suffix: String? = nil
+
+    if remainder.hasPrefix(",") {
+        let locatorPart = String(remainder.dropFirst()).trimmingCharacters(in: .whitespaces)
+        if !locatorPart.isEmpty {
+            locator = locatorPart
+        }
+    }
+
+    return CitationEntry(
+        citekey: citekey,
+        prefix: prefix,
+        locator: locator,
+        suffix: suffix,
+        suppressAuthor: suppressAuthor
+    )
+}
+
+/// Determine the citation prefix and suppress-author flag from the text before `@`.
+/// Handles: `-` (suppress, no prefix), empty (no prefix, not suppressed), a trailing `-`
+/// like `"see -@key"` (suppress with the leading text as prefix), and any other non-empty
+/// text (prefix, not suppressed).
+private func citationPrefixAndSuppression(beforeAt: String) -> (prefix: String?, suppressAuthor: Bool) {
+    if beforeAt == "-" {
+        return (nil, true)
+    } else if beforeAt.isEmpty {
+        return (nil, false)
+    } else if beforeAt.hasSuffix("-") {
+        // "see -@key" pattern
+        let prefix = String(beforeAt.dropLast()).trimmingCharacters(in: .whitespaces)
+        return (prefix, true)
+    } else {
+        return (beforeAt, false)
+    }
+}
+
+/// Accumulate the leading run of citekey characters (alphanumeric, `:`, `.`, `-`, `_`) from
+/// the text immediately after `@`, stopping at the first character that isn't part of a
+/// citekey.
+private func leadingCitekey(in afterAt: String) -> String {
+    var citekey = ""
+    for char in afterAt {
+        if isCitekeyCharacter(char) {
+            citekey.append(char)
+        } else {
+            break
+        }
+    }
+    return citekey
+}
+
+/// Whether `char` may appear in a Pandoc citekey (alphanumeric, `:`, `.`, `-`, `_`).
+private func isCitekeyCharacter(_ char: Character) -> Bool {
+    char.isLetter || char.isNumber || char == ":" || char == "." || char == "-" || char == "_"
 }
 
 /// JSON-RPC response wrapper for BBT item.search
@@ -405,6 +419,51 @@ final class ZoteroService {
     /// when `item.pandoc_filter` resolution (`resolveRawViaPandocFilter`) fails.
     private func fetchItemsForCitekeysViaExport(_ citekeys: [String]) async throws -> [CSLItem] {
         guard !citekeys.isEmpty else { return [] }
+        let request = try makeExportRequest(citekeys: citekeys)
+
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+
+            guard let httpResponse = response as? HTTPURLResponse,
+                  httpResponse.statusCode == 200 else {
+                throw ZoteroError.noResponse
+            }
+
+            let items: [CSLItem]
+            switch try Self.decodeExportResult(from: data) {
+            case .noItems:
+                // Empty result payload — leave connection state untouched, matching the
+                // pre-refactor early `return []` for an empty string/array result.
+                return []
+            case .items(let decoded):
+                items = decoded
+            }
+
+            // Cache by the citekey string actually REQUESTED (matched case-insensitively against
+            // each item's CSL `id`), not by `item.citekey` (== `citationKey ?? id`) — same
+            // rationale as `fetchItemsForCitekeys` above: BBT resolves by its own KeyManager key
+            // (surfaced as CSL `id`) but can report a different `citation-key` for the same item.
+            cacheItems(items, forRequestedCitekeys: citekeys)
+
+            isConnected = true
+            connectionError = nil
+
+            return items
+        } catch let error as ZoteroError {
+            throw error
+        } catch let urlError as URLError where urlError.code == .cannotConnectToHost
+            || urlError.code == .networkConnectionLost {
+            isConnected = false
+            throw ZoteroError.notRunning
+        } catch {
+            throw ZoteroError.networkError(error)
+        }
+    }
+
+    /// Build the `item.export` JSON-RPC request for `fetchItemsForCitekeysViaExport`. Runs
+    /// before the network `do` block, exactly where this code sat inline before the refactor,
+    /// so a thrown `ZoteroError` here is not caught by that block's catch clauses.
+    private func makeExportRequest(citekeys: [String]) throws -> URLRequest {
         guard let url = URL(string: "\(baseURL)/better-bibtex/json-rpc") else {
             throw ZoteroError.invalidResponse("Invalid URL")
         }
@@ -428,66 +487,58 @@ final class ZoteroService {
             throw ZoteroError.invalidResponse("Failed to serialize request: \(error)")
         }
 
-        do {
-            let (data, response) = try await URLSession.shared.data(for: request)
+        return request
+    }
 
-            guard let httpResponse = response as? HTTPURLResponse,
-                  httpResponse.statusCode == 200 else {
-                throw ZoteroError.noResponse
+    /// Result of decoding an `item.export` JSON-RPC response body.
+    enum ExportDecodeResult {
+        /// Empty result payload (empty string or empty array) — the caller returns `[]` and
+        /// leaves connection state (`isConnected`/`connectionError`) untouched, matching the
+        /// pre-refactor early-return behavior. A non-empty `result` string that decodes to an
+        /// empty CSL-item array does NOT take this case.
+        case noItems
+        case items([CSLItem])
+    }
+
+    /// Decode the JSON-RPC envelope from `item.export`: CSL-JSON as a string, CSL-JSON as an
+    /// array, a JSON-RPC error object, or an unrecognized shape. Must be called inside the
+    /// network `do` block in `fetchItemsForCitekeysViaExport` — a `DecodingError` from the CSL
+    /// decode here needs to fall through to that block's trailing
+    /// `catch { throw ZoteroError.networkError(error) }`, while a `ZoteroError` thrown here
+    /// needs to pass through `catch let error as ZoteroError { throw error }` unwrapped.
+    nonisolated static func decodeExportResult(from data: Data) throws -> ExportDecodeResult {
+        // item.export returns a JSON-RPC wrapper with CSL-JSON in result
+        guard let jsonObj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw ZoteroError.invalidResponse("Invalid JSON-RPC response")
+        }
+
+        // Try result as string first (CSL-JSON encoded as string)
+        if let resultString = jsonObj["result"] as? String {
+            // Handle empty string (no items found)
+            if resultString.isEmpty {
+                return .noItems
             }
-
-            // item.export returns a JSON-RPC wrapper with CSL-JSON in result
-            guard let jsonObj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-                throw ZoteroError.invalidResponse("Invalid JSON-RPC response")
+            guard let resultData = resultString.data(using: .utf8) else {
+                throw ZoteroError.invalidResponse("Failed to decode result string")
             }
-
-            let items: [CSLItem]
-
-            // Try result as string first (CSL-JSON encoded as string)
-            if let resultString = jsonObj["result"] as? String {
-                // Handle empty string (no items found)
-                if resultString.isEmpty {
-                    return []
-                }
-                guard let resultData = resultString.data(using: .utf8) else {
-                    throw ZoteroError.invalidResponse("Failed to decode result string")
-                }
-                items = try JSONDecoder().decode([CSLItem].self, from: resultData)
+            let items = try JSONDecoder().decode([CSLItem].self, from: resultData)
+            return .items(items)
+        }
+        // Try result as array directly (CSL items as array)
+        else if let resultArray = jsonObj["result"] as? [[String: Any]] {
+            if resultArray.isEmpty {
+                return .noItems
             }
-            // Try result as array directly (CSL items as array)
-            else if let resultArray = jsonObj["result"] as? [[String: Any]] {
-                if resultArray.isEmpty {
-                    return []
-                }
-                let resultData = try JSONSerialization.data(withJSONObject: resultArray)
-                items = try JSONDecoder().decode([CSLItem].self, from: resultData)
-            }
-            // Check for JSON-RPC error
-            else if let error = jsonObj["error"] as? [String: Any],
-                    let message = error["message"] as? String {
-                throw ZoteroError.invalidResponse("BBT error: \(message)")
-            } else {
-                throw ZoteroError.invalidResponse("Unexpected result format in item.export")
-            }
-
-            // Cache by the citekey string actually REQUESTED (matched case-insensitively against
-            // each item's CSL `id`), not by `item.citekey` (== `citationKey ?? id`) — same
-            // rationale as `fetchItemsForCitekeys` above: BBT resolves by its own KeyManager key
-            // (surfaced as CSL `id`) but can report a different `citation-key` for the same item.
-            cacheItems(items, forRequestedCitekeys: citekeys)
-
-            isConnected = true
-            connectionError = nil
-
-            return items
-        } catch let error as ZoteroError {
-            throw error
-        } catch let urlError as URLError where urlError.code == .cannotConnectToHost
-            || urlError.code == .networkConnectionLost {
-            isConnected = false
-            throw ZoteroError.notRunning
-        } catch {
-            throw ZoteroError.networkError(error)
+            let resultData = try JSONSerialization.data(withJSONObject: resultArray)
+            let items = try JSONDecoder().decode([CSLItem].self, from: resultData)
+            return .items(items)
+        }
+        // Check for JSON-RPC error
+        else if let error = jsonObj["error"] as? [String: Any],
+                let message = error["message"] as? String {
+            throw ZoteroError.invalidResponse("BBT error: \(message)")
+        } else {
+            throw ZoteroError.invalidResponse("Unexpected result format in item.export")
         }
     }
 
