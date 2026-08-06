@@ -9,19 +9,6 @@ import SwiftUI
 
 // MARK: - Notification Extensions
 
-/// Groups the sync/persistence services threaded through the content-change
-/// observer chain, so `withContentObservers` and friends stay under
-/// SwiftLint's function-parameter-count limit.
-@MainActor
-struct ContentSyncServices {
-    let sectionSync: SectionSyncService
-    let annotationSync: AnnotationSyncService
-    let bibliographySync: BibliographySyncService
-    let footnoteSync: FootnoteSyncService
-    let autoBackup: AutoBackupService
-    let documentManager: DocumentManager
-}
-
 extension View {
     /// Adds editor-related notification handlers
     @MainActor
@@ -66,11 +53,7 @@ extension View {
                 }
                 // Handle cursor position restoration during mode switch
                 if let position = notification.userInfo?["position"] as? CursorPosition {
-                    let line = position.line
-                    let column = position.column
-                    let visible = position.cursorIsVisible
-                    let topLine = position.topLine
-                    DebugLog.log(.editor, "[CURSOR-SYNC] Relay: line=\(line) col=\(column) visible=\(visible) topLine=\(topLine)")
+                    DebugLog.log(.editor, "[CURSOR-SYNC] Relay: line=\(position.line) col=\(position.column) visible=\(position.cursorIsVisible) topLine=\(position.topLine)")
                     cursorRestore.wrappedValue = position
                 }
                 // Complete the two-phase toggle: cursor is saved, now do the actual switch
@@ -206,29 +189,56 @@ extension View {
     @MainActor
     func withContentObservers(
         editorState: EditorViewState,
-        services: ContentSyncServices
+        sectionSyncService: SectionSyncService,
+        annotationSyncService: AnnotationSyncService,
+        bibliographySyncService: BibliographySyncService,
+        footnoteSyncService: FootnoteSyncService,
+        autoBackupService: AutoBackupService,
+        documentManager: DocumentManager
     ) -> some View {
-        contentSyncObservers(editorState: editorState, services: services)
-            .annotationModeObservers(editorState: editorState)
-            .goalPersistenceObservers(editorState: editorState, documentManager: services.documentManager)
+        contentSyncObservers(
+            editorState: editorState,
+            sectionSyncService: sectionSyncService,
+            annotationSyncService: annotationSyncService,
+            bibliographySyncService: bibliographySyncService,
+            footnoteSyncService: footnoteSyncService,
+            autoBackupService: autoBackupService,
+            documentManager: documentManager
+        )
+        .annotationModeObservers(editorState: editorState)
+        .goalPersistenceObservers(editorState: editorState, documentManager: documentManager)
     }
 
     /// Content, editor-mode, and zoom observers (split out to keep type-checking fast)
     @MainActor
     private func contentSyncObservers(
         editorState: EditorViewState,
-        services: ContentSyncServices
+        sectionSyncService: SectionSyncService,
+        annotationSyncService: AnnotationSyncService,
+        bibliographySyncService: BibliographySyncService,
+        footnoteSyncService: FootnoteSyncService,
+        autoBackupService: AutoBackupService,
+        documentManager: DocumentManager
     ) -> some View {
         self
             .onChange(of: editorState.content) { _, newValue in
-                handleContentChange(newValue, editorState: editorState, services: services)
+                handleContentChange(
+                    newValue,
+                    editorState: editorState,
+                    sectionSyncService: sectionSyncService,
+                    annotationSyncService: annotationSyncService,
+                    bibliographySyncService: bibliographySyncService,
+                    footnoteSyncService: footnoteSyncService,
+                    autoBackupService: autoBackupService,
+                    documentManager: documentManager
+                )
             }
             .onChange(of: editorState.editorMode) { _, _ in
                 editorState.blockReparseTask?.cancel()
                 editorState.blockReparseTask = nil
             }
             .onChange(of: editorState.zoomedSectionId) { _, newValue in
-                services.sectionSync.isContentZoomed = (newValue != nil)
+                sectionSyncService.isContentZoomed = (newValue != nil)
             }
     }
 
@@ -286,16 +296,67 @@ extension View {
     private func handleContentChange(
         _ newValue: String,
         editorState: EditorViewState,
-        services: ContentSyncServices
+        sectionSyncService: SectionSyncService,
+        annotationSyncService: AnnotationSyncService,
+        bibliographySyncService: BibliographySyncService,
+        footnoteSyncService: FootnoteSyncService,
+        autoBackupService: AutoBackupService,
+        documentManager: DocumentManager
     ) {
         guard editorState.contentState == .idle else { return }
         // BlockSyncService handles content -> block DB sync via polling
         // SectionSyncService syncs the section table (used by version history snapshots)
-        services.sectionSync.contentChanged(newValue, zoomedIds: editorState.zoomedSectionIds)
-        services.annotationSync.contentChanged(newValue)
+        sectionSyncService.contentChanged(newValue, zoomedIds: editorState.zoomedSectionIds)
+        annotationSyncService.contentChanged(newValue)
 
         // When in source mode, re-parse blocks (BlockSyncService only works with Milkdown)
-        scheduleSourceModeReparse(newValue: newValue, editorState: editorState, services: services)
+        if editorState.editorMode == .source {
+            if editorState.zoomedSectionId == nil {
+                // Non-zoomed: full document re-parse via replaceBlocks()
+                if let db = documentManager.projectDatabase,
+                   let pid = documentManager.projectId {
+                    editorState.blockReparseTask?.cancel()
+                    editorState.blockReparseGeneration += 1
+                    let myGeneration = editorState.blockReparseGeneration
+                    editorState.blockReparseTask = Task {
+                        try? await Task.sleep(for: .milliseconds(1000))
+                        guard !Task.isCancelled else { return }
+                        guard editorState.blockReparseGeneration == myGeneration else { return }
+                        guard editorState.contentState == .idle,
+                              editorState.editorMode == .source,
+                              editorState.zoomedSectionId == nil else { return }
+                        let existing = try? db.fetchBlocks(projectId: pid)
+                        var metadata: [String: SectionMetadata] = [:]
+                        for block in existing ?? [] where block.blockType == .heading {
+                            metadata[block.textContent] = SectionMetadata(
+                                status: block.status,
+                                tags: block.tags?.isEmpty == false ? block.tags : nil,
+                                wordGoal: block.wordGoal
+                            )
+                        }
+                        let blocks = BlockParser.parse(
+                            markdown: newValue,
+                            projectId: pid,
+                            existingSectionMetadata: metadata.isEmpty ? nil : metadata
+                        )
+                        try? db.replaceBlocks(blocks, for: pid)
+                    }
+                }
+            } else if editorState.zoomedBlockRange != nil {
+                // Zoomed: scoped re-parse via flushCodeMirrorSyncIfNeeded()
+                editorState.blockReparseTask?.cancel()
+                editorState.blockReparseGeneration += 1
+                let myGeneration = editorState.blockReparseGeneration
+                editorState.blockReparseTask = Task {
+                    try? await Task.sleep(for: .milliseconds(1000))
+                    guard !Task.isCancelled else { return }
+                    guard editorState.blockReparseGeneration == myGeneration else { return }
+                    guard editorState.contentState == .idle,
+                          editorState.editorMode == .source else { return }
+                    editorState.flushContentToDatabase()
+                }
+            }
+        }
 
         // Skip bibliography sync when zoomed - we don't have full document context
         // Bibliography will be synced when user zooms out and full content is rebuilt
@@ -303,103 +364,24 @@ extension View {
 
         // Check for citation changes and update bibliography if needed
         // Always call even when citekeys is empty - this triggers bibliography removal
-        syncCitationsAndFootnotes(newValue: newValue, services: services)
+        if let projectId = documentManager.projectId {
+            let citekeys = BibliographySyncService.extractCitekeys(from: newValue)
+            bibliographySyncService.checkAndUpdateBibliography(
+                currentCitekeys: citekeys,
+                projectId: projectId
+            )
+
+            // Check for footnote changes and update #Notes section
+            let footnoteRefs = FootnoteSyncService.extractFootnoteRefs(from: newValue)
+            footnoteSyncService.checkAndUpdateFootnotes(
+                footnoteRefs: footnoteRefs,
+                projectId: projectId,
+                fullContent: newValue
+            )
+        }
 
         // Trigger auto-backup timer on content change
-        services.autoBackup.contentDidChange()
-    }
-
-    /// Dispatches the source-mode block re-parse to the zoomed or non-zoomed path.
-    /// Extracted from `handleContentChange` to keep type-checking fast and its
-    /// cyclomatic complexity down.
-    @MainActor
-    private func scheduleSourceModeReparse(
-        newValue: String,
-        editorState: EditorViewState,
-        services: ContentSyncServices
-    ) {
-        guard editorState.editorMode == .source else { return }
-        if editorState.zoomedSectionId == nil {
-            // Non-zoomed: full document re-parse via replaceBlocks()
-            scheduleFullDocumentReparse(newValue: newValue, editorState: editorState, services: services)
-        } else if editorState.zoomedBlockRange != nil {
-            // Zoomed: scoped re-parse via flushContentToDatabase()
-            scheduleZoomedReparse(editorState: editorState)
-        }
-    }
-
-    /// Non-zoomed source-mode re-parse: rebuilds the full block table from `newValue`,
-    /// preserving existing heading metadata (status/tags/word goal).
-    @MainActor
-    private func scheduleFullDocumentReparse(
-        newValue: String,
-        editorState: EditorViewState,
-        services: ContentSyncServices
-    ) {
-        guard let db = services.documentManager.projectDatabase,
-              let pid = services.documentManager.projectId else { return }
-        editorState.blockReparseTask?.cancel()
-        editorState.blockReparseGeneration += 1
-        let myGeneration = editorState.blockReparseGeneration
-        editorState.blockReparseTask = Task {
-            try? await Task.sleep(for: .milliseconds(1000))
-            guard !Task.isCancelled else { return }
-            guard editorState.blockReparseGeneration == myGeneration else { return }
-            guard editorState.contentState == .idle,
-                  editorState.editorMode == .source,
-                  editorState.zoomedSectionId == nil else { return }
-            let existing = try? db.fetchBlocks(projectId: pid)
-            var metadata: [String: SectionMetadata] = [:]
-            for block in existing ?? [] where block.blockType == .heading {
-                metadata[block.textContent] = SectionMetadata(
-                    status: block.status,
-                    tags: block.tags?.isEmpty == false ? block.tags : nil,
-                    wordGoal: block.wordGoal
-                )
-            }
-            let blocks = BlockParser.parse(
-                markdown: newValue,
-                projectId: pid,
-                existingSectionMetadata: metadata.isEmpty ? nil : metadata
-            )
-            try? db.replaceBlocks(blocks, for: pid)
-        }
-    }
-
-    /// Zoomed source-mode re-parse: flushes the scoped CodeMirror content to the database.
-    @MainActor
-    private func scheduleZoomedReparse(editorState: EditorViewState) {
-        editorState.blockReparseTask?.cancel()
-        editorState.blockReparseGeneration += 1
-        let myGeneration = editorState.blockReparseGeneration
-        editorState.blockReparseTask = Task {
-            try? await Task.sleep(for: .milliseconds(1000))
-            guard !Task.isCancelled else { return }
-            guard editorState.blockReparseGeneration == myGeneration else { return }
-            guard editorState.contentState == .idle,
-                  editorState.editorMode == .source else { return }
-            editorState.flushContentToDatabase()
-        }
-    }
-
-    /// Checks for citation and footnote changes in the (non-zoomed) full document
-    /// content and updates the bibliography / #Notes section accordingly.
-    @MainActor
-    private func syncCitationsAndFootnotes(newValue: String, services: ContentSyncServices) {
-        guard let projectId = services.documentManager.projectId else { return }
-        let citekeys = BibliographySyncService.extractCitekeys(from: newValue)
-        services.bibliographySync.checkAndUpdateBibliography(
-            currentCitekeys: citekeys,
-            projectId: projectId
-        )
-
-        // Check for footnote changes and update #Notes section
-        let footnoteRefs = FootnoteSyncService.extractFootnoteRefs(from: newValue)
-        services.footnoteSync.checkAndUpdateFootnotes(
-            footnoteRefs: footnoteRefs,
-            projectId: projectId,
-            fullContent: newValue
-        )
+        autoBackupService.contentDidChange()
     }
 
     /// Posts the annotationDisplayModesChanged notification with explicit values.

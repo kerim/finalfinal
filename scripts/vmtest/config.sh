@@ -5,6 +5,20 @@
 VMTEST_SCHEME="final final"
 VMTEST_DESTINATION='platform=macOS'
 
+# In-guest prep run from the copied checkout root before xcodebuild (web
+# bundle, xcodegen, scheme verification). Project-relative path.
+VMTEST_GUEST_PREP="scripts/vmtest/guest-prep.sh"
+
+# Host-side cache-warm script sourced by the engine's provision.sh while the
+# candidate image is booted ($ip, ssh_guest, PROJECT_ROOT in scope).
+VMTEST_PROVISION_WARM_SCRIPT="provision-warm.sh"
+
+# Extra VAR=value pairs for the xcodebuild invocation. TEST_RUNNER_ prefix
+# required for anything the XCUITest runner process must see — xcodebuild
+# forwards only that prefix, stripping it on arrival. The relative value
+# resolves against the runner's sandboxed home (the one writable location).
+VMTEST_GUEST_TEST_ENV="TEST_RUNNER_FF_E2E_SHOT_DIR=e2e-shots"
+
 VMTEST_GOLDEN="ff-golden"
 VMTEST_GOLDEN_PREV="ff-golden-prev"
 VMTEST_GOLDEN_CANDIDATE="ff-golden-candidate"
