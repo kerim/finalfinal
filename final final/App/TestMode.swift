@@ -39,7 +39,7 @@ enum TestMode {
     /// during UI testing. Gating on the general flag would silently defeat that behavior for
     /// every other UI test. Only this one test's launch sets the more specific env var below;
     /// everything else -- other UI tests and real usage -- keeps the exclusion active.
-    static var isUITestingScratchRecentProjectsAllowed: Bool {
+    static var isUITestingWithScratchRecentProjectsAllowed: Bool {
         isUITesting && ProcessInfo.processInfo.environment["FF_UI_TESTING_ALLOW_SCRATCH_RECENT_PROJECTS"] == "1"
     }
 
