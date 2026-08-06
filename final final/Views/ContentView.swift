@@ -152,7 +152,9 @@ struct ContentView: View {
 
                             DebugLog.log(.lifecycle, "[VersionHistory] prepareForOpen: \(sections.count) sections, projectId=\(pid)")
                             if let first = sections.first {
-                                DebugLog.log(.lifecycle, "[VersionHistory]   first section: '\(first.title)' id=\(first.id) content=\(first.markdownContent.count) chars")
+                                DebugLog.log(.lifecycle,
+                                             "[VersionHistory]   first section: '\(first.title)' " +
+                                             "id=\(first.id) content=\(first.markdownContent.count) chars")
                             }
                             versionHistoryCoordinator.prepareForOpen(
                                 database: db,
