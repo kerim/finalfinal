@@ -14,7 +14,7 @@ extension XCUIApplication {
     /// Creates an XCUIApplication targeting our app by bundle identifier.
     /// Explicit ID avoids issues with the pipe character in PRODUCT_NAME.
     static func targetApp() -> XCUIApplication {
-        XCUIApplication(bundleIdentifier: "com.kerim.final-final")
+        XCUIApplication(bundleIdentifier: "com.kerim.final-final.testhost")
     }
 
     /// Launches the app in UI testing mode without a fixture (shows picker)
@@ -68,7 +68,13 @@ extension XCUIApplication {
     /// Note: NSHomeDirectory() in the test runner may differ from the app's home.
     /// We clean both the test runner's home AND the real user home to be safe.
     private static func cleanSavedApplicationState() {
-        let bundleState = "Library/Saved Application State/com.kerim.final-final.savedState"
+        // The Test action builds the app as com.kerim.final-final.testhost
+        // (project.yml's DebugTest config), so only the testhost domain is
+        // cleaned. The production domain (com.kerim.final-final.savedState)
+        // is deliberately untouched — an earlier version deleted it from the
+        // real user home on every test launch, silently discarding the
+        // user's own saved window state.
+        let bundleState = "Library/Saved Application State/com.kerim.final-final.testhost.savedState"
         let testRunnerPath = NSHomeDirectory() + "/" + bundleState
 
         // Also try the real user home (in case test runner home differs)

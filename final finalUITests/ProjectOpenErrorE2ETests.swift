@@ -21,7 +21,7 @@ import XCTest
 import AppKit
 
 final class ProjectOpenErrorE2ETests: XCTestCase {
-    private static let bundleIdentifier = "com.kerim.final-final"
+    private static let bundleIdentifier = "com.kerim.final-final.testhost"
 
     var app: XCUIApplication!
     private var brokenProjectURL: URL!

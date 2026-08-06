@@ -6,6 +6,18 @@ options:
   xcodeVersion: "15.0"
   generateEmptyDirectories: true
 
+# DebugTest exists so the Test action builds the app under a SEPARATE bundle
+# identity (see the app target's DebugTest config). macOS keys UserDefaults,
+# NSWindow frame/full-screen autosave, and process identity to the bundle ID,
+# so a test-hosted app instance under the real ID could inherit the user's
+# saved full-screen state (live incident 2026-08-05: a test run launched the
+# app full-screen over the user's work) and collide with a running production
+# copy. A distinct test identity removes that whole class.
+configs:
+  Debug: debug
+  DebugTest: debug
+  Release: release
+
 schemes:
   final final:
     build:
@@ -20,7 +32,7 @@ schemes:
       config: Debug
       executable: final final
     test:
-      config: Debug
+      config: DebugTest
       # Forwards TEST_RUNNER_FF_E2E_SHOT_DIR (a build-setting override
       # `vmtest run` passes on the xcodebuild command line — see
       # scripts/vmtest/guest/run.sh) into the XCUITest RUNNER process's own
@@ -161,6 +173,15 @@ targets:
           SWIFT_OPTIMIZATION_LEVEL: "-Onone"
           # Surface slow-to-type-check functions/expressions (>200ms) as warnings.
           OTHER_SWIFT_FLAGS: "-Xfrontend -warn-long-function-bodies=200 -Xfrontend -warn-long-expression-type-checking=200"
+        DebugTest:
+          # Same build as Debug, but a SEPARATE app identity for the Test
+          # action — see the configs comment at the top of this file.
+          PRODUCT_BUNDLE_IDENTIFIER: com.kerim.final-final.testhost
+          CODE_SIGN_IDENTITY: "-"
+          CODE_SIGN_STYLE: Manual
+          SWIFT_COMPILATION_MODE: singlefile
+          SWIFT_OPTIMIZATION_LEVEL: "-Onone"
+          OTHER_SWIFT_FLAGS: "-Xfrontend -warn-long-function-bodies=200 -Xfrontend -warn-long-expression-type-checking=200"
         Release:
           CODE_SIGN_IDENTITY: "Developer ID Application"
           CODE_SIGN_STYLE: Manual
@@ -243,6 +264,12 @@ targets:
         OTHER_LDFLAGS: ["-lsqlite3"]
       configs:
         Debug:
+          CODE_SIGN_IDENTITY: "-"
+          CODE_SIGN_STYLE: Manual
+        DebugTest:
+          # Embedded-extension IDs must be prefixed by the host app's ID, and
+          # the Test action's host app is …final-final.testhost.
+          PRODUCT_BUNDLE_IDENTIFIER: com.kerim.final-final.testhost.quicklook
           CODE_SIGN_IDENTITY: "-"
           CODE_SIGN_STYLE: Manual
         Release:

@@ -1679,6 +1679,69 @@
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
+		00125468260EDACEF320CC03 /* DebugTest */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = DebugTest;
+		};
 		01DDEA1156C69DB1F5E21F51 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -1775,6 +1838,26 @@
 			};
 			name = Release;
 		};
+		206B52C719687B657EF560D0 /* DebugTest */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "com.kerim.final-final-tests";
+				SDKROOT = macosx;
+				SWIFT_VERSION = 5.9;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/FINAL|FINAL.app/Contents/MacOS/FINAL|FINAL";
+			};
+			name = DebugTest;
+		};
 		325CEE181C40AF7C0BAF9405 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -1794,6 +1877,56 @@
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/FINAL|FINAL.app/Contents/MacOS/FINAL|FINAL";
 			};
 			name = Debug;
+		};
+		4B779436EBAEEF6B4337100F /* DebugTest */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = "QuickLook Extension/QuickLook Extension.entitlements";
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 0.2.120;
+				DEVELOPMENT_TEAM = HBHZWD24V7;
+				ENABLE_HARDENED_RUNTIME = YES;
+				INFOPLIST_FILE = "QuickLook Extension/Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				MARKETING_VERSION = 1;
+				OTHER_LDFLAGS = (
+					"-lsqlite3",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "com.kerim.final-final.testhost.quicklook";
+				PRODUCT_MODULE_NAME = QuickLook_Extension;
+				PRODUCT_NAME = "QuickLook Extension";
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.9;
+			};
+			name = DebugTest;
+		};
+		5BC5A349EB946E850E1DFC3E /* DebugTest */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "com.kerim.final-final-uitests";
+				SDKROOT = macosx;
+				SWIFT_VERSION = 5.9;
+				TEST_TARGET_NAME = "final final";
+			};
+			name = DebugTest;
 		};
 		71EA0B12C1C0C97C42A15FDC /* Debug */ = {
 			isa = XCBuildConfiguration;
@@ -1913,6 +2046,36 @@
 			};
 			name = Release;
 		};
+		BD7305D3D0859131E8E646CF /* DebugTest */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = "final final/final final.entitlements";
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 0.2.120;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "final final/Info.plist";
+				INFOPLIST_GENERATION_MODE = GeneratedFile;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				MARKETING_VERSION = 1;
+				OTHER_SWIFT_FLAGS = "-Xfrontend -warn-long-function-bodies=200 -Xfrontend -warn-long-expression-type-checking=200";
+				PRODUCT_BUNDLE_IDENTIFIER = "com.kerim.final-final.testhost";
+				PRODUCT_MODULE_NAME = final_final;
+				PRODUCT_NAME = "FINAL|FINAL";
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = singlefile;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.9;
+			};
+			name = DebugTest;
+		};
 		DD0356459FEFE41CCC3AEA03 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -2003,6 +2166,7 @@
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				71EA0B12C1C0C97C42A15FDC /* Debug */,
+				BD7305D3D0859131E8E646CF /* DebugTest */,
 				7F944E942DFED44C9A711E4F /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
@@ -2012,6 +2176,7 @@
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				DD0356459FEFE41CCC3AEA03 /* Debug */,
+				00125468260EDACEF320CC03 /* DebugTest */,
 				05D68221E751AE7AB86E28DB /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
@@ -2021,6 +2186,7 @@
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				787907BB59FE77A664638113 /* Debug */,
+				4B779436EBAEEF6B4337100F /* DebugTest */,
 				9DCC347FF419380C686FD4E6 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
@@ -2030,6 +2196,7 @@
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				325CEE181C40AF7C0BAF9405 /* Debug */,
+				206B52C719687B657EF560D0 /* DebugTest */,
 				E912CBA80AF49FED74AC986E /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
@@ -2039,6 +2206,7 @@
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				01DDEA1156C69DB1F5E21F51 /* Debug */,
+				5BC5A349EB946E850E1DFC3E /* DebugTest */,
 				0D4CD9A7010A574AB7109E80 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
