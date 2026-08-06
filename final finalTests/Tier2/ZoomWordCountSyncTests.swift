@@ -582,4 +582,84 @@ final class ZoomWordCountSyncTests: XCTestCase {
             """
         )
     }
+
+    // MARK: - Zoomed: heading deleted while zoomed (SectionSyncService.syncZoomedSections deletion path)
+
+    /// Exercises `syncZoomedSections`'s deletion branch directly (via `contentChanged`, the
+    /// same entry point `ViewNotificationModifiers` calls) rather than through the block-sync/
+    /// WKWebView chain the other tests in this file use. Section-level sync while zoomed is
+    /// data-integrity-adjacent — deleting a section's heading while zoomed must remove exactly
+    /// that section from the sections table, leave sections outside the zoomed set untouched,
+    /// and report the removal via `onZoomedSectionsUpdated`.
+    @MainActor
+    func testZoomed_headingDeletedWhileZoomed_removesFromDatabase() async throws {
+        let fullMarkdown = """
+        # Alpha
+
+        Alpha text.
+
+        # Beta
+
+        Beta text.
+
+        # Gamma
+
+        Gamma text.
+        """
+        let db = try TestFixtureFactory.createTemporary(content: fullMarkdown)
+        let pid = try TestFixtureFactory.getProjectId(from: db)
+
+        let syncService = SectionSyncService()
+        syncService.configure(database: db, projectId: pid)
+
+        // Populate the sections table from the full document, as the initial sync would.
+        await syncService.syncNow(fullMarkdown)
+
+        let sectionsBefore = try db.fetchSections(projectId: pid)
+        XCTAssertEqual(sectionsBefore.map(\.title), ["Alpha", "Beta", "Gamma"])
+        guard let alpha = sectionsBefore.first(where: { $0.title == "Alpha" }),
+              let beta = sectionsBefore.first(where: { $0.title == "Beta" }),
+              let gamma = sectionsBefore.first(where: { $0.title == "Gamma" }) else {
+            XCTFail("Expected Alpha, Beta, and Gamma sections after initial sync")
+            return
+        }
+
+        // Zoom into Beta + Gamma, then delete Gamma's heading from the zoomed content —
+        // mirrors what ContentView's zoomed editor sends via contentChanged(_:zoomedIds:).
+        let zoomedIds: Set<String> = [beta.id, gamma.id]
+        let editedZoomedMarkdown = """
+        # Beta
+
+        Beta text.
+        """
+
+        var receivedIds: Set<String>?
+        syncService.onZoomedSectionsUpdated = { ids in receivedIds = ids }
+
+        syncService.contentChanged(editedZoomedMarkdown, zoomedIds: zoomedIds)
+        // contentChanged debounces for 500ms before syncing; leave generous headroom.
+        try await Task.sleep(nanoseconds: 1_000_000_000)
+
+        let sectionsAfter = try db.fetchSections(projectId: pid)
+        XCTAssertEqual(
+            sectionsAfter.count, 2,
+            "Deleting Gamma's heading while zoomed must remove exactly one section, got \(sectionsAfter.map(\.title))"
+        )
+        XCTAssertFalse(
+            sectionsAfter.contains { $0.id == gamma.id },
+            "Gamma must be removed from the database after its heading was deleted while zoomed"
+        )
+        XCTAssertTrue(
+            sectionsAfter.contains { $0.id == alpha.id },
+            "Alpha (outside the zoomed set) must be untouched by the zoomed deletion"
+        )
+        XCTAssertTrue(
+            sectionsAfter.contains { $0.id == beta.id },
+            "Beta must remain — only Gamma's heading was deleted"
+        )
+        XCTAssertEqual(
+            receivedIds, [beta.id],
+            "onZoomedSectionsUpdated must report the deleted section removed from the zoomed set"
+        )
+    }
 }
