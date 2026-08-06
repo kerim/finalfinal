@@ -58,6 +58,7 @@ struct FileCommands: Commands {
             Button("Version History...") {
                 NotificationCenter.default.post(name: .showVersionHistory, object: nil)
             }
+            .keyboardShortcut("v", modifiers: [.command, .option])
         }
 
         CommandGroup(replacing: .importExport) {
