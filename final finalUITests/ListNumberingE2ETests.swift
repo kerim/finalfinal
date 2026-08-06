@@ -172,47 +172,21 @@ final class ListNumberingE2ETests: XCTestCase {
         app.typeKey(.return, modifierFlags: [])
         app.typeText("Gamma item")
 
-        // Quiesce before triggering the flush below. This is a REAL
-        // quiescence check on data that already exists, not a wait for the
-        // toggle itself to create it: BlockSyncService's periodic poll
-        // (BlockSyncService.swift, 2s Timer, gated on `contentState == .idle`)
-        // keeps running throughout ordinary typing -- typing never moves
-        // `contentState` off `.idle` (that only happens for zoom, mode
-        // switch, bibliography update, drag-reorder, etc., none of which are
-        // in play here) -- so by the time we reach this line, the periodic
-        // poll has almost certainly already fired at least once and persisted
-        // the `ordered_list` row from the typing above. Cmd+/'s own flush
-        // (below) is not what first puts this row in the `block` table. What
-        // this poll still guards against is the app's periodic Swift<->JS
-        // sync possibly being mid-write when we read: it polls (bounded at
-        // 10s) until an ordered_list row exists and is byte-identical across
-        // two reads 1s apart, rather than assuming typing has already settled
-        // by the time we reach here. See waitForStableOrderedList's doc
-        // comment for what this does and doesn't guard against.
-        let preToggleBlocks = try Self.waitForStableOrderedList(fixturePath: TestFixtureHelper.fixturePath)
-
         // See the comment in testImagePasteMidListContinuesNumbering() above:
         // the label flips to "Source" before the WYSIWYG->CodeMirror view
         // swap necessarily finishes rendering, so this screenshot may still
         // show WYSIWYG. The proof below is the persisted `block` row, not pixels.
         let editorMode = app.buttons["status-bar-editor-mode"]
-        XCTAssertTrue(editorMode.waitForExistence(timeout: 10), "Editor mode button should appear. Blocks before toggle: \(preToggleBlocks)")
+        XCTAssertTrue(editorMode.waitForExistence(timeout: 10), "Editor mode button should appear")
         app.typeKey("/", modifierFlags: .command)
-        XCTAssertTrue(
-            editorMode.waitForLabel("== 'Source'", timeout: 10),
-            "Editor-mode button should report Source (triggers the flush). Blocks before toggle: \(preToggleBlocks)"
-        )
+        XCTAssertTrue(editorMode.waitForLabel("== 'Source'", timeout: 10), "Editor-mode button should report Source (triggers the flush)")
 
         let attachment = XCTAttachment(screenshot: app.screenshot())
         attachment.name = "deliberate-new-list-after-toggle"
         attachment.lifetime = .keepAlways
         add(attachment)
 
-        // Same bounded stability poll in place of the old fixed
-        // Thread.sleep(1.5): wait for the toggle-triggered flush (see file
-        // header) to land and settle rather than assuming a fixed delay is
-        // always long enough.
-        let allBlocks = try Self.waitForStableOrderedList(fixturePath: TestFixtureHelper.fixturePath)
+        Thread.sleep(forTimeInterval: 1.5)
 
         let fragments = try Self.queryBlockMarkdownFragments(
             fixturePath: TestFixtureHelper.fixturePath,
@@ -221,16 +195,16 @@ final class ListNumberingE2ETests: XCTestCase {
 
         XCTAssertEqual(
             fragments.count, 1,
-            "Expected exactly one ordered_list block (fixture starts with none). Got: \(fragments). All blocks: \(allBlocks)"
+            "Expected exactly one ordered_list block (fixture starts with none). Got: \(fragments)"
         )
         guard let onlyFragment = fragments.first else { return }
 
         let trimmed = onlyFragment.trimmingCharacters(in: .whitespacesAndNewlines)
         XCTAssertTrue(
             trimmed.contains("Alpha item") && trimmed.contains("Beta item") && trimmed.contains("Gamma item"),
-            "New list should contain all three items. Got: \(trimmed). All blocks: \(allBlocks)"
+            "New list should contain all three items. Got: \(trimmed)"
         )
-        XCTAssertTrue(trimmed.hasPrefix("1."), "A deliberately-created new list must restart at 1. Got: \(trimmed). All blocks: \(allBlocks)")
+        XCTAssertTrue(trimmed.hasPrefix("1."), "A deliberately-created new list must restart at 1. Got: \(trimmed)")
     }
 
     // MARK: - Helpers
@@ -354,87 +328,28 @@ final class ListNumberingE2ETests: XCTestCase {
             .filter { !$0.isEmpty }
     }
 
-    /// Diagnostic helper: dumps `id`, `sortOrder`, `blockType` + `markdownFragment`
-    /// for every row, in document order, to distinguish "flush never ran" (zero
-    /// rows), "flush ran but the list never formed" (rows exist, none are
-    /// ordered_list), a duplicate write race (two rows with distinct `id`s --
-    /// the app-level race filed as t-3904c457), and real fixture pollution (a
-    /// row with content that was never typed in this test). `id` and
-    /// `sortOrder` are included specifically so those cases can be told apart
-    /// by a future failure, not just by re-running and guessing.
+    /// Diagnostic helper: dumps `blockType` + `markdownFragment` for every row,
+    /// in document order, to distinguish "flush never ran" (zero rows) from
+    /// "flush ran but the list never formed" (rows exist, none are ordered_list).
     private static func queryAllBlocks(fixturePath: String) throws -> [String] {
         let dbPath = fixturePath + "/content.sqlite"
         let sentinel = "###ROWEND###"
-        let sql = "SELECT id || ' | sortOrder=' || sortOrder || ' | ' || blockType || ': ' "
-            + "|| markdownFragment || '\(sentinel)' FROM block ORDER BY sortOrder;"
+        let sql = "SELECT blockType || ': ' || markdownFragment || '\(sentinel)' FROM block ORDER BY sortOrder;"
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/sqlite3")
         process.arguments = [dbPath, sql]
 
         let stdoutPipe = Pipe()
-        let stderrPipe = Pipe()
         process.standardOutput = stdoutPipe
-        process.standardError = stderrPipe
         try process.run()
         process.waitUntilExit()
 
         let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-        let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
         let stdout = String(data: stdoutData, encoding: .utf8) ?? ""
-        let stderr = String(data: stderrData, encoding: .utf8) ?? ""
-
-        if process.terminationStatus != 0 {
-            XCTFail("sqlite3 query failed (status \(process.terminationStatus)): \(stderr)")
-        }
 
         return stdout
             .components(separatedBy: "\(sentinel)\n")
             .filter { !$0.isEmpty }
-    }
-
-    /// Quiesces the `block` table before `testDeliberateNewListRestartsAtOne`
-    /// reads from it: polls (bounded at `timeout`, default 10s) until an
-    /// `ordered_list` row exists AND the full block dump is byte-identical
-    /// across two reads 1s apart, then returns that stable dump. Used both
-    /// before the Cmd+/ mode toggle (to avoid racing the app's periodic
-    /// Swift<->JS sync -- "500ms polling", per CLAUDE.md's core principle --
-    /// while it's still catching up on the typing above) and, in place of the
-    /// old fixed `Thread.sleep(1.5)`, before the final assertion read (to
-    /// avoid racing the toggle-triggered flush described in the file header).
-    ///
-    /// This is a test-stabilization measure only: it does NOT paper over a
-    /// genuine duplicate-write race (two distinct-`id` ordered_list rows that
-    /// both stay present and identical across the 1s gap would still read as
-    /// "stable" here) -- that would still be caught downstream by this test's
-    /// `fragments.count == 1` assertion, whose failure message includes the
-    /// full dump this helper returns. Fixing that race itself is out of scope
-    /// -- see t-3904c457.
-    ///
-    /// If `timeout` elapses without an ordered_list row ever appearing, or
-    /// without two consecutive reads matching, the last dump taken is
-    /// returned anyway so the caller's own assertions -- not this helper --
-    /// produce the failure, with real diagnostic content attached.
-    private static func waitForStableOrderedList(fixturePath: String, timeout: TimeInterval = 10) throws -> [String] {
-        let deadline = Date().addingTimeInterval(timeout)
-        var lastDump = try queryAllBlocks(fixturePath: fixturePath)
-
-        while Date() < deadline {
-            let hasOrderedList = lastDump.contains { $0.contains("ordered_list") }
-            guard hasOrderedList else {
-                Thread.sleep(forTimeInterval: 0.5)
-                lastDump = try queryAllBlocks(fixturePath: fixturePath)
-                continue
-            }
-
-            Thread.sleep(forTimeInterval: 1.0)
-            let nextDump = try queryAllBlocks(fixturePath: fixturePath)
-            if nextDump == lastDump {
-                return nextDump
-            }
-            lastDump = nextDump
-        }
-
-        return lastDump
     }
 }

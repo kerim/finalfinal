@@ -172,48 +172,17 @@ enum E2EShotDir {
 // MARK: - Fixture Helpers
 
 enum TestFixtureHelper {
-    /// Backing storage for the per-test fixture path. XCTest runs one test's
-    /// setUp -> test -> tearDown serially before starting the next, so there is
-    /// no real concurrent access here -- `nonisolated(unsafe)` documents that
-    /// this mutable static is safe under that serial-execution contract, which
-    /// Swift 6 strict concurrency cannot see on its own.
-    private nonisolated(unsafe) static var currentFixturePath: String?
+    /// The path where the test fixture will be placed for the app to open.
+    /// Uses NSTemporaryDirectory() which the test runner can write to.
+    /// The app can read from this path since its sandbox is disabled.
+    static let fixturePath: String = {
+        return NSTemporaryDirectory() + "ff-test-fixture.ff"
+    }()
 
-    /// The per-test fixture path, assigned fresh by `setupFixture(from:)` and
-    /// cleared by `cleanupFixture()`. Each test gets its own
-    /// `ff-test-fixture-<UUID>.ff` under `NSTemporaryDirectory()` rather than a
-    /// single shared path, so one test's fixture file can't be read, mutated,
-    /// or torn down out from under a previously-running test.
-    ///
-    /// Reading this before `setupFixture(from:)` has run (or after
-    /// `cleanupFixture()` already ran) is a test-authoring bug: the old shared
-    /// `static let` would have silently handed back a stale path left over
-    /// from whatever test ran last, which is exactly the cross-test pollution
-    /// this per-test isolation exists to prevent. Fail loudly instead of
-    /// reproducing that silently-stale behavior -- via `XCTFail` rather than
-    /// `fatalError`, so the misuse fails only the one offending test instead
-    /// of killing the whole XCUITest runner process. Every current call site
-    /// runs with `continueAfterFailure = false`, so `XCTFail` unwinds the test
-    /// immediately and the sentinel path below is never actually consumed in
-    /// practice; it exists only to satisfy this property's non-throwing
-    /// `String` return type.
-    static var fixturePath: String {
-        guard let currentFixturePath else {
-            XCTFail(
-                "TestFixtureHelper.fixturePath read before setupFixture(from:) was called (or after "
-                    + "cleanupFixture() already ran) -- call setupFixture(from:) in this test's setUp first."
-            )
-            return "/dev/null/TestFixtureHelper-fixturePath-read-before-setupFixture"
-        }
-        return currentFixturePath
-    }
-
-    /// Copies the committed fixture from the UI test bundle to a fresh,
-    /// per-test path in the temp directory. Must be called in setUp before
-    /// launching the app.
+    /// Copies the committed fixture from the UI test bundle to the temp directory.
+    /// Must be called in setUp before launching the app.
     static func setupFixture(from testCase: XCTestCase) throws {
         let fm = FileManager.default
-        let path = NSTemporaryDirectory() + "ff-test-fixture-\(UUID().uuidString).ff"
 
         // Find fixture in the UI test bundle using URL-based path
         let bundle = Bundle(for: type(of: testCase))
@@ -225,27 +194,14 @@ enum TestFixtureHelper {
         }
 
         // Fresh copy for test isolation
-        try? fm.removeItem(atPath: path)
-        try fm.copyItem(at: fixtureSource, to: URL(fileURLWithPath: path))
+        try? fm.removeItem(atPath: fixturePath)
+        try fm.copyItem(at: fixtureSource, to: URL(fileURLWithPath: fixturePath))
 
-        // Only publish the path once the copy has actually succeeded --
-        // assigning it earlier would let a failed bundle lookup or copy leave
-        // `currentFixturePath` pointing at a file that doesn't exist.
-        currentFixturePath = path
-
-        print("[TestFixture] Fixture copied to: \(path)")
+        print("[TestFixture] Fixture copied to: \(fixturePath)")
     }
 
-    /// Removes the test fixture and clears the stored path. Call from
-    /// tearDown. A documented no-op when no fixture is currently set -- e.g. a
-    /// test method that never called `setupFixture(from:)` sharing a
-    /// `tearDown`/`tearDownWithError` with a sibling method that did (see
-    /// ProjectOpenErrorE2ETests, where `tearDownWithError` calls this
-    /// unconditionally but only one of its two test methods calls
-    /// `setupFixture`).
+    /// Removes the test fixture. Call from tearDown.
     static func cleanupFixture() {
-        guard let path = currentFixturePath else { return }
-        try? FileManager.default.removeItem(atPath: path)
-        currentFixturePath = nil
+        try? FileManager.default.removeItem(atPath: fixturePath)
     }
 }
