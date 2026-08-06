@@ -348,6 +348,12 @@ extension ContentView {
 
     /// Handle project closed notification
     func handleProjectClosed() {
+        // Check if this is the Getting Started project with modifications
+        if documentManager.isGettingStartedProject && documentManager.isGettingStartedModified() {
+            showGettingStartedCloseAlert = true
+            return
+        }
+
         Task {
             await performProjectClose()
         }
@@ -379,6 +385,34 @@ extension ContentView {
 
         // Notify parent to show picker
         onProjectClosed?()
+    }
+
+    /// Handle "Create New Project" from Getting Started close alert
+    func handleCreateFromGettingStarted() {
+        // Get current content before closing
+        let currentContent = (try? documentManager.getCurrentContent()) ?? ""
+
+        let savePanel = NSSavePanel()
+        savePanel.title = "Save Your Work"
+        savePanel.nameFieldLabel = "Project Name:"
+        savePanel.nameFieldStringValue = "Untitled"
+        savePanel.allowedContentTypes = [.init(exportedAs: "com.kerim.final-final.document")]
+        savePanel.canCreateDirectories = true
+
+        savePanel.begin { response in
+            guard response == .OK, let url = savePanel.url else { return }
+
+            Task { @MainActor in
+                do {
+                    let title = url.deletingPathExtension().lastPathComponent
+                    try self.documentManager.newProject(at: url, title: title, initialContent: currentContent)
+                    // No need to call onProjectOpened - we're replacing the current project
+                    await self.handleProjectOpened()
+                } catch {
+                    DebugLog.log(.lifecycle, "[ContentView] Failed to create project from Getting Started: \(error)")
+                }
+            }
+        }
     }
 
     // MARK: - Version History Handlers

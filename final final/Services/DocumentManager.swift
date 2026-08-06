@@ -123,15 +123,6 @@ final class DocumentManager {
     /// Content hash after editor loads (post-normalization)
     var gettingStartedLoadedHash: Int?
 
-    /// When gettingStartedLoadedHash was captured. Used with gettingStartedBaselineWindow
-    /// to absorb a differing settle shortly after the first as baseline noise (e.g. a second
-    /// Milkdown re-serialization pass) rather than a real edit.
-    var gettingStartedBaselineCapturedAt: Date?
-
-    /// How long after the first baseline capture a differing settle is still re-adopted as
-    /// the baseline instead of being flagged as an edit. Injectable for tests.
-    var gettingStartedBaselineWindow: TimeInterval = 2.0
-
     /// Directory for the temporary Getting Started project
     var gettingStartedDirectory: URL {
         FileManager.default.temporaryDirectory
@@ -349,8 +340,6 @@ final class DocumentManager {
         isGettingStartedProject = false
         gettingStartedLoadedHash = nil
         gettingStartedUserEdited = false
-        gettingStartedBaselineCapturedAt = nil
-        gettingStartedBaselineWindow = 2.0
 
         // Clear media scheme handler
         MediaSchemeHandler.shared.mediaDirectoryURL = nil

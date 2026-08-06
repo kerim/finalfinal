@@ -65,12 +65,6 @@ class EditorViewState {
     /// Controls visibility of the focus mode toast notification
     var showFocusModeToast: Bool = false
 
-    /// Controls visibility of the Getting Started first-edit toast notification.
-    /// Set true on the .gettingStartedEdited notification (see EditorViewState+Types.swift),
-    /// posted by SectionSyncService rather than set directly through its existing weak
-    /// `editorState` back-reference -- keeping this UI-layer concern out of the sync service.
-    var showGettingStartedToast: Bool = false
-
     var zoomedSectionId: String?
     var wordCount: Int = 0
     var characterCount: Int = 0
