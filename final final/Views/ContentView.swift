@@ -208,12 +208,14 @@ struct ContentView: View {
             .focusedSceneValue(\.editorState, editorState)
             .withContentObservers(
                 editorState: editorState,
-                sectionSyncService: sectionSyncService,
-                annotationSyncService: annotationSyncService,
-                bibliographySyncService: bibliographySyncService,
-                footnoteSyncService: footnoteSyncService,
-                autoBackupService: autoBackupService,
-                documentManager: documentManager
+                services: ContentSyncServices(
+                    sectionSync: sectionSyncService,
+                    annotationSync: annotationSyncService,
+                    bibliographySync: bibliographySyncService,
+                    footnoteSync: footnoteSyncService,
+                    autoBackup: autoBackupService,
+                    documentManager: documentManager
+                )
             )
             .withContentStateRecovery(editorState: editorState)
             .withResettingContentRecovery(editorState: editorState)

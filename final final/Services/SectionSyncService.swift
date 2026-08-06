@@ -340,22 +340,73 @@ class SectionSyncService {
                 let allSorted = existingSections.sorted { $0.sortOrder < $1.sortOrder }
 
                 // Match parsed headers to existing zoomed sections by position and update
-                var changes = SectionSyncService.zoomedUpdateChanges(headers: headers, zoomedExisting: zoomedExisting)
+                var changes: [SectionChange] = []
+                let matchCount = min(headers.count, zoomedExisting.count)
+                for index in 0..<matchCount {
+                    let header = headers[index]
+                    let existing = zoomedExisting[index]
+                    var updates = SectionUpdates()
+                    var hasChanges = false
+
+                    if header.title != existing.title {
+                        updates.title = header.title
+                        hasChanges = true
+                    }
+                    if header.level != existing.headerLevel {
+                        updates.headerLevel = header.level
+                        hasChanges = true
+                    }
+                    if header.markdownContent != existing.markdownContent {
+                        updates.markdownContent = header.markdownContent
+                        updates.wordCount = header.wordCount
+                        hasChanges = true
+                    }
+                    if header.startOffset != existing.startOffset {
+                        updates.startOffset = header.startOffset
+                        hasChanges = true
+                    }
+                    if hasChanges {
+                        changes.append(.update(id: existing.id, updates: updates))
+                    }
+                }
 
                 var updatedIds = zoomedIds
 
                 // Handle NEW sections (user added headers while zoomed)
-                let insertions = SectionSyncService.zoomedInsertionChanges(
-                    headers: headers, zoomedExisting: zoomedExisting,
-                    allSorted: allSorted, zoomedIds: zoomedIds, pid: pid
-                )
-                changes.append(contentsOf: insertions.changes)
-                updatedIds.formUnion(insertions.insertedIds)
+                if headers.count > zoomedExisting.count {
+                    let newCount = headers.count - zoomedExisting.count
+                    let lastZoomedSortOrder = zoomedExisting.last?.sortOrder ?? 0
+                    let firstAfterZoomed = allSorted.first { $0.sortOrder > lastZoomedSortOrder && !zoomedIds.contains($0.id) }
+
+                    if let firstAfter = firstAfterZoomed {
+                        let sectionsToShift = allSorted.filter { $0.sortOrder >= firstAfter.sortOrder }
+                        for section in sectionsToShift {
+                            changes.append(.update(id: section.id, updates: SectionUpdates(sortOrder: section.sortOrder + newCount)))
+                        }
+                    }
+
+                    for i in zoomedExisting.count..<headers.count {
+                        let header = headers[i]
+                        let newSortOrder = lastZoomedSortOrder + (i - zoomedExisting.count) + 1
+                        let newSection = Section(
+                            projectId: pid, sortOrder: newSortOrder, headerLevel: header.level,
+                            isPseudoSection: header.isPseudoSection, title: header.title,
+                            markdownContent: header.markdownContent, wordCount: header.wordCount,
+                            startOffset: header.startOffset
+                        )
+                        changes.append(.insert(newSection))
+                        updatedIds.insert(newSection.id)
+                    }
+                }
 
                 // Handle DELETED sections (user removed headers while zoomed)
-                let deletions = SectionSyncService.zoomedDeletionChanges(headers: headers, zoomedExisting: zoomedExisting)
-                changes.append(contentsOf: deletions.changes)
-                updatedIds.subtract(deletions.removedIds)
+                if headers.count < zoomedExisting.count {
+                    for i in headers.count..<zoomedExisting.count {
+                        let removedSection = zoomedExisting[i]
+                        changes.append(.delete(id: removedSection.id))
+                        updatedIds.remove(removedSection.id)
+                    }
+                }
 
                 if !changes.isEmpty {
                     try db.applySectionChanges(changes, for: pid)
@@ -375,13 +426,127 @@ class SectionSyncService {
     }
 
     // MARK: - Zoom Notes Helpers
-    // Implementation moved to SectionSyncService+MiniNotes.swift (type_body_length cleanup).
+
+    /// Strip the `<!-- ::zoom-notes:: -->` marker and everything after it from zoomed markdown.
+    /// Returns the stripped markdown and the mini #Notes content (if any).
+    static func stripZoomNotes(from markdown: String) -> (stripped: String, miniNotes: String?) {
+        let marker = "<!-- ::zoom-notes:: -->"
+        guard let range = markdown.range(of: marker) else {
+            return (markdown, nil)
+        }
+        let stripped = String(markdown[..<range.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+        let miniNotes = String(markdown[range.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+        return (stripped, miniNotes.isEmpty ? nil : miniNotes)
+    }
 
     /// Public entry point for syncing mini Notes definitions back to DB.
     /// Called from handleZoomedFootnoteInsertion to preserve user edits before insertion.
     func syncMiniNotesBackPublic(_ miniNotesContent: String, projectId: String) {
         guard let db = projectDatabase else { return }
         syncMiniNotesBack(miniNotesContent, db: db, pid: projectId)
+    }
+
+    /// Sync edited mini #Notes definitions back to the main Notes block in the database.
+    /// Called when zoomed content contains `<!-- ::zoom-notes:: -->` marker with definitions.
+    private func syncMiniNotesBack(
+        _ miniNotesContent: String,
+        db: ProjectDatabase,
+        pid: String
+    ) {
+        Self.syncMiniNotesBackImpl(miniNotesContent, db: db, pid: pid)
+    }
+
+    /// Static version of mini notes sync for use from detached tasks.
+    nonisolated static func syncMiniNotesBackDetached(
+        _ miniNotesContent: String,
+        db: ProjectDatabase,
+        pid: String
+    ) {
+        syncMiniNotesBackImpl(miniNotesContent, db: db, pid: pid)
+    }
+
+    /// Shared implementation for syncing mini notes back to DB.
+    nonisolated private static func syncMiniNotesBackImpl(
+        _ miniNotesContent: String,
+        db: ProjectDatabase,
+        pid: String
+    ) {
+        // Extract definitions from the mini #Notes content
+        let editedDefs = FootnoteSyncService.extractFootnoteDefinitions(from: miniNotesContent)
+        guard !editedDefs.isEmpty else { return }
+
+        // Read current definitions from Block table (not Section table).
+        let currentDefs: [String: String]
+        do {
+            let notesBlocks = try db.read { dbConn in
+                try Block
+                    .filter(Block.Columns.projectId == pid)
+                    .filter(Block.Columns.isNotes == true)
+                    .order(Block.Columns.sortOrder)
+                    .fetchAll(dbConn)
+            }
+            guard !notesBlocks.isEmpty else { return }
+            let notesMd = BlockParser.assembleMarkdown(from: notesBlocks)
+            currentDefs = FootnoteSyncService.extractFootnoteDefinitions(from: notesMd)
+        } catch {
+            DebugLog.log(.sync, "[SectionSyncService] Error reading notes blocks: \(error)")
+            return
+        }
+
+        // Merge: edited definitions override current ones for matching labels
+        var mergedDefs = currentDefs
+        for (label, text) in editedDefs {
+            mergedDefs[label] = text
+        }
+
+        guard mergedDefs != currentDefs else { return }
+
+        let sortedLabels = mergedDefs.keys.sorted { (Int($0) ?? 0) < (Int($1) ?? 0) }
+
+        do {
+            try db.write { dbConn in
+                // Preserve existing Notes heading block ID for scroll stability
+                let existingHeadingId = try Block
+                    .filter(Block.Columns.projectId == pid)
+                    .filter(Block.Columns.isNotes == true)
+                    .filter(Block.Columns.blockType == BlockType.heading.rawValue)
+                    .fetchOne(dbConn)?.id
+
+                try Block.filter(Block.Columns.projectId == pid)
+                    .filter(Block.Columns.isNotes == true)
+                    .deleteAll(dbConn)
+
+                let maxNonBibSort = try Block
+                    .filter(Block.Columns.projectId == pid)
+                    .filter(Block.Columns.isBibliography == false)
+                    .order(Block.Columns.sortOrder.desc)
+                    .fetchOne(dbConn)?.sortOrder ?? 0
+                let baseSortOrder = maxNonBibSort + 0.5
+
+                var heading = Block(
+                    id: existingHeadingId ?? UUID().uuidString,
+                    projectId: pid, sortOrder: baseSortOrder,
+                    blockType: .heading, textContent: "Notes",
+                    markdownFragment: "# Notes", headingLevel: 1,
+                    status: .final_, isNotes: true
+                )
+                heading.recalculateWordCount()
+                try heading.insert(dbConn)
+
+                for (index, label) in sortedLabels.enumerated() {
+                    let def = mergedDefs[label] ?? ""
+                    var defBlock = Block(
+                        projectId: pid, sortOrder: baseSortOrder + Double(index + 1),
+                        blockType: .paragraph, textContent: def,
+                        markdownFragment: "[^\(label)]: \(def)", isNotes: true
+                    )
+                    defBlock.recalculateWordCount()
+                    try defBlock.insert(dbConn)
+                }
+            }
+        } catch {
+            DebugLog.log(.sync, "[SectionSyncService] Error syncing mini notes back: \(error)")
+        }
     }
 
 }
