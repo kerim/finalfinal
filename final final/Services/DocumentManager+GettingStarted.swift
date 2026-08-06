@@ -86,19 +86,30 @@ extension DocumentManager {
             // not a user edit. The editor reformats whitespace when it re-serializes,
             // so the pre-round-trip DB string is not a reliable baseline.
             gettingStartedLoadedHash = currentMarkdown.hashValue
+            gettingStartedBaselineCapturedAt = Date()
             DebugLog.log(.lifecycle, "[DocumentManager] Captured settled Getting Started baseline")
             return
         }
         if currentMarkdown.hashValue != loadedHash {
+            // The editor can settle more than once shortly after load (e.g. a second
+            // re-serialization pass), each producing a slightly different reformatting of the
+            // same unedited content -- not a user edit. Re-adopt the hash as the new baseline
+            // for any differing settle within gettingStartedBaselineWindow of the first
+            // capture, rather than flagging it. Unlike the sub-second single-capture window
+            // above (justified by the editor settling faster than a human can open-then-type),
+            // this full window is a real, understood trade-off, not a vanishingly unlikely
+            // edge case: a user who types once inside it and then stops -- entirely plausible
+            // on a document whose whole purpose is inviting immediate typing -- has that
+            // keystroke folded into the baseline and will not see the toast for this session.
+            if let capturedAt = gettingStartedBaselineCapturedAt,
+               Date().timeIntervalSince(capturedAt) <= gettingStartedBaselineWindow {
+                gettingStartedLoadedHash = currentMarkdown.hashValue
+                DebugLog.log(.lifecycle, "[DocumentManager] Re-adopted Getting Started baseline within noise window")
+                return
+            }
             gettingStartedUserEdited = true
             DebugLog.log(.lifecycle, "[DocumentManager] User edited Getting Started content")
         }
-    }
-
-    /// Get the current content (for pre-populating new project)
-    func getCurrentContent() throws -> String? {
-        guard let db = projectDatabase, let pid = projectId else { return nil }
-        return try db.fetchContent(for: pid)?.markdown
     }
 
     // MARK: - Integrity Operations

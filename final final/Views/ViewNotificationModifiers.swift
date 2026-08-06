@@ -165,6 +165,9 @@ extension View {
             .onReceive(NotificationCenter.default.publisher(for: .projectDidClose)) { _ in
                 onClosed()
             }
+            .onReceive(NotificationCenter.default.publisher(for: .gettingStartedEdited)) { _ in
+                editorState.showGettingStartedToast = true
+            }
     }
 
     /// Adds version history notification handlers

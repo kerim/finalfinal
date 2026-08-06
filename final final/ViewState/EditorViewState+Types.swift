@@ -100,6 +100,12 @@ extension Notification.Name {
     static let requestInsertTable = Notification.Name("requestInsertTable")
     /// Posted to open the equation dialog (Insert > Equation menu + toolbar button, Cmd+Shift+E)
     static let requestInsertEquation = Notification.Name("requestInsertEquation")
+    /// Posted by SectionSyncService the moment DocumentManager.isGettingStartedModified()
+    /// transitions false -> true, so the UI layer can surface a toast. A notification (rather
+    /// than a direct call through SectionSyncService's existing weak `editorState` back-
+    /// reference) keeps this UI-layer concern -- toast visibility -- out of the sync service,
+    /// which otherwise has no business touching view state.
+    static let gettingStartedEdited = Notification.Name("gettingStartedEdited")
 }
 
 enum EditorMode: String, CaseIterable {
