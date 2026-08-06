@@ -102,10 +102,10 @@ extension DocumentManager {
     /// raw-string comparison between the two forms would silently never match.
     func isExcludedFromRecentProjects(path: String) -> Bool {
         guard !path.isEmpty else { return false }
-        // Narrow, test-only opt-out -- see TestMode.isUITestingWithScratchRecentProjectsAllowed.
+        // Narrow, test-only opt-out -- see TestMode.isUITestingScratchRecentProjectsAllowed.
         // Only ProjectOpenErrorE2ETests's launch sets the env var that flips this on; every
         // other caller (other UI tests, unit tests, and real usage) keeps this filter active.
-        if TestMode.isUITestingWithScratchRecentProjectsAllowed { return false }
+        if TestMode.isUITestingScratchRecentProjectsAllowed { return false }
         let candidateComponents = URL(fileURLWithPath: path).resolvingSymlinksInPath().pathComponents
         for root in excludedRecentProjectRoots where !root.isEmpty {
             let rootComponents = URL(fileURLWithPath: root).resolvingSymlinksInPath().pathComponents

@@ -156,7 +156,7 @@ final class ProjectOpenErrorE2ETests: XCTestCase {
         // Set the narrow, test-only opt-out env var -- ONLY here, not via the shared
         // FF_UI_TESTING flag every UI test sets -- so the exclusion stays active (and
         // testably provable) for every other UI test. See
-        // TestMode.isUITestingWithScratchRecentProjectsAllowed.
+        // TestMode.isUITestingScratchRecentProjectsAllowed.
         app.launchEnvironment["FF_UI_TESTING_ALLOW_SCRATCH_RECENT_PROJECTS"] = "1"
         app.launchForTesting(fixturePath: recentPath)
 
