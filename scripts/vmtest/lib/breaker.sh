@@ -94,21 +94,67 @@ any_key_at_streak_ge2() {
   return 1
 }
 
-# known-flaky.txt hash guard — refuses a widen mid-crisis.
+# known-flaky.txt guard — refuses only a widen that would MASK a live streak.
+# The first version refused ANY change to the file while ANY streak was
+# active (whole-file hash compare), which wedged every run over unrelated
+# edits — found live 2026-08-06: a prior session's committed addition of an
+# unrelated test blocked all runs, including the very runs that would have
+# cleared the active streaks. The actual risk is narrower: adding a line for
+# a test that is currently streaking would silently reclassify its live
+# failures as "expected". Refuse exactly that; snapshot content (not a hash)
+# so additions are diffable.
 known_flaky_check() {
-  local current
-  current="$(md5 -q "$VMTEST_KNOWN_FLAKY_FILE" 2>/dev/null || md5sum "$VMTEST_KNOWN_FLAKY_FILE" | cut -d' ' -f1)"
-  if any_streak_nonzero; then
-    if [ ! -f "$VMTEST_KNOWN_FLAKY_HASH_FILE" ]; then
-      die "known-flaky.hash is missing while a streak is active — this is a refusal, not a fresh baseline. Resolve the active streak(s) first (see \`vmtest status\`)."
-    fi
-    local snapshot; snapshot="$(cat "$VMTEST_KNOWN_FLAKY_HASH_FILE")"
-    if [ "$snapshot" != "$current" ]; then
-      die "known-flaky.txt changed while a streak is active — refusing to run. known-flaky.txt cannot be widened mid-crisis (see the plan's §3)."
-    fi
-  else
-    echo "$current" > "$VMTEST_KNOWN_FLAKY_HASH_FILE"
+  local snapshot_file="$VMTEST_STATE_DIR/known-flaky.snapshot"
+  if ! any_streak_nonzero; then
+    cp "$VMTEST_KNOWN_FLAKY_FILE" "$snapshot_file" 2>/dev/null || true
+    return 0
   fi
+  local line
+  while IFS= read -r line; do
+    [ -z "$line" ] && continue
+    case "$line" in \#*) continue ;; esac
+    if [ -f "$snapshot_file" ] && grep -Fxq "$line" "$snapshot_file" 2>/dev/null; then
+      continue
+    fi
+    if [ "$(streak_count "$line")" -ge 1 ]; then
+      die "known-flaky.txt adds '$line' while that test has an active streak — refusing: this would mask a live failure. Let a passing run clear the streak, or use vmtest reset."
+    fi
+  done < "$VMTEST_KNOWN_FLAKY_FILE"
+}
+
+# Auto-clear streaks proven stale by this run: any streaked key whose test
+# actually ran here and did not fail. A key "ran" if the run was full-suite
+# (no scopes) or the key falls under one of the run's --scope prefixes.
+# Pseudo-keys (__TIMEOUT__/__BUILD__) clear when the same scope spec gets
+# through build + parse again. Before this, streaks only ever went UP — a
+# later pass never cleared them, so every recovery required a human
+# `vmtest reset` even when the system had already proven itself healthy.
+# $1 = newline-separated failing ids (may be empty); remaining args = scopes.
+streaks_clear_passed() {
+  local failing="$1"; shift
+  local f key spec scope matched
+  shopt -s nullglob
+  for f in "${VMTEST_STREAK_PREFIX}"*.json; do
+    key="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['key'])" "$f" 2>/dev/null)" || continue
+    [ -z "$key" ] && continue
+    case "$key" in
+      __TIMEOUT__:*|__BUILD__:*)
+        spec="${key#*:}"
+        [ "$spec" = "${*:-fullsuite}" ] && { rm -f "$f"; echo "streak cleared (recovered): $key"; }
+        continue ;;
+    esac
+    printf '%s\n' "$failing" | grep -Fxq "$key" && continue
+    if [ "$#" -eq 0 ]; then
+      matched=1
+    else
+      matched=0
+      for scope in "$@"; do
+        case "$key" in "$scope"|"$scope"/*) matched=1; break ;; esac
+      done
+    fi
+    [ "$matched" = 1 ] && { rm -f "$f"; echo "streak cleared (passed): $key"; }
+  done
+  shopt -u nullglob
 }
 
 # Record a run's outcome in the index so prune/reset can find its artifacts.

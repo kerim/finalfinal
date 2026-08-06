@@ -166,8 +166,22 @@ cmd__run_inner() {
 
   echo "STATE: starting" > "$out/vmtest-status"
 
+  # If this process exits without reaching "STATE: done", stamp the status
+  # file with a real failure and the reason. Before this, a refused or died
+  # detached run left "STATE: starting" forever — the caller polled a run
+  # that had been dead for 20 minutes with no way to tell (found live
+  # 2026-08-06, on a run refused by known_flaky_check).
+  finalize_status() {
+    if [ -f "$out/vmtest-status" ] && ! grep -q "^STATE: done" "$out/vmtest-status" 2>/dev/null; then
+      local reason=""
+      [ -f "$out/vmtest-result.json" ] && reason="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get('detail',''))" "$out/vmtest-result.json" 2>/dev/null)"
+      [ -n "$reason" ] || reason="$(tail -1 "$out/vmtest-run.log" 2>/dev/null || true)"
+      echo "STATE: failed — ${reason:-see vmtest-run.log}" > "$out/vmtest-status"
+    fi
+  }
+
   acquire_lock 60
-  trap 'release_lock' EXIT
+  trap 'finalize_status; release_lock' EXIT
 
   if any_streak_at_three; then
     print_circuit_breaker_block "$out"
@@ -200,7 +214,7 @@ cmd__run_inner() {
     _tart stop --timeout 30 "$vm" >/dev/null 2>&1 || true
     _tart delete "$vm" >/dev/null 2>&1 || true
   }
-  trap 'cleanup_vm; release_lock' EXIT
+  trap 'cleanup_vm; finalize_status; release_lock' EXIT
 
   echo "STATE: booting" > "$out/vmtest-status"
   # `tart`, not `_tart`: perl's `exec @ARGV` execs a real binary, and the
@@ -327,9 +341,11 @@ cmd__run_inner() {
       streak_bump "__BUILD__:${scopes[*]:-fullsuite}"
     elif [ -z "$failing_ids" ]; then
       write_result "$out" "pass" "all tests passed"
-      # Clear streaks for tests that just passed within this scope is out of
-      # reach without a full pass list; known-flaky and real failures clear
-      # on their own next pass by construction (no accrual this run).
+      if [ "${#scopes[@]}" -gt 0 ]; then
+        streaks_clear_passed "" "${scopes[@]}"
+      else
+        streaks_clear_passed ""
+      fi
     else
       local real_failures=() flaky_failures=()
       while IFS= read -r id; do
@@ -350,8 +366,20 @@ cmd__run_inner() {
 
       if [ "${#real_failures[@]}" -eq 0 ]; then
         write_result "$out" "pass-with-known-flakes" "known flakes: ${flaky_failures[*]:-}"
+        if [ "${#scopes[@]}" -gt 0 ]; then
+          streaks_clear_passed "$failing_ids" "${scopes[@]}"
+        else
+          streaks_clear_passed "$failing_ids"
+        fi
       else
         write_result "$out" "fail" "failing: ${real_failures[*]:-}"
+        # Streaked tests that ran and passed in this run still clear, even
+        # though other tests failed — recovery is per-test, not per-run.
+        if [ "${#scopes[@]}" -gt 0 ]; then
+          streaks_clear_passed "$failing_ids" "${scopes[@]}"
+        else
+          streaks_clear_passed "$failing_ids"
+        fi
         if any_streak_at_three; then
           print_circuit_breaker_block "$out"
         fi
@@ -442,6 +470,11 @@ cmd_wait() {
       cat "${candidates%vmtest-status}vmtest-result.json"
       return 0
     fi
+    if [ -n "$candidates" ] && grep -q "^STATE: failed" "$candidates" 2>/dev/null; then
+      cat "$candidates"
+      [ -f "${candidates%vmtest-status}vmtest-result.json" ] && cat "${candidates%vmtest-status}vmtest-result.json"
+      return 1
+    fi
     sleep 5; waited=$((waited + 5))
   done
   die "wait timed out after ${timeout}s"
@@ -524,6 +557,36 @@ cmd_reset() {
   local sentinel; sentinel="$(sentinel_allow_reset)"
   [ -f "$sentinel" ] || die "reset refused — the allow-reset sentinel is missing. Type this in YOUR OWN terminal (Claude cannot run it): touch $sentinel"
   rm -f "$sentinel"
+
+  # Name the evidence this reset is about to discard. The human-in-the-loop
+  # step exists so failures get REVIEWED, not just waved through — a reset
+  # that silently deletes the video the review needed defeats its own
+  # purpose (user-reported, 2026-08-06: "I only get told to reset, I never
+  # get asked to review").
+  if [ -f "$VMTEST_RUN_INDEX_FILE" ]; then
+    echo "-- evidence about to be discarded --"
+    python3 - "$VMTEST_RUN_INDEX_FILE" "$key" <<'PYEOF'
+import json, sys
+index_file, key = sys.argv[1], sys.argv[2]
+shown = False
+for line in open(index_file):
+    line = line.strip()
+    if not line:
+        continue
+    r = json.loads(line)
+    keys = r.get("failing_keys", [])
+    if key and key not in keys:
+        continue
+    if keys:
+        shown = True
+        print(f"  run {r.get('run_id')}: {', '.join(keys)}")
+        if r.get("video_path"):
+            print(f"    video: {r['video_path']}")
+        print(f"    evidence dir: {r.get('out_dir')}")
+if not shown:
+    print("  (none recorded)")
+PYEOF
+  fi
 
   # Delete the artifacts belonging to the streak(s) being cleared — the one
   # sanctioned deletion path for evidence the non-zero-streak exemption

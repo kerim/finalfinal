@@ -84,13 +84,22 @@ if [ "$VALIDATE_ONLY" = 0 ]; then
     sudo xcodebuild -license accept
     sudo xcodebuild -runFirstLaunch
     export PATH="/opt/homebrew/bin:$PATH"
-    brew install pnpm xcodegen pandoc || true
+    brew install pnpm xcodegen pandoc
+    for t in pnpm xcodegen pandoc; do
+      command -v "$t" >/dev/null || { echo "provision: $t missing after brew install" >&2; exit 1; }
+    done
   '
 
   echo "-- notification-center suppression (Quick Look banner and anything else it would show) --"
   ssh_guest "$ip" '
     launchctl disable gui/501/com.apple.notificationcenterui.agent || true
     launchctl bootout gui/501/com.apple.notificationcenterui.agent 2>/dev/null || true
+  '
+
+  echo "-- media-key daemon suppression (rcd auto-launches Music on media-key/audio events) --"
+  ssh_guest "$ip" '
+    launchctl disable gui/501/com.apple.rcd || true
+    launchctl bootout gui/501/com.apple.rcd 2>/dev/null || true
   '
 
   echo "-- headless hygiene --"
@@ -153,6 +162,20 @@ echo "$size" | grep -q pixelWidth && echo "OK (measured — compare against conf
 echo "-- no notification-banner process running --"
 if ssh_guest "$ip" 'pgrep -x NotificationCenter >/dev/null 2>&1'; then
   echo "FAIL: NotificationCenter is running"; FAIL=1
+else
+  echo "OK"
+fi
+
+echo "-- required guest CLI tools present (pandoc gap shipped once: doctor checked the host only) --"
+tools_out="$(ssh_guest "$ip" 'export PATH="/opt/homebrew/bin:$PATH"; for t in pandoc pnpm xcodegen; do printf "%s: %s\n" "$t" "$(command -v "$t" || echo MISSING)"; done' 2>/dev/null)"
+echo "$tools_out"
+if [ -z "$tools_out" ] || echo "$tools_out" | grep -q MISSING; then
+  echo "FAIL: required guest tool missing (or check could not run)"; FAIL=1
+fi
+
+echo "-- media-key daemon (rcd) disabled, so Music cannot auto-launch mid-run --"
+if ssh_guest "$ip" 'launchctl print gui/501/com.apple.rcd >/dev/null 2>&1'; then
+  echo "FAIL: rcd is loaded — Music can auto-launch during test runs"; FAIL=1
 else
   echo "OK"
 fi
