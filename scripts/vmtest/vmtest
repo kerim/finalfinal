@@ -1,20 +1,642 @@
 #!/bin/bash
-# Thin per-project shim — the vmtest engine is shared and lives in
-# ~/Code/Claude Code Meta /vmtest/ (same pattern as superdev). Everything
-# project-specific stays in this directory: config.sh, known-flaky.txt,
-# guest-prep.sh (in-guest build steps), provision-warm.sh (image cache warm).
+# vmtest — the only sanctioned way to run "final final"'s macOS UI tests.
+# Every macOS UI test and e2e check runs in a disposable Tart clone, headless,
+# so no Touch ID prompt and no host screen/keyboard takeover.
 #
-# Keep this path stable: permission allow rules, the uitest-ready-gate hook,
-# and the e2e-verify skill all reference scripts/vmtest/vmtest.
+# See scripts/vmtest/README.md for the full design and its residual risks.
 
 set -uo pipefail
 
-VMTEST_PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-export VMTEST_PROJECT_DIR
+VMTEST_BIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/common.sh
+source "$VMTEST_BIN_DIR/lib/common.sh"
+# shellcheck source=lib/breaker.sh
+source "$VMTEST_BIN_DIR/lib/breaker.sh"
+# shellcheck source=lib/evidence.sh
+source "$VMTEST_BIN_DIR/lib/evidence.sh"
 
-VMTEST_ENGINE="/Users/niyaro/Code/Claude Code Meta /vmtest/vmtest"
-[ -x "$VMTEST_ENGINE" ] || {
-  echo "vmtest: shared engine not found at $VMTEST_ENGINE" >&2
-  exit 1
+usage() {
+  cat <<'EOF'
+usage: vmtest <command> [options]
+
+  run [--scope SPEC]... [--src DIR] [--out DIR] [--timeout SEC] [--detach] [--record]
+      One disposable clone, one test run, evidence out, clone deleted.
+
+  status [ID]        Poll a detached run, or list all known runs.
+  wait <ID> [--timeout SEC]
+                      Block on a detached run.
+  watch               Boot a clone with a window so you can watch a run live.
+  doctor              Environment/readiness report.
+  image build|validate|promote|rollback|list
+                      Golden-image lifecycle.
+  prune               Delete orphaned run clones, stale locks, expired videos.
+  reset [KEY]         Clear a circuit-breaker streak. User-authorized only.
+EOF
 }
-exec "$VMTEST_ENGINE" "$@"
+
+cmd_doctor() {
+  echo "== vmtest doctor =="
+  command -v tart >/dev/null && echo "tart: $(tart --version)" || echo "tart: MISSING"
+  command -v sshpass >/dev/null && echo "sshpass: present" || echo "sshpass: MISSING"
+  command -v ffmpeg >/dev/null && echo "ffmpeg: present" || echo "ffmpeg: MISSING"
+  command -v ffprobe >/dev/null && echo "ffprobe: present" || echo "ffprobe: MISSING"
+  command -v pandoc >/dev/null && echo "pandoc (host, informational only): present" || true
+  /usr/bin/perl -MPOSIX -e 'POSIX::setsid()' >/dev/null 2>&1 \
+    && echo "detach shim (perl POSIX::setsid): OK" || echo "detach shim: BROKEN"
+  command -v gtimeout >/dev/null && echo "gtimeout: present" || echo "gtimeout: absent (expected — watchdog uses sleep+kill)"
+
+  echo "-- golden image --"
+  if _tart list --quiet 2>/dev/null | grep -qx "$VMTEST_GOLDEN"; then
+    echo "$VMTEST_GOLDEN: present"
+  else
+    echo "$VMTEST_GOLDEN: MISSING"
+  fi
+  local meta="$VMTEST_STATE_DIR/golden.json"
+  if [ -f "$meta" ]; then
+    cat "$meta"
+  else
+    echo "golden.json: missing — this is a warning, not a failure, until \`vmtest image build\` runs at least once."
+  fi
+
+  echo "-- disk --"
+  echo "free: $(disk_free_gb)GB (floor ${VMTEST_DISK_FLOOR_GB}GB)"
+
+  echo "-- power --"
+  pmset -g batt 2>/dev/null | head -2 | grep -q "AC Power" \
+    && echo "on AC power" \
+    || echo "WARNING: on battery — long unattended batches will drain it"
+
+  echo "-- recording arm state --"
+  if any_key_at_streak_ge2; then
+    echo "ARMED — a non-flaky key is at streak >= 2:"
+    tripped_or_ge2_report
+  else
+    echo "not armed"
+  fi
+
+  echo "-- video storage --"
+  echo "(see \`vmtest prune\` for the retained-video accounting)"
+}
+
+tripped_or_ge2_report() {
+  local f c key
+  shopt -s nullglob
+  for f in "${VMTEST_STREAK_PREFIX}"*.json; do
+    c=$(streak_read_count "$f")
+    if [ "${c:-0}" -ge 2 ]; then
+      key=$(python3 -c "import json; print(json.load(open('$f'))['key'])" 2>/dev/null)
+      echo "  $key: streak $c"
+    fi
+  done
+  shopt -u nullglob
+}
+
+# ---------------------------------------------------------------------------
+# run
+# ---------------------------------------------------------------------------
+cmd_run() {
+  local scopes=() src="$VMTEST_ROOT/../.." out="" timeout="" detach=0 force_record=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --scope) scopes+=("$2"); shift 2 ;;
+      --src) src="$2"; shift 2 ;;
+      --out) out="$2"; shift 2 ;;
+      --timeout) timeout="$2"; shift 2 ;;
+      --detach) detach=1; shift ;;
+      --record) force_record=1; shift ;;
+      *) die "unknown option to run: $1" ;;
+    esac
+  done
+  src="$(cd "$src" && pwd)"
+  local run_id; run_id="run-$(now_epoch)-$$"
+  VMTEST_RUN_ID="$run_id"
+  [ -n "$out" ] || out="$src/$VMTEST_DEFAULT_OUT_SUBDIR/$run_id"
+  mkdir -p "$out"
+
+  local full_suite=1
+  [ "${#scopes[@]}" -gt 0 ] && full_suite=0
+  [ -n "$timeout" ] || timeout=$([ "$full_suite" = 1 ] && echo "$VMTEST_TIMEOUT_FULLSUITE" || echo "$VMTEST_TIMEOUT_SCOPED")
+
+  # bash 3.2 (macOS's /bin/bash) has neither of the conveniences that would
+  # make a single call safe here: "${arr[@]}" on an empty array throws
+  # "unbound variable" under `set -u` (fixed upstream in bash 4.4, not
+  # backported), and "${arr[@]:-}" — the naive workaround — does not expand
+  # to zero words on empty, it expands to ONE empty-string word (verified
+  # live: it corrupted a full-suite run into looking scoped-by-empty-string
+  # and made guest/run.sh pass xcodebuild a bare "" argument, which printed
+  # xcodebuild's usage text instead of running anything). The only reliable
+  # fix on bash 3.2 is to never expand a possibly-empty array at all —
+  # branch on ${#scopes[@]} first, which IS always safe to read.
+  if [ "$detach" = 1 ]; then
+    if [ "${#scopes[@]}" -gt 0 ]; then
+      /usr/bin/perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV' -- \
+        "$VMTEST_BIN_DIR/vmtest" _run_inner "$run_id" "$src" "$out" "$timeout" "$force_record" "${scopes[@]}" \
+        > "$out/vmtest-run.log" 2>&1 < /dev/null &
+    else
+      /usr/bin/perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV' -- \
+        "$VMTEST_BIN_DIR/vmtest" _run_inner "$run_id" "$src" "$out" "$timeout" "$force_record" \
+        > "$out/vmtest-run.log" 2>&1 < /dev/null &
+    fi
+    disown
+    echo "run id: $run_id"
+    echo "out: $out"
+    echo "detached — poll with: vmtest status $run_id"
+    return 0
+  fi
+
+  # cmd__run_inner, not _run_inner — the latter is only a valid subcommand
+  # name for main's dispatch (used by the --detach relaunch above), not a
+  # real function name. Calling the wrong name here was a real bug: the
+  # blocking (non-detach) path would fail with "command not found" (found
+  # while wiring up merge-check.sh's exit-code contract).
+  if [ "${#scopes[@]}" -gt 0 ]; then
+    cmd__run_inner "$run_id" "$src" "$out" "$timeout" "$force_record" "${scopes[@]}"
+  else
+    cmd__run_inner "$run_id" "$src" "$out" "$timeout" "$force_record"
+  fi
+}
+
+# Not part of the public interface — invoked by `run --detach`'s shim, or
+# directly by a blocking `run`.
+cmd__run_inner() {
+  local run_id="$1" src="$2" out="$3" timeout="$4" force_record="$5"
+  shift 5
+  local scopes=("$@")
+  VMTEST_RUN_ID="$run_id"
+
+  echo "STATE: starting" > "$out/vmtest-status"
+
+  acquire_lock 60
+  trap 'release_lock' EXIT
+
+  if any_streak_at_three; then
+    print_circuit_breaker_block "$out"
+    write_result "$out" "fail" "circuit breaker tripped: $(tripped_keys | tr '\n' ' ')"
+    return 1
+  fi
+
+  known_flaky_check
+
+  cmd_prune_inner
+
+  check_disk_floor
+
+  # NOT `local` — deliberately script-global. An EXIT trap set inside a
+  # function fires when the whole PROCESS exits, not when the function
+  # returns, but `local` variables are torn down the instant the function
+  # returns. A trap referencing a local var therefore runs with that var
+  # already gone: found live, the very first full-suite run finished
+  # normally (returned from this function with a `fail` verdict), the EXIT
+  # trap then fired with `$vm` empty, `cleanup_vm` stopped/deleted nothing,
+  # and both the clone and the run lock were left behind indefinitely.
+  vm="ff-run-$run_id"
+  echo "STATE: cloning" > "$out/vmtest-status"
+  _tart clone "$VMTEST_GOLDEN" "$vm" || { write_result "$out" "fail" "clone failed"; return 1; }
+
+  cleanup_done=0
+  cleanup_vm() {
+    [ "$cleanup_done" = 1 ] && return
+    cleanup_done=1
+    _tart stop --timeout 30 "$vm" >/dev/null 2>&1 || true
+    _tart delete "$vm" >/dev/null 2>&1 || true
+  }
+  trap 'cleanup_vm; release_lock' EXIT
+
+  echo "STATE: booting" > "$out/vmtest-status"
+  # `tart`, not `_tart`: perl's `exec @ARGV` execs a real binary, and the
+  # `_tart` bash function does not exist in the new process image — passing
+  # it here silently fails (found live during Verification 2).
+  /usr/bin/perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV' -- \
+    tart run --no-graphics \
+    --dir="src:$src:ro" --dir="out:$out" \
+    "$vm" > "$out/tart-run.log" 2>&1 < /dev/null &
+  disown
+
+  local ip="" waited=0
+  while [ -z "$ip" ] && [ "$waited" -lt "$VMTEST_TIMEOUT_GUEST_AGENT" ]; do
+    ip="$(_tart ip "$vm" 2>/dev/null)"
+    [ -n "$ip" ] || { sleep 3; waited=$((waited + 3)); }
+  done
+  if [ -z "$ip" ]; then
+    write_result "$out" "fail" "boot timed out — no IP after ${VMTEST_TIMEOUT_GUEST_AGENT}s"
+    streak_bump "__TIMEOUT__:${scopes[*]:-fullsuite}"
+    return 1
+  fi
+
+  # Retry, not a single shot — getting an IP does not mean the guest agent is
+  # up yet (found live during Verification 2: a candidate that had just been
+  # through a first-boot settle after brew installs took a few more seconds
+  # after its IP appeared). Same budget as the IP wait.
+  agent_ok=0
+  agent_waited=0
+  while [ "$agent_waited" -lt "$VMTEST_TIMEOUT_GUEST_AGENT" ]; do
+    _tart exec "$vm" true >/dev/null 2>&1 && { agent_ok=1; break; }
+    sleep 3; agent_waited=$((agent_waited + 3))
+  done
+  if [ "$agent_ok" != 1 ]; then
+    write_result "$out" "fail" "guest agent did not respond within ${VMTEST_TIMEOUT_GUEST_AGENT}s of getting an IP"
+    streak_bump "__TIMEOUT__:${scopes[*]:-fullsuite}"
+    return 1
+  fi
+
+  local armed=0
+  [ "$force_record" = 1 ] && armed=1
+  any_key_at_streak_ge2 && armed=1
+
+  local rec_pid=""
+  if [ "$armed" = 1 ]; then
+    echo "STATE: arming recording" > "$out/vmtest-status"
+    rec_pid="$(start_recording "$ip")"
+    if verify_recording_started "$ip" "$rec_pid"; then
+      log "vmtest: recording armed and confirmed started"
+    else
+      log "WARNING: recording did not start — proceeding unrecorded"
+      rec_pid=""
+    fi
+  fi
+
+  echo "STATE: testing" > "$out/vmtest-status"
+  local watchdog_pid=""
+  ( sleep "$timeout"; _tart list --quiet 2>/dev/null | grep -qx "$vm" && {
+      log "vmtest: watchdog expiry — finalizing video, then stopping $vm";
+      [ -n "$rec_pid" ] && finalize_and_copy_video "$vm" "$ip" "$rec_pid" "$out" >/dev/null 2>&1;
+      _tart stop --timeout 15 "$vm" >/dev/null 2>&1;
+    } ) &
+  watchdog_pid=$!
+
+  # See the bash-3.2-empty-array note in cmd_run above — this is the exact
+  # bug that caused a live full-suite run to fail with xcodebuild printing
+  # its usage text: "${scopes[@]:-}" on an empty scopes array produced ONE
+  # empty-string word, so the loop below ran once with s="" and scope_args
+  # became ("-only-testing" ""), which xcodebuild rejected outright. Guard
+  # the array length before expanding it, both here and at the tart exec
+  # call two lines down.
+  local scope_args=()
+  if [ "${#scopes[@]}" -gt 0 ]; then
+    for s in "${scopes[@]}"; do scope_args+=(-only-testing "$s"); done
+  fi
+
+  if [ "${#scope_args[@]}" -gt 0 ]; then
+    _tart exec "$vm" bash "/Volumes/My Shared Files/src/scripts/vmtest/guest/run.sh" "${scope_args[@]}" \
+      > "$out/xcodebuild-driver.log" 2>&1
+  else
+    _tart exec "$vm" bash "/Volumes/My Shared Files/src/scripts/vmtest/guest/run.sh" \
+      > "$out/xcodebuild-driver.log" 2>&1
+  fi
+  local test_status=$?
+
+  kill "$watchdog_pid" 2>/dev/null || true
+
+  # `tart list --quiet` only lists NAMES — a stopped VM still appears there,
+  # it just isn't running, so checking mere presence can never distinguish
+  # "finished normally" from "watchdog force-stopped it on timeout". This
+  # was a real bug: found live, a genuine watchdog-timeout run streak-bumped
+  # as __BUILD__ instead of __TIMEOUT__, because `timed_out` was structurally
+  # always 0. Check the VM's actual STATE column in the full listing instead.
+  local timed_out=0
+  if ! _tart list 2>/dev/null | grep -E "^\S+\s+$vm\s" | grep -q "running"; then
+    timed_out=1
+  fi
+
+  if [ -n "$rec_pid" ] && [ "$timed_out" = 0 ]; then
+    echo "STATE: finalizing recording" > "$out/vmtest-status"
+    finalize_and_copy_video "$vm" "$ip" "$rec_pid" "$out" >/dev/null 2>&1 || true
+  fi
+
+  echo "STATE: exporting evidence" > "$out/vmtest-status"
+  local xcresult="$out/TestRun.xcresult"
+  # export_stills SSHes into the guest — skip it entirely once the VM is
+  # gone (watchdog timeout). ssh to a dead IP just hangs until its own
+  # connect timeout, wedging the run indefinitely: found live during
+  # Verification 6, the exact same class of bug as provision.sh's earlier
+  # ssh-after-stop hang. The .xcresult stills/attachments are host-local
+  # file reads regardless, so they still run.
+  if [ "$timed_out" = 0 ]; then
+    export_stills "$vm" "$ip" "$out" || true
+  fi
+  export_xcresult_failure_attachments "$xcresult" "$out" || true
+
+  local failing_ids=""
+  if [ "$timed_out" = 1 ]; then
+    write_result "$out" "fail" "watchdog timeout after ${timeout}s"
+    streak_bump "__TIMEOUT__:${scopes[*]:-fullsuite}"
+  else
+    failing_ids="$(parse_failing_test_ids "$xcresult")"
+    if [ -z "$failing_ids" ] && [ "$test_status" -ne 0 ]; then
+      write_result "$out" "fail" "build/run failure with no parseable test results (exit $test_status)"
+      streak_bump "__BUILD__:${scopes[*]:-fullsuite}"
+    elif [ -z "$failing_ids" ]; then
+      write_result "$out" "pass" "all tests passed"
+      # Clear streaks for tests that just passed within this scope is out of
+      # reach without a full pass list; known-flaky and real failures clear
+      # on their own next pass by construction (no accrual this run).
+    else
+      local real_failures=() flaky_failures=()
+      while IFS= read -r id; do
+        [ -z "$id" ] && continue
+        if is_known_flaky "$id"; then
+          flaky_failures+=("$id")
+        else
+          real_failures+=("$id")
+          streak_bump "$id" >/dev/null
+        fi
+      done <<< "$failing_ids"
+
+      local video_path=""
+      [ -n "$rec_pid" ] && [ -f "$out/recording.mov" ] && video_path="$out/recording.mov"
+      local failing_keys_csv=""
+      [ "${#real_failures[@]}" -gt 0 ] && failing_keys_csv="$(printf '%s,' "${real_failures[@]}")"
+      run_index_append "$run_id" "$out" "$video_path" "$failing_keys_csv"
+
+      if [ "${#real_failures[@]}" -eq 0 ]; then
+        write_result "$out" "pass-with-known-flakes" "known flakes: ${flaky_failures[*]:-}"
+      else
+        write_result "$out" "fail" "failing: ${real_failures[*]:-}"
+        if any_streak_at_three; then
+          print_circuit_breaker_block "$out"
+        fi
+      fi
+    fi
+  fi
+
+  echo "STATE: done" > "$out/vmtest-status"
+  cat "$out/vmtest-result.json"
+  # Exit code contract callers (merge-check.sh, sd-wrap-up, superdev) rely
+  # on: "pass" and "pass-with-known-flakes" are both a green exit 0 — a
+  # documented flake must not permanently redden the merge gate — anything
+  # else (including "fail") is exit 1.
+  case "$VMTEST_LAST_VERDICT" in
+    pass|pass-with-known-flakes) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+VMTEST_LAST_VERDICT=""
+write_result() {
+  local out="$1" verdict="$2" detail="$3"
+  VMTEST_LAST_VERDICT="$verdict"
+  python3 -c "
+import json, sys
+json.dump({'verdict': sys.argv[1], 'detail': sys.argv[2]}, open(sys.argv[3] + '/vmtest-result.json', 'w'), indent=2)
+" "$verdict" "$detail" "$out"
+}
+
+print_circuit_breaker_block() {
+  local out="$1"
+  cat <<EOF
+
+╔══════════════════════════════════════════════════════════════╗
+║ CIRCUIT BREAKER TRIPPED                                       ║
+╚══════════════════════════════════════════════════════════════╝
+Tests failing three times in a row: $(tripped_keys | tr '\n' ' ')
+
+All further vmtest runs of any scope are refused until reset.
+
+Evidence:
+$([ -f "$out/recording.mov" ] && echo "  video: $out/recording.mov" || echo "  no video: $(no_video_reason)")
+  stills: $out/screenshots/
+  log tail: $out/xcodebuild-driver.log
+
+DO NOT SUMMARIZE — SEND THESE FILES to the user with SendUserFile, then stop.
+
+To clear this, the user must run, in their OWN terminal (Claude cannot run this):
+  touch ~/.cache/vmtest/allow-reset && $VMTEST_BIN_DIR/vmtest reset
+EOF
+}
+
+no_video_reason() {
+  if any_key_at_streak_ge2 && [ ! -f "$out/recording.mov" ]; then
+    echo "recording failed to start, or no reachable guest to record (see xcodebuild-driver.log / tart-run.log)"
+  else
+    echo "not armed for this failure"
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# status / wait
+# ---------------------------------------------------------------------------
+cmd_status() {
+  local id="${1:-}"
+  if [ -z "$id" ]; then
+    echo "(list all known runs: check .claude/vmtest-runs/*/vmtest-status under each project checkout)"
+    return 0
+  fi
+  local candidates
+  candidates=$(find "$PWD" -path "*/vmtest-runs/$id/vmtest-status" 2>/dev/null)
+  [ -n "$candidates" ] || die "no run found with id $id under $PWD"
+  cat "$candidates"
+  local resultfile="${candidates%vmtest-status}vmtest-result.json"
+  [ -f "$resultfile" ] && cat "$resultfile"
+}
+
+cmd_wait() {
+  local id="$1"; shift
+  local timeout="$VMTEST_TIMEOUT_FULLSUITE"
+  while [ $# -gt 0 ]; do
+    case "$1" in --timeout) timeout="$2"; shift 2 ;; *) shift ;; esac
+  done
+  local waited=0
+  while [ "$waited" -lt "$timeout" ]; do
+    local candidates; candidates=$(find "$PWD" -path "*/vmtest-runs/$id/vmtest-status" 2>/dev/null)
+    if [ -n "$candidates" ] && grep -q "STATE: done" "$candidates" 2>/dev/null; then
+      cat "${candidates%vmtest-status}vmtest-result.json"
+      return 0
+    fi
+    sleep 5; waited=$((waited + 5))
+  done
+  die "wait timed out after ${timeout}s"
+}
+
+# ---------------------------------------------------------------------------
+# prune
+# ---------------------------------------------------------------------------
+cmd_prune() {
+  if any_streak_at_three; then
+    die "refusing to prune — a streak is at three strikes and evidence is outstanding. Resolve it first."
+  fi
+  cmd_prune_inner
+}
+
+cmd_prune_inner() {
+  release_lock_force_orphans_only
+  [ -f "$VMTEST_RUN_INDEX_FILE" ] || return 0
+
+  local now; now=$(now_epoch)
+  local age_cutoff=$((now - VMTEST_PRUNE_AGE_DAYS * 86400))
+
+  python3 - "$VMTEST_RUN_INDEX_FILE" "$age_cutoff" <<'PYEOF'
+import json, sys, os, shutil, time
+
+index_file, age_cutoff = sys.argv[1], float(sys.argv[2])
+records = []
+try:
+    with open(index_file) as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                records.append(json.loads(line))
+except FileNotFoundError:
+    sys.exit(0)
+
+# Which keys are currently at a non-zero streak (exempt from deletion)?
+state_dir = os.path.dirname(index_file)
+active_keys = set()
+for fn in os.listdir(state_dir):
+    if fn.startswith("streak-") and fn.endswith(".json"):
+        try:
+            d = json.load(open(os.path.join(state_dir, fn)))
+            if d.get("count", 0) > 0:
+                active_keys.add(d.get("key"))
+        except Exception:
+            pass
+
+kept = []
+for r in records:
+    exempt = any(k in active_keys for k in r.get("failing_keys", []))
+    out_dir = r.get("out_dir")
+    if exempt:
+        kept.append(r)
+        continue
+    if r.get("ts", 0) < age_cutoff and out_dir and os.path.isdir(out_dir):
+        shutil.rmtree(out_dir, ignore_errors=True)
+        continue
+    kept.append(r)
+
+with open(index_file, "w") as f:
+    for r in kept:
+        f.write(json.dumps(r) + "\n")
+PYEOF
+}
+
+release_lock_force_orphans_only() {
+  for vm in $(_tart list --quiet 2>/dev/null | grep '^ff-run-'); do
+    if ! _tart list 2>/dev/null | grep -q "^local  *$vm .*running"; then
+      continue
+    fi
+  done
+}
+
+# ---------------------------------------------------------------------------
+# reset — user-authorized only
+# ---------------------------------------------------------------------------
+cmd_reset() {
+  local key="${1:-}"
+  local sentinel; sentinel="$(sentinel_allow_reset)"
+  [ -f "$sentinel" ] || die "reset refused — the allow-reset sentinel is missing. Type this in YOUR OWN terminal (Claude cannot run it): touch $sentinel"
+  rm -f "$sentinel"
+
+  # Delete the artifacts belonging to the streak(s) being cleared — the one
+  # sanctioned deletion path for evidence the non-zero-streak exemption
+  # protects (see the plan's §3): by the time reset runs, the user has seen
+  # it. This was a real gap, found live: the first real reset cleared the
+  # streak file but left the tripping run's video/attachments/xcresult
+  # sitting in its run directory forever, with nothing left to ever prune
+  # them (the streak that exempted them from prune is now gone, but nothing
+  # retroactively un-exempts them without this).
+  reset_delete_artifacts "$key"
+
+  if [ -n "$key" ]; then
+    streak_clear "$key"
+    echo "cleared streak for: $key"
+  else
+    shopt -s nullglob
+    for f in "${VMTEST_STREAK_PREFIX}"*.json; do rm -f "$f"; done
+    shopt -u nullglob
+    echo "cleared all streaks"
+  fi
+}
+
+# $1 = key to clear, or empty for "clearing everything". Deletes each
+# matching run-index entry's out_dir and rewrites the index without them.
+# Tolerates a vanished out_dir (e.g. a since-removed superdev worktree).
+reset_delete_artifacts() {
+  local key="$1"
+  [ -f "$VMTEST_RUN_INDEX_FILE" ] || return 0
+  python3 - "$key" "$VMTEST_RUN_INDEX_FILE" <<'PYEOF'
+import json, sys, shutil, os
+
+key, index_file = sys.argv[1], sys.argv[2]
+records = []
+try:
+    with open(index_file) as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                records.append(json.loads(line))
+except FileNotFoundError:
+    sys.exit(0)
+
+kept = []
+for r in records:
+    matches = (not key) or (key in r.get("failing_keys", []))
+    if matches:
+        out_dir = r.get("out_dir")
+        if out_dir and os.path.isdir(out_dir):
+            shutil.rmtree(out_dir, ignore_errors=True)
+        continue
+    kept.append(r)
+
+with open(index_file, "w") as f:
+    for r in kept:
+        f.write(json.dumps(r) + "\n")
+PYEOF
+}
+
+# ---------------------------------------------------------------------------
+# watch
+# ---------------------------------------------------------------------------
+cmd_watch() {
+  local vm="ff-watch-$(now_epoch)"
+  _tart clone "$VMTEST_GOLDEN" "$vm"
+  _tart run "$vm"
+}
+
+# ---------------------------------------------------------------------------
+# image lifecycle
+# ---------------------------------------------------------------------------
+cmd_image() {
+  local sub="${1:-}"; shift || true
+  case "$sub" in
+    build) "$VMTEST_BIN_DIR/guest/provision.sh" "$VMTEST_GOLDEN_CANDIDATE" ;;
+    validate) "$VMTEST_BIN_DIR/guest/provision.sh" --validate-only "$VMTEST_GOLDEN_CANDIDATE" ;;
+    promote)
+      _tart list --quiet 2>/dev/null | grep -qx "$VMTEST_GOLDEN" && \
+        { _tart delete "$VMTEST_GOLDEN_PREV" 2>/dev/null || true; _tart rename "$VMTEST_GOLDEN" "$VMTEST_GOLDEN_PREV" 2>&1; }
+      _tart rename "$VMTEST_GOLDEN_CANDIDATE" "$VMTEST_GOLDEN"
+      echo "promoted"
+      ;;
+    rollback)
+      # A genuine swap, not a lossy rename — Verification 2 requires rolling
+      # forward again afterward, which a "rename golden away to a dead-end
+      # name" version can't support (found live: the first version renamed
+      # the just-promoted image to a name `promote` never looks for again).
+      _tart list --quiet 2>/dev/null | grep -qx "$VMTEST_GOLDEN_PREV" || die "no $VMTEST_GOLDEN_PREV to roll back to"
+      _tart rename "$VMTEST_GOLDEN" "${VMTEST_GOLDEN}-rollback-tmp"
+      _tart rename "$VMTEST_GOLDEN_PREV" "$VMTEST_GOLDEN"
+      _tart rename "${VMTEST_GOLDEN}-rollback-tmp" "$VMTEST_GOLDEN_PREV"
+      echo "rolled back (golden <-> prev swapped — roll forward again with the same command)"
+      ;;
+    list) _tart list 2>&1 | grep -E "ff-golden|NAME|Source" ;;
+    *) die "usage: vmtest image build|validate|promote|rollback|list" ;;
+  esac
+}
+
+# ---------------------------------------------------------------------------
+main() {
+  [ $# -ge 1 ] || { usage; exit 1; }
+  local cmd="$1"; shift
+  case "$cmd" in
+    run) cmd_run "$@" ;;
+    _run_inner) cmd__run_inner "$@" ;;
+    status) cmd_status "$@" ;;
+    wait) cmd_wait "$@" ;;
+    watch) cmd_watch "$@" ;;
+    doctor) cmd_doctor "$@" ;;
+    image) cmd_image "$@" ;;
+    prune) cmd_prune "$@" ;;
+    reset) cmd_reset "$@" ;;
+    -h|--help|help) usage ;;
+    *) usage; exit 1 ;;
+  esac
+}
+main "$@"

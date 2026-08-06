@@ -56,21 +56,7 @@ struct CodeMirrorEditor: NSViewRepresentable {
     func makeNSView(context: Context) -> WKWebView {
         // Try preloaded view first for instant startup
         if let preloaded = EditorPreloader.shared.claimCodeMirrorView() {
-            let controller = preloaded.configuration.userContentController
-            controller.add(context.coordinator, name: "contentChanged")
-            controller.add(context.coordinator, name: "sectionChanged")
-            controller.add(context.coordinator, name: "errorHandler")
-            controller.add(context.coordinator, name: "openCitationPicker")
-            controller.add(context.coordinator, name: "paintComplete")
-            controller.add(context.coordinator, name: "openURL")
-            controller.add(context.coordinator, name: "spellcheck")
-            controller.add(context.coordinator, name: "navigateToFootnote")
-            controller.add(context.coordinator, name: "footnoteInserted")
-            controller.add(context.coordinator, name: "pasteImage")
-            controller.add(context.coordinator, name: "requestImagePicker")
-            controller.add(context.coordinator, name: "updateImageMeta")
-            controller.add(context.coordinator, name: "openEquationDialog")
-            controller.add(context.coordinator, name: "selectionChanged")
+            context.coordinator.registerMessageHandlers(on: preloaded.configuration.userContentController, includeTableInsertTruncated: false)
 
             preloaded.navigationDelegate = context.coordinator
             context.coordinator.webView = preloaded
@@ -122,21 +108,7 @@ struct CodeMirrorEditor: NSViewRepresentable {
             forMainFrameOnly: true
         )
         configuration.userContentController.addUserScript(errorScript)
-        configuration.userContentController.add(context.coordinator, name: "contentChanged")
-        configuration.userContentController.add(context.coordinator, name: "sectionChanged")
-        configuration.userContentController.add(context.coordinator, name: "errorHandler")
-        configuration.userContentController.add(context.coordinator, name: "openCitationPicker")
-        configuration.userContentController.add(context.coordinator, name: "paintComplete")
-        configuration.userContentController.add(context.coordinator, name: "openURL")
-        configuration.userContentController.add(context.coordinator, name: "spellcheck")
-        configuration.userContentController.add(context.coordinator, name: "navigateToFootnote")
-        configuration.userContentController.add(context.coordinator, name: "footnoteInserted")
-        configuration.userContentController.add(context.coordinator, name: "pasteImage")
-        configuration.userContentController.add(context.coordinator, name: "requestImagePicker")
-        configuration.userContentController.add(context.coordinator, name: "updateImageMeta")
-        configuration.userContentController.add(context.coordinator, name: "tableInsertTruncated")
-        configuration.userContentController.add(context.coordinator, name: "openEquationDialog")
-        configuration.userContentController.add(context.coordinator, name: "selectionChanged")
+        context.coordinator.registerMessageHandlers(on: configuration.userContentController, includeTableInsertTruncated: true)
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = context.coordinator
@@ -358,223 +330,12 @@ struct CodeMirrorEditor: NSViewRepresentable {
             self.onWebViewReady = onWebViewReady
             super.init()
 
-            // Subscribe to toggle notification - save cursor before editor switches
-            toggleObserver = NotificationCenter.default.addObserver(
-                forName: .willToggleEditorMode,
-                object: nil,
-                queue: .main
-            ) { [weak self] _ in
-                self?.saveAndNotify()
-            }
-
-            // Subscribe to insert section break notification
-            insertBreakObserver = NotificationCenter.default.addObserver(
-                forName: .insertSectionBreak,
-                object: nil,
-                queue: .main
-            ) { [weak self] _ in
-                self?.insertSectionBreak()
-            }
-
-            // Subscribe to annotation display modes changes
-            annotationDisplayModesObserver = NotificationCenter.default.addObserver(
-                forName: .annotationDisplayModesChanged,
-                object: nil,
-                queue: .main
-            ) { [weak self] notification in
-                if let modes = notification.userInfo?["modes"] as? [AnnotationType: AnnotationDisplayMode] {
-                    let isPanelOnly = notification.userInfo?["isPanelOnly"] as? Bool ?? false
-                    let hideCompletedTasks = notification.userInfo?["hideCompletedTasks"] as? Bool ?? false
-                    self?.setAnnotationDisplayModes(modes, isPanelOnly: isPanelOnly, hideCompletedTasks: hideCompletedTasks)
-                }
-            }
-
-            // Subscribe to insert annotation notifications (keyboard shortcuts)
-            insertAnnotationObserver = NotificationCenter.default.addObserver(
-                forName: .insertAnnotation,
-                object: nil,
-                queue: .main
-            ) { [weak self] notification in
-                if let type = notification.userInfo?["type"] as? AnnotationType {
-                    self?.insertAnnotation(type: type)
-                }
-            }
-
-            // Subscribe to toggle highlight notification (Cmd+Shift+H)
-            toggleHighlightObserver = NotificationCenter.default.addObserver(
-                forName: .toggleHighlight,
-                object: nil,
-                queue: .main
-            ) { [weak self] _ in
-                self?.toggleHighlight()
-            }
-
-            // Subscribe to spellcheck toggle
-            spellcheckStateObserver = NotificationCenter.default.addObserver(
-                forName: .spellcheckStateChanged,
-                object: nil,
-                queue: .main
-            ) { [weak self] notification in
-                if let enabled = notification.userInfo?["enabled"] as? Bool {
-                    self?.setSpellcheck(enabled)
-                }
-            }
-
-            // Subscribe to smart quotes toggle
-            smartQuotesStateObserver = NotificationCenter.default.addObserver(
-                forName: .smartQuotesStateChanged,
-                object: nil,
-                queue: .main
-            ) { [weak self] notification in
-                if let enabled = notification.userInfo?["enabled"] as? Bool {
-                    self?.setSmartQuotes(enabled)
-                }
-            }
-
-            // Subscribe to proofing mode change (re-check with new mode)
-            proofingModeObserver = NotificationCenter.default.addObserver(
-                forName: .proofingModeChanged,
-                object: nil,
-                queue: .main
-            ) { [weak self] _ in
-                self?.triggerSpellcheck()
-            }
-
-            // Subscribe to proofing settings change (re-check with new settings)
-            proofingSettingsObserver = NotificationCenter.default.addObserver(
-                forName: .proofingSettingsChanged,
-                object: nil,
-                queue: .main
-            ) { [weak self] _ in
-                self?.triggerSpellcheck()
-            }
-
-            // Subscribe to insert footnote notification (Cmd+Shift+N)
-            insertFootnoteObserver = NotificationCenter.default.addObserver(
-                forName: .insertFootnote,
-                object: nil,
-                queue: .main
-            ) { [weak self] _ in
-                self?.insertFootnoteAtCursor()
-            }
-
-            // Subscribe to renumber footnotes notification
-            renumberFootnotesObserver = NotificationCenter.default.addObserver(
-                forName: .renumberFootnotes,
-                object: nil,
-                queue: .main
-            ) { [weak self] notification in
-                if let mapping = notification.userInfo?["mapping"] as? [String: String] {
-                    self?.renumberFootnotes(mapping: mapping)
-                }
-            }
-
-            // Subscribe to scroll-to-footnote-definition notification
-            scrollToFootnoteDefObserver = NotificationCenter.default.addObserver(
-                forName: .scrollToFootnoteDefinition,
-                object: nil,
-                queue: .main
-            ) { [weak self] notification in
-                if let label = notification.userInfo?["label"] as? String {
-                    self?.scrollToFootnoteDefinition(label: label)
-                }
-            }
-
-            // Subscribe to zoom footnote state changes
-            zoomFootnoteStateObserver = NotificationCenter.default.addObserver(
-                forName: .setZoomFootnoteState,
-                object: nil,
-                queue: .main
-            ) { [weak self] notification in
-                if let zoomed = notification.userInfo?["zoomed"] as? Bool,
-                   let maxLabel = notification.userInfo?["maxLabel"] as? Int {
-                    self?.setZoomFootnoteState(zoomed: zoomed, maxLabel: maxLabel)
-                }
-            }
-
-            // Subscribe to insert image notification (Insert > Image menu)
-            insertImageObserver = NotificationCenter.default.addObserver(
-                forName: .requestInsertImage,
-                object: nil,
-                queue: .main
-            ) { [weak self] _ in
-                guard let self, self.isEditorReady, !self.isCleanedUp else { return }
-                self.handleImagePicker()
-            }
-
-            // Subscribe to insert table notification (Insert > Table menu + toolbar button)
-            insertTableObserver = NotificationCenter.default.addObserver(
-                forName: .requestInsertTable,
-                object: nil,
-                queue: .main
-            ) { [weak self] _ in
-                guard let self, self.isEditorReady, !self.isCleanedUp else { return }
-                self.webView?.evaluateJavaScript("window.FinalFinal.insertTable(3, 2)") { _, _ in }
-            }
-
-            // Subscribe to insert equation notification (Insert > Equation menu + toolbar button)
-            insertEquationObserver = NotificationCenter.default.addObserver(
-                forName: .requestInsertEquation,
-                object: nil,
-                queue: .main
-            ) { [weak self] _ in
-                guard let self, self.isEditorReady, !self.isCleanedUp else { return }
-                self.webView?.evaluateJavaScript("window.FinalFinal.insertEquationDialog()") { _, _ in }
-            }
-
-            // Subscribe to formatting command notifications
-            toggleBoldObserver = NotificationCenter.default.addObserver(
-                forName: .toggleBold, object: nil, queue: .main
-            ) { [weak self] _ in self?.executeFormatting("toggleBold") }
-
-            toggleItalicObserver = NotificationCenter.default.addObserver(
-                forName: .toggleItalic, object: nil, queue: .main
-            ) { [weak self] _ in self?.executeFormatting("toggleItalic") }
-
-            toggleStrikethroughObserver = NotificationCenter.default.addObserver(
-                forName: .toggleStrikethrough, object: nil, queue: .main
-            ) { [weak self] _ in self?.executeFormatting("toggleStrikethrough") }
-
-            setHeadingObserver = NotificationCenter.default.addObserver(
-                forName: .setHeading, object: nil, queue: .main
-            ) { [weak self] notification in
-                if let level = notification.userInfo?["level"] as? Int {
-                    self?.executeFormatting("setHeading", argument: "\(level)")
-                }
-            }
-
-            toggleBulletListObserver = NotificationCenter.default.addObserver(
-                forName: .toggleBulletList, object: nil, queue: .main
-            ) { [weak self] _ in self?.executeFormatting("toggleBulletList") }
-
-            toggleNumberListObserver = NotificationCenter.default.addObserver(
-                forName: .toggleNumberList, object: nil, queue: .main
-            ) { [weak self] _ in self?.executeFormatting("toggleNumberList") }
-
-            toggleBlockquoteObserver = NotificationCenter.default.addObserver(
-                forName: .toggleBlockquote, object: nil, queue: .main
-            ) { [weak self] _ in self?.executeFormatting("toggleBlockquote") }
-
-            toggleCodeBlockObserver = NotificationCenter.default.addObserver(
-                forName: .toggleCodeBlock, object: nil, queue: .main
-            ) { [weak self] _ in self?.executeFormatting("toggleCodeBlock") }
-
-            toggleInlineCodeObserver = NotificationCenter.default.addObserver(
-                forName: .toggleInlineCode, object: nil, queue: .main
-            ) { [weak self] _ in self?.executeFormatting("toggleInlineCode") }
-
-            insertLinkObserver = NotificationCenter.default.addObserver(
-                forName: .insertLink, object: nil, queue: .main
-            ) { [weak self] _ in self?.executeFormatting("insertLink") }
-
-            // Subscribe to insert citation notification (toolbar "Cite" button, or the
-            // native Insert > Citation... menu item's ⌘⇧K) — opens the CAYW picker for a
-            // brand-new citation at the current cursor. The native menu shortcut now
-            // works in Source Mode too (EditorCommands.swift posts .insertCitation, which
-            // both editors observe identically).
-            insertCitationObserver = NotificationCenter.default.addObserver(
-                forName: .insertCitation, object: nil, queue: .main
-            ) { [weak self] _ in self?.executeFormatting("insertCitation") }
+            subscribeToEditorLifecycleNotifications()
+            subscribeToAnnotationNotifications()
+            subscribeToProofingNotifications()
+            subscribeToFootnoteNotifications()
+            subscribeToMediaNotifications()
+            subscribeToFormattingCommandNotifications()
         }
 
         deinit {
