@@ -4,6 +4,7 @@
 
 import type { Node } from '@milkdown/kit/prose/model';
 import { Plugin, PluginKey } from '@milkdown/kit/prose/state';
+import type { Mapping } from '@milkdown/kit/prose/transform';
 import { Decoration, DecorationSet } from '@milkdown/kit/prose/view';
 import { $prose } from '@milkdown/kit/utils';
 import { syncLog } from './sync-debug';
@@ -222,6 +223,15 @@ export function clearBlockIds(): void {
  * that don't track it) lets a legitimate split-then-fill bypass the content
  * check even though `meaningfulTextOverlap` alone would refuse it — see
  * `canClaimViaRecentSplitBypass`, the single source of truth for that bypass.
+ *
+ * `oldPos`/`deletedOldPositions` (9th/10th params, both optional) route
+ * through to `canClaimUnderStructuralChange` in place of
+ * `canClaimViaRecentSplitBypass` directly — see that function for what they
+ * guard against (a citation-only paragraph and a genuinely-empty paragraph
+ * being textually indistinguishable when the citation paragraph itself was
+ * deleted). Omitting them (callers with no transaction `Mapping` available)
+ * preserves the exact pre-existing behavior, since an empty
+ * `deletedOldPositions` never triggers the refusal.
  * Exported for tests.
  */
 export function phase1CanClaim(
@@ -232,7 +242,9 @@ export function phase1CanClaim(
   structureChanged: boolean,
   oldText: string | undefined,
   newText: string,
-  recentlySplitEmptyIds: ReadonlySet<string> = new Set()
+  recentlySplitEmptyIds: ReadonlySet<string> = new Set(),
+  oldPos?: number,
+  deletedOldPositions: ReadonlySet<number> = new Set()
 ): boolean {
   if (!existingId) return false;
   if (claimed.has(existingId)) return false;
@@ -240,13 +252,27 @@ export function phase1CanClaim(
   if (existingType === newType) {
     if (ATOMIC_BLOCK_TYPES.has(newType)) return true;
     if (!structureChanged) return true;
-    return canClaimViaRecentSplitBypass(oldText, newText, existingId, recentlySplitEmptyIds);
+    return canClaimUnderStructuralChange(
+      oldText,
+      newText,
+      existingId,
+      recentlySplitEmptyIds,
+      oldPos,
+      deletedOldPositions
+    );
   }
   if (existingType === undefined) return false;
   if (ATOMIC_BLOCK_TYPES.has(existingType)) return false;
   if (ATOMIC_BLOCK_TYPES.has(newType)) return false;
   if (!structureChanged) return true;
-  return canClaimViaRecentSplitBypass(oldText, newText, existingId, recentlySplitEmptyIds);
+  return canClaimUnderStructuralChange(
+    oldText,
+    newText,
+    existingId,
+    recentlySplitEmptyIds,
+    oldPos,
+    deletedOldPositions
+  );
 }
 
 /**
@@ -296,6 +322,62 @@ export function canClaimViaRecentSplitBypass(
 ): boolean {
   if (meaningfulTextOverlap(oldText, newText)) return true;
   return oldText === '' && recentlySplitEmptyIds.has(existingId);
+}
+
+/**
+ * Structural-change gate that sits in front of `canClaimViaRecentSplitBypass`
+ * for every claim site that has a transaction `Mapping` available. Fixes the
+ * citation-atom-blindness gap: `Node.textContent` strips inline atom nodes
+ * (citations), so a citation-only paragraph and a genuinely-empty paragraph
+ * both report `oldText === ''` — textually indistinguishable to
+ * `meaningfulTextOverlap`/`canClaimViaRecentSplitBypass`. When the citation
+ * paragraph is deleted and an unrelated blank paragraph slides into
+ * proximity, the two were previously equally valid candidates and pure
+ * offset-distance decided the (wrong) winner.
+ *
+ * `deletedOldPositions` (precomputed once per `assignBlockIds` call from the
+ * transaction's `Mapping` — see there) names old positions whose content was
+ * structurally deleted, not merely edited in place. Only an `oldText === ''`
+ * claim at one of those positions is refused — this is the ONLY new
+ * refusal this function adds. Deliberately narrow: it does NOT refuse
+ * claims at deleted positions in general, because a whole-document
+ * replace/paste-over-selection marks EVERY old position deleted while
+ * text overlap there can still be entirely genuine (see the
+ * `deletedAcross` semantics `Mapping.mapResult` documents) — refusing
+ * broadly would strip every block's identity on those transactions.
+ * `oldPos` undefined (caller has no position context) or `deletedOldPositions`
+ * empty (no `Mapping` supplied) never triggers the refusal, so this is a
+ * strict narrowing of `canClaimViaRecentSplitBypass`'s existing behavior,
+ * not a replacement policy. Exported for tests.
+ *
+ * Accepted cost: an empty block whose old position falls strictly inside
+ * ANY multi-block replace range loses its identity under this guard,
+ * whether or not it was genuinely destroyed — deliberate collateral of
+ * keeping the refusal narrow, not a bug.
+ *
+ * Chose `Mapping`-based deletion detection over the pre-existing
+ * `isBlankDueToExemptAtom` predicate (which already distinguishes "blank
+ * because of a citation atom" from "genuinely blank" without needing a
+ * `Mapping`) because that predicate inspects a single node's current
+ * content and has no way to say whether the OLD block at a position was
+ * structurally removed by this transaction — only
+ * `Mapping.mapResult(...).deletedAcross` records that.
+ *
+ * Known gap, deliberately not widened: cursor at the start of a
+ * citation-only paragraph + Backspace produces `DEL_BEFORE`, not
+ * `DEL_ACROSS`, at the paragraph's own content position, so this guard
+ * doesn't catch that shape.
+ */
+export function canClaimUnderStructuralChange(
+  oldText: string | undefined,
+  newText: string,
+  existingId: string,
+  recentlySplitEmptyIds: ReadonlySet<string> = new Set(),
+  oldPos?: number,
+  deletedOldPositions: ReadonlySet<number> = new Set()
+): boolean {
+  if (oldText === '' && oldPos !== undefined && deletedOldPositions.has(oldPos)) return false;
+  return canClaimViaRecentSplitBypass(oldText, newText, existingId, recentlySplitEmptyIds);
 }
 
 /**
@@ -512,13 +594,20 @@ export function suppressTempIdInZoom(zoomMode: boolean, offset: number, notesBou
  * empty nodes, so a later split-then-fill can reclaim its own id instead of
  * being refused as unrelated content — see `canClaimViaRecentSplitBypass`
  * for the bypass mechanism itself.
+ *
+ * `mapping` (optional 5th param — the transaction's `tr.mapping`) enables the
+ * `canClaimUnderStructuralChange` guard against citation-atom blindness: see
+ * that function's doc comment. Omitted (the plugin's `init` call site, which
+ * has no prior transaction) or absent, the guard never refuses anything —
+ * identical to this function's pre-existing behavior.
  * Exported for tests.
  */
 export function assignBlockIds(
   doc: Node,
   existingIds: Map<number, string>,
   existingTypes: Map<number, string>,
-  oldDoc: Node | undefined
+  oldDoc: Node | undefined,
+  mapping?: Mapping
 ): [Map<number, string>, Map<number, string>] {
   const newIds = new Map<number, string>();
   const newTypes = new Map<number, string>();
@@ -530,6 +619,46 @@ export function assignBlockIds(
     if (isBlockType(node)) blockCount++;
   });
   const structureChanged = blockCount !== existingIds.size;
+
+  // Precompute, once per call and only when it can matter (structural
+  // changes are the only consumer — see phase1CanClaim/Phase 2 below — so
+  // gating on `structureChanged` too keeps the ordinary-keystroke hot path
+  // free of this work), which `existingIds` positions were structurally
+  // deleted by this transaction (as opposed to merely edited in place) —
+  // feeds `canClaimUnderStructuralChange`'s oldText==='' refusal.
+  // `oldPos + 1` targets the position just inside the block's open token
+  // (its content position for an empty node) for ordinary container block
+  // types. Caveat: for leaf block types with `nodeSize === 1` (e.g. `hr`,
+  // `section_break` — not in `ATOMIC_BLOCK_TYPES`), there is no "inside" —
+  // `oldPos + 1` lands just AFTER the node, at a sibling boundary, not
+  // within it. Still correct in practice today (traced separately: those
+  // types don't carry meaningful text content for the oldText==='' check to
+  // act on either way), but this is not the "content position" invariant
+  // the name suggests for every block type.
+  //
+  // Guards against stale coordinate-space keys: `currentBlockIds` itself
+  // IS replaced wholesale every transaction (see the two direct
+  // `currentBlockIds = blockIds` reassignments in this plugin's
+  // `state.init`/`state.apply` below), so staleness can't survive a normal
+  // transaction round-trip. The real gap is `setBlockIdsForTopLevel`, which
+  // `syncBlockIds` (api-content.ts) can call directly between transactions
+  // without a preceding `clearBlockIds()` — it only `.set()`s the offsets
+  // present in whatever doc it's given and never prunes offsets left behind
+  // by an earlier, larger doc, so a stray offset can survive into the next
+  // transaction's `existingIds`. Node existence alone isn't sufficient
+  // proof — a different-typed node could coincidentally occupy that offset
+  // — so this also requires the resolved node's type to match the type on
+  // record for that position.
+  const deletedOldPositions = new Set<number>();
+  if (mapping && structureChanged) {
+    for (const oldPos of existingIds.keys()) {
+      const oldNode = safeNodeAt(oldDoc, oldPos);
+      if (!oldNode || oldNode.type.name !== existingTypes.get(oldPos)) continue;
+      if (mapping.mapResult(oldPos + 1).deletedAcross) {
+        deletedOldPositions.add(oldPos);
+      }
+    }
+  }
 
   // [SYNC-DIAG Phase 0] Log when the existingIds baseline is empty — strong desync signal.
   // Quiet on the common case (non-zero existingIds) to avoid log volume.
@@ -575,7 +704,9 @@ export function assignBlockIds(
           structureChanged,
           oldText,
           newText,
-          recentlySplitEmptyIds
+          recentlySplitEmptyIds,
+          offset,
+          deletedOldPositions
         )
       ) {
         // Exact-position match (same type, or non-atomic type conversion).
@@ -631,7 +762,10 @@ export function assignBlockIds(
         // whose content has no meaningful prefix/suffix relationship).
         if (!ATOMIC_BLOCK_TYPES.has(d.nodeType)) {
           const oldText = safeNodeAt(oldDoc, oldPos)?.textContent;
-          if (!canClaimViaRecentSplitBypass(oldText, d.nodeText, id, recentlySplitEmptyIds)) continue;
+          if (
+            !canClaimUnderStructuralChange(oldText, d.nodeText, id, recentlySplitEmptyIds, oldPos, deletedOldPositions)
+          )
+            continue;
         }
         const distance = Math.abs(oldPos - d.offset);
         if (distance < 500) {
@@ -816,7 +950,13 @@ export const blockIdPlugin = $prose(() => {
         // syncBlockIds() updates currentBlockIds directly without dispatching a
         // transaction, so value.blockIds can hold stale temp IDs that would
         // overwrite the confirmed UUIDs and trigger mass deletes.
-        const [blockIds, blockTypes] = assignBlockIds(newState.doc, currentBlockIds, currentBlockTypes, oldState.doc);
+        const [blockIds, blockTypes] = assignBlockIds(
+          newState.doc,
+          currentBlockIds,
+          currentBlockTypes,
+          oldState.doc,
+          tr.mapping
+        );
         currentBlockIds = blockIds;
         currentBlockTypes = blockTypes;
 
