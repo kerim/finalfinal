@@ -56,7 +56,7 @@ struct CodeMirrorEditor: NSViewRepresentable {
     func makeNSView(context: Context) -> WKWebView {
         // Try preloaded view first for instant startup
         if let preloaded = EditorPreloader.shared.claimCodeMirrorView() {
-            context.coordinator.registerMessageHandlers(on: preloaded.configuration.userContentController, includeTableInsertTruncated: true)
+            context.coordinator.registerMessageHandlers(on: preloaded.configuration.userContentController, includeTableInsertTruncated: false)
 
             preloaded.navigationDelegate = context.coordinator
             context.coordinator.webView = preloaded
