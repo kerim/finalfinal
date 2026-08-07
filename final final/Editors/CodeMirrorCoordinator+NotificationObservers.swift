@@ -14,10 +14,16 @@ import WebKit
 extension CodeMirrorEditor.Coordinator {
 
     /// Register this coordinator as the `WKScriptMessageHandler` for every JS → Swift
-    /// message channel the editor uses. `includeTableInsertTruncated` is `false` on the
-    /// preloaded-WebView path and `true` on the fresh-WebView path in `makeNSView` —
-    /// that asymmetry is preserved verbatim from the pre-move code, not a new decision
-    /// made here.
+    /// message channel the editor uses. `includeTableInsertTruncated` is `true` on both
+    /// the preloaded-WebView and fresh-WebView paths in `makeNSView`. It used to be
+    /// `false` on the preloaded path only, which meant `web/codemirror/src/table-paste.ts`'s
+    /// optional-chained `postMessage` silently no-op'd and the "Table Truncated" alert never
+    /// showed for documents opened via the (common) preload path — the same class of bug
+    /// already fixed for `MilkdownEditor` (see `registerMilkdownMessageHandlers`, which has
+    /// no such flag at all). No lifecycle reason was found for the asymmetry: the preloaded
+    /// WebView only ever has `errorHandler` registered (by `EditorPreloader`) before this
+    /// function runs, so adding `tableInsertTruncated` here is a first-time registration,
+    /// not a double-add.
     func registerMessageHandlers(on controller: WKUserContentController, includeTableInsertTruncated: Bool) {
         controller.add(self, name: "contentChanged")
         controller.add(self, name: "sectionChanged")

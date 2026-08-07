@@ -104,34 +104,6 @@ class BlockSyncService {
         return churn > 0 && balanceDelta <= churn / 4
     }
 
-    /// True when this poll cycle must abandon its batch because content was wholesale
-    /// replaced since the cycle began. Applies in force mode too: `force` bypasses the
-    /// contentState *precondition*, NOT mid-flight invalidation — a snapshot taken before
-    /// a replaceBlocks() is stale no matter who asked for it.
-    ///
-    /// `currentGeneration == nil` is ambiguous on its own — it can mean either "no
-    /// `editorState` was ever wired" (some test harnesses, or timing before
-    /// `onWebViewReady`) or "`editorState` WAS wired when this poll started but has since
-    /// been deallocated mid-poll" (e.g. a project switch tearing down the view). Those two
-    /// cases must be treated oppositely: the first is not staleness, so we proceed; the
-    /// second is itself evidence of a wholesale teardown — a live `editorState` going away
-    /// mid-flight is exactly the kind of change this guard exists to catch — so we abandon
-    /// rather than silently write a stale batch against `database`/`projectId` locals that
-    /// were captured before the switch. `wasWiredAtPollStart` disambiguates the two: it's
-    /// whether `editorState` was non-nil at the moment `generationAtPollStart` was captured.
-    nonisolated static func shouldAbandonForGenerationChange(
-        currentGeneration: Int?,
-        generationAtPollStart: Int,
-        wasWiredAtPollStart: Bool
-    ) -> Bool {
-        guard let currentGeneration else {
-            // Nil now: abandon only if editorState was actually torn down mid-poll
-            // (wired at capture, gone now) — not if it was simply never wired at all.
-            return wasWiredAtPollStart
-        }
-        return currentGeneration != generationAtPollStart
-    }
-
     // MARK: - Public API
 
     /// Configure the service for a specific project
@@ -199,27 +171,6 @@ class BlockSyncService {
     /// mid-flight to exercise the reentrancy paths below without racing real
     /// timers or sleeping. No cost in release builds (property doesn't exist).
     var testPollCycleHook: (() async -> Void)?
-
-    /// Test-only counter, incremented every time `shouldAbandonForGenerationChange`
-    /// causes a poll cycle to abandon its batch (see `checkGenerationGuard`). Lets
-    /// tests assert precisely that THIS guard — not the pre-existing
-    /// `contentState == .idle` guard or the stale-snapshot guard — caused a
-    /// rejection, without scraping `DebugLog` console output.
-    var testGenerationAbandonCount = 0
-
-    /// Test-only hook, awaited immediately after `generationAtPoll` is captured in
-    /// `doPollBlockChanges` — i.e. right at the point a wholesale content rewrite
-    /// (mode toggle, zoom, bibliography/notes rebuild, project switch) landing here
-    /// would make this cycle's snapshot stale. Unlike `testPollCycleHook` (awaited
-    /// at the very top of the cycle, before this capture happens), gating here lets
-    /// a test hold a cycle deterministically suspended with an already-captured
-    /// generation snapshot, so it can simulate the race the mid-flight generation
-    /// guard exists to close without a wall-clock sleep. Deliberately placed OUTSIDE
-    /// `checkGenerationGuard` itself (not conditional on the guard existing) so a
-    /// deletion-check that removes the guard still reaches this hook — the guard's
-    /// absence must change the test's OBSERVED OUTCOME, not silently deadlock its
-    /// synchronization. No cost in release builds (property doesn't exist).
-    var testAfterGenerationCaptureHook: (() async -> Void)?
 
     /// Test-only entry point to the otherwise-private poll, so tests can drive
     /// forced/periodic cycles directly instead of waiting on the real timer.
@@ -507,15 +458,6 @@ class BlockSyncService {
         }
 
         let generationAtPoll = editorState?.contentGeneration ?? 0
-        // Captured alongside generationAtPoll so the guard can tell "editorState was
-        // never wired" (not staleness) apart from "editorState was wired here but has
-        // since gone nil" (a teardown mid-poll, which IS staleness) — see
-        // `shouldAbandonForGenerationChange`.
-        let wasEditorStateWiredAtPoll = editorState != nil
-
-        #if DEBUG
-        await testAfterGenerationCaptureHook?()
-        #endif
 
         // Check if there are pending changes
         let hasChanges = await checkForChanges(webView: webView)
@@ -528,12 +470,9 @@ class BlockSyncService {
 
         DebugLog.log(.blockPoll, "[SYNC-DIAG:BlockPoll] changes detected, fetching... (force=\(force))")
 
-        // Applies in force mode too: force bypasses the contentState *precondition*,
-        // not mid-flight invalidation. Nothing has been consumed from JS yet at this
-        // point, so an abandoned batch simply stays queued and is re-offered on the
-        // next poll — this check is provably lossless.
-        if checkGenerationGuard(generationAtPoll: generationAtPoll, wasWiredAtPoll: wasEditorStateWiredAtPoll, stage: "preFetch", force: force) {
-            return
+        // In force mode, skip generation check — caller explicitly needs flush
+        if !force {
+            guard editorState?.contentGeneration == generationAtPoll else { return }
         }
 
         // Get the changes
@@ -546,17 +485,9 @@ class BlockSyncService {
             DebugLog.log(.blockPoll, "[DIAG:BlockPoll] update id=\(u.id.prefix(8)) force=\(force) text=\"\(u.textContent ?? "<nil>")\" md=\"\(u.markdownFragment ?? "<nil>")\"")
         }
 
-        // Unlike the preFetch check above, abandoning HERE is NOT lossless: by this point
-        // getBlockChanges() (block-sync-plugin.ts's getBlockChanges(), ~line 704-707) has
-        // already cleared the JS-side pendingUpdates/pendingInserts/pendingDeletes, so this
-        // batch will not be re-offered on a later poll — returning now genuinely discards
-        // it. That's still the right call: there is no lossless option inside this window.
-        // The alternative — re-queuing the already-fetched batch for a later poll — would
-        // mean writing pre-rewrite content against a document that's actively being rebuilt
-        // from the DB (mode toggle / zoom / bibliography-notes rebuild / project switch),
-        // which corrupts the rebuild instead of just dropping one already-stale batch.
-        if checkGenerationGuard(generationAtPoll: generationAtPoll, wasWiredAtPoll: wasEditorStateWiredAtPoll, stage: "postFetch", force: force) {
-            return
+        // In force mode, skip generation check — caller explicitly needs flush
+        if !force {
+            guard editorState?.contentGeneration == generationAtPoll else { return }
         }
 
         // Skip if no actual changes
@@ -652,39 +583,6 @@ class BlockSyncService {
         }
     }
 
-    /// Mid-flight generation re-check, shared by both call sites in `doPollBlockChanges`.
-    /// Runs unconditionally — including in force mode — because `force` only bypasses the
-    /// contentState *precondition* at the top of the cycle, never mid-flight invalidation:
-    /// a snapshot taken before a wholesale content rewrite (mode toggle, zoom, bibliography/
-    /// notes rebuild, project switch) is stale no matter who asked for the flush. Returns
-    /// true (and logs + counts, DEBUG only) when the caller must abandon this poll's batch.
-    ///
-    /// Note: this guard is inert for the three force callers in
-    /// `ContentView+NotificationHandlers.swift` (bibliography rebuild, notes rebuild,
-    /// immediate footnote insertion) with respect to their OWN transition — each sets
-    /// `editorState.contentState` to a non-idle value (bumping `contentGeneration`)
-    /// *before* spawning the `Task` that calls `pollBlockChangesNow()`, so `generationAtPoll`
-    /// is always captured post-bump and those callers never observe a mid-flight change
-    /// from the very transition they're running. Not a defect — a *different*, concurrent
-    /// rewrite landing during their poll would still be caught — just worth naming so a
-    /// future reader doesn't assume those three callers are protected against every stale
-    /// scenario by this guard alone.
-    private func checkGenerationGuard(generationAtPoll: Int, wasWiredAtPoll: Bool, stage: String, force: Bool) -> Bool {
-        guard Self.shouldAbandonForGenerationChange(
-            currentGeneration: editorState?.contentGeneration,
-            generationAtPollStart: generationAtPoll,
-            wasWiredAtPollStart: wasWiredAtPoll
-        ) else { return false }
-        DebugLog.always(
-            "[SYNC-DIAG:BlockPoll] REJECTED: reason=generationChangedMidFlight stage=\(stage) " +
-            "generationAtPoll=\(generationAtPoll) wasWired=\(wasWiredAtPoll) current=\(String(describing: editorState?.contentGeneration)) force=\(force)"
-        )
-        #if DEBUG
-        testGenerationAbandonCount += 1
-        #endif
-        return true
-    }
-
     /// Check if the editor has pending block changes
     private func checkForChanges(webView: WKWebView) async -> Bool {
         let result = try? await webView.evaluateJavaScript("window.FinalFinal.hasBlockChanges()")
@@ -707,30 +605,7 @@ class BlockSyncService {
         }
     }
 
-    /// Apply block changes to the database (off main thread).
-    ///
-    /// Known open window, not closed by the generation guard above: `checkGenerationGuard`'s
-    /// postFetch check only proves the generation was still current the INSTANT before this
-    /// call. `try await Task.detached { ... }.value` below then stays suspended for the
-    /// ENTIRE `applyBlockChangesFromEditor` SQLite write, not just "one scheduling hop" —
-    /// and GRDB's write serialization guarantees each write is atomic, but does NOT
-    /// guarantee ordering between this write and a concurrent `replaceBlocks` call that a
-    /// wholesale content rewrite might issue on MainActor while this await is suspended. A
-    /// `replaceBlocks` that starts and finishes entirely within this window could still let
-    /// this now-stale write land after it. Closing this fully would require making the
-    /// rewrite path (e.g. `handleEditorModeToggle`) wait for any in-flight poll to drain
-    /// before its own synchronous flush — deliberately out of scope for this guard.
-    ///
-    /// A second, related residual case, also not closed here: a forced poll that STARTS
-    /// while `contentState` is ALREADY non-idle captures that already-bumped generation as
-    /// its own `generationAtPoll` baseline — `contentGeneration` increments only on an
-    /// idle→non-idle transition (see `contentState`'s `didSet`), never on the matching
-    /// return-to-idle. If the in-flight rewrite this poll started alongside finishes
-    /// underneath it before `applyChanges` runs, there's no generation delta left for
-    /// either `checkGenerationGuard` call to detect. Neither residual case is a defect in
-    /// this fix — the stale-write window is strictly narrower than before, not eliminated
-    /// for every interleaving — but a future reader should not conclude force-mode polls
-    /// are now fully immune to this class of race.
+    /// Apply block changes to the database (off main thread)
     private func applyChanges(_ changes: BlockChanges, database: ProjectDatabase, projectId: String) async throws {
         let idMapping = try await Task.detached(priority: .utility) {
             try database.applyBlockChangesFromEditor(changes, for: projectId)
