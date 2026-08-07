@@ -449,6 +449,10 @@ final class ZoteroService {
             connectionError = nil
 
             return items
+        } catch let error as DecodingError {
+            // Malformed/unexpected response shape, not a network failure — report distinctly
+            // from `.networkError`, matching `search()`'s handling of the same error type.
+            throw ZoteroError.invalidResponse("Failed to decode: \(error.localizedDescription)")
         } catch let error as ZoteroError {
             throw error
         } catch let urlError as URLError where urlError.code == .cannotConnectToHost
@@ -503,9 +507,11 @@ final class ZoteroService {
     /// Decode the JSON-RPC envelope from `item.export`: CSL-JSON as a string, CSL-JSON as an
     /// array, a JSON-RPC error object, or an unrecognized shape. Must be called inside the
     /// network `do` block in `fetchItemsForCitekeysViaExport` — a `DecodingError` from the CSL
-    /// decode here needs to fall through to that block's trailing
-    /// `catch { throw ZoteroError.networkError(error) }`, while a `ZoteroError` thrown here
-    /// needs to pass through `catch let error as ZoteroError { throw error }` unwrapped.
+    /// decode here needs to fall through to that block's
+    /// `catch let error as DecodingError { throw ZoteroError.invalidResponse(...) }`, matching
+    /// how `search()` reports decode failures distinctly from network failures, while a
+    /// `ZoteroError` thrown here needs to pass through
+    /// `catch let error as ZoteroError { throw error }` unwrapped.
     nonisolated static func decodeExportResult(from data: Data) throws -> ExportDecodeResult {
         // item.export returns a JSON-RPC wrapper with CSL-JSON in result
         guard let jsonObj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {

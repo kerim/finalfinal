@@ -331,12 +331,8 @@ enum BlockParser {
 
         text = strippingFootnoteDefinitionPrefixes(text)
 
-        // Strip remaining markdown syntax. Headings can never actually BE a
-        // markdown list, so a heading whose literal text starts with "3. "
-        // (typed or pasted that way) must not have that prefix mistaken for
-        // an ordered-list marker and stripped — see
-        // MarkdownUtils.stripMarkdownSyntax's `stripListMarkers` doc comment.
-        text = MarkdownUtils.stripMarkdownSyntax(from: text, stripListMarkers: blockType != .heading)
+        // Strip remaining markdown syntax
+        text = MarkdownUtils.stripMarkdownSyntax(from: text)
 
         return text.trimmingCharacters(in: .whitespacesAndNewlines)
     }

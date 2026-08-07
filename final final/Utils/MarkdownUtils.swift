@@ -35,16 +35,7 @@ enum MarkdownUtils {
 
     /// Strip markdown syntax from content to get plain text
     /// Used for accurate word counting that excludes formatting symbols
-    ///
-    /// - Parameter stripListMarkers: Whether to remove a leading `- `/`* `/`+ `/`N. `
-    ///   list marker at the start of each line. Defaults to `true` for callers
-    ///   stripping syntax out of genuine list/paragraph markdown. Callers that
-    ///   already know the text is a heading's own content (e.g.
-    ///   `BlockParser.extractTextContent`, after removing the `#` prefix) must
-    ///   pass `false` — a heading literally titled "3. Title" starts with the
-    ///   same shape as an ordered-list marker, but it isn't one, and this
-    ///   regex can't tell the difference from the string alone.
-    static func stripMarkdownSyntax(from content: String, stripListMarkers: Bool = true) -> String {
+    static func stripMarkdownSyntax(from content: String) -> String {
         var result = content
 
         // Remove heading markers: # ## ### etc at line start
@@ -106,10 +97,11 @@ enum MarkdownUtils {
             result = regex.stringByReplacingMatches(in: result, options: [], range: range, withTemplate: "$1")
         }
 
-        // Remove list markers: - * + or 1. 2. etc (unless the caller already
-        // knows this isn't really list content -- see stripListMarkers's doc)
-        if stripListMarkers {
-            result = strippingListMarkers(from: result)
+        // Remove list markers: - * + or 1. 2. etc
+        let listPattern = "^\\s*(?:[-*+]|\\d+\\.)\\s+"
+        if let regex = try? NSRegularExpression(pattern: listPattern, options: .anchorsMatchLines) {
+            let range = NSRange(result.startIndex..., in: result)
+            result = regex.stringByReplacingMatches(in: result, options: [], range: range, withTemplate: "")
         }
 
         // Remove blockquote markers: > at line start
@@ -176,19 +168,6 @@ enum MarkdownUtils {
         result = stripAnnotations(from: result)
 
         return result
-    }
-
-    /// Remove a leading `- `/`* `/`+ `/`N. ` list marker at the start of each line.
-    /// Split out of `stripMarkdownSyntax` so that function's own complexity doesn't
-    /// grow with this conditional step -- see `stripMarkdownSyntax`'s `stripListMarkers`
-    /// parameter for why this is sometimes skipped.
-    private static func strippingListMarkers(from content: String) -> String {
-        let listPattern = "^\\s*(?:[-*+]|\\d+\\.)\\s+"
-        guard let regex = try? NSRegularExpression(pattern: listPattern, options: .anchorsMatchLines) else {
-            return content
-        }
-        let range = NSRange(content.startIndex..., in: content)
-        return regex.stringByReplacingMatches(in: content, options: [], range: range, withTemplate: "")
     }
 
     /// Strip `==highlight==` markers from markdown content, reducing highlighted text to

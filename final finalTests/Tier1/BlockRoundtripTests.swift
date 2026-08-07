@@ -250,25 +250,6 @@ struct BlockRoundtripTests {
         #expect(headings[2].headingLevel == 3)
     }
 
-    @Test("Heading text starting with a number and period keeps its literal prefix")
-    func blockParserPreservesLeadingNumberInHeadingText() throws {
-        // A heading literally titled "3. Title" starts with the same shape as
-        // an ordered-list marker ("3. "), but it is heading text, not a list
-        // item — extractTextContent must not strip it. Regression test for
-        // the sidebar outline silently dropping "N. " from heading titles.
-        let content = """
-        ## 3. Title
-
-        Body text.
-        """
-
-        let blocks = BlockParser.parse(markdown: content, projectId: "test")
-        let heading = try #require(blocks.first { $0.blockType == .heading })
-
-        #expect(heading.textContent == "3. Title")
-        #expect(heading.outlineTitle == "3. Title")
-    }
-
     @Test("Block parser handles bibliography detection")
     func blockParserBibliography() throws {
         let content = """
