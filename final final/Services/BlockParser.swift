@@ -364,12 +364,21 @@ enum BlockParser {
 
         text = strippingFootnoteDefinitionPrefixes(text)
 
-        // Strip remaining markdown syntax. Headings can never actually BE a
-        // markdown list, so a heading whose literal text starts with "3. "
-        // (typed or pasted that way) must not have that prefix mistaken for
-        // an ordered-list marker and stripped — see
-        // MarkdownUtils.stripMarkdownSyntax's `stripListMarkers` doc comment.
-        text = MarkdownUtils.stripMarkdownSyntax(from: text, stripListMarkers: blockType != .heading)
+        // Strip remaining markdown syntax. Headings and code blocks can
+        // never actually BE a markdown list, so text in either of those
+        // block types that literally starts with "3. " (typed, pasted, or
+        // a numbered step inside a code sample) must not have that prefix
+        // mistaken for an ordered-list marker and stripped. Blockquotes are
+        // different: "> 1. First item" is a completely normal markdown
+        // shape — an ordered list nested inside a blockquote — so this
+        // regex genuinely can't tell a quoted list from quoted text that
+        // merely looks like one. Preserving the literal text is still the
+        // safer default for blockquotes: it keeps textContent (search)
+        // matching what was actually typed instead of guessing. See
+        // MarkdownUtils.stripMarkdownSyntax's `stripListMarkers` doc
+        // comment.
+        let blockTypeCannotBeAList = blockType == .heading || blockType == .codeBlock || blockType == .blockquote
+        text = MarkdownUtils.stripMarkdownSyntax(from: text, stripListMarkers: !blockTypeCannotBeAList)
 
         return text.trimmingCharacters(in: .whitespacesAndNewlines)
     }
