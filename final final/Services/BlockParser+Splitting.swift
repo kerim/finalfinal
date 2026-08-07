@@ -77,10 +77,36 @@ private struct RawBlockSplitter {
 
     /// Handles the display-math fence: bare `$$` opens/closes, `$$...$$` is a one-line
     /// block, and every line in between is accumulated verbatim.
+    ///
+    /// Also recognizes a GLUED fence — `$$` sharing a line with LaTeX content instead of
+    /// sitting alone — as "prefix xor suffix": a line starting with `$$` but NOT also
+    /// ending with `$$` opens a fence (e.g. `$$\begin{aligned}`), and once open, a line
+    /// ending with `$$` but NOT also starting with `$$` closes it (e.g. `\end{aligned}$$`).
+    /// A line that's both (prefix AND suffix) keeps the existing single-line/fall-through
+    /// behavior unchanged. This mirrors the JS math tokenizer's own swallow-to-EOF
+    /// behavior on an unterminated glued opener (see math-plugin.ts /
+    /// math-paste-normalize.ts) — matching it here means a glued-open line with no
+    /// matching close accumulates to EOF instead of staying a paragraph, same as JS.
     /// - Returns: `true` when the line was consumed here and no later stage should see it.
     private mutating func consumeDisplayMath(line: String, trimmedLine: String) -> Bool {
-        let isSingleLineMath = trimmedLine.hasPrefix("$$") && trimmedLine.hasSuffix("$$") && trimmedLine.count > 4
-        if (trimmedLine == "$$" || isSingleLineMath) && !inCodeBlock {
+        let hasOpenPrefix = trimmedLine.hasPrefix("$$")
+        let hasCloseSuffix = trimmedLine.hasSuffix("$$")
+        // Matches micromark's own math-flow "meta" state exactly: it bails the instant it
+        // sees ANY further `$` character while scanning the rest of the opening line, so a
+        // line only opens a real display-math fence when there is NO other `$` anywhere
+        // after the leading `$$` — not merely "doesn't end with $$". Without this, a line
+        // like `$$E = mc^2$$ is the famous equation.` (a legitimate embedded closing `$$`
+        // followed by trailing prose) or `$$a + $b$ c` (two separate `$`-delimited runs) is
+        // misclassified as a glued opener and swallows everything after it to EOF —
+        // corrupting input micromark itself would have safely parsed as an ordinary
+        // paragraph. See math-paste-normalize.ts for the mirrored JS predicate.
+        //
+        // Shared with `BlockParser.fencedOrQuotedType`'s block-type classification via
+        // `mathDisplayFenceLineRole` (BlockParser.swift) — a single source of truth so
+        // this splitter and that classifier can never disagree about what opened.
+        let fenceRole = BlockParser.mathDisplayFenceLineRole(trimmedLine)
+
+        if fenceRole.isOpener && !inCodeBlock {
             if !inDisplayMath {
                 // Starting display math: flush current block
                 flushCurrentBlockIfNotBlank()
@@ -88,7 +114,7 @@ private struct RawBlockSplitter {
                 inFootnoteDef = false
                 currentBlock += line + "\n"
                 // Opened and closed on one line ($$...$$): finish the block immediately
-                if isSingleLineMath {
+                if fenceRole.isSingleLineMath {
                     blocks.append(currentBlock)
                     currentBlock = ""
                     inDisplayMath = false
@@ -104,10 +130,16 @@ private struct RawBlockSplitter {
             }
         }
 
-        // Inside display math: accumulate lines. A `$$...$$` line reached while math is
-        // already open deliberately falls through the branch above and lands here.
+        // Inside display math: accumulate lines, then check for a glued close
+        // (suffix without prefix) — a line that's both prefix and suffix deliberately
+        // falls through here unchanged (stays open), matching existing behavior.
         if inDisplayMath {
             currentBlock += line + "\n"
+            if hasCloseSuffix && !hasOpenPrefix {
+                blocks.append(currentBlock)
+                currentBlock = ""
+                inDisplayMath = false
+            }
             return true
         }
 

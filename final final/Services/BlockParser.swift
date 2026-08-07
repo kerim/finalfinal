@@ -190,8 +190,21 @@ enum BlockParser {
     /// ORDER IS LOAD-BEARING: `$$` and ``` must be tested before the `---` horizontal-rule
     /// pattern, and the section-break comment before the `>` blockquote prefix.
     private static func fencedOrQuotedType(_ trimmed: String) -> BlockType? {
-        // Display math block: starts with $$ (either $$...$$ on one line or multi-line)
-        if trimmed.hasPrefix("$$") { return .mathDisplay }
+        // Display math block: starts with $$ (either $$...$$ on one line or multi-line).
+        // Checked against the block's FIRST LINE only, via the exact same opener
+        // predicate `RawBlockSplitter.consumeDisplayMath` (BlockParser+Splitting.swift)
+        // used to bound this block in the first place — see `mathDisplayFenceLineRole`.
+        // Sharing the predicate means this classifier and the splitter that already
+        // produced the block can never disagree about what counts as "math" the way
+        // they once did: a naive `trimmed.hasPrefix("$$")` here used to relabel a block
+        // the splitter correctly left as an ordinary paragraph (e.g.
+        // "$$E = mc^2$$ is the famous equation." — a legitimate embedded closing `$$`
+        // followed by trailing prose, never a genuine fence opener) as `.mathDisplay`
+        // just because its content happened to start with `$$`.
+        let firstLine = trimmed.components(separatedBy: "\n").first ?? trimmed
+        if mathDisplayFenceLineRole(firstLine.trimmingCharacters(in: .whitespaces)).isOpener {
+            return .mathDisplay
+        }
         // Code block: starts with ```
         if trimmed.hasPrefix("```") { return .codeBlock }
         // Horizontal rule: ---, ***, ___
@@ -201,6 +214,26 @@ enum BlockParser {
         // Blockquote: starts with >
         if trimmed.hasPrefix(">") { return .blockquote }
         return nil
+    }
+
+    /// Classifies a single already-whitespace-trimmed line's role in a display-math
+    /// `$$` fence, matching micromark's own math-flow "meta" bail rule exactly: a
+    /// fence only opens when there is NO other `$` anywhere after the leading `$$` —
+    /// not merely "doesn't end with $$". Shared by `RawBlockSplitter.consumeDisplayMath`
+    /// (BlockParser+Splitting.swift, which uses `isOpener`/`isSingleLineMath` to decide
+    /// whether and how a fence opens while splitting) and `fencedOrQuotedType` above
+    /// (which uses `isOpener` to classify an already-split block's type) — factored out
+    /// as the single source of truth so the two can never disagree, which is exactly
+    /// how the two-classifier bug this fixes was possible: `fencedOrQuotedType` used to
+    /// run its own, more permissive `hasPrefix("$$")` check independent of this one.
+    static func mathDisplayFenceLineRole(_ trimmedLine: String) -> (isOpener: Bool, isSingleLineMath: Bool) {
+        let hasOpenPrefix = trimmedLine.hasPrefix("$$")
+        let hasCloseSuffix = trimmedLine.hasSuffix("$$")
+        let isSingleLineMath = hasOpenPrefix && hasCloseSuffix && trimmedLine.count > 4
+        let remainderAfterOpenPrefix = hasOpenPrefix ? String(trimmedLine.dropFirst(2)) : ""
+        let opensGluedOnly = hasOpenPrefix && !remainderAfterOpenPrefix.contains("$")
+        let isOpener = trimmedLine == "$$" || isSingleLineMath || opensGluedOnly
+        return (isOpener, isSingleLineMath)
     }
 
     /// The exact literal `RawBlockSplitter` (BlockParser+Splitting.swift) and
