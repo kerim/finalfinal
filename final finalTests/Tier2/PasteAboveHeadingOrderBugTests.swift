@@ -51,13 +51,54 @@ final class PasteAboveHeadingOrderBugTests: XCTestCase {
 
     private var hostWindow: NSWindow?
 
+    /// Whatever the user had on the clipboard before this test ran.
+    ///
+    /// This test needs the REAL `NSPasteboard.general` (see the header note),
+    /// and the general pasteboard is machine-wide — the DebugTest bundle
+    /// identity does NOT isolate it the way it isolates UserDefaults and
+    /// window state. So the host unit suite would otherwise destroy whatever
+    /// the user had copied. Snapshot it going in, put it back coming out.
+    private var savedPasteboardItems: [NSPasteboardItem] = []
+
+    @MainActor
+    override func setUp() async throws {
+        savedPasteboardItems = Self.snapshotGeneralPasteboard()
+    }
+
     @MainActor
     override func tearDown() async throws {
         hostWindow?.orderOut(nil)
         hostWindow = nil
         // Don't leak test clipboard content into the real user's pasteboard
-        // beyond the lifetime of this test.
+        // beyond the lifetime of this test — restore what was there before.
+        Self.restoreGeneralPasteboard(savedPasteboardItems)
+        savedPasteboardItems = []
+    }
+
+    /// Deep-copies the general pasteboard's contents into detached items.
+    ///
+    /// The live `NSPasteboardItem`s belong to the pasteboard and are
+    /// invalidated by `clearContents()`, so each one is rebuilt as a fresh
+    /// item holding the same type/data pairs. Lazily-promised types whose
+    /// data isn't materialized (`data(forType:)` returns nil) are skipped —
+    /// they can't be reproduced without their original provider.
+    private static func snapshotGeneralPasteboard() -> [NSPasteboardItem] {
+        (NSPasteboard.general.pasteboardItems ?? []).compactMap { item in
+            let copy = NSPasteboardItem()
+            var wroteAnything = false
+            for type in item.types {
+                guard let data = item.data(forType: type) else { continue }
+                copy.setData(data, forType: type)
+                wroteAnything = true
+            }
+            return wroteAnything ? copy : nil
+        }
+    }
+
+    private static func restoreGeneralPasteboard(_ items: [NSPasteboardItem]) {
         NSPasteboard.general.clearContents()
+        guard !items.isEmpty else { return }
+        NSPasteboard.general.writeObjects(items)
     }
 
     // MARK: - Harness

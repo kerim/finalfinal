@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { type Node, Schema } from '@milkdown/kit/prose/model';
+import { Transform } from '@milkdown/kit/prose/transform';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { assignBlockIds, resetBlockIdState } from '../block-id-plugin';
 
@@ -8,28 +9,30 @@ import { assignBlockIds, resetBlockIdState } from '../block-id-plugin';
 //
 // The gap: ProseMirror's Node.textContent silently strips inline atom nodes
 // — a paragraph containing only a `citation` atom reports textContent ===
-// '', identical to a genuinely empty paragraph. meaningfulTextOverlap (and
-// therefore phase1CanClaim / Phase 2's proximity matching) only ever sees
-// that stripped string, so it cannot tell "citation-only paragraph" apart
-// from "truly empty paragraph" by content alone.
-//
-// This was analyzed in detail during citation-insertion race-condition work
-// (see cayw.ts) and DELIBERATELY NOT FIXED at the comparison layer, because
-// two required behaviors present as the IDENTICAL (oldText, newText) input
-// pair to any content-only comparison function:
+// '', identical to a genuinely empty paragraph. meaningfulTextOverlap alone
+// cannot tell "citation-only paragraph" apart from "truly empty paragraph"
+// by content — two required behaviors present as the IDENTICAL (oldText,
+// newText) input pair to any content-only comparison function:
 //   (b) a paragraph whose OWN citation was just added/removed must still
 //       match its own earlier/later self (oldText==='' , newText==='' — a
 //       true match, must succeed)
 //   (c) an UNRELATED empty paragraph must NOT steal a citation paragraph's
 //       identity (oldText==='', newText==='' — again, from a DIFFERENT
-//      node — must NOT succeed, but looks identical to (b) at this layer)
-// There is no signal in (old-text, new-text) alone that distinguishes "same
-// node, content changed" from "different node, coincidental collision." A
-// real fix would need creation-time identity marking (e.g. tagging citation
-// atoms or their host paragraphs at insertion time) — more invasive, out of
-// scope for now. Tests 1 and 2 below pin the correct (b) behavior so it
-// can't regress; Test 3 pins today's actual (c) outcome as a known, accepted
-// gap.
+//       node — must NOT succeed, but looks identical to (b) at this layer)
+//
+// The fix: `assignBlockIds` now accepts the transaction's `tr.mapping` (5th
+// param). `Mapping.mapResult(oldPos + 1).deletedAcross` supplies a signal
+// content alone never could — whether the OLD node at a given position was
+// itself structurally deleted by this transaction, as opposed to merely
+// edited in place. That's exactly the missing piece: cases (b) above are
+// in-place edits of a SURVIVING node (never deletedAcross at their own old
+// position), while case (c)'s citation paragraph is deleted outright
+// (deletedAcross === true at its old position). `canClaimUnderStructuralChange`
+// (block-id-plugin.ts) refuses an oldText==='' claim exactly when the old
+// position was structurally deleted, resolving the ambiguity that
+// meaningfulTextOverlap alone could never resolve. All three cases below now
+// run through a REAL `Transform` so `tr.mapping` reflects an actual
+// ProseMirror step sequence, not a hand-built approximation.
 
 const schema = new Schema({
   nodes: {
@@ -71,19 +74,20 @@ describe('assignBlockIds — citation-atom blindness in text-overlap matching', 
       [citationPara().nodeSize + para('Two').nodeSize, 'paragraph'],
     ]);
 
-    // New doc: block 0's citation is gone (genuinely empty now). Blocks 1-2
-    // unchanged in content. A 4th paragraph is appended — an unrelated
-    // structural change elsewhere that forces structureChanged = true
-    // (blockCount 4 !== existingIds.size 3), so this exercises the
-    // structural content-check path, not the `!structureChanged` early-out.
-    const newDoc = schema.nodes.doc.create(null, [para(''), para('Two'), para('Three'), para('Four')]);
+    // Real transaction: delete the citation atom inside block 0 (leaving it
+    // genuinely empty), then append an unrelated 4th paragraph — forcing
+    // structureChanged = true (blockCount 4 !== existingIds.size 3), so this
+    // exercises the structural content-check path, not the
+    // `!structureChanged` early-out.
+    let tr = new Transform(oldDoc);
+    tr = tr.delete(1, 1 + schema.nodes.citation.create().nodeSize); // remove the citation atom itself
+    tr = tr.insert(tr.doc.content.size, para('Four'));
 
-    const [newIds] = assignBlockIds(newDoc, existingIds, existingTypes, oldDoc);
+    const [newIds] = assignBlockIds(tr.doc, existingIds, existingTypes, oldDoc, tr.mapping);
 
     // Keyed by POSITION (0 is always the first block's offset in both old
-    // and new docs, regardless of how later blocks' offsets shift when the
-    // citation-only paragraph's size changes) — not by any text-based
-    // lookup, since '' is not a distinguishing key here anyway.
+    // and new docs) — not by any text-based lookup, since '' is not a
+    // distinguishing key here anyway.
     expect(newIds.get(0)).toBe('cite-id');
   });
 
@@ -101,16 +105,18 @@ describe('assignBlockIds — citation-atom blindness in text-overlap matching', 
       [para('').nodeSize + para('Two').nodeSize, 'paragraph'],
     ]);
 
-    // New doc: a citation is now inserted into block 0. Blocks 1-2 unchanged.
-    // A 4th paragraph is appended, again forcing structureChanged = true.
-    const newDoc = schema.nodes.doc.create(null, [citationPara(), para('Two'), para('Three'), para('Four')]);
+    // Real transaction: insert a citation into block 0, then append an
+    // unrelated 4th paragraph, again forcing structureChanged = true.
+    let tr = new Transform(oldDoc);
+    tr = tr.insert(1, schema.nodes.citation.create());
+    tr = tr.insert(tr.doc.content.size, para('Four'));
 
-    const [newIds] = assignBlockIds(newDoc, existingIds, existingTypes, oldDoc);
+    const [newIds] = assignBlockIds(tr.doc, existingIds, existingTypes, oldDoc, tr.mapping);
 
     expect(newIds.get(0)).toBe('blank-id');
   });
 
-  it("(c, KNOWN GAP) an unrelated blank paragraph can steal a citation-only paragraph's id when an earlier deletion brings it into closer proximity", () => {
+  it('(c, FIXED) an unrelated blank paragraph no longer steals a citation-only paragraph’s id when an earlier deletion brings it into closer proximity', () => {
     // Old doc: 4 blocks. Block 0 is ordinary padding text (will be deleted
     // along with block 1 below — an edit entirely unrelated to blocks 2-3).
     // Block 1 is citation-only. Block 2 is genuinely empty. Block 3 is
@@ -141,44 +147,30 @@ describe('assignBlockIds — citation-atom blindness in text-overlap matching', 
       [tailOffset, 'paragraph'],
     ]);
 
-    // New doc: the padding paragraph AND the citation-only paragraph are
-    // both deleted entirely (a single unrelated edit at the start of the
+    // Real transaction: delete the padding paragraph AND the citation-only
+    // paragraph entirely (a single unrelated edit at the start of the
     // document). The genuinely-empty paragraph and the tail paragraph
-    // survive untouched, just shifted forward to offsets 0 and blankSize.
-    // structureChanged fires (blockCount 2 !== existingIds.size 4).
-    const newDoc = schema.nodes.doc.create(null, [blankPara, tailPara]);
+    // survive untouched, just shifted forward. structureChanged fires
+    // (blockCount 2 !== existingIds.size 4).
+    let tr = new Transform(oldDoc);
+    tr = tr.delete(0, blankOffset);
 
-    const [newIds] = assignBlockIds(newDoc, existingIds, existingTypes, oldDoc);
+    const [newIds] = assignBlockIds(tr.doc, existingIds, existingTypes, oldDoc, tr.mapping);
 
-    // What SHOULD happen, if the matcher could see through citation
-    // blindness: the surviving empty paragraph (truly the same node as old
-    // 'blank-id') keeps 'blank-id', and 'cite-id' is retired along with the
-    // deleted citation paragraph.
+    // Before the fix: because both 'cite-id' (citation-only, old textContent
+    // stripped to '') and 'blank-id' (genuinely empty, old textContent '')
+    // looked identical — '' === '' — to canClaimViaRecentSplitBypass /
+    // meaningfulTextOverlap, BOTH were valid Phase-2 candidates for the
+    // surviving empty paragraph at new offset 0, and raw offset distance
+    // (cite-id's old offset is closer) silently handed it the wrong id.
     //
-    // What ACTUALLY happens: because both 'cite-id' (citation-only, old
-    // textContent stripped to '') and 'blank-id' (genuinely empty, old
-    // textContent '') look identical — '' === '' — to
-    // canClaimViaRecentSplitBypass/meaningfulTextOverlap, BOTH become valid
-    // Phase-2 candidates for the surviving empty paragraph at new offset 0.
-    // Phase 2's closest-first greedy matching picks by raw offset distance:
-    // cite-id's old offset (citeOffset) is closer to new offset 0 than
-    // blank-id's own old offset (blankOffset) is (citeOffset < blankOffset
-    // by construction — cite-id sits directly after the deleted padding,
-    // blank-id sits one paragraph further in) — so cite-id wins, and the
-    // paragraph's real prior identity, blank-id, is silently dropped.
-    //
-    // This pins a KNOWN, ACCEPTED gap: citation-atom blindness in
-    // meaningfulTextOverlap can let an unrelated blank paragraph and a
-    // citation-only paragraph be confused for each other under
-    // structureChanged. It is deliberately not fixed because no proposed
-    // comparison-only fix could distinguish this case from the correct
-    // cases pinned in the two tests above (see the two-case impossibility
-    // argument in this file's header comment). If this test's asserted
-    // outcome ever needs to change because a real fix (e.g. creation-time
-    // identity marking) lands, that's expected — update this comment and
-    // assertion together with that fix; a change here alone is not a
-    // regression signal.
-    expect(newIds.get(0)).toBe('cite-id');
-    expect(newIds.get(0)).not.toBe('blank-id');
+    // After the fix: `tr.mapping` tells `canClaimUnderStructuralChange` that
+    // cite-id's old position was structurally deleted (deletedAcross ===
+    // true), so an oldText==='' claim against it is refused outright. Only
+    // blank-id — the paragraph's real prior identity, never deleted — is a
+    // valid candidate at new offset 0. cite-id is retired along with the
+    // citation paragraph, as it should be.
+    expect(newIds.get(0)).toBe('blank-id');
+    expect(newIds.get(0)).not.toBe('cite-id');
   });
 });

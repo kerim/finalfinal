@@ -27,7 +27,6 @@ extension MilkdownEditor.Coordinator {
         clearObserver(&refreshAllCitationsObserver)
         clearObserver(&editorModeObserver)
         clearObserver(&spellcheckStateObserver)
-        clearObserver(&smartQuotesStateObserver)
         clearObserver(&proofingModeObserver)
         clearObserver(&proofingSettingsObserver)
         clearObserver(&insertFootnoteObserver)
@@ -37,8 +36,6 @@ extension MilkdownEditor.Coordinator {
         clearObserver(&blockSyncPushObserver)
         clearObserver(&zoomFootnoteStateObserver)
         clearObserver(&insertImageObserver)
-        clearObserver(&insertTableObserver)
-        clearObserver(&insertEquationObserver)
 
         // Formatting command observers cleanup
         clearObserver(&toggleBoldObserver)
@@ -53,11 +50,6 @@ extension MilkdownEditor.Coordinator {
         clearObserver(&insertLinkObserver)
         clearObserver(&insertCitationObserver)
 
-        // Unregister all WKScriptMessageHandler channels registered in
-        // registerMilkdownMessageHandlers(on:coordinator:) (MilkdownEditor.swift)
-        // — without this, the WKUserContentController keeps a strong reference to this
-        // Coordinator (via `controller.add(coordinator, name:)`) and it is never deallocated.
-        webView?.configuration.userContentController.removeAllScriptMessageHandlers()
         webView = nil
     }
 
