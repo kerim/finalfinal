@@ -534,7 +534,7 @@ final class ZoteroNetworkTestLock {
 /// tests can assert on what was actually sent. Registered/unregistered per test (process-wide
 /// state) via `URLProtocol.registerClass`, mirroring `MockLTURLProtocol` in
 /// `LanguageToolProviderDedupTests.swift`.
-final class MockBBTURLProtocol: URLProtocol, @unchecked Sendable {
+private final class MockBBTURLProtocol: URLProtocol, @unchecked Sendable {
     /// Canned (statusCode, responseData) per JSON-RPC method name.
     nonisolated(unsafe) static var responses: [String: (Int, Data)] = [:]
     /// Response used for any method with no entry in `responses` and no `responseOverride` match.

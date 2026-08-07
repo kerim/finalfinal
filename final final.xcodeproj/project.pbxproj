@@ -104,7 +104,6 @@
 		529A02820E475F5D2A5D3D18 /* SplitViewAutosaveNaming.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7EE77319365B23B8088EAF41 /* SplitViewAutosaveNaming.swift */; };
 		53331E3019B19DB378F0F503 /* PendingFootnoteQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = DFC522AFA4BA34F95F917109 /* PendingFootnoteQueue.swift */; };
 		533D8BDE9118ACC34CF4BF89 /* ExportPreferencesPane.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEC20B55C260FCF5460E4E23 /* ExportPreferencesPane.swift */; };
-		53870951193FF6433568FC60 /* ZoteroLibraryScopeTests+ExportDecodeError.swift in Sources */ = {isa = PBXBuildFile; fileRef = C40F7F01A5564D0FB229F5D2 /* ZoteroLibraryScopeTests+ExportDecodeError.swift */; };
 		53A856455FD6985D356DF716 /* ExportService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C65021F994002F139C1184C /* ExportService.swift */; };
 		5428AB4DBE5F4E61BBD3DFAC /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = 980503AFBDB8FC8CEF6F8BFE /* GRDB */; };
 		548CF9F987699A77EF54127D /* DiagnosticReportGeneratorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 28645F6BE3303F093FF09EAF /* DiagnosticReportGeneratorTests.swift */; };
@@ -557,7 +556,6 @@
 		BF41CB39EB2C5BD4E30A2CDA /* StatusBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusBar.swift; sourceTree = "<group>"; };
 		C193BFD9D30D088D972DBBDB /* FootnoteSyncTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FootnoteSyncTests.swift; sourceTree = "<group>"; };
 		C1CFEDB8DA2CEAACE5CC6EF8 /* HierarchyEnforcementTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HierarchyEnforcementTests.swift; sourceTree = "<group>"; };
-		C40F7F01A5564D0FB229F5D2 /* ZoteroLibraryScopeTests+ExportDecodeError.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ZoteroLibraryScopeTests+ExportDecodeError.swift"; sourceTree = "<group>"; };
 		C4430FB4485538CDFA0F4F53 /* ImageImportServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageImportServiceTests.swift; sourceTree = "<group>"; };
 		C6E1612B4ACCCC5AF558AE92 /* EquationDialog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EquationDialog.swift; sourceTree = "<group>"; };
 		C7DACB449A648403C7CCDD3F /* GitInfo.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitInfo.swift; sourceTree = "<group>"; };
@@ -1102,7 +1100,6 @@
 				B8EE2BE4643241D9AD43EABF /* ZoteroExportDecodeResultTests.swift */,
 				B74C8F818689D9A62910CDD8 /* ZoteroLibraryScopeTests.swift */,
 				B9E84A9E73C67AA6C65C84BA /* ZoteroLibraryScopeTests+CaseInsensitivity.swift */,
-				C40F7F01A5564D0FB229F5D2 /* ZoteroLibraryScopeTests+ExportDecodeError.swift */,
 			);
 			path = Tier1;
 			sourceTree = "<group>";
@@ -1463,7 +1460,6 @@
 				31EE4F7EA3B0C9163BEF4206 /* ZoomWordCountSyncTests.swift in Sources */,
 				3CCD23FA0FAA8B8B1247B0B5 /* ZoteroExportDecodeResultTests.swift in Sources */,
 				7A3A35319C27A8AB3097E244 /* ZoteroLibraryScopeTests+CaseInsensitivity.swift in Sources */,
-				53870951193FF6433568FC60 /* ZoteroLibraryScopeTests+ExportDecodeError.swift in Sources */,
 				BF25AA707A567763D04A46EA /* ZoteroLibraryScopeTests.swift in Sources */,
 				7C511DB47A7113E8833C262E /* ZoteroServiceConnectionTests.swift in Sources */,
 			);
