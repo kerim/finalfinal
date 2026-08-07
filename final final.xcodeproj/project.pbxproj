@@ -179,6 +179,7 @@
 		8B84A55286FA2F144C0F57E9 /* GettingStartedBaselineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C9F8C71DDD49F99B9BB6746 /* GettingStartedBaselineTests.swift */; };
 		8CC3FFE851C758FAF0E7DE9B /* BibliographySyncService.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED9246FEA41F18BA08135B2F /* BibliographySyncService.swift */; };
 		8DF608DC28695AC4BA728238 /* ExportCommands.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55069760CD7C2E13C59E0E39 /* ExportCommands.swift */; };
+		8E5B8B36419386E92D16A1E5 /* BlockSyncGenerationGuardTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 32821ADC62DBC359E0511171 /* BlockSyncGenerationGuardTests.swift */; };
 		8EEE15BB190DEF63CE7020F5 /* SectionReconcilerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A68A93212735EBAA064098B5 /* SectionReconcilerTests.swift */; };
 		8EF5DB60C459BBC6524B5B88 /* SceneID.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55F227821F24C25C0F4045CC /* SceneID.swift */; };
 		8F63B2FC4CF2B275394DBB02 /* DocumentManager+RecentProjects.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4B4047E7D3F51B03731AAA62 /* DocumentManager+RecentProjects.swift */; };
@@ -378,6 +379,7 @@
 		307DA2CD982351B53E2CE918 /* LinkTrailingTextTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LinkTrailingTextTests.swift; sourceTree = "<group>"; };
 		31937040D58CFFD751C3C45D /* OutlineSidebar+DropDelegates.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "OutlineSidebar+DropDelegates.swift"; sourceTree = "<group>"; };
 		31C89F3A4269349290CD8F03 /* EditorViewState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorViewState.swift; sourceTree = "<group>"; };
+		32821ADC62DBC359E0511171 /* BlockSyncGenerationGuardTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockSyncGenerationGuardTests.swift; sourceTree = "<group>"; };
 		3354F76F25EE907B18F8452A /* DiagnosticsPreferencesPane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticsPreferencesPane.swift; sourceTree = "<group>"; };
 		349348AA5F221A0782421BDB /* TestMode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TestMode.swift; sourceTree = "<group>"; };
 		34998B89C7E1787E0C4DE20A /* CodeMirrorCoordinator+NotificationObservers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "CodeMirrorCoordinator+NotificationObservers.swift"; sourceTree = "<group>"; };
@@ -1071,6 +1073,7 @@
 				65C3FFA9A9BEB6D8649BE64F /* BlockReorderDuplicateHeadingTests.swift */,
 				3D3FBDBD7AFB8677F62D8FD4 /* BlockReorderIntegrityTests.swift */,
 				BA0FC3BCB857DBEFB0FBA39F /* BlockRoundtripTests.swift */,
+				32821ADC62DBC359E0511171 /* BlockSyncGenerationGuardTests.swift */,
 				A05E42B1B84A9B3F18B08E98 /* BlockSyncStaleGuardTests.swift */,
 				B2E812DDA3AFC1F86DC9E06B /* ContentStateMachineTests.swift */,
 				0339BF768D7EB53896A726B7 /* ExportAssemblyTests.swift */,
@@ -1394,6 +1397,7 @@
 				2AC9945B77DF66C95673A65A /* BlockReorderDuplicateHeadingTests.swift in Sources */,
 				B4A5A572F785E929B8D232AD /* BlockReorderIntegrityTests.swift in Sources */,
 				0E73A2CA77ADED759B79CD01 /* BlockRoundtripTests.swift in Sources */,
+				8E5B8B36419386E92D16A1E5 /* BlockSyncGenerationGuardTests.swift in Sources */,
 				1F5CD824C3B255DA2D04B0E0 /* BlockSyncStaleGuardTests.swift in Sources */,
 				A650AD87847159D1C38CB194 /* CAYWConcurrentInsertTests.swift in Sources */,
 				21AD1F61417FF4B80E270C71 /* CitationDeleteTests.swift in Sources */,
