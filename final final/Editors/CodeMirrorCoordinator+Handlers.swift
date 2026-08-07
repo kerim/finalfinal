@@ -73,11 +73,13 @@ extension CodeMirrorEditor.Coordinator {
             NotificationCenter.default.removeObserver(observer)
             insertEquationObserver = nil
         }
-        // Formatting command observers cleanup
+        // Formatting command observers cleanup (also covers smartQuotesStateObserver and
+        // zoomFootnoteStateObserver, previously missed here despite being removed in deinit)
         for observer in [toggleBoldObserver, toggleItalicObserver, toggleStrikethroughObserver,
                          setHeadingObserver, toggleBulletListObserver, toggleNumberListObserver,
                          toggleBlockquoteObserver, toggleCodeBlockObserver, toggleInlineCodeObserver,
-                         insertLinkObserver, insertCitationObserver] {
+                         insertLinkObserver, insertCitationObserver,
+                         smartQuotesStateObserver, zoomFootnoteStateObserver] {
             if let observer { NotificationCenter.default.removeObserver(observer) }
         }
         toggleBoldObserver = nil
@@ -91,6 +93,12 @@ extension CodeMirrorEditor.Coordinator {
         toggleInlineCodeObserver = nil
         insertLinkObserver = nil
         insertCitationObserver = nil
+        smartQuotesStateObserver = nil
+        zoomFootnoteStateObserver = nil
+        // Unregister all WKScriptMessageHandler channels registered in registerMessageHandlers(on:includeTableInsertTruncated:)
+        // — without this, the WKUserContentController keeps a strong reference to this
+        // Coordinator (via `controller.add(self, name:)`) and it is never deallocated.
+        webView?.configuration.userContentController.removeAllScriptMessageHandlers()
         webView = nil
     }
 
