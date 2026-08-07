@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.121] - 2026-08-07
+
 ### Added
 
 - **Version History now opens with ⌘⌥V** — the shortcut was documented in the README but had never been attached to the menu item.
