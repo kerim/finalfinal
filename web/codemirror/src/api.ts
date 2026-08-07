@@ -1261,42 +1261,15 @@ export function resetForProjectSwitch(): void {
 /**
  * Insert a math equation at the cursor position.
  * Uses direct text insertion rather than setContent (which escapes $).
- * isDisplay=true → $$\nlatex\n$$ with each fence on its own line, preceded by a
- * newline (or a full blank line, if real content precedes the cursor) so a
- * mid-line cursor never glues the opening `$$` onto surrounding text;
- * isDisplay=false → $latex$ inline.
+ * isDisplay=true → $$latex$$ on its own line; isDisplay=false → $latex$ inline.
  */
 export function insertEquation(latex: string, isDisplay: boolean): void {
   const view = getEditorView();
   if (!view) return;
 
   const { from, to } = view.state.selection.main;
-  // Display goes on its own line, with each `$$` fence on its own line too — a
-  // glued `$$latex$$` open would be misread as YAML-ish metadata by remark-math
-  // on the Milkdown side (see math-plugin.ts toMarkdown/parseMarkdown) and by
-  // Swift's BlockParser as plain text. Inline stays glued in the text flow.
-  let insert: string;
-  if (isDisplay) {
-    // If the cursor isn't already at column 0 of its line, the opening `$$`
-    // would land glued onto whatever precedes it (e.g. "some text$$") — and a
-    // bare `$$` ending a line with no other `$` earlier on it is, correctly
-    // per micromark's own fence-opener rule, a genuine opener with no
-    // matching close in sight, so it swallows every line after it to the
-    // next `$$` or EOF. Force the equation onto a fresh line instead: a
-    // single newline if the text before the cursor on this line is blank
-    // (it already reads as a blank line once split), or a full blank line
-    // (two newlines) when real content precedes the cursor — mirroring the
-    // blank-line separation Milkdown's own serializer puts around a
-    // display-math block.
-    const line = view.state.doc.lineAt(from);
-    const atLineStart = from === line.from;
-    const precedingText = view.state.sliceDoc(line.from, from);
-    const precedingIsBlank = precedingText.trim() === '';
-    const prefix = atLineStart ? '' : precedingIsBlank ? '\n' : '\n\n';
-    insert = `${prefix}$$\n${latex}\n$$\n`;
-  } else {
-    insert = `$${latex}$`;
-  }
+  // Display goes on its own line; inline stays in the text flow.
+  const insert = isDisplay ? `$$${latex}$$\n` : `$${latex}$`;
 
   view.dispatch({
     changes: { from, to, insert },

@@ -643,11 +643,7 @@ export function nodeToMarkdownFragment(node: Node): string {
       return node.attrs.width ? `${base}{width=${node.attrs.width}%}` : base;
     }
     case 'math_display':
-      // Each `$$` fence on its own line — NOT glued onto the first latex line — so
-      // Swift's BlockParser sees the same unglued shape the JS serializer now
-      // produces (math-plugin.ts toMarkdown). A glued `$$latex` open is also
-      // misread by remark-math as YAML-ish metadata on the JS parse side.
-      return `$$\n${node.attrs.latex || ''}\n$$`;
+      return `$$${node.attrs.latex || ''}$$`;
     case 'table': {
       const header: string[] = [];
       const separator: Align[] = [];
