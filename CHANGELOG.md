@@ -6,6 +6,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **Version History now opens with ⌘⌥V** — the shortcut was documented in the README but had never been attached to the menu item.
+
+### Changed
+
+- **Closing the Getting Started guide no longer asks whether you want to save your changes** — the guide is a playground, not a document you own, and the prompt implied work was about to be lost. Instead, the first time you edit it in a session, a brief message tells you that changes to the guide aren't saved.
+
+### Fixed
+
+- **Pasting malformed display math (`$$…$$`) could swallow everything after it into one broken block** — worse, the app's own equations became malformed simply by being saved and reopened, because the opening `$$` was written on the same line as the formula and then misread as something else when the document was parsed. Equations now save in a form that survives a round trip, documents already damaged this way repair themselves on open, and pasted math that arrives malformed is separated from the text that follows it.
+- **A section-break marker, mode switch, or bibliography refresh happening mid-save could duplicate a paragraph** — a save already in flight when the document was rewritten wholesale (switching between the formatted and source editors, zooming into a section, or a background bibliography or notes rebuild) could land its stale text at the end of the document as a new, duplicate paragraph. Saves in flight are now abandoned when the document changes underneath them.
+- **Deleting a paragraph that contained only a citation could scramble a nearby empty paragraph's identity** — the deleted paragraph's internal identity could be handed to an unrelated blank paragraph, so metadata attached to one could end up on the other.
+- **In the source editor opened after the app had warmed up, pasting an oversized table silently dropped the extra rows** — the warning that the table had been truncated never appeared, though it did in a freshly opened editor. The warning now shows in both cases.
+- **A heading like "3. Introduction" showed up in the outline sidebar as just "Introduction"** — the leading number was mistaken for an ordered-list marker and stripped. Headings now appear in the sidebar exactly as written.
+- **Text inside code blocks and block quotes was indexed for search with leading numbers and bullets stripped off** — searching for a line like `1. install` inside a code block could miss it. What's shown on screen was never affected; the saved search text now matches the literal text.
+- **Right-clicking in one window could be swallowed by the status badge in another** — the badge listened for right-clicks across the whole app rather than only in its own window, so a right-click or Control-click meant for a different window did nothing.
+- **Citing an offline reference could fail when the citation key's capitalization didn't match** — offline lookup now ignores case, the way online lookup already did.
+- **A failing Zotero export reported "Network error" even when the network was fine** — an unexpected response from Zotero was misreported as a connection problem. The message now reflects what actually went wrong.
+- **Switching between the formatted and source editors left the previous editor's machinery running** — memory and background listeners accumulated with every switch instead of being released.
+
 ## [0.2.120] - 2026-08-05
 
 ### Fixed
