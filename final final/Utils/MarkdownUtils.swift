@@ -39,18 +39,11 @@ enum MarkdownUtils {
     /// - Parameter stripListMarkers: Whether to remove a leading `- `/`* `/`+ `/`N. `
     ///   list marker at the start of each line. Defaults to `true` for callers
     ///   stripping syntax out of genuine list/paragraph markdown. Callers that
-    ///   already know the text belongs to a heading or a code block — which
-    ///   can never actually BE a markdown list (e.g.
-    ///   `BlockParser.extractTextContent`) — must pass `false`: a heading
-    ///   titled "3. Title", or a numbered step inside a code sample, starts
-    ///   with the same shape as an ordered-list marker, but it isn't one, and
-    ///   this regex can't tell the difference from the string alone.
-    ///   `BlockParser.extractTextContent` also passes `false` for
-    ///   blockquotes, but for a different reason: "> 1. First item" IS a
-    ///   normal markdown shape (an ordered list nested inside a blockquote),
-    ///   so this regex genuinely cannot distinguish a quoted list from quoted
-    ///   text that merely looks like one — preserving the literal text is the
-    ///   safer default there.
+    ///   already know the text is a heading's own content (e.g.
+    ///   `BlockParser.extractTextContent`, after removing the `#` prefix) must
+    ///   pass `false` — a heading literally titled "3. Title" starts with the
+    ///   same shape as an ordered-list marker, but it isn't one, and this
+    ///   regex can't tell the difference from the string alone.
     static func stripMarkdownSyntax(from content: String, stripListMarkers: Bool = true) -> String {
         var result = content
 

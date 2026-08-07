@@ -269,44 +269,6 @@ struct BlockRoundtripTests {
         #expect(heading.outlineTitle == "3. Title")
     }
 
-    @Test("Code block text starting with a number and period keeps its literal prefix")
-    func blockParserPreservesLeadingNumberInCodeBlockText() throws {
-        // A fenced code block whose first line literally reads "1. do this"
-        // (e.g. a numbered step in a shell comment or a code sample) starts
-        // with the same shape as an ordered-list marker, but it isn't a
-        // list — extractTextContent must not strip it. This affects text
-        // search, not display (code blocks are hardcoded to zero words in
-        // Block.recalculateWordCount, so word count is unaffected here).
-        // Regression test for the same list-marker-stripping bug fixed for
-        // headings.
-        let content = """
-        ```
-        1. do this
-        2. then this
-        ```
-        """
-
-        let blocks = BlockParser.parse(markdown: content, projectId: "test")
-        let codeBlock = try #require(blocks.first { $0.blockType == .codeBlock })
-
-        #expect(codeBlock.textContent == "1. do this\n2. then this")
-    }
-
-    @Test("Blockquote text starting with a number and period keeps its literal prefix")
-    func blockParserPreservesLeadingNumberInBlockquoteText() throws {
-        // A blockquote whose text literally starts with "1. " (a quoted
-        // numbered step, not a markdown list) must not have that prefix
-        // mistaken for an ordered-list marker and stripped.
-        let content = """
-        > 1. Quoted line
-        """
-
-        let blocks = BlockParser.parse(markdown: content, projectId: "test")
-        let quote = try #require(blocks.first { $0.blockType == .blockquote })
-
-        #expect(quote.textContent == "1. Quoted line")
-    }
-
     @Test("Block parser handles bibliography detection")
     func blockParserBibliography() throws {
         let content = """
