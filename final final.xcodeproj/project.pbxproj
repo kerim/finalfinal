@@ -240,6 +240,7 @@
 		C63065FEE9261025A22945D6 /* Fixtures in Resources */ = {isa = PBXBuildFile; fileRef = 6D1C9C394433400E8BE7F59C /* Fixtures */; };
 		C6B9E151FB9DD711E72960B8 /* ViewNotificationModifiers.swift in Sources */ = {isa = PBXBuildFile; fileRef = E673DA14AB0CE672FD60FB47 /* ViewNotificationModifiers.swift */; };
 		C7C3D32DD41A04373D70DD0A /* ExportService+Fonts.swift in Sources */ = {isa = PBXBuildFile; fileRef = 519AC684B7CAA00763881EC9 /* ExportService+Fonts.swift */; };
+		C8E43872015D13DDA90D6F7F /* DevBuildBadge.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBC35BC81A5541CBD0D5F575 /* DevBuildBadge.swift */; };
 		CB678DCC05EA528F1C7CF6CF /* NativeToolbarButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1679600B9A0C29D5BB56601 /* NativeToolbarButton.swift */; };
 		CB9E4720BDAA3DBAE3C2D501 /* ImageCaptionAltSeparationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A26D1428B222E2AB83B024F /* ImageCaptionAltSeparationTests.swift */; };
 		CE292E2BCF5617C406CA10FB /* AutoBackupService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B7205FC48760A149A8B0BF8 /* AutoBackupService.swift */; };
@@ -614,6 +615,7 @@
 		FAB8A912FFF326FE24A67328 /* E2ESectionReconcilerPseudoSectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = E2ESectionReconcilerPseudoSectionTests.swift; sourceTree = "<group>"; };
 		FAD8FFDABECD9BD823A0CA42 /* BlockParser+Images.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "BlockParser+Images.swift"; sourceTree = "<group>"; };
 		FB77BD6B3DD5AF1E074B30A4 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		FBC35BC81A5541CBD0D5F575 /* DevBuildBadge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DevBuildBadge.swift; sourceTree = "<group>"; };
 		FDA7C9F1CFBE9EDB2C4D818C /* OutlineParserTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutlineParserTests.swift; sourceTree = "<group>"; };
 		FE24C13995368C23BC470A26 /* FinalFinalApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FinalFinalApp.swift; sourceTree = "<group>"; };
 		FF34C45C645EA726101A81D6 /* FootnoteSyncService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FootnoteSyncService.swift; sourceTree = "<group>"; };
@@ -1048,6 +1050,7 @@
 				96251EE8FD571C0F7E2DE962 /* AppDelegate+AutosaveKeyTracking.swift */,
 				7E7D91BD121C3BACF5BD6DB3 /* AppDelegate+WindowFramePersistence.swift */,
 				ED41AF1DE2173EFE00B37AF1 /* AutosaveKeySweep.swift */,
+				FBC35BC81A5541CBD0D5F575 /* DevBuildBadge.swift */,
 				FE24C13995368C23BC470A26 /* FinalFinalApp.swift */,
 				C7DACB449A648403C7CCDD3F /* GitInfo.swift */,
 				55F227821F24C25C0F4045CC /* SceneID.swift */,
@@ -1360,7 +1363,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "PLIST_PATH=\"${BUILT_PRODUCTS_DIR}/${INFOPLIST_PATH}\"\nBRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo \"unknown\")\nCOMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo \"unknown\")\n/usr/libexec/PlistBuddy -c \"Add :GitBranch string $BRANCH\" \"$PLIST_PATH\" 2>/dev/null || \\\n  /usr/libexec/PlistBuddy -c \"Set :GitBranch $BRANCH\" \"$PLIST_PATH\"\n/usr/libexec/PlistBuddy -c \"Add :GitCommit string $COMMIT\" \"$PLIST_PATH\" 2>/dev/null || \\\n  /usr/libexec/PlistBuddy -c \"Set :GitCommit $COMMIT\" \"$PLIST_PATH\"\nmkdir -p \"${DERIVED_FILE_DIR}\"\necho \"${BRANCH} ${COMMIT}\" > \"${DERIVED_FILE_DIR}/git-stamp.txt\"\n";
+			shellScript = "PLIST_PATH=\"${BUILT_PRODUCTS_DIR}/${INFOPLIST_PATH}\"\nBRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo \"unknown\")\nCOMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo \"unknown\")\n# Worktree folder name — only set when building from a superdev/autodev\n# worktree, empty for the main checkout. DevBuildBadge.swift reads it to\n# label the running app; when the key is absent it falls back to BRANCH.\n# Deliberately not written when empty: PlistBuddy's Add/Set with an empty\n# value is unreliable, and an absent key is exactly the fallback signal.\ncase \"${SRCROOT}\" in\n  */.claude/worktrees/*) WORKTREE=$(basename \"${SRCROOT}\") ;;\n  *) WORKTREE=\"\" ;;\nesac\n/usr/libexec/PlistBuddy -c \"Add :GitBranch string $BRANCH\" \"$PLIST_PATH\" 2>/dev/null || \\\n  /usr/libexec/PlistBuddy -c \"Set :GitBranch $BRANCH\" \"$PLIST_PATH\"\n/usr/libexec/PlistBuddy -c \"Add :GitCommit string $COMMIT\" \"$PLIST_PATH\" 2>/dev/null || \\\n  /usr/libexec/PlistBuddy -c \"Set :GitCommit $COMMIT\" \"$PLIST_PATH\"\nif [ -n \"$WORKTREE\" ]; then\n  /usr/libexec/PlistBuddy -c \"Add :DevWorktree string $WORKTREE\" \"$PLIST_PATH\" 2>/dev/null || \\\n    /usr/libexec/PlistBuddy -c \"Set :DevWorktree $WORKTREE\" \"$PLIST_PATH\"\nfi\nmkdir -p \"${DERIVED_FILE_DIR}\"\necho \"${BRANCH} ${COMMIT} ${WORKTREE}\" > \"${DERIVED_FILE_DIR}/git-stamp.txt\"\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
@@ -1538,6 +1541,7 @@
 				4D671DBFA718AA3F2C24DFE3 /* Database+Snapshots.swift in Sources */,
 				45869BA1A8791DA0E428B1BD /* Database.swift in Sources */,
 				12BA40CF66378D505D841D27 /* DebugLog.swift in Sources */,
+				C8E43872015D13DDA90D6F7F /* DevBuildBadge.swift in Sources */,
 				37689163B83F075ACE336B7D /* DiagnosticLogFile.swift in Sources */,
 				75790D7B6D72084958166485 /* DiagnosticReportGenerator.swift in Sources */,
 				57F0430E70A9FFE6C3DE4A6C /* DiagnosticsPreferencesPane.swift in Sources */,

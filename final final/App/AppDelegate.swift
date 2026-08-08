@@ -99,6 +99,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         DebugLog.log(.lifecycle, "[FINAL|FINAL] Build: \(GitInfo.branch) (\(GitInfo.commit))")
 
+        // Debug builds tint the Dock icon and label their windows with the
+        // worktree (or branch) they came from — see DevBuildBadge.swift.
+        #if DEBUG
+            DevBuildBadge.install()
+        #endif
+
         // Disable window tabbing - removes "Show Tab Bar" and "Show All Tabs" from View menu
         // This app doesn't use a tabbed interface
         NSWindow.allowsAutomaticWindowTabbing = false
