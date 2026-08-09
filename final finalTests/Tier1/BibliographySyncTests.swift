@@ -64,6 +64,44 @@ struct BibliographySyncTests {
         #expect(!keys.contains("fake"), "@key inside fenced code block should not be extracted")
     }
 
+    // MARK: - Indented list shapes must NOT be treated as code (regression: the shared
+    // MarkdownUtils.stripCodeContent -- which this live bibliography-sync feature depends on
+    // directly -- must never strip an indented-but-not-code paragraph. CommonMark loose lists
+    // are DEFINED by a blank line between items/continuation paragraphs, so a 4-space-indented
+    // paragraph preceded by a blank line is ordinary prose, not a code block.)
+
+    @Test("extractCitekeys finds a citation inside a loose (blank-line-separated) nested bulleted list")
+    func extractCitekeysFindsKeyInsideLooseNestedList() {
+        let keys = BibliographySyncService.extractCitekeys(from: "- Parent\n\n    - Nested cites [@jones1999]")
+        #expect(keys == ["jones1999"])
+    }
+
+    @Test("extractCitekeys finds a citation inside a list-item continuation paragraph")
+    func extractCitekeysFindsKeyInsideListContinuationParagraph() {
+        let keys = BibliographySyncService.extractCitekeys(from: "- First point\n\n    More discussion here [@smith2020].")
+        #expect(keys == ["smith2020"])
+    }
+
+    // MARK: - Sync-side widening (mirrors ExportService.extractCitekeys's identical two-pass
+    // regex): the prose-before-@ form and the suppress-author form inside brackets, both
+    // previously missed by the old single-pass regex, are now extracted here too, since this
+    // extraction drives the live in-document bibliography section, not just export.
+
+    @Test("extractCitekeys finds keys in prose-before-@ and suppress-author bracket forms")
+    func extractCitekeysFindsProseBeforeAtAndSuppressAuthorForms() {
+        let proseKeys = BibliographySyncService.extractCitekeys(from: "Background [see @seekey2021] is relevant.")
+        #expect(proseKeys == ["seekey2021"])
+
+        let suppressKeys = BibliographySyncService.extractCitekeys(from: "Prior work [-@suppresskey2022] established this.")
+        #expect(suppressKeys == ["suppresskey2022"])
+    }
+
+    @Test("extractCitekeys does not extract a bare, unbracketed @key")
+    func extractCitekeysDoesNotExtractBareKey() {
+        let keys = BibliographySyncService.extractCitekeys(from: "As @jones2019 argues, bare @keys are literal.")
+        #expect(keys.isEmpty)
+    }
+
     // MARK: - Bibliography blocks in DB
 
     @Test("Rich content has bibliography blocks marked correctly")

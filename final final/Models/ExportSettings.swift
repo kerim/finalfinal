@@ -164,6 +164,16 @@ struct ExportSettings: Codable, Sendable {
         }
         return FileManager.default.fileExists(atPath: path)
     }
+
+    /// Bibliography header name for pandoc's `--metadata reference-section-title`, guaranteed
+    /// non-empty. Falls back to the shipped default ("Bibliography") for an empty or
+    /// whitespace-only configured name — omitting the argument instead would reintroduce a
+    /// headless reference list for that one degenerate input, which is the exact bug this
+    /// setting exists to fix.
+    var effectiveBibliographyHeaderName: String {
+        let trimmed = bibliographyHeaderName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? ExportSettings.default.bibliographyHeaderName : trimmed
+    }
 }
 
 // MARK: - Observable Settings Manager

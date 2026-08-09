@@ -413,16 +413,28 @@ extension ZoteroService {
 
     // MARK: - Raw (undecoded) public entry point + fallback
 
+    /// Diff requested citekeys against the CSL `id` field of each returned raw item
+    /// (case-insensitively) — lets the legacy item.export fallback report unresolved keys
+    /// instead of silently omitting them. item.export has no notion of "ambiguous", so
+    /// everything diffed-missing here is classified not-found.
+    nonisolated static func unresolvedKeys(requested: [String], resolvedItems: [[String: Any]]) -> Set<String> {
+        let resolvedLower = Set(resolvedItems.compactMap { ($0["id"] as? String)?.lowercased() })
+        return Set(requested.filter { !resolvedLower.contains($0.lowercased()) })
+    }
+
     /// Fetch bibliography items by citekey, scoped the same way as `fetchItemsForCitekeys`,
     /// but returning the RAW (undecoded) CSL-JSON per item instead of decoding into `CSLItem`.
     /// `CSLItem` only models a subset of CSL-JSON fields; export needs every field the bundled
     /// CSL style might use (translator, edition, collection-title, chapter-number, genre,
     /// original-date, etc.), which a decode-then-reencode round trip through `CSLItem` would
-    /// silently drop. Shares the exact two-phase resolution, stale-cache retry, and
-    /// not-found/ambiguous error behavior with `fetchItemsForCitekeys` — only the final
-    /// per-item representation (raw dict vs. `CSLItem`) differs.
-    func fetchRawItemsForCitekeys(_ citekeys: [String]) async throws -> [[String: Any]] {
-        guard !citekeys.isEmpty else { return [] }
+    /// silently drop. Shares the exact two-phase resolution and stale-cache retry behavior
+    /// with `fetchItemsForCitekeys` — but, unlike that typed path, never throws for individual
+    /// not-found/ambiguous citekeys: export needs to build a partial bibliography rather than
+    /// lose `--citeproc` for the whole document over one bad citekey, so those are reported via
+    /// the returned `RawCitekeyBatchResult` instead. Still throws for real transport/cancellation
+    /// failures — those fall back to `fetchRawItemsForCitekeysViaExport` as before.
+    func fetchRawItemsForCitekeys(_ citekeys: [String]) async throws -> RawCitekeyBatchResult {
+        guard !citekeys.isEmpty else { return RawCitekeyBatchResult(items: [], notFoundKeys: [], ambiguousKeys: []) }
         let requested = Self.orderedUniqueCitekeys(citekeys)
 
         let outcome: PandocFilterRawOutcome
@@ -440,11 +452,11 @@ extension ZoteroService {
         isConnected = true
         connectionError = nil
 
-        if !outcome.notFoundKeys.isEmpty || !outcome.ambiguousKeys.isEmpty {
-            throw Self.notFoundOrAmbiguousError(notFound: outcome.notFoundKeys, ambiguous: outcome.ambiguousKeys)
-        }
-
-        return Array(outcome.items.values)
+        return RawCitekeyBatchResult(
+            items: Array(outcome.items.values),
+            notFoundKeys: outcome.notFoundKeys,
+            ambiguousKeys: outcome.ambiguousKeys
+        )
     }
 
     /// Fetch raw (undecoded) CSL-JSON items by citekey using BBT's `item.export` — unscoped,
@@ -452,8 +464,15 @@ extension ZoteroService {
     /// `item.pandoc_filter` resolution (`resolveRawViaPandocFilter`) fails for any reason.
     /// Mirrors the pre-existing `ExportService+Citations.swift` raw JSON-RPC call this
     /// replaced, so PDF export keeps its old fallback behavior when the new path can't run.
-    fileprivate func fetchRawItemsForCitekeysViaExport(_ citekeys: [String]) async throws -> [[String: Any]] {
-        guard !citekeys.isEmpty else { return [] }
+    ///
+    /// Unlike `item.pandoc_filter`, `item.export` reports no per-key not-found/ambiguous
+    /// information of its own — it just silently omits anything it couldn't match. Every
+    /// return path below diffs the requested citekeys against the resolved items' `id` fields
+    /// via `unresolvedKeys` so a citekey that only fails via this fallback is still reported,
+    /// instead of vanishing with zero warning (which would recreate the exact bug this fix
+    /// addresses).
+    fileprivate func fetchRawItemsForCitekeysViaExport(_ citekeys: [String]) async throws -> RawCitekeyBatchResult {
+        guard !citekeys.isEmpty else { return RawCitekeyBatchResult(items: [], notFoundKeys: [], ambiguousKeys: []) }
         guard let url = URL(string: "\(baseURL)/better-bibtex/json-rpc") else {
             throw ZoteroError.invalidResponse("Invalid URL")
         }
@@ -480,22 +499,43 @@ extension ZoteroService {
         }
 
         if let resultString = jsonObj["result"] as? String {
-            if resultString.isEmpty { return [] }
+            if resultString.isEmpty {
+                return RawCitekeyBatchResult(items: [], notFoundKeys: Set(citekeys), ambiguousKeys: [])
+            }
             guard let resultData = resultString.data(using: .utf8),
                   let parsed = try JSONSerialization.jsonObject(with: resultData) as? [[String: Any]] else {
                 throw ZoteroError.invalidResponse("Failed to decode result string")
             }
             isConnected = true
             connectionError = nil
-            return parsed
+            return RawCitekeyBatchResult(
+                items: parsed,
+                notFoundKeys: Self.unresolvedKeys(requested: citekeys, resolvedItems: parsed),
+                ambiguousKeys: []
+            )
         } else if let resultArray = jsonObj["result"] as? [[String: Any]] {
             isConnected = true
             connectionError = nil
-            return resultArray
+            return RawCitekeyBatchResult(
+                items: resultArray,
+                notFoundKeys: Self.unresolvedKeys(requested: citekeys, resolvedItems: resultArray),
+                ambiguousKeys: []
+            )
         } else if let error = jsonObj["error"] as? [String: Any], let message = error["message"] as? String {
             throw ZoteroError.invalidResponse("BBT error: \(message)")
         } else {
             throw ZoteroError.invalidResponse("Unexpected result format in item.export")
         }
     }
+}
+
+/// Outcome of a raw (undecoded) citekey batch fetch for export: resolved CSL-JSON items,
+/// plus which requested citekeys never resolved — named separately (not-found vs. ambiguous)
+/// so the caller can build a specific warning. Never thrown as an error: the caller decides
+/// whether to export a partial bibliography instead of losing --citeproc for the whole
+/// document over one bad citekey.
+struct RawCitekeyBatchResult {
+    let items: [[String: Any]]
+    let notFoundKeys: Set<String>
+    let ambiguousKeys: Set<String>
 }
