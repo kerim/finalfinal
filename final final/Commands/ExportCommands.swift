@@ -33,7 +33,7 @@ struct ExportOperations {
     /// Handle export request with specified format
     static func handleExport(format: ExportFormat) async {
         // Get current content from DocumentManager
-        guard let content = try? await DocumentManager.shared.loadContentForExport(), !content.isEmpty else {
+        guard let content = try? await DocumentManager.shared.loadContentForExport(bibliographyPlaceholder: format == .pdf), !content.isEmpty else {
             showNoContentAlert()
             return
         }

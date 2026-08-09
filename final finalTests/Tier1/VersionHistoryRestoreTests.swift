@@ -205,4 +205,63 @@ struct VersionHistoryRestoreTests {
         #expect(headings.contains { $0.textContent == "Restored Header" },
                 "Restored Header text should be recognized as a heading block")
     }
+
+    // MARK: - Bibliography Terminator Round-Trip
+    //
+    // Coverage for the bibliography orphan bug's third fix attempt (see
+    // BibliographyTerminatorTests.swift): the explicit `BlockParser.bibliographyEndMarker`
+    // terminator, written into snapshots by createManualSnapshot/createAutoSnapshot's new
+    // assembleMarkdownForEditor call, so a restored snapshot round-trips the "text typed
+    // after the bibliography" scenario correctly. Deliberately built against a FRESH
+    // snapshot created in-test (not a pre-existing fixture snapshot, which would predate
+    // the terminator by construction and correctly NOT carry it — see
+    // BlockParser.bibliographyEndMarker's doc comment for that disclosed, expected gap).
+
+    @Test("A fresh snapshot of a bibliography-ending document carries the terminator, and restoring it lets a subsequent trailing paragraph resolve correctly")
+    func freshSnapshotCarriesTerminatorAndRestoresTrailingTextCorrectly() throws {
+        let db = try TestFixtureFactory.createTemporary(content: TestFixtureFactory.richTestContent)
+        let pid = try TestFixtureFactory.getProjectId(from: db)
+        let (service, _) = try createSnapshotService(db: db)
+
+        // richTestContent's References section is the LAST thing in the document — exactly
+        // the shape BibliographySyncService.updateBibliographyBlock always produces.
+        let snapshot = try service.createManualSnapshot(name: "Before Trailing Note")
+        #expect(
+            snapshot.previewMarkdown.contains(BlockParser.bibliographyEndMarker),
+            "A fresh snapshot of a document ending in bibliography content must carry the terminator"
+        )
+
+        // Restore it — restoreEntireProject reparses snapshot.previewMarkdown via
+        // BlockParser.parse(), which consumes the terminator (zero Blocks) as it closes
+        // the section.
+        try service.restoreEntireProject(from: snapshot.id, createSafetyBackup: false)
+
+        let restoredBlocks = try TestFixtureFactory.fetchBlocks(from: db)
+        let restoredBibBlocks = restoredBlocks.filter { $0.isBibliography }
+        #expect(
+            restoredBibBlocks.count == 5,
+            "Restore must bring back all 5 real bibliography blocks (heading + 4 entries) correctly flagged"
+        )
+
+        // Simulate what the app does next: rebuild editorState.content from the restored
+        // blocks (assembleMarkdownForEditor re-adds the terminator, since the last block is
+        // still bibliography-flagged), then simulate the user typing a new trailing
+        // paragraph followed by a full reparse (Source Mode's debounced reparse, or the
+        // pre-export flush).
+        let rebuiltContent = BlockParser.assembleMarkdownForEditor(from: restoredBlocks)
+        #expect(
+            rebuiltContent.hasSuffix(BlockParser.bibliographyEndMarker),
+            "Rebuilding editor content from the restored blocks must re-add the terminator"
+        )
+        let withTrailingNote = rebuiltContent + "\n\nA note typed after restoring from the snapshot."
+
+        let reparsed = BlockParser.parse(markdown: withTrailingNote, projectId: pid)
+        let trailingBlock = try #require(
+            reparsed.last { $0.markdownFragment.contains("A note typed after restoring") }
+        )
+        #expect(
+            trailingBlock.isBibliography == false,
+            "A paragraph typed after restoring a bibliography-ending snapshot must NOT be flagged isBibliography"
+        )
+    }
 }

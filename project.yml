@@ -140,25 +140,12 @@ targets:
           PLIST_PATH="${BUILT_PRODUCTS_DIR}/${INFOPLIST_PATH}"
           BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
           COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
-          # Worktree folder name — only set when building from a superdev/autodev
-          # worktree, empty for the main checkout. DevBuildBadge.swift reads it to
-          # label the running app; when the key is absent it falls back to BRANCH.
-          # Deliberately not written when empty: PlistBuddy's Add/Set with an empty
-          # value is unreliable, and an absent key is exactly the fallback signal.
-          case "${SRCROOT}" in
-            */.claude/worktrees/*) WORKTREE=$(basename "${SRCROOT}") ;;
-            *) WORKTREE="" ;;
-          esac
           /usr/libexec/PlistBuddy -c "Add :GitBranch string $BRANCH" "$PLIST_PATH" 2>/dev/null || \
             /usr/libexec/PlistBuddy -c "Set :GitBranch $BRANCH" "$PLIST_PATH"
           /usr/libexec/PlistBuddy -c "Add :GitCommit string $COMMIT" "$PLIST_PATH" 2>/dev/null || \
             /usr/libexec/PlistBuddy -c "Set :GitCommit $COMMIT" "$PLIST_PATH"
-          if [ -n "$WORKTREE" ]; then
-            /usr/libexec/PlistBuddy -c "Add :DevWorktree string $WORKTREE" "$PLIST_PATH" 2>/dev/null || \
-              /usr/libexec/PlistBuddy -c "Set :DevWorktree $WORKTREE" "$PLIST_PATH"
-          fi
           mkdir -p "${DERIVED_FILE_DIR}"
-          echo "${BRANCH} ${COMMIT} ${WORKTREE}" > "${DERIVED_FILE_DIR}/git-stamp.txt"
+          echo "${BRANCH} ${COMMIT}" > "${DERIVED_FILE_DIR}/git-stamp.txt"
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.kerim.final-final

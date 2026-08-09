@@ -50,6 +50,10 @@ function findNodeInMdLines(node: Node, mdLines: string[], startIdx: number): { m
     const found = scanForward(mdLines, idx, (line) => line.trim().startsWith('<!-- ::auto-bibliography::'));
     return { mdLine: found, linesConsumed: 1 };
   }
+  if (typeName === 'auto_bibliography_end') {
+    const found = scanForward(mdLines, idx, (line) => line.trim() === '<!-- ::auto-bibliography-end:: -->');
+    return { mdLine: found, linesConsumed: 1 };
+  }
 
   // --- Leaf nodes with textContent === "" (matched by markdown pattern) ---
   if (typeName === 'section_break') {
@@ -180,7 +184,7 @@ export function buildAnchorMap(view: EditorView, mdLines: string[]): ScrollAncho
   let mdIdx = 0;
 
   // Zero-height node types to skip from anchor map
-  const zeroHeightTypes = new Set(['zoom_notes_marker', 'auto_bibliography']);
+  const zeroHeightTypes = new Set(['zoom_notes_marker', 'auto_bibliography', 'auto_bibliography_end']);
 
   doc.forEach((node, offset) => {
     const result = findNodeInMdLines(node, mdLines, mdIdx);

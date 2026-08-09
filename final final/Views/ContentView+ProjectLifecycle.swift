@@ -229,8 +229,11 @@ extension ContentView {
             let existingBlocks = try db.fetchBlocks(projectId: pid)
 
             if !existingBlocks.isEmpty {
-                // Blocks exist - assemble markdown from blocks
-                editorState.content = BlockParser.assembleMarkdown(from: existingBlocks)
+                // Blocks exist - assemble markdown from blocks. assembleMarkdownForEditor
+                // (not plain assembleMarkdown): editorState.content must carry the
+                // bibliography-end terminator when the doc ends in bibliography content —
+                // see BlockParser.bibliographyEndMarker's doc comment.
+                editorState.content = BlockParser.assembleMarkdownForEditor(from: existingBlocks)
                 DebugLog.log(.lifecycle, "[LOAD] Assembled \(existingBlocks.count) blocks -> content length=\(editorState.content.count)")
                 updateSourceContentIfNeeded()
             } else {

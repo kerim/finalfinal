@@ -173,6 +173,37 @@ struct BlockParserAlignmentTests {
         }
     }
 
+    @Test func lastBibliographyNodeIndexPointsOnePastTheLastBibliographyAlignedIndex() {
+        let blocks = [
+            Block(projectId: "p1", sortOrder: 1, blockType: .paragraph,
+                  textContent: "Body text", markdownFragment: "Body text"),
+            Block(id: "bib-heading", projectId: "p1", sortOrder: 2, blockType: .heading,
+                  textContent: "References", markdownFragment: "# References",
+                  headingLevel: 1, isBibliography: true),
+            Block(id: "bib-entry-1", projectId: "p1", sortOrder: 3, blockType: .paragraph,
+                  textContent: "Smith (2020)", markdownFragment: "Smith (2020)",
+                  isBibliography: true),
+            Block(id: "bib-entry-2", projectId: "p1", sortOrder: 4, blockType: .paragraph,
+                  textContent: "Jones (2021)", markdownFragment: "Jones (2021)",
+                  isBibliography: true),
+            Block(id: "trailing-block", projectId: "p1", sortOrder: 5, blockType: .paragraph,
+                  textContent: "Trailing user text", markdownFragment: "Trailing user text")
+        ]
+
+        let ids = BlockParser.idsForProseMirrorAlignment(blocks)
+        let lastBibIndex = BlockParser.lastBibliographyNodeIndex(blocks)
+
+        #expect(lastBibIndex != nil)
+        if let lastBibIndex {
+            // The index returned is one PAST the last bibliography block, so it must line up
+            // with the first non-bibliography block AFTER the section — here, the trailing
+            // user paragraph — in the same aligned array the fix pushes as `blockIds`. Guards
+            // the cursorBoundaryEnd the push relies on to distinguish trailing user content
+            // from the bibliography section itself.
+            #expect(ids[lastBibIndex] == "trailing-block")
+        }
+    }
+
     // MARK: - alignmentPairs / setBlockIdsForTopLevel hardening
 
     @Test func alignmentPairsProducesCorrectTriplesForMixedTypeBlockList() {

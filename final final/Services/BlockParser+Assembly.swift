@@ -26,14 +26,128 @@ extension BlockParser {
         return result
     }
 
+    /// Same as `assembleMarkdown`, but inserts `bibliographyEndMarker` immediately after the
+    /// LAST block (by the same `assemblySorted` ordering `assembleMarkdown` itself uses) that
+    /// is bibliography content — wherever that block falls in the document, not only when it
+    /// happens to be the document's final block — so markdown handed to Milkdown or CodeMirror
+    /// via `editorState.content` always carries a permanent, position-independent "the
+    /// bibliography section ends here" signal, instead of relying on a count that can drift
+    /// or corrupt. See `BlockParser.bibliographyEndMarker`'s doc comment for the bug this
+    /// closes: `editorState.content` is exactly what `flushContentToDatabase()` — the
+    /// reparse that runs immediately before every PDF export — feeds into `parse()`.
+    ///
+    /// MUST NOT require bibliography content to be the document's last block: the entire
+    /// point of this terminator is the case where the user has typed trailing text AFTER the
+    /// bibliography (no closing heading in between) — exactly the shape that produced the
+    /// orphan-flag bug in the first place. An earlier version of this function guarded on
+    /// "the last non-empty block is bibliography content" and returned `base` unmodified
+    /// otherwise, which meant the terminator was never emitted for precisely that trailing-
+    /// text case — worse, on the next reparse `sectionFlagCarriedForward` would re-flag the
+    /// trailing text as bibliography, and the next bibliography regeneration
+    /// (`BibliographySyncService.updateBibliographyBlock`, which opens with a `deleteAll` on
+    /// every `isBibliography == true` row) would then delete it outright.
+    ///
+    /// NOT used by `assembleMarkdownForExport`/`assembleStandardMarkdownForExport` -- neither
+    /// needs this terminator, but for different reasons now. `assembleStandardMarkdownForExport`
+    /// still operates on already bibliography-filtered blocks (`DocumentManager.exportBlocks()`
+    /// filters `!$0.isBibliography` before calling it), so it never sees bibliography content to
+    /// mark the end of. `assembleMarkdownForExport` now receives the FULL unfiltered block array
+    /// instead (`DocumentManager.loadContentForExport()` passes `allBlocksForExport()`'s output
+    /// straight through, unfiltered) and does its own bibliography handling internally --
+    /// filtering, dedup via `emittedPlaceholder`, and placeholder emission -- so it has no use
+    /// for this terminator either.
+    static func assembleMarkdownForEditor(from blocks: [Block]) -> String {
+        let sortedReal = assemblySorted(blocks).filter { !isEmptyFragment($0.markdownFragment) }
+        var fragments = sortedReal.map { $0.markdownFragment }
+        if let lastBibIndex = sortedReal.lastIndex(where: { $0.isBibliography }) {
+            fragments.insert(bibliographyEndMarker, at: lastBibIndex + 1)
+        }
+        return fragments.joined(separator: "\n\n")
+    }
+
     /// Assemble blocks into Pandoc-compatible markdown for export.
     /// Uses `markdownForExport()` which includes fig-alt and width attributes for image blocks.
-    static func assembleMarkdownForExport(from blocks: [Block]) -> String {
-        // MUST stay in sync with BlockParser.assembleMarkdown filtering
-        assemblySorted(blocks)
-            .map { $0.markdownForExport() }
-            .filter { !isEmptyFragment($0) }
-            .joined(separator: "\n\n")
+    /// - Parameter bibliographyPlaceholder: when true, replaces the bibliography section — which
+    ///   is otherwise dropped entirely, since each export format regenerates its own bibliography —
+    ///   with the user's own bibliography heading (if the section has one) followed by
+    ///   `bibliographyPlacementMarker`, at the position the section occupies. `false` (the
+    ///   default) drops the section with nothing left behind, byte-identical to today's behavior —
+    ///   unchanged for DOCX/ODT.
+    static func assembleMarkdownForExport(from blocks: [Block], bibliographyPlaceholder: Bool = false) -> String {
+        let sorted = assemblySorted(blocks)
+
+        // Scan the WHOLE bibliography run for a `.heading`-typed block -- do not just take the
+        // first isBibliography block encountered. A persisted `<!-- ::auto-bibliography:: -->`
+        // marker block is ITSELF flagged isBibliography = true and can sort ahead of the real
+        // `# Bibliography` heading; it is typed `.bibliography`, never `.heading` (detectBlockType
+        // tests `^#{1,6}\s` before classifying as `.bibliography`, and the glued source-mode shape
+        // `<!-- ::auto-bibliography:: --># Bibliography` fails that test too). Using the naive
+        // first-isBibliography-block selector would silently take the marker-only branch and drop
+        // the user's heading from the PDF whenever a marker block exists -- exactly the headingless
+        // bibliography this fix exists to prevent.
+        //
+        // Safe against multiple `.heading && isBibliography` blocks (e.g. a citation entry whose
+        // formatted text happens to start with `#`, since BibliographySyncService's
+        // updateBibliographyBlock computes `isHeading = fragment.hasPrefix("#")` per-fragment for
+        // EVERY rawBlock, not just the first) because of two invariants that hold together:
+        // (1) BibliographySyncService.generateBibliographyMarkdown always builds the header
+        // fragment ("# {headerName}\n\n") FIRST, before any entries are appended, so no entry
+        // fragment can precede it in the string that gets split into blocks; (2)
+        // updateBibliographyBlock is atomic per generation -- it deletes ALL existing
+        // isBibliography blocks for the project first, then inserts freshly split fragments in
+        // order with sortOrder = start + Double(index) * step (where `start` is the position the
+        // bibliography is being reinserted at and `step > 0` is the spacing between fragments),
+        // so the header fragment (index 0) always gets the LOWEST sortOrder of the batch, and no
+        // block from a prior generation survives to sort ahead of it. Together these guarantee
+        // the header is always the lowest-sortOrder qualifying block at generation time -- "first
+        // in document order" reliably selects the real header, never a false-positive
+        // heading-shaped entry.
+        //
+        // Known, out-of-scope gap: Database+BlocksReorder.swift's applyPreservedHeading can
+        // reattach isBibliography = true to a heading block via title-based occurrence-index
+        // matching during block reconciliation -- a path entirely separate from
+        // updateBibliographyBlock's atomic delete-all/insert-all guarantee above relies on.
+        // Whether reconciliation/undo could ever produce two simultaneously-live
+        // isBibliography && .heading blocks outside a single generation is unproven; no existing
+        // test covers this. Pre-existing behavior, unchanged by this fix.
+        let headingBlock = sorted.first { $0.isBibliography && $0.blockType == .heading }
+
+        var fragments: [String] = []
+        var emittedPlaceholder = false
+
+        for block in sorted {
+            // MUST run before the isBibliography branch, for ALL blocks -- a bibliography-
+            // flagged block with a blank/whitespace-only fragment must never reach
+            // `emittedPlaceholder = true` at its own (possibly early) sort position, or the
+            // real `# Bibliography` heading reached later gets silently dropped since a
+            // placeholder was "already emitted."
+            let fragment = block.markdownForExport()
+            guard !isEmptyFragment(fragment) else { continue }
+
+            if block.isBibliography {
+                guard bibliographyPlaceholder, !emittedPlaceholder else { continue }
+                emittedPlaceholder = true
+                if let headingBlock {
+                    // markdownForExport() (== markdownFragment, e.g. "# Bibliography"), NOT
+                    // textContent (which would give just the bare word "Bibliography", rendering
+                    // as an ordinary paragraph, not a heading -- wrong). stripBibliographyMarker
+                    // here is defensive belt-and-braces, not load-bearing: a fragment carrying the
+                    // marker inline isn't typed `.heading` to begin with (see above), so
+                    // headingBlock's fragment is already clean by construction --
+                    // BibliographySyncService's generateBibliographyMarkdown explicitly builds it
+                    // WITHOUT the marker, and Source Mode content gets stripSectionAnchors/
+                    // stripBibliographyMarker applied before editorState.content is ever reparsed.
+                    fragments.append(SectionSyncService.stripBibliographyMarker(from: headingBlock.markdownForExport()))
+                }
+                // No heading anywhere in the bibliography section -> fall back to the marker alone.
+                fragments.append(bibliographyPlacementMarker)
+                continue
+            }
+
+            fragments.append(fragment)
+        }
+
+        return fragments.joined(separator: "\n\n")
     }
 
     /// Assemble blocks into standard markdown for export (no Pandoc attributes).
@@ -82,6 +196,37 @@ extension BlockParser {
             prevListType = isListBlock ? block.blockType : nil
         }
         return nil
+    }
+
+    /// Returns the node index (in ProseMirror alignment order) one PAST the last bibliography
+    /// block, or nil if no bibliography blocks exist. Companion to `firstBibliographyNodeIndex`,
+    /// used to bound the END of the bibliography section rather than just its start: now that a
+    /// regenerated bibliography can be reinserted back at a mid-document anchor instead of
+    /// always landing at the document's end (`BibliographySyncService.updateBibliographyBlock`),
+    /// a cursor sitting in real trailing user content AFTER the section is a position the
+    /// section's START index alone cannot distinguish from a position INSIDE the section.
+    /// MUST stay in sync with idsForProseMirrorAlignment list-merging logic.
+    static func lastBibliographyNodeIndex(_ blocks: [Block]) -> Int? {
+        var nodeIndex = 0
+        var prevListType: BlockType?
+        var lastBibIndex: Int?
+
+        for block in blocks {
+            if isEmptyFragment(block.markdownFragment) { continue }
+
+            let isListBlock = (block.blockType == .bulletList || block.blockType == .orderedList)
+
+            if isListBlock && block.blockType == prevListType {
+                // Merged into previous list node — same index
+                if block.isBibliography { lastBibIndex = nodeIndex - 1 }
+                continue
+            }
+
+            if block.isBibliography { lastBibIndex = nodeIndex }
+            nodeIndex += 1
+            prevListType = isListBlock ? block.blockType : nil
+        }
+        return lastBibIndex.map { $0 + 1 }
     }
 
     /// Per-id ground-truth metadata handed to the JS side's optional `setBlockIdsForTopLevel`

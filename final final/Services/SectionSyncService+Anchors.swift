@@ -154,4 +154,14 @@ extension SectionSyncService {
     nonisolated static func stripBibliographyMarker(from markdown: String) -> String {
         markdown.replacingOccurrences(of: "<!-- ::auto-bibliography:: -->", with: "")
     }
+
+    /// Strip the bibliography-end terminator (`BlockParser.bibliographyEndMarker`) from
+    /// markdown. Used only by display-only sinks (e.g. `SectionCardView.swift`'s sidebar
+    /// preview text) — NOT by anything that builds `editorState.content`, where the
+    /// terminator must survive so the pre-export reparse still sees it. See
+    /// `BlockParser.bibliographyEndMarker`'s doc comment.
+    /// nonisolated: pure string operation, safe to call from any context (e.g. BlockParser).
+    nonisolated static func stripBibliographyEndMarker(from markdown: String) -> String {
+        markdown.replacingOccurrences(of: BlockParser.bibliographyEndMarker, with: "")
+    }
 }

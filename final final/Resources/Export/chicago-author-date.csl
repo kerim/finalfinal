@@ -3575,10 +3575,7 @@
   <macro name="source-archive-reference-institution-first">
     <!-- Archive (gallery) name first for art (CMOS18 14.133) -->
     <group delimiter=", ">
-      <!-- LOCAL MODIFICATION (final final): `variable="archive"` removed here. Zotero's
-           Extra field leaks raw URLs into this CSL field, which then rendered as-is in
-           exports. See KUDOS.md for the full list of local modifications to this
-           upstream file. -->
+      <text variable="archive"/>
       <text variable="archive-place"/>
       <text variable="archive_collection"/>
       <text variable="archive_location"/>
@@ -3594,10 +3591,7 @@
       </group>
       <text variable="archive_collection"/>
       <group delimiter=", ">
-        <!-- LOCAL MODIFICATION (final final): `variable="archive"` removed here. Zotero's
-             Extra field leaks raw URLs into this CSL field, which then rendered as-is in
-             exports. See KUDOS.md for the full list of local modifications to this
-             upstream file. -->
+        <text variable="archive"/>
         <text variable="archive-place"/>
       </group>
     </group>
@@ -3608,10 +3602,7 @@
       <text variable="archive_location"/>
       <text macro="source-archive-locator"/>
       <text variable="archive_collection"/>
-      <!-- LOCAL MODIFICATION (final final): `variable="archive"` removed here. Zotero's
-           Extra field leaks raw URLs into this CSL field, which then rendered as-is in
-           exports. See KUDOS.md for the full list of local modifications to this
-           upstream file. -->
+      <text variable="archive"/>
       <text variable="archive-place"/>
     </group>
   </macro>

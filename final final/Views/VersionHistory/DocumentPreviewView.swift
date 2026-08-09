@@ -106,22 +106,45 @@ struct SnapshotSectionViewModel: Identifiable, Equatable {
     let originalSectionId: String?
 
     /// Initialize from SnapshotSection
+    ///
+    /// Unconditionally strips the bibliography-end terminator (`BlockParser.bibliographyEndMarker`)
+    /// rather than gating on `isBibliography`. Traced: `Section.isBibliography` is never actually set
+    /// `true` by any production writer — `SectionReconciler.reconcile()`'s insert path constructs
+    /// `Section` without an `isBibliography:` argument (defaults `false`), and `SectionUpdates` has no
+    /// field to set it later either. Meanwhile `SectionSyncService.parseHeaders()` only special-cases a "# Bibliography"
+    /// heading (skipping it as a boundary) when `existingBibTitle != nil` — i.e. when a `Section` row
+    /// already carries `isBibliography == true` — which per the above never happens. So the heading is
+    /// parsed as an ORDINARY section, and when bibliography content is the document's last content
+    /// (no following heading), that section's extracted span runs to end-of-document and can legitimately
+    /// include the terminator that `BlockParser.assembleMarkdownForEditor` appended to `editorState.content`
+    /// — the exact text `SectionSyncService.syncNow` reconciles into the `Section` table on every debounced
+    /// sync and before every snapshot (`ContentView+ProjectLifecycle.swift`'s `handleSaveVersion`). An
+    /// `isBibliography`-gated strip would silently never fire for that real row, so this strips
+    /// unconditionally instead — a pure substring removal, a no-op on the 99%+ of sections that never
+    /// contain the marker text at all.
     init(from section: SnapshotSection) {
+        let stripped = SectionSyncService.stripBibliographyEndMarker(from: section.markdownContent)
         self.id = section.id
         self.title = section.title
         self.headerLevel = section.headerLevel
-        self.markdownContent = section.markdownContent
+        self.markdownContent = stripped
         self.status = section.status
-        self.wordCount = MarkdownUtils.wordCount(for: section.markdownContent)
+        self.wordCount = MarkdownUtils.wordCount(for: stripped)
         self.originalSectionId = section.originalSectionId
     }
 
-    /// Initialize from SectionViewModel (current sections — their own ID is the original)
+    /// Initialize from SectionViewModel (current sections — their own ID is the original).
+    /// Strips unconditionally for the same reason as the `SnapshotSection` initializer above —
+    /// `viewModel.markdownContent` is NOT guaranteed already-stripped: `SectionViewModel.init(from:
+    /// Block)` (the live-outline path) doesn't strip at all, so this initializer can't assume the
+    /// terminator is already gone. (`SectionViewModel.init(from: Section)`, in `SectionCardView.swift`,
+    /// strips unconditionally too — see its doc comment — so re-stripping here is a safe no-op for that
+    /// path.)
     init(from viewModel: SectionViewModel) {
         self.id = viewModel.id
         self.title = viewModel.title
         self.headerLevel = viewModel.headerLevel
-        self.markdownContent = viewModel.markdownContent
+        self.markdownContent = SectionSyncService.stripBibliographyEndMarker(from: viewModel.markdownContent)
         self.status = viewModel.status
         self.wordCount = viewModel.wordCount
         self.originalSectionId = viewModel.id

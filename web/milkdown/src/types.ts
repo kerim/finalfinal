@@ -158,6 +158,13 @@ declare global {
           scrollToStart?: boolean;
           imageMeta?: ImageBlockMeta[];
           cursorBoundary?: number;
+          // Node index one PAST the last bibliography block — companion end bound for
+          // cursorBoundary so the cursor-clamp below only fires for a position actually INSIDE
+          // the bibliography section (start <= pos < end), not merely at-or-after its start.
+          // Needed because a regenerated bibliography can now be reinserted back at a
+          // mid-document anchor instead of always landing at the document's end, so real
+          // trailing user content can legitimately follow it.
+          cursorBoundaryEnd?: number;
           detectPausedEdits?: boolean;
           expected?: ExpectedBlockMeta[];
           // Whether the pushed content represents a zoomed subset of the document

@@ -62,6 +62,7 @@ extension ContentView {
                 markdown: result.markdown, blockIds: result.blockIds,
                 imageMeta: result.imageMeta,
                 cursorBoundary: result.bibBoundaryIndex,
+                cursorBoundaryEnd: result.bibBoundaryEndIndex,
                 expectedBlocks: result.expectedBlocks)
             editorState.isResettingContent = false
             editorState.contentState = .idle
@@ -99,6 +100,7 @@ extension ContentView {
                 markdown: result.markdown, blockIds: result.blockIds,
                 imageMeta: result.imageMeta,
                 cursorBoundary: result.bibBoundaryIndex,
+                cursorBoundaryEnd: result.bibBoundaryEndIndex,
                 expectedBlocks: result.expectedBlocks)
             editorState.isResettingContent = false
             editorState.contentState = .idle
@@ -220,6 +222,7 @@ extension ContentView {
                 markdown: result.markdown, blockIds: result.blockIds,
                 imageMeta: result.imageMeta,
                 cursorBoundary: result.bibBoundaryIndex,
+                cursorBoundaryEnd: result.bibBoundaryEndIndex,
                 expectedBlocks: result.expectedBlocks)
 
             editorState.isResettingContent = false

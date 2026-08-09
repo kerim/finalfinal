@@ -219,44 +219,56 @@ private struct RawBlockSplitter {
     /// A non-blank line either opens a footnote definition, interrupts the current
     /// block with a list marker, or is simply appended to the current block.
     private mutating func consumeContentLine(line: String, trimmedLine: String) {
-        // Section-break marker boundary, both directions. Without this, a marker
-        // sitting immediately next to prose with NO blank line in between — on
-        // either side — gets glued into ONE raw block string alongside that prose.
-        // detectBlockType/isSectionBreakMarker still classifies that combined string
-        // as `.sectionBreak` (its own first-line check matches), but
-        // extractTextContent forces textContent="" for EVERY `.sectionBreak` block
-        // regardless of what body text the fragment actually holds — so the prose
-        // is still sitting right there in markdownFragment, yet silently vanishes
-        // from textContent (word counts, previews, search, the outline sidebar).
-        // Splitting the marker into its own block here, at the source, means the
-        // prose becomes an ordinary `.paragraph` block with its textContent
-        // extracted normally — nothing downstream needs to special-case a
-        // section-break fragment that also happens to carry text.
+        if consumeBibliographyEndMarkerGlue(line: line) {
+            return
+        }
+
+        // Section-break / bibliography-end marker boundary, both directions, both
+        // markers. Without this, a marker sitting immediately next to prose with NO
+        // blank line in between — on either side — gets glued into ONE raw block
+        // string alongside that prose. detectBlockType/isSectionBreakMarker still
+        // classifies a glued section-break combination as `.sectionBreak` (its own
+        // first-line check matches), but extractTextContent forces textContent=""
+        // for EVERY `.sectionBreak` block regardless of what body text the fragment
+        // actually holds — so the prose is still sitting right there in
+        // markdownFragment, yet silently vanishes from textContent (word counts,
+        // previews, search, the outline sidebar). The bibliography-end marker has a
+        // parallel failure mode: `parse()` matches it via exact equality
+        // (`trimmed == bibliographyEndMarker`), so a glued combination wouldn't match
+        // at all and the terminator would silently fail to close the section — the
+        // exact bug this whole mechanism exists to fix. Splitting either marker into
+        // its own block here, at the source, means nothing downstream needs to
+        // special-case a marker fragment that also happens to carry text.
+        let accumulatedTrimmed = currentBlock.trimmingCharacters(in: .whitespacesAndNewlines)
         let accumulatedIsMarkerAlone =
-            currentBlock.trimmingCharacters(in: .whitespacesAndNewlines) == BlockParser.sectionBreakMarker
+            accumulatedTrimmed == BlockParser.sectionBreakMarker
+            || accumulatedTrimmed == BlockParser.bibliographyEndMarker
         if accumulatedIsMarkerAlone {
-            // Forward case: `<!-- ::break:: -->\nBody text`. The marker line was
-            // accumulated alone last time through, and now the body's first line
-            // has arrived right behind it. Flush the marker as its own complete
-            // block before this new line starts accumulating into a fresh one.
-            // Reset inFootnoteDef same as every other flush site in this file —
-            // otherwise a footnote def flushed at the marker boundary leaves the
-            // flag stuck true, and the next blank line is wrongly absorbed as a
-            // footnote-continuation blank, merging two blocks that should stay
-            // separate. See BlockParserSectionBreakClassificationTests.swift.
+            // Forward case: `<!-- ::break:: -->\nBody text` (or the bibliography-end
+            // marker in place of the break marker). The marker line was accumulated
+            // alone last time through, and now the body's first line has arrived
+            // right behind it. Flush the marker as its own complete block before this
+            // new line starts accumulating into a fresh one. Reset inFootnoteDef same
+            // as every other flush site in this file — otherwise a footnote def
+            // flushed at the marker boundary leaves the flag stuck true, and the next
+            // blank line is wrongly absorbed as a footnote-continuation blank,
+            // merging two blocks that should stay separate. See
+            // BlockParserSectionBreakClassificationTests.swift.
             flushCurrentBlockIfNotBlank()
             inFootnoteDef = false
-        } else if line == BlockParser.sectionBreakMarker,
+        } else if line == BlockParser.sectionBreakMarker || line == BlockParser.bibliographyEndMarker,
                   !currentBlock.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            // Reverse case: `Prose\n<!-- ::break:: -->`. Ordinary content was
-            // already accumulating and the marker line itself has now arrived with
-            // no blank line before it. Flush what came before so the marker still
-            // becomes its own `.sectionBreak` block instead of getting appended
-            // onto the end of a `.paragraph`-typed block — which would silently
-            // drop the section break from the outline sidebar (still no text-wipe
-            // there, since the combined block stays typed `.paragraph`, but a real
-            // Swift/JS block-count mismatch against ProseMirror's 2-node parse of
-            // the same markdown).
+            // Reverse case: `Prose\n<!-- ::break:: -->` (or the bibliography-end
+            // marker). Ordinary content was already accumulating and the marker line
+            // itself has now arrived with no blank line before it. Flush what came
+            // before so the marker still becomes its own block instead of getting
+            // appended onto the end of a `.paragraph`-typed block — which would
+            // silently drop the section break from the outline sidebar (still no
+            // text-wipe there, since the combined block stays typed `.paragraph`, but
+            // a real Swift/JS block-count mismatch against ProseMirror's 2-node parse
+            // of the same markdown), or — for the bibliography-end marker — glue the
+            // terminator onto the end of the preceding paragraph so `parse()`'s exact
+            // `trimmed == bibliographyEndMarker` check never matches it at all.
             //
             // Deliberately `line`, NOT `trimmedLine`, here — unlike the forward
             // case above. `sectionBreakMarker`'s own doc comment (BlockParser.swift)
@@ -334,6 +346,61 @@ private struct RawBlockSplitter {
             inFootnoteDef = false
         }
         currentBlock += line + "\n"
+    }
+
+    /// Same-line glue on the bibliography-end terminator: a raw line that CONTAINS the
+    /// terminator as a substring but isn't EQUAL to it. In CodeMirror the terminator's
+    /// line is fully hidden via `Decoration.replace` (a "blank" line to the eye), and
+    /// `atomicRanges` only protects its INTERIOR — so both the start and end of that
+    /// blank line are legal cursor positions. Clicking either boundary and typing glues
+    /// new text directly onto the SAME line as the terminator:
+    /// `Foo<!-- ::auto-bibliography-end:: -->` (glued before) or the mirror
+    /// `<!-- ::auto-bibliography-end:: -->Foo` (glued after). Neither shape matches the
+    /// adjacent-LINE guards above (which only fire when the marker occupies a whole line
+    /// by itself) or `parse()`'s exact-equality match, so without this the section never
+    /// closes and the glued text is silently lost — reproducing, through this fix's own
+    /// UI affordance, the exact orphan bug this whole mechanism exists to prevent.
+    ///
+    /// The terminator is always emitted FIRST as its own block, regardless of which side
+    /// the glued text landed on: the marker is completely invisible in CodeMirror, so a
+    /// user can never deliberately choose "before" vs "after" it — both shapes are the
+    /// same accidental gesture (clicking what looks like a blank trailing line and
+    /// typing). Closing the section before the glued text is evaluated means that text
+    /// always survives as ordinary, unflagged content for EITHER shape, instead of the
+    /// "glued before" shape silently inheriting `isBibliography = true` from the still-open
+    /// section and reproducing the export-drops-it/undeletable data-loss path this
+    /// terminator exists to close off in the first place.
+    ///
+    /// Any content already accumulating in `currentBlock` from EARLIER lines (the
+    /// adjacent-line case above, e.g. a paragraph glued to the terminator's line with no
+    /// blank line before it) is flushed as its own block first, untouched by the
+    /// same-line splitting below — it stays flagged by its own position, exactly as the
+    /// adjacent-line guards already handle it.
+    /// - Returns: `true` when the line was consumed here and no later stage should see it.
+    private mutating func consumeBibliographyEndMarkerGlue(line: String) -> Bool {
+        guard line != BlockParser.bibliographyEndMarker,
+              let markerRange = line.range(of: BlockParser.bibliographyEndMarker) else {
+            return false
+        }
+
+        let prefix = String(line[line.startIndex..<markerRange.lowerBound])
+        let suffix = String(line[markerRange.upperBound...])
+
+        flushCurrentBlockIfNotBlank()
+        inFootnoteDef = false
+
+        blocks.append(BlockParser.bibliographyEndMarker + "\n")
+
+        if !prefix.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            blocks.append(prefix + "\n")
+        }
+        if !suffix.isEmpty {
+            // Left open (not flushed) so a following line with no blank line before it
+            // still merges into the same paragraph as the glued suffix text, matching
+            // this splitter's normal accumulation behavior everywhere else.
+            currentBlock = suffix + "\n"
+        }
+        return true
     }
 
     // MARK: - Lookahead helpers

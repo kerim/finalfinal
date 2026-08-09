@@ -28,8 +28,12 @@ final class SnapshotService {
     @discardableResult
     func createManualSnapshot(name: String) throws -> Snapshot {
         // Assemble fresh markdown from blocks (source of truth, avoids stale content.markdown)
+        // assembleMarkdownForEditor (not plain assembleMarkdown): the snapshot's stored
+        // previewMarkdown is reparsed via BlockParser.parse() on restore, so it must carry
+        // the bibliography-end terminator when the doc ends in bibliography content — see
+        // BlockParser.bibliographyEndMarker's doc comment.
         let blocks = try database.fetchBlocks(projectId: projectId)
-        let assembledMarkdown = BlockParser.assembleMarkdown(from: blocks)
+        let assembledMarkdown = BlockParser.assembleMarkdownForEditor(from: blocks)
 
         // Save to content table to keep it in sync
         try database.saveContent(markdown: assembledMarkdown, for: projectId)
@@ -60,8 +64,10 @@ final class SnapshotService {
     @discardableResult
     func createAutoSnapshot() throws -> Snapshot? {
         // Assemble fresh markdown from blocks (source of truth, avoids stale content.markdown)
+        // assembleMarkdownForEditor (not plain assembleMarkdown): see createManualSnapshot's
+        // comment above.
         let blocks = try database.fetchBlocks(projectId: projectId)
-        let assembledMarkdown = BlockParser.assembleMarkdown(from: blocks)
+        let assembledMarkdown = BlockParser.assembleMarkdownForEditor(from: blocks)
 
         let hash = Self.computeHash(assembledMarkdown)
 

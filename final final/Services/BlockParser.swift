@@ -49,6 +49,15 @@ enum BlockParser {
             let trimmed = rawBlock.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else { continue }
 
+            // Explicit terminator: closes the bibliography section deterministically,
+            // regardless of block count or position — see `bibliographyEndMarker`'s
+            // doc comment. Produces ZERO Blocks (stronger than the opening marker,
+            // which DOES persist as a `.bibliography`-typed Block).
+            if trimmed == bibliographyEndMarker {
+                inBibliographySection = false
+                continue
+            }
+
             let (blockType, headingLevel) = detectBlockType(trimmed)
             let textContent = extractTextContent(from: trimmed, blockType: blockType)
             // wordCount populated below via Block.recalculateWordCount() so the
@@ -111,6 +120,32 @@ enum BlockParser {
 
     /// A "we are inside section X" flag advanced by one block: an opening heading turns it
     /// on, any *other* heading turns it off, and everything else leaves it as it was.
+    ///
+    /// For the bibliography flag specifically, this "carry until the next heading" rule has
+    /// no way, on its own, to tell "one more bibliography entry" apart from "the user's
+    /// first paragraph typed below the references, with no heading in between" — they're
+    /// textually identical shapes, and the auto-generated bibliography section
+    /// (`BibliographySyncService.updateBibliographyBlock`) can be followed directly by such
+    /// trailing user content with no heading in between, whether the section currently sits at
+    /// the end of the document or — since `updateBibliographyBlock`'s anchor-based placement —
+    /// back at its own prior mid-document position, with no closing heading by construction
+    /// either way. Confirmed by direct reproduction
+    /// (not inferred from reading this code): calling `parse()` on "# References\n\n<entries>
+    /// \n\nA trailing note with no heading after it." flagged that trailing note
+    /// `isBibliography = true` — silently dropped from every export (`exportBlocks()`
+    /// filters on this flag) and undeletable via the editor (`processEditorDeletes`'s safety
+    /// net refuses to remove a flagged block).
+    ///
+    /// `parse()` closes that gap upstream of this function, via an explicit terminator: see
+    /// `bibliographyEndMarker`. The terminator is written into the document's own markdown
+    /// (by `BlockParser+Assembly.swift`'s `assembleMarkdownForEditor`) whenever the last
+    /// real block is bibliography content, so the closing boundary travels with the text
+    /// itself — no count, no per-call-site threading, no dependency on prior DB state. Two
+    /// earlier approaches were tried and rejected: a position-bounded self-heal sweep (no
+    /// bound could safely distinguish real orphans from real user content — see
+    /// `BibliographySyncService.updateBibliographyBlock`'s doc comment) and a block-count
+    /// hint threaded into this one function's `parse()` caller (missed every reparse call
+    /// site except one, and could misfire under ordinary editing).
     private static func sectionFlagCarriedForward(
         current: Bool,
         opensSection: Bool,
@@ -142,7 +177,14 @@ enum BlockParser {
     /// `update()` calls `settings.save()` synchronously, so UserDefaults is always in
     /// sync with the manager's cached value): reading straight from UserDefaults here is
     /// thread-safe and avoids threading an @MainActor read through every call site.
-    private static func isBibliographyHeading(_ trimmed: String) -> Bool {
+    ///
+    /// Not `private`: Database+BlocksInsert.swift's `buildInsertedBlock` also calls this, for the
+    /// editor-diff insert-path containment check (an inserted fragment that is itself the
+    /// bibliography-opening heading is flagged `isBibliography = true` regardless of anchor
+    /// placement). That is a narrower, single-block check distinct from this file's own
+    /// `sectionFlagCarriedForward`, which drives the full-reparse "every block until the next
+    /// heading" inheritance semantics used by `parse()` above.
+    static func isBibliographyHeading(_ trimmed: String) -> Bool {
         if trimmed.contains("<!-- ::auto-bibliography:: -->") { return true }
         let titles = ["References", "Bibliography", ExportSettings.load().bibliographyHeaderName]
         return titles.contains { trimmed == "# \($0)" || trimmed == "## \($0)" }
@@ -245,6 +287,35 @@ enum BlockParser {
     /// of already-composed display text — and must stay separate; see that
     /// call site's comment.)
     static let sectionBreakMarker = "<!-- ::break:: -->"
+
+    /// Explicit, invisible terminator marking the end of the auto-generated bibliography
+    /// section. Written into `editorState.content` by `BlockParser+Assembly.swift`'s
+    /// `assembleMarkdownForEditor` whenever the last real block is bibliography content, so
+    /// every subsequent full reparse (Source Mode's debounced re-parse, and critically the
+    /// reparse that runs immediately before every PDF export) has a deterministic,
+    /// position-independent signal that the section has ended — see
+    /// `sectionFlagCarriedForward`'s doc comment for the bug this closes and the two
+    /// rejected approaches that preceded it.
+    ///
+    /// The `-end` sits BEFORE the closing `::` (`...-end:: -->`, not `...:: -end -->`)
+    /// deliberately: `isBibliographyHeading` checks `trimmed.contains("<!-- ::auto-
+    /// bibliography:: -->")` and `listTableOrMediaType` checks the same substring, so a
+    /// terminator spelled `...:: -end -->` would still contain the opening marker's exact
+    /// text and get misclassified as opening (or re-opening) the section it's meant to
+    /// close. Spelling the suffix inside the marker's own `::...::` delimiters instead means
+    /// neither check's substring can ever match this string. See
+    /// `isBibliographyHeading(bibliographyEndMarker) == false` in
+    /// BibliographyTerminatorTests.swift for the regression guard.
+    static let bibliographyEndMarker = "<!-- ::auto-bibliography-end:: -->"
+
+    /// Pandoc's `--citeproc` generated-bibliography placement marker (the `::: {#refs}\n:::`
+    /// fenced-div shorthand for `<div id="refs">...</div>`). Emitted by
+    /// `assembleMarkdownForExport(from:bibliographyPlaceholder:)` in place of the document's
+    /// bibliography section, at the position that section occupied, so pandoc's citeproc
+    /// filter inserts its freshly-generated bibliography there instead of appending it to the
+    /// very end of the document — the fix for text typed after the bibliography rendering
+    /// BEFORE it in PDF/print output. See that function's doc comment for the full mechanism.
+    static let bibliographyPlacementMarker = "::: {#refs}\n:::"
 
     /// Whether `trimmed` (an already-whitespace-trimmed raw block string) IS a
     /// section-break marker: either the marker alone, or the marker as the

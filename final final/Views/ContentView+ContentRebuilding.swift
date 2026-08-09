@@ -25,6 +25,12 @@ extension ContentView {
         let blockIds: [String]
         let imageMeta: [ImageBlockMeta]
         let bibBoundaryIndex: Int?
+        /// Node index one PAST the last bibliography block (nil iff `bibBoundaryIndex` is nil).
+        /// Companion end bound for `bibBoundaryIndex`: together they mark the bibliography
+        /// section's [start, end) range, so the JS-side cursor clamp can tell "inside the
+        /// section" apart from "in real trailing content after it" — see
+        /// `BlockParser.lastBibliographyNodeIndex`'s doc comment.
+        let bibBoundaryEndIndex: Int?
         let expectedBlocks: [BlockParser.BlockAlignmentMeta]
     }
 
@@ -48,7 +54,11 @@ extension ContentView {
                 let bKey = (b.sortOrder, b.blockType == .heading ? 0 : 1)
                 return aKey < bKey
             }
-            let markdown = BlockParser.assembleMarkdown(from: sorted)
+            // assembleMarkdownForEditor (not plain assembleMarkdown): this markdown becomes
+            // editorState.content, which flushContentToDatabase() reparses before every PDF
+            // export — it must carry the bibliography-end terminator when the doc ends in
+            // bibliography content, or trailing user text silently gets flagged and dropped.
+            let markdown = BlockParser.assembleMarkdownForEditor(from: sorted)
             // Single call produces both the id array and its expected-metadata array from the
             // SAME iteration, so the two cannot drift apart in count/order (see alignmentPairs).
             let pairs = BlockParser.alignmentPairs(sorted)
@@ -61,13 +71,16 @@ extension ContentView {
                 .map { ImageBlockMeta(id: $0.id, width: $0.imageWidth, caption: $0.imageCaption, alt: $0.imageAlt, src: $0.imageSrc) }
 
             let bibBoundaryIndex = BlockParser.firstBibliographyNodeIndex(sorted)
+            let bibBoundaryEndIndex = BlockParser.lastBibliographyNodeIndex(sorted)
 
             DebugLog.log(.bib, "[fetchBlocksWithIds] bibBoundaryIndex=\(String(describing: bibBoundaryIndex)) "
+                + "bibBoundaryEndIndex=\(String(describing: bibBoundaryEndIndex)) "
                 + "blockCount=\(sorted.count) idCount=\(ids.count)")
 
             return BlockFetchResult(
                 markdown: markdown, blockIds: ids, imageMeta: imageMeta,
-                bibBoundaryIndex: bibBoundaryIndex, expectedBlocks: expectedBlocks)
+                bibBoundaryIndex: bibBoundaryIndex, bibBoundaryEndIndex: bibBoundaryEndIndex,
+                expectedBlocks: expectedBlocks)
         } catch {
             return nil
         }
@@ -93,6 +106,7 @@ extension ContentView {
                 blockIds: result.blockIds,
                 imageMeta: result.imageMeta,
                 cursorBoundary: result.bibBoundaryIndex,
+                cursorBoundaryEnd: result.bibBoundaryEndIndex,
                 expectedBlocks: result.expectedBlocks,
                 zoomMode: editorState.zoomedSectionIds != nil)
             editorState.isResettingContent = false
@@ -440,6 +454,7 @@ extension ContentView {
                                         markdown: result.markdown, blockIds: result.blockIds,
                                         imageMeta: result.imageMeta,
                                         cursorBoundary: result.bibBoundaryIndex,
+                                        cursorBoundaryEnd: result.bibBoundaryEndIndex,
                                         expectedBlocks: result.expectedBlocks,
                                         zoomMode: editorState.zoomedSectionIds != nil)
                                     // Always sync editorState.content to DB-assembled markdown.

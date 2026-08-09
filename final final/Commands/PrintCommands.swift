@@ -48,7 +48,13 @@ struct PrintOperations {
     /// a temp PDF, then hands that off to the standard macOS print panel via PDFKit.
     static func handlePrintFormatted() async {
         let dm = DocumentManager.shared
-        guard let content = try? await dm.loadContentForExport(), !content.isEmpty else {
+        // This path always renders through the PDF/citeproc-capable format (hardcodes
+        // format: .pdf below), so the placeholder must always be requested here --
+        // unconditionally true, unlike ExportCommands.swift's format-dependent choice.
+        // Whether citeproc actually RUNS is decided later, independently, in ExportService
+        // (gated on hasCitations, zoteroStatus == .running, and a non-nil bibliography JSON
+        // fetch -- see ExportService.swift's export()/citationArguments()).
+        guard let content = try? await dm.loadContentForExport(bibliographyPlaceholder: true), !content.isEmpty else {
             showNoContentAlert()
             return
         }

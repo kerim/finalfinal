@@ -12,7 +12,20 @@ import type { ExpectedBlockMeta } from './types';
 
 export const blockIdPluginKey = new PluginKey<BlockIdPluginState>('block-id');
 
-// Block types that should receive IDs (top-level only — no list_item)
+// Block types that should receive IDs (top-level only — no list_item).
+// NEVER add 'auto_bibliography' or 'auto_bibliography_end' here — both are excluded from this
+// allowlist so they never consume a block-ID index tick in setBlockIdsForTopLevel's walk — but
+// they are NOT symmetric on the Swift side. The terminator ('auto_bibliography_end', the
+// `<!-- ::auto-bibliography-end:: -->` line) produces ZERO Blocks: BlockParser.parse() matches
+// it and `continue`s without ever appending one (see BlockParser.swift's doc comment on
+// `bibliographyEndMarker`). The opening marker ('auto_bibliography', the
+// `<!-- ::auto-bibliography:: -->` line) DOES persist as a `.bibliography`-typed Block when
+// glued to the heading it precedes in Source Mode's raw markdown — BlockParser.swift's
+// `detectBlockType` classifies that glued text as `.bibliography` (see the doc comment right
+// above its `bibliographyEndMarker` check, which says so explicitly). Both are still excluded
+// here regardless, because on the ProseMirror side they are each their own zero-content atom
+// node type, distinct from the heading/paragraph nodes BLOCK_TYPES tracks — see alignmentPairs'
+// doc comment (BlockParser+Assembly.swift) for the Swift-side mirror of this exclusion.
 const BLOCK_TYPES = new Set([
   'paragraph',
   'heading',

@@ -90,6 +90,7 @@ import {
   setTheme,
 } from './api-modes';
 import { autolinkPlugin } from './autolink-plugin';
+import { bibliographyEndMarkerPlugin } from './bibliography-end-marker-plugin';
 import { bibliographyPlugin } from './bibliography-plugin';
 import { blockIdPlugin, getAllBlockIds } from './block-id-plugin';
 import { blockSyncPlugin } from './block-sync-plugin';
@@ -213,6 +214,10 @@ async function initEditor() {
       .use(sectionBreakPlugin) // Intercept <!-- ::break:: --> before commonmark filters it
       .use(zoomNotesMarkerPlugin) // Intercept <!-- ::zoom-notes:: --> before commonmark filters it
       .use(bibliographyPlugin) // Intercept <!-- ::auto-bibliography:: --> before commonmark filters it
+      .use(bibliographyEndMarkerPlugin) // Intercept <!-- ::auto-bibliography-end:: --> + Enter-key
+      // placement fix — MUST be before commonmark so its Enter keymap binding takes
+      // precedence over commonmark's own Enter→splitBlock (same technique as
+      // citationDeleteKeymap below, for Backspace/Delete)
       .use(annotationPlugin) // Intercept annotation comments before filtering
       // Parse [@citekey] citations before commonmark. This ordering also gives
       // citationDeleteKeymap (citation-plugin.ts) precedence over ProseMirror's/

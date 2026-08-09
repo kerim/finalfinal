@@ -675,6 +675,9 @@ export function setContentWithBlockIds(
     scrollToStart?: boolean;
     imageMeta?: ImageBlockMeta[];
     cursorBoundary?: number;
+    // Node index one PAST the last bibliography block — see the clamp logic below for how
+    // this bounds the END of the section, as opposed to cursorBoundary's START.
+    cursorBoundaryEnd?: number;
     detectPausedEdits?: boolean;
     expected?: ExpectedBlockMeta[];
     // Whether the pushed content is a zoomed subset of the document. See the
@@ -768,26 +771,37 @@ export function setContentWithBlockIds(
       } else {
         let safeFrom = Math.min(from, Math.max(0, doc.content.size - 1));
 
-        // Clamp cursor before bibliography section to prevent typing into bib paragraphs.
-        // cursorBoundary is the node index of the first bibliography block.
+        // Clamp cursor before the bibliography section to prevent typing into bib paragraphs.
+        // cursorBoundary is the node index of the first bibliography block; cursorBoundaryEnd
+        // is the node index one past the LAST bibliography block (absent when the section runs
+        // to the end of the document). The clamp only fires when the cursor actually falls
+        // INSIDE that [bibPos, bibEndPos) range, not merely at-or-past bibPos: a regenerated
+        // bibliography can now be reinserted back at a mid-document anchor instead of always
+        // landing at the document's end, so a cursor sitting in real trailing user content
+        // AFTER the section must be left alone, not yanked back to just before it.
         const boundary = options?.cursorBoundary ?? -1;
+        const boundaryEnd = options?.cursorBoundaryEnd;
         let bibPos = doc.content.size;
+        let bibEndPos = doc.content.size;
         if (boundary >= 0) {
           let nodeIdx = 0;
           doc.forEach((_node, pos) => {
             if (nodeIdx === boundary) {
               bibPos = pos;
             }
+            if (boundaryEnd !== undefined && nodeIdx === boundaryEnd) {
+              bibEndPos = pos;
+            }
             nodeIdx++;
           });
-          if (safeFrom >= bibPos) {
+          if (safeFrom >= bibPos && safeFrom < bibEndPos) {
             safeFrom = Math.max(0, bibPos - 1);
           }
         }
 
         syncLog(
           'API:setContentWithBlockIds',
-          `cursor: from=${from} safeFrom=${safeFrom} boundary=${boundary} bibPos=${bibPos} docSize=${doc.content.size}`
+          `cursor: from=${from} safeFrom=${safeFrom} boundary=${boundary} boundaryEnd=${boundaryEnd} bibPos=${bibPos} bibEndPos=${bibEndPos} docSize=${doc.content.size}`
         );
 
         try {

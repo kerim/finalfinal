@@ -291,6 +291,11 @@ class BlockSyncService {
         scrollToStart: Bool = false,
         imageMeta: [ContentView.ImageBlockMeta] = [],
         cursorBoundary: Int? = nil,
+        /// Node index one PAST the last bibliography block — companion end bound for
+        /// `cursorBoundary` so the JS-side clamp only fires for a cursor actually INSIDE the
+        /// bibliography section, not merely at-or-after its start. See
+        /// `BlockParser.lastBibliographyNodeIndex`'s doc comment.
+        cursorBoundaryEnd: Int? = nil,
         detectPausedEdits: Bool = false,
         expectedBlocks: [BlockParser.BlockAlignmentMeta] = [],
         zoomMode: Bool = false
@@ -315,9 +320,7 @@ class BlockSyncService {
 
         // Build options object
         var optionParts: [String] = []
-        if scrollToStart {
-            optionParts.append("scrollToStart: true")
-        }
+        appendFlagOption(&optionParts, scrollToStart, "scrollToStart")
         if !imageMeta.isEmpty {
             let metaArray = imageMeta.map { meta -> [String: Any] in
                 var dict: [String: Any] = ["id": meta.id]
@@ -335,12 +338,9 @@ class BlockSyncService {
                 optionParts.append("imageMeta: JSON.parse(`\(escapedMeta)`)")
             }
         }
-        if let boundary = cursorBoundary {
-            optionParts.append("cursorBoundary: \(boundary)")
-        }
-        if detectPausedEdits {
-            optionParts.append("detectPausedEdits: true")
-        }
+        appendOption(&optionParts, cursorBoundary) { "cursorBoundary: \($0)" }
+        appendOption(&optionParts, cursorBoundaryEnd) { "cursorBoundaryEnd: \($0)" }
+        appendFlagOption(&optionParts, detectPausedEdits, "detectPausedEdits")
         if !expectedBlocks.isEmpty {
             if let expectedData = try? JSONEncoder().encode(expectedBlocks),
                let expectedJson = String(data: expectedData, encoding: .utf8) {
@@ -351,9 +351,7 @@ class BlockSyncService {
                 optionParts.append("expected: JSON.parse(`\(escapedExpected)`)")
             }
         }
-        if zoomMode {
-            optionParts.append("zoomMode: true")
-        }
+        appendFlagOption(&optionParts, zoomMode, "zoomMode")
         let options = optionParts.isEmpty ? "" : ", {\(optionParts.joined(separator: ", "))}"
         let js = "window.FinalFinal.setContentWithBlockIds(`\(escapedMarkdown)`, JSON.parse(`\(escapedIds)`)\(options))"
 
@@ -367,6 +365,24 @@ class BlockSyncService {
         )
 
         DebugLog.log(.sync, "[BlockSyncService] Set content with \(blockIds.count) block IDs atomically")
+    }
+
+    /// Appends a JS option-string entry (`"key: value"`) to `optionParts` iff `value` is
+    /// non-nil, formatting it with `format`. Factored out of `setContentWithBlockIds`'s long
+    /// chain of "if let X { optionParts.append(...) }" blocks to keep that function's branch
+    /// count down — pure, no side effects beyond mutating the passed-in array.
+    private func appendOption<T>(_ optionParts: inout [String], _ value: T?, format: (T) -> String) {
+        if let value {
+            optionParts.append(format(value))
+        }
+    }
+
+    /// Appends a JS option-string boolean flag (`"key: true"`) to `optionParts` iff `flag`
+    /// is true. Companion to `appendOption(_:_:format:)` for the simple boolean-flag cases.
+    private func appendFlagOption(_ optionParts: inout [String], _ flag: Bool, _ key: String) {
+        if flag {
+            optionParts.append("\(key): true")
+        }
     }
 
     /// Surgically update heading levels in the editor without replacing the document.

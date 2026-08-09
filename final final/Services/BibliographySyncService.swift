@@ -90,11 +90,34 @@ final class BibliographySyncService {
     /// between scheduling and this update actually running. Bails (no-ops) on mismatch.
     var flushLiveEditorContentToBlocks: ((_ scheduledForProjectId: String) async -> Void)?
 
-    // MARK: - Public Methods
+    // MARK: - Static Helpers
 
-    // Citekey extraction (citationSpanPattern, citationKeyPattern, extractCitekeys) lives in
-    // BibliographySyncService+CitationExtraction.swift — a distinct, self-contained concern
-    // from this class's sync state machine, and split out to keep type_body_length in range.
+    /// Pre-compiled regex for citekey extraction
+    /// Matches both [@citekey and ; @citekey for combined citations like [@key1; @key2]
+    /// Stops at comma to handle page locators like [@citekey, p. 123]
+    nonisolated(unsafe) private static let citationPattern: NSRegularExpression = {
+        do {
+            return try NSRegularExpression(
+                pattern: #"(?:\[|; )@([^\],;\s]+)"#,
+                options: []
+            )
+        } catch {
+            fatalError("Invalid regex pattern: \(error)")
+        }
+    }()
+
+    /// Extract citekeys from markdown content (skips code blocks and inline code)
+    nonisolated static func extractCitekeys(from markdown: String) -> [String] {
+        let stripped = MarkdownUtils.stripCodeContent(from: markdown)
+        let range = NSRange(stripped.startIndex..., in: stripped)
+        let matches = citationPattern.matches(in: stripped, range: range)
+        return matches.compactMap { match in
+            guard let range = Range(match.range(at: 1), in: stripped) else { return nil }
+            return String(stripped[range])
+        }
+    }
+
+    // MARK: - Public Methods
 
     /// Configure the service with a database
     func configure(database: ProjectDatabase, projectId: String) {
@@ -457,16 +480,60 @@ final class BibliographySyncService {
         // Read @MainActor property BEFORE entering GRDB write closure
         let headerName = ExportSettingsManager.shared.bibliographyHeaderName
         try database.write { db in
+            // Fetch the existing bibliography blocks BEFORE deleting them, so the regenerated
+            // bibliography can be reinserted back where the old one was, instead of always
+            // landing past whatever the user has typed after it since. See the anchor/step
+            // derivation below for how that position is reconstructed after the delete.
+            let existingBib = try Block
+                .filter(Block.Columns.projectId == projectId)
+                .filter(Block.Columns.isBibliography == true)
+                .order(Block.Columns.sortOrder)
+                .fetchAll(db)
+
+            // Anchor = the sortOrder the regenerated bibliography should return to: the REAL
+            // bibliography section's own heading position. A heading matching the configured
+            // bibliography header name is flagged `isBibliography = true` by the insert-time
+            // containment logic (see `Database+BlocksInsert.swift`'s `resolveInsertPlacement`)
+            // regardless of WHERE in the document it's inserted -- so a user typing or pasting
+            // an ordinary heading with that same text near the top of an otherwise-ordinary
+            // document (a completely normal thing to do) creates a second flagged heading.
+            // Picking the lowest-sortOrder flagged heading unconditionally could then pick that
+            // stray heading instead of the real section's, relocating the entire regenerated
+            // bibliography to the wrong position.
+            //
+            // Disambiguate with the same containment rule `resolveInsertPlacement` already
+            // applies: a flagged heading is the REAL bibliography heading only if the block
+            // immediately following it (by sortOrder, among ALL blocks -- not just
+            // bibliography-flagged ones) is ALSO bibliography-flagged. `generateBibliographyMarkdown`
+            // always emits heading-plus-entries together, so the real section's heading always
+            // has a bibliography-flagged block right after it; a lone stray heading with
+            // ordinary content after it does not.
+            //
+            // Falls back to the simpler "first flagged heading, unconditional" selector -- and,
+            // failing that, the first surviving bibliography block of any type -- when no
+            // heading satisfies the stricter check. Covers first-ever generation (no heading
+            // exists yet to satisfy anything) and an already-degenerate state (e.g. a
+            // heading-only bibliography with no surviving entries after it) so those cases
+            // don't regress. `nil` means there was no prior bibliography at all, which keeps
+            // today's append-at-the-end behavior unchanged.
+            let realBibliographyHeadingAnchor = try existingBib.first { candidate in
+                guard candidate.blockType == .heading else { return false }
+                let nextBlock = try Block
+                    .filter(Block.Columns.projectId == projectId)
+                    .filter(Block.Columns.sortOrder > candidate.sortOrder)
+                    .order(Block.Columns.sortOrder)
+                    .fetchOne(db)
+                return nextBlock?.isBibliography ?? false
+            }?.sortOrder
+            let anchor = realBibliographyHeadingAnchor
+                ?? existingBib.first { $0.blockType == .heading }?.sortOrder
+                ?? existingBib.first?.sortOrder
+
             // Delete ALL existing bibliography blocks (handles duplicates)
             try Block
                 .filter(Block.Columns.projectId == projectId)
                 .filter(Block.Columns.isBibliography == true)
                 .deleteAll(db)
-
-            let maxSortOrder = try Block
-                .filter(Block.Columns.projectId == projectId)
-                .order(Block.Columns.sortOrder.desc)
-                .fetchOne(db)?.sortOrder ?? 0
 
             // Split "# Bibliography\n\nEntry1\n\nEntry2\n\n" into individual fragments
             // so each DB block maps 1:1 with a ProseMirror top-level node.
@@ -476,6 +543,77 @@ final class BibliographySyncService {
                 .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
                 .filter { !$0.isEmpty }
 
+            // Placement: `start` is where the first fragment (the heading, always index 0 --
+            // see generateBibliographyMarkdown) lands; `step` is the sortOrder distance
+            // between consecutive fragments.
+            let start: Double
+            let step: Double
+            if let anchor {
+                start = anchor
+                // Whatever now immediately follows the anchor position (e.g. a trailing
+                // paragraph the user typed after the old bibliography) bounds how far the
+                // regenerated fragments can spread before colliding with it.
+                let nextBlock = try Block
+                    .filter(Block.Columns.projectId == projectId)
+                    .filter(Block.Columns.sortOrder > anchor)
+                    .order(Block.Columns.sortOrder)
+                    .fetchOne(db)
+                if let nextBlock {
+                    let gap = nextBlock.sortOrder - anchor
+                    step = min(1.0, gap / Double(max(rawBlocks.count, 1)))
+                    if step < 1e-6 {
+                        // Defensive logging only -- no block mutation. `gap / N` still keeps
+                        // every insert strictly increasing and correctly ordered relative to
+                        // `nextBlock` for any positive gap; this just makes an unusually tight
+                        // squeeze visible if it ever happens.
+                        DebugLog.log(.bib, "[BibliographySyncService] Tight bibliography sortOrder gap: " +
+                            "anchor=\(anchor) next=\(nextBlock.sortOrder) step=\(step)")
+                    }
+                } else {
+                    // Bibliography was already the last thing in the document -- nothing to
+                    // pack against, so it simply stays put without needing to shift.
+                    step = 1.0
+                }
+            } else {
+                // First-ever generation: no prior bibliography blocks existed, so there is
+                // nothing to anchor back to. Unchanged existing behavior -- append at the end.
+                let maxSortOrder = try Block
+                    .filter(Block.Columns.projectId == projectId)
+                    .order(Block.Columns.sortOrder.desc)
+                    .fetchOne(db)?.sortOrder ?? 0
+                start = maxSortOrder + 1.0
+                step = 1.0
+            }
+
+            // No self-heal sweep here (deliberately removed — a prior version tried to
+            // delete unflagged orphan rows by exact-text match, position-bounded to
+            // "at/after the bibliography heading"). That bound was unsound in both
+            // directions at once: computed from `maxSortOrder` AFTER the delete above, an
+            // orphan surviving in the table shifts the next heading's placement above it,
+            // permanently excluding that orphan from future sweeps; widened to catch it,
+            // the same unbounded-above range would just as readily delete a trailing user
+            // paragraph that happens to exact-match a regenerated fragment, silently and
+            // without undo. `Database+Blocks.swift`'s insert-time containment fix (see
+            // `resolveInsertPlacement`) prevents new orphans from being created at all, and
+            // `BlockParser.parse()`'s `sectionFlagCarriedForward` re-derives every block's
+            // `isBibliography` flag from scratch — no drift possible — on every full
+            // document reparse (project open with no existing blocks, Source Mode's
+            // debounced re-parse, snapshot restore).
+            //
+            // Historical orphans (rows already mis-flagged `isBibliography == true` from
+            // before the insert-time fix) do NOT self-heal from any of that, and must not be
+            // assumed to: `assembleMarkdownForEditor` inserts the terminator immediately
+            // after the LAST block flagged `isBibliography`, which in an already-corrupted
+            // document IS the orphaned paragraph itself, so the regenerated markdown places
+            // the terminator AFTER the orphan every time — a reparse of that markdown
+            // re-derives the identical wrong flag via `sectionFlagCarriedForward`, not a
+            // corrected one. Worse, `ContentView+ProjectLifecycle.swift`'s
+            // `loadInitialContent` only calls `BlockParser.parse()` when no blocks exist yet
+            // for the project; once blocks exist (which they do for any already-corrupted
+            // document) project open just reassembles them via `assembleMarkdownForEditor`
+            // and never reparses at all. Clearing existing historical orphans would need a
+            // dedicated one-time migration — out of scope here.
+
             for (index, fragment) in rawBlocks.enumerated() {
                 let isHeading = fragment.hasPrefix("#")
                 let textContent = isHeading
@@ -483,7 +621,7 @@ final class BibliographySyncService {
                     : BlockParser.extractTextContent(from: fragment, blockType: .paragraph)
                 var block = Block(
                     projectId: projectId,
-                    sortOrder: maxSortOrder + Double(index) + 1.0,
+                    sortOrder: start + Double(index) * step,
                     blockType: isHeading ? .heading : .paragraph,
                     textContent: textContent,
                     markdownFragment: fragment,

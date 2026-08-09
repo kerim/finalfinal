@@ -270,7 +270,11 @@ extension EditorViewState {
         do {
             // Fetch ALL blocks from DB - database is always complete
             let allBlocks = try db.fetchBlocks(projectId: pid)
-            let mergedContent = BlockParser.assembleMarkdown(from: allBlocks)
+            // assembleMarkdownForEditor (not plain assembleMarkdown): this merged content
+            // becomes editorState.content again, unlike zoomToSection's zoomedContent above
+            // (which already excludes bibliography blocks and stays on assembleMarkdown) —
+            // see BlockParser.bibliographyEndMarker's doc comment.
+            let mergedContent = BlockParser.assembleMarkdownForEditor(from: allBlocks)
 
             let allImageMeta = allBlocks
                 .filter { $0.blockType == .image }

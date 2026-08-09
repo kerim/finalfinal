@@ -382,10 +382,21 @@ class SectionViewModel: Identifiable {
         self.isNotes = section.isNotes
         self.title = section.title
         // Strip legacy bibliography marker from content (migration for old format)
-        // The marker is now injected only for CodeMirror source mode, not stored
-        self.markdownContent = section.isBibliography
-            ? section.markdownContent.replacingOccurrences(of: "<!-- ::auto-bibliography:: -->", with: "")
-            : section.markdownContent
+        // The marker is now injected only for CodeMirror source mode, not stored.
+        // Also strip the bibliography-end terminator (BlockParser.bibliographyEndMarker) —
+        // this is display-only sidebar text, so unlike editorState.content the terminator
+        // must NOT survive here (see SectionSyncService.stripBibliographyEndMarker's doc
+        // comment).
+        //
+        // Unconditional, NOT gated on section.isBibliography: DocumentPreviewView.swift's
+        // SnapshotSectionViewModel documents that Section.isBibliography is never actually
+        // set true by any production writer, so a gated strip here would silently never
+        // fire, letting the raw terminator text leak into this sidebar card's preview.
+        // Both strips are pure substring removals — safe no-ops on any section that
+        // doesn't contain the marker text at all.
+        self.markdownContent = SectionSyncService.stripBibliographyEndMarker(
+            from: section.markdownContent.replacingOccurrences(of: "<!-- ::auto-bibliography:: -->", with: "")
+        )
         self.status = section.status
         self.tags = section.tags
         self.wordGoal = section.wordGoal
