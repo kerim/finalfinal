@@ -33,21 +33,11 @@ extension ExportService {
         Bundle.main.url(forResource: "float-package", withExtension: "tex", subdirectory: "Export")?.path
     }
 
-    /// Get path to the bundled URL-line-breaking header snippet. Reproduces the `xurl` LaTeX
-    /// package's URL-breaking behavior (extending `url.sty`'s `\UrlBreaks`) without bundling
-    /// `xurl.sty` itself, which isn't part of this app's TinyTeX distribution -- see
-    /// xurl-workaround.tex for the full rationale.
-    static var bundledXurlWorkaroundTexPath: String? {
-        Bundle.main.url(forResource: "xurl-workaround", withExtension: "tex", subdirectory: "Export")?.path
-    }
-
-    /// Get path to the bundled document-wide linkify-urls Lua filter (see linkify-urls.lua).
-    /// Converts any bare URL-shaped `Str` inline anywhere in the document into a real `Link`,
-    /// so it gets the `\UrlBreaks` wrap protection from xurl-workaround.tex, which only applies
-    /// to real `\url{}`/`\href{}` content, never to plain text -- fixes the page-margin overflow
-    /// for citation-field URLs (e.g. Zotero's "archive" field) and bare URLs typed in body text.
-    static var bundledLinkifyUrlsLuaPath: String? {
-        Bundle.main.url(forResource: "linkify-urls", withExtension: "lua", subdirectory: "Export")?.path
+    /// Get path to the bundled PDF-only filter that flattens bare (unbracketed) `@citekey`
+    /// citations back to literal text, so they match DOCX/ODT rather than rendering as a
+    /// broken `\textbf{key?}` marker under --citeproc. See the file's own header comment.
+    static var bundledBareCitationsLuaPath: String? {
+        Bundle.main.url(forResource: "bare-citations-literal", withExtension: "lua", subdirectory: "Export")?.path
     }
 
     /// Get path to bundled reference document
