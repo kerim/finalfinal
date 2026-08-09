@@ -203,7 +203,7 @@ extension ExportService {
                 content: processedContent,
                 zoteroStatus: zoteroStatus,
                 luaScriptPath: resourcePaths.luaScriptPath,
-                tempDir: tempDir
+                pdfBibliography: PDFBibliographyRequest(settings: settings, tempDir: tempDir)
             )
             citationArgs = citation.arguments
             artifacts.tempBibURL = citation.tempBibURL
@@ -262,9 +262,21 @@ extension ExportService {
     // MARK: - Extracted Helpers
 
     /// Resolved lua-script and reference-doc paths for an export.
-    private struct ResourcePaths {
+    ///
+    /// `bareCitationsLuaPathOverride` exists purely as a test seam: `resolveAndValidateResourcePaths`
+    /// (the only production call site) always leaves it nil, so `buildBaseArguments` falls
+    /// through to the real `ExportService.bundledBareCitationsLuaPath` (a `Bundle.main` lookup)
+    /// exactly as before -- no behavior change. It lets a test call the REAL `buildBaseArguments`
+    /// and assert on its actual returned argument order instead of hand-duplicating pandoc's
+    /// argument list (see BareCitationExportTests.swift): `Bundle.main` doesn't resolve bundled
+    /// `Export/` resources correctly from the unit-test host, so the test injects the file's
+    /// real on-disk path (resolved via `#filePath`) here instead. Kept as a field on this
+    /// struct rather than a new `buildBaseArguments` parameter so the function's parameter
+    /// count doesn't cross SwiftLint's `function_parameter_count` threshold.
+    struct ResourcePaths {
         let luaScriptPath: String?
         let referenceDocPath: String?
+        let bareCitationsLuaPathOverride: String?
     }
 
     /// Resolves the lua-script and reference-doc paths from settings and validates that any
@@ -291,7 +303,11 @@ extension ExportService {
             }
         }
 
-        return ResourcePaths(luaScriptPath: luaScriptPath, referenceDocPath: referenceDocPath)
+        return ResourcePaths(
+            luaScriptPath: luaScriptPath,
+            referenceDocPath: referenceDocPath,
+            bareCitationsLuaPathOverride: nil
+        )
     }
 
     /// Groups the temp filesystem artifacts an export can create (the temp markdown input
@@ -317,7 +333,7 @@ extension ExportService {
     /// image paths), the resource directory Pandoc should resolve `media/` paths against, the
     /// temp media directory to clean up afterward (if image conversion created one), and any
     /// conversion warnings.
-    private struct PDFContentPreparation {
+    struct PDFContentPreparation {
         let content: String
         let effectiveResourceURL: URL?
         let tempMediaDir: URL?
@@ -364,7 +380,13 @@ extension ExportService {
     /// under the function-parameter-count limit — both are already constructed by the time
     /// `export()` calls this, and `pdfPrep.content` is always identical to `processedContent`
     /// at the call site (it was just assigned from it).
-    private func buildBaseArguments(
+    ///
+    /// Not `private`: BareCitationExportTests.swift calls this REAL function directly (via
+    /// `@testable import`) to assert on its actual returned argument order for PDF, rather than
+    /// hand-duplicating this argument list in a test file where it could silently drift out of
+    /// sync with production. See `ResourcePaths.bareCitationsLuaPathOverride`'s doc comment for
+    /// why the test needs to inject a path here instead of relying on `Bundle.main`.
+    func buildBaseArguments(
         inputURL: URL,
         outputURL: URL,
         format: ExportFormat,
@@ -392,6 +414,13 @@ extension ExportService {
             arguments.append(contentsOf: fontArguments(for: pdfPrep.content))
             if let figurePlacementLuaPath = ExportService.bundledFigurePlacementLuaPath {
                 arguments.append(contentsOf: ["--lua-filter", figurePlacementLuaPath])
+            }
+            // Bare `@key` is not a citation in this app (see bare-citations-literal.lua). Added
+            // here rather than in citationArguments so it is guaranteed to precede --citeproc on
+            // the command line -- pandoc applies filters in argument order, and a Cite node has to
+            // be flattened before citeproc gets a chance to render it as a broken marker.
+            if let bareCitationsLuaPath = resourcePaths.bareCitationsLuaPathOverride ?? ExportService.bundledBareCitationsLuaPath {
+                arguments.append(contentsOf: ["--lua-filter", bareCitationsLuaPath])
             }
             if let floatPackagePath = ExportService.bundledFloatPackageTexPath {
                 arguments.append(contentsOf: ["--include-in-header", floatPackagePath])
@@ -460,35 +489,70 @@ extension ExportService {
         let warnings: [String]
     }
 
+    /// `settings` and `tempDir`, grouped: both are needed only by `citationArguments`'s PDF
+    /// branch (passed straight through to `bibliographyWriteArguments`), always travel
+    /// together, and DOCX/ODT never touches either. Bundling them keeps `citationArguments`
+    /// under SwiftLint's `function_parameter_count` limit -- mirrors `ExportDiagnosticsRequest`
+    /// in `ExportService+Diagnostics.swift`, the same parameter-object pattern already used
+    /// elsewhere in this file's call graph.
+    private struct PDFBibliographyRequest {
+        let settings: ExportSettings
+        let tempDir: URL
+    }
+
     /// Build citation-related Pandoc arguments and fetch bibliography if needed.
+    ///
+    /// Takes `luaScriptPath` as its own parameter (rather than recomputing it from
+    /// `pdfBibliography.settings`) so the non-PDF branch below stays byte-for-byte identical
+    /// to what it resolved and validated in `resolveAndValidateResourcePaths` — not a second,
+    /// separately-computed `settings.effectiveLuaScriptPath` expression that merely happens to
+    /// match today. `pdfBibliography` is still threaded through for the PDF-only
+    /// `effectiveBibliographyHeaderName` metadata argument and the temp directory to write the
+    /// bibliography JSON into; DOCX/ODT never reads it at all.
     private func citationArguments(
         format: ExportFormat,
         content: String,
         zoteroStatus: ZoteroStatus,
         luaScriptPath: String?,
-        tempDir: URL
+        pdfBibliography: PDFBibliographyRequest
     ) async -> CitationBuildResult {
         var args: [String] = []
         var tempBibURL: URL?
         var warnings: [String] = []
 
         if format == .pdf {
-            if zoteroStatus == .running {
-                let citekeys = Array(Set(extractCitekeys(from: content)))
-                if let bibJSON = await fetchBibliographyJSON(for: citekeys) {
-                    let bibURL = tempDir.appendingPathComponent(UUID().uuidString + ".json")
-                    do {
-                        try bibJSON.write(to: bibURL, atomically: true, encoding: .utf8)
-                        tempBibURL = bibURL
-                        args.append(contentsOf: ["--citeproc", "--bibliography", bibURL.path])
-                        if let cslPath = ExportService.bundledCSLStylePath {
-                            args.append(contentsOf: ["--csl", cslPath])
-                        }
-                    } catch {
-                        warnings.append("Could not write bibliography data. Citations were not resolved.")
-                    }
+            let citekeys = Array(Set(extractCitekeys(from: content)))
+            // hasPandocCitations's bracket-match is looser than a real citekey (it also
+            // matches shapes extractCitekeys correctly rejects -- `[contact me@example.com]`,
+            // `[install @scope/pkg]`, `[see bsky.app/@handle]`), so a document that opened this
+            // Zotero-check gate (hasCitations == true) can still have zero real citekeys.
+            // Skipping the fetch entirely in that case -- the same effective behavior as
+            // `hasCitations` having been false in the first place -- avoids the generic "Could
+            // not fetch bibliography data from Zotero" warning firing on a document where
+            // Zotero never actually failed at anything. A document with a REAL citekey that
+            // legitimately isn't found in Zotero is unaffected: citekeys is non-empty there, so
+            // the fetch still runs and the normal partial-resolution warning still fires below.
+            if zoteroStatus == .running && !citekeys.isEmpty {
+                let bibliography = await fetchBibliographyJSON(for: citekeys)
+                if let bibJSON = bibliography.json {
+                    // See bibliographyWriteArguments's doc comment: the write-failure and
+                    // partial-bibliography warnings are mutually exclusive by construction.
+                    let result = bibliographyWriteArguments(
+                        bibJSON: bibJSON,
+                        notFoundKeys: bibliography.notFoundKeys,
+                        ambiguousKeys: bibliography.ambiguousKeys,
+                        settings: pdfBibliography.settings,
+                        tempDir: pdfBibliography.tempDir
+                    )
+                    args.append(contentsOf: result.arguments)
+                    tempBibURL = result.tempBibURL
+                    warnings.append(contentsOf: result.warnings)
                 } else {
-                    warnings.append("Could not fetch bibliography data from Zotero. Citations were not resolved.")
+                    // See fetchFailureWarning's doc comment: mutually exclusive with the
+                    // partial-bibliography warning above rather than always pairing with it.
+                    warnings.append(fetchFailureWarning(
+                        notFound: bibliography.notFoundKeys, ambiguous: bibliography.ambiguousKeys
+                    ))
                 }
             }
         } else {

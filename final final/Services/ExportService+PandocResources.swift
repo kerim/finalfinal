@@ -50,6 +50,13 @@ extension ExportService {
         Bundle.main.url(forResource: "linkify-urls", withExtension: "lua", subdirectory: "Export")?.path
     }
 
+    /// Get path to the bundled PDF-only filter that flattens bare (unbracketed) `@citekey`
+    /// citations back to literal text, so they match DOCX/ODT rather than rendering as a
+    /// broken `\textbf{key?}` marker under --citeproc. See the file's own header comment.
+    static var bundledBareCitationsLuaPath: String? {
+        Bundle.main.url(forResource: "bare-citations-literal", withExtension: "lua", subdirectory: "Export")?.path
+    }
+
     /// Get path to bundled reference document
     static var bundledReferenceDocPath: String? {
         Bundle.main.url(forResource: "reference", withExtension: "docx", subdirectory: "Export")?.path
