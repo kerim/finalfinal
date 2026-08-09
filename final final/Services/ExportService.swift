@@ -196,6 +196,7 @@ extension ExportService {
         )
 
         // Citations
+        var citationArgs: [String] = []
         if hasCitations {
             let citation = await citationArguments(
                 format: format,
@@ -204,10 +205,24 @@ extension ExportService {
                 luaScriptPath: resourcePaths.luaScriptPath,
                 tempDir: tempDir
             )
-            arguments.append(contentsOf: citation.arguments)
+            citationArgs = citation.arguments
             artifacts.tempBibURL = citation.tempBibURL
             warnings.append(contentsOf: citation.warnings)
         }
+
+        // Append citation arguments, then -- for PDF only -- the document-wide linkify-urls
+        // Lua filter AFTER them. Pandoc applies --lua-filter/--citeproc in command-line order,
+        // and citeproc is what turns a bare CSL field's URL text into a Str the linkify filter
+        // needs to see -- so this must run after --citeproc, not before (see
+        // assembleFinalArguments's doc comment and linkify-urls.lua's header comment). Applied
+        // unconditionally for PDF (not gated on hasCitations) because bare URLs typed directly
+        // into document body text need this fix too, with no citation involved at all.
+        arguments = assembleFinalArguments(
+            baseArguments: arguments,
+            citationArguments: citationArgs,
+            format: format,
+            linkifyUrlsLuaPath: ExportService.bundledLinkifyUrlsLuaPath
+        )
 
         // DIAGNOSTIC (temporary, opt-in — see docs/plans/mossy-tumbling-stroustrup.md, removed
         // once the fix for the PDF page-1 reorder bug lands). Off by default; gated by
@@ -381,6 +396,11 @@ extension ExportService {
             if let floatPackagePath = ExportService.bundledFloatPackageTexPath {
                 arguments.append(contentsOf: ["--include-in-header", floatPackagePath])
             }
+            // Long citation/DOI URLs with no natural break points (no slashes/hyphens)
+            // otherwise overflow the page margin -- see xurl-workaround.tex for why.
+            if let xurlWorkaroundPath = ExportService.bundledXurlWorkaroundTexPath {
+                arguments.append(contentsOf: ["--include-in-header", xurlWorkaroundPath])
+            }
         }
 
         // Reference document (DOCX/ODT only)
@@ -388,6 +408,35 @@ extension ExportService {
             arguments.append(contentsOf: ["--reference-doc", refPath])
         }
 
+        return arguments
+    }
+
+    /// Appends citation arguments to `baseArguments`, then -- for PDF exports only, when
+    /// `linkifyUrlsLuaPath` is available -- appends the document-wide linkify-urls Lua filter
+    /// AFTER them. Pandoc applies `--lua-filter`/`--citeproc` in command-line order, and
+    /// `--citeproc` is what turns a citation's CSL field text into the bare-URL `Str` nodes the
+    /// linkify filter looks for -- so this ordering is load-bearing, not cosmetic (an earlier
+    /// draft of this fix appended the linkify filter from inside `buildBaseArguments`, which
+    /// runs before `--citeproc` gets appended, and silently missed every citation-field URL).
+    ///
+    /// Not `private` (unlike its sibling helpers) and takes `linkifyUrlsLuaPath` as a parameter
+    /// rather than reading `ExportService.bundledLinkifyUrlsLuaPath` internally, so
+    /// `ExportArgumentOrderingTests` can call this exact function -- the one `export()` itself
+    /// delegates to for final argument assembly -- with a hand-fed citation-argument list and a
+    /// repo-relative filter path, without needing a live Zotero connection or `Bundle.main`
+    /// (which in a unit-test host resolves to the XCTest runner's own bundle, not the app's --
+    /// same reasoning as `ImageCaptionExportTests`'s `figurePlacementLuaPath`).
+    func assembleFinalArguments(
+        baseArguments: [String],
+        citationArguments: [String],
+        format: ExportFormat,
+        linkifyUrlsLuaPath: String?
+    ) -> [String] {
+        var arguments = baseArguments
+        arguments.append(contentsOf: citationArguments)
+        if format == .pdf, let linkifyUrlsLuaPath {
+            arguments.append(contentsOf: ["--lua-filter", linkifyUrlsLuaPath])
+        }
         return arguments
     }
 
