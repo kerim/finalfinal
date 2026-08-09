@@ -285,6 +285,30 @@ private struct RawBlockSplitter {
             // the (possibly indented) marker alone — accepted at any indentation —
             // and flushing it as its own block there is correct and intentional.
             // Same inFootnoteDef reset as the forward case above, for the same reason.
+            //
+            // SCOPE OF THAT "stay glued when indented" rule: it is
+            // `sectionBreakMarker`'s contract only. The two markers this branch
+            // matches do NOT share one invariant:
+            //
+            //   • `sectionBreakMarker` — whole-line and unindented ONLY. Anywhere
+            //     else (indented, or sharing a line with other text) it is just an
+            //     HTML comment belonging to its surrounding block, and must stay
+            //     glued there. Losing one costs a sidebar outline entry and a
+            //     block-count mismatch; nothing is deleted.
+            //   • `bibliographyEndMarker` — always split out into its own block, at
+            //     any indentation, even when it only appears as a SUBSTRING of a
+            //     line. That is `consumeBibliographyEndMarkerGlue` (called earlier,
+            //     line ~222), which fires before this guard is ever reached for the
+            //     same-line-glue shapes. It deliberately overrides the reasoning
+            //     above, because the terminator is invisible in CodeMirror: the user
+            //     cannot see or place it, so a marker that fails to be recognised
+            //     leaves the bibliography section open and the text around it is
+            //     silently lost. Data loss outranks matching ProseMirror's node
+            //     count, so the trade-off flips.
+            //
+            // Do NOT "unify" the two by making the terminator obey the
+            // stay-glued-when-indented rule; that reintroduces the orphan/data-loss
+            // path `consumeBibliographyEndMarkerGlue`'s doc comment describes.
             flushCurrentBlockIfNotBlank()
             inFootnoteDef = false
         }
