@@ -90,11 +90,34 @@ final class BibliographySyncService {
     /// between scheduling and this update actually running. Bails (no-ops) on mismatch.
     var flushLiveEditorContentToBlocks: ((_ scheduledForProjectId: String) async -> Void)?
 
-    // MARK: - Public Methods
+    // MARK: - Static Helpers
 
-    // Citekey extraction (citationSpanPattern, citationKeyPattern, extractCitekeys) lives in
-    // BibliographySyncService+CitationExtraction.swift — a distinct, self-contained concern
-    // from this class's sync state machine, and split out to keep type_body_length in range.
+    /// Pre-compiled regex for citekey extraction
+    /// Matches both [@citekey and ; @citekey for combined citations like [@key1; @key2]
+    /// Stops at comma to handle page locators like [@citekey, p. 123]
+    nonisolated(unsafe) private static let citationPattern: NSRegularExpression = {
+        do {
+            return try NSRegularExpression(
+                pattern: #"(?:\[|; )@([^\],;\s]+)"#,
+                options: []
+            )
+        } catch {
+            fatalError("Invalid regex pattern: \(error)")
+        }
+    }()
+
+    /// Extract citekeys from markdown content (skips code blocks and inline code)
+    nonisolated static func extractCitekeys(from markdown: String) -> [String] {
+        let stripped = MarkdownUtils.stripCodeContent(from: markdown)
+        let range = NSRange(stripped.startIndex..., in: stripped)
+        let matches = citationPattern.matches(in: stripped, range: range)
+        return matches.compactMap { match in
+            guard let range = Range(match.range(at: 1), in: stripped) else { return nil }
+            return String(stripped[range])
+        }
+    }
+
+    // MARK: - Public Methods
 
     /// Configure the service with a database
     func configure(database: ProjectDatabase, projectId: String) {

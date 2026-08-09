@@ -69,6 +69,8 @@ TinyTeX is a lightweight TeX Live distribution used for PDF export via xelatex/x
 | chicago-author-date.csl | CC BY-SA 3.0 | Andrew Dunning | https://github.com/citation-style-language/styles |
 | locales-en-US.xml | CC BY-SA 3.0 | CSL Team | https://github.com/citation-style-language/locales |
 
+`chicago-author-date.csl` carries 3 local modifications from upstream: the `<text variable="archive"/>` line was removed from the `source-archive-reference-institution-first`, `source-archive-reference-location-first-bib`, and `source-archive-reference-location-first-note` macros, so the `archive` field never renders (Zotero's Extra field leaks raw URLs into it — see each removal site's inline comment). Kept in both `final final/Resources/Export/chicago-author-date.csl` and `web/milkdown/src/csl/chicago-author-date.csl` (byte-identical copies). A future refresh from upstream must reapply these 3 edits or the URL leak returns.
+
 ---
 
 ## Build Tools (Development Only, Not Bundled)

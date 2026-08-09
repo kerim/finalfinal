@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Archive and gallery names no longer appear in citations for archival or artwork references** — Zotero can sometimes store a raw web address in this field instead of the archive's name (a known quirk of its Extra field), and that address used to print exactly as stored. There's no reliable way to tell a genuine archive name from a leaked web address, so this field is now left out of every such citation — including ones where it held a real archive name, not just the broken ones.
+- **A long citation link (like a DOI or a tracking-parameter-heavy URL) could run off the edge of the page when exporting to PDF** — LaTeX only knows how to break a URL onto a new line at certain punctuation, and a long link with none of that (no slashes or hyphens) had nowhere to break, so it printed past the page margin instead of wrapping. Long links now wrap properly, and the fix also covers plain web addresses typed directly into your document's text, which had the same problem.
+
 ## [0.2.121] - 2026-08-07
 
 ### Added
