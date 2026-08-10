@@ -176,7 +176,7 @@ extension ExportService {
         var warnings: [String] = []
 
         // For PDF export, convert unsupported images (WebP, HEIC, etc.) to PNG
-        let pdfPrep = try prepareContentForPDFIfNeeded(
+        var pdfPrep = try prepareContentForPDFIfNeeded(
             format: format,
             content: processedContent,
             projectURL: projectURL,
@@ -185,6 +185,63 @@ extension ExportService {
         processedContent = pdfPrep.content
         artifacts.tempMediaDir = pdfPrep.tempMediaDir
         warnings.append(contentsOf: pdfPrep.warnings)
+
+        // Citekey case canonicalization: rewrite any citekey spelling that differs only in
+        // case from the citekey Zotero/BBT actually resolved, so PDF's `--citeproc` (which
+        // matches CSL-JSON case-sensitively) and DOCX/ODT's `zotero.lua` (which does its own
+        // live BBT lookup keyed by the exact literal citekey text) both see the identical
+        // string. MUST run after the PDF image-prep block above (which does its own file
+        // rewrite -- an earlier canonicalization would be silently overwritten by it) and
+        // BEFORE `buildBaseArguments` below (whose PDF branch reads `pdfPrep.content` for
+        // font-argument detection) and `citationArguments` (which needs the fetched
+        // bibliography to build `--citeproc`/`--bibliography` args without fetching again).
+        let citekeys = Array(Set(extractCitekeys(from: processedContent)))
+        var bibliographyForCitations: BibliographyFetchResult?
+        if hasCitations, zoteroStatus == .running, !citekeys.isEmpty {
+            // One fetch, shared by both the citekey-case rewrite below (all formats) and
+            // `citationArguments`'s PDF-only `--citeproc`/`--bibliography` argument building
+            // further down -- never fetched twice for the same export.
+            let bibliography = await fetchBibliographyJSON(for: citekeys)
+            bibliographyForCitations = bibliography
+
+            // supportsAmbiguityReporting is false whenever this batch resolved via the
+            // item.export fallback, which has NO ambiguity concept at all -- not "reports zero
+            // ambiguous keys," but structurally incapable of reporting any. rawAmbiguousKeys
+            // being empty there means "no information," not "verified unambiguous," so the
+            // ambiguity veto inside canonicalCitekeyMap is silently inert on that path. Rather
+            // than rely on an inert veto, skip building a rewrite map entirely when ambiguity
+            // reporting isn't available -- see RawCitekeyBatchResult.supportsAmbiguityReporting's
+            // doc comment for the exact failure this prevents (a citekey silently repointed at
+            // a completely different, wrong reference).
+            let map = bibliography.supportsAmbiguityReporting
+                ? ExportService.canonicalCitekeyMap(
+                    requested: citekeys,
+                    resolvedIDs: bibliography.resolvedIDs,
+                    rawAmbiguousKeys: bibliography.rawAmbiguousKeys
+                )
+                : [:]
+            let rewritten = canonicalizeCitekeys(in: processedContent, using: map)
+            if rewritten != processedContent {
+                do {
+                    try rewritten.write(to: inputURL, atomically: true, encoding: .utf8)
+                    processedContent = rewritten
+                    pdfPrep = PDFContentPreparation(
+                        content: rewritten,
+                        effectiveResourceURL: pdfPrep.effectiveResourceURL,
+                        tempMediaDir: pdfPrep.tempMediaDir,
+                        warnings: pdfPrep.warnings
+                    )
+                } catch {
+                    DebugLog.log(
+                        .fileOps,
+                        "[ExportService] Failed to write canonicalized citekeys back to temp input file: \(error) " +
+                        "-- continuing export with the pre-rewrite content"
+                    )
+                    // Continue with pre-rewrite content -- today's behavior when this step
+                    // can't happen; never fail the whole export over it.
+                }
+            }
+        }
 
         // Build Pandoc arguments
         var arguments = buildBaseArguments(
@@ -198,12 +255,11 @@ extension ExportService {
         // Citations
         var citationArgs: [String] = []
         if hasCitations {
-            let citation = await citationArguments(
+            let citation = citationArguments(
                 format: format,
-                content: processedContent,
-                zoteroStatus: zoteroStatus,
                 luaScriptPath: resourcePaths.luaScriptPath,
-                pdfBibliography: PDFBibliographyRequest(settings: settings, tempDir: tempDir)
+                pdfBibliography: PDFBibliographyRequest(settings: settings, tempDir: tempDir),
+                bibliography: bibliographyForCitations
             )
             citationArgs = citation.arguments
             artifacts.tempBibURL = citation.tempBibURL
@@ -273,12 +329,10 @@ extension ExportService {
     /// real on-disk path (resolved via `#filePath`) here instead. Kept as a field on this
     /// struct rather than a new `buildBaseArguments` parameter so the function's parameter
     /// count doesn't cross SwiftLint's `function_parameter_count` threshold.
-    /// `mathSpecialCharsLuaPathOverride` is the same test seam for `bundledMathSpecialCharsLuaPath`.
     struct ResourcePaths {
         let luaScriptPath: String?
         let referenceDocPath: String?
         let bareCitationsLuaPathOverride: String?
-        let mathSpecialCharsLuaPathOverride: String?
     }
 
     /// Resolves the lua-script and reference-doc paths from settings and validates that any
@@ -308,8 +362,7 @@ extension ExportService {
         return ResourcePaths(
             luaScriptPath: luaScriptPath,
             referenceDocPath: referenceDocPath,
-            bareCitationsLuaPathOverride: nil,
-            mathSpecialCharsLuaPathOverride: nil
+            bareCitationsLuaPathOverride: nil
         )
     }
 
@@ -425,28 +478,6 @@ extension ExportService {
             if let bareCitationsLuaPath = resourcePaths.bareCitationsLuaPathOverride ?? ExportService.bundledBareCitationsLuaPath {
                 arguments.append(contentsOf: ["--lua-filter", bareCitationsLuaPath])
             }
-            // Escapes `&`/`#`/`%` inside math spans so they don't crash xelatex (or, for `%`,
-            // silently truncate the rest of the line) -- see math-special-chars.lua's header
-            // comment. Ordering relative to the other PDF-only filters IN THIS BLOCK is free:
-            // this filter only touches Math AST nodes, which none of them read or write.
-            //
-            // Ordering relative to `--citeproc` (appended later, in citationArguments/
-            // assembleFinalArguments) is a different question, and NOT free in general: citeproc
-            // can itself generate fresh Math nodes out of a bibliography field's raw LaTeX (e.g.
-            // a `.bib` entry's `title = {$x & y$}`), and this filter runs before `--citeproc` on
-            // the command line, so any math citeproc generates is never seen by it -- confirmed
-            // by direct reproduction: with a `.bib` bibliography and this exact filter order, an
-            // unescaped `&` in a title's math survives uncaught and would crash xelatex; with the
-            // filter moved to run AFTER `--citeproc` instead, it gets escaped correctly. That
-            // reproduction is NOT reachable today only because this app's actual PDF bibliography
-            // path is CSL JSON from Zotero, not `.bib` -- confirmed separately: pandoc's CSL-JSON
-            // reader always treats a `$...$` title substring as literal text (escaping the `$`
-            // itself), never as a math span, regardless of this filter's position. If that
-            // bibliography source ever changes to something that can hand citeproc raw LaTeX
-            // (e.g. a `.bib`/BibLaTeX path), this ordering would need revisiting too.
-            if let mathSpecialCharsLuaPath = resourcePaths.mathSpecialCharsLuaPathOverride ?? ExportService.bundledMathSpecialCharsLuaPath {
-                arguments.append(contentsOf: ["--lua-filter", mathSpecialCharsLuaPath])
-            }
             if let floatPackagePath = ExportService.bundledFloatPackageTexPath {
                 arguments.append(contentsOf: ["--include-in-header", floatPackagePath])
             }
@@ -525,7 +556,7 @@ extension ExportService {
         let tempDir: URL
     }
 
-    /// Build citation-related Pandoc arguments and fetch bibliography if needed.
+    /// Build citation-related Pandoc arguments from an already-fetched bibliography.
     ///
     /// Takes `luaScriptPath` as its own parameter (rather than recomputing it from
     /// `pdfBibliography.settings`) so the non-PDF branch below stays byte-for-byte identical
@@ -534,31 +565,25 @@ extension ExportService {
     /// match today. `pdfBibliography` is still threaded through for the PDF-only
     /// `effectiveBibliographyHeaderName` metadata argument and the temp directory to write the
     /// bibliography JSON into; DOCX/ODT never reads it at all.
+    ///
+    /// `bibliography` is fetched exactly once by `export()` itself (shared with the
+    /// citekey-case rewrite, which needs the same fetch for every format, not just PDF) and
+    /// passed in here — this function no longer fetches on its own. `nil` means the fetch was
+    /// skipped entirely (no citations, Zotero not running, or no real citekeys extracted — see
+    /// `export()`'s guard), in which case PDF appends nothing, exactly as before this function
+    /// stopped fetching internally.
     private func citationArguments(
         format: ExportFormat,
-        content: String,
-        zoteroStatus: ZoteroStatus,
         luaScriptPath: String?,
-        pdfBibliography: PDFBibliographyRequest
-    ) async -> CitationBuildResult {
+        pdfBibliography: PDFBibliographyRequest,
+        bibliography: BibliographyFetchResult?
+    ) -> CitationBuildResult {
         var args: [String] = []
         var tempBibURL: URL?
         var warnings: [String] = []
 
         if format == .pdf {
-            let citekeys = Array(Set(extractCitekeys(from: content)))
-            // hasPandocCitations's bracket-match is looser than a real citekey (it also
-            // matches shapes extractCitekeys correctly rejects -- `[contact me@example.com]`,
-            // `[install @scope/pkg]`, `[see bsky.app/@handle]`), so a document that opened this
-            // Zotero-check gate (hasCitations == true) can still have zero real citekeys.
-            // Skipping the fetch entirely in that case -- the same effective behavior as
-            // `hasCitations` having been false in the first place -- avoids the generic "Could
-            // not fetch bibliography data from Zotero" warning firing on a document where
-            // Zotero never actually failed at anything. A document with a REAL citekey that
-            // legitimately isn't found in Zotero is unaffected: citekeys is non-empty there, so
-            // the fetch still runs and the normal partial-resolution warning still fires below.
-            if zoteroStatus == .running && !citekeys.isEmpty {
-                let bibliography = await fetchBibliographyJSON(for: citekeys)
+            if let bibliography {
                 if let bibJSON = bibliography.json {
                     // See bibliographyWriteArguments's doc comment: the write-failure and
                     // partial-bibliography warnings are mutually exclusive by construction.

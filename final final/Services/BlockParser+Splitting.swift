@@ -400,50 +400,29 @@ private struct RawBlockSplitter {
     /// blank line before it) is flushed as its own block first, untouched by the
     /// same-line splitting below — it stays flagged by its own position, exactly as the
     /// adjacent-line guards already handle it.
-    ///
-    /// Handles ANY number of marker occurrences on the same line, not just the first.
-    /// `String.range(of:)` only ever finds the first match, so a line like
-    /// `"Entry one.<marker>Middle.<marker>Tail."` (two same-line glues stacked back to
-    /// back — e.g. from two separate accidental clicks-and-types onto the terminator's
-    /// hidden line before either one is ever cleaned up) would otherwise hand everything
-    /// from the first match onward — INCLUDING the second marker's literal text — to
-    /// `currentBlock` verbatim. That text is never re-scanned (this function only runs
-    /// once per input line), so the second marker's literal `<!-- ::auto-bibliography-end::
-    /// -->` text would live forever inside what looks like an ordinary paragraph fragment,
-    /// and can never subsequently satisfy `parse()`'s exact `trimmed == bibliographyEndMarker`
-    /// check — permanently unrecognizable. The loop below finds and splits out EVERY
-    /// occurrence: each one becomes its own marker block exactly like the single-occurrence
-    /// case, and each text segment before/between/after occurrences is handled exactly the
-    /// way a single occurrence's prefix/suffix is handled — just applied repeatedly. For
-    /// exactly one occurrence this reduces to the original single-occurrence sequence
-    /// (marker block, then prefix block if non-blank, then suffix left open in
-    /// `currentBlock`) byte-for-byte.
     /// - Returns: `true` when the line was consumed here and no later stage should see it.
     private mutating func consumeBibliographyEndMarkerGlue(line: String) -> Bool {
         guard line != BlockParser.bibliographyEndMarker,
-              line.range(of: BlockParser.bibliographyEndMarker) != nil else {
+              let markerRange = line.range(of: BlockParser.bibliographyEndMarker) else {
             return false
         }
+
+        let prefix = String(line[line.startIndex..<markerRange.lowerBound])
+        let suffix = String(line[markerRange.upperBound...])
 
         flushCurrentBlockIfNotBlank()
         inFootnoteDef = false
 
-        var remainder = Substring(line)
-        while let markerRange = remainder.range(of: BlockParser.bibliographyEndMarker) {
-            let segment = String(remainder[remainder.startIndex..<markerRange.lowerBound])
+        blocks.append(BlockParser.bibliographyEndMarker + "\n")
 
-            blocks.append(BlockParser.bibliographyEndMarker + "\n")
-            if !segment.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                blocks.append(segment + "\n")
-            }
-            remainder = remainder[markerRange.upperBound...]
+        if !prefix.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            blocks.append(prefix + "\n")
         }
-
-        if !remainder.isEmpty {
+        if !suffix.isEmpty {
             // Left open (not flushed) so a following line with no blank line before it
-            // still merges into the same paragraph as the glued trailing text, matching
+            // still merges into the same paragraph as the glued suffix text, matching
             // this splitter's normal accumulation behavior everywhere else.
-            currentBlock = String(remainder) + "\n"
+            currentBlock = suffix + "\n"
         }
         return true
     }

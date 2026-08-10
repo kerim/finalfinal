@@ -279,45 +279,6 @@ struct BibliographyTerminatorTests {
         #expect(reparsedAfter.filter { $0.isBibliography }.count == 5)
     }
 
-    @Test("Terminator appearing TWICE on the same line splits into two zero-Block terminators plus separately, correctly-unflagged paragraphs")
-    func sameLineGluedTerminatorTwiceSplitsCorrectly() throws {
-        let db = try TestFixtureFactory.createTemporary(content: TestFixtureFactory.richTestContent)
-        let pid = try TestFixtureFactory.getProjectId(from: db)
-        let existingBlocks = try TestFixtureFactory.fetchBlocks(from: db)
-        let assembled = BlockParser.assembleMarkdown(from: existingBlocks)
-
-        // Two same-line glues stacked back to back on ONE physical line — e.g. two separate
-        // accidental clicks-and-types onto the terminator's CodeMirror-hidden line before
-        // either glue is ever cleaned up. `String.range(of:)` only ever finds the FIRST
-        // occurrence, so without splitting out every occurrence, everything from the first
-        // match onward — INCLUDING the second marker's own literal text — gets swallowed
-        // verbatim into what looks like an ordinary paragraph fragment, and can never
-        // subsequently satisfy `parse()`'s exact `trimmed == bibliographyEndMarker` check.
-        let twiceGlued = assembled + "\n\n"
-            + "Entry one." + BlockParser.bibliographyEndMarker
-            + "Middle." + BlockParser.bibliographyEndMarker
-            + "Tail."
-        let reparsed = BlockParser.parse(markdown: twiceGlued, projectId: pid)
-
-        #expect(
-            !reparsed.contains { $0.markdownFragment.contains(BlockParser.bibliographyEndMarker) },
-            "Neither occurrence of the terminator may survive, whole or as a substring, inside any block's markdownFragment"
-        )
-
-        let entryOneBlock = try #require(reparsed.last { $0.markdownFragment.contains("Entry one") })
-        let middleBlock = try #require(reparsed.last { $0.markdownFragment.contains("Middle") })
-        let tailBlock = try #require(reparsed.last { $0.markdownFragment.contains("Tail") })
-        #expect(entryOneBlock.isBibliography == false, "Text before the first terminator must be unflagged")
-        #expect(middleBlock.isBibliography == false, "Text between the two terminators must be unflagged")
-        #expect(tailBlock.isBibliography == false, "Text after the second terminator must be unflagged")
-        #expect(entryOneBlock.blockType == .paragraph, "Text before the first terminator must become an ordinary paragraph")
-        #expect(middleBlock.blockType == .paragraph, "Text between the two terminators must become an ordinary paragraph")
-        #expect(tailBlock.blockType == .paragraph, "Text after the second terminator must become an ordinary paragraph")
-
-        // Neither same-line glue may disturb the real bibliography block count (heading + 4 entries).
-        #expect(reparsed.filter { $0.isBibliography }.count == 5)
-    }
-
     @Test("bibliographyEndMarker is never itself recognized as a bibliography-opening heading")
     func terminatorIsNeverRecognizedAsOpeningHeading() {
         // Regression guard for the no-substring-collision naming property: the terminator's
