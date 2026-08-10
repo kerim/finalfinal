@@ -158,7 +158,8 @@ final class BareCitationExportTests: XCTestCase {
         let resourcePaths = ExportService.ResourcePaths(
             luaScriptPath: nil,
             referenceDocPath: nil,
-            bareCitationsLuaPathOverride: Self.bareCitationsLuaPath
+            bareCitationsLuaPathOverride: Self.bareCitationsLuaPath,
+            mathSpecialCharsLuaPathOverride: nil
         )
 
         let arguments = await service.buildBaseArguments(
