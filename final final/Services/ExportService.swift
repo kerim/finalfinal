@@ -273,10 +273,12 @@ extension ExportService {
     /// real on-disk path (resolved via `#filePath`) here instead. Kept as a field on this
     /// struct rather than a new `buildBaseArguments` parameter so the function's parameter
     /// count doesn't cross SwiftLint's `function_parameter_count` threshold.
+    /// `mathSpecialCharsLuaPathOverride` is the same test seam for `bundledMathSpecialCharsLuaPath`.
     struct ResourcePaths {
         let luaScriptPath: String?
         let referenceDocPath: String?
         let bareCitationsLuaPathOverride: String?
+        let mathSpecialCharsLuaPathOverride: String?
     }
 
     /// Resolves the lua-script and reference-doc paths from settings and validates that any
@@ -306,7 +308,8 @@ extension ExportService {
         return ResourcePaths(
             luaScriptPath: luaScriptPath,
             referenceDocPath: referenceDocPath,
-            bareCitationsLuaPathOverride: nil
+            bareCitationsLuaPathOverride: nil,
+            mathSpecialCharsLuaPathOverride: nil
         )
     }
 
@@ -421,6 +424,28 @@ extension ExportService {
             // be flattened before citeproc gets a chance to render it as a broken marker.
             if let bareCitationsLuaPath = resourcePaths.bareCitationsLuaPathOverride ?? ExportService.bundledBareCitationsLuaPath {
                 arguments.append(contentsOf: ["--lua-filter", bareCitationsLuaPath])
+            }
+            // Escapes `&`/`#`/`%` inside math spans so they don't crash xelatex (or, for `%`,
+            // silently truncate the rest of the line) -- see math-special-chars.lua's header
+            // comment. Ordering relative to the other PDF-only filters IN THIS BLOCK is free:
+            // this filter only touches Math AST nodes, which none of them read or write.
+            //
+            // Ordering relative to `--citeproc` (appended later, in citationArguments/
+            // assembleFinalArguments) is a different question, and NOT free in general: citeproc
+            // can itself generate fresh Math nodes out of a bibliography field's raw LaTeX (e.g.
+            // a `.bib` entry's `title = {$x & y$}`), and this filter runs before `--citeproc` on
+            // the command line, so any math citeproc generates is never seen by it -- confirmed
+            // by direct reproduction: with a `.bib` bibliography and this exact filter order, an
+            // unescaped `&` in a title's math survives uncaught and would crash xelatex; with the
+            // filter moved to run AFTER `--citeproc` instead, it gets escaped correctly. That
+            // reproduction is NOT reachable today only because this app's actual PDF bibliography
+            // path is CSL JSON from Zotero, not `.bib` -- confirmed separately: pandoc's CSL-JSON
+            // reader always treats a `$...$` title substring as literal text (escaping the `$`
+            // itself), never as a math span, regardless of this filter's position. If that
+            // bibliography source ever changes to something that can hand citeproc raw LaTeX
+            // (e.g. a `.bib`/BibLaTeX path), this ordering would need revisiting too.
+            if let mathSpecialCharsLuaPath = resourcePaths.mathSpecialCharsLuaPathOverride ?? ExportService.bundledMathSpecialCharsLuaPath {
+                arguments.append(contentsOf: ["--lua-filter", mathSpecialCharsLuaPath])
             }
             if let floatPackagePath = ExportService.bundledFloatPackageTexPath {
                 arguments.append(contentsOf: ["--include-in-header", floatPackagePath])
