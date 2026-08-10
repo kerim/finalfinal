@@ -14,6 +14,25 @@ export const URL_REGEX = /(?:^|\s)(https?:\/\/[^\s]+)\s$/;
 // Trailing punctuation to strip (matches GitHub/Slack autolink behavior)
 const TRAILING_PUNCT = /[.,;:!?)}\]>'"]+$/;
 
+// True if appending `char` (")" or "]") to `text` would close a "("/"[" that's
+// unmatched within `text` -- i.e. the bracket is part of the URL's own content,
+// not surrounding prose punctuation. Mirrors closesUnmatchedBracket in
+// linkify-urls.lua (final final/Resources/Export/linkify-urls.lua): that filter
+// only ever sees a bare URL as a pandoc `Str` node, which this InputRule
+// pre-empts by auto-linking as the user types, so the same bracket-balance
+// check has to be duplicated here or a URL like a Wikipedia disambiguation
+// link loses its closing paren before pandoc ever runs.
+function closesUnmatchedBracket(text: string, char: ')' | ']'): boolean {
+  const open = char === ')' ? '(' : '[';
+  let opens = 0;
+  let closes = 0;
+  for (const c of text) {
+    if (c === open) opens += 1;
+    else if (c === char) closes += 1;
+  }
+  return opens > closes;
+}
+
 // Exported so tests can drive the InputRule's handler directly against a minimal
 // schema/state, without needing the full Milkdown ctx.
 export function autolinkInputRuleHandler(
@@ -28,6 +47,20 @@ export function autolinkInputRuleHandler(
   const punctMatch = url.match(TRAILING_PUNCT);
   if (punctMatch) {
     url = url.slice(0, -punctMatch[0].length);
+    // Re-absorb leading trail characters that are ")"/"]" closing an earlier
+    // unmatched "("/"[" within the URL itself, so they stay in the link target
+    // instead of being stripped as surrounding prose punctuation -- same
+    // re-absorption loop as linkify-urls.lua's Str handler.
+    let trail = punctMatch[0];
+    while (trail.length > 0) {
+      const firstChar = trail[0];
+      if ((firstChar === ')' || firstChar === ']') && closesUnmatchedBracket(url, firstChar)) {
+        url += firstChar;
+        trail = trail.slice(1);
+      } else {
+        break;
+      }
+    }
   }
 
   const linkMark = state.schema.marks.link.create({ href: url });

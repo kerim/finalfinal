@@ -164,6 +164,81 @@ describe('autolink InputRule ProseMirror wiring', () => {
     expect(linkedText).toBe(url);
   });
 
+  // Regression for a real user-reported bug: typing a Wikipedia-style URL ending in a
+  // parenthesized disambiguator (e.g. ".../wiki/Example_(disambiguation)") followed by a
+  // space auto-linked the URL with its final ")" stripped, because TRAILING_PUNCT strips any
+  // trailing ")" unconditionally. linkify-urls.lua (the PDF-export Lua filter) was fixed for
+  // this same shape of URL, but that filter only ever sees a bare URL as a pandoc `Str` node
+  // -- this InputRule auto-links the URL first, while the user is still typing, so an export
+  // of the resulting document never gave the Lua filter a bare Str to fix: it already saw a
+  // `Link` node with a pre-corrupted href. The fix has to live here too.
+  it('regression: keeps a URL-internal closing paren that balances an earlier open paren', () => {
+    const url = 'https://en.wikipedia.org/wiki/Example_(disambiguation)';
+    const { state, match, start, end } = stateForUrl(url);
+
+    const tr = autolinkInputRuleHandler(state, match, start, end);
+    expect(tr).not.toBeNull();
+    const next = state.apply(tr!);
+    const para = next.doc.firstChild;
+    expect(para?.textContent).toBe(`${url} `);
+
+    let linkedText = '';
+    para?.forEach((child) => {
+      if (link.isInSet(child.marks)) linkedText += child.text ?? '';
+    });
+    expect(linkedText).toBe(url);
+
+    const linkMark = para?.firstChild?.marks.find((m) => m.type === link);
+    expect(linkMark?.attrs.href).toBe(url);
+  });
+
+  // Same regression as above, but for the "]" branch of closesUnmatchedBracket -- the
+  // paren test only exercises the ")" branch, leaving the "[" / "]" branch unverified except
+  // by inspection. An IPv6 literal host address legitimately ends a URL in "]" (e.g.
+  // "https://[::1]"), the real-world analog of the Wikipedia-disambiguation "(...)" case.
+  it('regression: keeps a URL-internal closing bracket that balances an earlier open bracket', () => {
+    const url = 'https://[::1]';
+    const { state, match, start, end } = stateForUrl(url);
+
+    const tr = autolinkInputRuleHandler(state, match, start, end);
+    expect(tr).not.toBeNull();
+    const next = state.apply(tr!);
+    const para = next.doc.firstChild;
+    expect(para?.textContent).toBe(`${url} `);
+
+    let linkedText = '';
+    para?.forEach((child) => {
+      if (link.isInSet(child.marks)) linkedText += child.text ?? '';
+    });
+    expect(linkedText).toBe(url);
+
+    const linkMark = para?.firstChild?.marks.find((m) => m.type === link);
+    expect(linkMark?.attrs.href).toBe(url);
+  });
+
+  it('regression: still strips a prose closing paren that is not part of the URL', () => {
+    // "(see https://example.com/page)" -- the URL itself has no internal "(", so its
+    // trailing ")" is surrounding prose punctuation, not URL content, and must still be
+    // stripped. Mirrors linkify-urls.lua's TRAILING_PUNCTUATION doc comment, which uses this
+    // exact "(see https://example.com)" shape as its own worked example of the same
+    // prose-punctuation-vs-URL-content distinction.
+    const text = '(see https://example.com/page)';
+    const url = 'https://example.com/page';
+    const { state, match, start, end } = stateForUrl(text);
+
+    const tr = autolinkInputRuleHandler(state, match, start, end);
+    expect(tr).not.toBeNull();
+    const next = state.apply(tr!);
+    const para = next.doc.firstChild;
+    expect(para?.textContent).toBe(`${text} `);
+
+    let linkedText = '';
+    para?.forEach((child) => {
+      if (link.isInSet(child.marks)) linkedText += child.text ?? '';
+    });
+    expect(linkedText).toBe(url);
+  });
+
   it('regression: typing in the middle of an existing autolinked URL still picks up the link mark', () => {
     // "See " + link("https://example.com") + " now" — cursor placed strictly inside the run.
     const doc = schema.node('doc', null, [

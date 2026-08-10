@@ -103,6 +103,37 @@ final class URLWrapLinkifyFilterTests: XCTestCase {
                       "with the trailing period stripped from the href. LaTeX:\n\(latex)")
     }
 
+    /// Balanced-paren fix, positive case: a URL that legitimately ends in ")" (e.g. a Wikipedia
+    /// disambiguation link, where the "(" is part of the URL's own path) must keep that
+    /// closing paren in the link TARGET, not just in the visible text. Before the fix,
+    /// TRAILING_PUNCTUATION stripped the ")" from the href unconditionally, silently truncating
+    /// the click target while leaving the rendered text intact.
+    func testLinkifyFilter_URLWithOwnUnmatchedOpenParen_KeepsClosingParenInLinkTarget() throws {
+        let markdown = "See https://en.wikipedia.org/wiki/Example_(disambiguation) for details.\n"
+
+        let latex = try runPandocToLatex(markdown: markdown, applyLinkifyFix: true)
+
+        XCTAssertTrue(latex.contains("\\url{https://en.wikipedia.org/wiki/Example_(disambiguation)}"),
+                      "A URL whose own content has an unmatched '(' must keep the matching " +
+                      "trailing ')' in the link target. LaTeX:\n\(latex)")
+    }
+
+    /// Balanced-paren fix, negative control (no regression): a URL immediately followed by a
+    /// ")" that closes SURROUNDING markdown prose -- not part of the URL itself -- must still
+    /// have that paren stripped from the link target, exactly as before the balanced-paren fix.
+    func testLinkifyFilter_URLFollowedByProseClosingParen_StripsParenFromLinkTarget() throws {
+        let markdown = "For background (see https://example.com) for more.\n"
+
+        let latex = try runPandocToLatex(markdown: markdown, applyLinkifyFix: true)
+
+        XCTAssertTrue(latex.contains("\\url{https://example.com}"),
+                      "A URL with no unmatched '(' of its own must still have a prose-closing " +
+                      "')' stripped from the link target. LaTeX:\n\(latex)")
+        XCTAssertFalse(latex.contains("\\url{https://example.com)}"),
+                       "The surrounding prose's closing ')' must not leak into the link target. " +
+                       "LaTeX:\n\(latex)")
+    }
+
     /// Link-guard regression test: an already-linked URL (angle-bracket autolink) must not be
     /// double-wrapped into a nested link. An earlier draft of this exact filter had a real
     /// double-nesting bug from getting the `Link = function(l) return l, false end` guard wrong

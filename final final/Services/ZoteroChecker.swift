@@ -30,33 +30,24 @@ actor ZoteroChecker {
     // MARK: - Status Check
 
     /// Check if Zotero with Better BibTeX is running
-    ///
-    /// Uses `URLSession.shared` with a per-request timeout, matching every other Zotero
-    /// network call in this codebase (`ZoteroService`, `ZoteroService+CAYW`,
-    /// `ZoteroService+LibraryScope` — none of which construct their own `URLSession`). This
-    /// used to build its own ad-hoc `URLSession(configuration: .ephemeral)` instead, which is
-    /// NOT just a cosmetic difference: a custom-configured `URLSession` does not automatically
-    /// pick up classes registered via `URLProtocol.registerClass(_:)` the way `URLSession.shared`
-    /// does, so this call was silently unmockable by `MockBBTURLProtocol` (the shared test
-    /// double every other Zotero-network test in this codebase relies on) — any test exercising
-    /// this path actually hit the real, local Zotero/BBT install (or a real connection failure)
-    /// regardless of what the test intended to simulate. Switching to `URLSession.shared`
-    /// fixes that silently-broken test seam by aligning with the codebase's one established,
-    /// working pattern for testable Zotero networking.
     func check() async -> ZoteroStatus {
         guard let url = URL(string: statusEndpoint) else {
             return .error("Invalid URL")
         }
 
+        let config = URLSessionConfiguration.ephemeral
+        config.timeoutIntervalForRequest = timeoutInterval
+        config.timeoutIntervalForResource = timeoutInterval
+        let session = URLSession(configuration: config)
+
         // Minimal JSON-RPC request to check if BBT is responding
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.timeoutInterval = timeoutInterval
         request.httpBody = Data(#"{"jsonrpc":"2.0","method":"item.search","params":{"query":""},"id":1}"#.utf8)
 
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await session.data(for: request)
 
             guard let httpResponse = response as? HTTPURLResponse else {
                 return .notRunning

@@ -5,32 +5,6 @@
 
 import Foundation
 
-// MARK: - Shared citekey regex
-
-/// Single, precompiled source of truth for the span/key regex pair used to extract (and, for
-/// `ExportService.canonicalizeCitekeys`, rewrite) pandoc citekeys. Three consumers share this
-/// exact pair: `ExportService.extractCitekeys`, `BibliographySyncService.extractCitekeys`
-/// (its own copy used to be precompiled separately -- see that type's doc comment on why
-/// precompilation matters there, running on every live content change), and
-/// `ExportService.canonicalizeCitekeys`. See `ExportService.extractCitekeys`'s doc comment
-/// for the full ~40 lines of accept/reject rules these two patterns encode (rejects
-/// `[contact me@example.com]`, `[install @scope/pkg]`, `[see bsky.app/@handle]`; handles
-/// `[@key{p. 21}]`, `[see @key]`, `[-@key]`). A single shared pair keeps every consumer bound
-/// to the exact same behavior instead of three copies that could silently drift apart.
-/// Compile-time constant patterns -- a compile failure would be a programming error (a typo),
-/// not a runtime condition, matching `MarkdownUtils`'s own `try!` convention for precompiled
-/// patterns.
-enum ExportCitationRegex {
-    /// Matches each complete `[...]` bracket span.
-    // swiftlint:disable:next force_try
-    static let span = try! NSRegularExpression(pattern: #"\[[^\]]*\]"#)
-    /// Matches each `@citekey` inside a span found by `span`, capturing the key in group 1.
-    // swiftlint:disable:next force_try
-    static let key = try! NSRegularExpression(
-        pattern: #"(?<![\w/])@(?![^\]{}\s]*/)([^\]{}/,;\s]+)"#
-    )
-}
-
 // MARK: - Citation Detection
 
 extension ExportService {
@@ -101,9 +75,13 @@ extension ExportService {
     ///   follow-up, but out of scope for this round.
     func extractCitekeys(from content: String) -> [String] {
         let stripped = MarkdownUtils.stripCodeContent(from: content)
+        guard let spanRegex = try? NSRegularExpression(pattern: #"\[[^\]]*\]"#),
+              let keyRegex = try? NSRegularExpression(
+                  pattern: #"(?<![\w/])@(?![^\]{}\s]*/)([^\]{}/,;\s]+)"#)
+        else { return [] }
         let full = NSRange(stripped.startIndex..., in: stripped)
-        return ExportCitationRegex.span.matches(in: stripped, range: full).flatMap { span in
-            ExportCitationRegex.key.matches(in: stripped, range: span.range).compactMap { match in
+        return spanRegex.matches(in: stripped, range: full).flatMap { span in
+            keyRegex.matches(in: stripped, range: span.range).compactMap { match in
                 guard let r = Range(match.range(at: 1), in: stripped) else { return nil }
                 return String(stripped[r])
             }
@@ -118,34 +96,6 @@ extension ExportService {
         let json: String?
         let notFoundKeys: Set<String>
         let ambiguousKeys: Set<String>
-        /// The CSL `id` of every resolved item backing `json` that is SAFE to use as a
-        /// citekey-case rewrite target, deduped and in the same stable order `json` was
-        /// serialized in (see `fetchBibliographyJSON`'s dedupe step). Feeds
-        /// `canonicalCitekeyMap`'s collision guard — never re-derived by re-parsing `json`.
-        ///
-        /// "Safe" excludes any item whose `citation-key` field is present AND differs from its
-        /// `id` (the legacy Zotero "Extra"-field shape — see `parsePandocFilterResponseRaw`'s
-        /// doc comment). PDF's `--citeproc` matches bibliography entries by `id`, but DOCX/ODT's
-        /// `zotero.lua` does its own live BBT lookup keyed by `citation-key`, not `id`. An item
-        /// with a divergent `citation-key` can have that field differ from `id` by nothing more
-        /// than case (e.g. `citation-key: "Smith2020"`, `id: "smith2020"`) — a shape indistinguishable
-        /// from a genuine pure-case rename target by `canonicalCitekeyMap`'s rule alone. Rewriting
-        /// the document's citekey text to the `id` spelling would fix PDF but break DOCX/ODT: the
-        /// literal string zotero.lua looks up would no longer match the item's `citation-key` at
-        /// all. So such an item is dropped from `resolvedIDs` entirely -- never proposed as a
-        /// rewrite target for ANY format -- leaving both PDF and DOCX/ODT at today's
-        /// unresolved-if-miscased behavior for it, rather than fixing one format by breaking the
-        /// other.
-        let resolvedIDs: [String]
-        /// See `RawCitekeyBatchResult.rawAmbiguousKeys`'s doc comment — a plain union that
-        /// survives even when `ambiguousKeys` above gets cleared. Feeds `canonicalCitekeyMap`'s
-        /// ambiguity veto.
-        let rawAmbiguousKeys: Set<String>
-        /// See `RawCitekeyBatchResult.supportsAmbiguityReporting`'s doc comment: false whenever
-        /// this batch resolved via the `item.export` fallback (no ambiguity information of any
-        /// kind available), in which case `canonicalCitekeyMap` must never be called at all —
-        /// see `ExportService.swift`'s sequencing for where this is enforced.
-        let supportsAmbiguityReporting: Bool
     }
 
     /// Fetch bibliography as raw CSL-JSON string from Zotero/BBT for the given citekeys, for
@@ -166,72 +116,24 @@ extension ExportService {
     /// document over one bad citekey.
     func fetchBibliographyJSON(for citekeys: [String]) async -> BibliographyFetchResult {
         guard !citekeys.isEmpty else {
-            return BibliographyFetchResult(
-                json: nil, notFoundKeys: [], ambiguousKeys: [], resolvedIDs: [], rawAmbiguousKeys: [],
-                supportsAmbiguityReporting: true
-            )
+            return BibliographyFetchResult(json: nil, notFoundKeys: [], ambiguousKeys: [])
         }
 
         do {
             let batch = try await ZoteroService.shared.fetchRawItemsForCitekeys(citekeys)
             guard !batch.items.isEmpty else {
-                return BibliographyFetchResult(
-                    json: nil,
-                    notFoundKeys: batch.notFoundKeys,
-                    ambiguousKeys: batch.ambiguousKeys,
-                    resolvedIDs: [],
-                    rawAmbiguousKeys: batch.rawAmbiguousKeys,
-                    supportsAmbiguityReporting: batch.supportsAmbiguityReporting
-                )
+                return BibliographyFetchResult(json: nil, notFoundKeys: batch.notFoundKeys, ambiguousKeys: batch.ambiguousKeys)
             }
 
-            // Dedupe by CSL `id` (first occurrence wins, stable order) BEFORE serializing to
-            // JSON. Needed because the `item.export` fallback path doesn't dedupe on its own,
-            // and a document that cites the same work under two casings requests BOTH
-            // spellings in the same batch, before the citekey-case rewrite (which runs after
-            // this fetch -- see ExportService.swift's sequencing) has a chance to collapse
-            // them to one. Without this, the same work could appear twice in the PDF
-            // reference list.
-            var seenIDs = Set<String>()
-            var dedupedItems: [[String: Any]] = []
-            dedupedItems.reserveCapacity(batch.items.count)
-            for item in batch.items {
-                guard let id = item["id"] as? String else {
-                    dedupedItems.append(item)
-                    continue
-                }
-                guard seenIDs.insert(id).inserted else { continue }
-                dedupedItems.append(item)
-            }
-
-            let data = try JSONSerialization.data(withJSONObject: dedupedItems)
+            let data = try JSONSerialization.data(withJSONObject: batch.items)
             return BibliographyFetchResult(
                 json: String(data: data, encoding: .utf8),
                 notFoundKeys: batch.notFoundKeys,
-                ambiguousKeys: batch.ambiguousKeys,
-                // See BibliographyFetchResult.resolvedIDs's doc comment: an item whose
-                // citation-key diverges from its id (even by case alone) is never a safe
-                // rewrite target -- DOCX/ODT's zotero.lua looks items up by citation-key, not
-                // id, so rewriting the document's citekey text to the id spelling would break
-                // that lookup for this item even though it fixes PDF's --citeproc matching.
-                resolvedIDs: dedupedItems.compactMap { item -> String? in
-                    guard let id = item["id"] as? String else { return nil }
-                    if let citationKey = item["citation-key"] as? String, citationKey != id {
-                        return nil
-                    }
-                    return id
-                },
-                rawAmbiguousKeys: batch.rawAmbiguousKeys,
-                supportsAmbiguityReporting: batch.supportsAmbiguityReporting
+                ambiguousKeys: batch.ambiguousKeys
             )
         } catch {
             DebugLog.log(.fileOps, "[ExportService] Failed to fetch bibliography JSON: \(error)")
-            // Unknown failure -- treat as "ambiguity information not available" so the caller
-            // never proposes a rewrite off a batch we know nothing about.
-            return BibliographyFetchResult(
-                json: nil, notFoundKeys: [], ambiguousKeys: [], resolvedIDs: [], rawAmbiguousKeys: [],
-                supportsAmbiguityReporting: false
-            )
+            return BibliographyFetchResult(json: nil, notFoundKeys: [], ambiguousKeys: [])
         }
     }
 
@@ -320,98 +222,6 @@ extension ExportService {
             parts.append("ambiguous: \(ambiguous.sorted().joined(separator: ", "))")
         }
         return "Some citations could not be resolved and were omitted from the bibliography (\(parts.joined(separator: "; ")))."
-    }
-
-    // MARK: - Citekey case canonicalization
-
-    /// Propose a `requested -> canonical` rewrite map for citekeys whose exact spelling
-    /// differs ONLY in case from a citekey Zotero/BBT actually resolved (an item's CSL `id`
-    /// field in `resolvedIDs` — never `citation-key`, which can diverge from `id` for a
-    /// legacy Zotero "Extra" field shape; see `parsePandocFilterResponseRaw`'s doc comment).
-    /// This is the mechanism behind rewriting a miscased citation (`[@smith2020]` when the
-    /// document elsewhere also cites `[@Smith2020]`) so it resolves in the exported PDF's
-    /// case-sensitive `--citeproc` matching and in DOCX/ODT's `zotero.lua`, which does its own
-    /// live BBT lookup keyed by the exact literal citekey string.
-    ///
-    /// A rename `requested -> canonical` is proposed only when ALL of:
-    /// 1. `requested` and `canonical` are case-folds of each other but not identical -- a
-    ///    PURE case difference. This is what protects the legacy-Extra-field shape: if a
-    ///    citekey's resolved `id` differs from `requested` for some unrelated reason (not a
-    ///    case fold), no rename is proposed for it, and `citation-key` is never consulted at
-    ///    all -- renames are always pinned to `id`.
-    /// 2. `requested` is not in `rawAmbiguousKeys` -- never rename off an arbitrary winner
-    ///    among 2+ real BBT matches for the exact spelling requested.
-    /// 3. Collision guard: `resolvedIDs` is grouped by its lowercased fold; any fold-group
-    ///    with 2+ DISTINCT ids is dropped from consideration entirely, so two genuinely
-    ///    different works whose ids happen to differ only by case are never merged into one
-    ///    canonical spelling.
-    nonisolated static func canonicalCitekeyMap(
-        requested: [String],
-        resolvedIDs: [String],
-        rawAmbiguousKeys: Set<String>
-    ) -> [String: String] {
-        // Group resolved ids by lowercased fold. A fold-group with 2+ DISTINCT ids means two
-        // real, different works differ only by case -- never safe to canonicalize onto either.
-        var idsByFold: [String: Set<String>] = [:]
-        for id in resolvedIDs {
-            idsByFold[id.lowercased(), default: []].insert(id)
-        }
-
-        var map: [String: String] = [:]
-        for key in requested {
-            guard !rawAmbiguousKeys.contains(key) else { continue }
-            guard let idsInFold = idsByFold[key.lowercased()],
-                  idsInFold.count == 1,
-                  let canonical = idsInFold.first,
-                  canonical != key
-            else { continue }
-            map[key] = canonical
-        }
-        return map
-    }
-
-    /// Rewrite every citekey occurrence in `content` that matches a `map` key to its
-    /// canonical spelling. Returns `content` unchanged when `map` is empty.
-    ///
-    /// Implementation: mask out code fences/inline code via `MarkdownUtils.maskCodeContent`
-    /// (offset-preserving), scan the MASK with the shared `ExportCitationRegex` span/key
-    /// pattern pair to find every `@key` match whose captured text is a `map` key, then apply
-    /// the replacements to the ORIGINAL `content` in REVERSE document order (last match
-    /// first).
-    ///
-    /// Reverse order is load-bearing for two independent reasons:
-    /// 1. Masking is only offset-safe for READING (finding where each match is) -- once an
-    ///    edit is applied, it shifts every later offset unless replacements are applied
-    ///    back-to-front.
-    /// 2. "Differs only in case" does NOT guarantee equal length: a Turkish İ (U+0130)
-    ///    lowercases to a two-UTF-16-unit sequence, so a length-changing replacement earlier
-    ///    in the document would corrupt every subsequent match's offset if applied forward.
-    func canonicalizeCitekeys(in content: String, using map: [String: String]) -> String {
-        guard !map.isEmpty else { return content }
-
-        let masked = MarkdownUtils.maskCodeContent(in: content)
-        let nsContent = content as NSString
-        let full = NSRange(location: 0, length: (masked as NSString).length)
-
-        var replacements: [(range: NSRange, replacement: String)] = []
-        for span in ExportCitationRegex.span.matches(in: masked, range: full) {
-            for match in ExportCitationRegex.key.matches(in: masked, range: span.range) {
-                let keyRange = match.range(at: 1)
-                guard keyRange.location != NSNotFound else { continue }
-                let keyText = nsContent.substring(with: keyRange)
-                guard let canonical = map[keyText] else { continue }
-                replacements.append((keyRange, canonical))
-            }
-        }
-
-        guard !replacements.isEmpty else { return content }
-
-        var result = content
-        for (range, replacement) in replacements.sorted(by: { $0.range.location > $1.range.location }) {
-            guard let swiftRange = Range(range, in: result) else { continue }
-            result.replaceSubrange(swiftRange, with: replacement)
-        }
-        return result
     }
 
     /// Strip annotation HTML comments from markdown content

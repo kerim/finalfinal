@@ -48,16 +48,6 @@ struct PandocFilterRawOutcome {
     /// Citekeys with 2+ matches in the libraries this call queried — exists identically in
     /// more than one library, so which one the user meant can't be determined.
     var ambiguousKeys: Set<String>
-    /// Same source as `ambiguousKeys` (BBT `errors` entries with count >= 2) at the point
-    /// `parsePandocFilterResponseRaw` populates both, but tracked SEPARATELY from there on:
-    /// `mergeRawOutcomes` intersects `ambiguousKeys` against the still-unresolved key set (so
-    /// a spurious per-spelling miss can be cleared once some other casing of the same citekey
-    /// resolves — see that function's doc comment), while `rawAmbiguousKeys` is only ever
-    /// UNIONED, never intersected or cleared. This gives `ExportService.canonicalCitekeyMap`
-    /// an ambiguity signal that survives the clearing `ambiguousKeys` is deliberately subject
-    /// to, so it never proposes a citekey-case rewrite off an arbitrary winner among 2+ real
-    /// BBT matches for the exact spelling requested.
-    var rawAmbiguousKeys: Set<String> = []
 }
 
 extension ZoteroService {
@@ -204,12 +194,7 @@ extension ZoteroService {
             }
         }
 
-        return PandocFilterRawOutcome(
-            items: items,
-            notFoundKeys: notFoundKeys,
-            ambiguousKeys: ambiguousKeys,
-            rawAmbiguousKeys: ambiguousKeys
-        )
+        return PandocFilterRawOutcome(items: items, notFoundKeys: notFoundKeys, ambiguousKeys: ambiguousKeys)
     }
 
     /// Parse a raw `user.groups` JSON-RPC response body into a flat list of library IDs.
@@ -276,25 +261,16 @@ extension ZoteroService {
 
         var ambiguousKeys = personal.ambiguousKeys
         var notFoundKeys = personal.notFoundKeys
-        var rawAmbiguousKeys = personal.rawAmbiguousKeys
         if let groups {
             ambiguousKeys.formUnion(groups.ambiguousKeys)
             notFoundKeys.formUnion(groups.notFoundKeys)
-            rawAmbiguousKeys.formUnion(groups.rawAmbiguousKeys)
         }
         notFoundKeys.subtract(ambiguousKeys)
 
         return PandocFilterRawOutcome(
             items: resolved,
             notFoundKeys: notFoundKeys.intersection(unresolved),
-            ambiguousKeys: ambiguousKeys.intersection(unresolved),
-            // Plain union — never intersected against `unresolved`, never cleared. See
-            // `rawAmbiguousKeys`'s doc comment: this is what lets a case-insensitive citekey
-            // rewrite still veto off a genuine 2+-match ambiguity even on the branch where
-            // `ambiguousKeys` itself gets cleared (e.g. `resolveRawViaPandocFilter`'s
-            // fully-resolved-after-phase-1 early return, which calls this with `unresolved`
-            // empty).
-            rawAmbiguousKeys: rawAmbiguousKeys
+            ambiguousKeys: ambiguousKeys.intersection(unresolved)
         )
     }
 
@@ -406,46 +382,6 @@ extension ZoteroService {
     /// already-resolved items are kept — the still-unresolved keys are simply reported as
     /// not-found rather than discarding phase 1's work or forcing the caller to re-run the
     /// fallback against the full original citekey list.
-    ///
-    /// Even when everything is resolved after phase 1 alone (`stillUnresolved` empty), the
-    /// result is still routed through `mergeRawOutcomes` rather than returned as `personalOutcome`
-    /// directly. Reason: this app treats a citekey as a case-insensitive identity everywhere else
-    /// (getItem/hasItem/getItems, `mergeRawOutcomes` itself for the phase-1+phase-2 merge, the
-    /// offline `loadItem` cache — see their doc comments), and this branch is the one place that
-    /// policy wasn't yet being enforced. BBT itself only writes a citekey into `errors` when that
-    /// exact spelling case-SENSITIVELY matched nothing on its own — which is a genuine miss, not
-    /// a BBT bug or a stale/spurious report, and only surfaces at all when BBT's own
-    /// "case-insensitive citekeys" preference is OFF. So when a document cites the same
-    /// reference under two spellings (e.g. `[@Smith2020]` and `[@smith2020]`), BBT's response can
-    /// legitimately contain both a resolved item (for whichever spelling matched) AND an `errors`
-    /// entry for the other, genuinely-non-matching spelling — that key's own lowercased form IS
-    /// present among the resolved items, so `stillUnresolved` (computed case-insensitively, just
-    /// above) correctly comes up empty, but `personalOutcome`'s raw `notFoundKeys`/`ambiguousKeys`
-    /// still contain that per-spelling miss verbatim. Returning `personalOutcome` as-is would
-    /// surface a "not found in any library" error for a citekey identity that, under this app's
-    /// own case-insensitive policy, did resolve and cache correctly. `mergeRawOutcomes` enforces
-    /// that policy the same way it already does for the phase-1+phase-2 merge: it intersects
-    /// `notFoundKeys`/`ambiguousKeys` against the (case-insensitively computed) set of keys that
-    /// are actually still unresolved, which is empty here — clearing the per-spelling miss. Do
-    /// NOT "optimize" this back to `return personalOutcome`; that reintroduces the bug.
-    ///
-    /// Two limits of this, both intentional and neither requiring a fix:
-    /// - This only helps when SOME spelling of the citekey resolved within the same batch (in
-    ///   practice, the same document — `fetchRawItemsForCitekeys` sends every distinct citekey
-    ///   string found in one document in a single call). A document citing ONLY the miscased
-    ///   spelling, with no correctly-cased citation anywhere else in it, still correctly reports
-    ///   not-found — there is no other spelling in the batch to resolve against, so this is
-    ///   honest, unchanged behavior, not a gap.
-    /// - The intersection above clears `notFoundKeys` AND `ambiguousKeys` wholesale on this
-    ///   branch, not selectively per-key. Consequence: if a key BBT reported as genuinely
-    ///   ambiguous (2+ real matches) happens to case-fold to the same string as a separately-
-    ///   resolving spelling elsewhere in the same batch, its ambiguity warning is cleared here
-    ///   too, even though the ambiguity itself was real. Judged an acceptable trade-off for the
-    ///   same reason as the not-found case above: this app's citekey identity is case-insensitive
-    ///   everywhere else, and a case-fold match is exactly the situation this branch exists to
-    ///   handle. (A genuinely-ambiguous key with no other spelling anywhere in the batch cannot
-    ///   reach this branch at all — its lowercased form wouldn't be present among the resolved
-    ///   items, so `stillUnresolved` above would be non-empty and phase 2 would run instead.)
     func resolveRawViaPandocFilter(_ requested: [String]) async throws -> PandocFilterRawOutcome {
         let personalOutcome = try await performPandocFilterRequestRaw(
             citekeys: requested, libraryIDs: [Self.personalLibraryID]
@@ -455,7 +391,7 @@ extension ZoteroService {
         let stillUnresolved = requested.filter { !resolvedLower.contains($0.lowercased()) }
 
         guard !stillUnresolved.isEmpty else {
-            return Self.mergeRawOutcomes(requested: requested, personal: personalOutcome, groups: nil)
+            return personalOutcome
         }
 
         var groupOutcome: PandocFilterRawOutcome?
@@ -498,11 +434,7 @@ extension ZoteroService {
     /// the returned `RawCitekeyBatchResult` instead. Still throws for real transport/cancellation
     /// failures — those fall back to `fetchRawItemsForCitekeysViaExport` as before.
     func fetchRawItemsForCitekeys(_ citekeys: [String]) async throws -> RawCitekeyBatchResult {
-        guard !citekeys.isEmpty else {
-            return RawCitekeyBatchResult(
-                items: [], notFoundKeys: [], ambiguousKeys: [], rawAmbiguousKeys: [], supportsAmbiguityReporting: true
-            )
-        }
+        guard !citekeys.isEmpty else { return RawCitekeyBatchResult(items: [], notFoundKeys: [], ambiguousKeys: []) }
         let requested = Self.orderedUniqueCitekeys(citekeys)
 
         let outcome: PandocFilterRawOutcome
@@ -523,9 +455,7 @@ extension ZoteroService {
         return RawCitekeyBatchResult(
             items: Array(outcome.items.values),
             notFoundKeys: outcome.notFoundKeys,
-            ambiguousKeys: outcome.ambiguousKeys,
-            rawAmbiguousKeys: outcome.rawAmbiguousKeys,
-            supportsAmbiguityReporting: true
+            ambiguousKeys: outcome.ambiguousKeys
         )
     }
 
@@ -541,19 +471,8 @@ extension ZoteroService {
     /// via `unresolvedKeys` so a citekey that only fails via this fallback is still reported,
     /// instead of vanishing with zero warning (which would recreate the exact bug this fix
     /// addresses).
-    ///
-    /// `rawAmbiguousKeys` is always empty on every return path below: `item.export` has no
-    /// ambiguity concept at all (it just returns whatever it matched, silently, with no error
-    /// list to derive an ambiguity signal from). `supportsAmbiguityReporting` is `false` on
-    /// every return path below for the same reason — see that field's doc comment: this is
-    /// what disables `ExportService`'s citekey-case rewrite entirely on this fallback path,
-    /// rather than leaving it to rely on an ambiguity veto that has nothing to veto with here.
     fileprivate func fetchRawItemsForCitekeysViaExport(_ citekeys: [String]) async throws -> RawCitekeyBatchResult {
-        guard !citekeys.isEmpty else {
-            return RawCitekeyBatchResult(
-                items: [], notFoundKeys: [], ambiguousKeys: [], rawAmbiguousKeys: [], supportsAmbiguityReporting: false
-            )
-        }
+        guard !citekeys.isEmpty else { return RawCitekeyBatchResult(items: [], notFoundKeys: [], ambiguousKeys: []) }
         guard let url = URL(string: "\(baseURL)/better-bibtex/json-rpc") else {
             throw ZoteroError.invalidResponse("Invalid URL")
         }
@@ -581,10 +500,7 @@ extension ZoteroService {
 
         if let resultString = jsonObj["result"] as? String {
             if resultString.isEmpty {
-                return RawCitekeyBatchResult(
-                    items: [], notFoundKeys: Set(citekeys), ambiguousKeys: [], rawAmbiguousKeys: [],
-                    supportsAmbiguityReporting: false
-                )
+                return RawCitekeyBatchResult(items: [], notFoundKeys: Set(citekeys), ambiguousKeys: [])
             }
             guard let resultData = resultString.data(using: .utf8),
                   let parsed = try JSONSerialization.jsonObject(with: resultData) as? [[String: Any]] else {
@@ -595,9 +511,7 @@ extension ZoteroService {
             return RawCitekeyBatchResult(
                 items: parsed,
                 notFoundKeys: Self.unresolvedKeys(requested: citekeys, resolvedItems: parsed),
-                ambiguousKeys: [],
-                rawAmbiguousKeys: [],
-                supportsAmbiguityReporting: false
+                ambiguousKeys: []
             )
         } else if let resultArray = jsonObj["result"] as? [[String: Any]] {
             isConnected = true
@@ -605,9 +519,7 @@ extension ZoteroService {
             return RawCitekeyBatchResult(
                 items: resultArray,
                 notFoundKeys: Self.unresolvedKeys(requested: citekeys, resolvedItems: resultArray),
-                ambiguousKeys: [],
-                rawAmbiguousKeys: [],
-                supportsAmbiguityReporting: false
+                ambiguousKeys: []
             )
         } else if let error = jsonObj["error"] as? [String: Any], let message = error["message"] as? String {
             throw ZoteroError.invalidResponse("BBT error: \(message)")
@@ -626,25 +538,4 @@ struct RawCitekeyBatchResult {
     let items: [[String: Any]]
     let notFoundKeys: Set<String>
     let ambiguousKeys: Set<String>
-    /// See `PandocFilterRawOutcome.rawAmbiguousKeys`'s doc comment: a plain union, never
-    /// intersected/cleared the way `ambiguousKeys` can be. Always empty on the
-    /// `fetchRawItemsForCitekeysViaExport` fallback path — `item.export` has no ambiguity
-    /// concept to derive it from.
-    let rawAmbiguousKeys: Set<String>
-    /// True when this batch resolved via `item.pandoc_filter` (`fetchRawItemsForCitekeys`'s
-    /// own success path), which reports real per-key ambiguity information (`rawAmbiguousKeys`
-    /// above is trustworthy). False when this batch resolved via the `item.export` fallback
-    /// (`fetchRawItemsForCitekeysViaExport`), which has NO ambiguity concept at all — not
-    /// "reports zero ambiguous keys," but structurally incapable of reporting any, ever. An
-    /// empty `rawAmbiguousKeys` on that path means "no information," not "verified
-    /// unambiguous," so a caller using `rawAmbiguousKeys` as a veto (see
-    /// `ExportService.canonicalCitekeyMap`) must not trust it there: two genuinely different
-    /// references sharing a citekey except for case, with only one of them ever requested in
-    /// this batch, would resolve via the fallback to one arbitrary match with zero error
-    /// signal — the collision guard can't help either, since the OTHER reference was never
-    /// requested/seen. This flag exists so the caller can refuse to build ANY rewrite map at
-    /// all on the fallback path, rather than relying on an ambiguity veto that is silently
-    /// inert there. See `ExportService.swift`'s citekey-canonicalization sequencing for where
-    /// this is enforced.
-    let supportsAmbiguityReporting: Bool
 }
