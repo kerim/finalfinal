@@ -17,6 +17,8 @@ enum ExportError: Error, LocalizedError {
     case tempFileCreationFailed
     case invalidOutputPath
     case noContent
+    case zoteroRequiredForCitations(format: ExportFormat, zoteroStatus: ZoteroStatus)
+    case citationFilterFailed(format: ExportFormat)
 
     var errorDescription: String? {
         switch self {
@@ -34,6 +36,19 @@ enum ExportError: Error, LocalizedError {
             return "Invalid output file path"
         case .noContent:
             return "No content to export"
+        case .zoteroRequiredForCitations(let format, let zoteroStatus):
+            // Per-status reason (e.g. "Zotero is not running" vs. "Better BibTeX is not
+            // installed"), not a single generic message -- see zoteroPreflightReason's doc
+            // comment. This is a defense-in-depth backstop: ExportViewModel intercepts this
+            // specific case before it reaches any generic error alert, so in practice the
+            // user sees the ViewModel's own (identically-sourced) wording instead.
+            let reason = ExportService.zoteroPreflightReason(for: zoteroStatus)
+            return "This document has citations, and \(format.displayName) export needs Zotero " +
+                "to resolve them. \(reason) Resolve this, then try exporting again."
+        case .citationFilterFailed(let format):
+            return "The citation processor failed while exporting to \(format.displayName). " +
+                "Try again, and if this keeps happening, make sure Zotero and Better BibTeX are " +
+                "working correctly."
         }
     }
 }
@@ -81,11 +96,6 @@ extension ExportService {
         await pandocLocator.locate()
     }
 
-    /// Check Zotero status
-    func checkZotero() async -> ZoteroStatus {
-        await zoteroChecker.check()
-    }
-
     /// Refresh Pandoc status (clear cache and re-check)
     func refreshPandocStatus() async -> PandocStatus {
         await pandocLocator.clearCache()
@@ -114,6 +124,147 @@ extension ExportService {
         return MarkdownUtils.stripHighlightMarkers(from: result)
     }
 
+    // MARK: - Export Preflight
+
+    /// True when an export must hard-stop rather than proceed: a non-PDF (DOCX/ODT) export
+    /// whose content has citations, where a Zotero lua filter is configured
+    /// (`luaScriptPath != nil`), but Zotero is not reachable (`zoteroStatus != .running`).
+    ///
+    /// PDF is excluded unconditionally -- PDF resolves citations via `--citeproc` and a
+    /// fetched bibliography JSON, not the lua filter, and already degrades gracefully (see
+    /// `citationArguments`'s PDF branch and its warnings) rather than crashing. DOCX/ODT feed
+    /// the lua filter a live JSON-RPC call to Better BibTeX with no fallback; when Zotero is
+    /// unreachable that filter either emits broken citations or -- observed in the field --
+    /// pandoc exits 83. A hard stop with a clear prompt replaces that crash/silent-degrade.
+    ///
+    /// Pure and side-effect-free by design so it can be exercised directly by tests (see
+    /// `ExportZoteroPreflightTests.swift`) across every format x hasCitations x luaScriptPath x
+    /// zoteroStatus combination without needing a live Zotero connection or a real export run.
+    /// Not actor-isolated (a `static func`, not an instance method) so `ExportViewModel` can
+    /// call it synchronously from `@MainActor` to decide whether to show the hard-stop alert
+    /// before an export is even attempted, using the same logic `export()` itself enforces.
+    static func requiresZoteroForExport(
+        format: ExportFormat,
+        hasCitations: Bool,
+        luaScriptPath: String?,
+        zoteroStatus: ZoteroStatus
+    ) -> Bool {
+        format != .pdf && hasCitations && luaScriptPath != nil && zoteroStatus != .running
+    }
+
+    /// Maps a pandoc failure to a friendly "citation filter failed" error when it's plausibly
+    /// caused by the Zotero lua filter, rather than surfacing the raw
+    /// `"Pandoc failed with exit code 83: <lua traceback>"` message. Returns nil (leave the
+    /// original error alone) for every other case.
+    ///
+    /// This covers a gap `requiresZoteroForExport` cannot: Zotero can be reachable at the
+    /// moment the pre-flight probe runs, then fail specifically while zotero.lua processes
+    /// THIS document's citations (a Better BibTeX RPC error mid-export, a malformed citekey,
+    /// etc.) -- pandoc surfaces a Lua runtime error as exit code 83. Deliberately does NOT
+    /// word this as "Zotero is not running" (the probe just confirmed it was) -- see
+    /// `ExportError.citationFilterFailed`'s message.
+    ///
+    /// `luaScriptPath != nil` (not `hasCitations`) is the condition, matching exactly how the
+    /// review described this gap ("a non-PDF export with a lua filter configured") and keeping
+    /// this pure and testable without needing to re-derive whether the filter was actually
+    /// attached to this particular pandoc invocation.
+    static func citationFilterErrorIfApplicable(
+        exitCode: Int,
+        format: ExportFormat,
+        luaScriptPath: String?
+    ) -> ExportError? {
+        guard exitCode == 83, format != .pdf, luaScriptPath != nil else { return nil }
+        return .citationFilterFailed(format: format)
+    }
+
+    /// Result of `zoteroPreflight`: the Zotero status this preflight determined -- a real
+    /// check if the document has citations, `.running` (no check needed) if it doesn't --
+    /// plus whether that status means the export would currently hit the Zotero-required hard
+    /// stop, plus whether the document has real citations at all.
+    ///
+    /// `zoteroStatus` is returned on every outcome, not just the blocked one, so a caller that
+    /// goes on to call `export()` can forward it via `export()`'s `precomputedZoteroStatus`
+    /// parameter regardless of whether this preflight blocked the export -- eliminating the
+    /// second, redundant Zotero network round-trip that would otherwise happen on the common
+    /// path (Zotero reachable, document has citations): before `precomputedZoteroStatus`
+    /// existed, `zoteroPreflight` checked Zotero once to decide whether to show the save panel,
+    /// and then `export()` checked it again from scratch right after the user picked a save
+    /// location.
+    ///
+    /// `hasCitations` is the STRICT citekey check (same as `isBlocked`'s inputs, not the loose
+    /// `hasPandocCitations` regex) -- it's what lets `ExportViewModel.savePanelDecision` decide
+    /// whether a PDF export should show the degraded-citations warning at all: a document whose
+    /// only bracketed text is a false-positive shape (e.g. an email address) must never trigger
+    /// that warning, exactly as it must never trigger the DOCX/ODT hard stop.
+    struct ZoteroPreflightResult: Sendable {
+        let zoteroStatus: ZoteroStatus
+        let isBlocked: Bool
+        let hasCitations: Bool
+    }
+
+    /// Ask whether calling `export()` with this content/format/settings would currently hit
+    /// the Zotero-required hard stop (`requiresZoteroForExport`) -- WITHOUT running Pandoc,
+    /// writing any temp files, or requiring a destination URL at all. Exists so
+    /// `ExportViewModel` can decide whether to show a Zotero alert *before* ever presenting the
+    /// save panel, for every export format including PDF: previously the save panel appeared,
+    /// the user picked a filename and clicked Save, and only THEN did `export()` throw (or, for
+    /// PDF, only then did a separate post-panel probe run) -- wasting the user's time on a save
+    /// location that might never get used. See `ExportViewModel.savePanelDecision`'s doc
+    /// comment for the full history.
+    ///
+    /// Reuses the exact same preprocessing (`preprocessContentForExport`), citation detection
+    /// (`hasPandocCitations`/`extractCitekeys`), resource-path resolution
+    /// (`resolveAndValidateResourcePaths`), and `requiresZoteroForExport` gate that `export()`
+    /// itself uses below -- the same single source of truth `requiresZoteroForExport`'s
+    /// original extraction established -- so this preflight can never disagree with what
+    /// `export()` will actually do for the same inputs. `isBlocked` is always `false` for PDF
+    /// (`requiresZoteroForExport` excludes it unconditionally), so PDF can only ever reach
+    /// `ExportViewModel`'s `.warnDegraded` outcome, never `.blockedByZotero`.
+    ///
+    /// The narrow race where Zotero disappears between this preflight call and the real export
+    /// is NOT covered by a second check inside `export()` for DOCX/ODT -- when a caller
+    /// forwards this preflight's result via `export()`'s `precomputedZoteroStatus` (as
+    /// `ExportViewModel` does for the DOCX/ODT path), `export()` uses that value verbatim
+    /// instead of re-checking, by design, to avoid a redundant network round-trip. That race is
+    /// instead covered by an already-existing, different mechanism further down this file:
+    /// `citationFilterErrorIfApplicable` maps the pandoc exit-83 failure that a now-unreachable
+    /// Zotero's lua filter would actually produce into the friendly `citationFilterFailed`
+    /// error, so the export still fails with a clear message rather than a raw pandoc
+    /// traceback -- it just isn't caught this early anymore. PDF, by contrast, deliberately does
+    /// NOT forward this preflight's status into `export()` -- see
+    /// `ExportViewModel.showExportPanel`'s doc comment -- so a user who starts Zotero and clicks
+    /// "Continue Export" after seeing the warning gets export()'s own fresh check, not this
+    /// stale pre-panel one.
+    ///
+    /// Propagates `luaScriptNotFound`/`referenceDocNotFound` exactly as
+    /// `resolveAndValidateResourcePaths` would if a configured resource path is missing on
+    /// disk -- these are a *different* doomed-export condition than the Zotero one, so a caller
+    /// should surface them the same way (before ever showing the save panel), not fold them
+    /// into "not blocked by Zotero, proceed". In practice this can only fire for DOCX/ODT: PDF's
+    /// reference-doc path is hardcoded `nil` and its lua-script validation is guarded to
+    /// non-PDF formats, so `resolveAndValidateResourcePaths` never throws for PDF.
+    func zoteroPreflight(
+        content: String,
+        format: ExportFormat,
+        settings: ExportSettings
+    ) async throws -> ZoteroPreflightResult {
+        let processedContent = preprocessContentForExport(content, settings: settings)
+        let hasCitations = hasPandocCitations(in: processedContent)
+        let zoteroStatus: ZoteroStatus = hasCitations
+            ? await zoteroChecker.check()
+            : .running
+        let resourcePaths = try resolveAndValidateResourcePaths(format: format, settings: settings)
+        let hasRealCitations = !extractCitekeys(from: processedContent).isEmpty
+
+        let isBlocked = Self.requiresZoteroForExport(
+            format: format,
+            hasCitations: hasRealCitations,
+            luaScriptPath: resourcePaths.luaScriptPath,
+            zoteroStatus: zoteroStatus
+        )
+        return ZoteroPreflightResult(zoteroStatus: zoteroStatus, isBlocked: isBlocked, hasCitations: hasRealCitations)
+    }
+
     // MARK: - Export
 
     /// Export markdown content to the specified format
@@ -122,13 +273,20 @@ extension ExportService {
     ///   - outputURL: Destination file URL
     ///   - format: Export format (docx, pdf, odt)
     ///   - settings: Export settings
+    ///   - precomputedZoteroStatus: When non-nil, used as-is instead of checking Zotero again
+    ///     here. Lets a caller that already ran `zoteroPreflight` (as `ExportViewModel` does
+    ///     for DOCX/ODT) forward the status it already obtained, instead of this function
+    ///     repeating the same network round-trip a second time right after the save panel
+    ///     closes. `nil` (the default) preserves the original behavior -- check now -- so every
+    ///     other caller of `export()` is unaffected.
     /// - Returns: ExportResult with details
     func export(
         content: String,
         to outputURL: URL,
         format: ExportFormat,
         settings: ExportSettings,
-        projectURL: URL? = nil
+        projectURL: URL? = nil,
+        precomputedZoteroStatus: ZoteroStatus? = nil
     ) async throws -> ExportResult {
 
         // Validate content
@@ -146,16 +304,39 @@ extension ExportService {
             throw ExportError.pandocNotFound
         }
 
-        // Only check Zotero if content appears to have citations
+        // Only check Zotero if content appears to have citations -- unless the caller already
+        // did (see `precomputedZoteroStatus`'s doc comment above).
         let hasCitations = hasPandocCitations(in: processedContent)
         // Zotero status only matters for citation processing
         // When no citations, .running means "no issue" (status is irrelevant)
-        let zoteroStatus: ZoteroStatus = hasCitations
-            ? await zoteroChecker.check()
-            : .running
+        let zoteroStatus: ZoteroStatus
+        if let precomputedZoteroStatus {
+            zoteroStatus = precomputedZoteroStatus
+        } else {
+            zoteroStatus = hasCitations ? await zoteroChecker.check() : .running
+        }
 
         // Get and validate resource paths (lua filter, reference doc)
         let resourcePaths = try resolveAndValidateResourcePaths(format: format, settings: settings)
+
+        // Hard stop -- before any temp file or pandoc invocation -- rather than let a
+        // DOCX/ODT export run its lua filter against an unreachable Zotero (pandoc exit 83)
+        // or silently emit unresolved citations. See requiresZoteroForExport's doc comment.
+        //
+        // Uses the strict citekey extractor here, NOT the loose `hasCitations` above:
+        // `hasPandocCitations`'s regex also matches non-citation shapes like
+        // `[contact me@example.com]` or `[install @scope/pkg]` (see extractCitekeys's doc
+        // comment), and a document with zero real citekeys must never be hard-blocked just
+        // because it happens to contain one of those shapes.
+        let hasRealCitations = !extractCitekeys(from: processedContent).isEmpty
+        guard !Self.requiresZoteroForExport(
+            format: format,
+            hasCitations: hasRealCitations,
+            luaScriptPath: resourcePaths.luaScriptPath,
+            zoteroStatus: zoteroStatus
+        ) else {
+            throw ExportError.zoteroRequiredForCitations(format: format, zoteroStatus: zoteroStatus)
+        }
 
         // Create temp files
         let tempDir = FileManager.default.temporaryDirectory
@@ -176,7 +357,7 @@ extension ExportService {
         var warnings: [String] = []
 
         // For PDF export, convert unsupported images (WebP, HEIC, etc.) to PNG
-        var pdfPrep = try prepareContentForPDFIfNeeded(
+        let pdfPrep = try prepareContentForPDFIfNeeded(
             format: format,
             content: processedContent,
             projectURL: projectURL,
@@ -185,63 +366,6 @@ extension ExportService {
         processedContent = pdfPrep.content
         artifacts.tempMediaDir = pdfPrep.tempMediaDir
         warnings.append(contentsOf: pdfPrep.warnings)
-
-        // Citekey case canonicalization: rewrite any citekey spelling that differs only in
-        // case from the citekey Zotero/BBT actually resolved, so PDF's `--citeproc` (which
-        // matches CSL-JSON case-sensitively) and DOCX/ODT's `zotero.lua` (which does its own
-        // live BBT lookup keyed by the exact literal citekey text) both see the identical
-        // string. MUST run after the PDF image-prep block above (which does its own file
-        // rewrite -- an earlier canonicalization would be silently overwritten by it) and
-        // BEFORE `buildBaseArguments` below (whose PDF branch reads `pdfPrep.content` for
-        // font-argument detection) and `citationArguments` (which needs the fetched
-        // bibliography to build `--citeproc`/`--bibliography` args without fetching again).
-        let citekeys = Array(Set(extractCitekeys(from: processedContent)))
-        var bibliographyForCitations: BibliographyFetchResult?
-        if hasCitations, zoteroStatus == .running, !citekeys.isEmpty {
-            // One fetch, shared by both the citekey-case rewrite below (all formats) and
-            // `citationArguments`'s PDF-only `--citeproc`/`--bibliography` argument building
-            // further down -- never fetched twice for the same export.
-            let bibliography = await fetchBibliographyJSON(for: citekeys)
-            bibliographyForCitations = bibliography
-
-            // supportsAmbiguityReporting is false whenever this batch resolved via the
-            // item.export fallback, which has NO ambiguity concept at all -- not "reports zero
-            // ambiguous keys," but structurally incapable of reporting any. rawAmbiguousKeys
-            // being empty there means "no information," not "verified unambiguous," so the
-            // ambiguity veto inside canonicalCitekeyMap is silently inert on that path. Rather
-            // than rely on an inert veto, skip building a rewrite map entirely when ambiguity
-            // reporting isn't available -- see RawCitekeyBatchResult.supportsAmbiguityReporting's
-            // doc comment for the exact failure this prevents (a citekey silently repointed at
-            // a completely different, wrong reference).
-            let map = bibliography.supportsAmbiguityReporting
-                ? ExportService.canonicalCitekeyMap(
-                    requested: citekeys,
-                    resolvedIDs: bibliography.resolvedIDs,
-                    rawAmbiguousKeys: bibliography.rawAmbiguousKeys
-                )
-                : [:]
-            let rewritten = canonicalizeCitekeys(in: processedContent, using: map)
-            if rewritten != processedContent {
-                do {
-                    try rewritten.write(to: inputURL, atomically: true, encoding: .utf8)
-                    processedContent = rewritten
-                    pdfPrep = PDFContentPreparation(
-                        content: rewritten,
-                        effectiveResourceURL: pdfPrep.effectiveResourceURL,
-                        tempMediaDir: pdfPrep.tempMediaDir,
-                        warnings: pdfPrep.warnings
-                    )
-                } catch {
-                    DebugLog.log(
-                        .fileOps,
-                        "[ExportService] Failed to write canonicalized citekeys back to temp input file: \(error) " +
-                        "-- continuing export with the pre-rewrite content"
-                    )
-                    // Continue with pre-rewrite content -- today's behavior when this step
-                    // can't happen; never fail the whole export over it.
-                }
-            }
-        }
 
         // Build Pandoc arguments
         var arguments = buildBaseArguments(
@@ -255,11 +379,12 @@ extension ExportService {
         // Citations
         var citationArgs: [String] = []
         if hasCitations {
-            let citation = citationArguments(
+            let citation = await citationArguments(
                 format: format,
+                content: processedContent,
+                zoteroStatus: zoteroStatus,
                 luaScriptPath: resourcePaths.luaScriptPath,
-                pdfBibliography: PDFBibliographyRequest(settings: settings, tempDir: tempDir),
-                bibliography: bibliographyForCitations
+                pdfBibliography: PDFBibliographyRequest(settings: settings, tempDir: tempDir)
             )
             citationArgs = citation.arguments
             artifacts.tempBibURL = citation.tempBibURL
@@ -296,15 +421,30 @@ extension ExportService {
         ))
 
         // Run Pandoc
-        try await runPandoc(
-            at: pandocPath,
-            arguments: arguments,
-            stderrCaptureURL: diagnosticDirURL?.appendingPathComponent("pandoc-stderr.log")
-        )
+        do {
+            try await runPandoc(
+                at: pandocPath,
+                arguments: arguments,
+                stderrCaptureURL: diagnosticDirURL?.appendingPathComponent("pandoc-stderr.log")
+            )
+        } catch let error as ExportError {
+            if case .pandocFailed(let exitCode, _) = error,
+               let mapped = Self.citationFilterErrorIfApplicable(
+                   exitCode: exitCode,
+                   format: format,
+                   luaScriptPath: resourcePaths.luaScriptPath
+               ) {
+                // Zotero WAS reachable when the pre-flight probe ran (requiresZoteroForExport
+                // above didn't fire), so a raw exit-83 crash message here would wrongly imply
+                // the probe was wrong. See citationFilterErrorIfApplicable's doc comment.
+                throw mapped
+            }
+            throw error
+        }
 
         // Zotero warnings (after export — export still runs, warnings inform after)
         if hasCitations {
-            warnings.append(contentsOf: zoteroWarnings(for: zoteroStatus))
+            warnings.append(contentsOf: Self.zoteroWarnings(for: zoteroStatus))
         }
 
         return ExportResult(
@@ -329,12 +469,10 @@ extension ExportService {
     /// real on-disk path (resolved via `#filePath`) here instead. Kept as a field on this
     /// struct rather than a new `buildBaseArguments` parameter so the function's parameter
     /// count doesn't cross SwiftLint's `function_parameter_count` threshold.
-    /// `mathSpecialCharsLuaPathOverride` is the same test seam for `bundledMathSpecialCharsLuaPath`.
     struct ResourcePaths {
         let luaScriptPath: String?
         let referenceDocPath: String?
         let bareCitationsLuaPathOverride: String?
-        let mathSpecialCharsLuaPathOverride: String?
     }
 
     /// Resolves the lua-script and reference-doc paths from settings and validates that any
@@ -364,8 +502,7 @@ extension ExportService {
         return ResourcePaths(
             luaScriptPath: luaScriptPath,
             referenceDocPath: referenceDocPath,
-            bareCitationsLuaPathOverride: nil,
-            mathSpecialCharsLuaPathOverride: nil
+            bareCitationsLuaPathOverride: nil
         )
     }
 
@@ -481,28 +618,6 @@ extension ExportService {
             if let bareCitationsLuaPath = resourcePaths.bareCitationsLuaPathOverride ?? ExportService.bundledBareCitationsLuaPath {
                 arguments.append(contentsOf: ["--lua-filter", bareCitationsLuaPath])
             }
-            // Escapes `&`/`#`/`%` inside math spans so they don't crash xelatex (or, for `%`,
-            // silently truncate the rest of the line) -- see math-special-chars.lua's header
-            // comment. Ordering relative to the other PDF-only filters IN THIS BLOCK is free:
-            // this filter only touches Math AST nodes, which none of them read or write.
-            //
-            // Ordering relative to `--citeproc` (appended later, in citationArguments/
-            // assembleFinalArguments) is a different question, and NOT free in general: citeproc
-            // can itself generate fresh Math nodes out of a bibliography field's raw LaTeX (e.g.
-            // a `.bib` entry's `title = {$x & y$}`), and this filter runs before `--citeproc` on
-            // the command line, so any math citeproc generates is never seen by it -- confirmed
-            // by direct reproduction: with a `.bib` bibliography and this exact filter order, an
-            // unescaped `&` in a title's math survives uncaught and would crash xelatex; with the
-            // filter moved to run AFTER `--citeproc` instead, it gets escaped correctly. That
-            // reproduction is NOT reachable today only because this app's actual PDF bibliography
-            // path is CSL JSON from Zotero, not `.bib` -- confirmed separately: pandoc's CSL-JSON
-            // reader always treats a `$...$` title substring as literal text (escaping the `$`
-            // itself), never as a math span, regardless of this filter's position. If that
-            // bibliography source ever changes to something that can hand citeproc raw LaTeX
-            // (e.g. a `.bib`/BibLaTeX path), this ordering would need revisiting too.
-            if let mathSpecialCharsLuaPath = resourcePaths.mathSpecialCharsLuaPathOverride ?? ExportService.bundledMathSpecialCharsLuaPath {
-                arguments.append(contentsOf: ["--lua-filter", mathSpecialCharsLuaPath])
-            }
             if let floatPackagePath = ExportService.bundledFloatPackageTexPath {
                 arguments.append(contentsOf: ["--include-in-header", floatPackagePath])
             }
@@ -581,7 +696,7 @@ extension ExportService {
         let tempDir: URL
     }
 
-    /// Build citation-related Pandoc arguments from an already-fetched bibliography.
+    /// Build citation-related Pandoc arguments and fetch bibliography if needed.
     ///
     /// Takes `luaScriptPath` as its own parameter (rather than recomputing it from
     /// `pdfBibliography.settings`) so the non-PDF branch below stays byte-for-byte identical
@@ -590,25 +705,31 @@ extension ExportService {
     /// match today. `pdfBibliography` is still threaded through for the PDF-only
     /// `effectiveBibliographyHeaderName` metadata argument and the temp directory to write the
     /// bibliography JSON into; DOCX/ODT never reads it at all.
-    ///
-    /// `bibliography` is fetched exactly once by `export()` itself (shared with the
-    /// citekey-case rewrite, which needs the same fetch for every format, not just PDF) and
-    /// passed in here — this function no longer fetches on its own. `nil` means the fetch was
-    /// skipped entirely (no citations, Zotero not running, or no real citekeys extracted — see
-    /// `export()`'s guard), in which case PDF appends nothing, exactly as before this function
-    /// stopped fetching internally.
     private func citationArguments(
         format: ExportFormat,
+        content: String,
+        zoteroStatus: ZoteroStatus,
         luaScriptPath: String?,
-        pdfBibliography: PDFBibliographyRequest,
-        bibliography: BibliographyFetchResult?
-    ) -> CitationBuildResult {
+        pdfBibliography: PDFBibliographyRequest
+    ) async -> CitationBuildResult {
         var args: [String] = []
         var tempBibURL: URL?
         var warnings: [String] = []
 
         if format == .pdf {
-            if let bibliography {
+            let citekeys = Array(Set(extractCitekeys(from: content)))
+            // hasPandocCitations's bracket-match is looser than a real citekey (it also
+            // matches shapes extractCitekeys correctly rejects -- `[contact me@example.com]`,
+            // `[install @scope/pkg]`, `[see bsky.app/@handle]`), so a document that opened this
+            // Zotero-check gate (hasCitations == true) can still have zero real citekeys.
+            // Skipping the fetch entirely in that case -- the same effective behavior as
+            // `hasCitations` having been false in the first place -- avoids the generic "Could
+            // not fetch bibliography data from Zotero" warning firing on a document where
+            // Zotero never actually failed at anything. A document with a REAL citekey that
+            // legitimately isn't found in Zotero is unaffected: citekeys is non-empty there, so
+            // the fetch still runs and the normal partial-resolution warning still fires below.
+            if zoteroStatus == .running && !citekeys.isEmpty {
+                let bibliography = await fetchBibliographyJSON(for: citekeys)
                 if let bibJSON = bibliography.json {
                     // See bibliographyWriteArguments's doc comment: the write-failure and
                     // partial-bibliography warnings are mutually exclusive by construction.
@@ -639,8 +760,12 @@ extension ExportService {
         return CitationBuildResult(arguments: args, tempBibURL: tempBibURL, warnings: warnings)
     }
 
-    /// Map Zotero status to user-facing warnings.
-    private func zoteroWarnings(for status: ZoteroStatus) -> [String] {
+    /// Map Zotero status to user-facing warnings. A `static func` (not an instance method, and
+    /// not `private`) so `ExportViewModel`'s DOCX/ODT hard-stop alert can reuse this exact
+    /// per-status wording -- a user whose Zotero is running but missing Better BibTeX needs a
+    /// different message than one whose Zotero isn't running at all -- without duplicating
+    /// these strings or needing actor isolation to call it.
+    static func zoteroWarnings(for status: ZoteroStatus) -> [String] {
         switch status {
         case .notRunning:
             return ["Zotero is not running. Citations were not resolved."]
@@ -653,6 +778,18 @@ extension ExportService {
         case .running:
             return []
         }
+    }
+
+    /// A present-tense-friendly variant of `zoteroWarnings(for:)`'s first sentence, for
+    /// pre-flight contexts (like the DOCX/ODT hard-stop) where export was never attempted --
+    /// `zoteroWarnings`'s full message is written past-tense ("Citations were not resolved"),
+    /// which reads oddly before anything has run. Reuses `zoteroWarnings` as the single source
+    /// of truth for the substantive per-status reason (so the two never drift out of sync)
+    /// rather than maintaining a second, separately-worded set of per-status strings.
+    static func zoteroPreflightReason(for status: ZoteroStatus) -> String {
+        let warning = zoteroWarnings(for: status).first ?? "Zotero with Better BibTeX is not reachable."
+        guard let periodIndex = warning.firstIndex(of: ".") else { return warning }
+        return String(warning[..<warning.index(after: periodIndex)])
     }
 
     // MARK: - Pandoc Execution

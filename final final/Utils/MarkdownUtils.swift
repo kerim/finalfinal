@@ -9,78 +9,27 @@
 import Foundation
 
 enum MarkdownUtils {
-    /// The three "code" shapes that must never contribute a false citekey match: fenced code
-    /// blocks (``` and ~~~) and inline code (`...`). Shared between `stripCodeContent`
-    /// (deletes each match) and `maskCodeContent` (blanks each match to same-length
-    /// whitespace, preserving every other character's offset) so the two functions can never
-    /// silently drift apart on what counts as "code". Order matches `stripCodeContent`'s
-    /// original three `replacingOccurrences` calls (fenced-backtick, then fenced-tilde, then
-    /// inline) -- unchanged by this hoist. Compile-time constant patterns: a `try?` failure
-    /// here would be a programming error (a typo), so a failed pattern is simply dropped
-    /// rather than crashing -- matches `stripCodeContent`'s own pre-hoist error handling,
-    /// which silently no-op'd a pattern that failed to compile.
-    private static let codeContentPatterns: [NSRegularExpression] = [
-        #"```[\s\S]*?```"#,
-        #"~~~[\s\S]*?~~~"#,
-        #"`[^`]+`"#
-    ].compactMap { try? NSRegularExpression(pattern: $0) }
-
     /// Remove fenced code blocks and inline code from markdown.
     /// Used before citekey extraction to prevent false positives from examples.
     static func stripCodeContent(from markdown: String) -> String {
         var result = markdown
-        for pattern in codeContentPatterns {
-            let range = NSRange(result.startIndex..., in: result)
-            result = pattern.stringByReplacingMatches(in: result, options: [], range: range, withTemplate: "")
-        }
-        return result
-    }
-
-    /// Mask fenced code blocks and inline code in markdown by replacing each match with a run
-    /// of space characters of IDENTICAL UTF-16 length, so `masked.utf16.count ==
-    /// markdown.utf16.count` always. Unlike `stripCodeContent` (which deletes matches --
-    /// exactly right for word counts, where losing the code's contribution to length is the
-    /// point), this is for callers that need to scan for other content while excluding code
-    /// (e.g. citekey rewriting) but then apply an edit back onto the ORIGINAL, unmasked
-    /// string at an offset found via the mask -- deleting the matched text would shift every
-    /// later offset and corrupt that edit.
-    ///
-    /// Each match is replaced by a run of exactly `match.range.length` space characters --
-    /// built per-`NSRange` from a fresh `String(repeating:count:)`, never by mapping
-    /// `Character`s one-to-one: an emoji or other surrogate-pair character inside a code span
-    /// occupies 2 UTF-16 code units but iterates as a single `Character`, so a naive
-    /// `Character`-for-`Character` replacement would silently shrink the UTF-16 length and
-    /// shift every subsequent offset -- exactly the corruption this function exists to avoid.
-    static func maskCodeContent(in markdown: String) -> String {
-        var result = markdown
-        for pattern in codeContentPatterns {
-            result = maskMatches(of: pattern, in: result)
-        }
-        return result
-    }
-
-    /// Replace each match of `pattern` in `input` with a run of spaces of the same UTF-16
-    /// length as the match, leaving every other character -- and the string's total UTF-16
-    /// length -- untouched. Helper for `maskCodeContent`.
-    private static func maskMatches(of pattern: NSRegularExpression, in input: String) -> String {
-        let nsInput = input as NSString
-        let fullRange = NSRange(location: 0, length: nsInput.length)
-        var result = ""
-        var lastEnd = 0
-
-        pattern.enumerateMatches(in: input, options: [], range: fullRange) { match, _, _ in
-            guard let match else { return }
-            if match.range.location > lastEnd {
-                result += nsInput.substring(with: NSRange(location: lastEnd, length: match.range.location - lastEnd))
-            }
-            result += String(repeating: " ", count: match.range.length)
-            lastEnd = match.range.location + match.range.length
-        }
-
-        if lastEnd < nsInput.length {
-            result += nsInput.substring(with: NSRange(location: lastEnd, length: nsInput.length - lastEnd))
-        }
-
+        // Remove fenced code blocks (``` and ~~~)
+        result = result.replacingOccurrences(
+            of: #"```[\s\S]*?```"#,
+            with: "",
+            options: .regularExpression
+        )
+        result = result.replacingOccurrences(
+            of: #"~~~[\s\S]*?~~~"#,
+            with: "",
+            options: .regularExpression
+        )
+        // Remove inline code (`...`)
+        result = result.replacingOccurrences(
+            of: #"`[^`]+`"#,
+            with: "",
+            options: .regularExpression
+        )
         return result
     }
 

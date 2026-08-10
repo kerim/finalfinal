@@ -57,15 +57,6 @@ extension ExportService {
         Bundle.main.url(forResource: "bare-citations-literal", withExtension: "lua", subdirectory: "Export")?.path
     }
 
-    /// Get path to the bundled PDF-only filter that escapes the TeX-special characters `&`,
-    /// `#`, and `%` inside math spans, so they don't crash xelatex (or, for `%`, silently
-    /// truncate the rest of the line) when they appear unescaped in inline/display math. See
-    /// the file's own header comment for the confirmed failure modes and the alignment-
-    /// environment exemption.
-    static var bundledMathSpecialCharsLuaPath: String? {
-        Bundle.main.url(forResource: "math-special-chars", withExtension: "lua", subdirectory: "Export")?.path
-    }
-
     /// Get path to bundled reference document
     static var bundledReferenceDocPath: String? {
         Bundle.main.url(forResource: "reference", withExtension: "docx", subdirectory: "Export")?.path
