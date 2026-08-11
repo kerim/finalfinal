@@ -519,52 +519,11 @@ final class ExportCitekeyCanonicalizationIntegrationTests: XCTestCase {
         }
     }
 
-    // MARK: - Zotero not running: no rewrite, content reaches pandoc unchanged
-
-    func testZoteroNotRunningSkipsCanonicalizationEntirely() async throws {
-        guard Self.findPandocPath() != nil else {
-            throw XCTSkip("Pandoc not installed — skipping citekey canonicalization write-back verification")
-        }
-
-        try await ZoteroNetworkTestLock.shared.run {
-            MockBBTURLProtocol.reset()
-            // No response registered for any method -- defaultResponse status stays 200 by
-            // default, so force a clearly-non-running status instead (mirrors a real
-            // Zotero-not-listening condition) regardless of MockBBTURLProtocol.reset()'s
-            // default, which would otherwise report `.running`.
-            MockBBTURLProtocol.defaultResponse = (500, Data())
-            URLProtocol.registerClass(MockBBTURLProtocol.self)
-            defer { URLProtocol.unregisterClass(MockBBTURLProtocol.self) }
-
-            let tempURL = FileManager.default.temporaryDirectory
-                .appendingPathComponent("citekey-canon-notrunning-\(UUID().uuidString).docx")
-            defer { try? FileManager.default.removeItem(at: tempURL) }
-
-            let service = ExportService()
-            let content = "First cite [@Smith2020]. Second cite [@smith2020]."
-
-            var capturedResult: ExportResult?
-            let inputMD = try await captureInputMD {
-                capturedResult = try await service.export(
-                    content: content,
-                    to: tempURL,
-                    format: .word,
-                    settings: ExportSettings(),
-                    projectURL: nil
-                )
-            }
-
-            let result = try XCTUnwrap(capturedResult)
-            XCTAssertTrue(
-                result.warnings.contains { $0.contains("Zotero is not running") },
-                "Existing zoteroWarnings behavior must be unaffected: \(result.warnings)"
-            )
-
-            let md = try XCTUnwrap(inputMD, "Diagnostic capture should have produced an input.md for this export")
-            XCTAssertTrue(
-                md.contains("[@Smith2020]") && md.contains("[@smith2020]"),
-                "With Zotero not running, no fetch/rewrite must happen -- both original spellings must survive verbatim: \(md)"
-            )
-        }
-    }
+    // Zotero-unreachable + real citekeys now hard-stops `export()` before pandoc ever runs
+    // (see ExportService.requiresZoteroForExport) -- the old "degrade with a warning, skip
+    // canonicalization" contract this file used to verify here no longer applies to DOCX/ODT.
+    // That hard-stop is covered at the integration level by
+    // ExportZoteroPreflightTests.exportThrowsBeforePandocInvocation and
+    // .zoteroPreflightAgreesWithExport, which assert the same scenario -- a real `export()`
+    // call, DOCX, real citekeys, Zotero unreachable -- throws `zoteroRequiredForCitations`.
 }
