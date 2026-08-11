@@ -413,53 +413,13 @@ extension ExportService {
         // BEFORE `buildBaseArguments` below (whose PDF branch reads `pdfPrep.content` for
         // font-argument detection) and `citationArguments` (which needs the fetched
         // bibliography to build `--citeproc`/`--bibliography` args without fetching again).
-        let citekeys = Array(Set(extractCitekeys(from: processedContent)))
-        var bibliographyForCitations: BibliographyFetchResult?
-        if hasCitations, zoteroStatus == .running, !citekeys.isEmpty {
-            // One fetch, shared by both the citekey-case rewrite below (all formats) and
-            // `citationArguments`'s PDF-only `--citeproc`/`--bibliography` argument building
-            // further down -- never fetched twice for the same export.
-            let bibliography = await fetchBibliographyJSON(for: citekeys)
-            bibliographyForCitations = bibliography
-
-            // supportsAmbiguityReporting is false whenever this batch resolved via the
-            // item.export fallback, which has NO ambiguity concept at all -- not "reports zero
-            // ambiguous keys," but structurally incapable of reporting any. rawAmbiguousKeys
-            // being empty there means "no information," not "verified unambiguous," so the
-            // ambiguity veto inside canonicalCitekeyMap is silently inert on that path. Rather
-            // than rely on an inert veto, skip building a rewrite map entirely when ambiguity
-            // reporting isn't available -- see RawCitekeyBatchResult.supportsAmbiguityReporting's
-            // doc comment for the exact failure this prevents (a citekey silently repointed at
-            // a completely different, wrong reference).
-            let map = bibliography.supportsAmbiguityReporting
-                ? ExportService.canonicalCitekeyMap(
-                    requested: citekeys,
-                    resolvedIDs: bibliography.resolvedIDs,
-                    rawAmbiguousKeys: bibliography.rawAmbiguousKeys
-                )
-                : [:]
-            let rewritten = canonicalizeCitekeys(in: processedContent, using: map)
-            if rewritten != processedContent {
-                do {
-                    try rewritten.write(to: inputURL, atomically: true, encoding: .utf8)
-                    processedContent = rewritten
-                    pdfPrep = PDFContentPreparation(
-                        content: rewritten,
-                        effectiveResourceURL: pdfPrep.effectiveResourceURL,
-                        tempMediaDir: pdfPrep.tempMediaDir,
-                        warnings: pdfPrep.warnings
-                    )
-                } catch {
-                    DebugLog.log(
-                        .fileOps,
-                        "[ExportService] Failed to write canonicalized citekeys back to temp input file: \(error) " +
-                        "-- continuing export with the pre-rewrite content"
-                    )
-                    // Continue with pre-rewrite content -- today's behavior when this step
-                    // can't happen; never fail the whole export over it.
-                }
-            }
-        }
+        let canonical = await applyCitekeyCanonicalization(
+            content: processedContent, pdfPrep: pdfPrep,
+            hasCitations: hasCitations, zoteroStatus: zoteroStatus, inputURL: inputURL
+        )
+        processedContent = canonical.content
+        pdfPrep = canonical.pdfPrep
+        let bibliographyForCitations = canonical.bibliography
 
         // Build Pandoc arguments
         var arguments = buildBaseArguments(
@@ -514,35 +474,13 @@ extension ExportService {
         ))
 
         // Run Pandoc
-        do {
-            try await runPandoc(
-                at: pandocPath,
-                arguments: arguments,
-                stderrCaptureURL: diagnosticDirURL?.appendingPathComponent("pandoc-stderr.log")
-            )
-        } catch let error as ExportError {
-            if case .pandocFailed(let exitCode, let pandocStderr) = error,
-               let mapped = Self.citationFilterErrorIfApplicable(
-                   exitCode: exitCode,
-                   format: format,
-                   luaScriptPath: resourcePaths.luaScriptPath
-               ) {
-                // Zotero WAS reachable when the pre-flight probe ran (requiresZoteroForExport
-                // above didn't fire), so a raw exit-83 crash message here would wrongly imply
-                // the probe was wrong. See citationFilterErrorIfApplicable's doc comment.
-                //
-                // The user-facing citationFilterFailed message deliberately omits the raw
-                // pandoc traceback (see its doc comment) -- preserve it here instead, so a
-                // real failure can still be diagnosed after the fact from the debug log.
-                DebugLog.log(
-                    .zotero,
-                    "[ExportService] Citation filter failed for \(format.displayName) export " +
-                    "(pandoc exit \(exitCode)): \(pandocStderr)"
-                )
-                throw mapped
-            }
-            throw error
-        }
+        try await runPandocMappingCitationErrors(
+            at: pandocPath,
+            arguments: arguments,
+            format: format,
+            luaScriptPath: resourcePaths.luaScriptPath,
+            stderrCaptureURL: diagnosticDirURL?.appendingPathComponent("pandoc-stderr.log")
+        )
 
         // Zotero warnings (after export — export still runs, warnings inform after)
         if hasCitations {
@@ -681,215 +619,6 @@ extension ExportService {
         )
     }
 
-    /// Assembles the base Pandoc arguments shared by all formats: input/output paths,
-    /// resource path, PDF engine + font + figure-placement arguments (PDF only), and the
-    /// reference document (DOCX/ODT only). Citations and the diagnostic dump are layered on
-    /// separately by `export()` since they need async work this function doesn't.
-    ///
-    /// Takes `pdfPrep`/`resourcePaths` (rather than their individual fields) to stay at or
-    /// under the function-parameter-count limit — both are already constructed by the time
-    /// `export()` calls this, and `pdfPrep.content` is always identical to `processedContent`
-    /// at the call site (it was just assigned from it).
-    ///
-    /// Not `private`: BareCitationExportTests.swift calls this REAL function directly (via
-    /// `@testable import`) to assert on its actual returned argument order for PDF, rather than
-    /// hand-duplicating this argument list in a test file where it could silently drift out of
-    /// sync with production. See `ResourcePaths.bareCitationsLuaPathOverride`'s doc comment for
-    /// why the test needs to inject a path here instead of relying on `Bundle.main`.
-    func buildBaseArguments(
-        inputURL: URL,
-        outputURL: URL,
-        format: ExportFormat,
-        pdfPrep: PDFContentPreparation,
-        resourcePaths: ResourcePaths
-    ) -> [String] {
-        var arguments = [
-            inputURL.path,
-            "--from", "markdown",
-            "--to", format.pandocFormat,
-            "--output", outputURL.path
-        ]
-
-        // Resource path for image resolution (media/ paths relative to .ff package)
-        if let url = pdfPrep.effectiveResourceURL {
-            arguments.append(contentsOf: ["--resource-path", url.path])
-        }
-
-        // PDF: engine + font variables + figure placement pinning (fixes drift at page
-        // breaks — see figure-placement.lua/float-package.tex). Both are optional: if the
-        // bundled resources are somehow missing, PDF export still proceeds without the
-        // placement fix rather than failing outright.
-        if format == .pdf {
-            arguments.append(contentsOf: pdfEngineArguments())
-            arguments.append(contentsOf: fontArguments(for: pdfPrep.content))
-            if let figurePlacementLuaPath = ExportService.bundledFigurePlacementLuaPath {
-                arguments.append(contentsOf: ["--lua-filter", figurePlacementLuaPath])
-            }
-            // Bare `@key` is not a citation in this app (see bare-citations-literal.lua). Added
-            // here rather than in citationArguments so it is guaranteed to precede --citeproc on
-            // the command line -- pandoc applies filters in argument order, and a Cite node has to
-            // be flattened before citeproc gets a chance to render it as a broken marker.
-            if let bareCitationsLuaPath = resourcePaths.bareCitationsLuaPathOverride ?? ExportService.bundledBareCitationsLuaPath {
-                arguments.append(contentsOf: ["--lua-filter", bareCitationsLuaPath])
-            }
-            // Escapes `&`/`#`/`%` inside math spans so they don't crash xelatex (or, for `%`,
-            // silently truncate the rest of the line) -- see math-special-chars.lua's header
-            // comment. Ordering relative to the other PDF-only filters IN THIS BLOCK is free:
-            // this filter only touches Math AST nodes, which none of them read or write.
-            //
-            // Ordering relative to `--citeproc` (appended later, in citationArguments/
-            // assembleFinalArguments) is a different question, and NOT free in general: citeproc
-            // can itself generate fresh Math nodes out of a bibliography field's raw LaTeX (e.g.
-            // a `.bib` entry's `title = {$x & y$}`), and this filter runs before `--citeproc` on
-            // the command line, so any math citeproc generates is never seen by it -- confirmed
-            // by direct reproduction: with a `.bib` bibliography and this exact filter order, an
-            // unescaped `&` in a title's math survives uncaught and would crash xelatex; with the
-            // filter moved to run AFTER `--citeproc` instead, it gets escaped correctly. That
-            // reproduction is NOT reachable today only because this app's actual PDF bibliography
-            // path is CSL JSON from Zotero, not `.bib` -- confirmed separately: pandoc's CSL-JSON
-            // reader always treats a `$...$` title substring as literal text (escaping the `$`
-            // itself), never as a math span, regardless of this filter's position. If that
-            // bibliography source ever changes to something that can hand citeproc raw LaTeX
-            // (e.g. a `.bib`/BibLaTeX path), this ordering would need revisiting too.
-            if let mathSpecialCharsLuaPath = resourcePaths.mathSpecialCharsLuaPathOverride ?? ExportService.bundledMathSpecialCharsLuaPath {
-                arguments.append(contentsOf: ["--lua-filter", mathSpecialCharsLuaPath])
-            }
-            if let floatPackagePath = ExportService.bundledFloatPackageTexPath {
-                arguments.append(contentsOf: ["--include-in-header", floatPackagePath])
-            }
-            // Long citation/DOI URLs with no natural break points (no slashes/hyphens)
-            // otherwise overflow the page margin -- see xurl-workaround.tex for why.
-            if let xurlWorkaroundPath = ExportService.bundledXurlWorkaroundTexPath {
-                arguments.append(contentsOf: ["--include-in-header", xurlWorkaroundPath])
-            }
-        }
-
-        // Reference document (DOCX/ODT only)
-        if let refPath = resourcePaths.referenceDocPath, format != .pdf {
-            arguments.append(contentsOf: ["--reference-doc", refPath])
-        }
-
-        return arguments
-    }
-
-    /// Appends citation arguments to `baseArguments`, then -- for PDF exports only, when
-    /// `linkifyUrlsLuaPath` is available -- appends the document-wide linkify-urls Lua filter
-    /// AFTER them. Pandoc applies `--lua-filter`/`--citeproc` in command-line order, and
-    /// `--citeproc` is what turns a citation's CSL field text into the bare-URL `Str` nodes the
-    /// linkify filter looks for -- so this ordering is load-bearing, not cosmetic (an earlier
-    /// draft of this fix appended the linkify filter from inside `buildBaseArguments`, which
-    /// runs before `--citeproc` gets appended, and silently missed every citation-field URL).
-    ///
-    /// Not `private` (unlike its sibling helpers) and takes `linkifyUrlsLuaPath` as a parameter
-    /// rather than reading `ExportService.bundledLinkifyUrlsLuaPath` internally, so
-    /// `ExportArgumentOrderingTests` can call this exact function -- the one `export()` itself
-    /// delegates to for final argument assembly -- with a hand-fed citation-argument list and a
-    /// repo-relative filter path, without needing a live Zotero connection or `Bundle.main`
-    /// (which in a unit-test host resolves to the XCTest runner's own bundle, not the app's --
-    /// same reasoning as `ImageCaptionExportTests`'s `figurePlacementLuaPath`).
-    func assembleFinalArguments(
-        baseArguments: [String],
-        citationArguments: [String],
-        format: ExportFormat,
-        linkifyUrlsLuaPath: String?
-    ) -> [String] {
-        var arguments = baseArguments
-        arguments.append(contentsOf: citationArguments)
-        if format == .pdf, let linkifyUrlsLuaPath {
-            arguments.append(contentsOf: ["--lua-filter", linkifyUrlsLuaPath])
-        }
-        return arguments
-    }
-
-    /// Build PDF engine arguments (bundled TinyTeX → bundled xelatex → system xelatex)
-    private func pdfEngineArguments() -> [String] {
-        if let tinyTeX = try? prepareBundledTinyTeX() {
-            return ["--pdf-engine", tinyTeX.xelatexPath,
-                    "--pdf-engine-opt", tinyTeX.outputDriverArg]
-        } else if let bundledPath = ExportService.bundledXelatexPath {
-            return ["--pdf-engine", bundledPath]
-        } else {
-            return ["--pdf-engine", "xelatex"]
-        }
-    }
-
-    /// Result of `citationArguments`: the Pandoc arguments to append, the temp bibliography
-    /// file to clean up afterward (if one was written), and any warnings.
-    private struct CitationBuildResult {
-        let arguments: [String]
-        let tempBibURL: URL?
-        let warnings: [String]
-    }
-
-    /// `settings` and `tempDir`, grouped: both are needed only by `citationArguments`'s PDF
-    /// branch (passed straight through to `bibliographyWriteArguments`), always travel
-    /// together, and DOCX/ODT never touches either. Bundling them keeps `citationArguments`
-    /// under SwiftLint's `function_parameter_count` limit -- mirrors `ExportDiagnosticsRequest`
-    /// in `ExportService+Diagnostics.swift`, the same parameter-object pattern already used
-    /// elsewhere in this file's call graph.
-    private struct PDFBibliographyRequest {
-        let settings: ExportSettings
-        let tempDir: URL
-    }
-
-    /// Build citation-related Pandoc arguments from an already-fetched bibliography.
-    ///
-    /// Takes `luaScriptPath` as its own parameter (rather than recomputing it from
-    /// `pdfBibliography.settings`) so the non-PDF branch below stays byte-for-byte identical
-    /// to what it resolved and validated in `resolveAndValidateResourcePaths` — not a second,
-    /// separately-computed `settings.effectiveLuaScriptPath` expression that merely happens to
-    /// match today. `pdfBibliography` is still threaded through for the PDF-only
-    /// `effectiveBibliographyHeaderName` metadata argument and the temp directory to write the
-    /// bibliography JSON into; DOCX/ODT never reads it at all.
-    ///
-    /// `bibliography` is fetched exactly once by `export()` itself (shared with the
-    /// citekey-case rewrite, which needs the same fetch for every format, not just PDF) and
-    /// passed in here — this function no longer fetches on its own. `nil` means the fetch was
-    /// skipped entirely (no citations, Zotero not running, or no real citekeys extracted — see
-    /// `export()`'s guard), in which case PDF appends nothing, exactly as before this function
-    /// stopped fetching internally.
-    private func citationArguments(
-        format: ExportFormat,
-        luaScriptPath: String?,
-        pdfBibliography: PDFBibliographyRequest,
-        bibliography: BibliographyFetchResult?
-    ) -> CitationBuildResult {
-        var args: [String] = []
-        var tempBibURL: URL?
-        var warnings: [String] = []
-
-        if format == .pdf {
-            if let bibliography {
-                if let bibJSON = bibliography.json {
-                    // See bibliographyWriteArguments's doc comment: the write-failure and
-                    // partial-bibliography warnings are mutually exclusive by construction.
-                    let result = bibliographyWriteArguments(
-                        bibJSON: bibJSON,
-                        notFoundKeys: bibliography.notFoundKeys,
-                        ambiguousKeys: bibliography.ambiguousKeys,
-                        settings: pdfBibliography.settings,
-                        tempDir: pdfBibliography.tempDir
-                    )
-                    args.append(contentsOf: result.arguments)
-                    tempBibURL = result.tempBibURL
-                    warnings.append(contentsOf: result.warnings)
-                } else {
-                    // See fetchFailureWarning's doc comment: mutually exclusive with the
-                    // partial-bibliography warning above rather than always pairing with it.
-                    warnings.append(fetchFailureWarning(
-                        notFound: bibliography.notFoundKeys, ambiguous: bibliography.ambiguousKeys
-                    ))
-                }
-            }
-        } else {
-            if let luaPath = luaScriptPath {
-                args.append(contentsOf: ["--lua-filter", luaPath])
-            }
-        }
-
-        return CitationBuildResult(arguments: args, tempBibURL: tempBibURL, warnings: warnings)
-    }
-
     /// Map Zotero status to user-facing warnings. A `static func` (not an instance method, and
     /// not `private`) so `ExportViewModel`'s DOCX/ODT hard-stop alert can reuse this exact
     /// per-status wording -- a user whose Zotero is running but missing Better BibTeX needs a
@@ -920,64 +649,5 @@ extension ExportService {
         let warning = zoteroWarnings(for: status).first ?? "Zotero with Better BibTeX is not reachable."
         guard let periodIndex = warning.firstIndex(of: ".") else { return warning }
         return String(warning[..<warning.index(after: periodIndex)])
-    }
-
-    // MARK: - Pandoc Execution
-
-    /// Run Pandoc with the given arguments
-    /// - Parameters:
-    ///   - path: Path to Pandoc executable
-    ///   - arguments: Command line arguments
-    ///   - stderrCaptureURL: DIAGNOSTIC (temporary, see dumpExportDiagnostics) — when set,
-    ///     the full pandoc stderr is written here regardless of exit status. Best-effort:
-    ///     failure to write is silently ignored.
-    private func runPandoc(at path: String, arguments: [String], stderrCaptureURL: URL? = nil) async throws {
-        try await withTaskCancellationHandler {
-            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-                let process = Process()
-                process.executableURL = URL(fileURLWithPath: path)
-                process.arguments = arguments
-
-                let stderrPipe = Pipe()
-                process.standardError = stderrPipe
-                process.standardOutput = Pipe()  // Discard stdout
-
-                var hasResumed = false  // Guard against double-resume
-
-                process.terminationHandler = { proc in
-                    guard !hasResumed else { return }
-                    hasResumed = true
-
-                    // DIAGNOSTIC: always read stderr to disk, not just on failure, so a
-                    // successful-but-wrong export (the PDF reorder bug) still leaves a trail.
-                    let errorData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
-                    if let stderrCaptureURL {
-                        try? errorData.write(to: stderrCaptureURL)
-                    }
-
-                    if proc.terminationStatus == 0 {
-                        continuation.resume()
-                    } else {
-                        let errorMessage = String(data: errorData, encoding: .utf8)?
-                            .trimmingCharacters(in: .whitespacesAndNewlines) ?? "Unknown error"
-                        continuation.resume(throwing: ExportError.pandocFailed(
-                            exitCode: Int(proc.terminationStatus),
-                            message: errorMessage
-                        ))
-                    }
-                }
-
-                do {
-                    try process.run()
-                } catch {
-                    guard !hasResumed else { return }
-                    hasResumed = true
-                    continuation.resume(throwing: error)
-                }
-            }
-        } onCancel: {
-            // Task was cancelled - process will be terminated when it goes out of scope
-            DebugLog.log(.fileOps, "[ExportService] Export cancelled")
-        }
     }
 }
