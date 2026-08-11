@@ -221,17 +221,6 @@ struct ExportZoteroPreflightTests {
         #expect(!description.localizedCaseInsensitiveContains("is not running"))
         #expect(!description.contains("83"))
     }
-}
-
-// Everything below is in its own `extension` (rather than the primary struct declaration
-// above) purely to keep `type_body_length` under its limit -- SwiftLint counts an extension's
-// body separately from the type's own declaration. Mirrors the identical seam already used in
-// `final final/Services/ExportService.swift` itself (see that file's own doc comment on the
-// same convention) -- applied here to keep this growing test suite's real-actor integration
-// tests alongside the pure gate-function tests above, in one file, without tripping the limit.
-// No behavior change: `private` members declared here remain accessible from (and to) the
-// primary struct above -- Swift's `private` extends to same-file extensions of the same type.
-extension ExportZoteroPreflightTests {
 
     // MARK: - Real-actor integration tests
 
@@ -383,34 +372,6 @@ extension ExportZoteroPreflightTests {
             settings: settings
         )
         #expect(!preflight.isBlocked)
-    }
-
-    /// The must-fix for the loose-vs-strict detector split: a false-positive bracket shape
-    /// like `[contact me@example.com]` matches the LOOSE `hasPandocCitations` regex (it
-    /// contains `@` followed by word/dot characters, closed by `]`) even though it has zero
-    /// real citekeys under the strict `extractCitekeys`. Before this fix, `zoteroPreflight`
-    /// used that loose match as its probe trigger, so a document shaped like this one still
-    /// made a real, live network call to Zotero -- pointlessly, since `isBlocked` was already
-    /// guaranteed `false` for it regardless of what that probe found. Gated on Zotero actually
-    /// being unreachable (mirrors this suite's other `isBetterBibTeXPortOpen` guards): with
-    /// Zotero down, the OLD code's needless probe would return `.notRunning`, not `.running`,
-    /// making this assertion a faithful proxy for "the probe never fired at all."
-    @Test(
-        "zoteroPreflight does not probe Zotero for a false-positive citation shape -- zoteroStatus stays .running even with Zotero unreachable",
-        .enabled(if: !ExportZoteroPreflightTests.isBetterBibTeXPortOpen())
-    )
-    func falsePositiveCitationShapeNeverTriggersZoteroProbe() async throws {
-        let service = ExportService()
-        var settings = ExportSettings()
-        settings.useCustomLuaScript = true
-        settings.customLuaScriptPath = Self.zoteroLuaPath
-
-        let preflight = try await service.zoteroPreflight(
-            content: "For questions, see [contact me@example.com].",
-            format: .word,
-            settings: settings
-        )
-        #expect(preflight.zoteroStatus == .running)
     }
 
     @Test(

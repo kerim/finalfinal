@@ -20,37 +20,6 @@ final class ExportViewModel {
     /// Whether an export is currently in progress
     private(set) var isExporting = false
 
-    /// Re-entrancy guard for the whole export FLOW (preflight, alerts, save panel, export) --
-    /// as distinct from `isExporting`, which only covers the pandoc run itself.
-    ///
-    /// NOTE (deliberate): `ExportOperations.exportViewModel` is a static-let app-wide
-    /// singleton, so this guard is GLOBAL, not per-document/per-window. Once one window's
-    /// modeless save panel (or an earlier alert) is actually ON SCREEN, a second window's
-    /// Export command is a silent no-op and the already-visible panel/alert IS the user's
-    /// feedback -- but that claim happens BEFORE `savePanelDecision`'s live Zotero preflight
-    /// runs (a real network round-trip that can take a couple of seconds), so a second Export
-    /// command that lands during that preflight window is a fully silent no-op with nothing
-    /// on screen yet to explain why nothing happened. That's a deliberate trade-off -- a rare
-    /// double-trigger during a brief probe silently doing nothing, rather than adding a
-    /// spinner or a second guard just to cover this narrow window -- not an oversight. The
-    /// debug log line in `beginExportFlowIfIdle()`'s rejected-claim branch below is what makes
-    /// a rejected claim visible (via `DebugLog`) if this silent window is ever suspected of
-    /// causing confusion.
-    private var isExportFlowActive = false
-
-    /// Claims the export flow. Returns `false` if a flow is already in progress. Exposed at
-    /// `internal` (not `private`) so `ExportFlowGuardTests.swift` can exercise it directly.
-    func beginExportFlowIfIdle() -> Bool {
-        if isExportFlowActive {
-            DebugLog.log(.lifecycle, "[ExportViewModel] Export command ignored — export flow already active")
-            return false
-        }
-        isExportFlowActive = true
-        return true
-    }
-
-    func endExportFlow() { isExportFlowActive = false }
-
     /// Current export progress message
     private(set) var progressMessage: String?
 
@@ -104,13 +73,6 @@ final class ExportViewModel {
     ///     doc comment. `showExportPanel`'s DOCX/ODT path passes the status `savePanelDecision`
     ///     already obtained here so the Service doesn't check Zotero a second time; every other
     ///     caller leaves this `nil` and gets the original check-now behavior.
-    ///
-    /// This is the single call site every caller funnels through -- including
-    /// `PrintOperations.handlePrintFormatted()`, which calls this directly with no precomputed
-    /// status and therefore always runs a real Zotero probe inside `exportService.export()` --
-    /// so on success it also folds any freshly-probed Zotero status into `ZoteroService.shared`
-    /// (see `ExportResult.zoteroStatusWasProbed`) before returning, rather than leaving that
-    /// write-back to each individual caller.
     /// - Returns: ExportResult on success
     func export(
         content: String,
@@ -138,14 +100,6 @@ final class ExportViewModel {
                 projectURL: projectURL,
                 precomputedZoteroStatus: precomputedZoteroStatus
             )
-
-            // `zoteroStatusWasProbed` is true only when this call actually ran a live Zotero
-            // check itself (see its doc comment) -- fold that fresh result into the app-wide
-            // cached connection state so `ZoteroService.shared.isConnected` doesn't keep
-            // showing a stale "connected" long after Zotero went away.
-            if result.zoteroStatusWasProbed {
-                ZoteroService.shared.applyProbedStatus(result.zoteroStatus)
-            }
 
             return result
         } catch {
@@ -214,19 +168,6 @@ final class ExportViewModel {
             let preflight = try await exportService.zoteroPreflight(
                 content: content, format: format, settings: settings
             )
-            // `preflight.hasCitations` is the strict `hasRealCitations` check -- exactly the
-            // flag that gates whether `zoteroPreflight` actually ran a live probe (see
-            // `ZoteroPreflightResult`'s doc comment), so this fires if and only if
-            // `preflight.zoteroStatus` is a real probed value, never the synthetic `.running`
-            // a citation-free document short-circuits to. This single call site, run before the
-            // decision below even picks a `SavePanelDecision` case, covers ALL of
-            // `.blockedByZotero`, `.warnDegraded`, and `.proceed` -- for every export format,
-            // including PDF -- which is why none of those branches (nor the `export()` wrapper
-            // above, when it forwards this same precomputed status verbatim) need their own
-            // separate `applyProbedStatus` call for this preflight's result.
-            if preflight.hasCitations {
-                ZoteroService.shared.applyProbedStatus(preflight.zoteroStatus)
-            }
             return Self.savePanelDecision(
                 format: format,
                 preflight: preflight,
@@ -287,12 +228,6 @@ final class ExportViewModel {
             return
         }
 
-        // Claim the export flow -- deliberately AFTER the no-Pandoc guard above, so that path
-        // never claims the flow at all and there's no branch that can leak it unreleased. See
-        // `beginExportFlowIfIdle`'s doc comment for why this guard is global (one shared
-        // ExportViewModel singleton), not per-document/per-window.
-        guard beginExportFlowIfIdle() else { return }
-
         // See `savePanelDecision`'s doc comment: this asks the Service whether the export would
         // hit the Zotero-required hard stop (DOCX/ODT), the degraded-citations warning (PDF),
         // or a misconfigured resource path -- BEFORE the save panel ever appears, so a doomed
@@ -313,25 +248,13 @@ final class ExportViewModel {
         // forwarding its precomputed status as before -- a fresh recheck isn't meaningful for
         // DOCX/ODT the same way, since it hard-stops rather than degrading.
         Task { @MainActor in
-            // Releases the flow claim above on every path that does NOT hand off to
-            // `presentSavePanel` (which owns the claim from here on and releases it itself --
-            // see its own doc comment). `handedOff` is flipped just before each such call so
-            // this defer never double-releases.
-            var handedOff = false
-            defer { if !handedOff { self.endExportFlow() } }
-
             switch await self.savePanelDecision(content: content, format: format) {
             case .blockedByZotero(let zoteroStatus):
-                // The probed status behind this decision is already folded into
-                // `ZoteroService.shared` inside `savePanelDecision` itself (right after its
-                // `zoteroPreflight` call) -- nothing left to do here but show the alert.
                 self.showZoteroRequiredAlert(format: format, zoteroStatus: zoteroStatus)
             case .blockedByError(let error):
                 self.showExportErrorAlert(error: error)
             case .warnDegraded(let zoteroStatus):
-                // Same as `.blockedByZotero` above -- already applied inside `savePanelDecision`.
                 if await self.showZoteroWarningAlert(zoteroStatus: zoteroStatus) {
-                    handedOff = true
                     self.presentSavePanel(
                         content: content,
                         format: format,
@@ -341,11 +264,6 @@ final class ExportViewModel {
                     )
                 }
             case .proceed(let precomputedZoteroStatus):
-                // For DOCX/ODT, a document with real citations that reaches `.proceed` (Zotero
-                // already running, or simply no lua filter configured) also had its probed
-                // status applied inside `savePanelDecision`, before this switch ever ran --
-                // there's no separate "proceed" gap to cover here.
-                handedOff = true
                 self.presentSavePanel(
                     content: content,
                     format: format,
@@ -368,11 +286,6 @@ final class ExportViewModel {
     /// time. For PDF, `showExportPanel` always passes `nil` here deliberately -- see its doc
     /// comment -- so `export()` performs its own fresh check instead of trusting a status that
     /// may have gone stale while the user picked a save location.
-    ///
-    /// Owns releasing the export-flow guard `showExportPanel` claimed (see
-    /// `beginExportFlowIfIdle`): the panel's completion handler releases it on cancel/no-URL,
-    /// and the export `Task` inside releases it via `defer` on every exit path (success or
-    /// either catch arm) once the panel closes with `.OK`.
     private func presentSavePanel(
         content: String,
         format: ExportFormat,
@@ -393,19 +306,9 @@ final class ExportViewModel {
         savePanel.canCreateDirectories = true
 
         savePanel.begin { [weak self] response in
-            guard let self else { return }
-            guard response == .OK, let url = savePanel.url else {
-                // User cancelled, or dismissed without a URL -- no export `Task` will run to
-                // release the flow guard `showExportPanel` claimed, so release it here.
-                self.endExportFlow()
-                return
-            }
+            guard let self = self, response == .OK, let url = savePanel.url else { return }
 
             Task { @MainActor in
-                // Releases the flow guard on every exit from this Task -- the success arm and
-                // both catch arms below -- now that the panel has actually closed with `.OK`.
-                defer { self.endExportFlow() }
-
                 do {
                     // DOCX/ODT's hard stop, and PDF's degraded-citations warning, are both
                     // decided BEFORE this panel even appears -- see `savePanelDecision`, called
@@ -428,19 +331,10 @@ final class ExportViewModel {
                         precomputedZoteroStatus: precomputedZoteroStatus
                     )
 
-                    // `export()` above already folds `result.zoteroStatusWasProbed` into
-                    // `ZoteroService.shared` itself now (it's the single call site every caller
-                    // funnels through) -- nothing left to do here but show success.
+                    // Show success with warnings
                     self.showExportSuccessAlert(result: result)
 
                 } catch ExportError.zoteroRequiredForCitations(let failedFormat, let zoteroStatus) {
-                    // Defensive / future-proofing, not a live race in the current call graph:
-                    // for DOCX/ODT the precomputed status `savePanelDecision` already found is
-                    // forwarded into `export()` verbatim (never re-checked), so a blocking
-                    // status would already have short-circuited to `.blockedByZotero` before
-                    // this Task ever started; for PDF, `requiresZoteroForExport` never returns
-                    // true at all. Kept so this arm still shows the right alert if a future
-                    // change ever makes it reachable, without anyone needing to re-derive why.
                     self.showZoteroRequiredAlert(format: failedFormat, zoteroStatus: zoteroStatus)
                 } catch {
                     self.showExportErrorAlert(error: error)
@@ -546,45 +440,14 @@ final class ExportViewModel {
         }
     }
 
-    /// Truncates `message` to (approximately) `limit` characters for display in an alert,
-    /// breaking at a sentence or word boundary instead of mid-word, or returns `nil` if
-    /// `message` is already short enough that no truncation is needed.
-    ///
-    /// Prefers the last sentence-ending punctuation (`.`/`!`/`?`) inside the `limit`-character
-    /// window, as long as that leaves at least half the window's worth of text (avoids
-    /// truncating down to a near-empty fragment when a sentence break happens to fall very
-    /// early). Falls back to the last whitespace boundary, trimmed and given an ellipsis. If
-    /// neither is found (e.g. one long unbroken token), falls back to a hard cut at `limit`
-    /// with an ellipsis -- better than crashing or showing nothing, and matches the previous
-    /// behavior's worst case exactly.
-    ///
-    /// A pure, `nonisolated static func` (no alert construction, no clipboard access) so a
-    /// test can exercise every boundary case directly. `showExportErrorAlert` below is the
-    /// only production call site.
-    nonisolated static func truncatedForAlert(_ message: String, limit: Int = 200) -> String? {
-        guard message.count > limit else { return nil }
-        let window = message.prefix(limit)
-        if let end = window.lastIndex(where: { ".!?".contains($0) }) {
-            let head = window[...end]
-            if head.count >= limit / 2 { return String(head) }
-        }
-        if let space = window.lastIndex(where: { $0.isWhitespace }) {
-            let head = window[..<space]
-            if !head.isEmpty { return String(head.trimmingCharacters(in: .whitespaces)) + "\u{2026}" }
-        }
-        return String(window) + "\u{2026}"
-    }
-
     private func showExportErrorAlert(error: Error) {
         let fullErrorMessage = error.localizedDescription
 
-        // Truncate for display, breaking at a sentence/word boundary instead of mid-word (see
-        // `truncatedForAlert`'s doc comment). `nil` means the message was already short enough
-        // -- show it in full, with no clipboard copy, matching the original short-message
-        // behavior exactly.
+        // Truncate for display (first 200 chars + indicator)
         let displayMessage: String
-        if let truncated = Self.truncatedForAlert(fullErrorMessage) {
-            displayMessage = truncated + "\n\n(Full error copied to clipboard)"
+        if fullErrorMessage.count > 200 {
+            let truncated = String(fullErrorMessage.prefix(200))
+            displayMessage = truncated + "...\n\n(Full error copied to clipboard)"
 
             // Copy full error to clipboard
             let pasteboard = NSPasteboard.general
