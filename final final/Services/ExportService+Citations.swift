@@ -7,7 +7,6 @@ import Foundation
 
 // MARK: - Shared citekey regex
 
-// swiftlint:disable force_try
 /// Single, precompiled source of truth for the span/key regex pair used to extract (and, for
 /// `ExportService.canonicalizeCitekeys`, rewrite) pandoc citekeys. Three consumers share this
 /// exact pair: `ExportService.extractCitekeys`, `BibliographySyncService.extractCitekeys`
@@ -23,13 +22,14 @@ import Foundation
 /// patterns.
 enum ExportCitationRegex {
     /// Matches each complete `[...]` bracket span.
+    // swiftlint:disable:next force_try
     static let span = try! NSRegularExpression(pattern: #"\[[^\]]*\]"#)
     /// Matches each `@citekey` inside a span found by `span`, capturing the key in group 1.
+    // swiftlint:disable:next force_try
     static let key = try! NSRegularExpression(
         pattern: #"(?<![\w/])@(?![^\]{}\s]*/)([^\]{}/,;\s]+)"#
     )
 }
-// swiftlint:enable force_try
 
 // MARK: - Citation Detection
 
@@ -425,80 +425,5 @@ extension ExportService {
             with: "",
             options: .regularExpression
         )
-    }
-
-    /// Result of `applyCitekeyCanonicalization`: the (possibly unchanged) content and
-    /// `PDFContentPreparation`, plus the bibliography fetched along the way (nil when the
-    /// three-part guard below didn't hold, so nothing was fetched). `pdfPrep.warnings` were
-    /// already appended to `export()`'s `warnings` array by the caller, at
-    /// `ExportService.swift:405`, BEFORE this helper ever runs — a future caller must not
-    /// append `canonical.pdfPrep.warnings` again, or every PDF image-conversion warning shows
-    /// to the user twice.
-    struct CitekeyCanonicalization {
-        let content: String
-        let pdfPrep: PDFContentPreparation
-        let bibliography: BibliographyFetchResult?
-    }
-
-    /// Fetches the bibliography once and rewrites citekeys to their canonical case,
-    /// rewriting the temp input file when anything changed. Extracted verbatim from
-    /// `export()`; returns the (possibly unchanged) content, pdfPrep and bibliography.
-    /// Calls `canonicalizeCitekeys(in:using:)` for the actual string rewrite.
-    func applyCitekeyCanonicalization(
-        content: String, pdfPrep: PDFContentPreparation, hasCitations: Bool,
-        zoteroStatus: ZoteroStatus, inputURL: URL
-    ) async -> CitekeyCanonicalization {
-        let citekeys = Array(Set(extractCitekeys(from: content)))
-        guard hasCitations, zoteroStatus == .running, !citekeys.isEmpty else {
-            return CitekeyCanonicalization(content: content, pdfPrep: pdfPrep, bibliography: nil)
-        }
-
-        var content = content
-        var pdfPrep = pdfPrep
-
-        // One fetch, shared by both the citekey-case rewrite below (all formats) and
-        // `citationArguments`'s PDF-only `--citeproc`/`--bibliography` argument building
-        // further down -- never fetched twice for the same export.
-        let bibliography = await fetchBibliographyJSON(for: citekeys)
-
-        // supportsAmbiguityReporting is false whenever this batch resolved via the
-        // item.export fallback, which has NO ambiguity concept at all -- not "reports zero
-        // ambiguous keys," but structurally incapable of reporting any. rawAmbiguousKeys
-        // being empty there means "no information," not "verified unambiguous," so the
-        // ambiguity veto inside canonicalCitekeyMap is silently inert on that path. Rather
-        // than rely on an inert veto, skip building a rewrite map entirely when ambiguity
-        // reporting isn't available -- see RawCitekeyBatchResult.supportsAmbiguityReporting's
-        // doc comment for the exact failure this prevents (a citekey silently repointed at
-        // a completely different, wrong reference).
-        let map = bibliography.supportsAmbiguityReporting
-            ? ExportService.canonicalCitekeyMap(
-                requested: citekeys,
-                resolvedIDs: bibliography.resolvedIDs,
-                rawAmbiguousKeys: bibliography.rawAmbiguousKeys
-            )
-            : [:]
-        let rewritten = canonicalizeCitekeys(in: content, using: map)
-        if rewritten != content {
-            do {
-                try rewritten.write(to: inputURL, atomically: true, encoding: .utf8)
-                content = rewritten
-                pdfPrep = PDFContentPreparation(
-                    content: rewritten,
-                    effectiveResourceURL: pdfPrep.effectiveResourceURL,
-                    tempMediaDir: pdfPrep.tempMediaDir,
-                    warnings: pdfPrep.warnings
-                )
-            } catch {
-                DebugLog.log(
-                    .fileOps,
-                    "[ExportService] Failed to write canonicalized citekeys back to temp input file: \(error) " +
-                    "-- continuing export with the pre-rewrite content"
-                )
-                // Continue with pre-rewrite content -- today's behavior when this step
-                // can't happen; never fail the whole export over it.
-            }
-        }
-
-        return CitekeyCanonicalization(content: content, pdfPrep: pdfPrep, bibliography: bibliography)
     }
 }

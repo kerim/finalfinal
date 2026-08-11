@@ -9,11 +9,9 @@ import GRDB     // TransactionObserver for the writer-activity diagnostic (see d
 // MARK: - Export Diagnostics (temporary, opt-in)
 //
 // DIAGNOSTIC CODE — see docs/plans/mossy-tumbling-stroustrup.md.
-// Investigates a PDF-only page-1 reordering bug. This whole extension, and the
-// `stderrCaptureURL:` parameter threaded through `runPandocMappingCitationErrors`
-// (in ExportService+PandocProcess.swift) and `runPandoc` beneath it, along with
-// their call sites in `export(...)`, are removed once Step 3 of that plan lands a
-// targeted fix. Off by default, gated by
+// Investigates a PDF-only page-1 reordering bug. This whole extension, the
+// `stderrCaptureURL:` parameter on `runPandoc`, and its call site in `export(...)`
+// are removed once Step 3 of that plan lands a targeted fix. Off by default, gated by
 // `isDiagnosticCaptureEnabled` (Preferences -> Diagnostics -> Export Diagnostic Capture
 // toggle) — see ExportDiagnosticCaptureGatingTests.swift for the gating coverage.
 

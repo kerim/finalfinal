@@ -2,8 +2,9 @@
 //  CodeMirrorCoordinator+Handlers.swift
 //  final final
 //
-//  Content management, navigation, message handling, and polling
-//  for CodeMirrorEditor.Coordinator.
+//  Content sync, polling, cursor/scroll management, and the annotation/footnote/
+//  formatting command API for CodeMirrorEditor.Coordinator. WKScriptMessageHandler
+//  dispatch lives in CodeMirrorCoordinator+MessageDispatch.swift.
 //
 
 import SwiftUI
@@ -130,7 +131,10 @@ extension CodeMirrorEditor.Coordinator {
             let scrollFraction = dict["scrollFraction"] as? Double ?? 0
             let cursorIsVisible = dict["cursorIsVisible"] as? Bool ?? true
             let topLine = dict["topLine"] as? Double ?? 1.0
-            self?.onCursorPositionSaved(CursorPosition(line: line, column: column, scrollFraction: scrollFraction, cursorIsVisible: cursorIsVisible, topLine: topLine))
+            self?.onCursorPositionSaved(CursorPosition(
+                line: line, column: column, scrollFraction: scrollFraction,
+                cursorIsVisible: cursorIsVisible, topLine: topLine
+            ))
         }
     }
 
@@ -200,7 +204,10 @@ extension CodeMirrorEditor.Coordinator {
                 let scrollFraction = dict["scrollFraction"] as? Double ?? 0
                 let cursorIsVisible = dict["cursorIsVisible"] as? Bool ?? true
                 let topLine = dict["topLine"] as? Double ?? 1.0
-                position = CursorPosition(line: line, column: column, scrollFraction: scrollFraction, cursorIsVisible: cursorIsVisible, topLine: topLine)
+                position = CursorPosition(
+                    line: line, column: column, scrollFraction: scrollFraction,
+                    cursorIsVisible: cursorIsVisible, topLine: topLine
+                )
             }
 
             DebugLog.log(.editor,
@@ -358,337 +365,6 @@ extension CodeMirrorEditor.Coordinator {
         webView.evaluateJavaScript("window.FinalFinal.scrollToLine(\(line))") { _, _ in }
     }
 
-    // Handle JS error messages and citation picker requests
-    nonisolated func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
-        // Hot path: push-based section change from JS (instant sidebar highlight)
-        if message.name == "sectionChanged",
-           let data = message.body as? [String: Any] {
-            let title = (data["title"] as? String) ?? ""
-            let blockId = data["blockId"] as? String
-            Task { @MainActor in
-                guard self.contentState == .idle else { return }
-                guard !self.isResettingContentBinding.wrappedValue else { return }
-                self.onSectionChange(title)
-                self.onSectionIdChange?(blockId, title)
-            }
-            return
-        }
-
-        // Hot path: push-based content change from JS (replaces polling as primary)
-        if message.name == "contentChanged", let content = message.body as? String {
-            Task { @MainActor in
-                self.handleContentPush(content)
-            }
-            return
-        }
-
-        // Push-based selection change (status-bar selection word count)
-        if message.name == "selectionChanged", let text = message.body as? String {
-            Task { @MainActor in
-                self.onSelectionChange?(text)
-            }
-            return
-        }
-
-        // DebugLog handles #if DEBUG gating internally
-        if message.name == "errorHandler", let body = message.body as? [String: Any] {
-            let msgType = body["type"] as? String ?? "unknown"
-            let msg = body["message"] as? String ?? "unknown"
-            let prefix = "[CodeMirrorEditor]"
-
-            switch msgType {
-            case "sync-diag":
-                DebugLog.log(.sync, "\(prefix) JS SYNC-DIAG: \(msg)")
-            case "debug", "slash-diag":
-                DebugLog.log(.editor, "\(prefix) JS \(msgType.uppercased()): \(msg)")
-            case "plugin-error", "unhandledrejection", "error":
-                DebugLog.log(.editor, "\(prefix) JS ERROR: \(msg)")
-            default:
-                DebugLog.log(.editor, "\(prefix) JS \(msgType.uppercased()): \(msg)")
-            }
-        }
-
-        // Handle CAYW citation picker request from web editor
-        if message.name == "openCitationPicker", let requestId = message.body as? Int {
-            Task { @MainActor in
-                await self.handleOpenCitationPicker(requestId: requestId)
-            }
-        }
-
-        // Handle paint complete signal for zoom transitions
-        if message.name == "paintComplete" {
-            Task { @MainActor in
-                self.handlePaintComplete()
-            }
-        }
-
-        // Handle openURL requests from editor (Cmd+click on links)
-        if message.name == "openURL", let urlString = message.body as? String {
-            Task { @MainActor in
-                if let url = URL(string: urlString),
-                   let scheme = url.scheme?.lowercased(),
-                   ["http", "https", "mailto"].contains(scheme) {
-                    NSWorkspace.shared.open(url)
-                }
-            }
-        }
-
-        // Handle image paste from editor (base64 data)
-        if message.name == "pasteImage", let body = message.body as? [String: Any] {
-            Task { @MainActor in
-                self.handlePasteImage(body)
-            }
-        }
-
-        // Handle image picker request from editor
-        if message.name == "requestImagePicker" {
-            Task { @MainActor in
-                self.handleImagePicker()
-            }
-        }
-
-        // Handle image metadata update from editor (caption, alt, width)
-        if message.name == "updateImageMeta", let body = message.body as? [String: Any] {
-            Task { @MainActor in
-                self.handleUpdateImageMeta(body)
-            }
-        }
-
-        // Handle table paste truncation warning (> 1000 rows × 100 cols)
-        if message.name == "tableInsertTruncated", let body = message.body as? [String: Any] {
-            Task { @MainActor in
-                let rows = body["rows"] as? Int ?? 0
-                let cols = body["cols"] as? Int ?? 0
-                let window = self.webView?.window ?? NSApp.keyWindow
-                if let window {
-                    let alert = NSAlert()
-                    alert.messageText = "Table Truncated"
-                    alert.informativeText = "The pasted table was truncated to \(rows) rows × \(cols) columns."
-                    alert.alertStyle = .informational
-                    alert.addButton(withTitle: "OK")
-                    alert.beginSheetModal(for: window)
-                }
-            }
-        }
-
-        // Handle equation dialog request from JS (/equation slash command or insertEquationDialog())
-        if message.name == "openEquationDialog" {
-            Task { @MainActor in
-                EquationDialog.present(for: self.webView, logLabel: "CodeMirrorEditor")
-            }
-        }
-
-        // Handle footnote inserted notification from JS (slash command or evaluateJavaScript path)
-        // Sync editor content BEFORE posting notification to prevent stale DB body overwrite
-        if message.name == "footnoteInserted", let body = message.body as? [String: Any],
-           let label = body["label"] as? String, !label.isEmpty {
-            Task { @MainActor [weak self] in
-                guard let self, let webView = self.webView else { return }
-                webView.evaluateJavaScript("window.FinalFinal.getContentRaw()") { [weak self] result, _ in
-                    guard let self, let rawContent = result as? String else { return }
-                    Task { @MainActor in
-                        self.lastPushedContent = rawContent
-                        self.lastReceivedFromEditor = Date()
-                        self.contentBinding.wrappedValue = rawContent  // Sets sourceContent (with anchors)
-                        self.onContentChange(rawContent)  // Strips anchors → updates editorState.content
-                        NotificationCenter.default.post(
-                            name: .footnoteInsertedImmediate, object: nil,
-                            userInfo: ["label": label]
-                        )
-                    }
-                }
-            }
-        }
-
-        // Handle footnote navigation requests from editor
-        if message.name == "navigateToFootnote", let body = message.body as? [String: Any] {
-            Task { @MainActor in
-                guard let label = body["label"] as? String,
-                      let direction = body["direction"] as? String else { return }
-                self.handleNavigateToFootnote(label: label, direction: direction)
-            }
-        }
-
-        // Handle spellcheck messages from editor
-        if message.name == "spellcheck" {
-            Task { @MainActor in
-                guard let body = message.body as? [String: Any],
-                      let action = body["action"] as? String else { return }
-
-                switch action {
-                case "check":
-                    guard let segmentsData = body["segments"] as? [[String: Any]],
-                          let requestId = body["requestId"] as? Int else { return }
-                    let segments = segmentsData.compactMap { dict -> SpellCheckService.TextSegment? in
-                        guard let text = dict["text"] as? String,
-                              let from = dict["from"] as? Int,
-                              let to = dict["to"] as? Int else { return nil }
-                        let blockId = dict["blockId"] as? Int
-                        return SpellCheckService.TextSegment(text: text, from: from, to: to, blockId: blockId)
-                    }
-                    self.spellcheckTask?.cancel()
-                    self.spellcheckTask = Task {
-                        let results = await SpellCheckService.shared.check(segments: segments)
-                        guard !Task.isCancelled else { return }
-                        let encoder = JSONEncoder()
-                        guard let data = try? encoder.encode(results),
-                              let json = String(data: data, encoding: .utf8) else {
-                            DebugLog.log(.proofing, "[LT] DIAG delivery(CM): JSON encode FAILED for \(results.count) results, requestId=\(requestId)")
-                            return
-                        }
-                        let escaped = json.escapedForJSTemplateLiteral
-                        DebugLog.log(.proofing, "[LT] DIAG delivery(CM): sending requestId=\(requestId) results=\(results.count) jsonBytes=\(data.count)")
-                        self.webView?.evaluateJavaScript(
-                            "window.FinalFinal.setSpellcheckResults(\(requestId), JSON.parse(`\(escaped)`))"
-                        ) { _, error in
-                            if let error {
-                                DebugLog.log(.proofing, "[LT] DIAG delivery(CM): evaluateJavaScript FAILED requestId=\(requestId) error=\(error)")
-                            } else {
-                                DebugLog.log(.proofing, "[LT] DIAG delivery(CM): evaluateJavaScript OK requestId=\(requestId)")
-                            }
-                        }
-                    }
-
-                case "learn":
-                    guard let word = body["word"] as? String else { return }
-                    SpellCheckService.shared.learnWord(word)
-
-                case "ignore":
-                    guard let word = body["word"] as? String else { return }
-                    SpellCheckService.shared.ignoreWord(word)
-
-                case "disableRule":
-                    guard let ruleId = body["ruleId"] as? String else { return }
-                    ProofingSettings.shared.disableRule(ruleId)
-                    NotificationCenter.default.post(name: .proofingSettingsChanged, object: nil)
-
-                default: break
-                }
-            }
-        }
-    }
-
-    /// Show a native NSAlert for Zotero-related errors
-    /// JS alert() is silently swallowed in WKWebView (no WKUIDelegate), so we must use native alerts.
-    @MainActor
-    private func showZoteroAlert(title: String, message: String) {
-        let alert = NSAlert()
-        alert.messageText = title
-        alert.informativeText = message
-        alert.alertStyle = .warning
-        alert.addButton(withTitle: "OK")
-        alert.runModal()
-    }
-
-    /// Handle CAYW citation picker request from web editor
-    @MainActor
-    func handleOpenCitationPicker(requestId: Int) async {
-        guard let webView else {
-            DebugLog.log(.zotero, "[CodeMirrorEditor] handleOpenCitationPicker: webView is nil")
-            return
-        }
-
-        DebugLog.log(.zotero, "[CodeMirrorEditor] Opening CAYW picker, requestId: \(requestId)")
-
-        // Pre-check: ping Zotero before opening the picker
-        let isRunning = await ZoteroService.shared.ping()
-        if !isRunning {
-            showZoteroAlert(
-                title: "Zotero Not Running",
-                message: "Zotero is not running. Please open Zotero and try again."
-            )
-            sendCitationPickerCancelled(webView: webView, requestId: requestId)
-            return
-        }
-
-        do {
-            // Call CAYW picker - this blocks until user selects references
-            let (parsed, items) = try await ZoteroService.shared.openCAYWPicker()
-
-            // Bring app back to foreground after Zotero picker closes
-            NSApp.activate(ignoringOtherApps: true)
-
-            DebugLog.log(.zotero, "[CodeMirrorEditor] CAYW returned citekeys: \(parsed.citekeys)")
-
-            // Encode CSL items as JSON for web
-            let encoder = JSONEncoder()
-            encoder.outputFormatting = [.sortedKeys]
-            let itemsData = try encoder.encode(items)
-            guard let itemsJSON = String(data: itemsData, encoding: .utf8) else {
-                DebugLog.log(.zotero, "[CodeMirrorEditor] Failed to encode CSL items")
-                sendCitationPickerCancelled(webView: webView, requestId: requestId)
-                return
-            }
-
-            // Build callback data object
-            let callbackData: [String: Any] = [
-                "rawSyntax": parsed.rawSyntax,
-                "citekeys": parsed.citekeys,
-                "locators": parsed.locatorsJSON,
-                "prefix": parsed.entries.first?.prefix ?? "",
-                "suppressAuthor": parsed.entries.first?.suppressAuthor ?? false,
-                "requestId": requestId
-            ]
-
-            guard let callbackJSON = try? JSONSerialization.data(withJSONObject: callbackData),
-                  let callbackStr = String(data: callbackJSON, encoding: .utf8) else {
-                DebugLog.log(.zotero, "[CodeMirrorEditor] Failed to encode callback data")
-                sendCitationPickerCancelled(webView: webView, requestId: requestId)
-                return
-            }
-
-            // Send both parsed data and CSL items to web editor
-            let escapedCallback = callbackStr.escapedForJSTemplateLiteral
-            let escapedItems = itemsJSON.escapedForJSTemplateLiteral
-
-            let script = "window.FinalFinal.citationPickerCallback(JSON.parse(`\(escapedCallback)`), JSON.parse(`\(escapedItems)`))"
-            webView.evaluateJavaScript(script) { _, error in
-                if let error {
-                    DebugLog.log(.zotero, "[CodeMirrorEditor] citationPickerCallback error: \(error)")
-                } else {
-                    DebugLog.log(.zotero, "[CodeMirrorEditor] citationPickerCallback succeeded")
-                }
-            }
-        } catch ZoteroError.userCancelled {
-            NSApp.activate(ignoringOtherApps: true)
-            DebugLog.log(.zotero, "[CodeMirrorEditor] CAYW cancelled by user")
-            sendCitationPickerCancelled(webView: webView, requestId: requestId)
-        } catch ZoteroError.notRunning {
-            NSApp.activate(ignoringOtherApps: true)
-            DebugLog.log(.zotero, "[CodeMirrorEditor] Zotero not running")
-            showZoteroAlert(
-                title: "Zotero Connection Lost",
-                message: "Zotero is not running. Please open Zotero and try again."
-            )
-            sendCitationPickerCancelled(webView: webView, requestId: requestId)
-        } catch {
-            NSApp.activate(ignoringOtherApps: true)
-            DebugLog.log(.zotero, "[CodeMirrorEditor] CAYW error: \(error.localizedDescription)")
-            showZoteroAlert(
-                title: "Citation Error",
-                message: error.localizedDescription
-            )
-            sendCitationPickerCancelled(webView: webView, requestId: requestId)
-        }
-    }
-
-    /// Send citation picker error to web editor
-    @MainActor
-    func sendCitationPickerError(webView: WKWebView, message: String, requestId: Int) {
-        // Note: Escapes " instead of ${ — different pattern from escapedForJSTemplateLiteral
-        let escaped = message
-            .replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "`", with: "\\`")
-            .replacingOccurrences(of: "\"", with: "\\\"")
-        webView.evaluateJavaScript("window.FinalFinal.citationPickerError(`\(escaped)`, \(requestId))") { _, _ in }
-    }
-
-    /// Send citation picker cancelled to web editor
-    @MainActor
-    func sendCitationPickerCancelled(webView: WKWebView, requestId: Int) {
-        webView.evaluateJavaScript("window.FinalFinal.citationPickerCancelled(\(requestId))") { _, _ in }
-    }
-
     /// Handle paint complete signal for zoom transitions
     /// Called after the JS double-RAF + micro-scroll pattern ensures paint is complete
     func handlePaintComplete() {
@@ -755,14 +431,14 @@ extension CodeMirrorEditor.Coordinator {
 
     func setSpellcheck(_ enabled: Bool) {
         guard isEditorReady, let webView else { return }
-        let fn = enabled ? "enableSpellcheck" : "disableSpellcheck"
-        webView.evaluateJavaScript("window.FinalFinal.\(fn)()") { _, _ in }
+        let jsFunctionName = enabled ? "enableSpellcheck" : "disableSpellcheck"
+        webView.evaluateJavaScript("window.FinalFinal.\(jsFunctionName)()") { _, _ in }
     }
 
     func setSmartQuotes(_ enabled: Bool) {
         guard isEditorReady, let webView else { return }
-        let fn = enabled ? "enableSmartQuotes" : "disableSmartQuotes"
-        webView.evaluateJavaScript("window.FinalFinal.\(fn)()") { _, _ in }
+        let jsFunctionName = enabled ? "enableSmartQuotes" : "disableSmartQuotes"
+        webView.evaluateJavaScript("window.FinalFinal.\(jsFunctionName)()") { _, _ in }
     }
 
     /// Applies the persisted spellcheck/smart-quotes toggle state to this editor instance.
@@ -1013,121 +689,6 @@ extension CodeMirrorEditor.Coordinator {
     func toggleHighlight() {
         guard isEditorReady, let webView else { return }
         webView.evaluateJavaScript("window.FinalFinal.toggleHighlight()") { _, _ in }
-    }
-
-    // MARK: - Image Handling
-
-    /// Handle pasted image data from JS (base64-encoded)
-    @MainActor
-    func handlePasteImage(_ body: [String: Any]) {
-        guard let base64Data = body["data"] as? String,
-              let data = Data(base64Encoded: base64Data) else {
-            DebugLog.log(.editor, "[CodeMirrorEditor] Invalid paste image data")
-            return
-        }
-
-        let mimeType = body["type"] as? String
-        let suggestedName = body["name"] as? String
-
-        guard let mediaDir = MediaSchemeHandler.shared.mediaDirectoryURL else {
-            DebugLog.log(.editor, "[CodeMirrorEditor] No media directory — cannot paste image")
-            return
-        }
-
-        do {
-            let relativePath = try ImageImportService.importFromData(
-                data, suggestedName: suggestedName, mimeType: mimeType, mediaDir: mediaDir
-            )
-
-            insertImageBlock(src: relativePath, alt: suggestedName ?? "")
-        } catch {
-            DebugLog.log(.editor, "[CodeMirrorEditor] Image paste failed: \(error.localizedDescription)")
-            let window = webView?.window ?? NSApp.keyWindow
-            if let window {
-                let alert = NSAlert()
-                alert.messageText = "Image Import Failed"
-                alert.informativeText = error.localizedDescription
-                alert.alertStyle = .warning
-                alert.addButton(withTitle: "OK")
-                alert.beginSheetModal(for: window)
-            }
-        }
-    }
-
-    /// Handle native file picker request
-    @MainActor
-    func handleImagePicker() {
-        guard !isCleanedUp else { return }
-
-        let panel = NSOpenPanel()
-        panel.allowedContentTypes = ImageImportService.allowedTypes
-        panel.allowsMultipleSelection = false
-        panel.canChooseDirectories = false
-        panel.message = "Select an image to insert"
-
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-
-        guard let mediaDir = MediaSchemeHandler.shared.mediaDirectoryURL else {
-            DebugLog.log(.editor, "[CodeMirrorEditor] No media directory — cannot import image")
-            return
-        }
-
-        do {
-            let relativePath = try ImageImportService.importFromURL(url, mediaDir: mediaDir)
-            let alt = (url.lastPathComponent as NSString).deletingPathExtension
-            insertImageBlock(src: relativePath, alt: alt)
-        } catch {
-            DebugLog.log(.editor, "[CodeMirrorEditor] Image import failed: \(error.localizedDescription)")
-            let window = webView?.window ?? NSApp.keyWindow
-            if let window {
-                let alert = NSAlert()
-                alert.messageText = "Image Import Failed"
-                alert.informativeText = error.localizedDescription
-                alert.alertStyle = .warning
-                alert.addButton(withTitle: "OK")
-                alert.beginSheetModal(for: window)
-            }
-        }
-    }
-
-    /// Handle image metadata update from JS (caption, alt, width)
-    @MainActor
-    func handleUpdateImageMeta(_ body: [String: Any]) {
-        guard let blockId = body["blockId"] as? String else {
-            DebugLog.log(.editor, "[CodeMirrorEditor] updateImageMeta missing blockId")
-            return
-        }
-
-        guard let db = DocumentManager.shared.projectDatabase else { return }
-
-        do {
-            try db.updateBlockImageMeta(
-                id: blockId,
-                imageSrc: body["src"] as? String,
-                imageAlt: body["alt"] as? String,
-                imageCaption: body["caption"] as? String,
-                imageWidth: body["width"] as? Int
-            )
-        } catch {
-            DebugLog.log(.editor, "[CodeMirrorEditor] Failed to update image meta: \(error)")
-        }
-    }
-
-    /// Insert image markdown at cursor via JS
-    @MainActor
-    private func insertImageBlock(src: String, alt: String) {
-        guard let webView else { return }
-        let escapedSrc = src.replacingOccurrences(of: "`", with: "\\`")
-            .replacingOccurrences(of: "$", with: "\\$")
-        let escapedAlt = alt.replacingOccurrences(of: "`", with: "\\`")
-            .replacingOccurrences(of: "$", with: "\\$")
-        webView.evaluateJavaScript(
-            "window.FinalFinal.insertImage({src: `\(escapedSrc)`, alt: `\(escapedAlt)`})"
-        ) { _, error in
-            if let error {
-                DebugLog.log(.editor, "[CodeMirrorEditor] insertImage JS error: \(error)")
-            }
-        }
     }
 
 }
