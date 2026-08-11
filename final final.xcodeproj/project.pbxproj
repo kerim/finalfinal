@@ -133,6 +133,7 @@
 		63072A9E8DE3BC6324759AE9 /* ProjectDatabase.swift in Sources */ = {isa = PBXBuildFile; fileRef = DFB3FE823FEA8DAD86CD01A9 /* ProjectDatabase.swift */; };
 		639B3B47C550E26A3EE3F0D2 /* PandocLocator.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF38A145CE15C32F45EBB00D /* PandocLocator.swift */; };
 		63DC296CCF10AE4CE2719B56 /* EditorModeSwitchTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F2DCF084A58C8E4311F4D2B /* EditorModeSwitchTests.swift */; };
+		654C860545EFFAEE698BE0F0 /* ZoomWordCountSyncZoomedTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B3B350642682426E11BF1A0 /* ZoomWordCountSyncZoomedTests.swift */; };
 		66B2E33AC24571E9D119C046 /* ChevronButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = A4E5381EEA5442B073C96943 /* ChevronButton.swift */; };
 		66D2200EA53FE3348BB436E2 /* URLWrapLinkifyFilterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A8067346CDE87607A70492F /* URLWrapLinkifyFilterTests.swift */; };
 		6906417635740343EE8F362A /* OutlineParserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FDA7C9F1CFBE9EDB2C4D818C /* OutlineParserTests.swift */; };
@@ -373,6 +374,7 @@
 		0A8067346CDE87607A70492F /* URLWrapLinkifyFilterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = URLWrapLinkifyFilterTests.swift; sourceTree = "<group>"; };
 		0AAD4AA3FEF10B4394BAAAED /* ExportService+PDFImages.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ExportService+PDFImages.swift"; sourceTree = "<group>"; };
 		0AE40566D0E6548A9523CDBE /* HrTypedConversionE2ETests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HrTypedConversionE2ETests.swift; sourceTree = "<group>"; };
+		0B3B350642682426E11BF1A0 /* ZoomWordCountSyncZoomedTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZoomWordCountSyncZoomedTests.swift; sourceTree = "<group>"; };
 		0C3EF3B198E6DA37F41D54F6 /* E2EScratchTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = E2EScratchTests.swift; sourceTree = "<group>"; };
 		0CEC9B25AB24040A17CC1589 /* HashBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HashBar.swift; sourceTree = "<group>"; };
 		0E843650744C2F13D1618667 /* FinalFinalTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FinalFinalTests.swift; sourceTree = "<group>"; };
@@ -1103,6 +1105,7 @@
 				73EBD2F857920C0E7BDA5719 /* URLWrapWorkaroundTexTests.swift */,
 				2C35368F8803D097BE31BCE4 /* WindowFrameCoalescerTests.swift */,
 				354FD04A50F29512BEE6C1ED /* ZoomWordCountSyncTests.swift */,
+				0B3B350642682426E11BF1A0 /* ZoomWordCountSyncZoomedTests.swift */,
 				6704317B174DD3C1DB07E710 /* ZoteroServiceConnectionTests.swift */,
 			);
 			path = Tier2;
@@ -1565,6 +1568,7 @@
 				FCDEC16908ED1ABD61D221AE /* ZoomDataIntegrityNotesTests.swift in Sources */,
 				D6C6A8835E54DC2898CC1871 /* ZoomDataIntegrityTests.swift in Sources */,
 				31EE4F7EA3B0C9163BEF4206 /* ZoomWordCountSyncTests.swift in Sources */,
+				654C860545EFFAEE698BE0F0 /* ZoomWordCountSyncZoomedTests.swift in Sources */,
 				3CCD23FA0FAA8B8B1247B0B5 /* ZoteroExportDecodeResultTests.swift in Sources */,
 				7A3A35319C27A8AB3097E244 /* ZoteroLibraryScopeTests+CaseInsensitivity.swift in Sources */,
 				53870951193FF6433568FC60 /* ZoteroLibraryScopeTests+ExportDecodeError.swift in Sources */,
