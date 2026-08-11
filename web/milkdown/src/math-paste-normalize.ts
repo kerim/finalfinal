@@ -24,13 +24,28 @@
  * swallowing everything after it to EOF.
  *
  * A fully self-contained one-liner (`$$latex$$`, both open AND close glued
- * on the SAME line) is left untouched: remark-math already parses that shape
- * safely today (as inline math, not a runaway block) — there is nothing to
- * repair.
+ * on the SAME line, with nothing else on the line) is ALSO split onto three
+ * lines (`$$` / latex / `$$`) when it holds exactly one `$$...$$` run.
+ * remark-math's block-math tokenizer only recognizes a fence line that is
+ * EXACTLY `$$` as an opener/closer — left glued, a one-liner like
+ * `$$\begin{aligned}...\end{aligned}$$` is classified as INLINE math (a
+ * 2-`$`-fenced code-span-style token), not display math, even though it's
+ * the entire content of its paragraph and the app's own serializer would
+ * always emit it as a display block. Splitting the fences onto their own
+ * lines here makes it classify identically to that canonical multi-line
+ * form. A line carrying MORE than one `$$...$$` run (e.g. `$$a$$ + $$b$$`)
+ * is deliberately left untouched — remark-math already parses that
+ * correctly as two independent inline-math spans, and merging them would
+ * swallow the literal `$$` delimiters and the text between the runs into a
+ * single, wrong LaTeX body.
  *
  * Skips content inside fenced code blocks (```), mirroring the same guard in
  * Swift's `RawBlockSplitter` (`BlockParser+Splitting.swift`), so `$$`-shaped
  * text shown as a literal example inside a code block is never rewritten.
+ * Also skips any line indented 4 or more spaces, or by a single leading tab
+ * — markdown's own threshold for an INDENTED code block — so `    $$x = y$$`
+ * and `\t$$x = y$$` both stay literal code content instead of being
+ * rewritten into a math fence.
  *
  * A line that both starts AND ends with `$$` while already inside an open
  * fence (i.e., not the very first line) is deliberately left as ordinary
@@ -69,19 +84,52 @@ export function normalizeMathFences(text: string): string {
     // ordinary paragraph with inline math.
     const remainderAfterOpenPrefix = hasOpenPrefix ? trimmed.slice(2) : '';
     const isGluedOpener = hasOpenPrefix && !remainderAfterOpenPrefix.includes('$');
+    // Markdown's own indented-code-block rule (4+ leading spaces, OR a
+    // single leading tab) turns a line into literal INDENTED CODE BLOCK
+    // content, not a paragraph — e.g. "    $$x = y$$" or "\t$$x = y$$" both
+    // parse as code("$$x = y$$"), never as math. Content in that shape must
+    // never be rewritten by this normalizer, mirroring the ``` fence skip
+    // above but for the indentation-flavored "this is code, don't touch it"
+    // case.
+    const isIndentedCodeLine = /^(?: {4,}|\t)/.test(line);
 
     if (!awaitingClose) {
       const isSelfContainedOneLiner = hasOpenPrefix && hasCloseSuffix && trimmed.length > 4;
+      // Safe to promote to the canonical multi-line display shape only when the line
+      // holds exactly ONE $$...$$ run — i.e. no further "$$" appears between the
+      // opening and closing fence. See the doc comment above for why a multi-run line
+      // (e.g. "$$a$$ + $$b$$") must be left alone instead.
+      const innerContent = isSelfContainedOneLiner ? trimmed.slice(2, -2) : '';
+      const isSingleMathRun = isSelfContainedOneLiner && !innerContent.includes('$$');
+
       if (trimmed === '$$') {
         awaitingClose = true;
         out.push(line);
+      } else if (isSingleMathRun && !isIndentedCodeLine) {
+        // "$$latex$$" (the WHOLE line, nothing else) -> "$$" / "latex" / "$$"
+        // Preserve the line's leading indentation/prefix (e.g. a list item's
+        // continuation indent) on ALL THREE emitted lines, not just the
+        // opener — otherwise the content and closer lines de-indent enough
+        // to escape the list/blockquote context they were nested in.
+        const idx = line.indexOf('$$');
+        const closeIdx = line.lastIndexOf('$$');
+        const prefix = line.slice(0, idx);
+        out.push(line.slice(0, idx + 2));
+        out.push(prefix + line.slice(idx + 2, closeIdx));
+        out.push(prefix + line.slice(closeIdx));
       } else if (isSelfContainedOneLiner) {
         out.push(line);
-      } else if (isGluedOpener) {
+      } else if (isGluedOpener && !isIndentedCodeLine) {
         // Glued open: "$$content" -> "$$" / "content"
+        // Preserve the line's leading indentation/prefix (e.g. a list
+        // item's continuation indent) on BOTH emitted lines, not just the
+        // opener — mirroring the one-liner fix above — otherwise the
+        // content line de-indents enough to escape the list/blockquote
+        // context it was nested in.
         const idx = line.indexOf('$$');
+        const prefix = line.slice(0, idx);
         out.push(line.slice(0, idx + 2));
-        out.push(line.slice(idx + 2));
+        out.push(prefix + line.slice(idx + 2));
         awaitingClose = true;
       } else {
         out.push(line);
@@ -95,9 +143,16 @@ export function normalizeMathFences(text: string): string {
       out.push(line);
     } else if (hasCloseSuffix && !hasOpenPrefix) {
       // Glued close: "content$$" -> "content" / "$$"
+      // Preserve the line's leading indentation on the closer line too —
+      // same reasoning as the glued-open fix above — otherwise the closer
+      // de-indents enough to escape the list/blockquote context the
+      // fenced content was nested in. Unlike the opener case, the `$$`
+      // sits at the END of the line here, so the prefix must come from the
+      // line's own leading whitespace rather than "everything before $$".
       const idx = line.lastIndexOf('$$');
+      const prefix = line.match(/^[ \t]*/)![0];
       out.push(line.slice(0, idx));
-      out.push(line.slice(idx));
+      out.push(prefix + line.slice(idx));
       awaitingClose = false;
     } else {
       out.push(line);

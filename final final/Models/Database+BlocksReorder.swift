@@ -294,9 +294,27 @@ extension ProjectDatabase {
                 .fetchAll(db)
 
             // 2. Group blocks: each "group leader" (heading, pseudo-section, bibliography)
-            //    owns subsequent non-leader blocks until the next leader (see groupBlocksBySections)
+            //    owns subsequent non-leader blocks until the next leader
             let sectionIds = Set(sections.map { $0.id })
-            let (groups, preamble) = groupBlocksBySections(allBlocks, sectionIds: sectionIds)
+            var groups: [String: [Block]] = [:]  // leaderId -> body blocks
+            var preamble: [Block] = []           // body blocks before first leader
+            var currentLeaderId: String?
+            var leaderOrder: [String] = []       // preserves original leader order for lookup
+
+            for block in allBlocks {
+                let isLeader = sectionIds.contains(block.id)
+
+                if isLeader {
+                    currentLeaderId = block.id
+                    groups[block.id] = []
+                    leaderOrder.append(block.id)
+                } else if let leaderId = currentLeaderId {
+                    groups[leaderId, default: []].append(block)
+                } else {
+                    // Body block before any heading (preamble)
+                    preamble.append(block)
+                }
+            }
 
             // 3. Build new order: preamble, then sections in new order with their body blocks
             var sortCounter: Double = 1.0
@@ -312,10 +330,38 @@ extension ProjectDatabase {
                 sortCounter += 1.0
             }
 
-            // Sections in the order specified by the sections array (see reorderSection)
-            let context: SectionReorderContext = (groups: groups, headingUpdates: headingUpdates)
+            // Sections in the order specified by the sections array
             for section in sections {
-                sortCounter = try reorderSection(section, context: context, startingAt: sortCounter, now: now, db: db)
+                // Update the heading/leader block
+                if var headingBlock = try Block.fetchOne(db, key: section.id) {
+                    headingBlock.sortOrder = sortCounter
+                    headingBlock.updatedAt = now
+
+                    // Apply heading updates if provided
+                    if let update = headingUpdates[section.id] {
+                        if let fragment = update.markdownFragment {
+                            headingBlock.markdownFragment = fragment
+                        }
+                        if let level = update.headingLevel {
+                            headingBlock.headingLevel = level
+                        }
+                    }
+
+                    try headingBlock.update(db)
+                    sortCounter += 1.0
+
+                    // Body blocks follow in their original order
+                    if let bodyBlocks = groups[section.id] {
+                        for var bodyBlock in bodyBlocks {
+                            if bodyBlock.sortOrder != sortCounter {
+                                bodyBlock.sortOrder = sortCounter
+                                bodyBlock.updatedAt = now
+                                try bodyBlock.update(db)
+                            }
+                            sortCounter += 1.0
+                        }
+                    }
+                }
             }
         }
     }
@@ -398,71 +444,10 @@ extension ProjectDatabase {
 
 // MARK: - Shared Replace/Reorder Helpers
 
-/// Mechanical extractions from `replaceBlocks`, `replaceBlocksInRange`, and `reorderAllBlocks`
-/// (the latter split out only for cyclomatic complexity) — no behavior change from the originals.
+/// Mechanical extractions from `replaceBlocks` and `replaceBlocksInRange` — no behavior
+/// change from the bodies they were lifted from. See the risk notes on each function for
+/// what must not be altered.
 private extension ProjectDatabase {
-
-    // MARK: Reorder all blocks
-
-    /// leaderId->body-blocks map + pending heading updates, bundled to keep reorderSection's param count under the limit.
-    typealias SectionReorderContext = (groups: [String: [Block]], headingUpdates: [String: HeadingUpdate])
-
-    /// Partitions `allBlocks` into a leaderId -> body-blocks map plus a preamble. Extraction of `reorderAllBlocks` step 2.
-    func groupBlocksBySections(
-        _ allBlocks: [Block],
-        sectionIds: Set<String>
-    ) -> (groups: [String: [Block]], preamble: [Block]) {
-        var groups: [String: [Block]] = [:]  // leaderId -> body blocks
-        var preamble: [Block] = []           // body blocks before first leader
-        var currentLeaderId: String?
-        var leaderOrder: [String] = []       // preserves original leader order for lookup
-        for block in allBlocks {
-            let isLeader = sectionIds.contains(block.id)
-            if isLeader {
-                currentLeaderId = block.id
-                groups[block.id] = []
-                leaderOrder.append(block.id)
-            } else if let leaderId = currentLeaderId {
-                groups[leaderId, default: []].append(block)
-            } else {
-                preamble.append(block)  // body block before any heading
-            }
-        }
-        return (groups, preamble)
-    }
-
-    /// Reorders one section (heading + body); extracted from `reorderAllBlocks` step 4 — a missing heading silently skips the section, as before.
-    func reorderSection(
-        _ section: SectionViewModel,
-        context: SectionReorderContext,
-        startingAt initialSortCounter: Double,
-        now: Date,
-        db: Database
-    ) throws -> Double {
-        guard var headingBlock = try Block.fetchOne(db, key: section.id) else {
-            return initialSortCounter
-        }
-        var sortCounter = initialSortCounter
-        headingBlock.sortOrder = sortCounter
-        headingBlock.updatedAt = now
-        if let update = context.headingUpdates[section.id] {
-            if let fragment = update.markdownFragment { headingBlock.markdownFragment = fragment }
-            if let level = update.headingLevel { headingBlock.headingLevel = level }
-        }
-        try headingBlock.update(db)
-        sortCounter += 1.0
-        if let bodyBlocks = context.groups[section.id] {
-            for var bodyBlock in bodyBlocks {
-                if bodyBlock.sortOrder != sortCounter {
-                    bodyBlock.sortOrder = sortCounter
-                    bodyBlock.updatedAt = now
-                    try bodyBlock.update(db)
-                }
-                sortCounter += 1.0
-            }
-        }
-        return sortCounter
-    }
 
     // MARK: Image metadata
 

@@ -31,6 +31,8 @@ struct CodeMirrorEditor: NSViewRepresentable {
     /// Generation counter for stale poll detection
     var contentGeneration: Int = 0
 
+    var pollCacheResetGeneration: Int = 0  // bumped by EditorViewState.resetForProjectSwitch()
+
     /// CSS variables for theming - when this changes, updateNSView is called
     var themeCSS: String = ThemeManager.shared.cssVariables
 
@@ -134,6 +136,8 @@ struct CodeMirrorEditor: NSViewRepresentable {
         context.coordinator.onContentAcknowledged = onContentAcknowledged
         context.coordinator.onSectionIdChange = onSectionIdChange
         context.coordinator.onSelectionChange = onSelectionChange
+
+        context.coordinator.applyPollCacheReset(generation: pollCacheResetGeneration)
 
         let effectiveFocusMode = focusModeEnabled && FocusModeSettingsManager.shared.enableParagraphHighlighting
         if context.coordinator.lastFocusModeState != effectiveFocusMode {
@@ -257,6 +261,14 @@ struct CodeMirrorEditor: NSViewRepresentable {
 
         /// Generation counter for stale poll detection
         var contentGeneration: Int = 0
+
+        // Poll-equality-guard cache -- see applyPollCacheReset() below (declared in an
+        // extension so this doesn't count against this class's own body length).
+        var lastPolledWordCount: Int?
+        var lastPolledCharacterCount: Int?
+        var lastPolledSectionTitle: String?
+        var lastPolledSectionBlockId: String?
+        var lastPollCacheResetGeneration: Int = 0
 
         var isEditorReady = false
         var isCleanedUp = false
@@ -396,5 +408,19 @@ struct CodeMirrorEditor: NSViewRepresentable {
                 if let observer { NotificationCenter.default.removeObserver(observer) }
             }
         }
+    }
+}
+
+extension CodeMirrorEditor.Coordinator {
+    /// Drops the poll-equality-guard cache once `generation` moves past what was last
+    /// applied (bumped by `EditorViewState.resetForProjectSwitch()` on project switch/close),
+    /// so a poll tick can't compare a real value against one left from the previous project.
+    func applyPollCacheReset(generation: Int) {
+        guard lastPollCacheResetGeneration != generation else { return }
+        lastPollCacheResetGeneration = generation
+        lastPolledWordCount = nil
+        lastPolledCharacterCount = nil
+        lastPolledSectionTitle = nil
+        lastPolledSectionBlockId = nil
     }
 }

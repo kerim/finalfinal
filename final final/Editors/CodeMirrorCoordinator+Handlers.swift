@@ -896,14 +896,21 @@ extension CodeMirrorEditor.Coordinator {
 
             if let stats = json["stats"] as? [String: Any],
                let words = stats["words"] as? Int,
-               let chars = stats["characters"] as? Int {
+               let chars = stats["characters"] as? Int,
+               words != self.lastPolledWordCount || chars != self.lastPolledCharacterCount {
+                self.lastPolledWordCount = words
+                self.lastPolledCharacterCount = chars
                 self.onStatsChange(words, chars)
             }
 
             let sectionTitle = (json["sectionTitle"] as? String) ?? ""
             let sectionBlockId = json["sectionBlockId"] as? String
-            self.onSectionChange(sectionTitle)
-            self.onSectionIdChange?(sectionBlockId, sectionTitle)
+            if sectionTitle != self.lastPolledSectionTitle || sectionBlockId != self.lastPolledSectionBlockId {
+                self.lastPolledSectionTitle = sectionTitle
+                self.lastPolledSectionBlockId = sectionBlockId
+                self.onSectionChange(sectionTitle)
+                self.onSectionIdChange?(sectionBlockId, sectionTitle)
+            }
         }
     }
 
