@@ -261,6 +261,21 @@ final class ZoteroService {
         }
     }
 
+    /// Folds a freshly probed `ZoteroStatus` (from `ZoteroChecker.check()`, run during an
+    /// export preflight or export) into this service's cached connection state, so UI reading
+    /// `isConnected` doesn't keep showing a stale "connected" long after Zotero went away.
+    func applyProbedStatus(_ status: ZoteroStatus) {
+        switch status {
+        case .running:
+            isConnected = true
+            connectionError = nil
+            lastPingTime = Date()
+        case .notRunning, .betterBibTeXMissing, .timeout, .error:
+            isConnected = false
+            connectionError = ExportService.zoteroPreflightReason(for: status)
+        }
+    }
+
     /// Connect to Zotero - just verifies BBT is running via ping
     func connect() async throws {
         let connected = await ping()

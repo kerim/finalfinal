@@ -59,6 +59,14 @@ struct ExportResult: Sendable {
     let format: ExportFormat
     let zoteroStatus: ZoteroStatus
     let warnings: [String]
+    /// Whether `zoteroStatus` above came from an actual live check of Zotero during this
+    /// export, as opposed to the unprobed `.running` default a document with no real
+    /// citekeys short-circuits to (see `export()`'s `hasRealCitations` gate) or a status the
+    /// caller precomputed and forwarded in via `precomputedZoteroStatus`. Lets a caller (see
+    /// `ZoteroService.applyProbedStatus`) fold a fresh, real probe result into app-wide cached
+    /// Zotero connection state without also overwriting that state with a value that was
+    /// never actually checked.
+    let zoteroStatusWasProbed: Bool
 }
 
 /// Actor for performing exports (I/O work, off main thread)
@@ -249,12 +257,21 @@ extension ExportService {
         settings: ExportSettings
     ) async throws -> ZoteroPreflightResult {
         let processedContent = preprocessContentForExport(content, settings: settings)
-        let hasCitations = hasPandocCitations(in: processedContent)
-        let zoteroStatus: ZoteroStatus = hasCitations
-            ? await zoteroChecker.check()
-            : .running
-        let resourcePaths = try resolveAndValidateResourcePaths(format: format, settings: settings)
+        // Strict citekey extraction (not the loose `hasPandocCitations` regex) gates the
+        // Zotero probe itself: a false-positive bracket shape like `[contact me@example.com]`
+        // matches the loose regex but has zero real citekeys, and must never trigger a live
+        // network round-trip to Zotero just to compute a status nobody needs. See
+        // `export()`'s identical split further down for why the loose detector still has a
+        // legitimate (and deliberately unchanged) job elsewhere -- gating pandoc argument
+        // construction, not this probe.
         let hasRealCitations = !extractCitekeys(from: processedContent).isEmpty
+        let zoteroStatus: ZoteroStatus = hasRealCitations
+            ? await zoteroChecker.check()
+            : .running // Not an actual probe result -- a document with no real citekeys
+                       // (including a loose-only false-positive match) short-circuits here
+                       // without ever checking Zotero, so this value is NOT authoritative
+                       // about real Zotero connectivity. See `ExportResult.zoteroStatusWasProbed`.
+        let resourcePaths = try resolveAndValidateResourcePaths(format: format, settings: settings)
 
         let isBlocked = Self.requiresZoteroForExport(
             format: format,
@@ -304,31 +321,51 @@ extension ExportService {
             throw ExportError.pandocNotFound
         }
 
-        // Only check Zotero if content appears to have citations -- unless the caller already
-        // did (see `precomputedZoteroStatus`'s doc comment above).
-        let hasCitations = hasPandocCitations(in: processedContent)
-        // Zotero status only matters for citation processing
-        // When no citations, .running means "no issue" (status is irrelevant)
+        // Strict citekey extraction (not the loose `hasPandocCitations` regex below) gates
+        // both the Zotero probe just below and the hard-stop check further down. Hoisted up
+        // here -- rather than computed separately, later, only for the hard-stop check as it
+        // used to be -- so the same single computation drives both: a false-positive bracket
+        // shape like `[contact me@example.com]` or `[install @scope/pkg]` (see
+        // `extractCitekeys`'s doc comment for the full accept/reject rules) must never trigger
+        // a live Zotero network round-trip in the first place, not just avoid the hard stop
+        // after needlessly probing. Mirrors `zoteroPreflight`'s identical split above.
+        let hasRealCitations = !extractCitekeys(from: processedContent).isEmpty
+
+        // Only check Zotero if content appears to have real citations -- unless the caller
+        // already did (see `precomputedZoteroStatus`'s doc comment above).
         let zoteroStatus: ZoteroStatus
         if let precomputedZoteroStatus {
             zoteroStatus = precomputedZoteroStatus
         } else {
-            zoteroStatus = hasCitations ? await zoteroChecker.check() : .running
+            zoteroStatus = hasRealCitations
+                ? await zoteroChecker.check()
+                : .running // Not an actual probe -- see `zoteroPreflight`'s identical comment;
+                           // not authoritative about real Zotero connectivity. See
+                           // `ExportResult.zoteroStatusWasProbed`.
         }
 
         // Get and validate resource paths (lua filter, reference doc)
         let resourcePaths = try resolveAndValidateResourcePaths(format: format, settings: settings)
 
+        // Loose citation detection (`hasPandocCitations`) still gates the pandoc-argument
+        // construction below (the bibliography fetch and the --lua-filter/--citeproc
+        // arguments) -- deliberately kept distinct from the strict `hasRealCitations` used
+        // for the probe/hard-stop above. `extractCitekeys` has documented gaps (e.g.
+        // `[@some/key]`, `[@{key with spaces}]` -- see its doc comment) where this looser
+        // regex is intentionally more permissive; narrowing those call sites to
+        // `hasRealCitations` would strip `--lua-filter`/`--citeproc` from those real
+        // citations and regress them to literal, unresolved text instead.
+        let hasCitations = hasPandocCitations(in: processedContent)
+
         // Hard stop -- before any temp file or pandoc invocation -- rather than let a
         // DOCX/ODT export run its lua filter against an unreachable Zotero (pandoc exit 83)
         // or silently emit unresolved citations. See requiresZoteroForExport's doc comment.
         //
-        // Uses the strict citekey extractor here, NOT the loose `hasCitations` above:
-        // `hasPandocCitations`'s regex also matches non-citation shapes like
+        // Uses the strict `hasRealCitations` computed above, NOT the loose `hasCitations`
+        // just above: `hasPandocCitations`'s regex also matches non-citation shapes like
         // `[contact me@example.com]` or `[install @scope/pkg]` (see extractCitekeys's doc
         // comment), and a document with zero real citekeys must never be hard-blocked just
         // because it happens to contain one of those shapes.
-        let hasRealCitations = !extractCitekeys(from: processedContent).isEmpty
         guard !Self.requiresZoteroForExport(
             format: format,
             hasCitations: hasRealCitations,
@@ -484,7 +521,7 @@ extension ExportService {
                 stderrCaptureURL: diagnosticDirURL?.appendingPathComponent("pandoc-stderr.log")
             )
         } catch let error as ExportError {
-            if case .pandocFailed(let exitCode, _) = error,
+            if case .pandocFailed(let exitCode, let pandocStderr) = error,
                let mapped = Self.citationFilterErrorIfApplicable(
                    exitCode: exitCode,
                    format: format,
@@ -493,6 +530,15 @@ extension ExportService {
                 // Zotero WAS reachable when the pre-flight probe ran (requiresZoteroForExport
                 // above didn't fire), so a raw exit-83 crash message here would wrongly imply
                 // the probe was wrong. See citationFilterErrorIfApplicable's doc comment.
+                //
+                // The user-facing citationFilterFailed message deliberately omits the raw
+                // pandoc traceback (see its doc comment) -- preserve it here instead, so a
+                // real failure can still be diagnosed after the fact from the debug log.
+                DebugLog.log(
+                    .zotero,
+                    "[ExportService] Citation filter failed for \(format.displayName) export " +
+                    "(pandoc exit \(exitCode)): \(pandocStderr)"
+                )
                 throw mapped
             }
             throw error
@@ -507,7 +553,16 @@ extension ExportService {
             outputURL: outputURL,
             format: format,
             zoteroStatus: zoteroStatus,
-            warnings: warnings
+            warnings: warnings,
+            // True only when THIS export actually ran a live Zotero check itself -- not when
+            // the caller forwarded a precomputed status (that check happened earlier,
+            // elsewhere) and not when there were no real citekeys to check in the first place
+            // (zoteroStatus above is then the unprobed `.running` default, not a real result).
+            // Uses the strict `hasRealCitations` (item 1's probe trigger), not the loose
+            // `hasCitations` above -- the two can disagree for a loose-only-match document,
+            // and it's `hasRealCitations` that actually decided whether `zoteroChecker.check()`
+            // ran a few lines up.
+            zoteroStatusWasProbed: precomputedZoteroStatus == nil && hasRealCitations
         )
     }
 
