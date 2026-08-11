@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.123] - 2026-08-11
+
 ### Fixed
 
 - **An equation written on a single line as `$$…$$` was squeezed into the end of the paragraph above it instead of standing on its own** — the app couldn't tell a one-line display equation apart from a small inline one, so it rendered it as inline math. One-line display equations now get their own properly spaced block, and equations written inside an indented block keep their indentation instead of losing it.
