@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **An equation written on a single line as `$$…$$` was squeezed into the end of the paragraph above it instead of standing on its own** — the app couldn't tell a one-line display equation apart from a small inline one, so it rendered it as inline math. One-line display equations now get their own properly spaced block, and equations written inside an indented block keep their indentation instead of losing it.
+- **The word and character counts in the status bar could stay stuck at zero after you closed a project and reopened it** — the counts were being remembered from the previous session and never refreshed. They now show the real numbers immediately on reopening.
+- **Exporting a document with no citations in it could warn that Zotero wasn't running** — the check that decides whether Zotero is needed was stricter than the one that actually looks for citations, so ordinary text that vaguely resembled a citation triggered a warning for a document that never needed Zotero at all.
+- **Triggering an export twice in quick succession could stack up two save dialogs or two warnings on top of each other** — only one export prompt can now be on screen at a time.
+- **The Zotero connection indicator could keep showing an out-of-date state after an export** — a successful or failed export now updates it, instead of leaving whatever it last showed.
+- **A long export error message was cut off mid-word** — error text is now trimmed at a sentence or word boundary so it still reads as a sentence.
+
 ## [0.2.122] - 2026-08-10
 
 ### Changed
