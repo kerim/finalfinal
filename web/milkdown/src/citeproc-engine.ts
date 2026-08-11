@@ -6,10 +6,8 @@
 import CSL from 'citeproc';
 
 // Import bundled CSL style and locale via Vite's ?raw suffix
-// chicago-author-date.csl lives under Resources/Export — it's also read at
-// runtime by Swift (ExportService+PandocResources.swift) for PDF export.
-// That copy is the single source of truth; do not re-add a web/ copy.
-import chicagoStyle from '../../../final final/Resources/Export/chicago-author-date.csl?raw';
+// Note: these are local to milkdown/src
+import chicagoStyle from './csl/chicago-author-date.csl?raw';
 import localeEnUS from './locales/locales-en-US.xml?raw';
 
 // CSL-JSON item interface (matches Swift CSLItem)
