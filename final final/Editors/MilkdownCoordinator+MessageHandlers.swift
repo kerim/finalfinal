@@ -2,8 +2,9 @@
 //  MilkdownCoordinator+MessageHandlers.swift
 //  final final
 //
-//  Navigation, message handling, citation resolution, and polling
-//  for MilkdownEditor.Coordinator.
+//  Citation search/resolution (Zotero CAYW picker), navigation, cursor/scroll
+//  management, content sync, and polling for MilkdownEditor.Coordinator.
+//  WKScriptMessageHandler dispatch lives in MilkdownCoordinator+MessageDispatch.swift.
 //
 
 import SwiftUI
@@ -238,230 +239,6 @@ extension MilkdownEditor.Coordinator {
         webView.evaluateJavaScript("window.FinalFinal.scrollToLine(\(line))") { _, _ in }
     }
 
-    // Handle JS messages from WKScriptMessageHandler
-    nonisolated func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
-        // Hot path: push-based section change from JS (instant sidebar highlight)
-        if message.name == "sectionChanged",
-           let data = message.body as? [String: Any] {
-            let title = (data["title"] as? String) ?? ""
-            let blockId = data["blockId"] as? String
-            Task { @MainActor in
-                guard self.contentState == .idle else { return }
-                guard !self.isResettingContentBinding.wrappedValue else { return }
-                self.onSectionChange(title)
-                self.onSectionIdChange?(blockId, title)
-            }
-            return
-        }
-
-        // Hot path: push-based content change from JS (replaces polling as primary)
-        if message.name == "contentChanged", let content = message.body as? String {
-            Task { @MainActor in
-                self.handleContentPush(content)
-            }
-            return
-        }
-
-        // Push-based selection change (status-bar selection word count)
-        if message.name == "selectionChanged", let text = message.body as? String {
-            Task { @MainActor in
-                self.onSelectionChange?(text)
-            }
-            return
-        }
-
-        // DebugLog handles #if DEBUG gating internally
-        if message.name == "errorHandler", let body = message.body as? [String: Any] {
-            let msgType = body["type"] as? String ?? "unknown"
-            let msg = body["message"] as? String ?? "unknown"
-            let prefix = "[MilkdownEditor]"
-
-            switch msgType {
-            case "sync-diag":
-                DebugLog.log(.sync, "\(prefix) JS SYNC-DIAG: \(msg)")
-            case "debug", "slash-diag":
-                DebugLog.log(.editor, "\(prefix) JS \(msgType.uppercased()): \(msg)")
-            case "plugin-error", "unhandledrejection", "error":
-                DebugLog.log(.editor, "\(prefix) JS ERROR: \(msg)")
-            default:
-                DebugLog.log(.editor, "\(prefix) JS \(msgType.uppercased()): \(msg)")
-            }
-        }
-
-        // Handle citation search requests from web editor (legacy)
-        if message.name == "searchCitations", let query = message.body as? String {
-            Task { @MainActor in
-                await self.handleCitationSearch(query)
-            }
-        }
-
-        // Handle CAYW citation picker request from web editor
-        if message.name == "openCitationPicker", let requestId = message.body as? Int {
-            Task { @MainActor in
-                await self.handleOpenCitationPicker(requestId: requestId)
-            }
-        }
-
-        // Handle lazy citation resolution request from web editor
-        if message.name == "resolveCitekeys", let citekeys = message.body as? [String] {
-            Task { @MainActor in
-                await self.handleResolveCitekeys(citekeys)
-            }
-        }
-
-        // Handle paint complete signal for zoom transitions
-        // This is called after the double RAF pattern ensures paint is complete
-        if message.name == "paintComplete" {
-            Task { @MainActor in
-                self.handlePaintComplete()
-            }
-        }
-
-        // Handle openURL requests from editor (Cmd+click on links)
-        if message.name == "openURL", let urlString = message.body as? String {
-            Task { @MainActor in
-                if let url = URL(string: urlString),
-                   let scheme = url.scheme?.lowercased(),
-                   ["http", "https", "mailto"].contains(scheme) {
-                    NSWorkspace.shared.open(url)
-                }
-            }
-        }
-
-        // Handle footnote inserted notification from JS (slash command or evaluateJavaScript path)
-        // Sync editor content BEFORE posting notification to prevent stale DB body overwrite
-        if message.name == "footnoteInserted", let body = message.body as? [String: Any],
-           let label = body["label"] as? String, !label.isEmpty {
-            Task { @MainActor [weak self] in
-                guard let self, let webView = self.webView else { return }
-                webView.evaluateJavaScript("window.FinalFinal.getContent()") { [weak self] result, _ in
-                    guard let self, let content = result as? String else { return }
-                    Task { @MainActor in
-                        self.lastPushedContent = content
-                        self.lastReceivedFromEditor = Date()
-                        self.contentBinding.wrappedValue = content
-                        NotificationCenter.default.post(
-                            name: .footnoteInsertedImmediate, object: nil,
-                            userInfo: ["label": label]
-                        )
-                    }
-                }
-            }
-        }
-
-        // Handle footnote navigation requests from editor
-        if message.name == "navigateToFootnote", let body = message.body as? [String: Any] {
-            Task { @MainActor in
-                guard let label = body["label"] as? String,
-                      let direction = body["direction"] as? String else { return }
-                self.handleNavigateToFootnote(label: label, direction: direction)
-            }
-        }
-
-        // Handle image paste from editor (base64 data)
-        if message.name == "pasteImage", let body = message.body as? [String: Any] {
-            Task { @MainActor in
-                self.handlePasteImage(body)
-            }
-        }
-
-        // Handle image picker request from editor
-        if message.name == "requestImagePicker" {
-            Task { @MainActor in
-                self.handleImagePicker()
-            }
-        }
-
-        // Handle image metadata update from editor (caption, alt, width)
-        if message.name == "updateImageMeta", let body = message.body as? [String: Any] {
-            Task { @MainActor in
-                self.handleUpdateImageMeta(body)
-            }
-        }
-
-        // Handle table paste truncation warning (> 1000 rows × 100 cols)
-        if message.name == "tableInsertTruncated", let body = message.body as? [String: Any] {
-            Task { @MainActor in
-                let rows = body["rows"] as? Int ?? 0
-                let cols = body["cols"] as? Int ?? 0
-                let window = self.webView?.window ?? NSApp.keyWindow
-                if let window {
-                    let alert = NSAlert()
-                    alert.messageText = "Table Truncated"
-                    alert.informativeText = "The pasted table was truncated to \(rows) rows × \(cols) columns."
-                    alert.alertStyle = .informational
-                    alert.addButton(withTitle: "OK")
-                    alert.beginSheetModal(for: window)
-                }
-            }
-        }
-
-        // Handle equation dialog request from JS (/equation slash command or insertEquationDialog())
-        if message.name == "openEquationDialog" {
-            Task { @MainActor in
-                EquationDialog.present(for: self.webView, logLabel: "MilkdownEditor")
-            }
-        }
-
-        // Handle spellcheck messages from editor
-        if message.name == "spellcheck" {
-            Task { @MainActor in
-                guard let body = message.body as? [String: Any],
-                      let action = body["action"] as? String else { return }
-
-                switch action {
-                case "check":
-                    guard let segmentsData = body["segments"] as? [[String: Any]],
-                          let requestId = body["requestId"] as? Int else { return }
-                    let segments = segmentsData.compactMap { dict -> SpellCheckService.TextSegment? in
-                        guard let text = dict["text"] as? String,
-                              let from = dict["from"] as? Int,
-                              let to = dict["to"] as? Int else { return nil }
-                        let blockId = dict["blockId"] as? Int
-                        return SpellCheckService.TextSegment(text: text, from: from, to: to, blockId: blockId)
-                    }
-                    self.spellcheckTask?.cancel()
-                    self.spellcheckTask = Task {
-                        let results = await SpellCheckService.shared.check(segments: segments)
-                        guard !Task.isCancelled else { return }
-                        let encoder = JSONEncoder()
-                        guard let data = try? encoder.encode(results),
-                              let json = String(data: data, encoding: .utf8) else {
-                            DebugLog.log(.proofing, "[LT] DIAG delivery: JSON encode FAILED for \(results.count) results, requestId=\(requestId)")
-                            return
-                        }
-                        let escaped = json.escapedForJSTemplateLiteral
-                        DebugLog.log(.proofing, "[LT] DIAG delivery: sending requestId=\(requestId) results=\(results.count) jsonBytes=\(data.count)")
-                        self.webView?.evaluateJavaScript(
-                            "window.FinalFinal.setSpellcheckResults(\(requestId), JSON.parse(`\(escaped)`))"
-                        ) { _, error in
-                            if let error {
-                                DebugLog.log(.proofing, "[LT] DIAG delivery: evaluateJavaScript FAILED requestId=\(requestId) error=\(error)")
-                            } else {
-                                DebugLog.log(.proofing, "[LT] DIAG delivery: evaluateJavaScript OK requestId=\(requestId)")
-                            }
-                        }
-                    }
-
-                case "learn":
-                    guard let word = body["word"] as? String else { return }
-                    SpellCheckService.shared.learnWord(word)
-
-                case "ignore":
-                    guard let word = body["word"] as? String else { return }
-                    SpellCheckService.shared.ignoreWord(word)
-
-                case "disableRule":
-                    guard let ruleId = body["ruleId"] as? String else { return }
-                    ProofingSettings.shared.disableRule(ruleId)
-                    NotificationCenter.default.post(name: .proofingSettingsChanged, object: nil)
-
-                default: break
-                }
-            }
-        }
-    }
-
     /// Handle footnote navigation — find offset of target and scroll to it
     @MainActor
     func handleNavigateToFootnote(label: String, direction: String) {
@@ -663,17 +440,6 @@ extension MilkdownEditor.Coordinator {
         }
     }
 
-    /// Send citation picker error to web editor
-    @MainActor
-    func sendCitationPickerError(webView: WKWebView, message: String, requestId: Int) {
-        // Note: Escapes " instead of ${ — different pattern from escapedForJSTemplateLiteral
-        let escaped = message
-            .replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "`", with: "\\`")
-            .replacingOccurrences(of: "\"", with: "\\\"")
-        webView.evaluateJavaScript("window.FinalFinal.citationPickerError(`\(escaped)`, \(requestId))") { _, _ in }
-    }
-
     /// Send citation picker cancelled to web editor
     @MainActor
     func sendCitationPickerCancelled(webView: WKWebView, requestId: Int) {
@@ -813,7 +579,8 @@ extension MilkdownEditor.Coordinator {
         let receivedFirstLine = content.components(separatedBy: "\n").first ?? ""
         if pushedFirstLine.hasPrefix("#") && receivedFirstLine.hasPrefix("<br") { return }
 
-        DebugLog.log(.sync, "[SYNC-DIAG:ContentPush] ACCEPTED: len=\(content.count) firstH=\"\(content.components(separatedBy: "\n").first(where: { $0.hasPrefix("#") })?.prefix(60) ?? "(none)")\"")
+        DebugLog.log(.sync, "[SYNC-DIAG:ContentPush] ACCEPTED: len=\(content.count) firstH=\"" +
+            "\(content.components(separatedBy: "\n").first(where: { $0.hasPrefix("#") })?.prefix(60) ?? "(none)")\"")
         self.lastReceivedFromEditor = Date()
         self.lastPushedContent = content
         self.contentBinding.wrappedValue = content
@@ -873,126 +640,6 @@ extension MilkdownEditor.Coordinator {
                 (self.lastPolledSectionTitle, self.lastPolledSectionBlockId) = (sectionTitle, sectionBlockId)
                 self.onSectionChange(sectionTitle)
                 self.onSectionIdChange?(sectionBlockId, sectionTitle)
-            }
-        }
-    }
-
-    // MARK: - Image Handling
-
-    /// Handle pasted image data from JS (base64-encoded)
-    @MainActor
-    func handlePasteImage(_ body: [String: Any]) {
-        guard let base64Data = body["data"] as? String,
-              let data = Data(base64Encoded: base64Data) else {
-            DebugLog.log(.editor, "[MilkdownEditor] Invalid paste image data")
-            return
-        }
-
-        let mimeType = body["type"] as? String
-        let suggestedName = body["name"] as? String
-
-        guard let mediaDir = MediaSchemeHandler.shared.mediaDirectoryURL else {
-            DebugLog.log(.editor, "[MilkdownEditor] No media directory — cannot paste image")
-            return
-        }
-
-        do {
-            let relativePath = try ImageImportService.importFromData(
-                data, suggestedName: suggestedName, mimeType: mimeType, mediaDir: mediaDir
-            )
-
-            // Create image block in database
-            // origin: "clipboard" — this handler is the single Swift entry point for both
-            // clipboard paste and drag-and-drop, since the JS side posts both through the
-            // same `pasteImage` message channel (see handlePaste/handleDrop in image-plugin.ts).
-            insertImageBlock(src: relativePath, alt: suggestedName ?? "", origin: "clipboard")
-        } catch {
-            DebugLog.log(.editor, "[MilkdownEditor] Image paste failed: \(error.localizedDescription)")
-            let window = webView?.window ?? NSApp.keyWindow
-            if let window {
-                let alert = NSAlert()
-                alert.messageText = "Image Import Failed"
-                alert.informativeText = error.localizedDescription
-                alert.alertStyle = .warning
-                alert.addButton(withTitle: "OK")
-                alert.beginSheetModal(for: window)
-            }
-        }
-    }
-
-    /// Handle native file picker request
-    @MainActor
-    func handleImagePicker() {
-        let panel = NSOpenPanel()
-        panel.allowedContentTypes = ImageImportService.allowedTypes
-        panel.allowsMultipleSelection = false
-        panel.canChooseDirectories = false
-        panel.message = "Select an image to insert"
-
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-
-        guard let mediaDir = MediaSchemeHandler.shared.mediaDirectoryURL else {
-            DebugLog.log(.editor, "[MilkdownEditor] No media directory — cannot import image")
-            return
-        }
-
-        do {
-            let relativePath = try ImageImportService.importFromURL(url, mediaDir: mediaDir)
-            let alt = (url.lastPathComponent as NSString).deletingPathExtension
-            insertImageBlock(src: relativePath, alt: alt, origin: "picker")
-        } catch {
-            DebugLog.log(.editor, "[MilkdownEditor] Image import failed: \(error.localizedDescription)")
-            let window = webView?.window ?? NSApp.keyWindow
-            if let window {
-                let alert = NSAlert()
-                alert.messageText = "Image Import Failed"
-                alert.informativeText = error.localizedDescription
-                alert.alertStyle = .warning
-                alert.addButton(withTitle: "OK")
-                alert.beginSheetModal(for: window)
-            }
-        }
-    }
-
-    /// Handle image metadata update from JS (caption, alt, width)
-    @MainActor
-    func handleUpdateImageMeta(_ body: [String: Any]) {
-        guard let blockId = body["blockId"] as? String else {
-            DebugLog.log(.editor, "[MilkdownEditor] updateImageMeta missing blockId")
-            return
-        }
-
-        guard let db = DocumentManager.shared.projectDatabase else { return }
-
-        do {
-            try db.updateBlockImageMeta(
-                id: blockId,
-                imageSrc: body["src"] as? String,
-                imageAlt: body["alt"] as? String,
-                imageCaption: body["caption"] as? String,
-                imageWidth: body["width"] as? Int
-            )
-        } catch {
-            DebugLog.log(.editor, "[MilkdownEditor] Failed to update image meta: \(error)")
-        }
-    }
-
-    /// Insert figure node into editor via JS (editor-first approach).
-    /// No DB write — BlockSyncService detects the new node on its next poll
-    /// and creates the block record via the normal insert path.
-    ///
-    /// `origin` is threaded through to JS's `insertImage()` so it can decide
-    /// whether to consult a pending paste/drop caret position ("clipboard")
-    /// or always fall back to inserting after the current selection's block
-    /// ("picker" — the picker has no associated caret-capture event).
-    @MainActor
-    private func insertImageBlock(src: String, alt: String, origin: String) {
-        let escapedAlt = alt.escapedForJSTemplateLiteral
-        webView?.evaluateJavaScript(
-            "window.FinalFinal.insertImage && window.FinalFinal.insertImage({src: `\(src)`, alt: `\(escapedAlt)`, caption: '', width: null, blockId: '', origin: '\(origin)'})"
-        ) { _, error in
-            if let error {
-                DebugLog.log(.editor, "[MilkdownEditor] insertImage JS error: \(error)")
             }
         }
     }
