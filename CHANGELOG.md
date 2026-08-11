@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.122] - 2026-08-10
+
 ### Changed
 
 - **A citation written without square brackets (for example, "Smith argues that...") is no longer recognized as a citation, in any export format or in the reference list built into the document itself** — it used to work by accident in PDF exports only, while every other format silently treated it as plain text. Rather than make that inconsistent, easy-to-get-wrong style work everywhere, it's been dropped everywhere in favor of one clear rule: a citation only counts if it's inside square brackets. Two bracketed styles that used to work in PDF only by accident — a citation with "see" written before it, and one that hides the author's name — now work consistently everywhere too.
