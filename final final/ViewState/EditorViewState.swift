@@ -133,6 +133,17 @@ class EditorViewState {
     /// Polling captures this before JS calls and discards results if it changed.
     var contentGeneration: Int = 0
 
+    /// Incremented every time `resetForProjectSwitch()` runs (project switch or close).
+    /// `MilkdownEditor`/`CodeMirrorEditor`'s Coordinator compares this against the value
+    /// it last saw in `updateNSView` and, on change, clears its `lastPolled*`
+    /// equality-guard caches (word/character counts, section title/id). Without this,
+    /// those caches -- which the Coordinator keeps across project switches because the
+    /// editor view stays mounted -- would still hold the old project's values after
+    /// `wordCount`/`characterCount`/`currentSectionName`/`currentSectionId` reset to
+    /// zero/empty below, so a poll tick after reopening the same project would see the
+    /// same numbers it cached before and wrongly suppress the change callbacks.
+    var pollCacheResetGeneration: Int = 0
+
     /// Whether any content transition is in progress.
     /// Services check this instead of maintaining their own suppression flags.
     var isBusy: Bool { contentState != .idle }

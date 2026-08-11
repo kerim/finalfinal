@@ -409,6 +409,7 @@ extension ContentView {
                     contentState: editorState.contentState,
                     isZoomingContent: editorState.isZoomingContent,
                     contentGeneration: editorState.contentGeneration,
+                    pollCacheResetGeneration: editorState.pollCacheResetGeneration,
                     themeCSS: currentThemeCSS,
                     onContentChange: { _ in
                         // Content change handling - could trigger outline parsing here
@@ -481,6 +482,7 @@ extension ContentView {
                     contentState: editorState.contentState,
                     isZoomingContent: editorState.isZoomingContent,
                     contentGeneration: editorState.contentGeneration,
+                    pollCacheResetGeneration: editorState.pollCacheResetGeneration,
                     themeCSS: currentThemeCSS,
                     onContentChange: { newContent in
                         // Update sourceContent with raw content (including anchors)
