@@ -86,12 +86,6 @@ struct MilkdownEditor: NSViewRepresentable {
     /// Generation counter for stale poll detection
     var contentGeneration: Int = 0
 
-    /// Bumped by `EditorViewState.resetForProjectSwitch()` on every project switch/close.
-    /// `updateNSView` compares this against the Coordinator's last-seen value and, on
-    /// change, clears the Coordinator's `lastPolled*` equality-guard caches -- see
-    /// `EditorViewState.pollCacheResetGeneration`'s doc comment for why.
-    var pollCacheResetGeneration: Int = 0
-
     /// CSS variables for theming - when this changes, updateNSView is called
     var themeCSS: String = ThemeManager.shared.cssVariables
 
@@ -170,13 +164,6 @@ struct MilkdownEditor: NSViewRepresentable {
         context.coordinator.onContentAcknowledged = onContentAcknowledged
         context.coordinator.onSectionIdChange = onSectionIdChange
         context.coordinator.onSelectionChange = onSelectionChange
-
-        // Project switch/close just ran -- drop the poll-equality-guard cache so the
-        // next poll tick can't be suppressed by a value cached from the old project.
-        if context.coordinator.lastPollCacheResetGeneration != pollCacheResetGeneration {
-            context.coordinator.lastPollCacheResetGeneration = pollCacheResetGeneration
-            context.coordinator.resetPollCache()
-        }
 
         let effectiveFocusMode = focusModeEnabled && FocusModeSettingsManager.shared.enableParagraphHighlighting
         if context.coordinator.lastFocusModeState != effectiveFocusMode {
@@ -307,30 +294,6 @@ struct MilkdownEditor: NSViewRepresentable {
 
         /// Generation counter for stale poll detection
         var contentGeneration: Int = 0
-
-        /// Last values delivered via pollContent() — guards onStatsChange/
-        /// onSectionChange/onSectionIdChange against re-firing (and re-triggering
-        /// an @Observable invalidation) when a tick reports the same value as before.
-        var lastPolledWordCount: Int?
-        var lastPolledCharacterCount: Int?
-        var lastPolledSectionTitle: String?
-        var lastPolledSectionBlockId: String?
-
-        /// Last `pollCacheResetGeneration` value applied via `resetPollCache()` --
-        /// compared against the incoming value in `updateNSView` to detect a fresh
-        /// project switch/close exactly once per generation bump.
-        var lastPollCacheResetGeneration: Int = 0
-
-        /// Clears the poll-equality-guard cache above. Called from `updateNSView` when
-        /// `pollCacheResetGeneration` changes (project switch/close) so a poll tick can't
-        /// compare the next real value against a count/section left over from the
-        /// previous project.
-        func resetPollCache() {
-            lastPolledWordCount = nil
-            lastPolledCharacterCount = nil
-            lastPolledSectionTitle = nil
-            lastPolledSectionBlockId = nil
-        }
 
         /// Callback invoked after content is confirmed set in WebView
         /// Used for acknowledgement-based synchronization during zoom transitions

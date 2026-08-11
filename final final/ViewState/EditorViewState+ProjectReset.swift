@@ -55,13 +55,6 @@ extension EditorViewState {
         scrollToBlockId = nil
         scrollToAnnotationIndex = nil
         pendingEditAnnotationId = nil
-
-        // Tell the editor coordinators (which survive this reset -- the editor view
-        // stays mounted across project switches) to drop their lastPolled* equality-guard
-        // caches, which mirror the four stats properties just zeroed above. See this
-        // property's doc comment for why: without it, a poll tick after reopening the
-        // same project can match the stale cache and wrongly suppress the UI update.
-        pollCacheResetGeneration += 1
     }
 
 }

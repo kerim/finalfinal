@@ -862,18 +862,14 @@ extension MilkdownEditor.Coordinator {
 
             if let stats = json["stats"] as? [String: Any],
                let words = stats["words"] as? Int,
-               let chars = stats["characters"] as? Int,
-               words != self.lastPolledWordCount || chars != self.lastPolledCharacterCount {
-                (self.lastPolledWordCount, self.lastPolledCharacterCount) = (words, chars)
+               let chars = stats["characters"] as? Int {
                 self.onStatsChange(words, chars)
             }
+
             let sectionTitle = (json["sectionTitle"] as? String) ?? ""
             let sectionBlockId = json["sectionBlockId"] as? String
-            if sectionTitle != self.lastPolledSectionTitle || sectionBlockId != self.lastPolledSectionBlockId {
-                (self.lastPolledSectionTitle, self.lastPolledSectionBlockId) = (sectionTitle, sectionBlockId)
-                self.onSectionChange(sectionTitle)
-                self.onSectionIdChange?(sectionBlockId, sectionTitle)
-            }
+            self.onSectionChange(sectionTitle)
+            self.onSectionIdChange?(sectionBlockId, sectionTitle)
         }
     }
 
