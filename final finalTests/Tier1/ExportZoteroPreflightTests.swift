@@ -16,9 +16,10 @@
 //
 //  `@Test(arguments:)` only has direct overloads for one or two collections (the two-collection
 //  form runs the cartesian product of exactly two parameters). Tests below that vary three
-//  inputs at once build their own cross product as an array of tuples and pass that as a
-//  single collection instead -- Swift Testing destructures each tuple positionally into the
-//  test function's parameters (the same mechanism as the documented `zip(a, b)` pattern).
+//  inputs at once build their own cross product as an array of a small local struct (see
+//  `CitationsLuaStatusCombo` and `FormatLuaStatusCombo` below) and pass that as a single
+//  collection instead -- each such test takes one struct value as its sole parameter and reads
+//  its named fields, rather than juggling three separate arguments.
 //
 //  Also covers: `ExportService.citationFilterErrorIfApplicable` (mapping a pandoc exit-83
 //  failure to a friendly message, without wrongly implying Zotero isn't running), the
@@ -66,10 +67,24 @@ struct ExportZoteroPreflightTests {
 
     // MARK: - PDF is always false, regardless of every other input
 
-    private static let citationsLuaStatusCombos: [(Bool, String?, ZoteroStatus)] =
+    /// Named stand-in for the `(hasCitations, luaScriptPath, zoteroStatus)` cross product below
+    /// -- SwiftLint's `large_tuple` rule caps tuples at 2 members, and a small local struct reads
+    /// better in a test's arguments list than a positionally-destructured 3-tuple anyway.
+    /// (Not `private`: it's used as a parameter type by `pdfIsAlwaysFalse` below, which -- like
+    /// every other `@Test` method in this suite -- is implicitly `internal`, and a function's
+    /// parameter types can't be less visible than the function itself.)
+    struct CitationsLuaStatusCombo {
+        let hasCitations: Bool
+        let luaScriptPath: String?
+        let zoteroStatus: ZoteroStatus
+    }
+
+    private static let citationsLuaStatusCombos: [CitationsLuaStatusCombo] =
         [true, false].flatMap { hasCitations in
             luaPaths.flatMap { luaPath in
-                allStatuses.map { status in (hasCitations, luaPath, status) }
+                allStatuses.map { status in
+                    CitationsLuaStatusCombo(hasCitations: hasCitations, luaScriptPath: luaPath, zoteroStatus: status)
+                }
             }
         }
 
@@ -77,7 +92,7 @@ struct ExportZoteroPreflightTests {
         "PDF never requires the Zotero hard stop, regardless of citations/lua/status",
         arguments: citationsLuaStatusCombos
     )
-    func pdfIsAlwaysFalse(combo: (hasCitations: Bool, luaScriptPath: String?, zoteroStatus: ZoteroStatus)) {
+    func pdfIsAlwaysFalse(combo: CitationsLuaStatusCombo) {
         #expect(!ExportService.requiresZoteroForExport(
             format: .pdf,
             hasCitations: combo.hasCitations,
@@ -115,10 +130,21 @@ struct ExportZoteroPreflightTests {
         ))
     }
 
-    private static let formatLuaStatusCombos: [(ExportFormat, String?, ZoteroStatus)] =
+    /// Named stand-in for the `(format, luaScriptPath, zoteroStatus)` cross product below -- see
+    /// `CitationsLuaStatusCombo` above for why this replaces a `large_tuple`-tripping 3-tuple,
+    /// and for why it isn't `private` either.
+    struct FormatLuaStatusCombo {
+        let format: ExportFormat
+        let luaScriptPath: String?
+        let zoteroStatus: ZoteroStatus
+    }
+
+    private static let formatLuaStatusCombos: [FormatLuaStatusCombo] =
         nonPDFFormats.flatMap { format in
             luaPaths.flatMap { luaPath in
-                allStatuses.map { status in (format, luaPath, status) }
+                allStatuses.map { status in
+                    FormatLuaStatusCombo(format: format, luaScriptPath: luaPath, zoteroStatus: status)
+                }
             }
         }
 
@@ -126,7 +152,7 @@ struct ExportZoteroPreflightTests {
         "DOCX/ODT with no citations never requires the hard stop, regardless of lua/status",
         arguments: formatLuaStatusCombos
     )
-    func nonPDFDoesNotFireWithoutCitations(combo: (format: ExportFormat, luaScriptPath: String?, zoteroStatus: ZoteroStatus)) {
+    func nonPDFDoesNotFireWithoutCitations(combo: FormatLuaStatusCombo) {
         #expect(!ExportService.requiresZoteroForExport(
             format: combo.format,
             hasCitations: false,
@@ -414,7 +440,10 @@ extension ExportZoteroPreflightTests {
     }
 
     @Test(
-        "zoteroPreflight never blocks a PDF export, even with real citations and a lua path configured -- and reports hasCitations == true, the exact combination that makes .warnDegraded reachable",
+        """
+        zoteroPreflight never blocks a PDF export, even with real citations and a lua path configured -- \
+        and reports hasCitations == true, the exact combination that makes .warnDegraded reachable
+        """,
         .enabled(if: !ExportZoteroPreflightTests.isBetterBibTeXPortOpen())
     )
     func zoteroPreflightNeverBlocksPDF() async throws {
@@ -458,7 +487,10 @@ extension ExportZoteroPreflightTests {
     }
 
     @Test(
-        "zoteroPreflight reports hasCitations == false for a document whose only bracketed text is a false-positive shape like an email address, for every format",
+        """
+        zoteroPreflight reports hasCitations == false for a document whose only bracketed text is a false-positive \
+        shape like an email address, for every format
+        """,
         .enabled(if: !ExportZoteroPreflightTests.isBetterBibTeXPortOpen()),
         arguments: [ExportFormat.pdf, .word, .odt]
     )

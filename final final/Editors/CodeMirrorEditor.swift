@@ -223,6 +223,204 @@ struct CodeMirrorEditor: NSViewRepresentable {
         coordinator.cleanup()
     }
 
-    // Coordinator's primary declaration (stored properties, init, deinit) lives in
-    // CodeMirrorCoordinator+Core.swift -- see that file's header for why.
+    @MainActor
+    class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
+        weak var webView: WKWebView?
+
+        var contentBinding: Binding<String>
+        var cursorPositionToRestoreBinding: Binding<CursorPosition?>
+        var scrollToOffsetBinding: Binding<Int?>
+        var scrollToAnnotationIndexBinding: Binding<Int?>
+        var isResettingContentBinding: Binding<Bool>
+        let onContentChange: (String) -> Void
+        let onStatsChange: (Int, Int) -> Void
+        let onSectionChange: (String) -> Void
+        let onCursorPositionSaved: (CursorPosition) -> Void
+
+        /// Callback for block-ID-based section tracking (blockId, title)
+        var onSectionIdChange: ((String?, String) -> Void)?
+
+        /// Callback for selection changes (selected text; empty = deselected)
+        var onSelectionChange: ((String) -> Void)?
+
+        var pollingTimer: Timer?
+        var lastReceivedFromEditor: Date = .distantPast
+        var lastPushedContent: String = ""
+        var lastPushTime: Date = .distantPast
+
+        var lastThemeCss: String = ""
+        var lastFocusModeState: Bool = false
+
+        /// Current content state - used to suppress polling during transitions
+        var contentState: EditorContentState = .idle
+
+        /// Direct zoom flag passed from view through updateNSView.
+        /// Used to control alphaValue hiding and scrollToStart option in setContent().
+        /// This bypasses the race condition where contentState may be stale.
+        var isZoomingContent: Bool = false
+
+        /// Generation counter for stale poll detection
+        var contentGeneration: Int = 0
+
+        // Poll-equality-guard cache -- see applyPollCacheReset() below (declared in an
+        // extension so this doesn't count against this class's own body length).
+        var lastPolledWordCount: Int?
+        var lastPolledCharacterCount: Int?
+        var lastPolledSectionTitle: String?
+        var lastPolledSectionBlockId: String?
+        var lastPollCacheResetGeneration: Int = 0
+
+        var isEditorReady = false
+        var isCleanedUp = false
+        var toggleObserver: NSObjectProtocol?
+        var insertBreakObserver: NSObjectProtocol?
+        var annotationDisplayModesObserver: NSObjectProtocol?
+        var insertAnnotationObserver: NSObjectProtocol?
+        var toggleHighlightObserver: NSObjectProtocol?
+        var spellcheckStateObserver: NSObjectProtocol?
+        var smartQuotesStateObserver: NSObjectProtocol?
+        var proofingModeObserver: NSObjectProtocol?
+        var proofingSettingsObserver: NSObjectProtocol?
+        var insertFootnoteObserver: NSObjectProtocol?
+        var renumberFootnotesObserver: NSObjectProtocol?
+        var scrollToFootnoteDefObserver: NSObjectProtocol?
+        var zoomFootnoteStateObserver: NSObjectProtocol?
+        var insertImageObserver: NSObjectProtocol?
+        var insertTableObserver: NSObjectProtocol?
+        var insertEquationObserver: NSObjectProtocol?
+
+        // Formatting command observers
+        var toggleBoldObserver: NSObjectProtocol?
+        var toggleItalicObserver: NSObjectProtocol?
+        var toggleStrikethroughObserver: NSObjectProtocol?
+        var setHeadingObserver: NSObjectProtocol?
+        var toggleBulletListObserver: NSObjectProtocol?
+        var toggleNumberListObserver: NSObjectProtocol?
+        var toggleBlockquoteObserver: NSObjectProtocol?
+        var toggleCodeBlockObserver: NSObjectProtocol?
+        var toggleInlineCodeObserver: NSObjectProtocol?
+        var insertLinkObserver: NSObjectProtocol?
+        var insertCitationObserver: NSObjectProtocol?
+
+        /// Active spellcheck task (cancelled on new check or cleanup)
+        var spellcheckTask: Task<Void, Never>?
+
+        /// Last sent annotation display modes (to avoid redundant calls)
+        var lastAnnotationDisplayModes: [AnnotationType: AnnotationDisplayMode] = [:]
+
+        /// Pending cursor position that is being restored (set before JS call, cleared after)
+        var pendingCursorRestore: CursorPosition?
+
+        /// Callback invoked after content is confirmed set in WebView
+        /// Used for acknowledgement-based synchronization during zoom transitions
+        var onContentAcknowledged: (() -> Void)?
+
+        /// Callback to provide WebView reference
+        var onWebViewReady: ((WKWebView) -> Void)?
+
+        init(
+            content: Binding<String>,
+            cursorPositionToRestore: Binding<CursorPosition?>,
+            scrollToOffset: Binding<Int?>,
+            scrollToAnnotationIndex: Binding<Int?>,
+            isResettingContent: Binding<Bool>,
+            onContentChange: @escaping (String) -> Void,
+            onStatsChange: @escaping (Int, Int) -> Void,
+            onSectionChange: @escaping (String) -> Void,
+            onCursorPositionSaved: @escaping (CursorPosition) -> Void,
+            onWebViewReady: ((WKWebView) -> Void)?
+        ) {
+            self.contentBinding = content
+            self.cursorPositionToRestoreBinding = cursorPositionToRestore
+            self.scrollToOffsetBinding = scrollToOffset
+            self.scrollToAnnotationIndexBinding = scrollToAnnotationIndex
+            self.isResettingContentBinding = isResettingContent
+            self.onContentChange = onContentChange
+            self.onStatsChange = onStatsChange
+            self.onSectionChange = onSectionChange
+            self.onCursorPositionSaved = onCursorPositionSaved
+            self.onWebViewReady = onWebViewReady
+            super.init()
+
+            subscribeToEditorLifecycleNotifications()
+            subscribeToAnnotationNotifications()
+            subscribeToProofingNotifications()
+            subscribeToFootnoteNotifications()
+            subscribeToMediaNotifications()
+            subscribeToFormattingCommandNotifications()
+        }
+
+        deinit {
+            pollingTimer?.invalidate()
+            if let observer = toggleObserver {
+                NotificationCenter.default.removeObserver(observer)
+            }
+            if let observer = insertBreakObserver {
+                NotificationCenter.default.removeObserver(observer)
+            }
+            if let observer = annotationDisplayModesObserver {
+                NotificationCenter.default.removeObserver(observer)
+            }
+            if let observer = insertAnnotationObserver {
+                NotificationCenter.default.removeObserver(observer)
+            }
+            if let observer = toggleHighlightObserver {
+                NotificationCenter.default.removeObserver(observer)
+            }
+            if let observer = spellcheckStateObserver {
+                NotificationCenter.default.removeObserver(observer)
+            }
+            if let observer = smartQuotesStateObserver {
+                NotificationCenter.default.removeObserver(observer)
+            }
+            if let observer = proofingModeObserver {
+                NotificationCenter.default.removeObserver(observer)
+            }
+            if let observer = proofingSettingsObserver {
+                NotificationCenter.default.removeObserver(observer)
+            }
+            if let observer = insertFootnoteObserver {
+                NotificationCenter.default.removeObserver(observer)
+            }
+            if let observer = renumberFootnotesObserver {
+                NotificationCenter.default.removeObserver(observer)
+            }
+            if let observer = scrollToFootnoteDefObserver {
+                NotificationCenter.default.removeObserver(observer)
+            }
+            if let observer = zoomFootnoteStateObserver {
+                NotificationCenter.default.removeObserver(observer)
+            }
+            if let observer = insertImageObserver {
+                NotificationCenter.default.removeObserver(observer)
+            }
+            if let observer = insertTableObserver {
+                NotificationCenter.default.removeObserver(observer)
+            }
+            if let observer = insertEquationObserver {
+                NotificationCenter.default.removeObserver(observer)
+            }
+            // Formatting command observers cleanup
+            for observer in [toggleBoldObserver, toggleItalicObserver, toggleStrikethroughObserver,
+                             setHeadingObserver, toggleBulletListObserver, toggleNumberListObserver,
+                             toggleBlockquoteObserver, toggleCodeBlockObserver, toggleInlineCodeObserver,
+                             insertLinkObserver, insertCitationObserver] {
+                if let observer { NotificationCenter.default.removeObserver(observer) }
+            }
+        }
+    }
+}
+
+extension CodeMirrorEditor.Coordinator {
+    /// Drops the poll-equality-guard cache once `generation` moves past what was last
+    /// applied (bumped by `EditorViewState.resetForProjectSwitch()` on project switch/close),
+    /// so a poll tick can't compare a real value against one left from the previous project.
+    func applyPollCacheReset(generation: Int) {
+        guard lastPollCacheResetGeneration != generation else { return }
+        lastPollCacheResetGeneration = generation
+        lastPolledWordCount = nil
+        lastPolledCharacterCount = nil
+        lastPolledSectionTitle = nil
+        lastPolledSectionBlockId = nil
+    }
 }
