@@ -426,13 +426,18 @@ struct ExportCitekeyCanonicalizationTests {
 
 // MARK: - Real-pandoc, mocked-BBT integration tests
 
+// Not renamed despite the SwiftLint length warning: scripts/vmtest keys its persistent
+// diagnosis-tracking records (streak counts, recorded diagnoses under its state directory)
+// by the fully-qualified test identifier, which embeds this exact class name. Shortening it
+// would silently orphan any existing tracked diagnoses for tests in this class.
+//
 /// Real-pandoc integration tests, matching ImageCaptionExportTests.swift's pandoc-lookup +
 /// XCTSkip idiom, calling ExportService().export(...) directly (the same call the app makes).
 /// Uses the export-diagnostic-capture seam (ExportService.isDiagnosticCaptureEnabled /
 /// recentExportDiagnosticDirectories) to read back the EXACT temp file pandoc consumed --
 /// the only sanctioned way to inspect it, since TempExportArtifacts.cleanup() deletes it via
 /// `defer` before export() returns.
-final class ExportCitekeyCanonicalizationIntegrationTests: XCTestCase {
+final class ExportCitekeyCanonicalizationIntegrationTests: XCTestCase { // swiftlint:disable:this type_name
 
     private static func findPandocPath() -> String? {
         let candidates = ["/opt/homebrew/bin/pandoc", "/usr/local/bin/pandoc", "/usr/bin/pandoc"]

@@ -254,8 +254,49 @@ extension ContentView {
         // NOTE: No defer — contentState is managed by the persist Task below
         editorState.contentState = .dragReorder
 
-        var mutableSections = recalculateSortOrders(sections)
-        mutableSections = applyComputedOffsets(to: mutableSections)
+        var mutableSections = sections
+
+        // Recalculate sort orders
+        for index in mutableSections.indices {
+            mutableSections[index] = mutableSections[index].withUpdates(
+                sortOrder: Double(index)
+            )
+        }
+
+        // Compute offsets from blocks (consistent with updateSourceContentIfNeeded)
+        if let db = documentManager.projectDatabase,
+           let pid = documentManager.projectId {
+            do {
+                let fetchedBlocks: [Block]
+                if let zoomedIds = editorState.zoomedSectionIds {
+                    let allBlocks = try db.fetchBlocks(projectId: pid)
+                    fetchedBlocks = filterBlocksForZoom(
+                        allBlocks, zoomedIds: zoomedIds,
+                        zoomedBlockRange: editorState.zoomedBlockRange)
+                } else {
+                    fetchedBlocks = try db.fetchBlocks(projectId: pid)
+                }
+                let sorted = fetchedBlocks.sorted { a, b in
+                    let aKey = (a.sortOrder, a.blockType == .heading ? 0 : 1)
+                    let bKey = (b.sortOrder, b.blockType == .heading ? 0 : 1)
+                    return aKey < bKey
+                }
+                // MUST stay in sync with BlockParser.assembleMarkdown filtering
+                let nonEmpty = sorted.filter { !BlockParser.isEmptyFragment($0.markdownFragment) }
+                var blockOffset: [String: Int] = [:]
+                var offset = 0
+                for (i, block) in nonEmpty.enumerated() {
+                    if i > 0 { offset += 2 }
+                    blockOffset[block.id] = offset
+                    offset += block.markdownFragment.count
+                }
+                for index in mutableSections.indices {
+                    if let off = blockOffset[mutableSections[index].id] {
+                        mutableSections[index] = mutableSections[index].withUpdates(startOffset: off)
+                    }
+                }
+            } catch { }
+        }
 
         // Single atomic update to trigger SwiftUI
         editorState.sections = mutableSections
@@ -267,106 +308,30 @@ extension ContentView {
 
         // Persist blocks to database BEFORE rebuilding content
         // (rebuildDocumentContent reads from DB, so DB must be current)
-        persistBlocksBeforeRebuild()
+        if let db = documentManager.projectDatabase,
+           let pid = documentManager.projectId {
+            do {
+                var headingUpdates: [String: HeadingUpdate] = [:]
+                for vm in editorState.sections {
+                    headingUpdates[vm.id] = HeadingUpdate(
+                        markdownFragment: vm.markdownContent,
+                        headingLevel: vm.headerLevel
+                    )
+                }
+                try db.reorderAllBlocks(
+                    sections: editorState.sections,
+                    projectId: pid,
+                    headingUpdates: headingUpdates
+                )
+            } catch {
+                DebugLog.log(.outline, "[ContentView] Error persisting reordered blocks: \(error)")
+            }
+        }
 
         // Rebuild document content (now reads correct order from DB)
         rebuildDocumentContent()
 
         // Async: push block IDs + legacy section persist
-        scheduleAsyncReorderPersistTasks()
-    }
-
-    /// Recalculate sequential sort orders after a reorder.
-    func recalculateSortOrders(_ sections: [SectionViewModel]) -> [SectionViewModel] {
-        var mutableSections = sections
-        for index in mutableSections.indices {
-            mutableSections[index] = mutableSections[index].withUpdates(
-                sortOrder: Double(index)
-            )
-        }
-        return mutableSections
-    }
-
-    /// Compute offsets from blocks (consistent with updateSourceContentIfNeeded) and apply
-    /// them to the given sections. Returns the sections unchanged if the database is unavailable
-    /// or the offset computation fails.
-    func applyComputedOffsets(to sections: [SectionViewModel]) -> [SectionViewModel] {
-        guard let db = documentManager.projectDatabase,
-              let pid = documentManager.projectId else {
-            return sections
-        }
-
-        var mutableSections = sections
-        do {
-            let fetchedBlocks: [Block]
-            if let zoomedIds = editorState.zoomedSectionIds {
-                let allBlocks = try db.fetchBlocks(projectId: pid)
-                fetchedBlocks = filterBlocksForZoom(
-                    allBlocks, zoomedIds: zoomedIds,
-                    zoomedBlockRange: editorState.zoomedBlockRange)
-            } else {
-                fetchedBlocks = try db.fetchBlocks(projectId: pid)
-            }
-            let blockOffset = computeBlockOffsets(fetchedBlocks)
-            for index in mutableSections.indices {
-                if let off = blockOffset[mutableSections[index].id] {
-                    mutableSections[index] = mutableSections[index].withUpdates(startOffset: off)
-                }
-            }
-        } catch { }
-
-        return mutableSections
-    }
-
-    /// Compute per-block character offsets in document order (headings sort before body
-    /// blocks at the same sortOrder). Mirrors BlockParser.assembleMarkdown's filtering.
-    func computeBlockOffsets(_ blocks: [Block]) -> [String: Int] {
-        let sorted = blocks.sorted { a, b in
-            let aKey = (a.sortOrder, a.blockType == .heading ? 0 : 1)
-            let bKey = (b.sortOrder, b.blockType == .heading ? 0 : 1)
-            return aKey < bKey
-        }
-        // MUST stay in sync with BlockParser.assembleMarkdown filtering
-        let nonEmpty = sorted.filter { !BlockParser.isEmptyFragment($0.markdownFragment) }
-        var blockOffset: [String: Int] = [:]
-        var offset = 0
-        for (i, block) in nonEmpty.enumerated() {
-            if i > 0 { offset += 2 }
-            blockOffset[block.id] = offset
-            offset += block.markdownFragment.count
-        }
-        return blockOffset
-    }
-
-    /// Persist blocks to database BEFORE rebuilding content
-    /// (rebuildDocumentContent reads from DB, so DB must be current).
-    func persistBlocksBeforeRebuild() {
-        guard let db = documentManager.projectDatabase,
-              let pid = documentManager.projectId else {
-            return
-        }
-
-        do {
-            var headingUpdates: [String: HeadingUpdate] = [:]
-            for vm in editorState.sections {
-                headingUpdates[vm.id] = HeadingUpdate(
-                    markdownFragment: vm.markdownContent,
-                    headingLevel: vm.headerLevel
-                )
-            }
-            try db.reorderAllBlocks(
-                sections: editorState.sections,
-                projectId: pid,
-                headingUpdates: headingUpdates
-            )
-        } catch {
-            DebugLog.log(.outline, "[ContentView] Error persisting reordered blocks: \(error)")
-        }
-    }
-
-    /// Kick off async follow-up work after a reorder: push block IDs to the web editor,
-    /// then fire-and-forget the legacy section table persist.
-    func scheduleAsyncReorderPersistTasks() {
         editorState.currentPersistTask?.cancel()
         editorState.currentPersistTask = Task {
             guard !Task.isCancelled else { return }
