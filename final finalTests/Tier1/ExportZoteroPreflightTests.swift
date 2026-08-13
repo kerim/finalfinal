@@ -65,33 +65,6 @@ struct ExportZoteroPreflightTests {
         repoRoot().appendingPathComponent("final final/Resources/Export/zotero.lua").path
     }
 
-    /// Creates an `ExportService` configured with the stand-in "pandoc" (`/usr/bin/true` -- a
-    /// real, always-present, always-exits-0, touches-nothing executable) that every real-actor
-    /// integration test below needs so `export()` can run far enough to reach its own gate
-    /// without invoking a real Pandoc.
-    ///
-    /// `export()` only ever reads the actor's OWN `pandocLocator.customPath`, which is set by
-    /// `configure(with:)` -- never `settings.customPandocPath` directly. Setting
-    /// `settings.customPandocPath` and then separately calling `configure(with: settings)` is
-    /// therefore a two-step manual sequence, and forgetting the second step doesn't fail loudly:
-    /// `pandocLocator.getPath()` silently falls through to searching real system pandoc install
-    /// locations instead, so the test either exercises a real pandoc invocation or fails with
-    /// `.pandocNotFound` depending on what's installed on the machine running it -- not the
-    /// stand-in's guaranteed behavior the test actually wants. That exact mistake was fixed once
-    /// in this file and then recurred in four more tests, which is why this helper bundles both
-    /// steps into one call: forgetting `configure(with:)` after this helper runs is structurally
-    /// impossible, since it always returns an already-configured service.
-    ///
-    /// Takes `settings` `inout` (rather than returning a modified copy) so the stand-in pandoc
-    /// path it sets is visible to the caller's own `settings` variable afterward -- callers pass
-    /// that same variable to `export()`/`zoteroPreflight()` right after this call.
-    private static func makeConfiguredService(settings: inout ExportSettings) async -> ExportService {
-        settings.customPandocPath = "/usr/bin/true"
-        let service = ExportService()
-        await service.configure(with: settings)
-        return service
-    }
-
     // MARK: - PDF is always false, regardless of every other input
 
     /// Named stand-in for the `(hasCitations, luaScriptPath, zoteroStatus)` cross product below
@@ -326,13 +299,22 @@ extension ExportZoteroPreflightTests {
         "A document containing only [contact me@example.com] never hard-stops Word export, even with Zotero unreachable"
     )
     func falsePositiveCitationShapeNeverHardStops() async throws {
-        // `makeConfiguredService` sets the stand-in "pandoc" path and calls `configure(with:)`
-        // together -- see its doc comment. If the gate incorrectly fired here, export() would
-        // throw zoteroRequiredForCitations instead of returning a result.
+        let service = ExportService()
         var settings = ExportSettings()
+        // Stand-in "pandoc": always exits 0 and does nothing, regardless of arguments. If the
+        // gate incorrectly fired here, export() would throw zoteroRequiredForCitations instead
+        // of returning a result.
+        settings.customPandocPath = "/usr/bin/true"
         settings.useCustomLuaScript = true
         settings.customLuaScriptPath = Self.zoteroLuaPath
-        let service = await Self.makeConfiguredService(settings: &settings)
+
+        // `export()` only ever reads the actor's OWN `pandocLocator.customPath` (set via
+        // `configure`), never `settings.customPandocPath` directly -- see
+        // `exportHonorsPrecomputedRunningStatus`'s comment for the full explanation. Without
+        // this call, the stand-in above never takes effect and this test would instead fall
+        // through to searching real system pandoc install locations, silently exercising a
+        // real pandoc invocation instead of the stand-in.
+        await service.configure(with: settings)
 
         let outputURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("false-positive-citation-\(UUID().uuidString).docx")
@@ -359,18 +341,22 @@ extension ExportZoteroPreflightTests {
         .enabled(if: !ExportZoteroPreflightTests.isBetterBibTeXPortOpen())
     )
     func exportThrowsBeforePandocInvocation() async throws {
-        // `makeConfiguredService` sets the stand-in "pandoc" path and calls `configure(with:)`
-        // together -- see its doc comment. Without a real `configure` call taking effect,
-        // `pandocLocator.getPath()` would fall through to searching real system pandoc install
-        // locations before the hard-stop guard even runs: on a machine with no pandoc installed
-        // this test would fail with `.pandocNotFound` instead of proving the intended ordering,
-        // and on a machine with one installed, this test's whole point -- proving the guard
-        // fires before pandoc is ever invoked -- would be resting on real pandoc merely being
-        // *found*, not on the stand-in actually being in effect.
+        let service = ExportService()
         var settings = ExportSettings()
+        settings.customPandocPath = "/usr/bin/true"
         settings.useCustomLuaScript = true
         settings.customLuaScriptPath = Self.zoteroLuaPath
-        let service = await Self.makeConfiguredService(settings: &settings)
+
+        // `export()` only ever reads the actor's OWN `pandocLocator.customPath` (set via
+        // `configure`), never `settings.customPandocPath` directly -- see
+        // `exportHonorsPrecomputedRunningStatus`'s comment for the full explanation. Without
+        // this call, `pandocLocator.getPath()` falls through to searching real system pandoc
+        // install locations before the hard-stop guard even runs: on a machine with no pandoc
+        // installed this test would fail with `.pandocNotFound` instead of proving the
+        // intended ordering, and on a machine with one installed, this test's whole point --
+        // proving the guard fires before pandoc is ever invoked -- would be resting on real
+        // pandoc merely being *found*, not on the stand-in actually being in effect.
+        await service.configure(with: settings)
 
         let outputURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("preflight-ordering-\(UUID().uuidString).docx")
@@ -555,25 +541,30 @@ extension ExportZoteroPreflightTests {
         .enabled(if: !ExportZoteroPreflightTests.isBetterBibTeXPortOpen())
     )
     func zoteroPreflightAgreesWithExport() async throws {
+        let service = ExportService()
         let content = "See [@smith2020] for details."
 
         var preflightSettings = ExportSettings()
         preflightSettings.useCustomLuaScript = true
         preflightSettings.customLuaScriptPath = Self.zoteroLuaPath
 
-        let preflightService = ExportService()
-        let preflight = try await preflightService.zoteroPreflight(
+        let preflight = try await service.zoteroPreflight(
             content: content,
             format: .word,
             settings: preflightSettings
         )
         #expect(preflight.isBlocked)
 
-        // Same content, same lua configuration, plus a stand-in Pandoc (via
-        // `makeConfiguredService`, see its doc comment) so export() can run far enough to reach
-        // its own gate (see exportThrowsBeforePandocInvocation above).
+        // Same content, same lua configuration, plus a stand-in Pandoc so export() can run far
+        // enough to reach its own gate (see exportThrowsBeforePandocInvocation above).
         var exportSettings = preflightSettings
-        let service = await Self.makeConfiguredService(settings: &exportSettings)
+        exportSettings.customPandocPath = "/usr/bin/true"
+
+        // `export()` only ever reads the actor's OWN `pandocLocator.customPath` (set via
+        // `configure`), never `settings.customPandocPath` directly -- see
+        // `exportHonorsPrecomputedRunningStatus`'s comment for the full explanation. Without
+        // this call the stand-in above never takes effect.
+        await service.configure(with: exportSettings)
 
         let outputURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("preflight-agreement-\(UUID().uuidString).docx")
@@ -648,15 +639,19 @@ extension ExportZoteroPreflightTests {
 
     @Test("export() honors a precomputed blocking ZoteroStatus instead of checking again, regardless of Zotero's real status")
     func exportHonorsPrecomputedBlockingStatus() async throws {
-        // `makeConfiguredService` sets the stand-in "pandoc" path and calls `configure(with:)`
-        // together -- see its doc comment. Without a real `configure` call taking effect,
-        // `pandocLocator.getPath()` would fall through to searching real system pandoc install
-        // locations before the hard-stop guard even runs, so this test's pass would rest on
-        // real pandoc merely being *found* on the machine, not on the stand-in.
+        let service = ExportService()
         var settings = ExportSettings()
+        settings.customPandocPath = "/usr/bin/true"
         settings.useCustomLuaScript = true
         settings.customLuaScriptPath = Self.zoteroLuaPath
-        let service = await Self.makeConfiguredService(settings: &settings)
+
+        // `export()` only ever reads the actor's OWN `pandocLocator.customPath` (set via
+        // `configure`), never `settings.customPandocPath` directly -- see
+        // `exportHonorsPrecomputedRunningStatus`'s comment for the full explanation. Without
+        // this call, `pandocLocator.getPath()` falls through to searching real system pandoc
+        // install locations before the hard-stop guard even runs, so this test's pass would
+        // rest on real pandoc merely being *found* on the machine, not on the stand-in.
+        await service.configure(with: settings)
 
         let outputURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("precomputed-blocking-\(UUID().uuidString).docx")
@@ -682,23 +677,26 @@ extension ExportZoteroPreflightTests {
 
     @Test("export() honors a precomputed .running ZoteroStatus and proceeds, regardless of Zotero's real status")
     func exportHonorsPrecomputedRunningStatus() async throws {
-        // `makeConfiguredService` sets the stand-in "pandoc" path and calls `configure(with:)`
-        // together -- see its doc comment. Without a real `configure` call taking effect,
-        // `pandocLocator.getPath()` would fall through to searching real system pandoc install
+        let service = ExportService()
+        var settings = ExportSettings()
+        settings.customPandocPath = "/usr/bin/true"
+        settings.useCustomLuaScript = true
+        settings.customLuaScriptPath = Self.zoteroLuaPath
+
+        // `export()` only ever reads the actor's OWN `pandocLocator.customPath` (set via
+        // `configure`), never `settings.customPandocPath` directly. Without this call,
+        // `pandocLocator.getPath()` falls through to searching real system pandoc install
         // locations -- and content with a genuine citekey like `[@smith2020]` would then run
         // through a REAL pandoc + the real zotero.lua filter, making a real (and here, doomed,
         // since there's no real Zotero/Better BibTeX in a test environment) network call. That
         // surfaces as `.citationFilterFailed` (pandoc's exit-83 mapping), not the clean success
         // this test wants to assert -- a test-setup gap, not a product bug (see the earlier
         // `exportHonorsPrecomputedBlockingStatus` test above, which never reaches pandoc at
-        // all, so it never hit this). The stand-in path (`/usr/bin/true` -- a real,
-        // always-present, always-exits-0, touches-nothing executable) is why this test provably
-        // never depends on a real Zotero connection or a real pandoc installation being present
-        // on the machine running it.
-        var settings = ExportSettings()
-        settings.useCustomLuaScript = true
-        settings.customLuaScriptPath = Self.zoteroLuaPath
-        let service = await Self.makeConfiguredService(settings: &settings)
+        // all, so it never hit this). Calling `configure` first makes the `/usr/bin/true`
+        // stand-in -- a real, always-present, always-exits-0, touches-nothing executable --
+        // actually take effect, so this test provably never depends on a real Zotero
+        // connection or a real pandoc installation being present on the machine running it.
+        await service.configure(with: settings)
 
         let outputURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("precomputed-running-\(UUID().uuidString).docx")
