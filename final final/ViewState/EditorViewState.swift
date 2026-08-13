@@ -349,17 +349,14 @@ class EditorViewState {
                     self.lastOutlineCounts = counts
 
                     // Fix 2: merge in place -- reuse existing view models by id instead of
-                    // replacing the array wholesale. Merge into a local copy and only assign
-                    // back when something actually changed: `inout` access to a tracked
-                    // `@Observable` property fires that property's array-level notification
-                    // unconditionally on exit (its synthesized `_modify` accessor's `didSet`
-                    // call sits in an unconditional `defer`, unlike the plain `set`), so
-                    // passing `&self.sections` directly here would defeat the point of this
-                    // merge on every single tick.
-                    var updatedSections = self.sections
-                    let sectionsChanged = Self.mergeSections(into: &updatedSections, from: outlineBlocks, counts: counts)
-                    if sectionsChanged { self.sections = updatedSections }
-                    self.recalculateParentRelationships()
+                    // replacing the array wholesale, then recalculate parent relationships.
+                    // `applySectionsUpdate` merges into a local copy and only assigns back when
+                    // something actually changed: `inout` access to a tracked `@Observable`
+                    // property fires that property's array-level notification unconditionally
+                    // on exit (its synthesized `_modify` accessor's `didSet` call sits in an
+                    // unconditional `defer`, unlike the plain `set`), so passing `&self.sections`
+                    // directly here would defeat the point of this merge on every single tick.
+                    self.applySectionsUpdate(from: outlineBlocks, counts: counts)
 
                     // Notify observers (e.g., for hierarchy enforcement)
                     self.onSectionsUpdated?()
@@ -404,12 +401,9 @@ class EditorViewState {
                 self.lastOutlineBlocks = outlineBlocks
                 self.lastOutlineCounts = counts
 
-                // See the observation-loop call site above for why this merges into a local
-                // copy rather than passing `&self.sections` directly.
-                var updatedSections = self.sections
-                let sectionsChanged = Self.mergeSections(into: &updatedSections, from: outlineBlocks, counts: counts)
-                if sectionsChanged { self.sections = updatedSections }
-                self.recalculateParentRelationships()
+                // See the observation-loop call site above for why `applySectionsUpdate` merges
+                // into a local copy rather than passing `&self.sections` directly.
+                self.applySectionsUpdate(from: outlineBlocks, counts: counts)
                 self.onSectionsUpdated?()
             } catch {
                 DebugLog.log(.outline, "[EditorViewState] refreshSections error: \(error)")
@@ -457,6 +451,27 @@ class EditorViewState {
             || zip(result, existing).contains { $0 !== $1 }
         if structureChanged { existing = result }
         return structureChanged
+    }
+
+    /// Merge freshly-fetched blocks/counts into `sections` and recalculate parent
+    /// relationships in one step -- the exact sequence both `startObserving`'s live loop and
+    /// `refreshSections`'s explicit re-fetch run on every tick. Extracted so both call sites
+    /// (and tests) go through one call rather than duplicating the "merge into a local copy,
+    /// assign back only if changed, then recalculate parents" sequence -- see `mergeSections`'s
+    /// doc comment above for why the local-copy step matters.
+    ///
+    /// - Returns: `true` if `mergeSections` structurally changed `sections` (see that method's
+    ///   doc comment for what counts as a structural change).
+    @discardableResult
+    func applySectionsUpdate(
+        from blocks: [Block],
+        counts: [String: ProjectDatabase.HeadingWordCounts]
+    ) -> Bool {
+        var updatedSections = sections
+        let sectionsChanged = Self.mergeSections(into: &updatedSections, from: blocks, counts: counts)
+        if sectionsChanged { sections = updatedSections }
+        recalculateParentRelationships()
+        return sectionsChanged
     }
 
     /// Merge freshly-fetched `Annotation`s into an existing `[AnnotationViewModel]` array by
