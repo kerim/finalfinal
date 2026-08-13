@@ -99,19 +99,25 @@ final class ListNumberingE2ETests: XCTestCase {
         // also our signal to flush WYSIWYG content into `block` rows.
         // Note: the accessibility LABEL flips to "Source" as soon as the
         // toggle is issued, but the actual WYSIWYG->CodeMirror view swap is
-        // driven by an async cursor-save callback chain that
-        // `EditorSmokeTests.testEditorModeToggle` already documents as "not
-        // completing reliably in XCUITest" -- a real run's screenshot
-        // confirmed this: still WYSIWYG-rendered at capture time despite the
-        // label already reading "Source". That's harmless here because the
-        // actual proof (below) reads persisted `block` rows, not pixels --
-        // but it does mean this screenshot is best-effort visual context
-        // (still shows the real, correctly-continued 1/2/3 numbering and the
-        // real inserted image), not literal Source Mode markdown.
+        // driven by an async cursor-save callback chain that can lag behind
+        // it. `EditorSmokeTests.testEditorModeToggle` (SmokeTests.swift)
+        // proves the swap DOES complete reliably in XCUITest given the right
+        // technique -- retrying the toggle keystroke and polling for real
+        // on-screen source content instead of a fixed sleep -- but this test
+        // doesn't need that here: a real run's screenshot showed the swap
+        // still mid-flight (WYSIWYG-rendered) at capture time despite the
+        // label already reading "Source". That's harmless because the actual
+        // proof (below) reads persisted `block` rows, not pixels -- but it
+        // does mean this screenshot is best-effort visual context (still
+        // shows the real, correctly-continued 1/2/3 numbering and the real
+        // inserted image), not literal Source Mode markdown.
         let editorMode = app.buttons["status-bar-editor-mode"]
         XCTAssertTrue(editorMode.waitForExistence(timeout: 10), "Editor mode button should appear")
         app.typeKey("/", modifierFlags: .command)
-        XCTAssertTrue(editorMode.waitForLabel("== 'Source'", timeout: 10), "Editor-mode button should report Source (triggers the flush; view swap itself may lag -- see comment above)")
+        XCTAssertTrue(
+            editorMode.waitForLabel("== 'Source'", timeout: 10),
+            "Editor-mode button should report Source (triggers the flush; view swap itself may lag -- see comment above)"
+        )
 
         let attachment = XCTAttachment(screenshot: app.screenshot())
         attachment.name = "image-paste-mid-list-after-toggle"

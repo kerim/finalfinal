@@ -112,33 +112,8 @@ extension XCUIElement {
     /// content in `value`, not `label`.
     /// Example: `element.waitForValue("== 'WYSIWYG'")`
     /// Example: `element.waitForValue("CONTAINS 'words'")`
-    ///
-    /// `predicateFormat` is prefixed with `"value "`, so it must be an infix
-    /// comparison (`== 'x'`, `CONTAINS 'x'`, `!= 'x'`, ...), not an expression
-    /// that starts with a logical operator like `NOT (...)` — prefixing that
-    /// produces invalid predicate syntax (`value NOT (...)`) and throws at
-    /// parse time. Use `waitForValueNot(_:)` for negation.
     func waitForValue(_ predicateFormat: String, timeout: TimeInterval = 10) -> Bool {
         let predicate = NSPredicate(format: "value \(predicateFormat)")
-        let expectation = XCTNSPredicateExpectation(predicate: predicate, object: self)
-        return XCTWaiter().wait(for: [expectation], timeout: timeout) == .completed
-    }
-
-    /// Waits for the element's accessibility value to NOT match a predicate.
-    /// Example: `element.waitForValueNot("CONTAINS 'words'")` waits until the
-    /// value no longer contains "words", correctly building `NOT (value CONTAINS 'words')`.
-    /// `predicateFormat` must still be an infix comparison, same as `waitForValue(_:)`.
-    ///
-    /// Guarded with `exists == true`: NSPredicate comparison operators evaluate
-    /// to false when an operand is nil, so an ungated `NOT (value ...)` would
-    /// be TRUE the instant the element doesn't exist yet (its `value` reads as
-    /// nil) — a silent false pass for "the UI hasn't come up yet". Folding the
-    /// existence check into the same compound predicate makes this one atomic
-    /// wait: the negation is only ever evaluated once the element genuinely
-    /// exists, and if it never does, the expectation times out and this
-    /// returns `false` rather than reporting the negation satisfied.
-    func waitForValueNot(_ predicateFormat: String, timeout: TimeInterval = 10) -> Bool {
-        let predicate = NSPredicate(format: "exists == true AND NOT (value \(predicateFormat))")
         let expectation = XCTNSPredicateExpectation(predicate: predicate, object: self)
         return XCTWaiter().wait(for: [expectation], timeout: timeout) == .completed
     }
@@ -146,26 +121,8 @@ extension XCUIElement {
     /// Waits for the element's accessibility label to match a predicate.
     /// SwiftUI `Button` elements expose their `Text` label content in `label`, not `value`.
     /// Example: `element.waitForLabel("== 'WYSIWYG'")`
-    ///
-    /// `predicateFormat` is prefixed with `"label "`, so it must be an infix
-    /// comparison, not a NOT/AND/OR-prefixed expression — see `waitForValue(_:)`.
-    /// Use `waitForLabelNot(_:)` for negation.
     func waitForLabel(_ predicateFormat: String, timeout: TimeInterval = 10) -> Bool {
         let predicate = NSPredicate(format: "label \(predicateFormat)")
-        let expectation = XCTNSPredicateExpectation(predicate: predicate, object: self)
-        return XCTWaiter().wait(for: [expectation], timeout: timeout) == .completed
-    }
-
-    /// Waits for the element's accessibility label to NOT match a predicate.
-    /// Example: `element.waitForLabelNot("== 'Source'")` waits until the label
-    /// is no longer "Source", correctly building `NOT (label == 'Source')`.
-    /// `predicateFormat` must still be an infix comparison, same as `waitForLabel(_:)`.
-    ///
-    /// Guarded with `exists == true`, same rationale as `waitForValueNot(_:)`:
-    /// without it, `NOT (label ...)` reads TRUE the instant the element
-    /// doesn't exist yet, silently passing before the UI has come up.
-    func waitForLabelNot(_ predicateFormat: String, timeout: TimeInterval = 10) -> Bool {
-        let predicate = NSPredicate(format: "exists == true AND NOT (label \(predicateFormat))")
         let expectation = XCTNSPredicateExpectation(predicate: predicate, object: self)
         return XCTWaiter().wait(for: [expectation], timeout: timeout) == .completed
     }
