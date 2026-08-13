@@ -14,7 +14,6 @@
 
 import Testing
 import Foundation
-import os
 @testable import final_final
 
 @MainActor
@@ -172,25 +171,18 @@ struct ObservableListDiffTests {
     // sections it merged into. Before must-fixes 1 and 3 this was demonstrably false --
     // `inout` access to `state.sections` itself fired unconditionally, and `apply()` wrote
     // `parentId` on every call even though `recalculateParentRelationships()` immediately
-    // overwrites it anyway. This test calls `EditorViewState.applySectionsUpdate(from:counts:)`
-    // directly -- the exact method `startObserving`'s live loop and `refreshSections` call on
-    // every tick -- rather than replicating the merge-into-a-local-copy pattern inline, so a
-    // future regression at either real call site (e.g. someone "simplifying" back to a direct
-    // `&state.sections` pass) actually fails this test instead of leaving it green.
+    // overwrites it anyway. This test exercises the same merge-into-a-local-copy pattern the
+    // production call sites use (see `EditorViewState.startObserving`), not a direct
+    // `&state.sections` pass, or it would not actually catch a regression of must-fix 1.
     @Test func noOpMergeThenParentRecalcFiresNoObservation() {
         let state = EditorViewState()
+        var vms: [SectionViewModel] = []
         let blocks = [heading("a", 0, level: 1), heading("b", 1, level: 2)]
-        state.applySectionsUpdate(from: blocks, counts: counts(["a": 1, "b": 2]))
+        _ = EditorViewState.mergeSections(into: &vms, from: blocks, counts: counts(["a": 1, "b": 2]))
+        state.sections = vms
+        state.recalculateParentRelationships()
 
-        // `onChange` below is `@Sendable () -> Void`: a captured `var` would compile today
-        // only because delivery happens synchronously in this test. Under Swift 6 that's a
-        // "mutation of captured var in concurrently-executing code" error, and even short of
-        // that it's migration debt -- if delivery ever stopped being synchronous, an
-        // unsynchronized var could be read before it's set, turning a real regression into a
-        // silent false PASS on the test that guards this whole fix. `OSAllocatedUnfairLock` is
-        // this codebase's existing idiom for a Sendable-safe mutable flag (see
-        // `DiagnosticLogFile.enabledCache`).
-        let fired = OSAllocatedUnfairLock(initialState: false)
+        var fired = false
         withObservationTracking {
             for section in state.sections {
                 _ = section.title
@@ -201,14 +193,18 @@ struct ObservableListDiffTests {
                 _ = section.wordCount
             }
         } onChange: {
-            fired.withLock { $0 = true }
+            fired = true
         }
 
-        // Re-run the identical update through the same production call site -- it must not
-        // touch anything the tracking above observed.
-        let changed = state.applySectionsUpdate(from: blocks, counts: counts(["a": 1, "b": 2]))
+        // Re-run the identical merge into a local copy, then the same parent recalculation
+        // the production observation loop performs on every tick -- neither should touch
+        // anything the tracking above observed.
+        var reMerged = state.sections
+        let changed = EditorViewState.mergeSections(into: &reMerged, from: blocks, counts: counts(["a": 1, "b": 2]))
+        if changed { state.sections = reMerged }
+        state.recalculateParentRelationships()
 
         #expect(changed == false)
-        #expect(fired.withLock { $0 } == false)
+        #expect(fired == false)
     }
 }

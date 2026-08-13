@@ -349,14 +349,17 @@ class EditorViewState {
                     self.lastOutlineCounts = counts
 
                     // Fix 2: merge in place -- reuse existing view models by id instead of
-                    // replacing the array wholesale, then recalculate parent relationships.
-                    // `applySectionsUpdate` merges into a local copy and only assigns back when
-                    // something actually changed: `inout` access to a tracked `@Observable`
-                    // property fires that property's array-level notification unconditionally
-                    // on exit (its synthesized `_modify` accessor's `didSet` call sits in an
-                    // unconditional `defer`, unlike the plain `set`), so passing `&self.sections`
-                    // directly here would defeat the point of this merge on every single tick.
-                    self.applySectionsUpdate(from: outlineBlocks, counts: counts)
+                    // replacing the array wholesale. Merge into a local copy and only assign
+                    // back when something actually changed: `inout` access to a tracked
+                    // `@Observable` property fires that property's array-level notification
+                    // unconditionally on exit (its synthesized `_modify` accessor's `didSet`
+                    // call sits in an unconditional `defer`, unlike the plain `set`), so
+                    // passing `&self.sections` directly here would defeat the point of this
+                    // merge on every single tick.
+                    var updatedSections = self.sections
+                    let sectionsChanged = Self.mergeSections(into: &updatedSections, from: outlineBlocks, counts: counts)
+                    if sectionsChanged { self.sections = updatedSections }
+                    self.recalculateParentRelationships()
 
                     // Notify observers (e.g., for hierarchy enforcement)
                     self.onSectionsUpdated?()
@@ -401,104 +404,17 @@ class EditorViewState {
                 self.lastOutlineBlocks = outlineBlocks
                 self.lastOutlineCounts = counts
 
-                // See the observation-loop call site above for why `applySectionsUpdate` merges
-                // into a local copy rather than passing `&self.sections` directly.
-                self.applySectionsUpdate(from: outlineBlocks, counts: counts)
+                // See the observation-loop call site above for why this merges into a local
+                // copy rather than passing `&self.sections` directly.
+                var updatedSections = self.sections
+                let sectionsChanged = Self.mergeSections(into: &updatedSections, from: outlineBlocks, counts: counts)
+                if sectionsChanged { self.sections = updatedSections }
+                self.recalculateParentRelationships()
                 self.onSectionsUpdated?()
             } catch {
                 DebugLog.log(.outline, "[EditorViewState] refreshSections error: \(error)")
             }
         }
-    }
-
-    /// Merge freshly-fetched `Block`s into an existing `[SectionViewModel]` array by id,
-    /// reusing (and updating in place via `apply(_:)`) any view model whose id is still
-    /// present instead of replacing the array wholesale. This is Fix 2: wholesale array
-    /// replacement hands every sidebar card a new view-model reference on every database
-    /// tick, forcing that card's `@Observable` dependency tracking to tear down and
-    /// reinstall -- 48% of main-thread busy time in the 2026-08-10 Instruments trace.
-    ///
-    /// - Returns: `true` if `existing` was structurally replaced (count changed, or any
-    ///   element's identity or position changed) -- i.e. a change SwiftUI's `ForEach` diff
-    ///   needs to see. Word-count-only or other in-place field updates on retained objects
-    ///   do not count as "structure changed" here; `@Observable` already propagates those.
-    @discardableResult
-    static func mergeSections(
-        into existing: inout [SectionViewModel],
-        from blocks: [Block],
-        counts: [String: ProjectDatabase.HeadingWordCounts]
-    ) -> Bool {
-        var byId = Dictionary(existing.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        var result: [SectionViewModel] = []
-        result.reserveCapacity(blocks.count)
-        for block in blocks {
-            let vm: SectionViewModel
-            if let reused = byId.removeValue(forKey: block.id) {
-                reused.apply(block)
-                vm = reused
-            } else {
-                vm = SectionViewModel(from: block)
-            }
-            if let wc = counts[block.id] {
-                if vm.wordCount != wc.sectionOnly { vm.wordCount = wc.sectionOnly }
-                if vm.aggregateGoal != nil, vm.aggregateWordCount != wc.aggregate {
-                    vm.aggregateWordCount = wc.aggregate
-                }
-            }
-            result.append(vm)
-        }
-        let structureChanged = result.count != existing.count
-            || zip(result, existing).contains { $0 !== $1 }
-        if structureChanged { existing = result }
-        return structureChanged
-    }
-
-    /// Merge freshly-fetched blocks/counts into `sections` and recalculate parent
-    /// relationships in one step -- the exact sequence both `startObserving`'s live loop and
-    /// `refreshSections`'s explicit re-fetch run on every tick. Extracted so both call sites
-    /// (and tests) go through one call rather than duplicating the "merge into a local copy,
-    /// assign back only if changed, then recalculate parents" sequence -- see `mergeSections`'s
-    /// doc comment above for why the local-copy step matters.
-    ///
-    /// - Returns: `true` if `mergeSections` structurally changed `sections` (see that method's
-    ///   doc comment for what counts as a structural change).
-    @discardableResult
-    func applySectionsUpdate(
-        from blocks: [Block],
-        counts: [String: ProjectDatabase.HeadingWordCounts]
-    ) -> Bool {
-        var updatedSections = sections
-        let sectionsChanged = Self.mergeSections(into: &updatedSections, from: blocks, counts: counts)
-        if sectionsChanged { sections = updatedSections }
-        recalculateParentRelationships()
-        return sectionsChanged
-    }
-
-    /// Merge freshly-fetched `Annotation`s into an existing `[AnnotationViewModel]` array by
-    /// id. Same shape as `mergeSections`, no word-count patching. See that method's doc
-    /// comment for why identity-preserving merge matters.
-    @discardableResult
-    static func mergeAnnotations(
-        into existing: inout [AnnotationViewModel],
-        from annotations: [Annotation]
-    ) -> Bool {
-        var byId = Dictionary(existing.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        var result: [AnnotationViewModel] = []
-        result.reserveCapacity(annotations.count)
-        for annotation in annotations {
-            let vm: AnnotationViewModel
-            if let reused = byId.removeValue(forKey: annotation.id) {
-                reused.apply(annotation)
-                vm = reused
-            } else {
-                vm = AnnotationViewModel(from: annotation)
-            }
-            result.append(vm)
-        }
-        let structureChanged = result.count != existing.count
-            || zip(result, existing).contains { $0 !== $1 }
-        if structureChanged { existing = result }
-        return structureChanged
     }
 
     /// Fetch heading word counts off the main thread, logging (rather than swallowing)
