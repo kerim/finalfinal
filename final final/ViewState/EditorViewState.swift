@@ -289,27 +289,24 @@ class EditorViewState {
 
     // MARK: - Outline Cache (equality guard for the merge, Fix 1)
     //
-    // Caches the last blocks/counts an observation tick actually applied, so an unchanged
-    // re-emission from ValueObservation can be skipped before it ever reaches
-    // `mergeSections`. This is the guard from Fix 1; Fix 2 is the merge itself. Comparing
-    // blocks alone (without counts) would reintroduce a bug this codebase has fixed and
-    // re-broken four times before -- see the "DO NOT ADD .removeDuplicates()" banner near
-    // `observeOutlineBlocks` in `Database+BlocksObservation.swift` and
-    // `OutlineObservationTests.swift`.
-    //
-    // Annotations don't need an equivalent cache: `observeAnnotations` applies
-    // `.removeDuplicates()` at the GRDB layer (unlike `observeOutlineBlocks`, which
-    // deliberately can't), so an unchanged re-emission is already filtered out before this
-    // class ever sees it.
+    // Caches the last blocks/counts (and annotation rows) an observation tick actually
+    // applied, so an unchanged re-emission from ValueObservation can be skipped before it
+    // ever reaches `mergeSections`/`mergeAnnotations`. This is the guard from Fix 1; Fix 2
+    // is the merge itself. Comparing blocks alone (without counts) would reintroduce a bug
+    // this codebase has fixed and re-broken four times before -- see the
+    // "DO NOT ADD .removeDuplicates()" banner near `observeOutlineBlocks` in
+    // `Database+BlocksObservation.swift` and `OutlineObservationTests.swift`.
     private var lastOutlineBlocks: [Block]?
     private var lastOutlineCounts: [String: ProjectDatabase.HeadingWordCounts] = [:]
+    private var lastAnnotationRows: [Annotation]?
 
-    /// Clear the outline equality-guard cache. Must be called whenever `sections` is reset
-    /// out from under the cache (project switch, stop observing), or a stale cache would
-    /// suppress the next real re-fetch and leave the sidebar blank.
+    /// Clear the outline/annotation equality-guard caches. Must be called whenever `sections`
+    /// or `annotations` are reset out from under the caches (project switch, stop observing),
+    /// or a stale cache would suppress the next real re-fetch and leave the sidebar blank.
     func invalidateOutlineCache() {
         lastOutlineBlocks = nil
         lastOutlineCounts = [:]
+        lastAnnotationRows = nil
     }
 
     /// Start observing blocks from database for reactive UI updates
@@ -470,12 +467,17 @@ class EditorViewState {
                 for try await dbAnnotations in database.observeAnnotations(for: contentId) {
                     guard !Task.isCancelled, let self else { break }
 
-                    // Merge in place -- reuse existing view models by id. Merge into a
+                    // Fix 1: skip the merge when this re-emission is identical to the last
+                    // one actually applied.
+                    if let previous = self.lastAnnotationRows, previous == dbAnnotations {
+                        continue
+                    }
+                    self.lastAnnotationRows = dbAnnotations
+
+                    // Fix 2: merge in place -- reuse existing view models by id. Merge into a
                     // local copy and only assign back when something actually changed -- see
                     // the sections observation loop above for why `&self.annotations` can't be
-                    // passed directly here. No equality guard is needed before this: unlike
-                    // `observeOutlineBlocks`, `observeAnnotations` applies `.removeDuplicates()`
-                    // at the GRDB layer, so an unchanged re-emission never reaches here.
+                    // passed directly here.
                     var updatedAnnotations = self.annotations
                     let annotationsChanged = Self.mergeAnnotations(into: &updatedAnnotations, from: dbAnnotations)
                     if annotationsChanged { self.annotations = updatedAnnotations }
