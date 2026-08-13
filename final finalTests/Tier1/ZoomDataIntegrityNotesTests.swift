@@ -315,4 +315,125 @@ extension ZoomDataIntegrityTests {
             "The first occurrence's text lands; the duplicate second occurrence is dropped, not inserted"
         )
     }
+
+    // MARK: - shiftBlocksAfterRange Reservation on Interior Ranges (t-f090f157)
+    //
+    // A distinct bug from the two documented above. Every test in this file so far uses
+    // `endSortOrder: nil` (zoom to end of document), which means `shiftBlocksAfterRange` is
+    // never invoked at all — its `if let end = endSortOrder` guard skips the shift entirely,
+    // since there's nothing after the range to protect. This test exercises the INTERIOR-range
+    // case (`endSortOrder` non-nil — a zoom that ends partway through the document, with more
+    // content following) where `shiftBlocksAfterRange` DOES run.
+    //
+    // Its caller computes `insertEnd` — how far the trailing content must be pushed forward to
+    // make room — as `startSortOrder + newBlocks.count`. That reserves room for the freshly
+    // inserted blocks, but NOT for `preservedRowIds.count` — the isNotes/isBibliography rows
+    // inside the zoomed range that survive the delete and get re-anchored (by
+    // `reanchorPreservedRows`) immediately after the new content, at
+    // `startSortOrder + newBlocks.count + offset`. If `insertEnd` doesn't reserve room for them
+    // too, the trailing content isn't shifted far enough forward, and the re-anchored preserved
+    // rows collide with — or land numerically past — it. See `shiftBlocksAfterRange`'s doc
+    // comment in Database+BlocksReorder.swift for the mechanism.
+
+    @Test("replaceBlocksInRange shifts trailing content far enough for both a multi-insert batch AND its re-anchored preserved rows (endSortOrder non-nil)")
+    func replaceBlocksInRangeReservesRoomForPreservedRowsOnInteriorShift() throws {
+        let db = try TestFixtureFactory.createTemporary(content: "# Title\n\n## Section A\n\nPlaceholder.")
+        let pid = try TestFixtureFactory.getProjectId(from: db)
+
+        // Replace the auto-parsed fixture with a hand-built layout so every sortOrder and
+        // isNotes flag is exact and under test control — the scenario needs a precise interior
+        // zoom range plus known trailing content, which markdown parsing can't guarantee.
+        try db.dbWriter.write { database in
+            try Block.filter(Block.Columns.projectId == pid).deleteAll(database)
+
+            var document = Block(projectId: pid, sortOrder: 1, blockType: .heading,
+                                  textContent: "Document", markdownFragment: "# Document", headingLevel: 1)
+            try document.insert(database)
+
+            var sectionA = Block(projectId: pid, sortOrder: 2, blockType: .heading,
+                                  textContent: "Section A", markdownFragment: "## Section A", headingLevel: 2)
+            try sectionA.insert(database)
+
+            // Two preserved rows inside the zoom range. With two, the SECOND re-anchored row's
+            // sortOrder overshoots Section B's stale (unshifted) sortOrder by a whole integer
+            // under the bug — not just a tie — so the regression assertion below is a plain
+            // numeric comparison, not dependent on how a sortOrder tie would get broken.
+            var defOne = Block(projectId: pid, sortOrder: 3, blockType: .paragraph,
+                                textContent: "[^1]: First footnote definition.",
+                                markdownFragment: "[^1]: First footnote definition.", isNotes: true)
+            try defOne.insert(database)
+
+            var defTwo = Block(projectId: pid, sortOrder: 4, blockType: .paragraph,
+                                textContent: "[^2]: Second footnote definition.",
+                                markdownFragment: "[^2]: Second footnote definition.", isNotes: true)
+            try defTwo.insert(database)
+
+            var sectionB = Block(projectId: pid, sortOrder: 5, blockType: .heading,
+                                  textContent: "Section B", markdownFragment: "## Section B", headingLevel: 2)
+            try sectionB.insert(database)
+
+            var bodyB = Block(projectId: pid, sortOrder: 6, blockType: .paragraph,
+                               textContent: "Body B text.", markdownFragment: "Body B text.")
+            try bodyB.insert(database)
+        }
+
+        let before = try TestFixtureFactory.fetchBlocks(from: db)
+        let sectionABefore = try #require(before.first { $0.textContent == "Section A" })
+        let sectionBBefore = try #require(before.first { $0.textContent == "Section B" })
+
+        // Multi-insert batch: the single old "Section A" heading is replaced by THREE new
+        // blocks (heading + 2 paragraphs) — newBlocks.count grows past the old range's size.
+        // newBlocks omits both footnote definitions entirely (the mini-Notes-stripped shape),
+        // so both must survive via the preservedRowIds path, not as part of this batch.
+        let newBlocks = [
+            Block(projectId: pid, sortOrder: 0, blockType: .heading, textContent: "Section A",
+                  markdownFragment: "## Section A", headingLevel: 2),
+            Block(projectId: pid, sortOrder: 0, blockType: .paragraph, textContent: "New paragraph one.",
+                  markdownFragment: "New paragraph one."),
+            Block(projectId: pid, sortOrder: 0, blockType: .paragraph, textContent: "New paragraph two.",
+                  markdownFragment: "New paragraph two.")
+        ]
+
+        // Interior zoom range: [Section A, Section B) — endSortOrder is Section B's OWN
+        // sortOrder, non-nil, so shiftBlocksAfterRange runs and must push Section B (and
+        // everything after it) forward to make room.
+        try db.replaceBlocksInRange(
+            newBlocks, for: pid,
+            startSortOrder: sectionABefore.sortOrder,
+            endSortOrder: sectionBBefore.sortOrder
+        )
+
+        let after = try TestFixtureFactory.fetchBlocks(from: db)
+        #expect(after.count == 8, "Document + 3 new blocks + 2 preserved definitions + Section B + Body B")
+
+        let defOneAfter = try #require(after.first { $0.markdownFragment.hasPrefix("[^1]:") })
+        let defTwoAfter = try #require(after.first { $0.markdownFragment.hasPrefix("[^2]:") })
+        let sectionBAfter = try #require(after.first { $0.textContent == "Section B" })
+        let bodyBAfter = try #require(after.first { $0.textContent == "Body B text." })
+
+        // The real invariant: both preserved definitions must sort strictly BEFORE Section B —
+        // never tied with it, never past it. Under the bug (insertEnd missing the
+        // preservedRowIds.count term), Section B's under-shifted sortOrder ties with defOne's
+        // re-anchored sortOrder; the heading-vs-non-heading tiebreak in the final renumber pass
+        // then deterministically sorts the heading (Section B) BEFORE the tied paragraph
+        // (defOne), and defTwo's re-anchored sortOrder lands numerically past Section B's
+        // altogether. Both failures are plain integer comparisons — no dependency on how SQL
+        // would break an unrelated tie.
+        #expect(defOneAfter.sortOrder < sectionBAfter.sortOrder, "First preserved definition must sort before Section B")
+        #expect(defTwoAfter.sortOrder < sectionBAfter.sortOrder, "Second preserved definition must sort before Section B")
+        #expect(sectionBAfter.sortOrder < bodyBAfter.sortOrder, "Section B must still sort before its own body text")
+
+        let sortOrders = after.map { $0.sortOrder }
+        #expect(Set(sortOrders).count == sortOrders.count, "All sort orders must be distinct")
+
+        let orderedTitles = after.map { $0.textContent }
+        #expect(
+            orderedTitles == [
+                "Document", "Section A", "New paragraph one.", "New paragraph two.",
+                "[^1]: First footnote definition.", "[^2]: Second footnote definition.",
+                "Section B", "Body B text."
+            ],
+            "Full document order must be preserved: new content, then both preserved definitions, then Section B and its body — got \(orderedTitles)"
+        )
+    }
 }
