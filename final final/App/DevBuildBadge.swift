@@ -8,10 +8,12 @@
 //  screenshot captured as evidence.
 //
 //  Debug-only by construction: the whole file is inside `#if DEBUG`, so a
-//  release build carries none of it. The label comes from the Info.plist stamp
-//  written by project.yml's "Stamp Git Info into Info.plist" phase (see
-//  GitInfo.devLabel) and the colour is derived from that label, so a given
-//  worktree always gets the same colour across rebuilds.
+//  release build carries none of it. The label comes from GitInfo.plist —
+//  written into the built app's Resources by the app target's "Stamp Git
+//  Info into GitInfo.plist" post-build phase, sourced from the unsandboxed
+//  GitStamp aggregate target's git capture (see GitInfo.devLabel) — and the
+//  colour is derived from that label, so a given worktree always gets the
+//  same colour across rebuilds.
 //
 
 #if DEBUG
@@ -134,7 +136,7 @@
             super.init(frame: .zero)
             let attributes: [NSAttributedString.Key: Any] = [
                 .font: NSFont.systemFont(ofSize: 10, weight: .bold),
-                .foregroundColor: NSColor.white,
+                .foregroundColor: NSColor.white
             ]
             let textSize = (self.text as NSString).size(withAttributes: attributes)
             setFrameSize(NSSize(width: ceil(textSize.width) + 28, height: 28))
@@ -150,7 +152,7 @@
         override func draw(_ dirtyRect: NSRect) {
             let attributes: [NSAttributedString.Key: Any] = [
                 .font: NSFont.systemFont(ofSize: 10, weight: .bold),
-                .foregroundColor: NSColor.white,
+                .foregroundColor: NSColor.white
             ]
             let textSize = (text as NSString).size(withAttributes: attributes)
             let pill = NSRect(

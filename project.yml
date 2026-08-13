@@ -62,6 +62,53 @@ packages:
     url: https://github.com/sparkle-project/Sparkle
     majorVersion: 2.0.0
 
+aggregateTargets:
+  # Captures the current git branch/commit before the app target builds.
+  # Deliberately exempt from ENABLE_USER_SCRIPT_SANDBOXING: it runs `git`
+  # directly (arbitrary reads outside the source tree, e.g. .git/logs), which
+  # a sandboxed script phase would have denied. Kept as its own tiny target
+  # (rather than a script directly on the app target) so only this one
+  # narrow phase needs the exemption — everything else on the app target
+  # stays sandboxed.
+  GitStamp:
+    settings:
+      base:
+        ENABLE_USER_SCRIPT_SANDBOXING: NO
+    buildScripts:
+      - name: "Capture git branch and commit"
+        # No declared inputs — REQUIRED with a declared output, or Xcode
+        # runs this phase exactly once (at the first-ever build) and then
+        # treats the output as up to date forever, freezing branch/commit at
+        # whatever HEAD was during that first build.
+        basedOnDependencyAnalysis: false
+        outputFiles:
+          - $(BUILT_PRODUCTS_DIR)/GitStamp/git-info.env
+        script: |
+          OUT_DIR="${BUILT_PRODUCTS_DIR}/GitStamp"
+          mkdir -p "$OUT_DIR"
+          BRANCH=$(git -C "${SRCROOT}" rev-parse --abbrev-ref HEAD 2>/dev/null) || BRANCH=""
+          COMMIT=$(git -C "${SRCROOT}" rev-parse --short HEAD 2>/dev/null) || COMMIT=""
+          if [ -z "$BRANCH" ] || [ -z "$COMMIT" ]; then
+            echo "warning: git rev-parse failed in the GitStamp target (the git command itself failed, or the repository is unreadable — NOT detached HEAD, which rev-parse --abbrev-ref reports as the literal string 'HEAD'). Stamping 'git-unavailable' for branch/commit. This target is exempt from script sandboxing, so a sandbox denial is NOT the expected cause — investigate the repo state." >&2
+            BRANCH="${BRANCH:-git-unavailable}"
+            COMMIT="${COMMIT:-git-unavailable}"
+          fi
+          printf 'BRANCH=%s\nCOMMIT=%s\n' "$BRANCH" "$COMMIT" > "$OUT_DIR/git-info.env"
+      - name: "Clean stale QuickLook DerivedData"
+        # Re-homed here (off the app target) when script sandboxing went on:
+        # this script does its own `rm -rf`/directory scanning outside
+        # SRCROOT and DERIVED_DATA, which can't be expressed as declared
+        # build-script inputs/outputs. GitStamp is already exempt from
+        # ENABLE_USER_SCRIPT_SANDBOXING and already runs on every build, so
+        # it's a natural home — no sandboxing concerns, no doc disclosure
+        # needed about losing the automatic cleanup.
+        basedOnDependencyAnalysis: false
+        script: |
+          # See scripts/clean-stale-deriveddata.sh for what this does and why.
+          # (Extracted to a script file because the concurrency-safe version is
+          # too long to stay legible as an inline YAML script fragment.)
+          "${SRCROOT}/scripts/clean-stale-deriveddata.sh"
+
 targets:
   final final:
     type: application
@@ -92,20 +139,18 @@ targets:
         script: |
           EDITOR_DIR="${SRCROOT}/final final/Resources/editor"
           if [ ! -f "$EDITOR_DIR/milkdown/milkdown.html" ] || [ ! -f "$EDITOR_DIR/codemirror/codemirror.html" ]; then
-            echo "Web editors not found, building..."
-            cd "${SRCROOT}/web" && pnpm build
-          else
-            echo "Web editors already built, skipping."
+            echo "error: Web editors are not built. Run: cd web && pnpm build — then build again. (This phase can no longer build them itself: script sandboxing is on and pnpm's writes cannot be declared as build outputs.)" >&2
+            exit 1
           fi
-      - name: "Clean stale QuickLook DerivedData"
-        basedOnDependencyAnalysis: false
-        script: |
-          # See scripts/clean-stale-deriveddata.sh for what this does and why.
-          # (Extracted to a script file because the concurrency-safe version is
-          # too long to stay legible as an inline YAML script fragment.)
-          "${SRCROOT}/scripts/clean-stale-deriveddata.sh"
       - name: "Guard: no SQLite sidecars in bundled getting-started.ff"
         basedOnDependencyAnalysis: false
+        # Declared purely to grant the sandboxed script read access to list
+        # this directory (a bare `[ -f ... ]` stat is allowed without this,
+        # but the `ls` directory-listing this guard needs is not) — found
+        # empirically: basedOnDependencyAnalysis: false means this input
+        # doesn't gate whether the phase runs, only what it may read.
+        inputFiles:
+          - $(SRCROOT)/final final/Resources/getting-started.ff
         script: |
           # A leftover -wal/-shm pair next to the bundled guide gets copied into
           # the app and silently rolls the document back to whatever state the
@@ -115,47 +160,84 @@ targets:
           # and not the Apple sqlite3 CLI (persistent-WAL leaves them behind):
           #   cd "final final/Resources/getting-started.ff"
           #   python3 -c "import sqlite3; c=sqlite3.connect('content.sqlite'); c.execute('PRAGMA wal_checkpoint(TRUNCATE)'); c.close()"
+          #
+          # Matches full listing lines, not substrings: "content.sqlite" is a
+          # literal prefix of "content.sqlite-wal"/"content.sqlite-shm", so a
+          # naive substring/glob check would also match the main db file itself.
           GS_DIR="${SRCROOT}/final final/Resources/getting-started.ff"
-          for sidecar in "$GS_DIR/content.sqlite-wal" "$GS_DIR/content.sqlite-shm"; do
-            if [ -e "$sidecar" ]; then
-              echo "error: Stale SQLite sidecar would be bundled into the app: $sidecar — it reverts the Getting Started guide to old content. Fix: cd 'final final/Resources/getting-started.ff' && python3 -c \"import sqlite3; c=sqlite3.connect('content.sqlite'); c.execute('PRAGMA wal_checkpoint(TRUNCATE)'); c.close()\" — then rebuild. Do not use rm; if the sidecars persist, the app still has the database open."
-              exit 1
-            fi
-          done
+          LISTING=$(/bin/ls "$GS_DIR" 2>&1) || {
+            echo "error: SQLite sidecar guard could not list $GS_DIR ($LISTING). Under script sandboxing this means the guard cannot run — failing closed rather than shipping an unchecked bundle." >&2
+            exit 1
+          }
+          if ! printf '%s\n' "$LISTING" | grep -qx 'content.sqlite'; then
+            echo "error: SQLite sidecar guard read a listing of $GS_DIR with no 'content.sqlite' entry — the read was blocked, or the directory is wrong. Refusing to pass." >&2
+            exit 1
+          fi
+          if printf '%s\n' "$LISTING" | grep -qxE 'content\.sqlite-(wal|shm)'; then
+            echo "error: Stale SQLite sidecar would be bundled into the app in $GS_DIR — it reverts the Getting Started guide to old content. Fix: cd 'final final/Resources/getting-started.ff' && python3 -c \"import sqlite3; c=sqlite3.connect('content.sqlite'); c.execute('PRAGMA wal_checkpoint(TRUNCATE)'); c.close()\" — then rebuild. Do not use rm; if the sidecars persist, the app still has the database open." >&2
+            exit 1
+          fi
     postBuildScripts:
-      - name: Stamp Git Info into Info.plist
-        # Dependency-analyzed so Xcode skips this when HEAD hasn't moved.
-        # .git/logs/HEAD changes on every commit/checkout; .git/HEAD on branch
-        # switch. Output is a stamp file (not the plist itself — declaring the
-        # generated Info.plist as an output would conflict with the build
-        # system's own ProcessInfoPlist step). In worktrees .git is a file, so
-        # the inputs are missing and the script just runs every build (the old
-        # behavior).
+      - name: "Stamp Git Info into GitInfo.plist"
+        # Declared inputs/outputs, but this does NOT skip when HEAD hasn't
+        # moved: its input is GitStamp's git-info.env, which GitStamp
+        # rewrites (new mtime) on every single build regardless of content
+        # (see GitStamp's own basedOnDependencyAnalysis: false above) — so
+        # this phase's declared input always looks "changed" and it reruns
+        # every build too, same net effect as basedOnDependencyAnalysis:
+        # false without needing that flag here.
+        # The GitStamp aggregate target (see aggregateTargets below) captures
+        # branch/commit before this target builds — it runs git directly and
+        # is exempt from script sandboxing, so this phase only reads its
+        # output env file and writes a plist. Output is a SEPARATE plist (not
+        # Info.plist) — declaring the generated Info.plist as a script output
+        # would conflict with the build system's own ProcessInfoPlist step,
+        # and an undeclared write to it is denied under
+        # ENABLE_USER_SCRIPT_SANDBOXING.
         inputFiles:
-          - $(SRCROOT)/.git/HEAD
-          - $(SRCROOT)/.git/logs/HEAD
+          - $(BUILT_PRODUCTS_DIR)/GitStamp/git-info.env
         outputFiles:
+          - $(BUILT_PRODUCTS_DIR)/$(CONTENTS_FOLDER_PATH)/Resources/GitInfo.plist
           - $(DERIVED_FILE_DIR)/git-stamp.txt
         script: |
-          PLIST_PATH="${BUILT_PRODUCTS_DIR}/${INFOPLIST_PATH}"
-          BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
-          COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+          PLIST="${BUILT_PRODUCTS_DIR}/${CONTENTS_FOLDER_PATH}/Resources/GitInfo.plist"
+          ENV_FILE="${BUILT_PRODUCTS_DIR}/GitStamp/git-info.env"
+          # Parsed with sed, NOT sourced (`.`/source). Git branch names may
+          # contain parens, backticks, and $(...) — nearly everything except
+          # whitespace and a few reserved chars is legal. Sourcing a file
+          # with `BRANCH=feat(x)` breaks silently (empty BRANCH/COMMIT,
+          # bypassing both the git-unavailable and no-git-stamp sentinels —
+          # the badge just goes blank with no signal); a branch containing a
+          # backtick or $(...) would actually EXECUTE during the build.
+          if [ -f "$ENV_FILE" ]; then
+            BRANCH=$(sed -n 's/^BRANCH=//p' "$ENV_FILE")
+            COMMIT=$(sed -n 's/^COMMIT=//p' "$ENV_FILE")
+          else
+            # BUILT_PRODUCTS_DIR mismatch between GitStamp and this target,
+            # or GitStamp didn't run — fail soft with the build-wiring
+            # sentinel rather than aborting on a raw "No such file" error
+            # that gives no hint GitStamp is the cause.
+            BRANCH="no-git-stamp"
+            COMMIT="no-git-stamp"
+          fi
           # Worktree folder name — only set when building from a superdev/autodev
-          # worktree, empty for the main checkout. DevBuildBadge.swift reads it to
-          # label the running app; when the key is absent it falls back to BRANCH.
-          # Deliberately not written when empty: PlistBuddy's Add/Set with an empty
-          # value is unreliable, and an absent key is exactly the fallback signal.
+          # worktree, empty for the main checkout. DevBuildBadge.swift reads it via
+          # GitInfo.devLabel to label the running app, falling back to BRANCH.
           case "${SRCROOT}" in
             */.claude/worktrees/*) WORKTREE=$(basename "${SRCROOT}") ;;
             *) WORKTREE="" ;;
           esac
-          /usr/libexec/PlistBuddy -c "Add :GitBranch string $BRANCH" "$PLIST_PATH" 2>/dev/null || \
-            /usr/libexec/PlistBuddy -c "Set :GitBranch $BRANCH" "$PLIST_PATH"
-          /usr/libexec/PlistBuddy -c "Add :GitCommit string $COMMIT" "$PLIST_PATH" 2>/dev/null || \
-            /usr/libexec/PlistBuddy -c "Set :GitCommit $COMMIT" "$PLIST_PATH"
+          mkdir -p "$(dirname "$PLIST")"
+          if [ ! -f "$PLIST" ]; then
+            /usr/libexec/PlistBuddy -c "Save" "$PLIST" >/dev/null
+          fi
+          /usr/libexec/PlistBuddy \
+            -c "Clear dict" \
+            -c "Add :GitBranch string $BRANCH" \
+            -c "Add :GitCommit string $COMMIT" \
+            "$PLIST"
           if [ -n "$WORKTREE" ]; then
-            /usr/libexec/PlistBuddy -c "Add :DevWorktree string $WORKTREE" "$PLIST_PATH" 2>/dev/null || \
-              /usr/libexec/PlistBuddy -c "Set :DevWorktree $WORKTREE" "$PLIST_PATH"
+            /usr/libexec/PlistBuddy -c "Add :DevWorktree string $WORKTREE" "$PLIST"
           fi
           mkdir -p "${DERIVED_FILE_DIR}"
           echo "${BRANCH} ${COMMIT} ${WORKTREE}" > "${DERIVED_FILE_DIR}/git-stamp.txt"
@@ -172,6 +254,15 @@ targets:
         MACOSX_DEPLOYMENT_TARGET: "15.0"
         ENABLE_HARDENED_RUNTIME: YES
         CODE_SIGN_ENTITLEMENTS: final final/final final.entitlements
+        # ENABLE_USER_SCRIPT_SANDBOXING restricts what build-phase scripts may
+        # read/write (see the preBuildScripts/postBuildScripts above for what
+        # that required). FUSE_BUILD_SCRIPT_PHASES lets independent script
+        # phases run in parallel with compilation instead of serializing the
+        # whole build around them — not required for sandboxing itself, but
+        # requested alongside it in the original ask ("script sandboxing +
+        # parallel script phases").
+        ENABLE_USER_SCRIPT_SANDBOXING: YES
+        FUSE_BUILD_SCRIPT_PHASES: YES
       configs:
         Debug:
           CODE_SIGN_IDENTITY: "-"
@@ -201,6 +292,12 @@ targets:
       - package: Sparkle
       - target: QuickLook Extension
         embed: true
+        link: false
+      - target: GitStamp
+        # An aggregate target has no product, so embed/link are likely
+        # inert here — explicit anyway rather than letting the
+        # pbxproj-determinism guard flag this as unreviewed churn.
+        embed: false
         link: false
     info:
       path: final final/Info.plist

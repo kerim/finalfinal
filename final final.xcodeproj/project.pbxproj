@@ -6,6 +6,23 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXAggregateTarget section */
+		D47917AFA657D56AB88775A5 /* GitStamp */ = {
+			isa = PBXAggregateTarget;
+			buildConfigurationList = E8D98331FE39BFAD9C0E2710 /* Build configuration list for PBXAggregateTarget "GitStamp" */;
+			buildPhases = (
+				AA60B34A321857E62AC8047C /* Capture git branch and commit */,
+				D5FB074C67A2E320CDE7DD9E /* Clean stale QuickLook DerivedData */,
+			);
+			dependencies = (
+			);
+			name = GitStamp;
+			packageProductDependencies = (
+			);
+			productName = GitStamp;
+		};
+/* End PBXAggregateTarget section */
+
 /* Begin PBXBuildFile section */
 		002BF2C251C9FE9FC8F9EC77 /* ImageImportService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 787A1493E6815DF1DA4E829D /* ImageImportService.swift */; };
 		0127F846C37CAFAFA0455C60 /* CodeMirrorEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 73EA833CAD13B84DA71C0544 /* CodeMirrorEditor.swift */; };
@@ -338,6 +355,13 @@
 			proxyType = 1;
 			remoteGlobalIDString = 4A3B93CDDB27C36925E7EC59;
 			remoteInfo = "final final";
+		};
+		BBAF4470F3A7D741D6443425 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = F0BAF9FF1D366B40F0176899 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = D47917AFA657D56AB88775A5;
+			remoteInfo = GitStamp;
 		};
 		E692EB543D627B9001FF1A00 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -1271,18 +1295,18 @@
 			buildConfigurationList = 2E161EC228B8AE3510464111 /* Build configuration list for PBXNativeTarget "final final" */;
 			buildPhases = (
 				BCCA5E97A6A2744B41788F3B /* Build web editors if missing */,
-				A8133880C98FB2F23DCDD5BC /* Clean stale QuickLook DerivedData */,
 				D27B6AB1F9D1071B0C0A97F9 /* Guard: no SQLite sidecars in bundled getting-started.ff */,
 				AC02281FB7B2A5BB611B1A29 /* Sources */,
 				3BC3CAED088CEF7AE191FA7D /* Resources */,
 				E9038C5955C3D5D57EF730DB /* Frameworks */,
 				051E97E9BA4EECE25798542E /* Embed Foundation Extensions */,
-				FEF6C6A737962720093F21D9 /* Stamp Git Info into Info.plist */,
+				CE9BC6FA398657CB06291D60 /* Stamp Git Info into GitInfo.plist */,
 			);
 			buildRules = (
 			);
 			dependencies = (
 				62ABA6D3CE742FC590C14B53 /* PBXTargetDependency */,
+				A83F8114D76F1B18F3E793A7 /* PBXTargetDependency */,
 			);
 			name = "final final";
 			packageProductDependencies = (
@@ -1372,6 +1396,7 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
+				D47917AFA657D56AB88775A5 /* GitStamp */,
 				D529D3B3388A2FCF4CDD62EF /* QuickLook Extension */,
 				4A3B93CDDB27C36925E7EC59 /* final final */,
 				48CF9BA009EA11ACC33BFB55 /* final finalTests */,
@@ -1404,7 +1429,7 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
-		A8133880C98FB2F23DCDD5BC /* Clean stale QuickLook DerivedData */ = {
+		AA60B34A321857E62AC8047C /* Capture git branch and commit */ = {
 			isa = PBXShellScriptBuildPhase;
 			alwaysOutOfDate = 1;
 			buildActionMask = 2147483647;
@@ -1414,14 +1439,15 @@
 			);
 			inputPaths = (
 			);
-			name = "Clean stale QuickLook DerivedData";
+			name = "Capture git branch and commit";
 			outputFileListPaths = (
 			);
 			outputPaths = (
+				"$(BUILT_PRODUCTS_DIR)/GitStamp/git-info.env",
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "# See scripts/clean-stale-deriveddata.sh for what this does and why.\n# (Extracted to a script file because the concurrency-safe version is\n# too long to stay legible as an inline YAML script fragment.)\n\"${SRCROOT}/scripts/clean-stale-deriveddata.sh\"\n";
+			shellScript = "OUT_DIR=\"${BUILT_PRODUCTS_DIR}/GitStamp\"\nmkdir -p \"$OUT_DIR\"\nBRANCH=$(git -C \"${SRCROOT}\" rev-parse --abbrev-ref HEAD 2>/dev/null) || BRANCH=\"\"\nCOMMIT=$(git -C \"${SRCROOT}\" rev-parse --short HEAD 2>/dev/null) || COMMIT=\"\"\nif [ -z \"$BRANCH\" ] || [ -z \"$COMMIT\" ]; then\n  echo \"warning: git rev-parse failed in the GitStamp target (the git command itself failed, or the repository is unreadable — NOT detached HEAD, which rev-parse --abbrev-ref reports as the literal string 'HEAD'). Stamping 'git-unavailable' for branch/commit. This target is exempt from script sandboxing, so a sandbox denial is NOT the expected cause — investigate the repo state.\" >&2\n  BRANCH=\"${BRANCH:-git-unavailable}\"\n  COMMIT=\"${COMMIT:-git-unavailable}\"\nfi\nprintf 'BRANCH=%s\\nCOMMIT=%s\\n' \"$BRANCH\" \"$COMMIT\" > \"$OUT_DIR/git-info.env\"\n";
 		};
 		BCCA5E97A6A2744B41788F3B /* Build web editors if missing */ = {
 			isa = PBXShellScriptBuildPhase;
@@ -1440,7 +1466,28 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "EDITOR_DIR=\"${SRCROOT}/final final/Resources/editor\"\nif [ ! -f \"$EDITOR_DIR/milkdown/milkdown.html\" ] || [ ! -f \"$EDITOR_DIR/codemirror/codemirror.html\" ]; then\n  echo \"Web editors not found, building...\"\n  cd \"${SRCROOT}/web\" && pnpm build\nelse\n  echo \"Web editors already built, skipping.\"\nfi\n";
+			shellScript = "EDITOR_DIR=\"${SRCROOT}/final final/Resources/editor\"\nif [ ! -f \"$EDITOR_DIR/milkdown/milkdown.html\" ] || [ ! -f \"$EDITOR_DIR/codemirror/codemirror.html\" ]; then\n  echo \"error: Web editors are not built. Run: cd web && pnpm build — then build again. (This phase can no longer build them itself: script sandboxing is on and pnpm's writes cannot be declared as build outputs.)\" >&2\n  exit 1\nfi\n";
+		};
+		CE9BC6FA398657CB06291D60 /* Stamp Git Info into GitInfo.plist */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(BUILT_PRODUCTS_DIR)/GitStamp/git-info.env",
+			);
+			name = "Stamp Git Info into GitInfo.plist";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(BUILT_PRODUCTS_DIR)/$(CONTENTS_FOLDER_PATH)/Resources/GitInfo.plist",
+				"$(DERIVED_FILE_DIR)/git-stamp.txt",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "PLIST=\"${BUILT_PRODUCTS_DIR}/${CONTENTS_FOLDER_PATH}/Resources/GitInfo.plist\"\nENV_FILE=\"${BUILT_PRODUCTS_DIR}/GitStamp/git-info.env\"\n# Parsed with sed, NOT sourced (`.`/source). Git branch names may\n# contain parens, backticks, and $(...) — nearly everything except\n# whitespace and a few reserved chars is legal. Sourcing a file\n# with `BRANCH=feat(x)` breaks silently (empty BRANCH/COMMIT,\n# bypassing both the git-unavailable and no-git-stamp sentinels —\n# the badge just goes blank with no signal); a branch containing a\n# backtick or $(...) would actually EXECUTE during the build.\nif [ -f \"$ENV_FILE\" ]; then\n  BRANCH=$(sed -n 's/^BRANCH=//p' \"$ENV_FILE\")\n  COMMIT=$(sed -n 's/^COMMIT=//p' \"$ENV_FILE\")\nelse\n  # BUILT_PRODUCTS_DIR mismatch between GitStamp and this target,\n  # or GitStamp didn't run — fail soft with the build-wiring\n  # sentinel rather than aborting on a raw \"No such file\" error\n  # that gives no hint GitStamp is the cause.\n  BRANCH=\"no-git-stamp\"\n  COMMIT=\"no-git-stamp\"\nfi\n# Worktree folder name — only set when building from a superdev/autodev\n# worktree, empty for the main checkout. DevBuildBadge.swift reads it via\n# GitInfo.devLabel to label the running app, falling back to BRANCH.\ncase \"${SRCROOT}\" in\n  */.claude/worktrees/*) WORKTREE=$(basename \"${SRCROOT}\") ;;\n  *) WORKTREE=\"\" ;;\nesac\nmkdir -p \"$(dirname \"$PLIST\")\"\nif [ ! -f \"$PLIST\" ]; then\n  /usr/libexec/PlistBuddy -c \"Save\" \"$PLIST\" >/dev/null\nfi\n/usr/libexec/PlistBuddy \\\n  -c \"Clear dict\" \\\n  -c \"Add :GitBranch string $BRANCH\" \\\n  -c \"Add :GitCommit string $COMMIT\" \\\n  \"$PLIST\"\nif [ -n \"$WORKTREE\" ]; then\n  /usr/libexec/PlistBuddy -c \"Add :DevWorktree string $WORKTREE\" \"$PLIST\"\nfi\nmkdir -p \"${DERIVED_FILE_DIR}\"\necho \"${BRANCH} ${COMMIT} ${WORKTREE}\" > \"${DERIVED_FILE_DIR}/git-stamp.txt\"\n";
 		};
 		D27B6AB1F9D1071B0C0A97F9 /* Guard: no SQLite sidecars in bundled getting-started.ff */ = {
 			isa = PBXShellScriptBuildPhase;
@@ -1451,6 +1498,7 @@
 			inputFileListPaths = (
 			);
 			inputPaths = (
+				"$(SRCROOT)/final final/Resources/getting-started.ff",
 			);
 			name = "Guard: no SQLite sidecars in bundled getting-started.ff";
 			outputFileListPaths = (
@@ -1459,28 +1507,26 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "# A leftover -wal/-shm pair next to the bundled guide gets copied into\n# the app and silently rolls the document back to whatever state the\n# WAL froze at (this shipped a stale guide in v0.2.101–v0.2.104).\n# Fail fast. The fix is a clean open/checkpoint/close, which removes\n# both sidecars by itself — no `rm` (denied by .claude/settings.json),\n# and not the Apple sqlite3 CLI (persistent-WAL leaves them behind):\n#   cd \"final final/Resources/getting-started.ff\"\n#   python3 -c \"import sqlite3; c=sqlite3.connect('content.sqlite'); c.execute('PRAGMA wal_checkpoint(TRUNCATE)'); c.close()\"\nGS_DIR=\"${SRCROOT}/final final/Resources/getting-started.ff\"\nfor sidecar in \"$GS_DIR/content.sqlite-wal\" \"$GS_DIR/content.sqlite-shm\"; do\n  if [ -e \"$sidecar\" ]; then\n    echo \"error: Stale SQLite sidecar would be bundled into the app: $sidecar — it reverts the Getting Started guide to old content. Fix: cd 'final final/Resources/getting-started.ff' && python3 -c \\\"import sqlite3; c=sqlite3.connect('content.sqlite'); c.execute('PRAGMA wal_checkpoint(TRUNCATE)'); c.close()\\\" — then rebuild. Do not use rm; if the sidecars persist, the app still has the database open.\"\n    exit 1\n  fi\ndone\n";
+			shellScript = "# A leftover -wal/-shm pair next to the bundled guide gets copied into\n# the app and silently rolls the document back to whatever state the\n# WAL froze at (this shipped a stale guide in v0.2.101–v0.2.104).\n# Fail fast. The fix is a clean open/checkpoint/close, which removes\n# both sidecars by itself — no `rm` (denied by .claude/settings.json),\n# and not the Apple sqlite3 CLI (persistent-WAL leaves them behind):\n#   cd \"final final/Resources/getting-started.ff\"\n#   python3 -c \"import sqlite3; c=sqlite3.connect('content.sqlite'); c.execute('PRAGMA wal_checkpoint(TRUNCATE)'); c.close()\"\n#\n# Matches full listing lines, not substrings: \"content.sqlite\" is a\n# literal prefix of \"content.sqlite-wal\"/\"content.sqlite-shm\", so a\n# naive substring/glob check would also match the main db file itself.\nGS_DIR=\"${SRCROOT}/final final/Resources/getting-started.ff\"\nLISTING=$(/bin/ls \"$GS_DIR\" 2>&1) || {\n  echo \"error: SQLite sidecar guard could not list $GS_DIR ($LISTING). Under script sandboxing this means the guard cannot run — failing closed rather than shipping an unchecked bundle.\" >&2\n  exit 1\n}\nif ! printf '%s\\n' \"$LISTING\" | grep -qx 'content.sqlite'; then\n  echo \"error: SQLite sidecar guard read a listing of $GS_DIR with no 'content.sqlite' entry — the read was blocked, or the directory is wrong. Refusing to pass.\" >&2\n  exit 1\nfi\nif printf '%s\\n' \"$LISTING\" | grep -qxE 'content\\.sqlite-(wal|shm)'; then\n  echo \"error: Stale SQLite sidecar would be bundled into the app in $GS_DIR — it reverts the Getting Started guide to old content. Fix: cd 'final final/Resources/getting-started.ff' && python3 -c \\\"import sqlite3; c=sqlite3.connect('content.sqlite'); c.execute('PRAGMA wal_checkpoint(TRUNCATE)'); c.close()\\\" — then rebuild. Do not use rm; if the sidecars persist, the app still has the database open.\" >&2\n  exit 1\nfi\n";
 		};
-		FEF6C6A737962720093F21D9 /* Stamp Git Info into Info.plist */ = {
+		D5FB074C67A2E320CDE7DD9E /* Clean stale QuickLook DerivedData */ = {
 			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
 			buildActionMask = 2147483647;
 			files = (
 			);
 			inputFileListPaths = (
 			);
 			inputPaths = (
-				"$(SRCROOT)/.git/HEAD",
-				"$(SRCROOT)/.git/logs/HEAD",
 			);
-			name = "Stamp Git Info into Info.plist";
+			name = "Clean stale QuickLook DerivedData";
 			outputFileListPaths = (
 			);
 			outputPaths = (
-				"$(DERIVED_FILE_DIR)/git-stamp.txt",
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "PLIST_PATH=\"${BUILT_PRODUCTS_DIR}/${INFOPLIST_PATH}\"\nBRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo \"unknown\")\nCOMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo \"unknown\")\n# Worktree folder name — only set when building from a superdev/autodev\n# worktree, empty for the main checkout. DevBuildBadge.swift reads it to\n# label the running app; when the key is absent it falls back to BRANCH.\n# Deliberately not written when empty: PlistBuddy's Add/Set with an empty\n# value is unreliable, and an absent key is exactly the fallback signal.\ncase \"${SRCROOT}\" in\n  */.claude/worktrees/*) WORKTREE=$(basename \"${SRCROOT}\") ;;\n  *) WORKTREE=\"\" ;;\nesac\n/usr/libexec/PlistBuddy -c \"Add :GitBranch string $BRANCH\" \"$PLIST_PATH\" 2>/dev/null || \\\n  /usr/libexec/PlistBuddy -c \"Set :GitBranch $BRANCH\" \"$PLIST_PATH\"\n/usr/libexec/PlistBuddy -c \"Add :GitCommit string $COMMIT\" \"$PLIST_PATH\" 2>/dev/null || \\\n  /usr/libexec/PlistBuddy -c \"Set :GitCommit $COMMIT\" \"$PLIST_PATH\"\nif [ -n \"$WORKTREE\" ]; then\n  /usr/libexec/PlistBuddy -c \"Add :DevWorktree string $WORKTREE\" \"$PLIST_PATH\" 2>/dev/null || \\\n    /usr/libexec/PlistBuddy -c \"Set :DevWorktree $WORKTREE\" \"$PLIST_PATH\"\nfi\nmkdir -p \"${DERIVED_FILE_DIR}\"\necho \"${BRANCH} ${COMMIT} ${WORKTREE}\" > \"${DERIVED_FILE_DIR}/git-stamp.txt\"\n";
+			shellScript = "# See scripts/clean-stale-deriveddata.sh for what this does and why.\n# (Extracted to a script file because the concurrency-safe version is\n# too long to stay legible as an inline YAML script fragment.)\n\"${SRCROOT}/scripts/clean-stale-deriveddata.sh\"\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
@@ -1844,6 +1890,11 @@
 			target = D529D3B3388A2FCF4CDD62EF /* QuickLook Extension */;
 			targetProxy = E692EB543D627B9001FF1A00 /* PBXContainerItemProxy */;
 		};
+		A83F8114D76F1B18F3E793A7 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = D47917AFA657D56AB88775A5 /* GitStamp */;
+			targetProxy = BBAF4470F3A7D741D6443425 /* PBXContainerItemProxy */;
+		};
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
@@ -2106,6 +2157,8 @@
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 0.2.123;
 				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				FUSE_BUILD_SCRIPT_PHASES = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "final final/Info.plist";
 				INFOPLIST_GENERATION_MODE = GeneratedFile;
@@ -2167,6 +2220,8 @@
 				CURRENT_PROJECT_VERSION = 0.2.123;
 				DEVELOPMENT_TEAM = HBHZWD24V7;
 				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				FUSE_BUILD_SCRIPT_PHASES = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "final final/Info.plist";
 				INFOPLIST_GENERATION_MODE = GeneratedFile;
@@ -2214,6 +2269,13 @@
 			};
 			name = Release;
 		};
+		B05A354616F990140BEFE163 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+			};
+			name = Release;
+		};
 		BD7305D3D0859131E8E646CF /* DebugTest */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -2224,6 +2286,8 @@
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 0.2.123;
 				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				FUSE_BUILD_SCRIPT_PHASES = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "final final/Info.plist";
 				INFOPLIST_GENERATION_MODE = GeneratedFile;
@@ -2327,6 +2391,20 @@
 			};
 			name = Release;
 		};
+		F1BF35ECD661B02EC1022B35 /* DebugTest */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+			};
+			name = DebugTest;
+		};
+		FF519FCFA86DA8ADE0C7D2BE /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+			};
+			name = Debug;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -2376,6 +2454,16 @@
 				01DDEA1156C69DB1F5E21F51 /* Debug */,
 				5BC5A349EB946E850E1DFC3E /* DebugTest */,
 				0D4CD9A7010A574AB7109E80 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		E8D98331FE39BFAD9C0E2710 /* Build configuration list for PBXAggregateTarget "GitStamp" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				FF519FCFA86DA8ADE0C7D2BE /* Debug */,
+				F1BF35ECD661B02EC1022B35 /* DebugTest */,
+				B05A354616F990140BEFE163 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;
