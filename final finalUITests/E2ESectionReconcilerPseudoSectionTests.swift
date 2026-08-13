@@ -109,21 +109,17 @@
 //  required. Several separate smaller edits could each resolve unambiguously
 //  on their own and never exercise the three-way tie at all.
 //
-//  KNOWN RISK, disclosed rather than hidden: SmokeTests.swift
-//  (EditorSmokeTests.testEditorModeToggle) and ListNumberingE2ETests.swift
-//  both document that the Source Mode toggle's accessibility LABEL flips to
-//  "Source" before the WYSIWYG->CodeMirror view swap's async cursor-save
-//  callback chain necessarily finishes. EditorSmokeTests.testEditorModeToggle
-//  proves the swap DOES complete reliably in XCUITest given the right
-//  technique -- retrying the toggle keystroke and polling for real on-screen
-//  source content instead of a fixed sleep. This file's mitigation is
-//  simpler and DB-based instead: (a) a generous settle wait after the
-//  toggle, (b) an explicit click into the editor pane before Cmd+A/Cmd+V
-//  (focuses whichever editor is actually showing), and (c) the "verify the
-//  status-bar word count actually changed, retry the paste once if it did
-//  not" guard in step 3 below -- not a guarantee. If the paste genuinely
-//  lands in the wrong editor, the assertions below fail loudly with a
-//  diagnostic DB dump, rather than passing vacuously.
+//  KNOWN RISK, disclosed rather than hidden: EditorSmokeTests.swift and
+//  ListNumberingE2ETests.swift both document that the Source Mode toggle's
+//  accessibility LABEL flips to "Source" before the WYSIWYG->CodeMirror view
+//  swap's async cursor-save callback chain necessarily finishes. This file's
+//  mitigation is (a) a generous settle wait after the toggle, (b) an explicit
+//  click into the editor pane before Cmd+A/Cmd+V (focuses whichever editor is
+//  actually showing), and (c) the "verify the status-bar word count actually
+//  changed, retry the paste once if it did not" guard in step 3 below -- not
+//  a guarantee. If the paste genuinely lands in the wrong editor, the
+//  assertions below fail loudly with a diagnostic DB dump, rather than passing
+//  vacuously.
 //
 //  Verification mechanism: DB read (ground truth -- proves exactly which row
 //  survived and what status it carries), PLUS a relaunch-and-reopen check
