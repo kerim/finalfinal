@@ -66,7 +66,6 @@
 		2A991A819263234EDC320A38 /* FootnoteSyncService.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF34C45C645EA726101A81D6 /* FootnoteSyncService.swift */; };
 		2AC9945B77DF66C95673A65A /* BlockReorderDuplicateHeadingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65C3FFA9A9BEB6D8649BE64F /* BlockReorderDuplicateHeadingTests.swift */; };
 		2E3559787BC471AD315D2243 /* ExportService+PandocArguments.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1FD305A0D7ECAD444E8C8921 /* ExportService+PandocArguments.swift */; };
-		2EAA83141CE0D5824018921C /* EditorViewState+ObservableListDiff.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF99C08B4A3A904443B5BC4E /* EditorViewState+ObservableListDiff.swift */; };
 		2F7AFDF5A7C2082BC7D0ED92 /* ProjectOpenErrorState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4928580105FDF4B6C1D9E550 /* ProjectOpenErrorState.swift */; };
 		3103FDB5821BF5116605AEFA /* BibliographySourceModeFlushTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED7DADA746EF4F096F38961A /* BibliographySourceModeFlushTests.swift */; };
 		31BB974F6FF8868AD6FABB29 /* ExportViewModelSavePanelDecisionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 83A48145D001C901DB9BAC3E /* ExportViewModelSavePanelDecisionTests.swift */; };
@@ -662,7 +661,6 @@
 		DDC88DC217831BA18037CB1B /* Database+BlocksWordCount.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Database+BlocksWordCount.swift"; sourceTree = "<group>"; };
 		DDC98D54901B8744835E5EF4 /* BuiltInProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BuiltInProvider.swift; sourceTree = "<group>"; };
 		DE4DE8D59CFC464F6E7D5123 /* FullScreenManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FullScreenManager.swift; sourceTree = "<group>"; };
-		DF99C08B4A3A904443B5BC4E /* EditorViewState+ObservableListDiff.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "EditorViewState+ObservableListDiff.swift"; sourceTree = "<group>"; };
 		DFB3FE823FEA8DAD86CD01A9 /* ProjectDatabase.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectDatabase.swift; sourceTree = "<group>"; };
 		DFC522AFA4BA34F95F917109 /* PendingFootnoteQueue.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PendingFootnoteQueue.swift; sourceTree = "<group>"; };
 		E046DBE7CE7E1419392E6FAA /* FileCommands+Export.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "FileCommands+Export.swift"; sourceTree = "<group>"; };
@@ -823,7 +821,6 @@
 				431A8C9FB2EF990E375571FD /* EditorViewState+Annotations.swift */,
 				A64E27D82BD26FEF00B3751A /* EditorViewState+EditorControls.swift */,
 				DBBD3F44DAC64E5BDF50919F /* EditorViewState+FocusMode.swift */,
-				DF99C08B4A3A904443B5BC4E /* EditorViewState+ObservableListDiff.swift */,
 				4F8236DBF123893D2CEFD1FC /* EditorViewState+ProjectReset.swift */,
 				7544369438608030586F0022 /* EditorViewState+Sections.swift */,
 				4841F7F108760152AC98A47B /* EditorViewState+Types.swift */,
@@ -923,13 +920,6 @@
 				3F528C948E209CDF817C3EC8 /* ViewState */,
 			);
 			path = "final final";
-			sourceTree = "<group>";
-		};
-		897DF43C87D41FD1A0CCF1C9 /* editor */ = {
-			isa = PBXGroup;
-			children = (
-			);
-			path = editor;
 			sourceTree = "<group>";
 		};
 		8A579DFDA89ED4D43AE65852 /* Components */ = {
@@ -1063,7 +1053,6 @@
 		A0A538514A7F8AF439E6E08D /* Resources */ = {
 			isa = PBXGroup;
 			children = (
-				897DF43C87D41FD1A0CCF1C9 /* editor */,
 			);
 			path = Resources;
 			sourceTree = "<group>";
@@ -1718,7 +1707,6 @@
 				7475CE4B28D60036D4497DFD /* EditorViewState+Annotations.swift in Sources */,
 				39A9E2ADDEC2C8BFFFC19F72 /* EditorViewState+EditorControls.swift in Sources */,
 				D3FF566198A11C644E49B4D8 /* EditorViewState+FocusMode.swift in Sources */,
-				2EAA83141CE0D5824018921C /* EditorViewState+ObservableListDiff.swift in Sources */,
 				890AA06467EF1F85654E9D36 /* EditorViewState+ProjectReset.swift in Sources */,
 				1EF711E3DFA4F90BF31B36EC /* EditorViewState+Sections.swift in Sources */,
 				6DCDEAA6E72ACBE2572AA9F3 /* EditorViewState+Types.swift in Sources */,

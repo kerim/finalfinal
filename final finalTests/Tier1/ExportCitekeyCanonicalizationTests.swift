@@ -546,6 +546,19 @@ final class ExportCitekeyCanonicalizationIntegrationTests: XCTestCase {
             // MockBBTURLProtocol cannot fake. Skip only this tail when there's no live Zotero +
             // Better BibTeX to satisfy it; the canonicalization assertion above already ran
             // unconditionally.
+            //
+            // This DOCX-warnings check (the `result.warnings.isEmpty` assertion just below) only
+            // ever runs when a live Zotero + Better BibTeX connection is actually reachable on
+            // 127.0.0.1:23119 -- practically, only on a developer's machine with Zotero open. It
+            // is therefore ALWAYS SKIPPED in CI and the VM test runner (scripts/vmtest), which
+            // have no live Zotero. This is intentional and permanent, not a bug to fix: pandoc's
+            // zotero.lua filter makes its own out-of-process HTTP call to BBT, and an in-process
+            // URLProtocol mock (MockBBTURLProtocol) cannot intercept a request made by a
+            // separate process, so there is no way to fake this path in an automated
+            // environment. The canonicalization assertion above -- this test's main point -- has
+            // no such dependency and always runs everywhere. See commit d9137d3 ("Skip
+            // DOCX-warnings assertion in citekey export test without live Zotero") for the full
+            // rationale behind this split.
             guard await Self.isLiveZoteroBBTReachable() else {
                 throw XCTSkip(
                     "No live Zotero + Better BibTeX reachable on 127.0.0.1:23119 — skipping DOCX pandoc-warnings verification"
