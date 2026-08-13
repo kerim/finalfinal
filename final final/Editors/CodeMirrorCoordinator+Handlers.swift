@@ -18,89 +18,50 @@ extension CodeMirrorEditor.Coordinator {
         spellcheckTask = nil
         pollingTimer?.invalidate()
         pollingTimer = nil
-        if let observer = toggleObserver {
-            NotificationCenter.default.removeObserver(observer)
-            toggleObserver = nil
-        }
-        if let observer = insertBreakObserver {
-            NotificationCenter.default.removeObserver(observer)
-            insertBreakObserver = nil
-        }
-        if let observer = annotationDisplayModesObserver {
-            NotificationCenter.default.removeObserver(observer)
-            annotationDisplayModesObserver = nil
-        }
-        if let observer = insertAnnotationObserver {
-            NotificationCenter.default.removeObserver(observer)
-            insertAnnotationObserver = nil
-        }
-        if let observer = toggleHighlightObserver {
-            NotificationCenter.default.removeObserver(observer)
-            toggleHighlightObserver = nil
-        }
-        if let observer = spellcheckStateObserver {
-            NotificationCenter.default.removeObserver(observer)
-            spellcheckStateObserver = nil
-        }
-        if let observer = proofingModeObserver {
-            NotificationCenter.default.removeObserver(observer)
-            proofingModeObserver = nil
-        }
-        if let observer = proofingSettingsObserver {
-            NotificationCenter.default.removeObserver(observer)
-            proofingSettingsObserver = nil
-        }
-        if let observer = insertFootnoteObserver {
-            NotificationCenter.default.removeObserver(observer)
-            insertFootnoteObserver = nil
-        }
-        if let observer = renumberFootnotesObserver {
-            NotificationCenter.default.removeObserver(observer)
-            renumberFootnotesObserver = nil
-        }
-        if let observer = scrollToFootnoteDefObserver {
-            NotificationCenter.default.removeObserver(observer)
-            scrollToFootnoteDefObserver = nil
-        }
-        if let observer = insertImageObserver {
-            NotificationCenter.default.removeObserver(observer)
-            insertImageObserver = nil
-        }
-        if let observer = insertTableObserver {
-            NotificationCenter.default.removeObserver(observer)
-            insertTableObserver = nil
-        }
-        if let observer = insertEquationObserver {
-            NotificationCenter.default.removeObserver(observer)
-            insertEquationObserver = nil
-        }
+        clearObserver(&toggleObserver)
+        clearObserver(&insertBreakObserver)
+        clearObserver(&annotationDisplayModesObserver)
+        clearObserver(&insertAnnotationObserver)
+        clearObserver(&toggleHighlightObserver)
+        clearObserver(&spellcheckStateObserver)
+        clearObserver(&proofingModeObserver)
+        clearObserver(&proofingSettingsObserver)
+        clearObserver(&insertFootnoteObserver)
+        clearObserver(&renumberFootnotesObserver)
+        clearObserver(&scrollToFootnoteDefObserver)
+        clearObserver(&insertImageObserver)
+        clearObserver(&insertTableObserver)
+        clearObserver(&insertEquationObserver)
         // Formatting command observers cleanup (also covers smartQuotesStateObserver and
         // zoomFootnoteStateObserver, previously missed here despite being removed in deinit)
-        for observer in [toggleBoldObserver, toggleItalicObserver, toggleStrikethroughObserver,
-                         setHeadingObserver, toggleBulletListObserver, toggleNumberListObserver,
-                         toggleBlockquoteObserver, toggleCodeBlockObserver, toggleInlineCodeObserver,
-                         insertLinkObserver, insertCitationObserver,
-                         smartQuotesStateObserver, zoomFootnoteStateObserver] {
-            if let observer { NotificationCenter.default.removeObserver(observer) }
-        }
-        toggleBoldObserver = nil
-        toggleItalicObserver = nil
-        toggleStrikethroughObserver = nil
-        setHeadingObserver = nil
-        toggleBulletListObserver = nil
-        toggleNumberListObserver = nil
-        toggleBlockquoteObserver = nil
-        toggleCodeBlockObserver = nil
-        toggleInlineCodeObserver = nil
-        insertLinkObserver = nil
-        insertCitationObserver = nil
-        smartQuotesStateObserver = nil
-        zoomFootnoteStateObserver = nil
+        clearObserver(&toggleBoldObserver)
+        clearObserver(&toggleItalicObserver)
+        clearObserver(&toggleStrikethroughObserver)
+        clearObserver(&setHeadingObserver)
+        clearObserver(&toggleBulletListObserver)
+        clearObserver(&toggleNumberListObserver)
+        clearObserver(&toggleBlockquoteObserver)
+        clearObserver(&toggleCodeBlockObserver)
+        clearObserver(&toggleInlineCodeObserver)
+        clearObserver(&insertLinkObserver)
+        clearObserver(&insertCitationObserver)
+        clearObserver(&smartQuotesStateObserver)
+        clearObserver(&zoomFootnoteStateObserver)
         // Unregister all WKScriptMessageHandler channels registered in registerMessageHandlers(on:includeTableInsertTruncated:)
         // — without this, the WKUserContentController keeps a strong reference to this
         // Coordinator (via `controller.add(self, name:)`) and it is never deallocated.
         webView?.configuration.userContentController.removeAllScriptMessageHandlers()
         webView = nil
+    }
+
+    /// Remove `observer` from NotificationCenter (if still registered) and nil out the
+    /// stored token. Used by `cleanup()`, which — unlike `deinit` — can run while the
+    /// instance is still alive, so the tokens must be cleared to avoid double-removal.
+    private func clearObserver(_ observer: inout NSObjectProtocol?) {
+        if let unwrapped = observer {
+            NotificationCenter.default.removeObserver(unwrapped)
+        }
+        observer = nil
     }
 
     /// Execute a formatting command via window.FinalFinal API
