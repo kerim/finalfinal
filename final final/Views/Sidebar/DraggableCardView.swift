@@ -16,7 +16,11 @@ import UniformTypeIdentifiers
 /// Handles both click (single/double) and drag gestures with threshold-based distinction.
 struct DraggableCardView: NSViewRepresentable {
     let section: SectionViewModel
-    let allSections: [SectionViewModel]
+    /// Computes the drag-payload subtree (descendant IDs) for a given root section id.
+    /// Passed as a closure instead of the full section list -- the caller (`OutlineSidebar`)
+    /// captures its per-body-pass `visible` snapshot directly, so this view doesn't need to
+    /// hold (or re-derive) the whole array just to answer one query on option-drag start.
+    let collectSubtreeIds: (String) -> [String]
     let isGhost: Bool
     var isActive: Bool = false
     let onDragStarted: (Set<String>) -> Void
@@ -36,7 +40,6 @@ struct DraggableCardView: NSViewRepresentable {
         let view = DraggableNSView()
         view.coordinator = context.coordinator
         view.section = section
-        view.allSections = allSections
         view.themeManager = themeManager
 
         // Embed SwiftUI content via NSHostingView
@@ -70,7 +73,6 @@ struct DraggableCardView: NSViewRepresentable {
     func updateNSView(_ nsView: DraggableNSView, context: Context) {
         context.coordinator.parent = self
         nsView.section = section
-        nsView.allSections = allSections
         nsView.themeManager = themeManager
 
         // Update hosted SwiftUI content
@@ -127,7 +129,6 @@ class PassthroughHostingView<Content: View>: NSHostingView<Content> {
 class DraggableNSView: NSView, NSDraggingSource {
     weak var coordinator: DraggableCardView.Coordinator?
     var section: SectionViewModel?
-    var allSections: [SectionViewModel] = []
     var themeManager: ThemeManager?
     var hostingView: PassthroughHostingView<AnyView>?
 
@@ -172,7 +173,7 @@ class DraggableNSView: NSView, NSDraggingSource {
         }
 
         // 1. Compute subtree
-        let childIds = isOptionDrag ? collectSubtreeIds(rootId: section.id) : []
+        let childIds = isOptionDrag ? (coordinator?.parent.collectSubtreeIds(section.id) ?? []) : []
         let isSubtreeDrag = isOptionDrag && !childIds.isEmpty
         let draggedIds = Set([section.id] + childIds)
 
@@ -242,28 +243,6 @@ class DraggableNSView: NSView, NSDraggingSource {
     }
 
     // MARK: - Helpers
-
-    /// Collect IDs of all descendants for subtree drag (level-based, not parent-based)
-    /// Returns all sections after rootId until reaching one at same or shallower level
-    private func collectSubtreeIds(rootId: String) -> [String] {
-        guard let rootIndex = allSections.firstIndex(where: { $0.id == rootId }) else {
-            return []
-        }
-
-        let rootLevel = allSections[rootIndex].headerLevel
-        var childIds: [String] = []
-
-        // Iterate forward, collecting all sections deeper than root
-        for i in (rootIndex + 1)..<allSections.count {
-            let section = allSections[i]
-            if section.headerLevel <= rootLevel {
-                break  // Hit a section at same or shallower level
-            }
-            childIds.append(section.id)
-        }
-
-        return childIds
-    }
 
     /// Render the appropriate drag preview to NSImage
     private func renderPreview(isSubtreeDrag: Bool, childCount: Int) -> NSImage {

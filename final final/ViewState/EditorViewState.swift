@@ -287,10 +287,33 @@ class EditorViewState {
     /// Used by ContentView to enforce hierarchy constraints after slash command changes
     var onSectionsUpdated: (() -> Void)?
 
+    // MARK: - Outline Cache (equality guard for the merge, Fix 1)
+    //
+    // Caches the last blocks/counts (and annotation rows) an observation tick actually
+    // applied, so an unchanged re-emission from ValueObservation can be skipped before it
+    // ever reaches `mergeSections`/`mergeAnnotations`. This is the guard from Fix 1; Fix 2
+    // is the merge itself. Comparing blocks alone (without counts) would reintroduce a bug
+    // this codebase has fixed and re-broken four times before -- see the
+    // "DO NOT ADD .removeDuplicates()" banner near `observeOutlineBlocks` in
+    // `Database+BlocksObservation.swift` and `OutlineObservationTests.swift`.
+    private var lastOutlineBlocks: [Block]?
+    private var lastOutlineCounts: [String: ProjectDatabase.HeadingWordCounts] = [:]
+    private var lastAnnotationRows: [Annotation]?
+
+    /// Clear the outline/annotation equality-guard caches. Must be called whenever `sections`
+    /// or `annotations` are reset out from under the caches (project switch, stop observing),
+    /// or a stale cache would suppress the next real re-fetch and leave the sidebar blank.
+    func invalidateOutlineCache() {
+        lastOutlineBlocks = nil
+        lastOutlineCounts = [:]
+        lastAnnotationRows = nil
+    }
+
     /// Start observing blocks from database for reactive UI updates
     /// Call this once during initialization after database is ready
     func startObserving(database: ProjectDatabase, projectId: String) {
         stopObserving()  // Cancel any existing observation
+        invalidateOutlineCache()
         self.projectDatabase = database
         self.currentProjectId = projectId
 
@@ -305,28 +328,37 @@ class EditorViewState {
                         continue
                     }
 
-                    // Convert blocks to SectionViewModels
-                    var viewModels = outlineBlocks.map { SectionViewModel(from: $0) }
-
                     // Batch word counts in a single DB read off the main thread.
-                    let blockIds = viewModels.map { $0.id }
-                    let needsAggregate = Set(viewModels.filter { $0.aggregateGoal != nil }.map { $0.id })
+                    let blockIds = outlineBlocks.map(\.id)
+                    let needsAggregate = Set(outlineBlocks.filter { $0.aggregateGoal != nil }.map(\.id))
                     let counts = await Self.fetchBatchWordCounts(
                         database: database,
                         blockIds: blockIds,
                         needsAggregate: needsAggregate
                     )
-                    for i in viewModels.indices {
-                        if let wc = counts[viewModels[i].id] {
-                            viewModels[i].wordCount = wc.sectionOnly
-                            if viewModels[i].aggregateGoal != nil {
-                                viewModels[i].aggregateWordCount = wc.aggregate
-                            }
-                        }
-                    }
 
-                    // Update sections and recalculate parent relationships
-                    self.sections = viewModels
+                    // Fix 1: skip the merge entirely when nothing actually changed since the
+                    // last applied tick -- both blocks AND counts, never blocks alone.
+                    if let previous = self.lastOutlineBlocks,
+                       previous == outlineBlocks,
+                       self.lastOutlineCounts == counts {
+                        self.onSectionsUpdated?()
+                        continue
+                    }
+                    self.lastOutlineBlocks = outlineBlocks
+                    self.lastOutlineCounts = counts
+
+                    // Fix 2: merge in place -- reuse existing view models by id instead of
+                    // replacing the array wholesale. Merge into a local copy and only assign
+                    // back when something actually changed: `inout` access to a tracked
+                    // `@Observable` property fires that property's array-level notification
+                    // unconditionally on exit (its synthesized `_modify` accessor's `didSet`
+                    // call sits in an unconditional `defer`, unlike the plain `set`), so
+                    // passing `&self.sections` directly here would defeat the point of this
+                    // merge on every single tick.
+                    var updatedSections = self.sections
+                    let sectionsChanged = Self.mergeSections(into: &updatedSections, from: outlineBlocks, counts: counts)
+                    if sectionsChanged { self.sections = updatedSections }
                     self.recalculateParentRelationships()
 
                     // Notify observers (e.g., for hierarchy enforcement)
@@ -351,33 +383,107 @@ class EditorViewState {
                 let outlineBlocks = try await Task.detached(priority: .userInitiated) {
                     try db.fetchOutlineBlocks(projectId: pid)
                 }.value
-                var viewModels = outlineBlocks.map { SectionViewModel(from: $0) }
 
-                let blockIds = viewModels.map { $0.id }
-                let needsAggregate = Set(viewModels.filter { $0.aggregateGoal != nil }.map { $0.id })
+                let blockIds = outlineBlocks.map(\.id)
+                let needsAggregate = Set(outlineBlocks.filter { $0.aggregateGoal != nil }.map(\.id))
                 let counts = await Self.fetchBatchWordCounts(
                     database: db,
                     blockIds: blockIds,
                     needsAggregate: needsAggregate
                 )
-                for i in viewModels.indices {
-                    if let wc = counts[viewModels[i].id] {
-                        viewModels[i].wordCount = wc.sectionOnly
-                        if viewModels[i].aggregateGoal != nil {
-                            viewModels[i].aggregateWordCount = wc.aggregate
-                        }
-                    }
-                }
 
                 guard let self else { return }
-                DebugLog.log(.outline, "[EditorViewState:refresh] \(viewModels.count) sections (contentState=\(self.contentState))")
-                self.sections = viewModels
+                DebugLog.log(.outline, "[EditorViewState:refresh] \(outlineBlocks.count) sections (contentState=\(self.contentState))")
+
+                if let previous = self.lastOutlineBlocks,
+                   previous == outlineBlocks,
+                   self.lastOutlineCounts == counts {
+                    self.onSectionsUpdated?()
+                    return
+                }
+                self.lastOutlineBlocks = outlineBlocks
+                self.lastOutlineCounts = counts
+
+                // See the observation-loop call site above for why this merges into a local
+                // copy rather than passing `&self.sections` directly.
+                var updatedSections = self.sections
+                let sectionsChanged = Self.mergeSections(into: &updatedSections, from: outlineBlocks, counts: counts)
+                if sectionsChanged { self.sections = updatedSections }
                 self.recalculateParentRelationships()
                 self.onSectionsUpdated?()
             } catch {
                 DebugLog.log(.outline, "[EditorViewState] refreshSections error: \(error)")
             }
         }
+    }
+
+    /// Merge freshly-fetched `Block`s into an existing `[SectionViewModel]` array by id,
+    /// reusing (and updating in place via `apply(_:)`) any view model whose id is still
+    /// present instead of replacing the array wholesale. This is Fix 2: wholesale array
+    /// replacement hands every sidebar card a new view-model reference on every database
+    /// tick, forcing that card's `@Observable` dependency tracking to tear down and
+    /// reinstall -- 48% of main-thread busy time in the 2026-08-10 Instruments trace.
+    ///
+    /// - Returns: `true` if `existing` was structurally replaced (count changed, or any
+    ///   element's identity or position changed) -- i.e. a change SwiftUI's `ForEach` diff
+    ///   needs to see. Word-count-only or other in-place field updates on retained objects
+    ///   do not count as "structure changed" here; `@Observable` already propagates those.
+    @discardableResult
+    static func mergeSections(
+        into existing: inout [SectionViewModel],
+        from blocks: [Block],
+        counts: [String: ProjectDatabase.HeadingWordCounts]
+    ) -> Bool {
+        var byId = Dictionary(existing.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        var result: [SectionViewModel] = []
+        result.reserveCapacity(blocks.count)
+        for block in blocks {
+            let vm: SectionViewModel
+            if let reused = byId.removeValue(forKey: block.id) {
+                reused.apply(block)
+                vm = reused
+            } else {
+                vm = SectionViewModel(from: block)
+            }
+            if let wc = counts[block.id] {
+                if vm.wordCount != wc.sectionOnly { vm.wordCount = wc.sectionOnly }
+                if vm.aggregateGoal != nil, vm.aggregateWordCount != wc.aggregate {
+                    vm.aggregateWordCount = wc.aggregate
+                }
+            }
+            result.append(vm)
+        }
+        let structureChanged = result.count != existing.count
+            || zip(result, existing).contains { $0 !== $1 }
+        if structureChanged { existing = result }
+        return structureChanged
+    }
+
+    /// Merge freshly-fetched `Annotation`s into an existing `[AnnotationViewModel]` array by
+    /// id. Same shape as `mergeSections`, no word-count patching. See that method's doc
+    /// comment for why identity-preserving merge matters.
+    @discardableResult
+    static func mergeAnnotations(
+        into existing: inout [AnnotationViewModel],
+        from annotations: [Annotation]
+    ) -> Bool {
+        var byId = Dictionary(existing.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        var result: [AnnotationViewModel] = []
+        result.reserveCapacity(annotations.count)
+        for annotation in annotations {
+            let vm: AnnotationViewModel
+            if let reused = byId.removeValue(forKey: annotation.id) {
+                reused.apply(annotation)
+                vm = reused
+            } else {
+                vm = AnnotationViewModel(from: annotation)
+            }
+            result.append(vm)
+        }
+        let structureChanged = result.count != existing.count
+            || zip(result, existing).contains { $0 !== $1 }
+        if structureChanged { existing = result }
+        return structureChanged
     }
 
     /// Fetch heading word counts off the main thread, logging (rather than swallowing)
@@ -403,6 +509,7 @@ class EditorViewState {
         observationTask = nil
         annotationObservationTask?.cancel()
         annotationObservationTask = nil
+        invalidateOutlineCache()
     }
 
     /// Start observing annotations from database for reactive UI updates
@@ -414,9 +521,20 @@ class EditorViewState {
                 for try await dbAnnotations in database.observeAnnotations(for: contentId) {
                     guard !Task.isCancelled, let self else { break }
 
-                    // Convert to view models
-                    let viewModels = dbAnnotations.map { AnnotationViewModel(from: $0) }
-                    self.annotations = viewModels
+                    // Fix 1: skip the merge when this re-emission is identical to the last
+                    // one actually applied.
+                    if let previous = self.lastAnnotationRows, previous == dbAnnotations {
+                        continue
+                    }
+                    self.lastAnnotationRows = dbAnnotations
+
+                    // Fix 2: merge in place -- reuse existing view models by id. Merge into a
+                    // local copy and only assign back when something actually changed -- see
+                    // the sections observation loop above for why `&self.annotations` can't be
+                    // passed directly here.
+                    var updatedAnnotations = self.annotations
+                    let annotationsChanged = Self.mergeAnnotations(into: &updatedAnnotations, from: dbAnnotations)
+                    if annotationsChanged { self.annotations = updatedAnnotations }
                 }
             } catch {
                 DebugLog.log(.outline, "[EditorViewState] Annotation observation error: \(error)")
@@ -425,15 +543,21 @@ class EditorViewState {
     }
 
     /// Recalculate parentId for all sections based on document order and header levels
-    /// A section's parent is the nearest preceding section with a lower header level
-    private func recalculateParentRelationships() {
+    /// A section's parent is the nearest preceding section with a lower header level.
+    ///
+    /// Mutates `parentId` on the existing view model in place (equality-guarded) rather than
+    /// calling `withUpdates`, which returns a new object instance. `withUpdates` still exists
+    /// and is used by the drag-reorder path, which really is user-action triggered. The
+    /// hierarchy-enforcement path (`ContentView+HierarchyEnforcement.swift`) is different: it
+    /// is reached from `onSectionsUpdated`, which fires on every observation tick, so it can
+    /// run every keystroke for as long as a heading violates a level constraint -- not just
+    /// once per user action. Either way, this per-tick call runs on every observation update,
+    /// so replacing identities here would undo Fix 2 on the very next line.
+    func recalculateParentRelationships() {
         for index in sections.indices {
-            let section = sections[index]
+            let vm = sections[index]
             let newParentId = findParentByLevel(at: index)
-
-            if section.parentId != newParentId {
-                sections[index] = section.withUpdates(parentId: newParentId)
-            }
+            if vm.parentId != newParentId { vm.parentId = newParentId }
         }
     }
 

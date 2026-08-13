@@ -428,6 +428,49 @@ class SectionViewModel: Identifiable {
         self.startOffset = 0  // Not used for blocks (scroll by block ID)
     }
 
+    /// Update this view model in place from a re-fetched `Block`, preserving object identity
+    /// so SwiftUI's per-card `@Observable` dependency tracking doesn't tear down and reinstall
+    /// on every database tick (see `EditorViewState.mergeSections`).
+    ///
+    /// Deliberately excludes `wordCount`, `aggregateWordCount`, and `startOffset`: those are
+    /// placeholders in `init(from block: Block)` that the caller patches in afterward from a
+    /// separate batch word-count fetch. Copying them here would write `wordCount = 0` on every
+    /// merge before the counts loop overwrites it (an extra `@Observable` write per section per
+    /// keystroke, undermining the fix this method exists for) and would zero out counts whenever
+    /// that batch fetch fails, instead of retaining the last-known value.
+    ///
+    /// Also deliberately excludes `parentId`: `block.parentId` is always `nil` for the
+    /// heading/pseudo-section rows this observation path fetches, and
+    /// `EditorViewState.recalculateParentRelationships()` runs immediately after the merge on
+    /// the same tick and sets the level-derived `parentId` on every object regardless. Writing
+    /// it here would just be a second guarded-but-still-firing `@Observable` write on every
+    /// section below H1, every tick, for no effect.
+    ///
+    /// Every assignment is equality-guarded: `@Observable` fires on any write, including one
+    /// that writes the same value back, so an unguarded assignment would defeat the fix just as
+    /// surely as replacing the object outright.
+    func apply(_ block: Block) {
+        if projectId != block.projectId { projectId = block.projectId }
+        if sortOrder != block.sortOrder { sortOrder = block.sortOrder }
+        let newHeaderLevel = block.headingLevel ?? 1
+        if headerLevel != newHeaderLevel { headerLevel = newHeaderLevel }
+        if isPseudoSection != block.isPseudoSection { isPseudoSection = block.isPseudoSection }
+        if isBibliography != block.isBibliography { isBibliography = block.isBibliography }
+        if isNotes != block.isNotes { isNotes = block.isNotes }
+        let newTitle = block.outlineTitle
+        if title != newTitle { title = newTitle }
+        let newMarkdownContent = block.markdownFragment
+        if markdownContent != newMarkdownContent { markdownContent = newMarkdownContent }
+        let newStatus = block.status ?? .writing
+        if status != newStatus { status = newStatus }
+        let newTags = block.tags ?? []
+        if tags != newTags { tags = newTags }
+        if wordGoal != block.wordGoal { wordGoal = block.wordGoal }
+        if goalType != block.goalType { goalType = block.goalType }
+        if aggregateGoal != block.aggregateGoal { aggregateGoal = block.aggregateGoal }
+        if aggregateGoalType != block.aggregateGoalType { aggregateGoalType = block.aggregateGoalType }
+    }
+
     var goalProgress: Double? {
         guard let goal = wordGoal, goal > 0 else { return nil }
         return Double(wordCount) / Double(goal)

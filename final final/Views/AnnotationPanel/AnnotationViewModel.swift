@@ -31,6 +31,23 @@ class AnnotationViewModel: Identifiable {
         self.highlightEnd = annotation.highlightEnd
     }
 
+    /// Update this view model in place from a re-fetched `Annotation`, preserving object
+    /// identity so SwiftUI's per-row `@Observable` dependency tracking doesn't tear down and
+    /// reinstall on every database tick (see `EditorViewState.mergeAnnotations`). Mirrors
+    /// `init(from:)` fully -- unlike `SectionViewModel.apply`, there are no caller-patched
+    /// placeholder fields here. Every assignment is equality-guarded because `@Observable`
+    /// fires on any write, including one that writes back the same value.
+    func apply(_ annotation: Annotation) {
+        if contentId != annotation.contentId { contentId = annotation.contentId }
+        if sectionId != annotation.sectionId { sectionId = annotation.sectionId }
+        if type != annotation.type { type = annotation.type }
+        if text != annotation.text { text = annotation.text }
+        if isCompleted != annotation.isCompleted { isCompleted = annotation.isCompleted }
+        if charOffset != annotation.charOffset { charOffset = annotation.charOffset }
+        if highlightStart != annotation.highlightStart { highlightStart = annotation.highlightStart }
+        if highlightEnd != annotation.highlightEnd { highlightEnd = annotation.highlightEnd }
+    }
+
     /// Whether this annotation applies to the document as a whole
     var isDocumentLevel: Bool { charOffset < 0 }
 

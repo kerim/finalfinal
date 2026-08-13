@@ -52,19 +52,30 @@ struct OutlineSidebar: View {
     @State private var subtreeDragHintTask: Task<Void, Never>?  // Replaces Timer for proper lifecycle
     private let hasSeenSubtreeDragHintKey = "hasSeenSubtreeDragHint"
 
-    /// Total word count of currently visible sections (respects excludeBibliography)
-    private var filteredWordCount: Int {
-        filteredSections
+    /// Total word count of the given (already-filtered) sections, respecting excludeBibliography.
+    /// Takes `visible` explicitly rather than recomputing `filteredSections` -- this still reads
+    /// every section's `wordCount` on every body pass (so it still re-runs on each keystroke,
+    /// which is expected: SwiftUI can't skip a body read of a changed `@Observable` property),
+    /// but no longer duplicates the filter+sort+allocate work `visible` already paid for once.
+    private func filteredWordCount(of visible: [SectionViewModel]) -> Int {
+        visible
             .filter { !excludeBibliography || !$0.isBibliography }
             .reduce(0) { $0 + $1.wordCount }
     }
 
     var body: some View {
+        // Computed once per body pass and threaded through -- previously `filteredSections`
+        // (filter+sort+allocate) and `sectionLevelInfos` (walks filteredSections) were each
+        // reached from inside sectionCard(...), once per card, making per-update cost
+        // O(N^2 log N) in section count. See EditorViewState.mergeSections for the companion
+        // fix (Fix 2) that keeps card identity stable across updates.
+        let visible = filteredSections
+        let levelInfos = Self.levelInfos(for: visible)
         VStack(spacing: 0) {
             OutlineFilterBar(
                 selectedLevel: $headerLevelFilter,
                 selectedFilter: $statusFilter,
-                filteredWordCount: filteredWordCount,
+                filteredWordCount: filteredWordCount(of: visible),
                 documentGoal: $documentGoal,
                 documentGoalType: $documentGoalType,
                 excludeBibliography: $excludeBibliography
@@ -73,10 +84,10 @@ struct OutlineSidebar: View {
             Divider()
                 .foregroundColor(themeManager.currentTheme.dividerColor)
 
-            if filteredSections.isEmpty {
+            if visible.isEmpty {
                 emptyState
             } else {
-                sectionsList
+                sectionsList(visible: visible, levelInfos: levelInfos)
             }
         }
         .frame(minWidth: 250, idealWidth: 300, maxWidth: 400)
@@ -116,19 +127,36 @@ struct OutlineSidebar: View {
 
     // MARK: - Subtree Drag Helpers
 
-    /// Collect IDs of all descendants for subtree drag (level-based, not parent-based)
-    /// Returns all sections after rootId until reaching one at same or shallower level
+    /// Collect IDs of all descendants for subtree drag (level-based, not parent-based).
+    /// Returns all sections after rootId until reaching one at same or shallower level.
+    /// Delegates to the static `subtreeIds(rootId:in:)` -- the single implementation shared
+    /// with `DraggableCardView`'s drag payload (via the closure `sectionCard` hands it) and
+    /// pinned byte-identical by `ObservableListDiffTests.subtreeIdsMatchesLevelWalk`.
     private func collectSubtreeIds(rootId: String) -> [String] {
-        guard let rootIndex = filteredSections.firstIndex(where: { $0.id == rootId }) else {
+        Self.subtreeIds(rootId: rootId, in: filteredSections)
+    }
+
+    /// Check if section has children (for hint logic)
+    private func sectionHasChildren(_ sectionId: String) -> Bool {
+        return !collectSubtreeIds(rootId: sectionId).isEmpty
+    }
+
+    /// Collect IDs of all descendants of `rootId` for subtree drag (level-based, not
+    /// parent-based): every section after the root until one at the same or shallower level.
+    /// `internal static` so it can be called from a closure captured at `sectionCard` build
+    /// time (see `DraggableCardView.collectSubtreeIds`) without re-deriving `filteredSections`,
+    /// and from tests.
+    static func subtreeIds(rootId: String, in sections: [SectionViewModel]) -> [String] {
+        guard let rootIndex = sections.firstIndex(where: { $0.id == rootId }) else {
             return []
         }
 
-        let rootLevel = filteredSections[rootIndex].headerLevel
+        let rootLevel = sections[rootIndex].headerLevel
         var childIds: [String] = []
 
         // Iterate forward, collecting all sections deeper than root
-        for i in (rootIndex + 1)..<filteredSections.count {
-            let section = filteredSections[i]
+        for i in (rootIndex + 1)..<sections.count {
+            let section = sections[i]
             if section.headerLevel <= rootLevel {
                 break  // Hit a section at same or shallower level
             }
@@ -136,11 +164,6 @@ struct OutlineSidebar: View {
         }
 
         return childIds
-    }
-
-    /// Check if section has children (for hint logic)
-    private func sectionHasChildren(_ sectionId: String) -> Bool {
-        return !collectSubtreeIds(rootId: sectionId).isEmpty
     }
 
     /// Show hint for subtree drag (first-time only)
@@ -183,19 +206,21 @@ struct OutlineSidebar: View {
         dropPosition = nil  // Clear drop indicator
     }
 
-    /// Section level info for drop delegates - computed inline, no state modification
-    private var sectionLevelInfos: [SectionLevelInfo] {
-        filteredSections.enumerated().map { idx, sec in
+    /// Section level info for drop delegates. `internal static` so it can be computed once per
+    /// body pass (in `body`) and threaded into every card, instead of being re-derived from
+    /// `filteredSections` inside each card as it was before.
+    static func levelInfos(for sections: [SectionViewModel]) -> [SectionLevelInfo] {
+        sections.enumerated().map { idx, sec in
             SectionLevelInfo(id: sec.id, headerLevel: sec.headerLevel, index: idx)
         }
     }
 
-    private var sectionsList: some View {
+    private func sectionsList(visible: [SectionViewModel], levelInfos: [SectionLevelInfo]) -> some View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: 0) {
-                    ForEach(Array(filteredSections.enumerated()), id: \.element.id) { index, section in
-                        sectionCard(section: section, index: index)
+                    ForEach(Array(visible.enumerated()), id: \.element.id) { index, section in
+                        sectionCard(section: section, index: index, visible: visible, levelInfos: levelInfos)
 
                         Divider()
                             .foregroundColor(themeManager.currentTheme.dividerColor)
@@ -205,8 +230,8 @@ struct OutlineSidebar: View {
                     Color.clear
                         .frame(height: 40)
                         .onDrop(of: [.sectionTransfer], delegate: EndDropDelegate(
-                            sectionCount: filteredSections.count,
-                            sectionLevels: sectionLevelInfos,
+                            sectionCount: visible.count,
+                            sectionLevels: levelInfos,
                             sidebarWidth: sidebarWidth,  // Pass actual sidebar width for zone calculation
                             dropPosition: $dropPosition,
                             pendingDropId: $pendingDropId,
@@ -231,7 +256,7 @@ struct OutlineSidebar: View {
                 if let hoveredId = hoveredCardId,
                    !isDragging,
                    let frame = cardFrames[hoveredId],
-                   let section = filteredSections.first(where: { $0.id == hoveredId }),
+                   let section = visible.first(where: { $0.id == hoveredId }),
                    TypeScale.sectionTitleIsTruncated(
                        section.title,
                        level: section.headerLevel,
@@ -266,7 +291,7 @@ struct OutlineSidebar: View {
             .onHover { isMouseOverSidebar = $0 }
             .onChange(of: currentSectionId) { _, newId in
                 guard let newId, draggingSubtreeIds.isEmpty, !isMouseOverSidebar else { return }
-                if filteredSections.contains(where: { $0.id == newId }) {
+                if visible.contains(where: { $0.id == newId }) {
                     withAnimation(.easeInOut(duration: 0.3)) {
                         proxy.scrollTo(newId, anchor: .center)
                     }
@@ -277,11 +302,20 @@ struct OutlineSidebar: View {
 
     /// A single section card with drag, drop-indicator, and geometry tracking.
     /// Extracted from sectionsList to keep type-checking fast.
-    private func sectionCard(section: SectionViewModel, index: Int) -> some View {
-        // Use DraggableCardView for cursor offset control via AppKit
+    /// `visible`/`levelInfos` are the snapshot computed once in `body` for this pass -- passed
+    /// through rather than re-derived here, which previously made per-card cost O(N log N)
+    /// (so O(N^2 log N) across all cards) in section count on every update.
+    private func sectionCard(
+        section: SectionViewModel, index: Int, visible: [SectionViewModel], levelInfos: [SectionLevelInfo]
+    ) -> some View {
+        // Use DraggableCardView for cursor offset control via AppKit. The subtree walk is
+        // handed over as a closure rather than the full `allSections` array so the closure can
+        // capture this body pass's `visible` snapshot directly -- same childIds/pasteboard
+        // payload a fresh `filteredSections` read would produce, since drag start always reads
+        // through to the section list current as of the click.
         DraggableCardView(
             section: section,
-            allSections: filteredSections,
+            collectSubtreeIds: { rootId in Self.subtreeIds(rootId: rootId, in: visible) },
             isGhost: draggingSubtreeIds.contains(section.id),
             isActive: section.id == currentSectionId,
             onDragStarted: { draggedIds in
@@ -351,7 +385,7 @@ struct OutlineSidebar: View {
             section: section,
             index: index,
             cardHeight: cardHeight(for: section),
-            sectionLevels: sectionLevelInfos,
+            sectionLevels: levelInfos,
             sidebarWidth: sidebarWidth,  // Pass actual sidebar width for zone calculation
             dropPosition: $dropPosition,
             pendingDropId: $pendingDropId,
