@@ -439,6 +439,22 @@ final class ExportCitekeyCanonicalizationIntegrationTests: XCTestCase {
         return candidates.first { FileManager.default.isExecutableFile(atPath: $0) }
     }
 
+    /// The DOCX/ODT path runs pandoc's `zotero.lua`, which does its OWN live BBT lookup from a
+    /// separate process -- `MockBBTURLProtocol` (a URLProtocol inside this process) cannot
+    /// intercept it, and `ZoteroChecker.check()` being mocked is exactly what lets the export
+    /// past `requiresZoteroForExport`'s hard stop into a pandoc failure. Probe with an ephemeral
+    /// session so a registered mock can never answer it.
+    private static func isLiveZoteroBBTReachable() async -> Bool {
+        var request = URLRequest(url: URL(string: "http://127.0.0.1:23119/better-bibtex/json-rpc")!)
+        request.timeoutInterval = 2
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = []
+        guard let (_, response) = try? await URLSession(configuration: config).data(for: request) else {
+            return false
+        }
+        return response is HTTPURLResponse
+    }
+
     /// Points `ExportService.userDefaults` at a fresh isolated `UserDefaults` suite for the
     /// duration of `body` -- same idiom as ExportDiagnosticCaptureGatingTests.swift.
     private func withIsolatedUserDefaults(_ body: (UserDefaults) async throws -> Void) async throws {
@@ -496,25 +512,50 @@ final class ExportCitekeyCanonicalizationIntegrationTests: XCTestCase {
 
             var capturedResult: ExportResult?
             let inputMD = try await captureInputMD {
-                capturedResult = try await service.export(
-                    content: content,
-                    to: tempURL,
-                    format: .word,
-                    settings: ExportSettings(),
-                    projectURL: nil
+                do {
+                    capturedResult = try await service.export(
+                        content: content,
+                        to: tempURL,
+                        format: .word,
+                        settings: ExportSettings(),
+                        projectURL: nil
+                    )
+                } catch ExportError.citationFilterFailed {
+                    // Expected when there's no live Zotero + Better BibTeX listening on
+                    // 127.0.0.1:23119 in this environment: pandoc's own zotero.lua filter runs
+                    // as a SEPARATE process and does its own live BBT lookup that
+                    // MockBBTURLProtocol (a URLProtocol registered only inside this test
+                    // process) cannot intercept -- see isLiveZoteroBBTReachable's doc comment.
+                    // The canonicalization assertion right below reads the diagnostic input.md
+                    // pandoc was actually given, which dumpExportDiagnostics writes BEFORE
+                    // pandoc ever runs, so it's unaffected by whether pandoc itself then
+                    // succeeded.
+                }
+            }
+
+            // Never depends on pandoc succeeding -- proves the rewrite itself reached the temp
+            // file pandoc reads, independent of a live Zotero + BBT connection being available.
+            let markdown = try XCTUnwrap(inputMD, "Diagnostic capture should have produced an input.md for this export")
+            XCTAssertTrue(
+                markdown.contains("[@smith2020]") && !markdown.contains("Smith2020"),
+                "The temp file pandoc actually reads must contain the canonicalized spelling, not the original casing: \(markdown)"
+            )
+
+            // Everything below requires pandoc's zotero.lua filter to have actually SUCCEEDED --
+            // its own live BBT lookup against 127.0.0.1:23119 from a separate process, which
+            // MockBBTURLProtocol cannot fake. Skip only this tail when there's no live Zotero +
+            // Better BibTeX to satisfy it; the canonicalization assertion above already ran
+            // unconditionally.
+            guard await Self.isLiveZoteroBBTReachable() else {
+                throw XCTSkip(
+                    "No live Zotero + Better BibTeX reachable on 127.0.0.1:23119 — skipping DOCX pandoc-warnings verification"
                 )
             }
 
-            let result = try XCTUnwrap(capturedResult)
+            let result = try XCTUnwrap(capturedResult, "A live Zotero + BBT connection should let export() fully succeed")
             XCTAssertTrue(
                 result.warnings.isEmpty,
                 "A fully-resolved citekey-case rewrite must not introduce any new DOCX warning: \(result.warnings)"
-            )
-
-            let md = try XCTUnwrap(inputMD, "Diagnostic capture should have produced an input.md for this export")
-            XCTAssertTrue(
-                md.contains("[@smith2020]") && !md.contains("Smith2020"),
-                "The temp file pandoc actually reads must contain the canonicalized spelling, not the original casing: \(md)"
             )
         }
     }
