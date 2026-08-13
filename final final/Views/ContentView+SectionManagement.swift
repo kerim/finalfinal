@@ -380,33 +380,6 @@ extension ContentView {
         Task { await persistReorderedBlocks_legacySections() }
     }
 
-    /// Persist current section order to block database after reorder.
-    /// Uses reorderAllBlocks to move body blocks with their headings atomically.
-    func persistReorderedBlocks() async {
-        guard let db = documentManager.projectDatabase,
-              let pid = documentManager.projectId else {
-            return
-        }
-
-        do {
-            // Build heading updates from current section state
-            var headingUpdates: [String: HeadingUpdate] = [:]
-            for vm in editorState.sections {
-                headingUpdates[vm.id] = HeadingUpdate(
-                    markdownFragment: vm.markdownContent,
-                    headingLevel: vm.headerLevel
-                )
-            }
-            try db.reorderAllBlocks(
-                sections: editorState.sections,
-                projectId: pid,
-                headingUpdates: headingUpdates
-            )
-        } catch {
-            DebugLog.log(.outline, "[ContentView] Error persisting reordered blocks: \(error)")
-        }
-    }
-
     /// Persist legacy section table after reorder (fire-and-forget, non-critical)
     func persistReorderedBlocks_legacySections() async {
         guard let db = documentManager.projectDatabase,

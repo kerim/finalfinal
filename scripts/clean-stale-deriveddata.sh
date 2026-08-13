@@ -3,19 +3,12 @@
 # clean-stale-deriveddata.sh — Remove old DerivedData directories that cause
 # duplicate QuickLook extension registrations.
 #
-# Runs as a buildScript on the GitStamp aggregate target in project.yml
-# (moved off the app target's preBuildScripts when
-# ENABLE_USER_SCRIPT_SANDBOXING went on — this script's `rm -rf` and
-# directory scanning outside SRCROOT/DERIVED_DATA can't be expressed as
-# declared build-script inputs/outputs, but GitStamp is deliberately exempt
-# from sandboxing already and runs on every build, so it's a natural home).
-#
 # Each `xcodegen generate` run produces a new project file hash, so Xcode
 # gives it a new `final_final-<hash>` DerivedData directory. Left alone,
 # these accumulate and each one's copy of the QuickLook .appex gets
-# registered, causing duplicate QL extensions. This script runs on every
-# build, deleting every `final_final-*` directory except the one the
-# current build is using.
+# registered, causing duplicate QL extensions. This script, run as an Xcode
+# preBuildScript on every build, deletes every `final_final-*` directory
+# except the one the current build is using.
 #
 # Concurrency hazard this guards against: every git worktree of this repo
 # generates its own Xcode project (different project file path -> different
