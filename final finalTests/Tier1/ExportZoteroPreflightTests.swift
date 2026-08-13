@@ -308,6 +308,14 @@ extension ExportZoteroPreflightTests {
         settings.useCustomLuaScript = true
         settings.customLuaScriptPath = Self.zoteroLuaPath
 
+        // `export()` only ever reads the actor's OWN `pandocLocator.customPath` (set via
+        // `configure`), never `settings.customPandocPath` directly -- see
+        // `exportHonorsPrecomputedRunningStatus`'s comment for the full explanation. Without
+        // this call, the stand-in above never takes effect and this test would instead fall
+        // through to searching real system pandoc install locations, silently exercising a
+        // real pandoc invocation instead of the stand-in.
+        await service.configure(with: settings)
+
         let outputURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("false-positive-citation-\(UUID().uuidString).docx")
         defer { try? FileManager.default.removeItem(at: outputURL) }
@@ -338,6 +346,17 @@ extension ExportZoteroPreflightTests {
         settings.customPandocPath = "/usr/bin/true"
         settings.useCustomLuaScript = true
         settings.customLuaScriptPath = Self.zoteroLuaPath
+
+        // `export()` only ever reads the actor's OWN `pandocLocator.customPath` (set via
+        // `configure`), never `settings.customPandocPath` directly -- see
+        // `exportHonorsPrecomputedRunningStatus`'s comment for the full explanation. Without
+        // this call, `pandocLocator.getPath()` falls through to searching real system pandoc
+        // install locations before the hard-stop guard even runs: on a machine with no pandoc
+        // installed this test would fail with `.pandocNotFound` instead of proving the
+        // intended ordering, and on a machine with one installed, this test's whole point --
+        // proving the guard fires before pandoc is ever invoked -- would be resting on real
+        // pandoc merely being *found*, not on the stand-in actually being in effect.
+        await service.configure(with: settings)
 
         let outputURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("preflight-ordering-\(UUID().uuidString).docx")
@@ -541,6 +560,12 @@ extension ExportZoteroPreflightTests {
         var exportSettings = preflightSettings
         exportSettings.customPandocPath = "/usr/bin/true"
 
+        // `export()` only ever reads the actor's OWN `pandocLocator.customPath` (set via
+        // `configure`), never `settings.customPandocPath` directly -- see
+        // `exportHonorsPrecomputedRunningStatus`'s comment for the full explanation. Without
+        // this call the stand-in above never takes effect.
+        await service.configure(with: exportSettings)
+
         let outputURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("preflight-agreement-\(UUID().uuidString).docx")
         defer { try? FileManager.default.removeItem(at: outputURL) }
@@ -619,6 +644,14 @@ extension ExportZoteroPreflightTests {
         settings.customPandocPath = "/usr/bin/true"
         settings.useCustomLuaScript = true
         settings.customLuaScriptPath = Self.zoteroLuaPath
+
+        // `export()` only ever reads the actor's OWN `pandocLocator.customPath` (set via
+        // `configure`), never `settings.customPandocPath` directly -- see
+        // `exportHonorsPrecomputedRunningStatus`'s comment for the full explanation. Without
+        // this call, `pandocLocator.getPath()` falls through to searching real system pandoc
+        // install locations before the hard-stop guard even runs, so this test's pass would
+        // rest on real pandoc merely being *found* on the machine, not on the stand-in.
+        await service.configure(with: settings)
 
         let outputURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("precomputed-blocking-\(UUID().uuidString).docx")
