@@ -449,7 +449,17 @@ class SectionViewModel: Identifiable {
     /// Every assignment is equality-guarded: `@Observable` fires on any write, including one
     /// that writes the same value back, so an unguarded assignment would defeat the fix just as
     /// surely as replacing the object outright.
+    ///
+    /// Split into per-group helpers purely to keep cyclomatic complexity down; the field
+    /// grouping and assignment order below is unchanged from the original single-function form.
     func apply(_ block: Block) {
+        applyIdentity(from: block)
+        applyContent(from: block)
+        applyGoals(from: block)
+    }
+
+    /// Applies identity/structural fields: project, ordering, header level, and section-kind flags.
+    private func applyIdentity(from block: Block) {
         if projectId != block.projectId { projectId = block.projectId }
         if sortOrder != block.sortOrder { sortOrder = block.sortOrder }
         let newHeaderLevel = block.headingLevel ?? 1
@@ -457,6 +467,10 @@ class SectionViewModel: Identifiable {
         if isPseudoSection != block.isPseudoSection { isPseudoSection = block.isPseudoSection }
         if isBibliography != block.isBibliography { isBibliography = block.isBibliography }
         if isNotes != block.isNotes { isNotes = block.isNotes }
+    }
+
+    /// Applies content fields: title, markdown body, status, and tags.
+    private func applyContent(from block: Block) {
         let newTitle = block.outlineTitle
         if title != newTitle { title = newTitle }
         let newMarkdownContent = block.markdownFragment
@@ -465,6 +479,10 @@ class SectionViewModel: Identifiable {
         if status != newStatus { status = newStatus }
         let newTags = block.tags ?? []
         if tags != newTags { tags = newTags }
+    }
+
+    /// Applies word-goal fields: section goal/type and aggregate goal/type.
+    private func applyGoals(from block: Block) {
         if wordGoal != block.wordGoal { wordGoal = block.wordGoal }
         if goalType != block.goalType { goalType = block.goalType }
         if aggregateGoal != block.aggregateGoal { aggregateGoal = block.aggregateGoal }
