@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.124] - 2026-08-13
+
 ### Fixed
 
 - **Typing could start to feel sluggish, especially in documents with a lot of sections, comments, or footnotes** — every autosave tick was quietly rebuilding every sidebar outline card and every comment/footnote card from scratch, even the ones nothing had changed about, forcing each one to tear down and redo its internal bookkeeping on every keystroke. In one measured case this accounted for roughly half of all the time the app spent doing work while you typed. Cards are now reused in place and only redone when something about them actually changed, so typing stays responsive as a document grows.
