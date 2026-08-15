@@ -318,11 +318,23 @@ class EditorViewState {
     // Boundary: the guard is automatic for *array-level* writes only. It cannot catch in-place
     // mutation of a `SectionViewModel` element -- e.g. `recalculateParentRelationships()`
     // mutating `vm.parentId` below, or the equality-guarded `apply()` mutations in
-    // `EditorViewState+ObservableListDiff.swift`. Those element mutations are correct today
-    // because they only happen inside the cache-consistent merge path (`applySectionsUpdate`
-    // re-arms right after them). Any future code that needs the cache to notice an element
-    // mutation must route it through that merge path rather than mutating a `SectionViewModel`
-    // directly -- there is deliberately no escape hatch for that case.
+    // `EditorViewState+ObservableListDiff.swift`. Most of these element mutations happen inside
+    // the cache-consistent merge path (`applySectionsUpdate` re-arms right after them), but
+    // `finalizeSectionReorder` (`ContentView+SectionManagement.swift`) is a second, real caller
+    // of `recalculateParentRelationships()` that sits outside that path. It's still safe
+    // there: `editorState.sections = mutableSections`, an unconditional whole-array
+    // reassignment immediately before the call, clears the cache via `sections`'s `didSet`,
+    // and nothing between that write and the call re-arms it -- `applySectionsUpdate` is the
+    // sole re-arming point in this file -- so the cache is guaranteed nil for the entire
+    // mutation. `enforceHierarchyConstraints()`'s own reassignment immediately after also
+    // clears the cache, but that's incidental to this invariant: the cache is already nil by
+    // then, so removing that trailing write wouldn't reopen anything. The preceding write is
+    // what's load-bearing here, not something this type structurally enforces on its own: a
+    // future edit to `finalizeSectionReorder` that removes the preceding `editorState.sections
+    // = mutableSections` write could silently reopen a stale-cache window without anything
+    // here catching it. Any future code that needs the cache to notice an element mutation
+    // must route it through `applySectionsUpdate`'s merge path rather than mutating a
+    // `SectionViewModel` directly -- there is deliberately no escape hatch for that case.
     //
     // `@ObservationIgnored`: this is a private merge-skip cache, not UI state -- nothing should
     // ever observe it. Without the annotation, `@Observable` tracks these like any other stored
@@ -523,13 +535,18 @@ class EditorViewState {
     /// A section's parent is the nearest preceding section with a lower header level.
     ///
     /// Mutates `parentId` on the existing view model in place (equality-guarded) rather than
-    /// calling `withUpdates`, which returns a new object instance. `withUpdates` still exists
-    /// and is used by the drag-reorder path, which really is user-action triggered. The
-    /// hierarchy-enforcement path (`ContentView+HierarchyEnforcement.swift`) is different: it
-    /// is reached from `onSectionsUpdated`, which fires on every observation tick, so it can
-    /// run every keystroke for as long as a heading violates a level constraint -- not just
-    /// once per user action. Either way, this per-tick call runs on every observation update,
-    /// so replacing identities here would undo Fix 2 on the very next line.
+    /// calling `withUpdates`, which returns a new object instance. This method is shared by two
+    /// callers with different cadences. The real per-tick caller is `applySectionsUpdate`
+    /// (above, in this file, at the `recalculateParentRelationships()` call inside it) -- it
+    /// runs on every database observation tick, which can fire every keystroke, so replacing
+    /// identities here would undo Fix 2 on the very next line. The drag-reorder path
+    /// (`ContentView+SectionManagement.swift`'s `finalizeSectionReorder`) is the other caller,
+    /// invoked once per user action via `editorState.recalculateParentRelationships()`, instead
+    /// of duplicating the parent-recalculation logic locally the way it used to. Either way,
+    /// in-place mutation is the right choice for this method; `withUpdates` still exists and
+    /// remains in use elsewhere on the drag path (e.g. `recalculateSortOrders`/
+    /// `applyComputedOffsets`) for identity-replacing updates that are unaffected by this
+    /// method's approach.
     func recalculateParentRelationships() {
         for index in sections.indices {
             let vm = sections[index]

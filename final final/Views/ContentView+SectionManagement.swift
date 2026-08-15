@@ -261,7 +261,7 @@ extension ContentView {
         editorState.sections = mutableSections
 
         // Recalculate parent relationships and enforce hierarchy
-        recalculateParentRelationships()
+        editorState.recalculateParentRelationships()
         enforceHierarchyConstraints()
 
         // Persist blocks to database BEFORE rebuilding content
