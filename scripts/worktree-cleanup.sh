@@ -73,12 +73,6 @@ Exit codes:
   6 = unexpected failure during a mutating command — state may have changed;
       re-run with the same --slug/--base to detect and recover/report it
 
-See also: scripts/superdev-notes-prune.sh, a repo-wide sweep for
-orphaned .claude/superdev/<slug> run-notes directories left behind by a
-pipeline that died before wrap-up ever called this script for its slug.
-That script has its own shape (report-by-default, --prune to delete,
-its own exit codes) — it does not replace this one.
-
 IMPORTANT — sandbox note:
   This script performs destructive filesystem operations under
   .claude/worktrees/<slug> and .claude/superdev/<slug>. When invoked from
