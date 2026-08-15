@@ -8,6 +8,39 @@
 import SwiftUI
 
 extension ContentView {
+    /// Recalculate parentId for all sections based on document order and header levels
+    /// A section's parent is the nearest preceding section with a lower header level
+    func recalculateParentRelationships() {
+        for index in editorState.sections.indices {
+            let section = editorState.sections[index]
+            let newParentId = findParentByLevel(at: index)
+
+            // Only update if parentId changed
+            if section.parentId != newParentId {
+                editorState.sections[index] = section.withUpdates(parentId: newParentId)
+            }
+        }
+    }
+
+    /// Find the appropriate parent for a section at the given index
+    /// Parent = nearest preceding section with a LOWER header level
+    func findParentByLevel(at index: Int) -> String? {
+        let section = editorState.sections[index]
+
+        // H1 sections have no parent
+        guard section.headerLevel > 1 else { return nil }
+
+        // Look backwards for a section with lower level
+        for i in stride(from: index - 1, through: 0, by: -1) {
+            let candidate = editorState.sections[i]
+            if candidate.headerLevel < section.headerLevel {
+                return candidate.id
+            }
+        }
+
+        return nil  // No valid parent found
+    }
+
     /// Check if hierarchy constraints are violated (without modifying)
     /// Returns true if any section violates the hierarchy rules
     func hasHierarchyViolations() -> Bool {

@@ -319,21 +319,7 @@ class BlockSyncService {
 
         guard isConfigured, let webView, let database = projectDatabase, let projectId else { return }
 
-        // Forced flush: the JS side (block-sync-plugin.ts) runs its own 100ms
-        // debounce independent of this Swift-side force flag, so a forced poll
-        // arriving in the gap before that timer fires would otherwise read a
-        // stale, unconverted pending-changes entry (e.g. a footnote trigger's
-        // raw text, not yet replaced by the confirming transaction). Flush that
-        // JS-side timer synchronously before checking/reading changes.
-        if force {
-            do {
-                _ = try await webView.evaluateJavaScript(
-                    "window.FinalFinal.flushPendingBlockChanges(); true"
-                )
-            } catch {
-                DebugLog.log(.blockPoll, "[SYNC-DIAG:BlockPoll] flushPendingBlockChanges failed: \(error) — forced flush may read stale data")
-            }
-        }
+        await flushPendingJSChanges(webView: webView, force: force)
 
         let generationAtPoll = editorState?.contentGeneration ?? 0
         // Captured alongside generationAtPoll so the guard can tell "editorState was
@@ -367,16 +353,7 @@ class BlockSyncService {
 
         // Get the changes
         guard let changes = await getBlockChanges(webView: webView) else { return }
-        // DIAGNOSTIC (temporary, footnote-export-race investigation): dump the ACTUAL
-        // textContent of every update JS handed back, not just id+length -- to see
-        // directly whether getBlockChanges() returned a stale (pre-conversion) or
-        // fresh (post-conversion) snapshot of the edited block.
-        for update in changes.updates {
-            DebugLog.log(.blockPoll, {
-                "[DIAG:BlockPoll] update id=\(update.id.prefix(8)) force=\(force) "
-                    + "text=\"\(update.textContent ?? "<nil>")\" md=\"\(update.markdownFragment ?? "<nil>")\""
-            }())
-        }
+        logFetchedUpdates(changes, force: force)
 
         // Unlike the preFetch check above, abandoning HERE is NOT lossless: by this point
         // getBlockChanges() (block-sync-plugin.ts's getBlockChanges(), ~line 704-707) has
@@ -396,92 +373,15 @@ class BlockSyncService {
             return
         }
 
-        DebugLog.log(.blockPoll, "[SYNC-DIAG:BlockPoll] Processing: u=\(changes.updates.count) i=\(changes.inserts.count) d=\(changes.deletes.count) force=\(force)")
-        if !changes.deletes.isEmpty {
-            DebugLog.log(.blockPoll, "[SYNC-DIAG:BlockPoll] Deleting IDs: \(changes.deletes.prefix(5))")
-        }
-        // [SYNC-DIAG Phase 0] Dump first 10 updates as (idPrefix, textContentLength) tuples
-        // to correlate suspicious empty-textContent UPDATEs with DB row state.
-        if !changes.updates.isEmpty {
-            let digest = changes.updates.prefix(10).map { ($0.id.prefix(8), $0.textContent?.count ?? -1) }
-            DebugLog.log(.blockPoll, "[SYNC-DIAG:BlockPoll] Phase0 updateDigest=\(digest) u=\(changes.updates.count) i=\(changes.inserts.count) d=\(changes.deletes.count)")
-        } else if !changes.deletes.isEmpty || !changes.inserts.isEmpty {
-            DebugLog.log(.blockPoll, "[SYNC-DIAG:BlockPoll] Phase0 u=0 i=\(changes.inserts.count) d=\(changes.deletes.count) delIds=\(changes.deletes.prefix(5))")
+        logChangeDigest(changes, force: force)
+
+        if shouldRejectStaleSnapshot(changes, database: database, projectId: projectId) {
+            return
         }
 
-        // Stale-snapshot guard + telemetry. Hard-reject only the pre-existing
-        // 100%-delete-no-inserts pattern. Warning logs for mass delete or the
-        // balanced-churn type-theft signature — never reject on those.
-        if !changes.deletes.isEmpty || !changes.inserts.isEmpty {
-            do {
-                let blockCount = try database.fetchBlockCount(projectId: projectId)
-                if let reason = Self.shouldRejectAsStale(changes: changes, blockCount: blockCount) {
-                    DebugLog.always(
-                        "[SYNC-DIAG:BlockPoll] REJECTED: reason=\(reason) " +
-                        "d=\(changes.deletes.count) i=\(changes.inserts.count) blockCount=\(blockCount)"
-                    )
-                    return
-                }
-                if changes.deletes.count > blockCount / 2 && blockCount > 2 {
-                    DebugLog.always(
-                        "[SYNC-DIAG:BlockPoll] WARNING: Mass delete detected " +
-                        "(\(changes.deletes.count)/\(blockCount) blocks). May indicate stale snapshot."
-                    )
-                }
-                if Self.hasBalancedMassiveChurnSignature(changes: changes, blockCount: blockCount) {
-                    DebugLog.always(
-                        "[SYNC-DIAG:BlockPoll] WARNING: Balanced massive churn signature " +
-                        "(d=\(changes.deletes.count) i=\(changes.inserts.count) u=\(changes.updates.count) " +
-                        "blockCount=\(blockCount)). If this fires frequently, a regression of the " +
-                        "block-id-plugin type-theft bug is likely."
-                    )
-                }
-            } catch {
-                DebugLog.log(.blockPoll, "[SYNC-DIAG:BlockPoll] fetchBlockCount failed: \(error)")
-            }
-        }
+        let resolvedChanges = resolvingStaleTempIds(changes)
 
-        // Resolve stale temp IDs using cumulative confirmation mapping (defense-in-depth)
-        var resolvedChanges = changes
-        resolvedChanges.updates = changes.updates.map { update in
-            if update.id.hasPrefix("temp-"), let permanentId = confirmedTempIds[update.id] {
-                DebugLog.log(.blockPoll, "[SYNC-DIAG:BlockPoll] Resolved stale temp ID: \(update.id.prefix(13)) → \(permanentId.prefix(8))")
-                return BlockUpdate(id: permanentId, textContent: update.textContent,
-                                   markdownFragment: update.markdownFragment, headingLevel: update.headingLevel)
-            }
-            return update
-        }
-        resolvedChanges.inserts = changes.inserts.map { insert in
-            if let afterId = insert.afterBlockId, afterId.hasPrefix("temp-"),
-               let permanentId = confirmedTempIds[afterId] {
-                return BlockInsert(tempId: insert.tempId, blockType: insert.blockType,
-                                   textContent: insert.textContent, markdownFragment: insert.markdownFragment,
-                                   headingLevel: insert.headingLevel, afterBlockId: permanentId,
-                                   atDocumentStart: insert.atDocumentStart)
-            }
-            return insert
-        }
-
-        // Apply changes to database
-        do {
-            try await applyChanges(resolvedChanges, database: database, projectId: projectId)
-
-            // Merge new mappings into cumulative tracker
-            for (tempId, permanentId) in pendingConfirmations {
-                confirmedTempIds[tempId] = permanentId
-            }
-
-            DebugLog.log(.blockPoll, "[SYNC-DIAG:BlockPoll] Applied changes to DB successfully")
-
-            // Send ID confirmations back to editor if there were inserts
-            if !pendingConfirmations.isEmpty {
-                DebugLog.log(.blockPoll, "[SYNC-DIAG:BlockPoll] Confirming \(pendingConfirmations.count) IDs")
-                await confirmBlockIds(webView: webView, mapping: pendingConfirmations)
-                pendingConfirmations.removeAll()
-            }
-        } catch {
-            DebugLog.log(.blockPoll, "[SYNC-DIAG:BlockPoll] Error applying changes: \(error)")
-        }
+        await applyAndConfirm(resolvedChanges, database: database, projectId: projectId, webView: webView)
     }
 
     /// Mid-flight generation re-check, shared by both call sites in `doPollBlockChanges`.
@@ -834,5 +734,140 @@ extension BlockSyncService {
         )
 
         return markdown
+    }
+
+    // MARK: - Poll Helpers
+
+    /// Forced flush: the JS side (block-sync-plugin.ts) runs its own 100ms
+    /// debounce independent of this Swift-side force flag, so a forced poll
+    /// arriving in the gap before that timer fires would otherwise read a
+    /// stale, unconverted pending-changes entry (e.g. a footnote trigger's
+    /// raw text, not yet replaced by the confirming transaction). Flush that
+    /// JS-side timer synchronously before checking/reading changes.
+    private func flushPendingJSChanges(webView: WKWebView, force: Bool) async {
+        if force {
+            do {
+                _ = try await webView.evaluateJavaScript(
+                    "window.FinalFinal.flushPendingBlockChanges(); true"
+                )
+            } catch {
+                DebugLog.log(.blockPoll, "[SYNC-DIAG:BlockPoll] flushPendingBlockChanges failed: \(error) — forced flush may read stale data")
+            }
+        }
+    }
+
+    /// DIAGNOSTIC (temporary, footnote-export-race investigation): dump the ACTUAL
+    /// textContent of every update JS handed back, not just id+length -- to see
+    /// directly whether getBlockChanges() returned a stale (pre-conversion) or
+    /// fresh (post-conversion) snapshot of the edited block.
+    private func logFetchedUpdates(_ changes: BlockChanges, force: Bool) {
+        for update in changes.updates {
+            DebugLog.log(.blockPoll, {
+                "[DIAG:BlockPoll] update id=\(update.id.prefix(8)) force=\(force) "
+                    + "text=\"\(update.textContent ?? "<nil>")\" md=\"\(update.markdownFragment ?? "<nil>")\""
+            }())
+        }
+    }
+
+    /// Change-digest logging for a non-empty batch: processing counts, delete IDs,
+    /// and the Phase 0 update digest.
+    private func logChangeDigest(_ changes: BlockChanges, force: Bool) {
+        DebugLog.log(.blockPoll, "[SYNC-DIAG:BlockPoll] Processing: u=\(changes.updates.count) i=\(changes.inserts.count) d=\(changes.deletes.count) force=\(force)")
+        if !changes.deletes.isEmpty {
+            DebugLog.log(.blockPoll, "[SYNC-DIAG:BlockPoll] Deleting IDs: \(changes.deletes.prefix(5))")
+        }
+        // [SYNC-DIAG Phase 0] Dump first 10 updates as (idPrefix, textContentLength) tuples
+        // to correlate suspicious empty-textContent UPDATEs with DB row state.
+        if !changes.updates.isEmpty {
+            let digest = changes.updates.prefix(10).map { ($0.id.prefix(8), $0.textContent?.count ?? -1) }
+            DebugLog.log(.blockPoll, "[SYNC-DIAG:BlockPoll] Phase0 updateDigest=\(digest) u=\(changes.updates.count) i=\(changes.inserts.count) d=\(changes.deletes.count)")
+        } else if !changes.deletes.isEmpty || !changes.inserts.isEmpty {
+            DebugLog.log(.blockPoll, "[SYNC-DIAG:BlockPoll] Phase0 u=0 i=\(changes.inserts.count) d=\(changes.deletes.count) delIds=\(changes.deletes.prefix(5))")
+        }
+    }
+
+    /// Stale-snapshot guard + telemetry. Hard-reject only the pre-existing
+    /// 100%-delete-no-inserts pattern. Warning logs for mass delete or the
+    /// balanced-churn type-theft signature — never reject on those.
+    private func shouldRejectStaleSnapshot(_ changes: BlockChanges, database: ProjectDatabase, projectId: String) -> Bool {
+        if !changes.deletes.isEmpty || !changes.inserts.isEmpty {
+            do {
+                let blockCount = try database.fetchBlockCount(projectId: projectId)
+                if let reason = Self.shouldRejectAsStale(changes: changes, blockCount: blockCount) {
+                    DebugLog.always(
+                        "[SYNC-DIAG:BlockPoll] REJECTED: reason=\(reason) " +
+                        "d=\(changes.deletes.count) i=\(changes.inserts.count) blockCount=\(blockCount)"
+                    )
+                    return true
+                }
+                if changes.deletes.count > blockCount / 2 && blockCount > 2 {
+                    DebugLog.always(
+                        "[SYNC-DIAG:BlockPoll] WARNING: Mass delete detected " +
+                        "(\(changes.deletes.count)/\(blockCount) blocks). May indicate stale snapshot."
+                    )
+                }
+                if Self.hasBalancedMassiveChurnSignature(changes: changes, blockCount: blockCount) {
+                    DebugLog.always(
+                        "[SYNC-DIAG:BlockPoll] WARNING: Balanced massive churn signature " +
+                        "(d=\(changes.deletes.count) i=\(changes.inserts.count) u=\(changes.updates.count) " +
+                        "blockCount=\(blockCount)). If this fires frequently, a regression of the " +
+                        "block-id-plugin type-theft bug is likely."
+                    )
+                }
+            } catch {
+                DebugLog.log(.blockPoll, "[SYNC-DIAG:BlockPoll] fetchBlockCount failed: \(error)")
+            }
+        }
+        return false
+    }
+
+    /// Resolve stale temp IDs using cumulative confirmation mapping (defense-in-depth)
+    private func resolvingStaleTempIds(_ changes: BlockChanges) -> BlockChanges {
+        var resolvedChanges = changes
+        resolvedChanges.updates = changes.updates.map { update in
+            if update.id.hasPrefix("temp-"), let permanentId = confirmedTempIds[update.id] {
+                DebugLog.log(.blockPoll, "[SYNC-DIAG:BlockPoll] Resolved stale temp ID: \(update.id.prefix(13)) → \(permanentId.prefix(8))")
+                return BlockUpdate(id: permanentId, textContent: update.textContent,
+                                   markdownFragment: update.markdownFragment, headingLevel: update.headingLevel)
+            }
+            return update
+        }
+        resolvedChanges.inserts = changes.inserts.map { insert in
+            if let afterId = insert.afterBlockId, afterId.hasPrefix("temp-"),
+               let permanentId = confirmedTempIds[afterId] {
+                return BlockInsert(tempId: insert.tempId, blockType: insert.blockType,
+                                   textContent: insert.textContent, markdownFragment: insert.markdownFragment,
+                                   headingLevel: insert.headingLevel, afterBlockId: permanentId,
+                                   atDocumentStart: insert.atDocumentStart)
+            }
+            return insert
+        }
+        return resolvedChanges
+    }
+
+    /// Apply changes to database: writes the resolved changes, merges the resulting
+    /// pending confirmations into the cumulative `confirmedTempIds` tracker, and — if
+    /// any inserts produced temp→permanent ID mappings — pushes those ID confirmations
+    /// back to the editor via `confirmBlockIds`.
+    private func applyAndConfirm(_ resolvedChanges: BlockChanges, database: ProjectDatabase, projectId: String, webView: WKWebView) async {
+        do {
+            try await applyChanges(resolvedChanges, database: database, projectId: projectId)
+
+            // Merge new mappings into cumulative tracker
+            for (tempId, permanentId) in pendingConfirmations {
+                confirmedTempIds[tempId] = permanentId
+            }
+
+            DebugLog.log(.blockPoll, "[SYNC-DIAG:BlockPoll] Applied changes to DB successfully")
+
+            // Send ID confirmations back to editor if there were inserts
+            if !pendingConfirmations.isEmpty {
+                DebugLog.log(.blockPoll, "[SYNC-DIAG:BlockPoll] Confirming \(pendingConfirmations.count) IDs")
+                await confirmBlockIds(webView: webView, mapping: pendingConfirmations)
+                pendingConfirmations.removeAll()
+            }
+        } catch {
+            DebugLog.log(.blockPoll, "[SYNC-DIAG:BlockPoll] Error applying changes: \(error)")
+        }
     }
 }

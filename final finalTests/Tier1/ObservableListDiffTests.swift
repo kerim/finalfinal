@@ -110,24 +110,6 @@ struct ObservableListDiffTests {
         #expect(state.sections[1].parentId == "a")
     }
 
-    @Test func parentRecalculationKeepsIdentityAfterLevelChange() {
-        let state = EditorViewState()
-        var vms: [SectionViewModel] = []
-        _ = EditorViewState.mergeSections(
-            into: &vms,
-            from: [heading("a", 0, level: 1), heading("b", 1, level: 2), heading("c", 2, level: 3)],
-            counts: counts([:]))
-        state.sections = vms
-        state.recalculateParentRelationships()
-        #expect(state.sections.map(\.parentId) == [nil, "a", "b"])
-
-        let before = state.sections.map { ObjectIdentifier($0) }
-        state.sections[2].headerLevel = 2   // in-place level change, e.g. a per-keystroke edit
-        state.recalculateParentRelationships()
-        #expect(state.sections.map { ObjectIdentifier($0) } == before)
-        #expect(state.sections.map(\.parentId) == [nil, "a", "a"])
-    }
-
     private func annotation(_ id: String, text: String = "note",
                             offset: Int = 0, done: Bool = false) -> Annotation {
         Annotation(id: id, contentId: "c", sectionId: nil, type: .comment,

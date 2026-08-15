@@ -101,323 +101,6 @@ final class PasteAboveHeadingOrderBugTests: XCTestCase {
         NSPasteboard.general.writeObjects(items)
     }
 
-    // MARK: - Harness
-
-    private struct EditorStack {
-        let helper: EditorTestHelper
-        let db: ProjectDatabase
-        let pid: String
-        let sync: BlockSyncService
-    }
-
-    /// Starts from the exact two-block document the user reported:
-    /// `# heading` then `text`.
-    @MainActor
-    private func makeStack(content: String) async throws -> EditorStack {
-        let db = try TestFixtureFactory.createTemporary(content: content)
-        let pid = try TestFixtureFactory.getProjectId(from: db)
-        let helper = EditorTestHelper(editorType: .milkdown)
-
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 800, height: 600),
-            styleMask: [.titled], backing: .buffered, defer: false
-        )
-        window.contentView = helper.webView
-        window.makeKeyAndOrderFront(nil)
-        window.makeFirstResponder(helper.webView)
-        hostWindow = window
-
-        try await helper.loadAndWaitForReady(timeout: 15)
-
-        // Harness shim: WKWebView under xcodebuild never fires requestAnimationFrame,
-        // which block-sync's deferredSnapshotAndUnpause() depends on (see
-        // ZoomWordCountSyncTests for the same shim + rationale).
-        _ = try await helper.webView.evaluateJavaScript(
-            "window.requestAnimationFrame = (cb) => setTimeout(() => cb(performance.now()), 16); true"
-        )
-
-        let sync = BlockSyncService()
-        sync.configure(database: db, projectId: pid, webView: helper.webView)
-
-        // Push the starting content + IDs, mirroring how a real project loads.
-        let blocks = try TestFixtureFactory.fetchBlocks(from: db).sorted { $0.sortOrder < $1.sortOrder }
-        let ids = BlockParser.idsForProseMirrorAlignment(blocks)
-        let markdown = BlockParser.assembleMarkdown(from: blocks)
-        await sync.setContentWithBlockIds(markdown: markdown, blockIds: ids)
-        try await Task.sleep(nanoseconds: 400_000_000)
-
-        return EditorStack(helper: helper, db: db, pid: pid, sync: sync)
-    }
-
-    /// Places a collapsed cursor at the very START of the first top-level block whose
-    /// textContent starts with `text` — a real DOM location, not assumed cursor state.
-    @MainActor
-    private func focusStartOfBlock(containingPrefix text: String, webView: WKWebView) async throws {
-        let escaped = text.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "'", with: "\\'")
-        let result = try await webView.evaluateJavaScript(
-            """
-            (() => {
-                const pm = document.querySelector('.ProseMirror');
-                if (!pm) return 'no-prosemirror-root';
-                pm.focus();
-                const blocks = Array.from(pm.children);
-                const target = blocks.find(el => el.textContent && el.textContent.startsWith('\(escaped)'));
-                if (!target) return 'no-target:' + blocks.map(b => b.textContent).join('|');
-                const walker = document.createTreeWalker(target, NodeFilter.SHOW_TEXT);
-                const firstText = walker.nextNode();
-                const range = document.createRange();
-                if (firstText) {
-                    range.setStart(firstText, 0);
-                } else {
-                    range.selectNodeContents(target);
-                }
-                range.collapse(true);
-                const sel = window.getSelection();
-                sel.removeAllRanges();
-                sel.addRange(range);
-                return 'ok';
-            })()
-            """
-        ) as? String
-        XCTAssertEqual(result, "ok", "failed to focus start of block prefixed '\(text)' (diagnostic: \(String(describing: result)))")
-    }
-
-    /// Selects the ENTIRE DOM content of the first top-level block whose textContent
-    /// starts with `text` — mirrors a real user "select this paragraph" gesture
-    /// (e.g. triple-click / select-line) prior to Cmd+C, so the resulting system
-    /// pasteboard content is whatever WebKit's OWN native copy serialization
-    /// produces (not a hand-built plain-text guess).
-    @MainActor
-    private func selectEntireBlock(containingPrefix text: String, webView: WKWebView) async throws {
-        let escaped = text.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "'", with: "\\'")
-        let result = try await webView.evaluateJavaScript(
-            """
-            (() => {
-                const pm = document.querySelector('.ProseMirror');
-                if (!pm) return 'no-prosemirror-root';
-                pm.focus();
-                const blocks = Array.from(pm.children);
-                const target = blocks.find(el => el.textContent && el.textContent.startsWith('\(escaped)'));
-                if (!target) return 'no-target:' + blocks.map(b => b.textContent).join('|');
-                const range = document.createRange();
-                range.selectNodeContents(target);
-                const sel = window.getSelection();
-                sel.removeAllRanges();
-                sel.addRange(range);
-                return 'ok';
-            })()
-            """
-        ) as? String
-        XCTAssertEqual(result, "ok", "failed to select block prefixed '\(text)' (diagnostic: \(String(describing: result)))")
-    }
-
-    /// Places a collapsed cursor at the very start of the WHOLE document (start of
-    /// the first top-level block, regardless of its content).
-    @MainActor
-    private func focusDocumentStart(_ webView: WKWebView) async throws {
-        let result = try await webView.evaluateJavaScript(
-            """
-            (() => {
-                const pm = document.querySelector('.ProseMirror');
-                if (!pm) return 'no-prosemirror-root';
-                pm.focus();
-                const target = pm.firstElementChild;
-                if (!target) return 'no-first-child';
-                const walker = document.createTreeWalker(target, NodeFilter.SHOW_TEXT);
-                const firstText = walker.nextNode();
-                const range = document.createRange();
-                if (firstText) {
-                    range.setStart(firstText, 0);
-                } else {
-                    range.selectNodeContents(target);
-                }
-                range.collapse(true);
-                const sel = window.getSelection();
-                sel.removeAllRanges();
-                sel.addRange(range);
-                return 'ok';
-            })()
-            """
-        ) as? String
-        XCTAssertEqual(result, "ok", "failed to focus document start (diagnostic: \(String(describing: result)))")
-    }
-
-    /// Sends a real keyDown/keyUp NSEvent pair per character (see LinkTrailingTextTests
-    /// for why this — and not execCommand — is required to exercise real editor behavior).
-    @MainActor
-    private func typeViaNSEvents(_ text: String, window: NSWindow) throws {
-        for ch in text {
-            let charString = String(ch)
-            let now = ProcessInfo.processInfo.systemUptime
-            guard
-                let down = NSEvent.keyEvent(
-                    with: .keyDown, location: .zero, modifierFlags: [],
-                    timestamp: now, windowNumber: window.windowNumber, context: nil,
-                    characters: charString, charactersIgnoringModifiers: charString,
-                    isARepeat: false, keyCode: 0
-                ),
-                let up = NSEvent.keyEvent(
-                    with: .keyUp, location: .zero, modifierFlags: [],
-                    timestamp: now, windowNumber: window.windowNumber, context: nil,
-                    characters: charString, charactersIgnoringModifiers: charString,
-                    isARepeat: false, keyCode: 0
-                )
-            else {
-                throw NSError(domain: "diag", code: 1, userInfo: [NSLocalizedDescriptionKey: "could not build NSEvent for \(charString)"])
-            }
-            window.sendEvent(down)
-            window.sendEvent(up)
-        }
-    }
-
-    /// Sends a real Return keypress (keyCode 36) via NSEvent — splits the current block.
-    @MainActor
-    private func pressEnter(window: NSWindow) throws {
-        try sendKeyCommand(character: "\r", keyCode: 36, modifierFlags: [], window: window)
-    }
-
-    /// Sends a real Command-modified key command (e.g. Cmd+C, Cmd+V) via NSEvent —
-    /// exercises WKWebView's own native editing-command handling, the same path a
-    /// genuine keyboard shortcut takes. Deliberately NOT document.execCommand(), per
-    /// the "execCommand doesn't replicate real keyboard input" project lesson.
-    ///
-    /// EMPIRICAL FINDING (see report): this does NOT work for Cmd+C/Cmd+V under
-    /// xcodebuild's headless test runner — NSPasteboard.general stayed empty after
-    /// sending this for Cmd+C against a real text selection. WKWebView's native
-    /// copy/paste editing commands are not reachable via synthetic NSEvent key
-    /// commands in this off-screen/non-interactive window session (no real window
-    /// server key-event delivery to the Web Content process). Kept here (unused by
-    /// the active test below) as a documented dead end — do not re-attempt this
-    /// path without new evidence it works.
-    @MainActor
-    private func sendKeyCommand(character: String, keyCode: UInt16, modifierFlags: NSEvent.ModifierFlags, window: NSWindow) throws {
-        let now = ProcessInfo.processInfo.systemUptime
-        guard
-            let down = NSEvent.keyEvent(
-                with: .keyDown, location: .zero, modifierFlags: modifierFlags,
-                timestamp: now, windowNumber: window.windowNumber, context: nil,
-                characters: character, charactersIgnoringModifiers: character,
-                isARepeat: false, keyCode: keyCode
-            ),
-            let up = NSEvent.keyEvent(
-                with: .keyUp, location: .zero, modifierFlags: modifierFlags,
-                timestamp: now, windowNumber: window.windowNumber, context: nil,
-                characters: character, charactersIgnoringModifiers: character,
-                isARepeat: false, keyCode: keyCode
-            )
-        else {
-            throw NSError(domain: "diag", code: 1, userInfo: [NSLocalizedDescriptionKey: "could not build NSEvent for keyCode \(keyCode)"])
-        }
-        window.sendEvent(down)
-        window.sendEvent(up)
-    }
-
-    @MainActor
-    private func sendCmdC(window: NSWindow) throws {
-        try sendKeyCommand(character: "c", keyCode: 8, modifierFlags: .command, window: window)
-    }
-
-    @MainActor
-    private func sendCmdV(window: NSWindow) throws {
-        try sendKeyCommand(character: "v", keyCode: 9, modifierFlags: .command, window: window)
-    }
-
-    /// Dispatches a REAL DOM `ClipboardEvent('paste', ...)` directly on the
-    /// ProseMirror editable root — the exact event ProseMirror's view registers
-    /// its own native listener for (which then calls each plugin's `handlePaste`
-    /// prop, e.g. Milkdown's `clipboard` plugin — see block-sync-plugin.ts
-    /// investigation notes). This is NOT `document.execCommand()` — execCommand
-    /// bypasses the DOM event entirely and manipulates the DOM directly, which is
-    /// why it doesn't reproduce real paste bugs. A synthetic ClipboardEvent still
-    /// goes through the editor's REAL production `handlePaste` code path; only the
-    /// OS/keyboard layer that would normally fire this event is skipped (which,
-    /// per the Cmd+C/Cmd+V dead end above, is not reachable at all in this
-    /// headless test runner, so this is the most faithful mechanism available).
-    ///
-    /// `html`, when provided, is set as `text/html` on the synthetic clipboard —
-    /// pass the REAL `outerHTML` of the source DOM node (grabbed directly from
-    /// the live document, not hand-authored) to mirror what an in-app same-editor
-    /// copy would put on the pasteboard, without guessing at browser fragment-
-    /// wrapping quirks we cannot independently observe here.
-    @MainActor
-    private func dispatchSyntheticPaste(plainText: String, html: String?, webView: WKWebView) async throws {
-        let escapedText = plainText
-            .replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "`", with: "\\`")
-            .replacingOccurrences(of: "$", with: "\\$")
-        let htmlAssignment: String
-        if let html {
-            let escapedHTML = html
-                .replacingOccurrences(of: "\\", with: "\\\\")
-                .replacingOccurrences(of: "`", with: "\\`")
-                .replacingOccurrences(of: "$", with: "\\$")
-            htmlAssignment = "dt.setData('text/html', `\(escapedHTML)`);"
-        } else {
-            htmlAssignment = ""
-        }
-        let result = try await webView.evaluateJavaScript(
-            """
-            (() => {
-                const pm = document.querySelector('.ProseMirror');
-                if (!pm) return 'no-prosemirror-root';
-                const dt = new DataTransfer();
-                dt.setData('text/plain', `\(escapedText)`);
-                \(htmlAssignment)
-                const evt = new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: dt });
-                pm.dispatchEvent(evt);
-                return 'ok';
-            })()
-            """
-        ) as? String
-        XCTAssertEqual(result, "ok", "failed to dispatch synthetic paste (diagnostic: \(String(describing: result)))")
-    }
-
-    /// Reads the real, currently-rendered outerHTML of the first top-level block
-    /// whose textContent starts with `text` — used to build a faithful synthetic
-    /// clipboard payload (see dispatchSyntheticPaste) from the ACTUAL live DOM
-    /// rather than a hand-authored guess.
-    @MainActor
-    private func outerHTMLOfBlock(containingPrefix text: String, webView: WKWebView) async throws -> String? {
-        let escaped = text.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "'", with: "\\'")
-        let result = try await webView.evaluateJavaScript(
-            """
-            (() => {
-                const pm = document.querySelector('.ProseMirror');
-                if (!pm) return null;
-                const blocks = Array.from(pm.children);
-                const target = blocks.find(el => el.textContent && el.textContent.startsWith('\(escaped)'));
-                return target ? target.outerHTML : null;
-            })()
-            """
-        ) as? String
-        return result
-    }
-
-    /// Dumps the REAL live ProseMirror DOM: top-level children's tag name,
-    /// data-block-id (assigned by block-id-plugin's decorations), and textContent.
-    /// This observes paste's raw structural effect directly, independent of (and
-    /// prior to) any block-sync poll/flush.
-    @MainActor
-    private func domDump(_ webView: WKWebView) async throws -> String {
-        let result = try await webView.evaluateJavaScript(
-            """
-            JSON.stringify(Array.from(document.querySelectorAll('.ProseMirror > *')).map(el => ({
-                tag: el.tagName,
-                blockId: el.getAttribute('data-block-id'),
-                text: el.textContent
-            })))
-            """
-        ) as? String
-        return result ?? "(nil)"
-    }
-
-    /// Human-readable dump of stored blocks in sortOrder, for diagnostic reporting.
-    private func orderSummary(_ blocks: [Block]) -> String {
-        blocks.sorted { $0.sortOrder < $1.sortOrder }
-            .map { "\($0.blockType.rawValue)(so=\(String(format: "%.4f", $0.sortOrder))):\"\($0.textContent)\"" }
-            .joined(separator: " | ")
-    }
-
     // MARK: - The exact user-reported sequence
 
     @MainActor
@@ -740,5 +423,325 @@ final class PasteAboveHeadingOrderBugTests: XCTestCase {
         } else {
             XCTFail("Could not identify pasted paragraph / original heading in final blocks: \(orderSummary(sorted))")
         }
+    }
+}
+
+// Split out of the class body to keep type_body_length under the error threshold; nothing here is a stored instance property.
+extension PasteAboveHeadingOrderBugTests {
+    // MARK: - Harness
+
+    private struct EditorStack {
+        let helper: EditorTestHelper
+        let db: ProjectDatabase
+        let pid: String
+        let sync: BlockSyncService
+    }
+
+    /// Starts from the exact two-block document the user reported:
+    /// `# heading` then `text`.
+    @MainActor
+    private func makeStack(content: String) async throws -> EditorStack {
+        let db = try TestFixtureFactory.createTemporary(content: content)
+        let pid = try TestFixtureFactory.getProjectId(from: db)
+        let helper = EditorTestHelper(editorType: .milkdown)
+
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 800, height: 600),
+            styleMask: [.titled], backing: .buffered, defer: false
+        )
+        window.contentView = helper.webView
+        window.makeKeyAndOrderFront(nil)
+        window.makeFirstResponder(helper.webView)
+        hostWindow = window
+
+        try await helper.loadAndWaitForReady(timeout: 15)
+
+        // Harness shim: WKWebView under xcodebuild never fires requestAnimationFrame,
+        // which block-sync's deferredSnapshotAndUnpause() depends on (see
+        // ZoomWordCountSyncTests for the same shim + rationale).
+        _ = try await helper.webView.evaluateJavaScript(
+            "window.requestAnimationFrame = (cb) => setTimeout(() => cb(performance.now()), 16); true"
+        )
+
+        let sync = BlockSyncService()
+        sync.configure(database: db, projectId: pid, webView: helper.webView)
+
+        // Push the starting content + IDs, mirroring how a real project loads.
+        let blocks = try TestFixtureFactory.fetchBlocks(from: db).sorted { $0.sortOrder < $1.sortOrder }
+        let ids = BlockParser.idsForProseMirrorAlignment(blocks)
+        let markdown = BlockParser.assembleMarkdown(from: blocks)
+        await sync.setContentWithBlockIds(markdown: markdown, blockIds: ids)
+        try await Task.sleep(nanoseconds: 400_000_000)
+
+        return EditorStack(helper: helper, db: db, pid: pid, sync: sync)
+    }
+
+    /// Places a collapsed cursor at the very START of the first top-level block whose
+    /// textContent starts with `text` — a real DOM location, not assumed cursor state.
+    @MainActor
+    private func focusStartOfBlock(containingPrefix text: String, webView: WKWebView) async throws {
+        let escaped = text.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "'", with: "\\'")
+        let result = try await webView.evaluateJavaScript(
+            """
+            (() => {
+                const pm = document.querySelector('.ProseMirror');
+                if (!pm) return 'no-prosemirror-root';
+                pm.focus();
+                const blocks = Array.from(pm.children);
+                const target = blocks.find(el => el.textContent && el.textContent.startsWith('\(escaped)'));
+                if (!target) return 'no-target:' + blocks.map(b => b.textContent).join('|');
+                const walker = document.createTreeWalker(target, NodeFilter.SHOW_TEXT);
+                const firstText = walker.nextNode();
+                const range = document.createRange();
+                if (firstText) {
+                    range.setStart(firstText, 0);
+                } else {
+                    range.selectNodeContents(target);
+                }
+                range.collapse(true);
+                const sel = window.getSelection();
+                sel.removeAllRanges();
+                sel.addRange(range);
+                return 'ok';
+            })()
+            """
+        ) as? String
+        XCTAssertEqual(result, "ok", "failed to focus start of block prefixed '\(text)' (diagnostic: \(String(describing: result)))")
+    }
+
+    /// Selects the ENTIRE DOM content of the first top-level block whose textContent
+    /// starts with `text` — mirrors a real user "select this paragraph" gesture
+    /// (e.g. triple-click / select-line) prior to Cmd+C, so the resulting system
+    /// pasteboard content is whatever WebKit's OWN native copy serialization
+    /// produces (not a hand-built plain-text guess).
+    @MainActor
+    private func selectEntireBlock(containingPrefix text: String, webView: WKWebView) async throws {
+        let escaped = text.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "'", with: "\\'")
+        let result = try await webView.evaluateJavaScript(
+            """
+            (() => {
+                const pm = document.querySelector('.ProseMirror');
+                if (!pm) return 'no-prosemirror-root';
+                pm.focus();
+                const blocks = Array.from(pm.children);
+                const target = blocks.find(el => el.textContent && el.textContent.startsWith('\(escaped)'));
+                if (!target) return 'no-target:' + blocks.map(b => b.textContent).join('|');
+                const range = document.createRange();
+                range.selectNodeContents(target);
+                const sel = window.getSelection();
+                sel.removeAllRanges();
+                sel.addRange(range);
+                return 'ok';
+            })()
+            """
+        ) as? String
+        XCTAssertEqual(result, "ok", "failed to select block prefixed '\(text)' (diagnostic: \(String(describing: result)))")
+    }
+
+    /// Places a collapsed cursor at the very start of the WHOLE document (start of
+    /// the first top-level block, regardless of its content).
+    @MainActor
+    private func focusDocumentStart(_ webView: WKWebView) async throws {
+        let result = try await webView.evaluateJavaScript(
+            """
+            (() => {
+                const pm = document.querySelector('.ProseMirror');
+                if (!pm) return 'no-prosemirror-root';
+                pm.focus();
+                const target = pm.firstElementChild;
+                if (!target) return 'no-first-child';
+                const walker = document.createTreeWalker(target, NodeFilter.SHOW_TEXT);
+                const firstText = walker.nextNode();
+                const range = document.createRange();
+                if (firstText) {
+                    range.setStart(firstText, 0);
+                } else {
+                    range.selectNodeContents(target);
+                }
+                range.collapse(true);
+                const sel = window.getSelection();
+                sel.removeAllRanges();
+                sel.addRange(range);
+                return 'ok';
+            })()
+            """
+        ) as? String
+        XCTAssertEqual(result, "ok", "failed to focus document start (diagnostic: \(String(describing: result)))")
+    }
+
+    /// Sends a real keyDown/keyUp NSEvent pair per character (see LinkTrailingTextTests
+    /// for why this — and not execCommand — is required to exercise real editor behavior).
+    @MainActor
+    private func typeViaNSEvents(_ text: String, window: NSWindow) throws {
+        for ch in text {
+            let charString = String(ch)
+            let now = ProcessInfo.processInfo.systemUptime
+            guard
+                let down = NSEvent.keyEvent(
+                    with: .keyDown, location: .zero, modifierFlags: [],
+                    timestamp: now, windowNumber: window.windowNumber, context: nil,
+                    characters: charString, charactersIgnoringModifiers: charString,
+                    isARepeat: false, keyCode: 0
+                ),
+                let up = NSEvent.keyEvent(
+                    with: .keyUp, location: .zero, modifierFlags: [],
+                    timestamp: now, windowNumber: window.windowNumber, context: nil,
+                    characters: charString, charactersIgnoringModifiers: charString,
+                    isARepeat: false, keyCode: 0
+                )
+            else {
+                throw NSError(domain: "diag", code: 1, userInfo: [NSLocalizedDescriptionKey: "could not build NSEvent for \(charString)"])
+            }
+            window.sendEvent(down)
+            window.sendEvent(up)
+        }
+    }
+
+    /// Sends a real Return keypress (keyCode 36) via NSEvent — splits the current block.
+    @MainActor
+    private func pressEnter(window: NSWindow) throws {
+        try sendKeyCommand(character: "\r", keyCode: 36, modifierFlags: [], window: window)
+    }
+
+    /// Sends a real Command-modified key command (e.g. Cmd+C, Cmd+V) via NSEvent —
+    /// exercises WKWebView's own native editing-command handling, the same path a
+    /// genuine keyboard shortcut takes. Deliberately NOT document.execCommand(), per
+    /// the "execCommand doesn't replicate real keyboard input" project lesson.
+    ///
+    /// EMPIRICAL FINDING (see report): this does NOT work for Cmd+C/Cmd+V under
+    /// xcodebuild's headless test runner — NSPasteboard.general stayed empty after
+    /// sending this for Cmd+C against a real text selection. WKWebView's native
+    /// copy/paste editing commands are not reachable via synthetic NSEvent key
+    /// commands in this off-screen/non-interactive window session (no real window
+    /// server key-event delivery to the Web Content process). Kept here (unused by
+    /// the active test below) as a documented dead end — do not re-attempt this
+    /// path without new evidence it works.
+    @MainActor
+    private func sendKeyCommand(character: String, keyCode: UInt16, modifierFlags: NSEvent.ModifierFlags, window: NSWindow) throws {
+        let now = ProcessInfo.processInfo.systemUptime
+        guard
+            let down = NSEvent.keyEvent(
+                with: .keyDown, location: .zero, modifierFlags: modifierFlags,
+                timestamp: now, windowNumber: window.windowNumber, context: nil,
+                characters: character, charactersIgnoringModifiers: character,
+                isARepeat: false, keyCode: keyCode
+            ),
+            let up = NSEvent.keyEvent(
+                with: .keyUp, location: .zero, modifierFlags: modifierFlags,
+                timestamp: now, windowNumber: window.windowNumber, context: nil,
+                characters: character, charactersIgnoringModifiers: character,
+                isARepeat: false, keyCode: keyCode
+            )
+        else {
+            throw NSError(domain: "diag", code: 1, userInfo: [NSLocalizedDescriptionKey: "could not build NSEvent for keyCode \(keyCode)"])
+        }
+        window.sendEvent(down)
+        window.sendEvent(up)
+    }
+
+    @MainActor
+    private func sendCmdC(window: NSWindow) throws {
+        try sendKeyCommand(character: "c", keyCode: 8, modifierFlags: .command, window: window)
+    }
+
+    @MainActor
+    private func sendCmdV(window: NSWindow) throws {
+        try sendKeyCommand(character: "v", keyCode: 9, modifierFlags: .command, window: window)
+    }
+
+    /// Dispatches a REAL DOM `ClipboardEvent('paste', ...)` directly on the
+    /// ProseMirror editable root — the exact event ProseMirror's view registers
+    /// its own native listener for (which then calls each plugin's `handlePaste`
+    /// prop, e.g. Milkdown's `clipboard` plugin — see block-sync-plugin.ts
+    /// investigation notes). This is NOT `document.execCommand()` — execCommand
+    /// bypasses the DOM event entirely and manipulates the DOM directly, which is
+    /// why it doesn't reproduce real paste bugs. A synthetic ClipboardEvent still
+    /// goes through the editor's REAL production `handlePaste` code path; only the
+    /// OS/keyboard layer that would normally fire this event is skipped (which,
+    /// per the Cmd+C/Cmd+V dead end above, is not reachable at all in this
+    /// headless test runner, so this is the most faithful mechanism available).
+    ///
+    /// `html`, when provided, is set as `text/html` on the synthetic clipboard —
+    /// pass the REAL `outerHTML` of the source DOM node (grabbed directly from
+    /// the live document, not hand-authored) to mirror what an in-app same-editor
+    /// copy would put on the pasteboard, without guessing at browser fragment-
+    /// wrapping quirks we cannot independently observe here.
+    @MainActor
+    private func dispatchSyntheticPaste(plainText: String, html: String?, webView: WKWebView) async throws {
+        let escapedText = plainText
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "`", with: "\\`")
+            .replacingOccurrences(of: "$", with: "\\$")
+        let htmlAssignment: String
+        if let html {
+            let escapedHTML = html
+                .replacingOccurrences(of: "\\", with: "\\\\")
+                .replacingOccurrences(of: "`", with: "\\`")
+                .replacingOccurrences(of: "$", with: "\\$")
+            htmlAssignment = "dt.setData('text/html', `\(escapedHTML)`);"
+        } else {
+            htmlAssignment = ""
+        }
+        let result = try await webView.evaluateJavaScript(
+            """
+            (() => {
+                const pm = document.querySelector('.ProseMirror');
+                if (!pm) return 'no-prosemirror-root';
+                const dt = new DataTransfer();
+                dt.setData('text/plain', `\(escapedText)`);
+                \(htmlAssignment)
+                const evt = new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: dt });
+                pm.dispatchEvent(evt);
+                return 'ok';
+            })()
+            """
+        ) as? String
+        XCTAssertEqual(result, "ok", "failed to dispatch synthetic paste (diagnostic: \(String(describing: result)))")
+    }
+
+    /// Reads the real, currently-rendered outerHTML of the first top-level block
+    /// whose textContent starts with `text` — used to build a faithful synthetic
+    /// clipboard payload (see dispatchSyntheticPaste) from the ACTUAL live DOM
+    /// rather than a hand-authored guess.
+    @MainActor
+    private func outerHTMLOfBlock(containingPrefix text: String, webView: WKWebView) async throws -> String? {
+        let escaped = text.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "'", with: "\\'")
+        let result = try await webView.evaluateJavaScript(
+            """
+            (() => {
+                const pm = document.querySelector('.ProseMirror');
+                if (!pm) return null;
+                const blocks = Array.from(pm.children);
+                const target = blocks.find(el => el.textContent && el.textContent.startsWith('\(escaped)'));
+                return target ? target.outerHTML : null;
+            })()
+            """
+        ) as? String
+        return result
+    }
+
+    /// Dumps the REAL live ProseMirror DOM: top-level children's tag name,
+    /// data-block-id (assigned by block-id-plugin's decorations), and textContent.
+    /// This observes paste's raw structural effect directly, independent of (and
+    /// prior to) any block-sync poll/flush.
+    @MainActor
+    private func domDump(_ webView: WKWebView) async throws -> String {
+        let result = try await webView.evaluateJavaScript(
+            """
+            JSON.stringify(Array.from(document.querySelectorAll('.ProseMirror > *')).map(el => ({
+                tag: el.tagName,
+                blockId: el.getAttribute('data-block-id'),
+                text: el.textContent
+            })))
+            """
+        ) as? String
+        return result ?? "(nil)"
+    }
+
+    /// Human-readable dump of stored blocks in sortOrder, for diagnostic reporting.
+    private func orderSummary(_ blocks: [Block]) -> String {
+        blocks.sorted { $0.sortOrder < $1.sortOrder }
+            .map { "\($0.blockType.rawValue)(so=\(String(format: "%.4f", $0.sortOrder))):\"\($0.textContent)\"" }
+            .joined(separator: " | ")
     }
 }

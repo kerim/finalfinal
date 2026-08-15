@@ -17,7 +17,14 @@ import Foundation
 @Suite("Heading+paragraph insert order (export-order-bug regression suite)")
 struct BlockInsertHeadingParagraphOrderTests {
 
-    private func fixture() throws -> (ProjectDatabase, String, Block, Block) {
+    private struct Fixture {
+        let db: ProjectDatabase
+        let pid: String
+        let docHeading: Block
+        let tailHeading: Block
+    }
+
+    private func fixture() throws -> Fixture {
         let content = """
         # Doc
 
@@ -32,7 +39,7 @@ struct BlockInsertHeadingParagraphOrderTests {
         let blocksBefore = try TestFixtureFactory.fetchBlocks(from: db)
         let docHeading = TestFixtureFactory.headingBlocks(blocksBefore).first { $0.textContent == "Doc" }!
         let tailHeading = TestFixtureFactory.headingBlocks(blocksBefore).first { $0.textContent == "Tail" }!
-        return (db, pid, docHeading, tailHeading)
+        return Fixture(db: db, pid: pid, docHeading: docHeading, tailHeading: tailHeading)
     }
 
     // MARK: - Scenario A: doc-order array (heading entry precedes paragraph entry)
@@ -43,22 +50,22 @@ struct BlockInsertHeadingParagraphOrderTests {
 
     @Test("A: heading-then-paragraph, doc-order array — expect correct order")
     func docOrderHeadingThenParagraph() throws {
-        let (db, pid, docHeading, tailHeading) = try fixture()
+        let fixture = try fixture()
 
         let changes = BlockChanges(inserts: [
             BlockInsert(tempId: "temp-h", blockType: "heading", textContent: "Section A",
-                        markdownFragment: "## Section A", headingLevel: 2, afterBlockId: docHeading.id),
+                        markdownFragment: "## Section A", headingLevel: 2, afterBlockId: fixture.docHeading.id),
             BlockInsert(tempId: "temp-p", blockType: "paragraph", textContent: "Section A body.",
                         markdownFragment: "Section A body.", headingLevel: nil, afterBlockId: "temp-h")
         ])
 
-        let mapping = try db.applyBlockChangesFromEditor(changes, for: pid)
-        let blocksAfter = try TestFixtureFactory.fetchBlocks(from: db)
+        let mapping = try fixture.db.applyBlockChangesFromEditor(changes, for: fixture.pid)
+        let blocksAfter = try TestFixtureFactory.fetchBlocks(from: fixture.db)
 
         let headingSO = blocksAfter.first { $0.id == mapping["temp-h"]! }!.sortOrder
         let paragraphSO = blocksAfter.first { $0.id == mapping["temp-p"]! }!.sortOrder
-        let docSO = blocksAfter.first { $0.id == docHeading.id }!.sortOrder
-        let tailSO = blocksAfter.first { $0.id == tailHeading.id }!.sortOrder
+        let docSO = blocksAfter.first { $0.id == fixture.docHeading.id }!.sortOrder
+        let tailSO = blocksAfter.first { $0.id == fixture.tailHeading.id }!.sortOrder
 
         print("SCOUT-A doc=\(docSO) heading=\(headingSO) paragraph=\(paragraphSO) tail=\(tailSO)")
 
@@ -73,7 +80,7 @@ struct BlockInsertHeadingParagraphOrderTests {
 
     @Test("B: paragraph-then-heading, OUT-OF-ORDER array — does idMapping resolve?")
     func outOfOrderParagraphBeforeHeading() throws {
-        let (db, pid, docHeading, tailHeading) = try fixture()
+        let fixture = try fixture()
 
         let changes = BlockChanges(inserts: [
             // Paragraph appears FIRST in the array, anchored to the heading's temp id,
@@ -81,16 +88,16 @@ struct BlockInsertHeadingParagraphOrderTests {
             BlockInsert(tempId: "temp-p", blockType: "paragraph", textContent: "Section A body.",
                         markdownFragment: "Section A body.", headingLevel: nil, afterBlockId: "temp-h"),
             BlockInsert(tempId: "temp-h", blockType: "heading", textContent: "Section A",
-                        markdownFragment: "## Section A", headingLevel: 2, afterBlockId: docHeading.id)
+                        markdownFragment: "## Section A", headingLevel: 2, afterBlockId: fixture.docHeading.id)
         ])
 
-        let mapping = try db.applyBlockChangesFromEditor(changes, for: pid)
-        let blocksAfter = try TestFixtureFactory.fetchBlocks(from: db)
+        let mapping = try fixture.db.applyBlockChangesFromEditor(changes, for: fixture.pid)
+        let blocksAfter = try TestFixtureFactory.fetchBlocks(from: fixture.db)
 
         let headingSO = blocksAfter.first { $0.id == mapping["temp-h"]! }!.sortOrder
         let paragraphSO = blocksAfter.first { $0.id == mapping["temp-p"]! }!.sortOrder
-        let docSO = blocksAfter.first { $0.id == docHeading.id }!.sortOrder
-        let tailSO = blocksAfter.first { $0.id == tailHeading.id }!.sortOrder
+        let docSO = blocksAfter.first { $0.id == fixture.docHeading.id }!.sortOrder
+        let tailSO = blocksAfter.first { $0.id == fixture.tailHeading.id }!.sortOrder
 
         print("SCOUT-B doc=\(docSO) heading=\(headingSO) paragraph=\(paragraphSO) tail=\(tailSO)")
 
@@ -106,7 +113,7 @@ struct BlockInsertHeadingParagraphOrderTests {
 
     @Test("C: new heading+paragraph inserted at document start (heading has no anchor)")
     func leadingSectionInsertAtDocumentStart() throws {
-        let (db, pid, docHeading, tailHeading) = try fixture()
+        let fixture = try fixture()
 
         let changes = BlockChanges(inserts: [
             BlockInsert(tempId: "temp-h", blockType: "heading", textContent: "New First Section",
@@ -115,13 +122,13 @@ struct BlockInsertHeadingParagraphOrderTests {
                         markdownFragment: "New first body.", headingLevel: nil, afterBlockId: "temp-h")
         ])
 
-        let mapping = try db.applyBlockChangesFromEditor(changes, for: pid)
-        let blocksAfter = try TestFixtureFactory.fetchBlocks(from: db)
+        let mapping = try fixture.db.applyBlockChangesFromEditor(changes, for: fixture.pid)
+        let blocksAfter = try TestFixtureFactory.fetchBlocks(from: fixture.db)
 
         let headingSO = blocksAfter.first { $0.id == mapping["temp-h"]! }!.sortOrder
         let paragraphSO = blocksAfter.first { $0.id == mapping["temp-p"]! }!.sortOrder
-        let docSO = blocksAfter.first { $0.id == docHeading.id }!.sortOrder
-        let tailSO = blocksAfter.first { $0.id == tailHeading.id }!.sortOrder
+        let docSO = blocksAfter.first { $0.id == fixture.docHeading.id }!.sortOrder
+        let tailSO = blocksAfter.first { $0.id == fixture.tailHeading.id }!.sortOrder
 
         print("SCOUT-C doc=\(docSO) heading=\(headingSO) paragraph=\(paragraphSO) tail=\(tailSO)")
 
