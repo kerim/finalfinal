@@ -357,11 +357,13 @@ enum MarkdownUtils {
         (```[\s\S]*?```)|(~~~[\s\S]*?~~~)|(`[^`]+`)|(\$\$[\s\S]+?\$\$)|((?<![A-Za-z0-9$])\$(?=\S)[^\$\n]+?(?<=\S)\$(?![A-Za-z0-9$]))|((?<!=)==(?!=)((?:(?!==)[\s\S])+?)==)
         """#
 
-        // Pattern is a compile-time constant string; a compile failure here would be a
-        // programming error (a typo in the pattern), not a runtime condition worth
-        // silently swallowing — matches this file's `try!` convention for the
-        // precompiled patterns in `stripForWordCount` below.
-        let regex = try! NSRegularExpression(pattern: pattern)
+        guard let regex = try? NSRegularExpression(pattern: pattern) else {
+            // Unreachable unless the literal pattern above is edited into an invalid one.
+            // Degrade to the input unchanged (highlights export with their `==` markers
+            // intact) rather than crashing an export on a programming error.
+            DebugLog.log(.fileOps, "[MarkdownUtils] stripHighlightMarkers: highlight pattern failed to compile; returning input unchanged")
+            return markdown
+        }
 
         let nsMarkdown = markdown as NSString
         let fullRange = NSRange(location: 0, length: nsMarkdown.length)
