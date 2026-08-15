@@ -345,7 +345,7 @@ final class LanguageToolProvider: ProofingProvider {
         for i in 0..<result.count {
             guard let firstChar = result[i].text.first,
                   Self.noSpaceBeforePunctuation.contains(firstChar) else { continue }
-            var j = i - 1
+            var precedingIndex = i - 1
             // Require non-nil blockId equality here, matching consolidateSegments'
             // own same-block test (`if let bid = segment.blockId, bid == lastBlockId`)
             // where a nil blockId is always treated as a different block. Without
@@ -353,25 +353,25 @@ final class LanguageToolProvider: ProofingProvider {
             // be treated as "same block" here but not there — a latent
             // inconsistency, even though in practice blockId is always populated
             // from a real ProseMirror position on the JS side and never nil.
-            while j >= 0, let jBid = result[j].blockId, let iBid = result[i].blockId, jBid == iBid {
-                if result[j].text.allSatisfy(\.isWhitespace) {
+            while precedingIndex >= 0, let precedingBid = result[precedingIndex].blockId, let iBid = result[i].blockId, precedingBid == iBid {
+                if result[precedingIndex].text.allSatisfy(\.isWhitespace) {
                     // Whitespace-only segment (e.g. from a skipped annotation/hard
                     // break sandwiched between this seam and the previous real
                     // content) — fully absorbed by the elision, drop it.
-                    if !result[j].text.isEmpty {
-                        result[j] = SpellCheckService.TextSegment(
-                            text: "", from: result[j].from, to: result[j].to, blockId: result[j].blockId)
+                    if !result[precedingIndex].text.isEmpty {
+                        result[precedingIndex] = SpellCheckService.TextSegment(
+                            text: "", from: result[precedingIndex].from, to: result[precedingIndex].to, blockId: result[precedingIndex].blockId)
                     }
-                    j -= 1
+                    precedingIndex -= 1
                     continue
                 }
                 // Found the nearest real content — trim its trailing whitespace and stop.
-                var text = result[j].text
+                var text = result[precedingIndex].text
                 while let last = text.last, last.isWhitespace {
                     text.removeLast()
                 }
-                result[j] = SpellCheckService.TextSegment(
-                    text: text, from: result[j].from, to: result[j].to, blockId: result[j].blockId)
+                result[precedingIndex] = SpellCheckService.TextSegment(
+                    text: text, from: result[precedingIndex].from, to: result[precedingIndex].to, blockId: result[precedingIndex].blockId)
                 break
             }
         }
@@ -594,9 +594,9 @@ final class LanguageToolProvider: ProofingProvider {
 
         for i in text.indices {
             let ch = text[i]
-            let n = ch.utf16.count
-            if count + n > utf16Limit { break }
-            count += n
+            let utf16Length = ch.utf16.count
+            if count + utf16Length > utf16Limit { break }
+            count += utf16Length
             if previousWasEnder && ch == " " {
                 candidate = text.index(after: i)
             }
@@ -613,9 +613,9 @@ final class LanguageToolProvider: ProofingProvider {
 
         for i in text.indices {
             let ch = text[i]
-            let n = ch.utf16.count
-            if count + n > utf16Limit { break }
-            count += n
+            let utf16Length = ch.utf16.count
+            if count + utf16Length > utf16Limit { break }
+            count += utf16Length
             if ch.isWhitespace {
                 candidate = text.index(after: i)
             }
@@ -632,9 +632,9 @@ final class LanguageToolProvider: ProofingProvider {
     private static func hardCutIndex(in text: Substring, utf16Limit: Int) -> String.Index {
         var count = 0, cut = text.startIndex
         for i in text.indices {
-            let n = text[i].utf16.count
-            if count + n > utf16Limit { break }
-            count += n; cut = text.index(after: i)
+            let utf16Length = text[i].utf16.count
+            if count + utf16Length > utf16Limit { break }
+            count += utf16Length; cut = text.index(after: i)
         }
         if cut == text.startIndex, !text.isEmpty { cut = text.index(after: cut) }
         return cut

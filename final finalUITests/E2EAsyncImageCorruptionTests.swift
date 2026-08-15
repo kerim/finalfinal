@@ -348,8 +348,8 @@ final class E2EAsyncImageCorruptionTests: XCTestCase {
     /// literal (doubles any embedded single quotes). `appendixMarkdown`
     /// currently contains none, but this keeps the helper correct if the
     /// constant above ever changes.
-    private static func sqlEscape(_ s: String) -> String {
-        s.replacingOccurrences(of: "'", with: "''")
+    private static func sqlEscape(_ value: String) -> String {
+        value.replacingOccurrences(of: "'", with: "''")
     }
 
     // MARK: - DB query helpers

@@ -187,7 +187,8 @@ struct BlockInsertHeadingParagraphOrderTests {
 
         // This is the actual reported bug, reproduced end to end: the heading a user
         // just wrote to introduce "New body paragraph." sorts AFTER it, not before.
-        #expect(headingSO < paragraphSO,
-                "regression: heading with no cross-cycle anchor must land before its own paragraph (heading=\(headingSO), paragraph=\(paragraphSO)) — otherwise export would show the paragraph before its own heading")
+        let regressionMessage = "regression: heading with no cross-cycle anchor must land before its own paragraph "
+            + "(heading=\(headingSO), paragraph=\(paragraphSO)) — otherwise export would show the paragraph before its own heading"
+        #expect(headingSO < paragraphSO, Comment(rawValue: regressionMessage))
     }
 }

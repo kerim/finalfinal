@@ -404,8 +404,8 @@ final class NestedListE2ETests: XCTestCase {
 
     /// Escapes a string for embedding as a single-quoted SQLite string
     /// literal (doubles any embedded single quotes).
-    private static func sqlEscape(_ s: String) -> String {
-        s.replacingOccurrences(of: "'", with: "''")
+    private static func sqlEscape(_ value: String) -> String {
+        value.replacingOccurrences(of: "'", with: "''")
     }
 
     // MARK: - DB query helpers

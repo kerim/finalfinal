@@ -39,7 +39,8 @@ enum MarkdownRenderer {
                 return style
             }()
         ]
-        result.append(NSAttributedString(string: "\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\n", attributes: separatorAttrs))
+        let separatorLine = String(repeating: "\u{2500}", count: 20)
+        result.append(NSAttributedString(string: separatorLine + "\n", attributes: separatorAttrs))
 
         let cleaned = preprocess(markdown)
 

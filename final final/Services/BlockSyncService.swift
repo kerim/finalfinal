@@ -76,9 +76,9 @@ class BlockSyncService {
         changes: BlockChanges,
         blockCount: Int
     ) -> StaleRejectReason? {
-        let d = changes.deletes.count
-        let i = changes.inserts.count
-        if blockCount > 2 && d == blockCount && i == 0 {
+        let deleteCount = changes.deletes.count
+        let insertCount = changes.inserts.count
+        if blockCount > 2 && deleteCount == blockCount && insertCount == 0 {
             return .allDeletedNoInserts
         }
         return nil
@@ -94,13 +94,13 @@ class BlockSyncService {
         changes: BlockChanges,
         blockCount: Int
     ) -> Bool {
-        let d = changes.deletes.count
-        let i = changes.inserts.count
-        let u = changes.updates.count
+        let deleteCount = changes.deletes.count
+        let insertCount = changes.inserts.count
+        let updateCount = changes.updates.count
         guard blockCount > 10 else { return false }
-        guard d + i > blockCount / 2 && u > 5 else { return false }
-        let churn = max(d, i)
-        let balanceDelta = abs(d - i)
+        guard deleteCount + insertCount > blockCount / 2 && updateCount > 5 else { return false }
+        let churn = max(deleteCount, insertCount)
+        let balanceDelta = abs(deleteCount - insertCount)
         return churn > 0 && balanceDelta <= churn / 4
     }
 
@@ -227,193 +227,6 @@ class BlockSyncService {
         await pollBlockChanges(force: force)
     }
     #endif
-
-    // MARK: - Push Block IDs to Editor
-
-    /// Push block IDs from DB to JS editor (aligns temp IDs with real UUIDs)
-    /// - Parameter range: Optional sort order range to filter blocks (for zoom state).
-    ///   When nil, pushes all block IDs.
-    func pushBlockIds(for range: (start: Double, end: Double?)? = nil) async {
-        guard let database = projectDatabase, let projectId, let webView else { return }
-
-        do {
-            let blocks = try database.fetchBlocks(projectId: projectId)
-            let filtered: [Block]
-            if let range = range {
-                if let end = range.end {
-                    filtered = blocks.filter { $0.sortOrder >= range.start && !$0.isBibliography && !$0.isNotes && $0.sortOrder < end }
-                } else {
-                    filtered = blocks.filter { $0.sortOrder >= range.start && !$0.isBibliography && !$0.isNotes }
-                }
-            } else {
-                filtered = blocks
-            }
-            let pairs = BlockParser.alignmentPairs(filtered.sorted { $0.sortOrder < $1.sortOrder })
-            let orderedIds = pairs.map { $0.id }
-            let expectedBlocks = pairs.map { $0.meta }
-
-            if let range = range {
-                DebugLog.log(.sync, "[BlockSyncService] pushBlockIds filtered: \(orderedIds.count) blocks " +
-                    "(range start=\(range.start), end=\(String(describing: range.end)))")
-            }
-
-            guard let jsonData = try? JSONSerialization.data(withJSONObject: orderedIds),
-                  let jsonString = String(data: jsonData, encoding: .utf8) else { return }
-
-            let escaped = jsonString
-                .replacingOccurrences(of: "\\", with: "\\\\")
-                .replacingOccurrences(of: "`", with: "\\`")
-                .replacingOccurrences(of: "${", with: "\\${")
-
-            guard let expectedData = try? JSONEncoder().encode(expectedBlocks),
-                  let expectedJsonString = String(data: expectedData, encoding: .utf8) else { return }
-
-            let escapedExpected = expectedJsonString
-                .replacingOccurrences(of: "\\", with: "\\\\")
-                .replacingOccurrences(of: "`", with: "\\`")
-                .replacingOccurrences(of: "${", with: "\\${")
-
-            let zoomMode = range != nil ? "true" : "false"
-            _ = try? await webView.evaluateJavaScript(
-                "window.FinalFinal.syncBlockIds(JSON.parse(`\(escaped)`), \(zoomMode), JSON.parse(`\(escapedExpected)`)); true"
-            )
-
-            DebugLog.log(.sync, "[BlockSyncService] Pushed \(orderedIds.count) block IDs to editor")
-        } catch {
-            DebugLog.log(.sync, "[BlockSyncService] pushBlockIds failed: \(error)")
-        }
-    }
-
-    /// Set content AND block IDs atomically (for initial load, zoom, rebuild)
-    func setContentWithBlockIds(
-        markdown: String,
-        blockIds: [String],
-        scrollToStart: Bool = false,
-        imageMeta: [ContentView.ImageBlockMeta] = [],
-        cursorBoundary: Int? = nil,
-        /// Node index one PAST the last bibliography block — companion end bound for
-        /// `cursorBoundary` so the JS-side clamp only fires for a cursor actually INSIDE the
-        /// bibliography section, not merely at-or-after its start. See
-        /// `BlockParser.lastBibliographyNodeIndex`'s doc comment.
-        cursorBoundaryEnd: Int? = nil,
-        detectPausedEdits: Bool = false,
-        expectedBlocks: [BlockParser.BlockAlignmentMeta] = [],
-        zoomMode: Bool = false
-    ) async {
-        guard let webView else { return }
-
-        DebugLog.log(.sync, "[SYNC-DIAG:BlockSync] setContentWithBlockIds: len=\(markdown.count) blocks=\(blockIds.count) firstH=\"\(markdown.components(separatedBy: "\n").first(where: { $0.hasPrefix("#") })?.prefix(60) ?? "(none)")\" scrollToStart=\(scrollToStart) cursorBoundary=\(String(describing: cursorBoundary))")
-
-        // Escape markdown for JS template literal
-        let escapedMarkdown = markdown
-            .replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "`", with: "\\`")
-            .replacingOccurrences(of: "${", with: "\\${")
-
-        guard let idsData = try? JSONSerialization.data(withJSONObject: blockIds),
-              let idsJson = String(data: idsData, encoding: .utf8) else { return }
-
-        let escapedIds = idsJson
-            .replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "`", with: "\\`")
-            .replacingOccurrences(of: "${", with: "\\${")
-
-        // Build options object
-        var optionParts: [String] = []
-        appendFlagOption(&optionParts, scrollToStart, "scrollToStart")
-        if !imageMeta.isEmpty {
-            let metaArray = imageMeta.map { meta -> [String: Any] in
-                var dict: [String: Any] = ["id": meta.id]
-                if let w = meta.width { dict["width"] = w }
-                if let c = meta.caption { dict["caption"] = c }
-                if let a = meta.alt { dict["alt"] = a }
-                return dict
-            }
-            if let metaData = try? JSONSerialization.data(withJSONObject: metaArray),
-               let metaJson = String(data: metaData, encoding: .utf8) {
-                let escapedMeta = metaJson
-                    .replacingOccurrences(of: "\\", with: "\\\\")
-                    .replacingOccurrences(of: "`", with: "\\`")
-                    .replacingOccurrences(of: "${", with: "\\${")
-                optionParts.append("imageMeta: JSON.parse(`\(escapedMeta)`)")
-            }
-        }
-        appendOption(&optionParts, cursorBoundary) { "cursorBoundary: \($0)" }
-        appendOption(&optionParts, cursorBoundaryEnd) { "cursorBoundaryEnd: \($0)" }
-        appendFlagOption(&optionParts, detectPausedEdits, "detectPausedEdits")
-        if !expectedBlocks.isEmpty {
-            if let expectedData = try? JSONEncoder().encode(expectedBlocks),
-               let expectedJson = String(data: expectedData, encoding: .utf8) {
-                let escapedExpected = expectedJson
-                    .replacingOccurrences(of: "\\", with: "\\\\")
-                    .replacingOccurrences(of: "`", with: "\\`")
-                    .replacingOccurrences(of: "${", with: "\\${")
-                optionParts.append("expected: JSON.parse(`\(escapedExpected)`)")
-            }
-        }
-        appendFlagOption(&optionParts, zoomMode, "zoomMode")
-        let options = optionParts.isEmpty ? "" : ", {\(optionParts.joined(separator: ", "))}"
-        let js = "window.FinalFinal.setContentWithBlockIds(`\(escapedMarkdown)`, JSON.parse(`\(escapedIds)`)\(options))"
-
-        _ = try? await webView.evaluateJavaScript("\(js); true")
-
-        // Notify coordinator so it updates lastPushedContent (prevents redundant updateNSView push)
-        NotificationCenter.default.post(
-            name: .blockSyncDidPushContent,
-            object: nil,
-            userInfo: ["markdown": markdown]
-        )
-
-        DebugLog.log(.sync, "[BlockSyncService] Set content with \(blockIds.count) block IDs atomically")
-    }
-
-    /// Appends a JS option-string entry (`"key: value"`) to `optionParts` iff `value` is
-    /// non-nil, formatting it with `format`. Factored out of `setContentWithBlockIds`'s long
-    /// chain of "if let X { optionParts.append(...) }" blocks to keep that function's branch
-    /// count down — pure, no side effects beyond mutating the passed-in array.
-    private func appendOption<T>(_ optionParts: inout [String], _ value: T?, format: (T) -> String) {
-        if let value {
-            optionParts.append(format(value))
-        }
-    }
-
-    /// Appends a JS option-string boolean flag (`"key: true"`) to `optionParts` iff `flag`
-    /// is true. Companion to `appendOption(_:_:format:)` for the simple boolean-flag cases.
-    private func appendFlagOption(_ optionParts: inout [String], _ flag: Bool, _ key: String) {
-        if flag {
-            optionParts.append("\(key): true")
-        }
-    }
-
-    /// Surgically update heading levels in the editor without replacing the document.
-    /// Returns the updated content string (via getContent()) or nil on failure.
-    func updateHeadingLevels(_ changes: [(blockId: String, newLevel: Int)]) async -> String? {
-        guard let webView else { return nil }
-
-        let changesArray = changes.map { ["blockId": $0.blockId, "newLevel": $0.newLevel] as [String: Any] }
-        guard let jsonData = try? JSONSerialization.data(withJSONObject: changesArray),
-              let jsonString = String(data: jsonData, encoding: .utf8) else { return nil }
-
-        // Single JS call: update headings then get canonical content
-        let script = """
-            (() => {
-                window.FinalFinal.updateHeadingLevels(\(jsonString));
-                return window.FinalFinal.getContent();
-            })()
-        """
-
-        let result = try? await webView.evaluateJavaScript(script)
-        guard let markdown = result as? String else { return nil }
-
-        // Sync lastPushedContent to prevent updateNSView from firing plain setContent()
-        NotificationCenter.default.post(
-            name: .blockSyncDidPushContent,
-            object: nil,
-            userInfo: ["markdown": markdown]
-        )
-
-        return markdown
-    }
 
     // MARK: - Polling
 
@@ -558,8 +371,11 @@ class BlockSyncService {
         // textContent of every update JS handed back, not just id+length -- to see
         // directly whether getBlockChanges() returned a stale (pre-conversion) or
         // fresh (post-conversion) snapshot of the edited block.
-        for u in changes.updates {
-            DebugLog.log(.blockPoll, "[DIAG:BlockPoll] update id=\(u.id.prefix(8)) force=\(force) text=\"\(u.textContent ?? "<nil>")\" md=\"\(u.markdownFragment ?? "<nil>")\"")
+        for update in changes.updates {
+            DebugLog.log(.blockPoll, {
+                "[DIAG:BlockPoll] update id=\(update.id.prefix(8)) force=\(force) "
+                    + "text=\"\(update.textContent ?? "<nil>")\" md=\"\(update.markdownFragment ?? "<nil>")\""
+            }())
         }
 
         // Unlike the preFetch check above, abandoning HERE is NOT lossless: by this point
@@ -816,5 +632,207 @@ class BlockSyncService {
                 return "BlockSyncService not configured"
             }
         }
+    }
+}
+
+// MARK: - Editor Push / Heading Updates
+//
+// Split out of the main class body to keep it under SwiftLint's type_body_length
+// limit. `private` is file-scoped in Swift, so `projectDatabase`, `projectId`, and
+// `webView` stay `private` on the class and are still readable here — no
+// access-level widening.
+@MainActor
+extension BlockSyncService {
+    // MARK: - Push Block IDs to Editor
+
+    /// Push block IDs from DB to JS editor (aligns temp IDs with real UUIDs)
+    /// - Parameter range: Optional sort order range to filter blocks (for zoom state).
+    ///   When nil, pushes all block IDs.
+    func pushBlockIds(for range: (start: Double, end: Double?)? = nil) async {
+        guard let database = projectDatabase, let projectId, let webView else { return }
+
+        do {
+            let blocks = try database.fetchBlocks(projectId: projectId)
+            let filtered: [Block]
+            if let range = range {
+                if let end = range.end {
+                    filtered = blocks.filter { $0.sortOrder >= range.start && !$0.isBibliography && !$0.isNotes && $0.sortOrder < end }
+                } else {
+                    filtered = blocks.filter { $0.sortOrder >= range.start && !$0.isBibliography && !$0.isNotes }
+                }
+            } else {
+                filtered = blocks
+            }
+            let pairs = BlockParser.alignmentPairs(filtered.sorted { $0.sortOrder < $1.sortOrder })
+            let orderedIds = pairs.map { $0.id }
+            let expectedBlocks = pairs.map { $0.meta }
+
+            if let range = range {
+                DebugLog.log(.sync, "[BlockSyncService] pushBlockIds filtered: \(orderedIds.count) blocks " +
+                    "(range start=\(range.start), end=\(String(describing: range.end)))")
+            }
+
+            guard let jsonData = try? JSONSerialization.data(withJSONObject: orderedIds),
+                  let jsonString = String(data: jsonData, encoding: .utf8) else { return }
+
+            let escaped = jsonString
+                .replacingOccurrences(of: "\\", with: "\\\\")
+                .replacingOccurrences(of: "`", with: "\\`")
+                .replacingOccurrences(of: "${", with: "\\${")
+
+            guard let expectedData = try? JSONEncoder().encode(expectedBlocks),
+                  let expectedJsonString = String(data: expectedData, encoding: .utf8) else { return }
+
+            let escapedExpected = expectedJsonString
+                .replacingOccurrences(of: "\\", with: "\\\\")
+                .replacingOccurrences(of: "`", with: "\\`")
+                .replacingOccurrences(of: "${", with: "\\${")
+
+            let zoomMode = range != nil ? "true" : "false"
+            _ = try? await webView.evaluateJavaScript(
+                "window.FinalFinal.syncBlockIds(JSON.parse(`\(escaped)`), \(zoomMode), JSON.parse(`\(escapedExpected)`)); true"
+            )
+
+            DebugLog.log(.sync, "[BlockSyncService] Pushed \(orderedIds.count) block IDs to editor")
+        } catch {
+            DebugLog.log(.sync, "[BlockSyncService] pushBlockIds failed: \(error)")
+        }
+    }
+
+    /// Set content AND block IDs atomically (for initial load, zoom, rebuild)
+    func setContentWithBlockIds(
+        markdown: String,
+        blockIds: [String],
+        scrollToStart: Bool = false,
+        imageMeta: [ContentView.ImageBlockMeta] = [],
+        cursorBoundary: Int? = nil,
+        /// Node index one PAST the last bibliography block — companion end bound for
+        /// `cursorBoundary` so the JS-side clamp only fires for a cursor actually INSIDE the
+        /// bibliography section, not merely at-or-after its start. See
+        /// `BlockParser.lastBibliographyNodeIndex`'s doc comment.
+        cursorBoundaryEnd: Int? = nil,
+        detectPausedEdits: Bool = false,
+        expectedBlocks: [BlockParser.BlockAlignmentMeta] = [],
+        zoomMode: Bool = false
+    ) async {
+        guard let webView else { return }
+
+        DebugLog.log(.sync, {
+            let firstHeading = markdown.components(separatedBy: "\n")
+                .first(where: { $0.hasPrefix("#") })?.prefix(60) ?? "(none)"
+            return "[SYNC-DIAG:BlockSync] setContentWithBlockIds: len=\(markdown.count) "
+                + "blocks=\(blockIds.count) firstH=\"\(firstHeading)\" "
+                + "scrollToStart=\(scrollToStart) cursorBoundary=\(String(describing: cursorBoundary))"
+        }())
+
+        // Escape markdown for JS template literal
+        let escapedMarkdown = markdown
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "`", with: "\\`")
+            .replacingOccurrences(of: "${", with: "\\${")
+
+        guard let idsData = try? JSONSerialization.data(withJSONObject: blockIds),
+              let idsJson = String(data: idsData, encoding: .utf8) else { return }
+
+        let escapedIds = idsJson
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "`", with: "\\`")
+            .replacingOccurrences(of: "${", with: "\\${")
+
+        // Build options object
+        var optionParts: [String] = []
+        appendFlagOption(&optionParts, scrollToStart, "scrollToStart")
+        if !imageMeta.isEmpty {
+            let metaArray = imageMeta.map { meta -> [String: Any] in
+                var dict: [String: Any] = ["id": meta.id]
+                if let width = meta.width { dict["width"] = width }
+                if let caption = meta.caption { dict["caption"] = caption }
+                if let alt = meta.alt { dict["alt"] = alt }
+                return dict
+            }
+            if let metaData = try? JSONSerialization.data(withJSONObject: metaArray),
+               let metaJson = String(data: metaData, encoding: .utf8) {
+                let escapedMeta = metaJson
+                    .replacingOccurrences(of: "\\", with: "\\\\")
+                    .replacingOccurrences(of: "`", with: "\\`")
+                    .replacingOccurrences(of: "${", with: "\\${")
+                optionParts.append("imageMeta: JSON.parse(`\(escapedMeta)`)")
+            }
+        }
+        appendOption(&optionParts, cursorBoundary) { "cursorBoundary: \($0)" }
+        appendOption(&optionParts, cursorBoundaryEnd) { "cursorBoundaryEnd: \($0)" }
+        appendFlagOption(&optionParts, detectPausedEdits, "detectPausedEdits")
+        if !expectedBlocks.isEmpty {
+            if let expectedData = try? JSONEncoder().encode(expectedBlocks),
+               let expectedJson = String(data: expectedData, encoding: .utf8) {
+                let escapedExpected = expectedJson
+                    .replacingOccurrences(of: "\\", with: "\\\\")
+                    .replacingOccurrences(of: "`", with: "\\`")
+                    .replacingOccurrences(of: "${", with: "\\${")
+                optionParts.append("expected: JSON.parse(`\(escapedExpected)`)")
+            }
+        }
+        appendFlagOption(&optionParts, zoomMode, "zoomMode")
+        let options = optionParts.isEmpty ? "" : ", {\(optionParts.joined(separator: ", "))}"
+        let js = "window.FinalFinal.setContentWithBlockIds(`\(escapedMarkdown)`, JSON.parse(`\(escapedIds)`)\(options))"
+
+        _ = try? await webView.evaluateJavaScript("\(js); true")
+
+        // Notify coordinator so it updates lastPushedContent (prevents redundant updateNSView push)
+        NotificationCenter.default.post(
+            name: .blockSyncDidPushContent,
+            object: nil,
+            userInfo: ["markdown": markdown]
+        )
+
+        DebugLog.log(.sync, "[BlockSyncService] Set content with \(blockIds.count) block IDs atomically")
+    }
+
+    /// Appends a JS option-string entry (`"key: value"`) to `optionParts` iff `value` is
+    /// non-nil, formatting it with `format`. Factored out of `setContentWithBlockIds`'s long
+    /// chain of "if let X { optionParts.append(...) }" blocks to keep that function's branch
+    /// count down — pure, no side effects beyond mutating the passed-in array.
+    private func appendOption<T>(_ optionParts: inout [String], _ value: T?, format: (T) -> String) {
+        if let value {
+            optionParts.append(format(value))
+        }
+    }
+
+    /// Appends a JS option-string boolean flag (`"key: true"`) to `optionParts` iff `flag`
+    /// is true. Companion to `appendOption(_:_:format:)` for the simple boolean-flag cases.
+    private func appendFlagOption(_ optionParts: inout [String], _ flag: Bool, _ key: String) {
+        if flag {
+            optionParts.append("\(key): true")
+        }
+    }
+
+    /// Surgically update heading levels in the editor without replacing the document.
+    /// Returns the updated content string (via getContent()) or nil on failure.
+    func updateHeadingLevels(_ changes: [(blockId: String, newLevel: Int)]) async -> String? {
+        guard let webView else { return nil }
+
+        let changesArray = changes.map { ["blockId": $0.blockId, "newLevel": $0.newLevel] as [String: Any] }
+        guard let jsonData = try? JSONSerialization.data(withJSONObject: changesArray),
+              let jsonString = String(data: jsonData, encoding: .utf8) else { return nil }
+
+        // Single JS call: update headings then get canonical content
+        let script = """
+            (() => {
+                window.FinalFinal.updateHeadingLevels(\(jsonString));
+                return window.FinalFinal.getContent();
+            })()
+        """
+
+        let result = try? await webView.evaluateJavaScript(script)
+        guard let markdown = result as? String else { return nil }
+
+        // Sync lastPushedContent to prevent updateNSView from firing plain setContent()
+        NotificationCenter.default.post(
+            name: .blockSyncDidPushContent,
+            object: nil,
+            userInfo: ["markdown": markdown]
+        )
+
+        return markdown
     }
 }

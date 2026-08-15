@@ -259,6 +259,7 @@ extension ContentView {
 
         // Single atomic update to trigger SwiftUI
         editorState.sections = mutableSections
+        editorState.invalidateOutlineCache()
 
         // Recalculate parent relationships and enforce hierarchy
         recalculateParentRelationships()

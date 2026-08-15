@@ -123,23 +123,23 @@ final class LinkTrailingTextTests: XCTestCase {
     @MainActor
     private func typeViaNSEvents(_ text: String, window: NSWindow) throws {
         for ch in text {
-            let s = String(ch)
+            let charString = String(ch)
             let now = ProcessInfo.processInfo.systemUptime
             guard
                 let down = NSEvent.keyEvent(
                     with: .keyDown, location: .zero, modifierFlags: [],
                     timestamp: now, windowNumber: window.windowNumber, context: nil,
-                    characters: s, charactersIgnoringModifiers: s,
+                    characters: charString, charactersIgnoringModifiers: charString,
                     isARepeat: false, keyCode: 0
                 ),
                 let up = NSEvent.keyEvent(
                     with: .keyUp, location: .zero, modifierFlags: [],
                     timestamp: now, windowNumber: window.windowNumber, context: nil,
-                    characters: s, charactersIgnoringModifiers: s,
+                    characters: charString, charactersIgnoringModifiers: charString,
                     isARepeat: false, keyCode: 0
                 )
             else {
-                throw NSError(domain: "diag", code: 1, userInfo: [NSLocalizedDescriptionKey: "could not build NSEvent for \(s)"])
+                throw NSError(domain: "diag", code: 1, userInfo: [NSLocalizedDescriptionKey: "could not build NSEvent for \(charString)"])
             }
             window.sendEvent(down)
             window.sendEvent(up)

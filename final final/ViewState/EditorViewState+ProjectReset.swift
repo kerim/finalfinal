@@ -24,8 +24,9 @@ extension EditorViewState {
         sourceAnchors = []
 
         // Reset sections and annotations
-        sections = []  // fires didSet -> clears the outline cache
+        sections = []
         annotations = []
+        invalidateOutlineCache()
 
         // Reset zoom state
         zoomedSectionId = nil

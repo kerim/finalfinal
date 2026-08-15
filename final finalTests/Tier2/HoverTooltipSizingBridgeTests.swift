@@ -121,8 +121,8 @@ final class HoverTooltipSizingBridgeTests: XCTestCase {
         _ = try await helper.webView.evaluateJavaScript("window.FinalFinal.setTheme('--font-size-body: \(px)px;')")
     }
 
-    private func jsString(_ s: String) -> String {
-        let escaped = s
+    private func jsString(_ value: String) -> String {
+        let escaped = value
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\"", with: "\\\"")
             .replacingOccurrences(of: "\n", with: "\\n")

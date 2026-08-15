@@ -13,7 +13,11 @@ extension ContentView {
     /// Bibliography section was updated in the database - rebuild editor content
     @MainActor
     func handleBibliographySectionChanged() {
-        DebugLog.log(.bib, "[CV:bibNotif] contentState=\(editorState.contentState) suppress=\(suppressNextBibliographyRebuild) pendingBib=\(pendingBibliographyRebuild) content.isEmpty=\(editorState.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)")
+        DebugLog.log(.bib, {
+            let contentIsEmpty = editorState.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            return "[CV:bibNotif] contentState=\(editorState.contentState) suppress=\(suppressNextBibliographyRebuild) "
+                + "pendingBib=\(pendingBibliographyRebuild) content.isEmpty=\(contentIsEmpty)"
+        }())
         // Skip if zoomed into a section (bibliography update only affects full document view)
         guard editorState.zoomedSectionId == nil else { return }
         // Skip during any content transition (including editor switch)

@@ -224,7 +224,7 @@ final class SnapshotService {
         guard let contentRecord = try database.fetchContent(for: projectId) else { return }
         let sections = try database.fetchSections(projectId: projectId)
         var metadata: [String: SectionMetadata] = [:]
-        for s in sections { metadata[s.title] = SectionMetadata(from: s) }
+        for section in sections { metadata[section.title] = SectionMetadata(from: section) }
         let blocks = BlockParser.parse(
             markdown: contentRecord.markdown, projectId: projectId,
             existingSectionMetadata: metadata.isEmpty ? nil : metadata
@@ -287,7 +287,7 @@ final class SnapshotService {
         guard let contentRecord = try database.fetchContent(for: projectId) else { return }
         let allSectionsAfter = try database.fetchSections(projectId: projectId)
         var metadataForBlocks: [String: SectionMetadata] = [:]
-        for s in allSectionsAfter { metadataForBlocks[s.title] = SectionMetadata(from: s) }
+        for section in allSectionsAfter { metadataForBlocks[section.title] = SectionMetadata(from: section) }
         let blocks = BlockParser.parse(
             markdown: contentRecord.markdown, projectId: projectId,
             existingSectionMetadata: metadataForBlocks.isEmpty ? nil : metadataForBlocks
