@@ -171,7 +171,9 @@ class EditorViewState {
     var scrollToAnnotationIndex: Int?
 
     // MARK: - Sidebar State (Phase 1.6)
-    var sections: [SectionViewModel] = []
+    var sections: [SectionViewModel] = [] {
+        didSet { invalidateOutlineCache() }
+    }
     var statusFilter: SectionStatus?
     var headerLevelFilter: Int?
 
@@ -301,15 +303,51 @@ class EditorViewState {
     // `.removeDuplicates()` at the GRDB layer (unlike `observeOutlineBlocks`, which
     // deliberately can't), so an unchanged re-emission is already filtered out before this
     // class ever sees it.
+    //
+    // Mechanism: invalidation is automatic, via `sections`'s `didSet` above -- any wholesale
+    // write to `sections` (reassignment, subscript assignment, `inout` access) clears the
+    // cache on its own. `applySectionsUpdate` is the sole re-arming point, and it re-arms
+    // *after* its own assignment to `sections` runs (so the `didSet` it just triggered doesn't
+    // wipe what it's about to set). `invalidateOutlineCache()` itself is `private`, which
+    // narrows its blast radius to this file -- no caller outside `EditorViewState.swift` can
+    // hand-manage the cache. Two manual, file-local calls remain and are both audited as
+    // genuinely needed: `startObserving` and `stopObserving` neither one writes `sections`, so
+    // the automatic `didSet` path never fires there -- these are the only two places that must
+    // still clear the cache by hand.
+    //
+    // Boundary: the guard is automatic for *array-level* writes only. It cannot catch in-place
+    // mutation of a `SectionViewModel` element -- e.g. `recalculateParentRelationships()`
+    // mutating `vm.parentId` below, or the equality-guarded `apply()` mutations in
+    // `EditorViewState+ObservableListDiff.swift`. Those element mutations are correct today
+    // because they only happen inside the cache-consistent merge path (`applySectionsUpdate`
+    // re-arms right after them). Any future code that needs the cache to notice an element
+    // mutation must route it through that merge path rather than mutating a `SectionViewModel`
+    // directly -- there is deliberately no escape hatch for that case.
+    //
+    // `@ObservationIgnored`: this is a private merge-skip cache, not UI state -- nothing should
+    // ever observe it. Without the annotation, `@Observable` tracks these like any other stored
+    // property, so `invalidateOutlineCache()`'s writes to them run *inside* the `withMutation`
+    // that `sections`'s own write already opened, adding two redundant nested registrar
+    // mutations to every array-level `sections` write for no observable benefit.
+    @ObservationIgnored
     private var lastOutlineBlocks: [Block]?
+    @ObservationIgnored
     private var lastOutlineCounts: [String: ProjectDatabase.HeadingWordCounts] = [:]
 
-    /// Clear the outline equality-guard cache. Must be called whenever `sections` is reset
-    /// out from under the cache (project switch, stop observing), or a stale cache would
-    /// suppress the next real re-fetch and leave the sidebar blank.
-    func invalidateOutlineCache() {
+    /// Clear the outline equality-guard cache. Fires automatically from `sections`'s `didSet`;
+    /// private so nothing outside this file can hand-manage it.
+    private func invalidateOutlineCache() {
         lastOutlineBlocks = nil
         lastOutlineCounts = [:]
+    }
+
+    /// True when `blocks`/`counts` are exactly what the last applied tick produced, i.e. the
+    /// merge can be skipped. Cleared automatically by `sections`'s `didSet`.
+    func isOutlineUnchanged(
+        blocks: [Block],
+        counts: [String: ProjectDatabase.HeadingWordCounts]
+    ) -> Bool {
+        lastOutlineBlocks == blocks && lastOutlineCounts == counts
     }
 
     /// Start observing blocks from database for reactive UI updates
@@ -342,14 +380,10 @@ class EditorViewState {
 
                     // Fix 1: skip the merge entirely when nothing actually changed since the
                     // last applied tick -- both blocks AND counts, never blocks alone.
-                    if let previous = self.lastOutlineBlocks,
-                       previous == outlineBlocks,
-                       self.lastOutlineCounts == counts {
+                    if self.isOutlineUnchanged(blocks: outlineBlocks, counts: counts) {
                         self.onSectionsUpdated?()
                         continue
                     }
-                    self.lastOutlineBlocks = outlineBlocks
-                    self.lastOutlineCounts = counts
 
                     // Fix 2: merge in place -- reuse existing view models by id instead of
                     // replacing the array wholesale, then recalculate parent relationships.
@@ -395,14 +429,10 @@ class EditorViewState {
                 guard let self else { return }
                 DebugLog.log(.outline, "[EditorViewState:refresh] \(outlineBlocks.count) sections (contentState=\(self.contentState))")
 
-                if let previous = self.lastOutlineBlocks,
-                   previous == outlineBlocks,
-                   self.lastOutlineCounts == counts {
+                if self.isOutlineUnchanged(blocks: outlineBlocks, counts: counts) {
                     self.onSectionsUpdated?()
                     return
                 }
-                self.lastOutlineBlocks = outlineBlocks
-                self.lastOutlineCounts = counts
 
                 // See the observation-loop call site above for why `applySectionsUpdate` merges
                 // into a local copy rather than passing `&self.sections` directly.
@@ -430,8 +460,11 @@ class EditorViewState {
     ) -> Bool {
         var updatedSections = sections
         let sectionsChanged = Self.mergeSections(into: &updatedSections, from: blocks, counts: counts)
-        if sectionsChanged { sections = updatedSections }
+        if sectionsChanged { sections = updatedSections }   // fires didSet -> clears cache
         recalculateParentRelationships()
+        // Re-arm AFTER the assignment above: `sections`'s didSet would otherwise wipe it.
+        lastOutlineBlocks = blocks
+        lastOutlineCounts = counts
         return sectionsChanged
     }
 

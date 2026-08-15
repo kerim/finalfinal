@@ -211,4 +211,42 @@ struct ObservableListDiffTests {
         #expect(changed == false)
         #expect(fired.withLock { $0 } == false)
     }
+
+    // The whole point of this task: the cache must not depend on anyone remembering to
+    // call invalidateOutlineCache(). Any wholesale write to `sections` -- including one
+    // through the `$editorState.sections` Binding handed to OutlineSidebar, which no
+    // manual call site covers -- has to clear it automatically via `didSet`.
+    @Test func wholesaleSectionsWriteInvalidatesOutlineCacheAutomatically() {
+        let state = EditorViewState()
+        let blocks = [heading("a", 0, level: 1), heading("b", 1, level: 2)]
+        let wordCounts = counts(["a": 1, "b": 2])
+        state.applySectionsUpdate(from: blocks, counts: wordCounts)
+
+        // Happy path: applySectionsUpdate re-arms the cache after its own write,
+        // so an identical tick is still skipped (no over-invalidation).
+        #expect(state.isOutlineUnchanged(blocks: blocks, counts: wordCounts) == true)
+
+        state.sections = []
+        #expect(state.isOutlineUnchanged(blocks: blocks, counts: wordCounts) == false)
+
+        // And the next identical re-fetch must actually re-merge, not be suppressed.
+        let changed = state.applySectionsUpdate(from: blocks, counts: wordCounts)
+        #expect(changed == true)
+        #expect(state.sections.count == 2)
+    }
+
+    // The hierarchy-enforcement path mutates `sections` through an `inout` parameter
+    // (ContentView+HierarchyEnforcement.swift). That shape must invalidate too.
+    @Test func inoutSectionsWriteInvalidatesOutlineCacheAutomatically() {
+        let state = EditorViewState()
+        let blocks = [heading("a", 0, level: 1), heading("b", 1, level: 2)]
+        let wordCounts = counts(["a": 1, "b": 2])
+        state.applySectionsUpdate(from: blocks, counts: wordCounts)
+        #expect(state.isOutlineUnchanged(blocks: blocks, counts: wordCounts) == true)
+
+        func mutateInPlace(_ sections: inout [SectionViewModel]) { sections.reverse() }
+        mutateInPlace(&state.sections)
+
+        #expect(state.isOutlineUnchanged(blocks: blocks, counts: wordCounts) == false)
+    }
 }

@@ -165,7 +165,6 @@ extension ContentView {
         enforceHierarchyConstraintsStatic(
             sections: &editorState.sections, syncService: syncService
         )
-        editorState.invalidateOutlineCache()
 
         // 3. Compute which headings actually changed level
         var headingChanges: [(blockId: String, newLevel: Int)] = []
@@ -340,6 +339,5 @@ extension ContentView {
         var sections = editorState.sections
         Self.enforceHierarchyConstraintsStatic(sections: &sections, syncService: sectionSyncService)
         editorState.sections = sections
-        editorState.invalidateOutlineCache()
     }
 }
