@@ -33,6 +33,18 @@ struct ObservableListDiffTests {
         pairs.mapValues { .init(sectionOnly: $0, aggregate: $0) }
     }
 
+    // Variant that supplies `sectionOnly` and `aggregate` distinctly, for tests that need to
+    // tell the two apart (e.g. a heading with an aggregate-goal whose child's word count
+    // changes: the heading's own `sectionOnly` count is untouched while its `aggregate` count,
+    // which sums in the child, moves). Named distinctly from `counts(_:)` above rather than
+    // overloaded on it: `counts([:])` call sites elsewhere in this file are otherwise ambiguous
+    // between the two parameter types, since an empty dictionary literal can't pick a value type.
+    private func distinctCounts(
+        _ pairs: [String: (sectionOnly: Int, aggregate: Int)]
+    ) -> [String: ProjectDatabase.HeadingWordCounts] {
+        pairs.mapValues { .init(sectionOnly: $0.sectionOnly, aggregate: $0.aggregate) }
+    }
+
     @Test func sectionMergeKeepsIdentityWhenNothingChanged() {
         var vms: [SectionViewModel] = []
         let blocks = [heading("a", 0), heading("b", 1), heading("c", 2)]
@@ -248,5 +260,87 @@ struct ObservableListDiffTests {
         mutateInPlace(&state.sections)
 
         #expect(state.isOutlineUnchanged(blocks: blocks, counts: wordCounts) == false)
+    }
+
+    // The manual-verification leftover from this task: "the outline sidebar's word counts
+    // stay live while typing." Typing under an existing heading (no heading added/removed)
+    // is exactly a counts-only re-fetch -- same blocks, different counts -- through the real
+    // production entry point both `startObserving`'s live loop and `refreshSections` call on
+    // every tick. `mergeSections` deliberately does NOT count a word-count-only update as
+    // "structure changed" (see its doc comment in EditorViewState+ObservableListDiff.swift)
+    // -- it relies on `@Observable` to propagate that in-place write on its own. This is the
+    // mirror image of `noOpMergeThenParentRecalcFiresNoObservation` above (same
+    // `withObservationTracking` infra, opposite expectation: that test proves silence on a
+    // true no-op, this one proves the cache does NOT also swallow a real one): if
+    // `isOutlineUnchanged` or `applySectionsUpdate` ever started comparing blocks alone (the
+    // regression `OutlineObservationTests.swift` guards at the DB layer) or gated the counts
+    // write on `mergeSections`'s structural-change flag, this test fails while the two
+    // existing didSet tests above would stay green -- they only ever exercise identical
+    // blocks/counts pairs, never a counts-only diff.
+    @Test func countsOnlyChangeThroughApplySectionsUpdateFiresObservationAndUpdatesWordCount() {
+        let state = EditorViewState()
+        let blocks = [heading("a", 0, level: 1), heading("b", 1, level: 2)]
+        state.applySectionsUpdate(from: blocks, counts: counts(["a": 1, "b": 2]))
+        #expect(state.isOutlineUnchanged(blocks: blocks, counts: counts(["a": 1, "b": 2])) == true)
+
+        // "b" grew -- same headings, no structural change, exactly what a keystroke in an
+        // existing section's body looks like by the time it reaches this layer.
+        let grownCounts = counts(["a": 1, "b": 9])
+        #expect(state.isOutlineUnchanged(blocks: blocks, counts: grownCounts) == false)
+
+        let fired = OSAllocatedUnfairLock(initialState: false)
+        withObservationTracking {
+            _ = state.sections[1].wordCount
+        } onChange: {
+            fired.withLock { $0 = true }
+        }
+
+        let changed = state.applySectionsUpdate(from: blocks, counts: grownCounts)
+
+        #expect(changed == false, "word-count-only updates are not a structural change")
+        #expect(state.sections[1].wordCount == 9)
+        #expect(state.sections[0].wordCount == 1, "the untouched neighbor's count must survive the merge unclobbered")
+        #expect(fired.withLock { $0 } == true, "the sidebar's word-count observer must fire on a real counts change")
+    }
+
+    // The sibling branch to the test above: `mergeSections` writes `vm.aggregateWordCount`
+    // from the counts dict's `aggregate` field only when `vm.aggregateGoal != nil` -- the
+    // sidebar only ever displays that number once the user has set an aggregate word-count
+    // goal on the heading (`SectionCardView.swift`'s `if let aggGoal = aggregateGoal, aggGoal
+    // > 0` display guard). That's a narrower, distinct scenario from a plain counts-only
+    // change under a goal-less heading: a heading WITH an aggregate goal, whose child's word
+    // count changes and so moves the heading's own `aggregate` total (summed from itself plus
+    // its subtree) while its `sectionOnly` total stays put. This branch had zero test coverage
+    // before this test -- a regression that silently dropped it would freeze every
+    // goal-tracking heading's aggregate display while the full suite stayed green.
+    @Test func aggregateWordCountUpdatesWhenGoalSetOnHeadingAndChildCountChanges() {
+        let state = EditorViewState()
+        var parent = heading("a", 0, level: 1)
+        parent.aggregateGoal = 500
+        let blocks = [parent, heading("b", 1, level: 2)]
+
+        state.applySectionsUpdate(
+            from: blocks,
+            counts: distinctCounts(["a": (sectionOnly: 1, aggregate: 3), "b": (sectionOnly: 2, aggregate: 2)]))
+        #expect(state.sections[0].aggregateGoal == 500)
+        #expect(state.sections[0].aggregateWordCount == 3)
+
+        let fired = OSAllocatedUnfairLock(initialState: false)
+        withObservationTracking {
+            _ = state.sections[0].aggregateWordCount
+        } onChange: {
+            fired.withLock { $0 = true }
+        }
+
+        // "b" grew -- same headings, no structural change. "a"'s own sectionOnly count is
+        // unchanged; only its aggregate (which sums in "b") moves, exactly what a keystroke in
+        // a goal-tracked heading's child section looks like by the time it reaches this layer.
+        let grownCounts = distinctCounts(["a": (sectionOnly: 1, aggregate: 9), "b": (sectionOnly: 8, aggregate: 8)])
+        let changed = state.applySectionsUpdate(from: blocks, counts: grownCounts)
+
+        #expect(changed == false, "counts-only updates are not a structural change")
+        #expect(state.sections[0].aggregateWordCount == 9)
+        #expect(state.sections[0].wordCount == 1, "sectionOnly count must be untouched by the aggregate-only move")
+        #expect(fired.withLock { $0 } == true, "the sidebar's aggregate-word-count observer must fire on a real aggregate change")
     }
 }
