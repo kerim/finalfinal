@@ -160,46 +160,8 @@ extension BlockParser {
             .joined(separator: "\n\n")
     }
 
-    /// Assemble blocks into plain markdown for the "Markdown Only" export -- text only, no
-    /// images, no sidecar image folder needed to render correctly. Two steps:
-    ///
-    /// 1. Drop `.image`-typed blocks entirely, BEFORE assembly. A `.image` block's fragment
-    ///    (`Block.markdownForStandardExport()`) glues the image reference and its caption
-    ///    together as ONE fragment (`![alt](src)\n\n*caption*`), so stripping only the image
-    ///    syntax out of the assembled text would leave an orphaned italic caption floating
-    ///    with nothing above it to caption. Dropping the whole block removes both cleanly.
-    /// 2. Strip any image markup that survived anyway -- an inline image embedded inside
-    ///    prose/list/table/blockquote text that never got its own `.image`-typed block -- via
-    ///    `MarkdownUtils.strippingImages` (fenced-code/inline-code-safe), applied to EACH
-    ///    fragment individually, INSIDE this function's own `map`, before `isEmptyFragment`
-    ///    filters the result -- deliberately not by calling `assembleStandardMarkdownForExport`
-    ///    and post-processing its already-joined-and-filtered output.
-    ///
-    /// This ordering matters for two reasons, both regressions an earlier "assemble first,
-    /// strip the whole document, then collapse blank-line craters" version of this function
-    /// had:
-    /// - Per-fragment stripping never touches the `\n\n` join between fragments, so it can
-    ///   never reach INSIDE a fenced code block's fragment and delete blank lines the user
-    ///   typed there on purpose -- unlike a `\n{3,}` regex pass over the whole assembled
-    ///   string, which cannot tell "blank lines between fragments" from "blank lines inside a
-    ///   code fence" and silently ate the latter too.
-    /// - Stripping BEFORE `isEmptyFragment` runs (rather than after, when the filter has
-    ///   already made its one pass over the pre-strip fragments) means a fragment that strips
-    ///   down to whitespace-only -- not just exactly `""` -- is still caught, since
-    ///   `isEmptyFragment` trims before comparing. A post-hoc `\n{3,}` collapse only catches
-    ///   an exactly-empty fragment collapsing two `\n\n` joins into `\n\n\n\n`; it does nothing
-    ///   for a fragment that stripped down to a single leftover space, which used to survive
-    ///   as a visible, stray blank-looking line.
-    static func assembleMarkdownOnlyForExport(from blocks: [Block]) -> String {
-        let withoutImages = blocks.filter { $0.blockType != .image }
-        return assemblySorted(withoutImages)
-            .map { MarkdownUtils.strippingImages(from: $0.markdownForStandardExport()) }
-            .filter { !isEmptyFragment($0) }
-            .joined(separator: "\n\n")
-    }
-
     /// Shared assembly ordering: by `sortOrder`, with headings ahead of non-headings
-    /// at the same `sortOrder`. Every `assemble…` entry point MUST use this, or
+    /// at the same `sortOrder`. All three `assemble…` entry points MUST use this, or
     /// an export can disagree with the editor about block order.
     private static func assemblySorted(_ blocks: [Block]) -> [Block] {
         blocks.sorted { a, b in

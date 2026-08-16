@@ -1093,16 +1093,6 @@ body.source-mode .ff-citation,
   opacity: 0.35;
   cursor: not-allowed;
 }
-.table-toolbar-btn.is-danger {
-  /* --color-danger isn't wired up from Swift anywhere in the app (unlike
-     --editor-*, --accent-color, --annotation-*, etc.) so a var() indirection
-     here would always resolve to its fallback anyway; use the literal
-     directly instead of pretending it's themeable. */
-  color: #c0392b;
-}
-.table-toolbar-btn.is-danger:hover:not(:disabled) {
-  background: rgba(192, 57, 43, 0.12);
-}
 .table-toolbar-sep {
   width: 1px;
   height: 20px;
