@@ -205,12 +205,19 @@ extension ProjectDatabase {
 
             // 2.5. Shift blocks after range to prevent sort order collisions — see
             // shiftBlocksAfterRange for why insertEnd must reserve room for
-            // preservedRowIds.count too, not just newBlocks.count.
+            // preservedRowIds.count too, not just newBlocks.count. preservedRowsAnchor is
+            // hoisted here (rather than inlined into insertEnd below) so it can also be passed
+            // to shiftBlocksAfterRange's own reservation check, and reused unchanged as
+            // reanchorPreservedRows' anchorBase below — one shared value instead of the same
+            // expression written out twice.
+            let preservedRowsAnchor = startSortOrder + Double(newBlocks.count)
             try shiftBlocksAfterRange(
                 db: db,
                 projectId: projectId,
                 endSortOrder: endSortOrder,
-                insertEnd: startSortOrder + Double(newBlocks.count) + Double(preservedRowIds.count)
+                insertEnd: preservedRowsAnchor + Double(preservedRowIds.count),
+                preservedRowsAnchor: preservedRowsAnchor,
+                reservationCount: preservedRowIds.count
             )
 
             // Track footnote labels already claimed within this batch — whether by merging into
@@ -255,7 +262,7 @@ extension ProjectDatabase {
                 try reanchorPreservedRows(
                     db: db,
                     rowIds: preservedRowIds,
-                    anchorBase: startSortOrder + Double(newBlocks.count)
+                    anchorBase: preservedRowsAnchor
                 )
             }
 
@@ -673,12 +680,43 @@ private extension ProjectDatabase {
     /// `preservedRowIds.count` term (not just `newBlocks.count`) must be included, or
     /// `reanchorPreservedRows`' positions can themselves collide with whatever comes after
     /// the range.
+    ///
+    /// `preservedRowsAnchor` and `reservationCount` exist to make that invariant checkable at
+    /// runtime for FUTURE, independent callers — ones that compute `insertEnd` themselves from
+    /// scratch rather than reusing `preservedRowsAnchor`. Dropping the reservation term
+    /// type-checks and compiles fine, but silently corrupts sortOrder once
+    /// `reanchorPreservedRows` runs; the precondition below is what would catch that. For the
+    /// CURRENT (and only) caller, this is documentation of the invariant rather than live
+    /// enforcement: it passes `insertEnd: preservedRowsAnchor + Double(preservedRowIds.count)`
+    /// and `reservationCount: preservedRowIds.count`, so `insertEnd` and
+    /// `preservedRowsAnchor + Double(reservationCount)` are the same IEEE 754 expression over
+    /// the same operands — an arithmetic identity — and the precondition can never fire there,
+    /// in either the growing or shrinking case. Checking against `insertEnd` alone (or against
+    /// `endSortOrder`) can't tell a genuine under-reservation from a legitimate call where
+    /// `newBlocks.count` shrinks the range enough that no shift is needed at all — only
+    /// comparing against `preservedRowsAnchor` (independent of how `insertEnd` was computed)
+    /// can, which is why this guard is worth keeping for a future caller even though it's inert
+    /// for today's. Any new caller must build `insertEnd` using the same grouping/expression
+    /// shape (reservation anchor + reservation count) it passes as
+    /// `preservedRowsAnchor`/`reservationCount` — a differently-grouped but mathematically
+    /// equivalent expression can round to a different `Double` and land a hair below the
+    /// threshold, turning this data-integrity guard into an unexpected crash. This is a
+    /// `precondition` (not `assert`), so it's live — and can trap — in Release builds too.
     func shiftBlocksAfterRange(
         db: Database,
         projectId: String,
         endSortOrder: Double?,
-        insertEnd: Double
+        insertEnd: Double,
+        preservedRowsAnchor: Double,
+        reservationCount: Int
     ) throws {
+        precondition(
+            insertEnd >= preservedRowsAnchor + Double(reservationCount),
+            "shiftBlocksAfterRange: insertEnd (\(insertEnd)) doesn't reserve room for " +
+            "\(reservationCount) preserved row(s) anchored at \(preservedRowsAnchor) — needs " +
+            "to be >= \(preservedRowsAnchor + Double(reservationCount)). Did a caller drop the " +
+            "preservedRowIds.count term when computing insertEnd?"
+        )
         if let end = endSortOrder {
             if insertEnd > end {
                 let shift = insertEnd - end
