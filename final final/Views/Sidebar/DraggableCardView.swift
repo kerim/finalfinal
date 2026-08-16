@@ -14,21 +14,63 @@ import UniformTypeIdentifiers
 
 /// Wraps a SwiftUI view with AppKit drag handling for cursor offset control.
 /// Handles both click (single/double) and drag gestures with threshold-based distinction.
-struct DraggableCardView: NSViewRepresentable {
+struct DraggableCardView: NSViewRepresentable, Equatable {
     let section: SectionViewModel
     /// Computes the drag-payload subtree (descendant IDs) for a given root section id.
     /// Passed as a closure instead of the full section list -- the caller (`OutlineSidebar`)
     /// captures its per-body-pass `visible` snapshot directly, so this view doesn't need to
     /// hold (or re-derive) the whole array just to answer one query on option-drag start.
+    /// Because it closes over a snapshot rather than reading through live state, this closure
+    /// goes stale whenever `updateNSView` is skipped -- see `structuralSignature` below, which
+    /// exists specifically to bound that staleness.
     let collectSubtreeIds: (String) -> [String]
     let isGhost: Bool
     var isActive: Bool = false
+    /// `OutlineSidebar.structuralSignature(of:)` for the section order/levels this instance was
+    /// built against. Not itself a render input -- folded into `==` purely to force
+    /// `updateNSView` to re-run, for every card, whenever a reorder or promote/demote happens,
+    /// even for a card whose own `section`/`isGhost`/`isActive` are unchanged. See `==`'s doc
+    /// comment for why that matters.
+    let structuralSignature: Int
     let onDragStarted: (Set<String>) -> Void
     let onDragEnded: () -> Void
     let onSingleClick: () -> Void
     let onDoubleClick: (ZoomMode) -> Void
     let onSectionUpdated: ((SectionViewModel) -> Void)?  // Called when word goal changes
     var onHoverChanged: ((Bool) -> Void)?  // Bubbles hover from SectionCardView to OutlineSidebar
+
+    /// Manual `Equatable` conformance so SwiftUI can skip `updateNSView` when nothing that
+    /// matters actually changed. The compiler can't synthesize this: closures aren't
+    /// `Equatable`, and this struct carries several (`collectSubtreeIds`, `onDragStarted`,
+    /// `onDragEnded`, `onSingleClick`, `onDoubleClick`, `onSectionUpdated`, `onHoverChanged`).
+    ///
+    /// What's compared:
+    ///  - `section` by reference identity (`===`). `SectionViewModel` is an `@Observable`
+    ///    class that callers update in place to preserve identity (see `apply(_:)`'s doc
+    ///    comment in SectionCardView.swift) specifically so per-card Observable tracking
+    ///    doesn't tear down and reinstall. As long as the reference is unchanged, content
+    ///    edits (title, word count, status, etc.) still propagate to the already-hosted
+    ///    `SectionCardView` via `@Observable`'s own tracking -- `updateNSView` doesn't need
+    ///    to re-run for that. A different reference means a genuinely different section and
+    ///    must re-wire the hosted view.
+    ///  - `isGhost` / `isActive`: plain value flags that directly affect how
+    ///    `SectionCardView` renders and aren't otherwise observable.
+    ///  - `structuralSignature`: NOT a render input by itself. Closures are excluded from this
+    ///    comparison because they can't be compared and none of them affects what THIS card
+    ///    renders -- but excluding them only stays safe as long as a stale copy is never
+    ///    actually invoked with a wrong answer. `updateNSView` is the only thing that copies a
+    ///    fresh `self` (and its closures) into `context.coordinator.parent`; skip it and every
+    ///    closure here keeps running against whatever it closed over last time it ran, forever
+    ///    (in particular `collectSubtreeIds`, which closes over `OutlineSidebar`'s per-body-pass
+    ///    `visible` snapshot). `structuralSignature` changes on any reorder or promote/demote,
+    ///    which forces `updateNSView` -- and therefore a coordinator refresh -- on every card
+    ///    exactly when that staleness would otherwise be observable, while leaving pure content
+    ///    edits (which don't change any card's subtree computation) free to skip it. See
+    ///    `OutlineSidebar.structuralSignature(of:)`.
+    static func == (lhs: DraggableCardView, rhs: DraggableCardView) -> Bool {
+        lhs.section === rhs.section && lhs.isGhost == rhs.isGhost && lhs.isActive == rhs.isActive
+            && lhs.structuralSignature == rhs.structuralSignature
+    }
 
     @Environment(ThemeManager.self) private var themeManager
 
