@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **A new "Markdown Only" option in File ▸ Export Markdown** — exports your document as a single plain markdown file with no images and no extra folder alongside it, for when you just want the text. Code you've written inside a code block, and anything that merely looks like an image inside one, is left exactly as typed.
+
 ## [0.2.124] - 2026-08-13
 
 ### Fixed

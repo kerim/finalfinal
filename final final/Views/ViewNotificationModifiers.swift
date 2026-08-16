@@ -153,6 +153,9 @@ extension View {
             .onReceive(NotificationCenter.default.publisher(for: .importMarkdown)) { _ in
                 FileOperations.handleImportMarkdown()
             }
+            .onReceive(NotificationCenter.default.publisher(for: .exportMarkdownOnly)) { _ in
+                Task { await FileOperations.handleExportMarkdownOnly() }
+            }
             .onReceive(NotificationCenter.default.publisher(for: .exportMarkdownWithImages)) { _ in
                 Task { await FileOperations.handleExportMarkdownWithImages() }
             }
