@@ -61,6 +61,22 @@ extension ExportService {
         return MarkdownExportResult(outputURL: outputURL, warnings: warnings)
     }
 
+    /// Export plain markdown text -- no images, no sidecar image folder. `content` is
+    /// expected to already have image markup removed (see
+    /// `BlockParser.assembleMarkdownOnlyForExport`); this just writes it out atomically as
+    /// UTF-8, sibling to `exportMarkdownWithImages` but without any of its image-copying or
+    /// path-rewriting work, since there is nothing left to copy or rewrite.
+    /// - Parameters:
+    ///   - content: Plain markdown content (already assembled, images already stripped)
+    ///   - outputURL: Destination .md file URL
+    func exportMarkdownOnly(
+        content: String,
+        outputURL: URL
+    ) throws -> MarkdownExportResult {
+        try content.write(to: outputURL, atomically: true, encoding: .utf8)
+        return MarkdownExportResult(outputURL: outputURL, warnings: [])
+    }
+
     /// Export as TextBundle package.
     /// - Parameters:
     ///   - content: Standard markdown content (already assembled)
