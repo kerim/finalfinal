@@ -15,6 +15,8 @@ extension Notification.Name {
     static let exportDocument = Notification.Name("exportDocument")
     /// Request to show export preferences
     static let showExportPreferences = Notification.Name("showExportPreferences")
+    /// Request to export plain markdown text, no images
+    static let exportMarkdownOnly = Notification.Name("exportMarkdownOnly")
     /// Request to export markdown with images in a folder
     static let exportMarkdownWithImages = Notification.Name("exportMarkdownWithImages")
     /// Request to export as TextBundle
