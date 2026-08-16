@@ -254,12 +254,33 @@ class CiteprocEngine {
     return plainEntries.join('\n\n');
   }
 
-  // Reset engine with new style
+  // Reset engine with new style. A malformed/garbled custom CSL file (a corrupted download,
+  // or a user-provided .csl that isn't actually valid CSL) must degrade gracefully rather
+  // than brick live citation rendering for the rest of the session -- the Swift bridge call
+  // (setCitationStyle -> pushCitationStyle) has no error-handling path of its own, so an
+  // uncaught throw here would leave the engine in whatever half-initialized state
+  // initEngine()'s own try/catch left it in after rethrowing.
   setStyle(styleXML: string): void {
+    const previousStyleXML = this.styleXML;
     this.styleXML = styleXML;
-    this.initEngine();
+    try {
+      this.initEngine();
+    } catch (error) {
+      console.error('[CiteprocEngine] setStyle failed with invalid CSL, rolling back to previous style:', error);
+      this.styleXML = previousStyleXML;
+      try {
+        this.initEngine();
+      } catch (rollbackError) {
+        // The previous style was already active a moment ago, so this should be
+        // unreachable -- but never let a rollback failure escape either.
+        console.error('[CiteprocEngine] Rollback to previous style also failed:', rollbackError);
+        return;
+      }
+    }
 
-    // Re-add items
+    // Re-add items to whichever engine ended up active (the new style, or the rolled-back
+    // previous one) -- initEngine() always constructs a fresh CSL.Engine with no items
+    // registered yet.
     const items = Array.from(this.items.values());
     if (items.length > 0) {
       this.setBibliography(items);

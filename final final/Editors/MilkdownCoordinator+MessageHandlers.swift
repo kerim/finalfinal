@@ -33,12 +33,38 @@ extension MilkdownEditor.Coordinator {
         batchInitialize()
         startPolling()
 
+        // Push the effective CSL citation style (custom or bundled) before the citation
+        // library, matching the citeproc engine's own dependency order: style, then items.
+        pushCitationStyle()
+
         // Push cached citation library to editor (ensures citations format correctly
         // when switching from CodeMirror where CSL items were fetched)
         pushCachedCitationLibrary()
 
         // Notify parent that WebView is ready (for find operations)
         onWebViewReady?(webView)
+    }
+
+    /// Push the effective CSL citation style (custom, if configured and valid, else bundled
+    /// Chicago) to the editor's citeproc engine. Called at both webview-ready paths below
+    /// (before `pushCachedCitationLibrary()`) AND from the `.citationStyleChanged` observer
+    /// (`MilkdownCoordinator+NotificationObservers.swift`) whenever the Export preferences
+    /// toggle or path changes.
+    ///
+    /// Always reads and pushes `effectiveCSLStylePath`'s current value, even when it resolves
+    /// to the bundled default -- no "skip if it's just the bundled style" optimization. That
+    /// optimization would be safe at webview-ready (the citeproc engine already constructs
+    /// itself with the bundled style as its compiled-in default), but is NOT safe on the
+    /// notification path: reverting the toggle off after a custom style was active needs the
+    /// bundled style pushed explicitly, or the live editor keeps rendering citations in the
+    /// old custom style until the app relaunches.
+    func pushCitationStyle() {
+        guard let path = ExportSettingsManager.shared.settings.effectiveCSLStylePath,
+              let styleXML = try? String(contentsOf: URL(fileURLWithPath: path), encoding: .utf8) else {
+            DebugLog.log(.zotero, "[MilkdownEditor] Could not read CSL style file to push to editor")
+            return
+        }
+        setCitationStyle(styleXML)
     }
 
     /// Push cached CSL items from ZoteroService to the editor's citeproc engine
@@ -59,6 +85,7 @@ extension MilkdownEditor.Coordinator {
         applyPersistedToggleStates()
         batchInitialize()
         startPolling()
+        pushCitationStyle()
         pushCachedCitationLibrary()
 
         // Notify parent that WebView is ready (for find operations)

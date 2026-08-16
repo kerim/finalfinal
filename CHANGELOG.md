@@ -8,8 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
-- **Tables can now be deleted in one click** — the floating toolbar that appears over a table in the formatted editor has a new "Delete table" button that removes the whole table at once, leaving the surrounding text untouched. It's shown in red and set apart on its own, after the alignment dropdown, so it's not next to the row/column delete buttons where a stray click could take out an entire table by accident.
-- **A new "Markdown Only" option in File ▸ Export Markdown** — exports your document as a single plain markdown file with no images and no extra folder alongside it, for when you just want the text. Code you've written inside a code block, and anything that merely looks like an image inside one, is left exactly as typed.
+- **Export preferences now has a "Use custom citation style" option** — load your own citation style (`.csl`) file instead of being locked to the built-in Chicago style. Citations already on screen reformat live, with no reload needed, the moment you turn it on, change the file, or turn it back off.
 
 ## [0.2.124] - 2026-08-13
 

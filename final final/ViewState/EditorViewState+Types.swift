@@ -46,6 +46,10 @@ extension Notification.Name {
     static let toggleHighlight = Notification.Name("toggleHighlight")
     /// Posted when citation library should be pushed to editor
     static let citationLibraryChanged = Notification.Name("citationLibraryChanged")
+    /// Posted when the active CSL citation style changes (Export preferences: custom-style
+    /// toggle or path edited) — editors should re-push the effective style (custom or
+    /// bundled) to the live in-editor citeproc engine.
+    static let citationStyleChanged = Notification.Name("citationStyleChanged")
     /// Posted when bibliography section content changes in the database
     static let bibliographySectionChanged = Notification.Name("bibliographySectionChanged")
     /// Posted when footnote notes section content changes in the database

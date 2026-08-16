@@ -24,6 +24,7 @@ extension MilkdownEditor.Coordinator {
         clearObserver(&insertAnnotationObserver)
         clearObserver(&toggleHighlightObserver)
         clearObserver(&citationLibraryObserver)
+        clearObserver(&citationStyleObserver)
         clearObserver(&refreshAllCitationsObserver)
         clearObserver(&editorModeObserver)
         clearObserver(&spellcheckStateObserver)
@@ -200,7 +201,11 @@ extension MilkdownEditor.Coordinator {
     /// Set CSL style for citation formatting
     func setCitationStyle(_ styleXML: String) {
         guard isEditorReady, let webView else { return }
-        let escaped = styleXML.replacingOccurrences(of: "`", with: "\\`")
+        // A hand-rolled backtick-only replace here used to let a `${...}` sequence inside the
+        // style XML (or a stray backslash) break out of the JS template literal -- every
+        // other bridge call in this file uses the shared escapedForJSTemplateLiteral helper
+        // (see setCitationLibrary, setFootnoteDefinitions above) for exactly this reason.
+        let escaped = styleXML.escapedForJSTemplateLiteral
         webView.evaluateJavaScript("window.FinalFinal.setCitationStyle(`\(escaped)`)") { _, _ in }
     }
 

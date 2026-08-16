@@ -190,6 +190,16 @@ export function setCitationLibraryApi(items: CSLItem[]): void {
 
 export function setCitationStyle(styleXML: string): void {
   getCiteprocEngine().setStyle(styleXML);
+  // Notify citation nodes that the active style has changed so they re-render with the new
+  // formatting. An empty `view.dispatch(view.state.tr)` transaction (as used elsewhere in this
+  // file for annotation redecoration) is NOT sufficient here: it leaves the document and its
+  // decorations unchanged, so ProseMirror's view layer never calls the citation NodeView's
+  // `update()`. The citation NodeView (citation-plugin.ts) instead listens directly for this
+  // DOM CustomEvent and calls its own `updateDisplay()` -- the same mechanism
+  // `setCitationLibraryApi()` above already relies on when the underlying citation data
+  // changes. Reused here (rather than a separate event) because the effect needed is
+  // identical: "re-run citeproc formatting for every on-screen citation."
+  document.dispatchEvent(new CustomEvent('citation-library-updated'));
   // Trigger re-render of citations
   const editorInstance = getEditorInstance();
   if (editorInstance) {

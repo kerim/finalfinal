@@ -71,7 +71,6 @@ struct OutlineSidebar: View {
         // fix (Fix 2) that keeps card identity stable across updates.
         let visible = filteredSections
         let levelInfos = Self.levelInfos(for: visible)
-        let structuralSignature = Self.structuralSignature(of: visible)
         VStack(spacing: 0) {
             OutlineFilterBar(
                 selectedLevel: $headerLevelFilter,
@@ -88,7 +87,7 @@ struct OutlineSidebar: View {
             if visible.isEmpty {
                 emptyState
             } else {
-                sectionsList(visible: visible, levelInfos: levelInfos, structuralSignature: structuralSignature)
+                sectionsList(visible: visible, levelInfos: levelInfos)
             }
         }
         .frame(minWidth: 250, idealWidth: 300, maxWidth: 400)
@@ -216,39 +215,12 @@ struct OutlineSidebar: View {
         }
     }
 
-    /// Structural signature of an ordered section list -- the sequence of `(id, headerLevel)`
-    /// pairs that `subtreeIds(rootId:in:)` walks to compute a drag payload. Computed once per
-    /// body pass (like `levelInfos` above) and threaded into every `DraggableCardView` built
-    /// from this list, where it's folded into `Equatable` (see that type's doc comment) so a
-    /// reorder or promote/demote always forces `updateNSView` to re-run for every card, even
-    /// ones whose own `section`/`isGhost`/`isActive` are unchanged -- because `updateNSView` is
-    /// the only thing that refreshes `context.coordinator.parent`, and with it the
-    /// `collectSubtreeIds` closure `sectionCard` builds by capturing this pass's `visible`
-    /// snapshot.
-    ///
-    /// Deliberately excludes every other section property (title, word count, status, ...) --
-    /// those already propagate to a hosted card via `@Observable` and don't change what any
-    /// *other* card's subtree walk would compute, so a pure content edit should still let
-    /// untouched cards skip `updateNSView`.
-    static func structuralSignature(of sections: [SectionViewModel]) -> Int {
-        var hasher = Hasher()
-        for section in sections {
-            hasher.combine(section.id)
-            hasher.combine(section.headerLevel)
-        }
-        return hasher.finalize()
-    }
-
-    private func sectionsList(
-        visible: [SectionViewModel], levelInfos: [SectionLevelInfo], structuralSignature: Int
-    ) -> some View {
+    private func sectionsList(visible: [SectionViewModel], levelInfos: [SectionLevelInfo]) -> some View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: 0) {
                     ForEach(Array(visible.enumerated()), id: \.element.id) { index, section in
-                        sectionCard(
-                            section: section, index: index, visible: visible, levelInfos: levelInfos,
-                            structuralSignature: structuralSignature)
+                        sectionCard(section: section, index: index, visible: visible, levelInfos: levelInfos)
 
                         Divider()
                             .foregroundColor(themeManager.currentTheme.dividerColor)
@@ -334,28 +306,18 @@ struct OutlineSidebar: View {
     /// through rather than re-derived here, which previously made per-card cost O(N log N)
     /// (so O(N^2 log N) across all cards) in section count on every update.
     private func sectionCard(
-        section: SectionViewModel, index: Int, visible: [SectionViewModel], levelInfos: [SectionLevelInfo],
-        structuralSignature: Int
+        section: SectionViewModel, index: Int, visible: [SectionViewModel], levelInfos: [SectionLevelInfo]
     ) -> some View {
         // Use DraggableCardView for cursor offset control via AppKit. The subtree walk is
         // handed over as a closure rather than the full `allSections` array so the closure can
         // capture this body pass's `visible` snapshot directly -- same childIds/pasteboard
-        // payload a fresh `filteredSections` read would produce.
-        //
-        // That snapshot is only current as of the click if `updateNSView` actually ran for this
-        // card since the last reorder. `DraggableCardView`'s `Equatable` conformance can skip
-        // `updateNSView` for a card whose own `section`/`isGhost`/`isActive` are unchanged,
-        // which would otherwise leave `context.coordinator.parent` (and this closure) pointing
-        // at the pre-reorder list. `structuralSignature`, passed below, exists to prevent
-        // exactly that: it changes on any reorder or promote/demote, which forces
-        // `updateNSView` -- and a freshly-captured closure -- on every card, including ones
-        // this snapshot alone wouldn't distinguish.
+        // payload a fresh `filteredSections` read would produce, since drag start always reads
+        // through to the section list current as of the click.
         DraggableCardView(
             section: section,
             collectSubtreeIds: { rootId in Self.subtreeIds(rootId: rootId, in: visible) },
             isGhost: draggingSubtreeIds.contains(section.id),
             isActive: section.id == currentSectionId,
-            structuralSignature: structuralSignature,
             onDragStarted: { draggedIds in
                 // Track subtree IDs for ghost state
                 draggingSubtreeIds = draggedIds

@@ -9,7 +9,6 @@ import {
   CellSelection,
   deleteColumn,
   deleteRow,
-  deleteTable,
   isInTable,
   selectedRect,
 } from 'prosemirror-tables';
@@ -68,10 +67,10 @@ function createToolbar(): HTMLElement {
   toolbar.className = 'table-toolbar';
   toolbar.setAttribute('data-show', 'false');
 
-  const mkBtn = (ariaLabel: string, text: string, extraClass?: string): HTMLButtonElement => {
+  const mkBtn = (ariaLabel: string, text: string): HTMLButtonElement => {
     const btn = document.createElement('button');
     btn.type = 'button';
-    btn.className = extraClass ? `table-toolbar-btn ${extraClass}` : 'table-toolbar-btn';
+    btn.className = 'table-toolbar-btn';
     btn.setAttribute('aria-label', ariaLabel);
     btn.title = ariaLabel;
     btn.textContent = text;
@@ -105,14 +104,6 @@ function createToolbar(): HTMLElement {
     sel.appendChild(opt);
   }
   toolbar.appendChild(sel);
-
-  // Divider + delete-table button go LAST, after the alignment dropdown —
-  // deliberately far from ×row/×col so an accidental click near those
-  // frequently-used buttons can't nuke the whole table.
-  const deleteSep = document.createElement('div');
-  deleteSep.className = 'table-toolbar-sep';
-  toolbar.appendChild(deleteSep);
-  toolbar.appendChild(mkBtn('Delete table', '×table', 'is-danger'));
 
   document.body.appendChild(toolbar);
   return toolbar;
@@ -244,7 +235,6 @@ export const tableToolsPlugin = $prose(() => {
       wireBtn('Add column right', addColumnAfter as never);
       wireBtn('Delete row', deleteRow as never);
       wireBtn('Delete column', deleteColumn as never);
-      wireBtn('Delete table', deleteTable as never);
 
       const alignSel = toolbar!.querySelector('.table-toolbar-align') as HTMLSelectElement;
       alignSel.addEventListener('mousedown', (e) => {
@@ -272,24 +262,12 @@ export const tableToolsPlugin = $prose(() => {
           (btn('Delete column') as HTMLButtonElement).disabled = info.colCount <= 1;
           const alignSel = toolbar!.querySelector('.table-toolbar-align') as HTMLSelectElement;
           alignSel.value = info.currentAlign ?? '';
-          const wasShown = toolbar!.getAttribute('data-show') === 'true';
-          // Flip data-show BEFORE measuring offsetWidth: the toolbar is
-          // display:none until this attribute is "true" (see styles.css),
-          // and a hidden element always reports 0 for offsetWidth — clamping
-          // against that would pin the toolbar to the left margin every time.
-          toolbar!.setAttribute('data-show', 'true');
-          // Clamp horizontally so the toolbar (and the far-right "Delete
-          // table" button in particular) can't overflow past either edge of
-          // the viewport — e.g. a table near the right edge with the
-          // Annotations panel open narrowing the WebView.
-          const margin = 8;
-          const maxLeft = Math.max(margin, document.documentElement.clientWidth - toolbar!.offsetWidth - margin);
-          const clampedLeft = Math.min(Math.max(margin, info.left), maxLeft);
-          toolbar!.style.left = `${clampedLeft}px`;
+          toolbar!.style.left = `${info.left}px`;
           toolbar!.style.top = `${Math.max(0, info.top - 44)}px`;
-          if (!wasShown) {
+          if (toolbar!.getAttribute('data-show') !== 'true') {
             log('update: showing', `cols=${info.colCount} rows=${info.dataRowCount} align=${info.currentAlign}`);
           }
+          toolbar!.setAttribute('data-show', 'true');
         },
         destroy() {
           toolbar?.remove();

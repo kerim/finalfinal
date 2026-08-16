@@ -94,6 +94,17 @@ extension MilkdownEditor.Coordinator {
                 await self?.refreshAllCitations()
             }
         }
+
+        // Subscribe to CSL citation style changes (Export preferences: custom-style toggle
+        // or path edited). Always re-pushes the current effective style -- including a
+        // revert to bundled -- see pushCitationStyle's doc comment.
+        citationStyleObserver = NotificationCenter.default.addObserver(
+            forName: .citationStyleChanged,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.pushCitationStyle()
+        }
     }
 
     func subscribeToProofingNotifications() {

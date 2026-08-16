@@ -345,6 +345,7 @@ struct MilkdownEditor: NSViewRepresentable {
         var insertAnnotationObserver: NSObjectProtocol?
         var toggleHighlightObserver: NSObjectProtocol?
         var citationLibraryObserver: NSObjectProtocol?
+        var citationStyleObserver: NSObjectProtocol?
         var refreshAllCitationsObserver: NSObjectProtocol?
         var insertCitationObserver: NSObjectProtocol?
         var editorModeObserver: NSObjectProtocol?
@@ -442,6 +443,7 @@ struct MilkdownEditor: NSViewRepresentable {
             removeObserverIfPresent(insertAnnotationObserver)
             removeObserverIfPresent(toggleHighlightObserver)
             removeObserverIfPresent(citationLibraryObserver)
+            removeObserverIfPresent(citationStyleObserver)
             removeObserverIfPresent(refreshAllCitationsObserver)
             removeObserverIfPresent(editorModeObserver)
             removeObserverIfPresent(spellcheckStateObserver)

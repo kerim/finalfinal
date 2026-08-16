@@ -269,7 +269,9 @@ extension ExportService {
     /// write succeeds, a still-partial batch (some requested keys not found/ambiguous) gets
     /// `partialBibliographyWarning`; when the write itself fails, only the write-failure
     /// warning is returned — nothing was "omitted from the bibliography" that was never
-    /// written and never passed to pandoc, so pairing both would be self-contradictory.
+    /// written and never passed to pandoc, so pairing both would be self-contradictory. The
+    /// custom-CSL-style warning is independent of that pairing (it's about which `--csl` was
+    /// used, not the bibliography write) and can appear alongside either.
     ///
     /// Factored out of `citationArguments` (its only real call site) so a unit test can
     /// exercise the write-failure branch directly — by pointing `tempDir` at a location that
@@ -296,8 +298,38 @@ extension ExportService {
                 "--citeproc", "--bibliography", bibURL.path,
                 "--metadata", "reference-section-title=\(settings.effectiveBibliographyHeaderName)"
             ])
-            if let cslPath = ExportService.bundledCSLStylePath {
+            // Resolve the custom-style state ONCE (a single file read + parse) and reuse it
+            // for both the `--csl` argument and the warning below, instead of calling
+            // `effectiveCSLStylePath`/`isCustomCSLStyleValid` separately -- each of which
+            // independently re-reads and re-parses the file -- which could disagree with
+            // itself if the file changed between those calls.
+            let cslResolution = settings.resolveCSLStyle()
+            let cslPath: String?
+            switch cslResolution {
+            case .valid(let path):
+                cslPath = path
+            case .notCustom, .notConfigured, .notFound, .invalidCSL:
+                cslPath = ExportService.bundledCSLStylePath
+            }
+            if let cslPath {
                 args.append(contentsOf: ["--csl", cslPath])
+            }
+            // The custom-style toggle can silently be serving the bundled Chicago style
+            // instead of the user's configured one, for three distinct reasons -- no path
+            // configured yet, a configured path that doesn't exist, or a file that exists but
+            // isn't a usable CSL style (see `resolveCSLStyle`'s doc comment). A
+            // preferences-pane caption alone is invisible to someone who set this weeks ago
+            // and is exporting today from a different screen, so surface it here too, with
+            // wording that actually matches which of the three happened.
+            switch cslResolution {
+            case .notCustom, .valid:
+                break
+            case .notConfigured:
+                warnings.append("No custom citation style file specified — exported using the built-in Chicago style.")
+            case .notFound:
+                warnings.append("Custom citation style not found — exported using the built-in Chicago style.")
+            case .invalidCSL:
+                warnings.append("Custom citation style is not valid CSL — exported using the built-in Chicago style.")
             }
             if !notFoundKeys.isEmpty || !ambiguousKeys.isEmpty {
                 warnings.append(partialBibliographyWarning(notFound: notFoundKeys, ambiguous: ambiguousKeys))
