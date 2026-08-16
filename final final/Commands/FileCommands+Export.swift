@@ -50,8 +50,9 @@ extension FileOperations {
         savePanel.begin { response in
             guard response == .OK, var url = savePanel.url else { return }
 
-            // Ensure .md extension
-            if url.pathExtension != "md" {
+            // Ensure .md extension -- case-insensitive, so a user-typed "Notes.MD" is
+            // recognized as already having the extension instead of becoming "Notes.MD.md".
+            if url.pathExtension.lowercased() != "md" {
                 url = url.appendingPathExtension("md")
             }
 
@@ -72,6 +73,89 @@ extension FileOperations {
                 }
             }
         }
+    }
+
+    static func handleExportMarkdownOnly() async {
+        let dm = DocumentManager.shared
+        guard dm.projectDatabase != nil, dm.projectId != nil else {
+            showNoContentError()
+            return
+        }
+
+        // Fetch blocks (flushing pending editor edits first), then assemble plain markdown
+        // with no image markup left behind by stripping it.
+        let blocks: [Block]
+        do {
+            blocks = try await dm.exportBlocks()
+        } catch {
+            showErrorAlert("Could Not Load Content", error: error)
+            return
+        }
+
+        let content = BlockParser.assembleMarkdownOnlyForExport(from: blocks)
+        guard !content.isEmpty else {
+            // Empty here doesn't necessarily mean the document itself is empty -- it can also
+            // mean every block was an image (or was image markup and nothing else), which
+            // assembleMarkdownOnlyForExport correctly strips down to nothing. Distinguish the
+            // two so the error reflects what's actually true. assembleStandardMarkdownForExport
+            // (unfiltered -- it keeps image markup, unlike assembleMarkdownOnlyForExport) being
+            // non-empty here means `blocks` DID carry real content; since the Markdown Only
+            // assembly of that same content came back empty, that content can only have been
+            // images -- text content would have survived unstripped and made `content` above
+            // non-empty too.
+            let documentHasContent = !BlockParser.assembleStandardMarkdownForExport(from: blocks).isEmpty
+            if documentHasContent {
+                showImagesOnlyError()
+            } else {
+                showNoContentError()
+            }
+            return
+        }
+
+        let defaultName = dm.projectTitle ?? "Untitled"
+
+        let savePanel = NSSavePanel()
+        savePanel.title = "Export Markdown Only"
+        savePanel.nameFieldLabel = "File Name:"
+        savePanel.nameFieldStringValue = defaultName
+        savePanel.allowedContentTypes = [.plainText]
+        savePanel.canCreateDirectories = true
+
+        savePanel.begin { response in
+            guard response == .OK, let panelURL = savePanel.url else { return }
+            let url = markdownExportURL(for: panelURL)
+
+            savePanel.orderOut(nil)
+
+            Task { @MainActor in
+                let exportService = ExportService()
+                do {
+                    let result = try await exportService.exportMarkdownOnly(
+                        content: content,
+                        outputURL: url
+                    )
+                    showMarkdownExportSuccess(result: result)
+                } catch {
+                    showErrorAlert("Could Not Export File", error: error)
+                }
+            }
+        }
+    }
+
+    /// Ensures a markdown export URL ends in `.md` -- case-insensitively, so a user-typed
+    /// "Notes.MD" is recognized as already having the extension instead of becoming
+    /// "Notes.MD.md" -- and REPLACES any other extension rather than stacking `.md` on top
+    /// of it. That replacement matters because `savePanel.allowedContentTypes = [.plainText]`
+    /// makes NSSavePanel itself auto-append ".txt" (plain text's preferred extension) to any
+    /// name typed without an extension -- e.g. a save panel opened with the default name
+    /// "Notes" resolves to `savePanel.url` "Notes.txt" before this function ever runs. The
+    /// previous logic only appended ".md" when the extension wasn't already "md", so that
+    /// auto-appended ".txt" survived and became "Notes.txt.md" instead of "Notes.md".
+    static func markdownExportURL(for url: URL) -> URL {
+        if url.pathExtension.lowercased() == "md" {
+            return url
+        }
+        return url.deletingPathExtension().appendingPathExtension("md")
     }
 
     static func handleExportTextBundle() async {
@@ -160,5 +244,15 @@ extension FileOperations {
         let msg = "Open a project with content before exporting."
         let err = NSError(domain: "", code: 0, userInfo: [NSLocalizedDescriptionKey: msg])
         showErrorAlert("No Content to Export", error: err)
+    }
+
+    /// Distinct from `showNoContentError()`: this document is NOT empty -- it has content, but
+    /// that content is entirely images, which "Markdown Only" deliberately excludes. Saying
+    /// "open a project with content" here would be false and confusing.
+    private static func showImagesOnlyError() {
+        let msg = "This document only contains images, which \"Markdown Only\" export leaves out. "
+            + "Use \"Markdown with Images...\" instead to include them."
+        let err = NSError(domain: "", code: 0, userInfo: [NSLocalizedDescriptionKey: msg])
+        showErrorAlert("No Text to Export", error: err)
     }
 }
