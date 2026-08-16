@@ -354,8 +354,7 @@ enum MarkdownUtils {
         //   5 = inline math ($...$)          6 = full highlight match (==...==)
         //   7 = highlight inner text (captured content between the == markers)
         let pattern = #"""
-        (```[\s\S]*?```)|(~~~[\s\S]*?~~~)|(`[^`]+`)|(\$\$[\s\S]+?\$\$)|\#
-        ((?<![A-Za-z0-9$])\$(?=\S)[^\$\n]+?(?<=\S)\$(?![A-Za-z0-9$]))|((?<!=)==(?!=)((?:(?!==)[\s\S])+?)==)
+        (```[\s\S]*?```)|(~~~[\s\S]*?~~~)|(`[^`]+`)|(\$\$[\s\S]+?\$\$)|((?<![A-Za-z0-9$])\$(?=\S)[^\$\n]+?(?<=\S)\$(?![A-Za-z0-9$]))|((?<!=)==(?!=)((?:(?!==)[\s\S])+?)==)
         """#
 
         guard let regex = try? NSRegularExpression(pattern: pattern) else {
@@ -390,68 +389,6 @@ enum MarkdownUtils {
                 result += nsMarkdown.substring(with: match.range)
             }
 
-            lastEnd = match.range.location + match.range.length
-        }
-
-        if lastEnd < nsMarkdown.length {
-            result += nsMarkdown.substring(with: NSRange(location: lastEnd, length: nsMarkdown.length - lastEnd))
-        }
-
-        return result
-    }
-
-    /// The image markdown pattern used by `strippingImages(from:)`: `![alt](url){attrs}`,
-    /// with an OPTIONAL trailing `{...}` attribute block (Pandoc width/attrs syntax), a
-    /// `\s*` allowance before that block so a space-separated attribute block (`![alt](x.png)
-    /// {width=50%}` -- legal Pandoc, and what a hand-typed or pasted attribute block often
-    /// looks like) is still recognized as part of the image rather than left behind as a
-    /// stray, visible `{width=50%}` in the "Markdown Only" export, a deliberately permissive
-    /// URL group (`[^)]*`, not `[^)]+`) so a hand-typed or pasted `![]()` placeholder is
-    /// stripped too, and an escape-aware bracket-text group (`(?:[^\]\\]|\\.)*`, not a bare
-    /// `[^\]]*`) so a caption containing an escaped bracket (`\]`) doesn't prematurely end the
-    /// match -- same escape-aware approach `BlockParser.parseImageFragmentMeta`
-    /// (BlockParser+Images.swift) uses for the identical reason.
-    ///
-    /// Close cousin of, but NOT unified with, `stripMarkdownSyntax`'s own inline image
-    /// pattern (`imagePattern`, above): that one requires a non-empty URL (`[^)]+`) and a
-    /// plain (non-escape-aware) bracket group, matching real generated markdown exactly for
-    /// word-count purposes, where under-matching is safer than over-matching. Unifying the
-    /// two risked silently changing `stripMarkdownSyntax`'s well-tested word-count behavior
-    /// for the sake of one shared constant -- not worth the risk, so these stay two
-    /// deliberately separate, slightly different patterns for two different callers with two
-    /// different jobs.
-    private static let imageStripPattern = try? NSRegularExpression(
-        pattern: #"!\[(?:[^\]\\]|\\.)*\]\([^)]*\)(\s*\{[^}]*\})?"#
-    )
-
-    /// Remove image markdown (`![alt](url){attrs}`) from `markdown`, leaving fenced code
-    /// blocks and inline code spans untouched -- e.g. an image reference someone typed
-    /// inside a code fence to DOCUMENT markdown image syntax survives verbatim instead of
-    /// being stripped as if it were a real image.
-    ///
-    /// Implemented by scanning `MarkdownUtils.maskCodeContent(in:)`'s masked (length-
-    /// preserving) copy of `markdown` for matches -- so a real image inside code content is
-    /// invisible to the pattern, since that span is now all spaces in the masked copy -- and
-    /// then applying the removal to the ORIGINAL, unmasked string at those same offsets, so
-    /// code content itself is copied through byte-for-byte rather than reconstructed from
-    /// the mask. Used for the "Markdown Only" export (plain text, no images, no sidecar
-    /// image folder) -- see `BlockParser.assembleMarkdownOnlyForExport`, the sole call site.
-    static func strippingImages(from markdown: String) -> String {
-        guard let pattern = imageStripPattern else { return markdown }
-
-        let masked = maskCodeContent(in: markdown)
-        let nsMarkdown = markdown as NSString
-        let fullRange = NSRange(location: 0, length: nsMarkdown.length)
-        var result = ""
-        var lastEnd = 0
-
-        pattern.enumerateMatches(in: masked, options: [], range: fullRange) { match, _, _ in
-            guard let match else { return }
-            if match.range.location > lastEnd {
-                result += nsMarkdown.substring(
-                    with: NSRange(location: lastEnd, length: match.range.location - lastEnd)
-                )
-            }
             lastEnd = match.range.location + match.range.length
         }
 

@@ -71,10 +71,6 @@ struct FileCommands: Commands {
                     NotificationCenter.default.post(name: .exportMarkdownWithImages, object: nil)
                 }
 
-                Button("Markdown Only...") {
-                    NotificationCenter.default.post(name: .exportMarkdownOnly, object: nil)
-                }
-
                 Button("TextBundle...") {
                     NotificationCenter.default.post(name: .exportTextBundle, object: nil)
                 }
