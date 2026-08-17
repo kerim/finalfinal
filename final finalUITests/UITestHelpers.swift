@@ -218,6 +218,162 @@ enum E2EShotDir {
     }
 }
 
+// MARK: - Proven-Pattern Query Helpers
+//
+// Each helper below encodes a failure mode diagnosed live in the 2026-08-16
+// superdev batch (see "Proven patterns" in .claude/skills/e2e-verify/SKILL.md).
+// Disposable e2e tests should compose these instead of re-deriving queries.
+
+extension XCUIApplication {
+    /// The WKWebView editor container. Every query for editor content must be
+    /// scoped here: a bare `app.staticTexts[...]` also matches the outline
+    /// sidebar's mirror of each heading, and `.firstMatch` resolves to the
+    /// *sidebar* match first — so an unscoped "click the heading" clicks a
+    /// sidebar row instead.
+    var editorArea: XCUIElement {
+        groups["editor-area"]
+    }
+
+    /// First StaticText inside the editor whose value (or, for heading
+    /// containers, label) starts with `text`, or nil if none appears within
+    /// `timeout`.
+    ///
+    /// Matching is done in Swift, not NSPredicate: heading containers carry a
+    /// non-string value (the heading level, an NSNumber), and any substring
+    /// predicate (`CONTAINS`, `BEGINSWITH`) evaluated against one throws
+    /// NSInvalidArgumentException at resolution time. Prefix (not exact)
+    /// matching, because a leaf text run carries a trailing space when an
+    /// inline link follows, and a heading container's label concatenates all
+    /// child text — exact equality matches neither.
+    ///
+    /// Re-call after every mutation: a handle resolved before typing goes
+    /// stale once the text changes.
+    func editorStaticText(startingWith text: String, timeout: TimeInterval = 10) -> XCUIElement? {
+        let deadline = Date(timeIntervalSinceNow: timeout)
+        repeat {
+            for element in editorArea.staticTexts.allElementsBoundByIndex {
+                if let value = element.value as? String, value.hasPrefix(text) {
+                    return element
+                }
+                if element.label.hasPrefix(text) {
+                    return element
+                }
+            }
+            RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.25))
+        } while Date() < deadline
+        return nil
+    }
+
+    /// Waits for a menu item by TITLE and returns it, or fails. XCUITest gives
+    /// `NSMenuItem` only `title` and an identifier (`menuAction:`) — no
+    /// `label` — so a `label BEGINSWITH` query against `menuItems` matches
+    /// nothing, forever, while the item sits open and visible on screen.
+    /// Prefix matching, for items whose title embeds a document name
+    /// ("Undo Restore of ...").
+    @discardableResult
+    func menuItem(titleStartingWith prefix: String, timeout: TimeInterval = 10,
+                  file: StaticString = #filePath, line: UInt = #line) -> XCUIElement {
+        let item = menuItems.matching(
+            NSPredicate(format: "title BEGINSWITH %@", prefix)
+        ).firstMatch
+        if !item.waitForExistence(timeout: timeout) {
+            XCTFail("No menu item with title starting \"\(prefix)\" appeared within \(timeout)s "
+                + "(note: menu items match on title, never label)", file: file, line: line)
+        }
+        return item
+    }
+
+    /// Waits for and clicks a button in a modal alert raised via
+    /// `NSAlert.runModal()` (e.g. from a menu command). Those alerts are
+    /// top-level Dialog siblings of the windows, so `windows.buttons[...]`
+    /// can never reach them; and a bare `app.buttons[...]` can resolve to the
+    /// Touch Bar mirror of the dialog's default button instead of the real
+    /// one. Dialog scope avoids both.
+    func clickDialogButton(_ title: String, timeout: TimeInterval = 10,
+                           file: StaticString = #filePath, line: UInt = #line) {
+        let button = dialogs.buttons[title]
+        if !button.waitForExistence(timeout: timeout) {
+            XCTFail("Dialog button \"\(title)\" did not appear within \(timeout)s "
+                + "(runModal alerts live under app.dialogs, not app.windows)", file: file, line: line)
+            return
+        }
+        button.click()
+    }
+}
+
+extension XCUIElement {
+    /// Clicks via coordinates instead of element hit-testing. Sidebar cards
+    /// are non-hittable by design — `PassthroughHostingView.hitTest` returns
+    /// nil for anything but right-clicks — so `element.click()` on one can
+    /// never land, and the failure masquerades as a layout/obstruction
+    /// problem. Every positioned click in this suite goes through
+    /// coordinates; this wraps that precedent.
+    func clickViaCoordinate(dx: CGFloat = 0.5, dy: CGFloat = 0.5,
+                            timeout: TimeInterval = 10,
+                            file: StaticString = #filePath, line: UInt = #line) {
+        if !waitForExistence(timeout: timeout) {
+            XCTFail("Element \(debugDescription) did not appear within \(timeout)s "
+                + "for coordinate click", file: file, line: line)
+            return
+        }
+        coordinate(withNormalizedOffset: CGVector(dx: dx, dy: dy)).click()
+    }
+}
+
+// MARK: - App File Helpers
+
+/// Reads files the APP writes (logs, exports) from inside the test runner.
+/// The runner's own home is containerized: `NSHomeDirectory()` and
+/// `FileManager.default.homeDirectoryForCurrentUser` point at the xctrunner
+/// container, not the app's home — a read helper built on either silently
+/// returns nothing.
+enum AppFileHelper {
+    struct ReadError: Error, CustomStringConvertible {
+        let relativePath: String
+        let attempted: [String]
+        var description: String {
+            "AppFileHelper: \"\(relativePath)\" not found. Attempted: \(attempted.joined(separator: ", ")). "
+                + "A missing file is a real failure — never treat it as \"the app wrote nothing\"."
+        }
+    }
+
+    /// Candidate locations for an app-written path relative to the app's home
+    /// (e.g. "Library/Application Support/com.kerim.final-final/..."), as
+    /// home roots in the order worth trying: the real user home by name
+    /// (works around the runner's containerized home), the home implied by
+    /// the standard Application Support lookup, then the runner's own idea
+    /// of home as a last resort.
+    static func candidateURLs(appRelativePath: String) -> [URL] {
+        let fm = FileManager.default
+        var homes: [URL] = [URL(fileURLWithPath: "/Users/\(NSUserName())")]
+        if let appSupport = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
+            // Strip "Application Support" and "Library" to get a home root.
+            homes.append(appSupport.deletingLastPathComponent().deletingLastPathComponent())
+        }
+        homes.append(fm.homeDirectoryForCurrentUser)
+        // De-dup while preserving order (the three often agree outside a VM).
+        var seen = Set<String>()
+        return homes.filter { seen.insert($0.path).inserted }
+            .map { $0.appendingPathComponent(appRelativePath) }
+    }
+
+    /// Returns the contents of the first candidate that exists. Throws a
+    /// descriptive error naming every attempted path — never an empty string
+    /// for a missing file, which made a wrong path indistinguishable from
+    /// "the app never wrote" and burned three VM cycles on one silent read
+    /// failure.
+    static func read(appRelativePath: String) throws -> String {
+        var attempted: [String] = []
+        for url in candidateURLs(appRelativePath: appRelativePath) {
+            attempted.append(url.path)
+            if FileManager.default.fileExists(atPath: url.path) {
+                return try String(contentsOf: url, encoding: .utf8)
+            }
+        }
+        throw ReadError(relativePath: appRelativePath, attempted: attempted)
+    }
+}
+
 // MARK: - Fixture Helpers
 
 enum TestFixtureHelper {
