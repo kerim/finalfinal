@@ -1259,6 +1259,43 @@ export function resetForProjectSwitch(): void {
 }
 
 /**
+ * Clear the CodeMirror undo/redo history stack after a structural, DB-driven document rebuild
+ * (sidebar section delete/duplicate/undo). Mirrors Milkdown's `clearEditorHistory()` in
+ * api-content.ts for the same reason: setContent()'s own push deliberately dispatches with
+ * `addToHistory: false`, but prior undo-history entries anchored inside the section that just
+ * changed are still sitting on the stack -- undoing back through them (Cmd-Z) could resurrect
+ * text the DB no longer has a matching Block row for.
+ *
+ * This function does NOT use Milkdown's scoped double-reconfigure technique, but that's a
+ * choice, not a hard constraint: a `Compartment`-wrapped `history()` extension WOULD allow the
+ * same kind of scoped swap (and would need the identical two-step remove-then-re-add dance,
+ * since `@codemirror/commands`'s history field is module-level singleton state too, just like
+ * prosemirror-history's) -- this codebase's `history()` just isn't wrapped in one today.
+ * Rebuilding a fresh `EditorState` (the same technique `resetForProjectSwitch()` above already
+ * uses to get a guaranteed-empty history) is the simpler route absent that compartment.
+ *
+ * This preserves the CURRENT doc and the text selection (both are threaded into the new
+ * `EditorState` explicitly) -- unlike `resetForProjectSwitch()`, which deliberately starts from
+ * a blank doc. It is NOT otherwise a scoped, undo-stack-only clear: `EditorView.setState()`
+ * destroys and recreates every ViewPlugin (image previews, spellcheck decorations, etc.) and
+ * does not preserve scroll position, exactly like `resetForProjectSwitch()` above does -- the
+ * only things this function actually spares that a full project-wide reset wouldn't are the
+ * document content and the caret/selection offset.
+ */
+export function clearHistory(): void {
+  const view = getEditorView();
+  if (!view) return;
+
+  const newState = EditorState.create({
+    doc: view.state.doc,
+    selection: view.state.selection,
+    extensions: getEditorExtensions(),
+  });
+  view.setState(newState);
+  installLineHeightFix(view);
+}
+
+/**
  * Insert a math equation at the cursor position.
  * Uses direct text insertion rather than setContent (which escapes $).
  * isDisplay=true → $$\nlatex\n$$ with each fence on its own line, preceded by a

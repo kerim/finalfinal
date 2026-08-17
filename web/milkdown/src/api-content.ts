@@ -1,9 +1,11 @@
 // Content-related API method implementations for window.FinalFinal
 
 import { editorViewCtx, parserCtx } from '@milkdown/kit/core';
+import { history as pmHistory } from '@milkdown/kit/prose/history';
 import type { NodeType, Node as ProsemirrorNode, ResolvedPos } from '@milkdown/kit/prose/model';
 import { Slice } from '@milkdown/kit/prose/model';
-import { Selection, type Transaction } from '@milkdown/kit/prose/state';
+import { type Plugin, Selection, type Transaction } from '@milkdown/kit/prose/state';
+import type { EditorView } from '@milkdown/kit/prose/view';
 import { getMarkdown } from '@milkdown/kit/utils';
 import {
   applyPendingConfirmations,
@@ -46,6 +48,98 @@ import { consumePendingDropPos, consumePendingPastePos } from './image-plugin';
 import { isSourceModeEnabled } from './source-mode-plugin';
 import { syncLog } from './sync-debug';
 import type { Block, ExpectedBlockMeta, ImageBlockMeta } from './types';
+
+/**
+ * Clear the ProseMirror undo/redo history stacks after a structural, DB-driven document
+ * rebuild (project switch today; sidebar section delete/duplicate/undo in a later phase --
+ * see the `clearHistory` option on `setContentWithBlockIds` in the sidebar-section-delete-dup
+ * worktree this was ported from).
+ *
+ * The block-level LCS diff `setContentWithBlockIds` otherwise uses deliberately dispatches its
+ * replace transaction with `addToHistory: false` -- but that only excludes THIS transaction
+ * from being recorded, it does NOT clear history entries already on the stack from BEFORE the
+ * push. For a plain resync (bibliography/notes regeneration, zoom) that's exactly right: the
+ * whole point of the LCS diff is to leave unrelated undo history intact. But for a structural
+ * rebuild like a project switch, prior undo-history entries anchored inside content that just
+ * got replaced are no longer safe to leave replayable -- a user pressing Cmd-Z in the editor
+ * could resurrect content from the PREVIOUS project, which the next block-sync poll could then
+ * silently write back as a brand-new insert into the current one.
+ *
+ * Implementation -- WHY this needs two chained `reconfigure()` calls, not one: prosemirror-state's
+ * `EditorState.reconfigure({ plugins })` preserves each plugin's existing state by matching
+ * plugin instances to their declared field NAME (each plugin's own `PluginKey` -- prosemirror-
+ * history's history plugin is keyed `"history$"`), NOT by object identity. So simply swapping in
+ * a brand-new `history()` plugin instance at the same array position is not enough on its own:
+ * `reconfigure()` still finds an existing field already registered under `"history$"` (carried
+ * over from whichever plugin instance produced the CURRENT state) and preserves that value
+ * instead of running the new plugin's own `init()` -- a naive single-step swap silently leaves
+ * the OLD undo/redo stack in place, even though the plugin object itself is new.
+ *
+ * The fix takes it in two reconfigure() steps, chained: (1) drop the history plugin from the
+ * plugin array entirely, so the intermediate state has no field under `"history$"` at all for
+ * reconfigure() to preserve; (2) reconfigure AGAIN from THAT intermediate state (not from the
+ * original state) with a freshly-constructed `history()` plugin re-inserted -- now there is
+ * genuinely nothing to preserve, so this second reconfigure's `init()` actually runs and produces
+ * a genuinely empty stack. Every OTHER plugin's state survives both steps untouched, since their
+ * object identity never changes across either call (only `history$`'s slot is ever removed/
+ * re-added) -- unlike a full `EditorState.create()`, which would reset every plugin's state,
+ * including citation/footnote/image decorations that have nothing to do with undo history.
+ *
+ * Both reconfigures are folded into a SINGLE `view.updateState(...)` call on the final chained
+ * result (not one `updateState()` per step): `updateState()` destroys and recreates every
+ * plugin's own DOM-facing view (props, event handlers, decorations) on each call, so invoking it
+ * twice would tear down and rebuild every plugin's view twice for zero benefit -- only the STATE
+ * needs the two-step reconfigure, not the view.
+ *
+ * The fresh history plugin is reinserted at its ORIGINAL array index (not appended to the end),
+ * so plugin ordering -- which can affect `handleDOMEvents`/`handleKeyDown` precedence against
+ * other plugins registered nearby -- is unchanged versus before the clear.
+ *
+ * The existing history plugin is located via `pluginsByKey['history$']`: prosemirror-history
+ * registers itself under a module-level singleton `PluginKey("history")` (this is the exact
+ * mechanism `PluginKey.get()`/`undoDepth()`/`redoDepth()` use internally), so this app has
+ * exactly one plugin under that key regardless of how Milkdown's `history` ctx wrapper
+ * constructed it -- no assumption about array position, only about there being one plugin
+ * registered under that name.
+ */
+export function clearEditorHistory(view: EditorView): void {
+  const pluginsByKey = (view.state as unknown as { config: { pluginsByKey?: Record<string, Plugin> } }).config
+    .pluginsByKey;
+  const oldHistoryPlugin = pluginsByKey?.history$;
+  if (!oldHistoryPlugin) {
+    // Legitimate no-op when no history plugin is configured at all (e.g. some test harnesses)
+    // -- but also the exact shape a future regression would take if another plugin ever claims
+    // the "history$" key ahead of prosemirror-history's own registration (PluginKey dedupes by
+    // appending a suffix, e.g. "history$1", leaving nothing under the bare "history$" name this
+    // lookup depends on). Log so that silent case surfaces instead of vanishing.
+    syncLog('API:clearEditorHistory', 'no-op: no plugin registered under the "history$" key');
+    return;
+  }
+  const originalIndex = view.state.plugins.indexOf(oldHistoryPlugin);
+  if (originalIndex === -1) {
+    // Should be unreachable given pluginsByKey.history$ resolved above (that plugin instance
+    // must be somewhere in view.state.plugins) -- log if it ever isn't, rather than silently
+    // no-opping on what would be a genuinely surprising state.
+    syncLog('API:clearEditorHistory', 'no-op: history plugin resolved via pluginsByKey but missing from plugins array');
+    return;
+  }
+
+  // Step 1: drop the history plugin entirely -- the intermediate state has no "history$" field
+  // for step 2's reconfigure to preserve.
+  const withoutHistory = view.state.plugins.filter((p) => p !== oldHistoryPlugin);
+  const stateWithoutHistory = view.state.reconfigure({ plugins: withoutHistory });
+
+  // Step 2: reconfigure AGAIN from the intermediate (history-less) state, chained -- not from
+  // the original -- with a brand-new history() plugin re-inserted at its original index.
+  const freshHistoryPlugin = pmHistory();
+  const pluginsWithFreshHistory = [...withoutHistory];
+  pluginsWithFreshHistory.splice(originalIndex, 0, freshHistoryPlugin);
+  const finalState = stateWithoutHistory.reconfigure({ plugins: pluginsWithFreshHistory });
+
+  // Single updateState() call on the final chained result -- see doc comment above for why two
+  // calls (one per step) would be wasteful and incorrect.
+  view.updateState(finalState);
+}
 
 /** Re-snapshot in the next animation frame, then unpause sync.
  *  Ensures normalization transactions are absorbed before change detection resumes.
@@ -333,16 +427,40 @@ export function resetForProjectSwitch(): void {
   if (editorInstance) {
     try {
       const view = editorInstance.ctx.get(editorViewCtx);
+
+      // Clear the undo/redo history stacks FIRST, before the doc-clearing transaction below.
+      // clearEditorHistory() ends in view.updateState(finalState) -- since the plugin array
+      // changes, this unconditionally destroys and recreates every plugin's DOM-facing view,
+      // but prosemirror-view's updateState() internally still branches on
+      // `prevState.doc.eq(state.doc)` for whether to also run the expensive updateDoc path
+      // (the one the comment just above this block warns "destroys [layout caches] and causes
+      // rendering issues on project switch"). Calling this here, while the document is still
+      // the OUTGOING project's unchanged doc, keeps that check true, so the plugin-view churn
+      // happens against an unchanged document and updateDoc never runs. The actual content
+      // replacement then goes through the plain transaction path below, exactly as the
+      // neighboring comment demands -- calling this AFTER that transaction would instead hand
+      // updateState() a just-changed doc and hit the destructive branch it's there to avoid.
+      clearEditorHistory(view);
+
       const emptyParagraph = view.state.schema.nodes.paragraph.create();
       const emptyDoc = view.state.schema.nodes.doc.create(null, emptyParagraph);
-      const tr = view.state.tr
-        .replace(0, view.state.doc.content.size, new Slice(emptyDoc.content, 0, 0))
-        .setSelection(Selection.atStart(view.state.tr.doc));
+      // NOTE: `tr` must be reused (not re-derived via a second `view.state.tr` access) when
+      // building the post-replace selection below -- `.tr` is a getter that mints a fresh
+      // Transaction from `view.state` every time it's read, so a second `view.state.tr.doc`
+      // here would point at the PRE-replace document while `tr` itself has already moved past
+      // it, and ProseMirror's setSelection() rejects a selection anchored to the wrong doc
+      // (pre-existing bug, fixed in passing: this always threw and was silently swallowed by
+      // the catch below, so this whole block -- including the history clear added alongside
+      // it -- never actually ran on any real project switch).
+      const tr = view.state.tr.replace(0, view.state.doc.content.size, new Slice(emptyDoc.content, 0, 0));
+      tr.setSelection(Selection.atStart(tr.doc));
       tr.setMeta('addToHistory', false);
       view.dispatch(tr);
       view.dom.scrollTop = 0;
-    } catch {
-      // State reset failed, ignore
+    } catch (e) {
+      // State reset failed -- log it (this exact silent swallow is why the pre-existing
+      // selection bug above went unnoticed for as long as it did; don't repeat that).
+      syncLog('API:resetForProjectSwitch', `state reset failed: ${e instanceof Error ? e.message : e}`);
     }
   }
 
@@ -1338,7 +1456,9 @@ export function updateHeadingLevels(changes: Array<{ blockId: string; newLevel: 
       }
 
       if (tr.steps.length > 0) {
-        view.dispatch(tr);
+        // Hierarchy enforcement is a programmatic, sync-origin push (like the other
+        // programmatic dispatches in this file) — it must not land as a user-undoable step.
+        view.dispatch(tr.setMeta('addToHistory', false));
       }
 
       // Update currentContent to match post-surgery state
