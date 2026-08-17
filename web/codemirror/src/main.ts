@@ -102,6 +102,15 @@ import {
   triggerSpellcheck,
 } from './spellcheck-plugin';
 import { handleTablePaste } from './table-paste';
+import {
+  handleGlobalUndoRedoKeydown,
+  maybeNotifyHistoryEdited,
+  receiveRedoOutcome,
+  receiveUndoOutcome,
+  requestUnifiedRedo,
+  requestUnifiedUndo,
+  setUndoDescriptor,
+} from './undo-coordinator';
 import './styles.css';
 // Import types.ts for declare global side-effect
 import './types';
@@ -309,6 +318,13 @@ function initEditor() {
         updateCitationAddButton(update.view);
       }
     }),
+    // Unified-undo §4.6 predicate -- deliberately runs on EVERY transaction in the update
+    // (its own descriptor.redoTopOpId check short-circuits at a single property read
+    // whenever no structural redo entry exists, i.e. always in Phase 2 -- see
+    // undo-coordinator.ts).
+    EditorView.updateListener.of((update) => {
+      for (const tr of update.transactions) maybeNotifyHistoryEdited(tr);
+    }),
     // Debounced push-based content messaging to Swift (replaces 500ms polling as primary)
     (() => {
       let cmPushTimer: ReturnType<typeof setTimeout> | null = null;
@@ -379,6 +395,28 @@ function initEditor() {
   installLineHeightFix(view);
 
   setEditorView(view);
+
+  // Unified-undo capture-phase keydown interceptor (docs/plans/patient-rewinding-clockwork.md
+  // §4.2/§4.7). No merge point needed here the way Milkdown's slash-commands.ts has one --
+  // see undo-coordinator.ts's header for why. With the always-empty Phase 2 registry this
+  // always returns false (fallthrough), leaving CodeMirror's own `Mod-z`/`Mod-Shift-z`/
+  // `Mod-y` keymap bindings (including their embedded smart-slash-undo logic) completely
+  // untouched.
+  //
+  // DEFERRED (Phase 3, do not fix now): no event-target check -- this fires for a Cmd-Z
+  // typed anywhere in the document (a native text field, a dialog, etc.), not just inside
+  // this editor. Harmless today (getEditorView() gate aside, routing always falls through to
+  // a no-op here since nothing but the editor's own keymap reacts to the untouched event),
+  // but worth scoping to editor-owned targets before Phase 3 makes the structural path live.
+  document.addEventListener(
+    'keydown',
+    (e) => {
+      const currentView = getEditorView();
+      if (!currentView) return;
+      handleGlobalUndoRedoKeydown(e, currentView);
+    },
+    true
+  );
 }
 
 // Register window.FinalFinal API — thin delegation to api.ts implementations
@@ -464,6 +502,18 @@ window.FinalFinal = {
   clearSearch,
   getSearchState: apiGetSearchState,
   resetForProjectSwitch,
+
+  // Unified-undo API (docs/plans/patient-rewinding-clockwork.md) -- Phase 2 skeleton.
+  // requestUnifiedUndo/Redo are the menu-path entry points (Edit > Undo/Redo); with no
+  // structural entries ever recorded in this phase, both always fall through to
+  // CodeMirror's own text undo/redo. setUndoDescriptor/receiveUndoOutcome/receiveRedoOutcome
+  // are the Swift -> JS bridge targets Phase 3+ wires once real structural operations
+  // exist -- no Swift call site invokes any of the three yet.
+  requestUnifiedUndo,
+  requestUnifiedRedo,
+  setUndoDescriptor,
+  receiveUndoOutcome,
+  receiveRedoOutcome,
 
   // Combined poll data for batched 3s fallback polling
   getPollData() {

@@ -25,6 +25,7 @@ struct FindBarView: View {
                         .textFieldStyle(.plain)
                         .font(.system(size: 13))
                         .focused($isSearchFieldFocused)
+                        .accessibilityIdentifier("find-bar-search-field")
                         .onSubmit {
                             state.findNext()
                         }

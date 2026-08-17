@@ -136,6 +136,14 @@ extension View {
             }
     }
 
+    // Note: unified-undo menu activation (docs/plans/patient-rewinding-clockwork.md §4.7) is
+    // NOT wired through NotificationCenter here. An earlier revision broadcast a notification
+    // that every open project window's ContentView observed, so one Cmd-Z affected every open
+    // window's WebView at once (review finding, round 1 must-fix). UndoRedoCommands.swift now
+    // resolves the actually-focused WKWebView itself (via NSApp.keyWindow's first responder)
+    // and calls evaluateJavaScript on it directly -- scoped to the key window by
+    // construction, with no broadcast in between.
+
     /// Adds file menu notification handlers
     @MainActor
     func withFileNotifications(

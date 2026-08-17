@@ -133,6 +133,7 @@ struct FinalFinalApp: App {
         }
         .commands {
             FileCommands()
+            UndoRedoCommands()
             ViewCommands()
             EditorCommands()
             HelpCommands(

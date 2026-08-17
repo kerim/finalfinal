@@ -125,6 +125,14 @@ import { imagePlugin } from './image-plugin';
 import { inlineCodeCursorPlugin } from './inline-code-cursor';
 import { linkCursorPlugin } from './link-cursor';
 import { markdownLinkPlugin } from './markdown-link-input-rule';
+import {
+  maybeNotifyHistoryEdited,
+  receiveRedoOutcome,
+  receiveUndoOutcome,
+  requestUnifiedRedo,
+  requestUnifiedUndo,
+  setUndoDescriptor,
+} from './undo-coordinator';
 import './link-click-handler';
 import { insertEquation, insertEquationDialog } from './api-math';
 import { linkTooltipPlugin, openLinkEdit } from './link-tooltip';
@@ -292,6 +300,20 @@ async function initEditor() {
 
   view.dispatch = (tr) => {
     originalDispatch(tr);
+
+    // Unified-undo §4.6 predicate -- deliberately runs on EVERY transaction (its own
+    // descriptor.redoTopOpId check short-circuits at a single property read whenever no
+    // structural redo entry exists, i.e. always in Phase 2 -- see undo-coordinator.ts).
+    //
+    // DEFERRED (Phase 3, do not fix now): this sits ABOVE the getIsSettingContent() early
+    // return below. Harmless today (descriptor.redoTopOpId never exists, so
+    // maybeNotifyHistoryEdited always no-ops at its own first check regardless of ordering),
+    // but once Phase 3 populates descriptor.redoTopOpId, a programmatic content-set
+    // transaction that doesn't carry addToHistory:false would still fire historyEdited here
+    // and wrongly invalidate the redo entry -- setContent()/setContentWithBlockIds() should
+    // be audited to confirm every such transaction sets that meta, or this check should move
+    // below the getIsSettingContent() guard.
+    maybeNotifyHistoryEdited(tr);
 
     if (getIsSettingContent()) return;
 
@@ -567,6 +589,18 @@ window.FinalFinal = {
   replaceAll: replaceAllApi,
   clearSearch: clearSearchApi,
   getSearchState: getSearchStateApi,
+
+  // Unified-undo API (docs/plans/patient-rewinding-clockwork.md) -- Phase 2 skeleton.
+  // requestUnifiedUndo/Redo are the menu-path entry points (Edit > Undo/Redo); with no
+  // structural entries ever recorded in this phase, both always fall through to Milkdown's
+  // own text undo/redo. setUndoDescriptor/receiveUndoOutcome/receiveRedoOutcome are the
+  // Swift -> JS bridge targets Phase 3+ wires once real structural operations exist -- no
+  // Swift call site invokes any of the three yet.
+  requestUnifiedUndo,
+  requestUnifiedRedo,
+  setUndoDescriptor,
+  receiveUndoOutcome,
+  receiveRedoOutcome,
 
   // Combined poll data for batched 3s fallback polling
   getPollData() {

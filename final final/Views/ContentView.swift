@@ -59,6 +59,7 @@ struct ContentView: View {
     @State internal var appearanceManager = AppearanceSettingsManager.shared
     @Environment(\.openWindow) private var openWindow
     @State internal var editorState = EditorViewState()
+    @State internal var unifiedUndoService = UnifiedUndoService()
     @State internal var cursorPositionToRestore: CursorPosition?
     @State internal var sectionSyncService = SectionSyncService()
     @State internal var blockSyncService = BlockSyncService()
@@ -208,6 +209,7 @@ struct ContentView: View {
     private var mainContentView: some View {
         navigationSplitViewContent
             .focusedSceneValue(\.editorState, editorState)
+            .focusedSceneValue(\.unifiedUndoService, unifiedUndoService)
             .withContentObservers(
                 editorState: editorState,
                 services: ContentSyncServices(

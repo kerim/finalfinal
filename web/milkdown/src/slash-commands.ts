@@ -19,6 +19,7 @@ import {
 } from './editor-state';
 import { insertFootnoteWithDelete } from './footnote-plugin';
 import { sectionBreakNode } from './section-break-plugin';
+import { handleGlobalUndoRedoKeydown } from './undo-coordinator';
 
 // === Slash command definitions ===
 interface SlashCommand {
@@ -457,6 +458,29 @@ function handleSlashKeydown(e: KeyboardEvent): boolean {
     }
   }
 
+  // Unified-undo routing (docs/plans/patient-rewinding-clockwork.md §4.2). Deliberately
+  // merged into THIS same capture-phase handler rather than a second independently
+  // -registered `document.addEventListener('keydown', ..., true)` listener: this function's
+  // own `e.stopPropagation()` calls above (not `stopImmediatePropagation()`) would NOT stop
+  // a second listener registered on the same `document` node from also running for the same
+  // keydown, so a separate listener could fire alongside (or instead of, depending on
+  // registration order) slash's smart-undo branches above -- ordering by code position here
+  // keeps slash's pending-flag window strictly first, by construction, not by registration
+  // accident. Runs only when neither smart-undo branch above already consumed the keystroke
+  // (both `return true` when they fire). With the always-empty Phase 2 registry this always
+  // falls through to Milkdown's own undo/redo keymap, unchanged.
+  //
+  // DEFERRED (Phase 3, do not fix now): this sits ABOVE the "reset flags on any editing key"
+  // block below. Fine today because handleGlobalUndoRedoKeydown always returns false here
+  // (empty registry) and this function returns early on true anyway -- but once routing can
+  // actually return true for a real structural op, re-examine whether pendingSlashUndo/Redo
+  // should still reach the reset block on that path, or whether a structural hit should
+  // itself count as "an editing key" for reset purposes.
+  if (editorInstance) {
+    const view = editorInstance.ctx.get(editorViewCtx);
+    if (handleGlobalUndoRedoKeydown(e, view)) return true;
+  }
+
   // Reset flags on any editing key (typing, backspace, delete)
   if (e.key.length === 1 || e.key === 'Backspace' || e.key === 'Delete') {
     setPendingSlashUndo(false);
@@ -553,5 +577,10 @@ export function configureSlash(ctx: Ctx) {
   });
 
   // Add keyboard listener for menu navigation
+  // DEFERRED (Phase 3, do not fix now): no event-target check -- since the unified-undo
+  // routing was merged into this handler, it now also fires for a Cmd-Z typed anywhere in
+  // the document (a native text field, a dialog, etc.), not just inside this editor.
+  // Harmless today (routing always falls through to a no-op for events outside the editor),
+  // but worth scoping to editor-owned targets before Phase 3 makes the structural path live.
   document.addEventListener('keydown', handleSlashKeydown, true);
 }
