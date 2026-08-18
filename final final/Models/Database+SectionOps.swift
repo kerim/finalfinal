@@ -198,6 +198,13 @@ extension ProjectDatabase {
                 if index == 0, original.blockType == .heading {
                     copy.textContent += " copy"
                     copy.markdownFragment = Self.appendCopySuffix(toHeadingFragment: original.markdownFragment)
+                    // `copy = original` above carries over the ORIGINAL's stored wordCount
+                    // verbatim; appending " copy" to textContent without this call would persist
+                    // a one-word-short count forever (wordCount is a stored column, not computed
+                    // on read). Must run before both `copy.insert(db)` below and the `Section`
+                    // row construction further down, which reads `copy.wordCount` for its own
+                    // `wordCount:` field.
+                    copy.recalculateWordCount()
                     newTitle = copy.outlineTitle
                 }
                 try copy.insert(db)

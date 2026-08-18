@@ -183,6 +183,22 @@ struct SectionDeleteDuplicateOpsTests {
         ])
     }
 
+    @Test("duplicate's \" copy\"-suffixed heading gets a wordCount one higher than the original, not a stale pre-suffix count")
+    @MainActor
+    func duplicateHeadingWordCountReflectsCopySuffix() throws {
+        let db = try TestFixtureFactory.createTemporary(content: Self.content)
+        let pid = try TestFixtureFactory.getProjectId(from: db)
+        let before = try TestFixtureFactory.fetchBlocks(from: db)
+        let sectionA = try #require(before.first { $0.textContent == "Section A" })
+        let originalWordCount = sectionA.wordCount
+
+        _ = try #require(try db.duplicateSections(rootId: sectionA.id, projectId: pid))
+
+        let after = try TestFixtureFactory.fetchBlocks(from: db)
+        let copiedHeading = try #require(after.first { $0.textContent == "Section A copy" })
+        #expect(copiedHeading.wordCount == originalWordCount + 1)
+    }
+
     @Test("duplicate creates a legacy section row for the copy's heading")
     @MainActor
     func duplicateCreatesSectionRowForCopy() throws {

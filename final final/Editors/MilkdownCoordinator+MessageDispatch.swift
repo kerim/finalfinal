@@ -50,10 +50,18 @@ extension MilkdownEditor.Coordinator {
             return true
 
         case "historyEdited":
-            // Informational (plan §4.6): a genuine text edit landed while a structural redo
-            // entry exists. Routing (§4.2) is doc-equality-based and self-correcting, so no
-            // stack mutation is needed here -- logged for visibility per the coder brief.
+            // Redo-branch barrier (plan §4.6): a genuine text edit landed while a structural
+            // redo entry exists. Doc-equality routing (§4.2) alone is NOT self-correcting here
+            // -- a later text undo/redo can land the live doc back at byte-equality with a now-
+            // stale redo entry's preOpDoc, letting an abandoned structural redo fire again. Tell
+            // the controller to invalidate the redo branch, mirroring the sibling
+            // structuralUndoRequested/structuralRedoRequested cases' webview-identity-guarded
+            // routing above.
             DebugLog.log(.undo, "[MilkdownEditor] historyEdited: real edit while structural redo entry exists")
+            let requestingWebView = message.webView
+            Task { @MainActor in
+                await routeHistoryEdited(from: requestingWebView, editorLabel: "MilkdownEditor")
+            }
             return true
 
         case "structuralUndoRefused":

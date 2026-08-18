@@ -468,6 +468,34 @@ final class StructuralUndoController {
         await sendOutcome(opId: opId, direction: direction, outcome: outcome.jsOutcomeString)
     }
 
+    /// Entry point for the `historyEdited` WKScriptMessageHandler (plan §4.6): a genuine new
+    /// text edit landed in the live editor while a structural redo entry still exists. Abandons
+    /// that redo path the same way `record()` already does for a fresh structural op -- see
+    /// `UnifiedUndoService.invalidateRedoBranch`'s doc comment for the stale-redo hazard this
+    /// closes (a structural undo, then a genuine new text edit, then an undo of THAT edit, can
+    /// land the live doc back at byte-equality with the abandoned redo entry's `preOpDoc`).
+    ///
+    /// `!isPerforming` is load-bearing, not decorative. `performStructuralOp`/`performUndo`/
+    /// `performRedo` all set `isPerforming = true` synchronously as their very first statement
+    /// (before any `await`), and only reset it via `defer` when the WHOLE sequence returns --
+    /// so every `await` inside those sequences, including the content push
+    /// (`pushPostOpContentAndFinalize`/`settleAfterDBRestore`) that can itself trigger this same
+    /// `historyEdited` JS machinery, runs with `isPerforming == true` for its entire duration.
+    /// Since `isPerforming = true` and the guard check above it are both synchronous (no `await`
+    /// between them), no concurrently-scheduled `handleHistoryEdited()` Task can observe
+    /// `isPerforming == false` partway through one of those sequences -- there is no window
+    /// where the current op has started mutating state but this guard would still let a
+    /// concurrent call through. This matters most for `performRedo`: the entry being redone
+    /// stays on `redoStack` until its very last stack-move step, so an unguarded call landing
+    /// mid-sequence would wipe out the very entry the sequence is mid-way through moving,
+    /// corrupting that op's own outcome rather than reacting to a genuine external edit.
+    func handleHistoryEdited() async {
+        guard let unifiedUndoService, !isPerforming else { return }
+        guard !unifiedUndoService.redoStack.isEmpty else { return }
+        unifiedUndoService.invalidateRedoBranch(reason: "text edit after structural undo")
+        await pushDescriptor()
+    }
+
     /// The three replies JS understands (plan review round MF-4). `performed`/`fallback` are
     /// the original pair; `failed` is new: it means the DB restore ALREADY committed but a
     /// later step (the JS-side settle) didn't complete. JS's `fallback` handling replays a
@@ -1101,4 +1129,21 @@ func routeStructuralRequest(
         return
     }
     await controller.handleStructuralRequest(opId: opId, direction: direction)
+}
+
+/// Multi-window guard for the `historyEdited` message, mirroring `routeStructuralRequest`'s
+/// reasoning above: `DocumentManager.shared.structuralUndoController` is a single global slot,
+/// so a `historyEdited` message from a non-active window's WebView must not reach a controller
+/// wired to a DIFFERENT project's `unifiedUndoService` -- that could invalidate the wrong
+/// project's redo stack. Unlike `routeStructuralRequest`, there is no JS-side reply to send on a
+/// mismatch (no opId, no latch to clear) -- this message is fire-and-forget from JS, so a
+/// mismatch here is simply a silent no-op.
+@MainActor
+func routeHistoryEdited(from requestingWebView: WKWebView?, editorLabel: String) async {
+    guard let controller = DocumentManager.shared.structuralUndoController,
+          controller.activeWebView === requestingWebView else {
+        DebugLog.log(.undo, "[\(editorLabel)] historyEdited from a non-active window -- ignoring")
+        return
+    }
+    await controller.handleHistoryEdited()
 }

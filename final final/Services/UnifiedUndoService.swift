@@ -149,6 +149,21 @@ final class UnifiedUndoService {
         )
     }
 
+    /// Redo-branch barrier (plan §4.6): a genuine new text edit landed in the live editor while
+    /// a structural redo entry still exists. Clears ONLY the redo stack -- the undo stack is
+    /// left untouched -- exactly mirroring how `record()` (above) clears the redo stack, not
+    /// the undo stack, when a fresh structural op is recorded. Without this, a structural undo
+    /// followed by a genuine new text edit (then an undo of THAT edit) can land the live
+    /// document back at byte-equality with a now-stale redo entry's `preOpDoc`, letting the
+    /// abandoned structural redo fire again instead of correctly falling back to a plain text
+    /// redo (confirmed live: a redo producing a word count matching an old, already-superseded
+    /// entry's snapshot).
+    func invalidateRedoBranch(reason: String) {
+        guard !redoStack.isEmpty else { return }
+        DebugLog.log(.undo, "[UnifiedUndoService] invalidateRedoBranch: \(reason) (redo=\(redoStack.count))")
+        redoStack.removeAll()
+    }
+
     /// Barrier: wipes the timeline (plan §4.5). Does NOT itself clear editor histories --
     /// every real barrier call site (project switch, mode switch, zoom, drag reorder, ...)
     /// already has its own existing mechanism for that; unlike eviction (above), a full
