@@ -148,6 +148,13 @@ final class StructuralUndoController {
         isPerforming = true
         defer { isPerforming = false }
 
+        // MF-2 (Phase 5 review round): capture the timeline's generation counter right as this
+        // sequence claims the latch. The two new Phase 5 barriers (project switch, mode switch)
+        // are deliberately NOT gated on `isPerforming` -- see their own call sites' comments --
+        // so `unifiedUndoService.invalidateAll`/`invalidateRedoBranch` can still fire WHILE this
+        // sequence is mid-flight. Re-checked at step 8 below, right before `record(entry)`.
+        let epoch = unifiedUndoService.generation
+
         // Step 1: zoom out first if zoomed (autoZoomOut policy only); enter non-idle
         // contentState (bumps contentGeneration, gating the 2s poll); cancel pending async
         // insertions.
@@ -188,6 +195,15 @@ final class StructuralUndoController {
             return false
         }
         spy("createUndoPointSnapshot")
+
+        // MF-3 (Phase 5 review round): `createUndoPointSnapshot()` just pinned `undoSnapshotId`
+        // (plan §4.4/§9) -- every early return between here and the entry actually being
+        // recorded below (step 8) used to leak that pin permanently, since nothing on those
+        // failure paths ever called `SnapshotService.unpinUndoPointSnapshot`. `defer` covers
+        // every such exit uniformly instead of patching each call site individually; `recorded`
+        // is flipped to `true` only at the one point where the entry genuinely gets recorded.
+        var recorded = false
+        defer { if !recorded { SnapshotService.unpinUndoPointSnapshot(undoSnapshotId) } }
 
         // Step 5: execute the op-specific DB mutation. createSafetyBackup:false (for restore
         // ops) -- the undo-point snapshot just taken IS the safety net; a second nested
@@ -241,11 +257,27 @@ final class StructuralUndoController {
         await enforceHierarchyInSequence()
         spy("enforceHierarchyInSequence")
 
+        // MF-2 (Phase 5 review round): re-check the generation captured at the top of this
+        // sequence, right before recording -- a barrier (project switch, mode switch, or any
+        // other `invalidateAll`/`invalidateRedoBranch` caller) invalidated the timeline while
+        // this sequence was mid-flight. Recording now would blindly append this op's entry onto
+        // whatever timeline is CURRENT at this point -- which, after e.g. a project-switch
+        // barrier, is a different project's (empty) timeline than the one this op actually ran
+        // against (`db`/`pid` were captured once at method entry and never re-read) -- re-seeding
+        // it with an entry describing a mutation performed against the OLD project's database.
+        // `recorded` stays false, so the `defer` above unpins `undoSnapshotId` for us.
+        guard unifiedUndoService.generation == epoch else {
+            DebugLog.log(.undo, "[StructuralUndoController] \(kind): timeline generation changed mid-sequence (\(epoch) -> \(unifiedUndoService.generation)) -- a barrier invalidated the timeline while this op was in flight; not recording")
+            editorState.contentState = .idle
+            return false
+        }
+
         // Step 8: record; clear redo; push descriptor; refresh sections (awaited -- MF-2,
         // round 4: no longer the fire-and-forget refreshSections() Task round 3 left in place,
         // which could itself race a later barrier the same way the original bug did); idle.
         let entry = StructuralEntry(id: opId, kind: kind, title: title, undoSnapshotId: undoSnapshotId)
         unifiedUndoService.record(entry)
+        recorded = true
         await pushDescriptor()
         await editorState.refreshSectionsAwaiting()
         editorState.contentState = .idle
@@ -576,6 +608,10 @@ final class StructuralUndoController {
 
         isPerforming = true
         defer { isPerforming = false }
+        // MF-2 (Phase 5 review round): see `performStructuralOp`'s matching comment -- captured
+        // here too so this sequence can tell a genuine external barrier apart from its own
+        // upcoming stack move at step 5 below.
+        let epoch = unifiedUndoService.generation
 
         editorState.contentState = .structuralUndo
         await evalVoid("window.FinalFinal.cancelPendingInsertions?.()")
@@ -630,6 +666,15 @@ final class StructuralUndoController {
             // Nothing has been written to the DB yet -- safe to report fallback.
             return .fallback
         }
+
+        // MF (review round, gap closed post-Phase-5): mirrors `performStructuralOp`'s matching
+        // comment -- `createUndoPointSnapshot()` just pinned `redoSnapshotId`, and every early
+        // return between here and `attachRedoSnapshot` actually running below (the one place
+        // this pin is genuinely handed off) used to leak that pin permanently. `defer` covers
+        // every such exit (restore-threw, settle-failed, epoch-mismatch, stack-move-mismatch)
+        // uniformly instead of patching each call site individually.
+        var recorded = false
+        defer { if !recorded { SnapshotService.unpinUndoPointSnapshot(redoSnapshotId) } }
 
         // Step 3: DB restore via the lean re-entry path (NOT .projectDidOpen/isRestore).
         // COMMIT POINT: once this succeeds, any later failure must report .failed, not
@@ -692,12 +737,24 @@ final class StructuralUndoController {
         // Report `.failed` instead: the DB write already committed, so `.fallback` (which
         // tells JS to replay a plain text-undo on top of it) would compound the problem the
         // same way every other post-commit failure path in this method already avoids.
+        //
+        // MF-2 (Phase 5 review round): the epoch check below catches a case the stack-identity
+        // check that follows it does not -- the timeline was invalidated by a barrier AND has
+        // since been re-populated by a different op with a different opId, so a naive identity
+        // check on its own could theoretically still line up; comparing the generation counter
+        // instead is unambiguous regardless of what (if anything) currently occupies the stack.
+        guard unifiedUndoService.generation == epoch else {
+            DebugLog.log(.undo, "[StructuralUndoController] performUndo: timeline generation changed mid-sequence for \(opId) -- a barrier invalidated the timeline; reporting .failed")
+            editorState.contentState = .idle
+            return .failed
+        }
         guard case .performed = unifiedUndoService.performUndo(opId: opId) else {
             DebugLog.log(.undo, "[StructuralUndoController] performUndo: stack move mismatch after DB restore for \(opId) -- timeline was cleared mid-sequence; reporting .failed")
             editorState.contentState = .idle
             return .failed
         }
         unifiedUndoService.attachRedoSnapshot(opId: opId, redoSnapshotId: redoSnapshotId)
+        recorded = true
         await pushDescriptor()
         await editorState.refreshSectionsAwaiting()
         editorState.contentState = .idle
@@ -716,6 +773,8 @@ final class StructuralUndoController {
 
         isPerforming = true
         defer { isPerforming = false }
+        // MF-2 (Phase 5 review round): see `performStructuralOp`'s matching comment.
+        let epoch = unifiedUndoService.generation
 
         editorState.contentState = .structuralUndo
         await evalVoid("window.FinalFinal.cancelPendingInsertions?.()")
@@ -750,6 +809,14 @@ final class StructuralUndoController {
             return .fallback
         }
 
+        // MF (review round, gap closed post-Phase-5): mirrors `performUndo`'s matching comment
+        // -- `createUndoPointSnapshot()` just pinned `undoSnapshotId`, and every early return
+        // between here and `replaceTopOfUndoStack` actually running below (the one place this
+        // pin is genuinely handed off) used to leak that pin permanently. `defer` covers every
+        // such exit uniformly.
+        var recorded = false
+        defer { if !recorded { SnapshotService.unpinUndoPointSnapshot(undoSnapshotId) } }
+
         // COMMIT POINT (MF-4) + non-atomicity risk (round-4 judge item 4) -- see performUndo's
         // matching comment for the full reasoning on why this reports .failed, not .fallback.
         do {
@@ -775,6 +842,13 @@ final class StructuralUndoController {
         // steps, after the resync above.
         await enforceHierarchyInSequence()
 
+        // MF-2 (Phase 5 review round): see `performUndo`'s matching comment -- mirror fix for
+        // the redo stack.
+        guard unifiedUndoService.generation == epoch else {
+            DebugLog.log(.undo, "[StructuralUndoController] performRedo: timeline generation changed mid-sequence for \(opId) -- a barrier invalidated the timeline; reporting .failed")
+            editorState.contentState = .idle
+            return .failed
+        }
         // MF-1(b) (Phase 4 review round 4): see `performUndo`'s matching comment -- mirror
         // fix for the redo stack. Checked, not discarded.
         guard case .performed = unifiedUndoService.performRedo(opId: opId) else {
@@ -783,6 +857,7 @@ final class StructuralUndoController {
             return .failed
         }
         unifiedUndoService.replaceTopOfUndoStack(opId: opId, freshUndoSnapshotId: undoSnapshotId)
+        recorded = true
         await pushDescriptor()
         await editorState.refreshSectionsAwaiting()
         editorState.contentState = .idle

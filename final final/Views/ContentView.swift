@@ -121,7 +121,8 @@ struct ContentView: View {
                 editorState: editorState,
                 cursorRestore: $cursorPositionToRestore,
                 sectionSyncService: sectionSyncService,
-                findBarState: findBarState
+                findBarState: findBarState,
+                unifiedUndoService: unifiedUndoService
             )
             .withFindNotifications(findBarState: findBarState)
             .withFileNotifications(
@@ -276,6 +277,39 @@ struct ContentView: View {
                 unifiedUndoService: unifiedUndoService
             )
             DocumentManager.shared.structuralUndoController = structuralUndoController
+            // Wired here rather than as `UnifiedUndoService` instance methods -- this service
+            // has no business knowing about WebViews (see both closures' doc comments,
+            // `UnifiedUndoService.swift`). `[weak controller]`, not `[weak self]`: capturing
+            // the local `let` avoids retaining the whole ContentView struct's state back into
+            // a long-lived `@State` object's closure property.
+            let controller = structuralUndoController
+            unifiedUndoService.clearEditorHistories = { [weak controller] evictedId in
+                guard let webView = controller?.activeWebView else {
+                    DebugLog.log(.undo, "[ContentView] clearEditorHistories: no active webview -- skipping clear for evicted entry \(evictedId)")
+                    return
+                }
+                // MF-1 (Phase 5 review round): scoped to the ONE evicted entry, not a whole-
+                // registry clear -- `record()` (UnifiedUndoService.swift) calls this as its
+                // LAST step, after this same op's own registry entry may already have been
+                // created and finalized elsewhere in the same tick; a whole-registry clear here
+                // used to wipe that just-recorded entry too.
+                webView.evaluateJavaScript("window.FinalFinal.clearStructuralUndoState('\(evictedId.uuidString)')") { _, error in
+                    if let error {
+                        DebugLog.log(.undo, "[ContentView] clearEditorHistories: clearStructuralUndoState failed: \(error.localizedDescription)")
+                    }
+                }
+            }
+            unifiedUndoService.clearStructuralRegistry = { [weak controller] in
+                guard let webView = controller?.activeWebView else {
+                    DebugLog.log(.undo, "[ContentView] clearStructuralRegistry: no active webview -- skipping barrier registry clear")
+                    return
+                }
+                webView.evaluateJavaScript("window.FinalFinal.clearStructuralUndoRegistry()") { _, error in
+                    if let error {
+                        DebugLog.log(.undo, "[ContentView] clearStructuralRegistry: clearStructuralUndoRegistry failed: \(error.localizedDescription)")
+                    }
+                }
+            }
             await initializeProject()
 
             // Restore focus mode from previous session if needed. The launch race between

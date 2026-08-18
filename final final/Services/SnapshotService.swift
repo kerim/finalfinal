@@ -138,8 +138,48 @@ final class SnapshotService {
             sections: sections,
             contentHash: hash
         )
+        // Pin immediately (plan §4.4/§9): every undo-point snapshot is referenced by a live
+        // `StructuralEntry` on `UnifiedUndoService`'s stacks the instant this returns, so it
+        // must never be silently pruned by `pruneAutoBackups()`'s Time-Machine-style retention
+        // -- see `pinUndoPointSnapshot`'s doc comment for the full reasoning.
+        Self.pinUndoPointSnapshot(snapshot.id)
         return snapshot.id
     }
+
+    // MARK: - Undo-point pin set (plan §4.4/§9)
+
+    /// In-memory set of undo/redo-point snapshot ids currently referenced by a live
+    /// `StructuralEntry` somewhere on `UnifiedUndoService`'s undo/redo stacks. Exempts them
+    /// from `pruneAutoBackups()` below. They are ordinary `isAutomatic` rows -- no schema
+    /// change (plan §9: "no schema migration") -- indistinguishable from a regular auto-backup
+    /// except by this in-memory set, so pinning (and unpinning, owned by `UnifiedUndoService`)
+    /// is the only thing standing between a forced undo-point snapshot and normal pruning.
+    ///
+    /// Deliberately in-memory, never persisted: pins die with the session exactly like the
+    /// undo timeline itself does (plan §4.8, no cross-relaunch persistence). This is why no
+    /// separate "startup sweep" needs to delete anything at launch -- a relaunch starts with
+    /// an EMPTY pin set (this is a `static var`, reset by process restart), so every row a
+    /// prior session pinned simply rejoins the normal auto-backup population the next time
+    /// `pruneAutoBackups()` runs and prunes on its usual schedule. `AutoBackupService.configure()`
+    /// now also runs one prune pass on project open (in addition to the existing idle-timeout
+    /// path) specifically so that "the next time it runs" isn't gated on 60s of user idle time
+    /// after a relaunch.
+    private static var pinnedUndoPointSnapshotIds: Set<String> = []
+
+    static func pinUndoPointSnapshot(_ id: String) {
+        pinnedUndoPointSnapshotIds.insert(id)
+    }
+
+    /// No-op if `id` isn't pinned (e.g. a snapshot that failed to create, or an id already
+    /// unpinned by an earlier barrier) -- every call site treats this as idempotent cleanup.
+    static func unpinUndoPointSnapshot(_ id: String) {
+        pinnedUndoPointSnapshotIds.remove(id)
+    }
+
+    #if DEBUG
+    /// Test-only accessor, mirroring `UnifiedUndoService`'s own `#if DEBUG` test hooks.
+    static var pinnedUndoPointSnapshotIdsForTesting: Set<String> { pinnedUndoPointSnapshotIds }
+    #endif
 
     // MARK: - Hash Computation
 
@@ -397,8 +437,12 @@ final class SnapshotService {
             }
         }
 
-        // Collect IDs to delete
-        for snapshot in autoSnapshots where !snapshotsToKeep.contains(snapshot.id) {
+        // Collect IDs to delete -- excluding anything currently pinned as a live undo/redo-point
+        // snapshot (plan §4.4/§9: forced undo-point snapshots must not be silently pruned like
+        // automatic ones, even when the Time-Machine-style retention above would otherwise have
+        // dropped them).
+        for snapshot in autoSnapshots
+        where !snapshotsToKeep.contains(snapshot.id) && !Self.pinnedUndoPointSnapshotIds.contains(snapshot.id) {
             snapshotsToDelete.append(snapshot.id)
         }
 

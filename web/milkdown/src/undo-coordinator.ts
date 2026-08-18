@@ -15,7 +15,7 @@ import { closeHistory, isHistoryTransaction, redo, redoDepth, undo, undoDepth } 
 import type { Node } from '@milkdown/kit/prose/model';
 import type { EditorState, Transaction } from '@milkdown/kit/prose/state';
 import type { EditorView } from '@milkdown/kit/prose/view';
-import { getContent } from './api-content';
+import { clearEditorHistory, getContent } from './api-content';
 import { clearBlockIds } from './block-id-plugin';
 import {
   hasUnsettledLocalEdit,
@@ -87,6 +87,49 @@ export function deleteRegistryEntry(opId: string): void {
 }
 export function clearRegistry(): void {
   registry.clear();
+}
+
+/** Barrier-only registry clear (plan §4.5/§5 backlog): clears the registry and resets the
+ * descriptor to `{}` WITHOUT touching this editor's own text-undo history -- unlike
+ * `clearStructuralUndoState()` (eviction, below), a barrier (zoom, project/mode switch, drag
+ * reorder, hierarchy enforcement, annotation ops, section metadata edits) must NOT wipe
+ * legitimate in-flight text-undo steps, only the now-invalid structural checkpoints/descriptor.
+ * Correctness was already backstopped without this (a stale opId request gets `.fallback`,
+ * plan §4.2), but leaving the registry populated is a per-session `EditorState` leak (every
+ * checkpoint retains a full ProseMirror doc) and defeats the JS-side fast path (the descriptor
+ * keeps claiming there's something to route). Bridge target for
+ * `window.FinalFinal.clearStructuralUndoRegistry`, called by Swift from
+ * `UnifiedUndoService.invalidateAll()`. */
+export function clearStructuralUndoRegistry(): void {
+  clearRegistry();
+  setUndoDescriptor({});
+}
+
+/** Eviction mini-barrier (plan §4.1/§4.5): the oldest structural entry just fell off the undo
+ * stack at capacity. Clears this editor's OWN text-undo history (`clearEditorHistory`, the
+ * same double-reconfigure technique `resetForProjectSwitch()` already uses) AND removes just
+ * that ONE evicted entry from the registry -- pre-boundary text steps must not stay reachable
+ * past a boundary the timeline no longer guards against (H1 laundering / H2 rebase collapse).
+ *
+ * Takes the evicted entry's `opId` and calls `deleteRegistryEntry(opId)` (MF-1, Phase 5 review
+ * round) -- NOT `clearStructuralUndoRegistry()`/`clearRegistry()`, which wipe every entry. This
+ * used to be a whole-registry clear, but `record()` (`UnifiedUndoService.swift`) calls this
+ * closure as the LAST step of `performStructuralOp` -- AFTER that same op's own registry entry
+ * has already been created and finalized -- so a whole-registry clear here was wiping the
+ * current op's own just-recorded entry too, breaking structural undo/redo the moment the stack
+ * crossed capacity (op #51+). The descriptor is left untouched here: the caller
+ * (`UnifiedUndoService.record()`) always calls `pushDescriptor()` right after this fires, which
+ * refreshes it to the current top-of-stack pointers regardless. Bridge target for
+ * `window.FinalFinal.clearStructuralUndoState`, called by Swift from
+ * `UnifiedUndoService.record()`'s eviction path via `ContentView`'s `clearEditorHistories`
+ * closure. */
+export function clearStructuralUndoState(opId: string): void {
+  const editorInstance = getEditorInstance();
+  if (editorInstance) {
+    const view = editorInstance.ctx.get(editorViewCtx);
+    clearEditorHistory(view);
+  }
+  deleteRegistryEntry(opId);
 }
 export function getUndoDescriptor(): UndoDescriptor {
   return descriptor;

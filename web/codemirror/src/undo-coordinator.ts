@@ -23,6 +23,7 @@
 import { isolateHistory, redo, redoDepth, undo, undoDepth } from '@codemirror/commands';
 import { type EditorState, type Text, Transaction } from '@codemirror/state';
 import type { EditorView } from '@codemirror/view';
+import { clearHistory } from './api';
 import { getEditorView } from './editor-state';
 
 // === Types (plan §4.1) ===
@@ -85,6 +86,39 @@ export function deleteRegistryEntry(opId: string): void {
 }
 export function clearRegistry(): void {
   registry.clear();
+}
+
+/** Barrier-only registry clear (plan §4.5/§5 backlog): clears the registry and resets the
+ * descriptor to `{}` WITHOUT touching this editor's own text-undo history -- unlike
+ * `clearStructuralUndoState()` (eviction, below), a barrier must not wipe legitimate in-flight
+ * text-undo steps, only the now-invalid structural checkpoints/descriptor. See Milkdown's
+ * `undo-coordinator.ts` (mirrored file) for the full reasoning. Bridge target for
+ * `window.FinalFinal.clearStructuralUndoRegistry`, called by Swift from
+ * `UnifiedUndoService.invalidateAll()`. */
+export function clearStructuralUndoRegistry(): void {
+  clearRegistry();
+  setUndoDescriptor({});
+}
+
+/** Eviction mini-barrier (plan §4.1/§4.5): the oldest structural entry just fell off the undo
+ * stack at capacity. Clears this editor's OWN text-undo history (`clearHistory`, `./api.ts`)
+ * AND removes just that ONE evicted entry from the registry -- pre-boundary text steps must not
+ * stay reachable past a boundary the timeline no longer guards against (H1/H2). Note: this
+ * editor has no checkpoint-swap path (Source mode is always the degraded, non-checkpoint path,
+ * plan §4.4 undo step 3b), so `clearHistory()`'s full-`EditorState` rebuild (rather than a
+ * scoped swap) is fine here -- it's the same technique `resetForProjectSwitch()` already uses.
+ *
+ * Takes the evicted entry's `opId` and calls `deleteRegistryEntry(opId)` (MF-1, Phase 5 review
+ * round) -- NOT `clearStructuralUndoRegistry()`/`clearRegistry()`, which wipe every entry. See
+ * Milkdown's `undo-coordinator.ts` (mirrored file) for the full reasoning: `record()` calls this
+ * closure as the LAST step of `performStructuralOp`, after that same op's own registry entry has
+ * already been recorded -- a whole-registry clear here used to wipe it too. Bridge target for
+ * `window.FinalFinal.clearStructuralUndoState`, called by Swift from
+ * `UnifiedUndoService.record()`'s eviction path via `ContentView`'s `clearEditorHistories`
+ * closure. */
+export function clearStructuralUndoState(opId: string): void {
+  clearHistory();
+  deleteRegistryEntry(opId);
 }
 export function getUndoDescriptor(): UndoDescriptor {
   return descriptor;

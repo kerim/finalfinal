@@ -785,4 +785,211 @@ struct StructuralUndoControllerTests {
         #expect(fixture.unifiedUndoService.undoStack.isEmpty, "the injected invalidateAll already emptied the undo stack")
         #expect(fixture.unifiedUndoService.redoStack.isEmpty, "the mismatched entry must not silently land on the redo stack anyway")
     }
+
+    // MARK: - Phase 5: performance sanity check on a large document
+
+    /// Build a fixture with `sectionCount` sections instead of `makeFixture()`'s single one --
+    /// a sanity bar for "large", consistent with this codebase's other large-content tests
+    /// (`EditorModeSwitchTests.testLargeContentIntegrity` uses 50 paragraphs; this scales
+    /// further since it's exercising the full audited op sequence, not just round-trip
+    /// content integrity).
+    private func makeLargeFixture(sectionCount: Int) throws -> (
+        db: ProjectDatabase, pid: String, controller: StructuralUndoController,
+        editorState: EditorViewState, unifiedUndoService: UnifiedUndoService
+    ) {
+        var markdown = ""
+        for i in 0..<sectionCount {
+            markdown += "# Section \(i)\n\nParagraph body for section \(i) with several words to build up the word count of this document evenly across every section.\n\n"
+        }
+        let db = try TestFixtureFactory.createTemporary(content: markdown)
+        let pid = try TestFixtureFactory.getProjectId(from: db)
+
+        let sections = try db.fetchSections(projectId: pid)
+        // TestFixtureFactory.createTemporary only populates the Block table (see makeFixture's
+        // doc comment above) -- mirror the same explicit Section-table insert makeFixture does,
+        // one per generated heading, since performRestoreProject reads from the Section table.
+        if sections.isEmpty {
+            for i in 0..<sectionCount {
+                try db.insertSection(Section(
+                    projectId: pid, sortOrder: i, headerLevel: 1, title: "Section \(i)",
+                    markdownContent: "# Section \(i)\n\nParagraph body for section \(i) with several words to build up the word count of this document evenly across every section.\n"
+                ))
+            }
+        }
+
+        let editorState = EditorViewState()
+        editorState.projectDatabase = db
+        editorState.currentProjectId = pid
+        editorState.content = markdown
+
+        let blockSyncService = BlockSyncService()
+        let sectionSyncService = SectionSyncService()
+        let bibliographySyncService = BibliographySyncService()
+        bibliographySyncService.configure(database: db, projectId: pid)
+        let footnoteSyncService = FootnoteSyncService()
+        footnoteSyncService.configure(database: db, projectId: pid)
+        let annotationSyncService = AnnotationSyncService()
+        let unifiedUndoService = UnifiedUndoService()
+
+        let controller = StructuralUndoController()
+        controller.configure(
+            editorState: editorState, blockSyncService: blockSyncService,
+            sectionSyncService: sectionSyncService, bibliographySyncService: bibliographySyncService,
+            footnoteSyncService: footnoteSyncService, annotationSyncService: annotationSyncService,
+            unifiedUndoService: unifiedUndoService
+        )
+        controller.testEvalBoolOverride = { js in Self.realisticEvalBoolDefault(js) }
+        controller.testEvalVoidOverride = { _ in true }
+
+        return (db, pid, controller, editorState, unifiedUndoService)
+    }
+
+    @Test("performStructuralOp (via performRestoreProject) completes in reasonable time against a 300-section document")
+    func performStructuralOpCompletesInReasonableTimeOnLargeDoc() async throws {
+        let fixture = try makeLargeFixture(sectionCount: 300)
+        let snapshotService = SnapshotService(database: fixture.db, projectId: fixture.pid)
+        let projectSnapshot = try snapshotService.createManualSnapshot(name: "Large doc before")
+
+        let clock = ContinuousClock()
+        let elapsed = await clock.measure {
+            let ok = await fixture.controller.performRestoreProject(
+                snapshotId: projectSnapshot.id, requestingProjectId: fixture.pid
+            )
+            #expect(ok, "the audited sequence must still succeed against a large document, not just be fast")
+        }
+
+        #expect(fixture.editorState.contentState == .idle)
+        #expect(fixture.unifiedUndoService.undoStack.count == 1)
+        // MF-6 (Phase 5 review round): raised from 5s to 30s -- this suite gates every commit
+        // via a pre-commit hook, and a tight wall-clock threshold on shared/loaded CI-like
+        // hardware is prone to intermittent failure unrelated to any real regression. 30s only
+        // catches an order-of-magnitude regression (e.g. a per-section DB round trip inside a
+        // loop that should be batched, turning this into O(n^2)) on a 300-section doc -- this
+        // test double has zero real WKWebView/network latency, so even 30s is still generous
+        // headroom, not a tight profiling budget.
+        #expect(elapsed < .seconds(30), "performStructuralOp took \(elapsed) against a 300-section document -- investigate for an accidental non-linear regression")
+    }
+
+    // MARK: - Phase 5 MF-2: in-flight timeline invalidation (generation/epoch check)
+
+    /// Regression for MF-2 (Phase 5 review round): a barrier (project switch, mode switch --
+    /// deliberately unguarded by `isPerforming`, see those call sites' comments) can invalidate
+    /// the timeline via `UnifiedUndoService.invalidateAll` WHILE `performStructuralOp` is
+    /// mid-flight. Before this fix, the sequence would still unconditionally call
+    /// `unifiedUndoService.record(entry)` at its last step, re-seeding whatever timeline is
+    /// CURRENT at that point (e.g. a different project's, now-empty, timeline) with an entry
+    /// describing a mutation performed against the ORIGINAL project's database (`db`/`pid` are
+    /// captured once at method entry and never re-read). The generation/epoch check must catch
+    /// this: the op reports failure, neither stack ends up with an entry, and the op's own
+    /// undo-point snapshot (pinned by `createUndoPointSnapshot()`) is unpinned rather than
+    /// leaked.
+    @Test("MF-2: a barrier invalidating the timeline mid-sequence aborts performStructuralOp -- no entry recorded on either stack, and the op's undo-point snapshot is unpinned")
+    func performStructuralOpAbortsWhenGenerationChangesMidSequence() async throws {
+        let fixture = try makeFixture()
+        let snapshotService = SnapshotService(database: fixture.db, projectId: fixture.pid)
+        let snapshotIdsBefore = Set(try snapshotService.fetchAllSnapshots().map(\.id))
+
+        // Inject the barrier at `beginStructuralOp` (step 3) -- well before step 8's record()
+        // call, mirroring a project/mode switch racing in mid-sequence for real.
+        var boolCalls: [String] = []
+        fixture.controller.testEvalBoolOverride = { js in
+            boolCalls.append(js)
+            if js.contains("beginStructuralOp") {
+                fixture.unifiedUndoService.invalidateAll(reason: "test-injected barrier mid-sequence")
+            }
+            return Self.realisticEvalBoolDefault(js)
+        }
+        fixture.controller.testEvalVoidOverride = { _ in true }
+
+        let opOk = await fixture.controller.performSectionRestoreReplace(
+            snapshotSectionId: fixture.snapshotSectionId, targetSectionId: fixture.targetSectionId,
+            requestingProjectId: fixture.pid
+        )
+
+        #expect(
+            boolCalls.contains { $0.contains("beginStructuralOp") },
+            "the injected barrier must actually be reached -- got calls: \(boolCalls)"
+        )
+        #expect(!opOk, "recording now would re-seed a timeline invalidated mid-sequence")
+        #expect(fixture.unifiedUndoService.undoStack.isEmpty)
+        #expect(fixture.unifiedUndoService.redoStack.isEmpty)
+
+        // createUndoPointSnapshot() (step 4) still ran before the barrier landed and the entry
+        // was refused -- its snapshot must be unpinned (MF-3's defer), not left as a permanent
+        // leaked pin.
+        let snapshotIdsAfter = Set(try snapshotService.fetchAllSnapshots().map(\.id))
+        let newSnapshotIds = snapshotIdsAfter.subtracting(snapshotIdsBefore)
+        #expect(newSnapshotIds.count == 1, "createUndoPointSnapshot should still have run once before the epoch check catches the race")
+        for id in newSnapshotIds {
+            #expect(
+                !SnapshotService.pinnedUndoPointSnapshotIdsForTesting.contains(id),
+                "the aborted op's undo-point snapshot must be unpinned, not leaked"
+            )
+        }
+    }
+
+    /// Regression for the gap the review round after MF-2 found: `performStructuralOp` got the
+    /// unpin-on-abort `defer` above, but `performUndo`/`performRedo` have the identical shape
+    /// (`createUndoPointSnapshot()` pins a fresh snapshot id, then the SAME in-flight
+    /// generation/epoch barrier can abort the sequence before that snapshot is ever handed off
+    /// to `attachRedoSnapshot`/`replaceTopOfUndoStack`) and never got the mirrored `defer` --
+    /// leaking the fresh redo-point snapshot's pin permanently on every barrier-raced undo.
+    /// Mirrors `performStructuralOpAbortsWhenGenerationChangesMidSequence` above, but drives
+    /// `performUndo` via `handleStructuralRequest` and injects the barrier at
+    /// `performStructuralSwap` (the JS call `performUndo` makes just before
+    /// `createUndoPointSnapshot()`), so the fresh snapshot still gets created and pinned before
+    /// the epoch check (further down the sequence) catches the race and aborts.
+    @Test("MF: a barrier invalidating the timeline mid-sequence aborts performUndo -- entry lands on neither stack, and the fresh redo-point snapshot is unpinned")
+    func performUndoAbortsWhenGenerationChangesMidSequence() async throws {
+        let fixture = try makeFixture()
+
+        let opOk = await fixture.controller.performSectionRestoreReplace(
+            snapshotSectionId: fixture.snapshotSectionId, targetSectionId: fixture.targetSectionId,
+            requestingProjectId: fixture.pid
+        )
+        #expect(opOk)
+        let entry = try #require(fixture.unifiedUndoService.undoStack.last)
+
+        let snapshotService = SnapshotService(database: fixture.db, projectId: fixture.pid)
+        // Captured AFTER the forward op above (which itself pins entry.undoSnapshotId) so the
+        // isolated new-snapshot diff below only counts the snapshot performUndo creates.
+        let snapshotIdsBefore = Set(try snapshotService.fetchAllSnapshots().map(\.id))
+
+        // Inject the barrier at `performStructuralSwap` -- the JS call performUndo makes right
+        // before `createUndoPointSnapshot()` (WYSIWYG's Step 2) -- mirroring a project/mode
+        // switch racing in mid-sequence for real, well before the epoch re-check near the end
+        // of the sequence.
+        var boolCalls: [String] = []
+        fixture.controller.testEvalBoolOverride = { js in
+            boolCalls.append(js)
+            if js.contains("performStructuralSwap") {
+                fixture.unifiedUndoService.invalidateAll(reason: "test-injected barrier mid-sequence")
+            }
+            return Self.realisticEvalBoolDefault(js)
+        }
+
+        await fixture.controller.handleStructuralRequest(opId: entry.id.uuidString, direction: .undo)
+
+        #expect(
+            boolCalls.contains { $0.contains("performStructuralSwap") },
+            "the injected barrier must actually be reached -- got calls: \(boolCalls)"
+        )
+        // invalidateAll (fired mid-sequence) already cleared both stacks -- and the epoch check
+        // further down performUndo must refuse to put anything back on either one.
+        #expect(fixture.unifiedUndoService.undoStack.isEmpty)
+        #expect(fixture.unifiedUndoService.redoStack.isEmpty)
+
+        // createUndoPointSnapshot() still ran (after the barrier landed but before the epoch
+        // check catches it) and pinned a fresh redo-point snapshot -- that pin must be released
+        // by the mirrored `defer`, not leaked permanently.
+        let snapshotIdsAfter = Set(try snapshotService.fetchAllSnapshots().map(\.id))
+        let newSnapshotIds = snapshotIdsAfter.subtracting(snapshotIdsBefore)
+        #expect(newSnapshotIds.count == 1, "createUndoPointSnapshot should still have run once before the epoch check catches the race")
+        for id in newSnapshotIds {
+            #expect(
+                !SnapshotService.pinnedUndoPointSnapshotIdsForTesting.contains(id),
+                "the aborted performUndo's fresh redo-point snapshot must be unpinned, not leaked"
+            )
+        }
+    }
 }

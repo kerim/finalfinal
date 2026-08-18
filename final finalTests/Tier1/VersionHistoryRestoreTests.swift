@@ -208,6 +208,71 @@ struct VersionHistoryRestoreTests {
                 "Manual snapshot should survive pruning")
     }
 
+    /// Backdate a snapshot's `createdAt` directly in the DB -- `createSnapshot`/`Snapshot`'s
+    /// own initializer always stamps "now", so pruning's Time-Machine-style retention buckets
+    /// (24h/day/week/month) can't otherwise be exercised without a real 2-month wait.
+    private func backdateSnapshot(_ db: ProjectDatabase, id: String, to date: Date) throws {
+        try db.write { grdbDb in
+            guard var snapshot = try Snapshot.fetchOne(grdbDb, key: id) else { return }
+            snapshot.createdAt = date
+            try snapshot.update(grdbDb)
+        }
+    }
+
+    @Test("Prune auto backups exempts a pinned undo-point snapshot that would otherwise be pruned (plan §4.4/§9)")
+    func pruneAutoBackupsExemptsPinnedUndoPointSnapshot() throws {
+        let db = try TestFixtureFactory.createTemporary(content: TestFixtureFactory.testContent)
+        let (service, pid) = try createSnapshotService(db: db)
+
+        // Three old auto-backups in the SAME calendar-month retention bucket (>=4 weeks old,
+        // so pruneAutoBackups' month-bucket dedup applies: normally only the LATEST survives).
+        // A fixed reference date (day 15 of a month two months ago) keeps all three safely
+        // inside one calendar month regardless of when this test happens to run.
+        let refMonth = Calendar.current.date(byAdding: .month, value: -2, to: Date())!
+        var comps = Calendar.current.dateComponents([.year, .month], from: refMonth)
+        comps.day = 15
+        let baseDate = try #require(Calendar.current.date(from: comps))
+        let earliest = baseDate
+        let middle = Calendar.current.date(byAdding: .hour, value: 1, to: baseDate)!
+        let latest = Calendar.current.date(byAdding: .hour, value: 2, to: baseDate)!
+
+        func makeAutoSnapshot(markdown: String) throws -> Snapshot {
+            let blocks = BlockParser.parse(markdown: markdown, projectId: pid)
+            try db.replaceBlocks(blocks, for: pid)
+            return try #require(try service.createAutoSnapshot())
+        }
+
+        // plainUnpinned: earliest, ordinary auto-backup -- NOT the bucket's natural survivor,
+        // and not pinned. Must be pruned.
+        let plainUnpinned = try makeAutoSnapshot(markdown: "# Bucket 1\n\nContent one.")
+        try backdateSnapshot(db, id: plainUnpinned.id, to: earliest)
+
+        // undoPoint: middle, created via the exact production API a structural op uses (no
+        // dedup skip, self-pinning per createUndoPointSnapshot's own doc comment). Also NOT
+        // the bucket's natural survivor by recency -- only the pin should save it.
+        let blocks = BlockParser.parse(markdown: "# Bucket 2 (undo point)\n\nContent two.", projectId: pid)
+        try db.replaceBlocks(blocks, for: pid)
+        let undoPointId = try service.createUndoPointSnapshot()
+        try backdateSnapshot(db, id: undoPointId, to: middle)
+        #expect(SnapshotService.pinnedUndoPointSnapshotIdsForTesting.contains(undoPointId))
+
+        // bucketKeeper: latest in the bucket -- survives naturally via the existing
+        // Time-Machine retention logic, regardless of pinning. Present so the bucket has a
+        // real "natural survivor" distinct from the two entries under test above.
+        let bucketKeeper = try makeAutoSnapshot(markdown: "# Bucket 3 (keeper)\n\nContent three.")
+        try backdateSnapshot(db, id: bucketKeeper.id, to: latest)
+
+        try service.pruneAutoBackups()
+
+        let remaining = try service.fetchAllSnapshots().map(\.id)
+        #expect(remaining.contains(undoPointId), "Pinned undo-point snapshot must survive pruning even though it isn't the bucket's natural latest-survivor")
+        #expect(remaining.contains(bucketKeeper.id), "The bucket's natural latest-survivor should still be kept as before")
+        #expect(!remaining.contains(plainUnpinned.id), "An equally-old, UNPINNED plain auto-backup that also isn't the bucket's survivor should still be prunable -- confirms the exemption is pin-specific, not a blanket retention-window change")
+
+        // Cleanup: unpin so this test's id doesn't linger in the process-lifetime static set.
+        SnapshotService.unpinUndoPointSnapshot(undoPointId)
+    }
+
     // MARK: - Trailing Blank Line Regression (Outline Desync)
     //
     // Regression coverage for a bug where sections were joined end-to-end with no

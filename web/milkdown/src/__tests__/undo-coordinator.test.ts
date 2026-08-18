@@ -18,10 +18,13 @@ import { highlightPlugin } from '../highlight-plugin';
 import { configureSlash, slash } from '../slash-commands';
 import {
   beginStructuralOp,
+  clearStructuralUndoRegistry,
+  clearStructuralUndoState,
   decideRedoRouting,
   decideUndoRouting,
   finalizeStructuralOpPostOpDoc,
   getRegistry,
+  getUndoDescriptor,
   handleGlobalUndoRedoKeydown,
   handleUndoReplyFromSwift,
   handleUnifiedUndoKeydown,
@@ -635,6 +638,68 @@ describe('undo-coordinator live wiring (real Milkdown editor, always-empty Phase
       docsEqual: (a, b) => a.eq(b),
     });
     expect(decision).toEqual({ action: 'structural', opId: 'op-1' });
+  });
+
+  // === Phase 5: barrier/eviction JS-side clears (plan §4.1/§4.5/§5 backlog) ===
+
+  it('clearStructuralUndoRegistry clears the registry and resets the descriptor WITHOUT touching editor text-undo history', async () => {
+    const e = await makeEditor('Paragraph one.');
+    const view = e.ctx.get(editorViewCtx);
+
+    view.dispatch(view.state.tr.insertText('typed text'));
+    const depthBefore = undoDepth(view.state);
+    expect(depthBefore).toBeGreaterThan(0);
+
+    expect(beginStructuralOp('op-1')).toBe(true);
+    setUndoDescriptor({ undoTopOpId: 'op-1' });
+    expect(getRegistry().size).toBe(1);
+
+    clearStructuralUndoRegistry();
+
+    expect(getRegistry().size).toBe(0);
+    expect(getUndoDescriptor()).toEqual({});
+    // The editor's own text-undo history is untouched -- a barrier must not wipe legitimate
+    // in-flight typing undo steps, only the now-invalid structural registry/descriptor.
+    expect(undoDepth(view.state)).toBe(depthBefore);
+  });
+
+  it('clearStructuralUndoState (eviction) removes only the evicted opId from the registry AND clears the editor text-undo history (MF-1, Phase 5 review round)', async () => {
+    const e = await makeEditor('Paragraph one.');
+    const view = e.ctx.get(editorViewCtx);
+
+    view.dispatch(view.state.tr.insertText('typed text'));
+    expect(undoDepth(e.ctx.get(editorViewCtx).state)).toBeGreaterThan(0);
+
+    expect(beginStructuralOp('op-1')).toBe(true);
+    setUndoDescriptor({ undoTopOpId: 'op-1' });
+
+    clearStructuralUndoState('op-1');
+
+    expect(getRegistry().has('op-1')).toBe(false);
+    // clearEditorHistory() reconfigures the view via updateState() -- re-fetch the live view
+    // rather than trusting the pre-clear `view` reference.
+    expect(undoDepth(e.ctx.get(editorViewCtx).state)).toBe(0);
+  });
+
+  it("clearStructuralUndoState (eviction) does NOT wipe a DIFFERENT, still-live opId's registry entry -- regression for MF-1 (Phase 5 review round): the eviction path used to call clearStructuralUndoRegistry()/clearRegistry(), a WHOLE-registry wipe. record() (UnifiedUndoService.swift) calls this closure as the LAST step of performStructuralOp -- AFTER that same op's own registry entry was already created and finalized -- so the old whole-registry clear wiped the CURRENT op's own just-recorded entry too, breaking structural undo/redo the moment the stack crossed capacity (op #51+)", async () => {
+    const e = await makeEditor('Paragraph one.');
+    const view = e.ctx.get(editorViewCtx);
+
+    // 'op-evicted' stands in for the oldest entry that just fell off the undo stack at
+    // capacity; 'op-current' stands in for the CURRENT op's own entry, already fully recorded
+    // (finalizeStructuralOpPostOpDoc has run) by the time eviction's JS-side clear fires.
+    expect(beginStructuralOp('op-evicted')).toBe(true);
+    expect(finalizeStructuralOpPostOpDoc('op-evicted')).toBe(true);
+    view.dispatch(view.state.tr.insertText('X').setMeta('addToHistory', false));
+    expect(beginStructuralOp('op-current')).toBe(true);
+    expect(finalizeStructuralOpPostOpDoc('op-current')).toBe(true);
+    expect(getRegistry().has('op-evicted')).toBe(true);
+    expect(getRegistry().has('op-current')).toBe(true);
+
+    clearStructuralUndoState('op-evicted');
+
+    expect(getRegistry().has('op-evicted')).toBe(false);
+    expect(getRegistry().has('op-current')).toBe(true);
   });
 });
 

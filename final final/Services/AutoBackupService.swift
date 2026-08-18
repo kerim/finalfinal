@@ -50,6 +50,19 @@ final class AutoBackupService {
         self.lastBackupTime = nil
         self.hasUnsavedChanges = false
         cancelIdleTimer()
+
+        // Startup sweep (plan §4.4/§9, Phase 5): previously the only `pruneAutoBackups()` call
+        // site was the 60s idle-timeout path below, so a project opened and closed within that
+        // window (or opened right after a relaunch) could go arbitrarily long without a prune
+        // pass. `SnapshotService`'s undo-point pin set is in-memory and always starts EMPTY on
+        // a fresh launch (see `pinUndoPointSnapshot`'s doc comment) -- so there is no separate
+        // "orphaned row" concept to detect or delete here: every undo-point snapshot a PRIOR
+        // session pinned is, by definition, unpinned the moment this process starts, and this
+        // ordinary `pruneAutoBackups()` call already treats it exactly like any other
+        // auto-backup on its usual Time-Machine-style schedule. Best-effort (`try?`, matching
+        // the idle-timeout call site) -- a failed prune here isn't worth surfacing to the user
+        // on project open, and the idle-timeout path will retry later anyway.
+        try? snapshotService?.pruneAutoBackups()
     }
 
     /// Reset when project is closed

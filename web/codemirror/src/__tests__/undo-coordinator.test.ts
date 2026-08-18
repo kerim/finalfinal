@@ -9,14 +9,17 @@ import { history, redoDepth, undo, undoDepth } from '@codemirror/commands';
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { EditorState, Transaction } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { setEditorExtensions, setEditorView } from '../editor-state';
 import {
   beginStructuralOp,
+  clearStructuralUndoRegistry,
+  clearStructuralUndoState,
   decideRedoRouting,
   decideUndoRouting,
   finalizeStructuralOpPostOpDoc,
   getRegistry,
+  getUndoDescriptor,
   handleGlobalUndoRedoKeydown,
   handleUndoReplyFromSwift,
   handleUnifiedUndoKeydown,
@@ -30,6 +33,30 @@ import {
   setRegistryEntry,
   setUndoDescriptor,
 } from '../undo-coordinator';
+
+// jsdom has no real layout engine and doesn't implement Range.prototype.getBoundingClientRect --
+// clearStructuralUndoState() below calls clearHistory(), which calls installLineHeightFix(),
+// which measures dummy elements via the Range API. Polyfill to a zeroed DOMRect (identical to
+// clear-history.test.ts's rationale) so that measurement path doesn't throw here.
+beforeAll(() => {
+  if (typeof Range !== 'undefined' && !Range.prototype.getBoundingClientRect) {
+    Range.prototype.getBoundingClientRect = function (this: Range): DOMRect {
+      return {
+        x: 0,
+        y: 0,
+        width: 0,
+        height: 0,
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        toJSON() {
+          return {};
+        },
+      } as DOMRect;
+    };
+  }
+});
 
 // === (1) Pure routing truth table -- fake string "docs", no editor at all ===
 // Identical in shape to web/milkdown/src/__tests__/undo-coordinator.test.ts's truth table --
@@ -593,5 +620,63 @@ describe('undo-coordinator live wiring (real CodeMirror EditorView, always-empty
       docsEqual: (a, b) => a.eq(b),
     });
     expect(decision).toEqual({ action: 'structural', opId: 'op-1' });
+  });
+
+  // === Phase 5: barrier/eviction JS-side clears (plan §4.1/§4.5/§5 backlog) ===
+
+  it('clearStructuralUndoRegistry clears the registry and resets the descriptor WITHOUT touching editor text-undo history', () => {
+    const v = makeEditor('Paragraph one.');
+    v.dispatch({ changes: { from: 0, insert: 'typed text' } });
+    const depthBefore = undoDepth(v.state);
+    expect(depthBefore).toBeGreaterThan(0);
+
+    expect(beginStructuralOp('op-1')).toBe(true);
+    setUndoDescriptor({ undoTopOpId: 'op-1' });
+    expect(getRegistry().size).toBe(1);
+
+    clearStructuralUndoRegistry();
+
+    expect(getRegistry().size).toBe(0);
+    expect(getUndoDescriptor()).toEqual({});
+    // The editor's own text-undo history is untouched -- a barrier must not wipe legitimate
+    // in-flight typing undo steps, only the now-invalid structural registry/descriptor.
+    expect(undoDepth(v.state)).toBe(depthBefore);
+  });
+
+  it('clearStructuralUndoState (eviction) removes only the evicted opId from the registry AND clears the editor text-undo history (MF-1, Phase 5 review round)', () => {
+    const v = makeEditor('Paragraph one.');
+    v.dispatch({ changes: { from: 0, insert: 'typed text' } });
+    expect(undoDepth(v.state)).toBeGreaterThan(0);
+
+    expect(beginStructuralOp('op-1')).toBe(true);
+    setUndoDescriptor({ undoTopOpId: 'op-1' });
+
+    clearStructuralUndoState('op-1');
+
+    expect(getRegistry().has('op-1')).toBe(false);
+    // clearHistory() rebuilds the EditorState via setState() -- read the module-level view
+    // back out (setEditorView is called inside clearHistory) rather than trusting the local
+    // `v` reference, mirroring makeEditor's own bookkeeping.
+    expect(undoDepth(v.state)).toBe(0);
+  });
+
+  it("clearStructuralUndoState (eviction) does NOT wipe a DIFFERENT, still-live opId's registry entry -- regression for MF-1 (Phase 5 review round): the eviction path used to call clearStructuralUndoRegistry()/clearRegistry(), a WHOLE-registry wipe. record() (UnifiedUndoService.swift) calls this closure as the LAST step of performStructuralOp -- AFTER that same op's own registry entry was already created and finalized -- so the old whole-registry clear wiped the CURRENT op's own just-recorded entry too, breaking structural undo/redo the moment the stack crossed capacity (op #51+)", () => {
+    const v = makeEditor('Paragraph one.');
+
+    // 'op-evicted' stands in for the oldest entry that just fell off the undo stack at
+    // capacity; 'op-current' stands in for the CURRENT op's own entry, already fully recorded
+    // (finalizeStructuralOpPostOpDoc has run) by the time eviction's JS-side clear fires.
+    expect(beginStructuralOp('op-evicted')).toBe(true);
+    expect(finalizeStructuralOpPostOpDoc('op-evicted')).toBe(true);
+    v.dispatch({ changes: { from: 0, insert: 'X' }, annotations: Transaction.addToHistory.of(false) });
+    expect(beginStructuralOp('op-current')).toBe(true);
+    expect(finalizeStructuralOpPostOpDoc('op-current')).toBe(true);
+    expect(getRegistry().has('op-evicted')).toBe(true);
+    expect(getRegistry().has('op-current')).toBe(true);
+
+    clearStructuralUndoState('op-evicted');
+
+    expect(getRegistry().has('op-evicted')).toBe(false);
+    expect(getRegistry().has('op-current')).toBe(true);
   });
 });

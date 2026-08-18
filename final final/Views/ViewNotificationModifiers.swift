@@ -29,7 +29,8 @@ extension View {
         editorState: EditorViewState,
         cursorRestore: Binding<CursorPosition?>,
         sectionSyncService: SectionSyncService,
-        findBarState: FindBarState
+        findBarState: FindBarState,
+        unifiedUndoService: UnifiedUndoService
     ) -> some View {
         self
             .onReceive(NotificationCenter.default.publisher(for: .toggleFocusMode)) { _ in
@@ -53,7 +54,8 @@ extension View {
                 handleEditorModeToggle(
                     editorState: editorState,
                     sectionSyncService: sectionSyncService,
-                    findBarState: findBarState
+                    findBarState: findBarState,
+                    unifiedUndoService: unifiedUndoService
                 )
             }
             .onReceive(NotificationCenter.default.publisher(for: .didSaveCursorPosition)) { notification in
@@ -440,8 +442,20 @@ extension View {
     private func handleEditorModeToggle(
         editorState: EditorViewState,
         sectionSyncService: SectionSyncService,
-        findBarState: FindBarState
+        findBarState: FindBarState,
+        unifiedUndoService: UnifiedUndoService
     ) {
+        // Barrier (plan §4.5, Phase 5 backlog -- "neither is wired anywhere"): mode switch
+        // destroys the outgoing editor's WebView and claims a fresh preloaded one for the
+        // incoming mode (plan §2), so any structural entry's checkpoint/registry state tied to
+        // the outgoing WebView is gone the instant this toggle completes. Timeline + descriptor
+        // only, per plan §4.5 -- editor text-undo history is already inherently fresh after a
+        // mode switch (a brand-new WebView), so there's nothing else to clear here.
+        // Deliberately unguarded by `isPerforming` (MF-2, Phase 5 review round) -- do not "fix"
+        // this by adding one; the forward path is already defended by
+        // `StructuralUndoController`'s generation/epoch check (see its doc comment).
+        unifiedUndoService.invalidateAll(reason: "mode switch")
+
         // Clear find bar state when switching editors
         findBarState.clearSearch()
 

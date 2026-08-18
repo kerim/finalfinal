@@ -285,6 +285,30 @@ extension ContentView {
 
     /// Handle project opened notification
     func handleProjectOpened(isRestore: Bool = false) async {
+        // Barrier (plan §4.5, Phase 5 backlog): a project switch must invalidate the unified
+        // undo timeline -- it's per-project in-memory state (plan §4.1/§4.8), and
+        // `unifiedUndoService` is a single `@State` instance owned by ContentView, so it
+        // persists across a project switch within the SAME window rather than being recreated
+        // per-project. Real justification (MF-6, Phase 5 review round -- corrected: an earlier
+        // draft of this comment cited stale Undo/Redo MENU ENABLEMENT, which isn't actually the
+        // hazard -- `UndoRedoCommands.canUndo`/`canRedo` are almost always `true` anyway via
+        // `mayHaveTextUndo`, so the menu's enabled/disabled look barely changes either way):
+        // this call is what makes `StructuralUndoController`'s in-flight generation/epoch check
+        // (MF-2, `performStructuralOp`/`performUndo`/`performRedo`) actually fire. Without it, a
+        // structural op already in flight when the user switches projects -- deliberately NOT
+        // aborted here (`invalidateAll` is intentionally unguarded by `isPerforming`; do not
+        // "fix" this by adding one -- see that epoch mechanism's doc comment for why skipping
+        // the barrier instead would be worse) -- could still finish and record its entry,
+        // re-seeding the NEW project's (now-current)
+        // timeline with an entry that actually describes a mutation performed against the OLD
+        // project's database. Fires for a version-restore reopen too (`isRestore`) -- that path
+        // is itself one of the five structural op kinds, whose own audited sequence already
+        // recorded/updated the timeline before this notification landed; a stale timeline from
+        // BEFORE the restore is exactly as wrong here as one from a different project would be.
+        // Runs first, before any of the flush/reset work below, so a late in-flight structural
+        // op's epoch check has the earliest possible chance to catch this.
+        unifiedUndoService.invalidateAll(reason: "project switch")
+
         // Stop block polling FIRST — prevents poll timer from firing during
         // the await suspension points in flushAllPendingContent() and writing
         // conflicting data to the database.

@@ -257,6 +257,10 @@ declare global {
       performStructuralSwap: (opId: string, direction: 'undo' | 'redo') => boolean;
       finishStructuralSwapSettle: () => boolean;
       cancelPendingInsertions: () => void;
+      // Barrier/eviction JS-side clears (Phase 5, plan §4.1/§4.5/§5 backlog).
+      clearStructuralUndoRegistry: () => void;
+      // MF-1 (Phase 5 review round): scoped to one evicted opId, not a whole-registry clear.
+      clearStructuralUndoState: (opId: string) => void;
     };
   }
 }

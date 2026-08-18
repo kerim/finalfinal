@@ -63,7 +63,7 @@ struct UnifiedUndoServiceTests {
     func recordEvictionFiresClearEditorHistories() {
         let service = UnifiedUndoService()
         var clearCount = 0
-        service.clearEditorHistories = { clearCount += 1 }
+        service.clearEditorHistories = { _ in clearCount += 1 }
 
         for i in 0..<UnifiedUndoService.capacity {
             service.record(makeEntry(title: "Entry \(i)"))
@@ -81,7 +81,7 @@ struct UnifiedUndoServiceTests {
     func recordUnderCapacityDoesNotEvict() {
         let service = UnifiedUndoService()
         var clearCount = 0
-        service.clearEditorHistories = { clearCount += 1 }
+        service.clearEditorHistories = { _ in clearCount += 1 }
 
         service.record(makeEntry())
         service.record(makeEntry())
@@ -177,11 +177,213 @@ struct UnifiedUndoServiceTests {
     func invalidateAllDoesNotCallClearEditorHistories() {
         let service = UnifiedUndoService()
         var clearCount = 0
-        service.clearEditorHistories = { clearCount += 1 }
+        service.clearEditorHistories = { _ in clearCount += 1 }
         service.record(makeEntry())
 
         service.invalidateAll(reason: "test barrier")
 
         #expect(clearCount == 0)
+    }
+
+    // MARK: - clearEditorHistories eviction scoping (MF-1, Phase 5 review round)
+
+    @Test("record's eviction mini-barrier fires clearEditorHistories with exactly the evicted entry's id, not the current entry's")
+    func recordEvictionFiresClearEditorHistoriesWithEvictedId() {
+        let service = UnifiedUndoService()
+        var receivedIds: [UUID] = []
+        service.clearEditorHistories = { receivedIds.append($0) }
+
+        var recordedIds: [UUID] = []
+        for i in 0..<(UnifiedUndoService.capacity + 1) {
+            let entry = makeEntry(title: "Entry \(i)")
+            recordedIds.append(entry.id)
+            service.record(entry)
+        }
+
+        // 51 entries recorded (capacity 50 + 1): exactly one eviction, and it must carry the
+        // FIRST entry's id (the oldest, evicted one) -- never the just-recorded 51st entry's own
+        // id, which is what a whole-registry clear used to wipe by mistake (MF-1).
+        #expect(receivedIds == [recordedIds[0]])
+        #expect(!receivedIds.contains(recordedIds.last!))
+        #expect(service.undoStack.contains { $0.id == recordedIds.last })
+    }
+
+    @Test("invalidateAll DOES call clearStructuralRegistry -- the lighter barrier-only JS clear (Phase 5)")
+    func invalidateAllCallsClearStructuralRegistry() {
+        let service = UnifiedUndoService()
+        var clearCount = 0
+        service.clearStructuralRegistry = { clearCount += 1 }
+        service.record(makeEntry())
+
+        service.invalidateAll(reason: "test barrier")
+
+        #expect(clearCount == 1)
+    }
+
+    @Test("invalidateAll on an already-empty timeline STILL calls clearStructuralRegistry (MF-5, Phase 5 review round)")
+    func invalidateAllOnEmptyTimelineStillCallsClearStructuralRegistry() {
+        // MF-5: the registry-clear used to run AFTER the empty-stack early return, so it never
+        // fired when both stacks were already empty -- stranding any JS-side registry entry
+        // that got inserted (beginStructuralOp) before the Swift-side stacks caught up, with no
+        // other path able to clear it. Moved to run unconditionally, before that guard.
+        let service = UnifiedUndoService()
+        var clearCount = 0
+        service.clearStructuralRegistry = { clearCount += 1 }
+
+        service.invalidateAll(reason: "no-op barrier")
+
+        #expect(clearCount == 1)
+    }
+
+    // MARK: - generation (MF-2, Phase 5 review round)
+
+    @Test("invalidateAll bumps generation even on an already-empty timeline (MF-5)")
+    func invalidateAllBumpsGenerationEvenWhenEmpty() {
+        let service = UnifiedUndoService()
+        let before = service.generation
+
+        service.invalidateAll(reason: "no-op barrier")
+
+        #expect(service.generation == before + 1)
+    }
+
+    @Test("invalidateAll bumps generation once per call when the timeline is non-empty")
+    func invalidateAllBumpsGenerationWhenNonEmpty() {
+        let service = UnifiedUndoService()
+        service.record(makeEntry())
+        let before = service.generation
+
+        service.invalidateAll(reason: "test barrier")
+
+        #expect(service.generation == before + 1)
+    }
+
+    @Test("invalidateRedoBranch bumps generation when it actually clears the redo stack")
+    func invalidateRedoBranchBumpsGeneration() {
+        let service = UnifiedUndoService()
+        let entry = makeEntry()
+        service.record(entry)
+        _ = service.performUndo(opId: entry.id)
+        #expect(!service.redoStack.isEmpty)
+        let before = service.generation
+
+        service.invalidateRedoBranch(reason: "text edit after structural undo")
+
+        #expect(service.generation == before + 1)
+    }
+
+    @Test("invalidateRedoBranch on an already-empty redo stack is a no-op and does not bump generation")
+    func invalidateRedoBranchOnEmptyStackDoesNotBumpGeneration() {
+        let service = UnifiedUndoService()
+        let before = service.generation
+
+        service.invalidateRedoBranch(reason: "no-op")
+
+        #expect(service.generation == before)
+    }
+
+    @Test("invalidateRedoBranch unpins the discarded redo entries' snapshot ids (MF-3, Phase 5 review round)")
+    func invalidateRedoBranchUnpinsSnapshots() {
+        // MF-3: every other stack-discard path in this file unpins before clearing --
+        // invalidateRedoBranch's redoStack.removeAll() didn't, leaking a permanent pin.
+        let service = UnifiedUndoService()
+        let undoSnapshotId = UUID().uuidString
+        let redoSnapshotId = UUID().uuidString
+        SnapshotService.pinUndoPointSnapshot(undoSnapshotId)
+        SnapshotService.pinUndoPointSnapshot(redoSnapshotId)
+        let entry = makeEntry(undoSnapshotId: undoSnapshotId)
+        service.record(entry)
+        _ = service.performUndo(opId: entry.id) // moves to redoStack
+        service.attachRedoSnapshot(opId: entry.id, redoSnapshotId: redoSnapshotId)
+        #expect(SnapshotService.pinnedUndoPointSnapshotIdsForTesting.contains(undoSnapshotId))
+        #expect(SnapshotService.pinnedUndoPointSnapshotIdsForTesting.contains(redoSnapshotId))
+
+        service.invalidateRedoBranch(reason: "text edit after structural undo")
+
+        #expect(service.redoStack.isEmpty)
+        #expect(!SnapshotService.pinnedUndoPointSnapshotIdsForTesting.contains(undoSnapshotId))
+        #expect(!SnapshotService.pinnedUndoPointSnapshotIdsForTesting.contains(redoSnapshotId))
+    }
+
+    // MARK: - Snapshot pin/prune interplay (Phase 5, plan §4.4/§9)
+
+    @Test("record pins a new entry's undo snapshot and eviction unpins the evicted entry's snapshot")
+    func evictionUnpinsSnapshot() {
+        let service = UnifiedUndoService()
+        let firstUndoSnapshotId = UUID().uuidString
+        SnapshotService.pinUndoPointSnapshot(firstUndoSnapshotId) // mirrors createUndoPointSnapshot's own pin
+        let first = makeEntry(title: "First", undoSnapshotId: firstUndoSnapshotId)
+        service.record(first)
+        #expect(SnapshotService.pinnedUndoPointSnapshotIdsForTesting.contains(firstUndoSnapshotId))
+
+        for i in 0..<UnifiedUndoService.capacity {
+            let snapshotId = UUID().uuidString
+            SnapshotService.pinUndoPointSnapshot(snapshotId)
+            service.record(makeEntry(title: "Entry \(i)", undoSnapshotId: snapshotId))
+        }
+
+        // `first` was evicted (capacity + 1 entries recorded total) -- its snapshot must be
+        // unpinned so it rejoins the normal auto-backup population instead of leaking a
+        // permanent pin.
+        #expect(!service.undoStack.contains { $0.id == first.id })
+        #expect(!SnapshotService.pinnedUndoPointSnapshotIdsForTesting.contains(firstUndoSnapshotId))
+    }
+
+    @Test("invalidateAll unpins every discarded entry's snapshot ids, on both stacks")
+    func invalidateAllUnpinsSnapshots() {
+        let service = UnifiedUndoService()
+        let undoSnapshotId = UUID().uuidString
+        let redoSnapshotId = UUID().uuidString
+        SnapshotService.pinUndoPointSnapshot(undoSnapshotId)
+        SnapshotService.pinUndoPointSnapshot(redoSnapshotId)
+        let entry = StructuralEntry(
+            kind: .restoreSectionReplace, title: "Test", undoSnapshotId: undoSnapshotId, redoSnapshotId: redoSnapshotId
+        )
+        service.record(entry)
+
+        service.invalidateAll(reason: "test barrier")
+
+        #expect(!SnapshotService.pinnedUndoPointSnapshotIdsForTesting.contains(undoSnapshotId))
+        #expect(!SnapshotService.pinnedUndoPointSnapshotIdsForTesting.contains(redoSnapshotId))
+    }
+
+    @Test("record's redo-branch clear (a fresh op abandoning an undone entry) unpins the abandoned entry's snapshots")
+    func freshRecordUnpinsAbandonedRedoBranch() {
+        let service = UnifiedUndoService()
+        let undoSnapshotId = UUID().uuidString
+        SnapshotService.pinUndoPointSnapshot(undoSnapshotId)
+        let entry = makeEntry(title: "First", undoSnapshotId: undoSnapshotId)
+        service.record(entry)
+        _ = service.performUndo(opId: entry.id) // moves to redoStack, still pinned
+        #expect(SnapshotService.pinnedUndoPointSnapshotIdsForTesting.contains(undoSnapshotId))
+
+        let freshSnapshotId = UUID().uuidString
+        SnapshotService.pinUndoPointSnapshot(freshSnapshotId)
+        service.record(makeEntry(title: "Second", undoSnapshotId: freshSnapshotId))
+
+        #expect(service.redoStack.isEmpty)
+        #expect(!SnapshotService.pinnedUndoPointSnapshotIdsForTesting.contains(undoSnapshotId))
+    }
+
+    @Test("replaceTopOfUndoStack unpins the discarded old undo/redo snapshot ids")
+    func replaceTopOfUndoStackUnpinsDiscardedSnapshots() {
+        let service = UnifiedUndoService()
+        let originalUndoSnapshotId = UUID().uuidString
+        let redoSnapshotId = UUID().uuidString
+        SnapshotService.pinUndoPointSnapshot(originalUndoSnapshotId)
+        SnapshotService.pinUndoPointSnapshot(redoSnapshotId)
+        let entry = makeEntry(title: "Test", undoSnapshotId: originalUndoSnapshotId)
+        service.record(entry)
+        _ = service.performUndo(opId: entry.id)
+        service.attachRedoSnapshot(opId: entry.id, redoSnapshotId: redoSnapshotId)
+        _ = service.performRedo(opId: entry.id)
+
+        let freshUndoSnapshotId = UUID().uuidString
+        SnapshotService.pinUndoPointSnapshot(freshUndoSnapshotId)
+        service.replaceTopOfUndoStack(opId: entry.id, freshUndoSnapshotId: freshUndoSnapshotId)
+
+        #expect(!SnapshotService.pinnedUndoPointSnapshotIdsForTesting.contains(originalUndoSnapshotId))
+        #expect(!SnapshotService.pinnedUndoPointSnapshotIdsForTesting.contains(redoSnapshotId))
+        #expect(SnapshotService.pinnedUndoPointSnapshotIdsForTesting.contains(freshUndoSnapshotId))
     }
 }

@@ -70,15 +70,49 @@ final class UnifiedUndoService {
     private(set) var undoStack: [StructuralEntry] = []
     private(set) var redoStack: [StructuralEntry] = []
 
-    /// Set by ContentView (Phase 3+) to actually clear both editors' JS undo/redo
-    /// histories. A closure rather than a stored WKWebView reference -- this service has no
-    /// business knowing about WebViews; ContentView owns those. nil in Phase 2: nothing
-    /// ever exceeds `capacity`, so the eviction path that would invoke this never runs.
-    /// DEFERRED (Phase 3, do not fix now): whoever wires this closure from ContentView must
-    /// capture `self`/`findBarState`/webviews as `[weak ...]` -- `UnifiedUndoService` is a
-    /// long-lived `@State` on ContentView, so a strong capture back into view-layer state
-    /// here would be a retain cycle. Not a real leak yet since nothing sets this closure.
-    var clearEditorHistories: (() -> Void)?
+    /// Timeline invalidation counter (MF-2, Phase 5 review round). Bumped by every barrier
+    /// that can invalidate the timeline WHILE a `StructuralUndoController` audited sequence
+    /// (`performStructuralOp`/`performUndo`/`performRedo`) is mid-flight -- `invalidateAll`
+    /// and `invalidateRedoBranch` below -- deliberately independent of `undoStack`/
+    /// `redoStack`'s own contents, so a sequence that captured this value at the start of its
+    /// run can tell "the timeline was invalidated out from under me" apart from "the stack is
+    /// just legitimately empty/different" even in the edge case where a barrier fires and the
+    /// stacks end up looking the same as before (e.g. both already empty). The two new Phase 5
+    /// barriers (project switch, mode switch) are deliberately NOT gated on
+    /// `StructuralUndoController.isPerforming` -- skipping a barrier while an op is in flight
+    /// would leave the OLD context's entries live against a NEW context, which is worse -- so
+    /// this counter is what lets the in-flight sequence itself notice and abort instead,
+    /// rather than blindly recording its own entry into a timeline that's no longer "its"
+    /// timeline (see `StructuralUndoController.performStructuralOp`'s epoch check).
+    private(set) var generation: Int = 0
+
+    /// Set by ContentView (Phase 5, `ContentView.swift`'s `.task` block right after
+    /// `structuralUndoController.configure(...)`) to actually clear the active editor's JS
+    /// history for ONE evicted entry AND remove that entry from the undo-coordinator's
+    /// registry (`window.FinalFinal.clearStructuralUndoState(opId)`, plan §4.1/§4.5's eviction
+    /// mini-barrier). Takes the evicted entry's id (MF-1, Phase 5 review round): the JS-side
+    /// target used to be a whole-registry clear (`clearStructuralUndoRegistry`/`clearRegistry`),
+    /// but `record()` below runs as the LAST step of `performStructuralOp` -- AFTER that same
+    /// op's own registry entry has already been created and finalized -- so a whole-registry
+    /// clear on eviction was wiping the current op's own just-recorded entry too, breaking
+    /// structural undo/redo the moment the stack crossed capacity (op #51+). Scoped to the one
+    /// evicted opId instead. A closure rather than a stored WKWebView reference -- this service
+    /// has no business knowing about WebViews; ContentView/StructuralUndoController own those.
+    /// The capturing closure holds `[weak controller]` (`StructuralUndoController`, not
+    /// `self`/ContentView) -- `UnifiedUndoService` is a long-lived `@State` on ContentView, so a
+    /// strong capture back into view-layer state here would be a retain cycle.
+    var clearEditorHistories: ((UUID) -> Void)?
+
+    /// Set alongside `clearEditorHistories` -- the lighter barrier-only counterpart
+    /// (`window.FinalFinal.clearStructuralUndoRegistry()`): clears the JS registry/descriptor
+    /// WITHOUT touching the editor's own text-undo history (plan §5 backlog: "barriers should
+    /// clear the JS registry"). Used by `invalidateAll()` below -- a barrier (zoom,
+    /// project/mode switch, drag reorder, hierarchy enforcement, ...) must not wipe legitimate
+    /// in-flight text-undo steps, only the now-invalid structural checkpoints. Correctness was
+    /// already backstopped without this (a stale opId request gets `.fallback`, plan §4.2); this
+    /// closes the per-session `EditorState` leak (every checkpoint retains a full ProseMirror/CM
+    /// doc) and lets the JS-side fast path skip a doomed equality check once cleared.
+    var clearStructuralRegistry: (() -> Void)?
 
     /// Record a completed structural operation. Clears the redo stack (a fresh operation
     /// invalidates any previously-undone-then-abandoned redo path) and evicts the oldest
@@ -87,15 +121,33 @@ final class UnifiedUndoService {
     /// Eviction is a MINI-BARRIER (plan §4.1/§4.5): it also clears both editors' JS
     /// histories via `clearEditorHistories`. Skipping that would leave pre-boundary text
     /// steps reachable past a boundary the timeline no longer guards against -- reopening
-    /// the laundering (H1) and rebase-collapse (H2) hazards. Built correctly now even
-    /// though nothing evicts in practice until Phase 3+ starts recording real entries.
+    /// the laundering (H1) and rebase-collapse (H2) hazards. Wired for real in Phase 5:
+    /// every discarded entry's undo/redo-point snapshot ids are also unpinned
+    /// (`SnapshotService`'s in-memory pin set, plan §4.4/§9), so they rejoin the normal
+    /// auto-backup population and prune on the usual Time-Machine schedule.
     func record(_ entry: StructuralEntry) {
+        // A fresh op abandons any previously-undone redo path -- unpin every discarded
+        // entry's snapshots before the stack itself is cleared.
+        for discarded in redoStack { unpinSnapshots(of: discarded) }
         undoStack.append(entry)
         redoStack.removeAll()
         if undoStack.count > Self.capacity {
-            undoStack.removeFirst()
-            DebugLog.log(.undo, "[UnifiedUndoService] evicted oldest entry at capacity \(Self.capacity) -- clearing editor histories")
-            clearEditorHistories?()
+            let evicted = undoStack.removeFirst()
+            unpinSnapshots(of: evicted)
+            DebugLog.log(.undo, "[UnifiedUndoService] evicted oldest entry at capacity \(Self.capacity) -- clearing editor history for \(evicted.id)")
+            clearEditorHistories?(evicted.id)
+        }
+    }
+
+    /// Unpins both of an entry's snapshot ids (plan §4.4/§9's in-memory pin set) -- shared by
+    /// every path that permanently discards a `StructuralEntry` (eviction, a fresh op
+    /// abandoning the redo branch, `invalidateAll`, `replaceTopOfUndoStack`'s stale undo
+    /// snapshot). See `SnapshotService.pinUndoPointSnapshot`'s doc comment for why this is an
+    /// in-memory set rather than a DB column.
+    private func unpinSnapshots(of entry: StructuralEntry) {
+        SnapshotService.unpinUndoPointSnapshot(entry.undoSnapshotId)
+        if let redoSnapshotId = entry.redoSnapshotId {
+            SnapshotService.unpinUndoPointSnapshot(redoSnapshotId)
         }
     }
 
@@ -143,6 +195,10 @@ final class UnifiedUndoService {
     /// doesn't match `opId`.
     func replaceTopOfUndoStack(opId: UUID, freshUndoSnapshotId: String) {
         guard let top = undoStack.last, top.id == opId else { return }
+        // The old undoSnapshotId and redoSnapshotId are both being discarded here (the fresh
+        // entry starts with `redoSnapshotId: nil`) -- unpin them so they rejoin the normal
+        // auto-backup population instead of leaking a permanent pin.
+        unpinSnapshots(of: top)
         undoStack[undoStack.count - 1] = StructuralEntry(
             id: top.id, kind: top.kind, title: top.title,
             undoSnapshotId: freshUndoSnapshotId, redoSnapshotId: nil, createdAt: top.createdAt
@@ -161,17 +217,42 @@ final class UnifiedUndoService {
     func invalidateRedoBranch(reason: String) {
         guard !redoStack.isEmpty else { return }
         DebugLog.log(.undo, "[UnifiedUndoService] invalidateRedoBranch: \(reason) (redo=\(redoStack.count))")
+        // MF-3 (Phase 5 review round): every other stack-discard path in this file unpins
+        // before clearing -- this one didn't, leaking every abandoned redo entry's snapshot
+        // ids as a permanent pin.
+        for entry in redoStack { unpinSnapshots(of: entry) }
         redoStack.removeAll()
+        generation += 1
     }
 
-    /// Barrier: wipes the timeline (plan §4.5). Does NOT itself clear editor histories --
-    /// every real barrier call site (project switch, mode switch, zoom, drag reorder, ...)
-    /// already has its own existing mechanism for that; unlike eviction (above), a full
-    /// barrier doesn't need a second one here. No call site exists yet -- Phase 3+ wires
-    /// project switch, zoom, etc. -- this method is deliberately inert today.
+    /// Barrier: wipes the timeline (plan §4.5). Does NOT clear the editor's own text-undo
+    /// history -- every real barrier call site (project switch, mode switch, zoom, drag
+    /// reorder, hierarchy enforcement, section metadata edit, inline annotation ops) already
+    /// has its own existing mechanism for that where needed (e.g. `resetForProjectSwitch()`'s
+    /// history clear), and a barrier must not wipe legitimate in-flight text-undo steps that
+    /// have nothing to do with the invalidated structural timeline. It DOES (Phase 5) unpin
+    /// every discarded entry's snapshot ids and clear the JS registry/descriptor via
+    /// `clearStructuralRegistry` (plan §5 backlog) -- see that closure's doc comment.
     func invalidateAll(reason: String) {
+        // MF-5 (Phase 5 review round): the generation bump and the JS registry clear both run
+        // UNCONDITIONALLY, before the empty-stack early return below -- moved here from after
+        // it. `StructuralUndoController`'s in-flight epoch check (MF-2) depends on every
+        // `invalidateAll` call bumping `generation`, including one that lands while both
+        // stacks happen to already be empty (e.g. a project-switch barrier firing against a
+        // freshly-opened project with nothing recorded yet) -- an early return that skipped
+        // the bump would let a stale in-flight sequence's epoch check pass by coincidence. The
+        // registry clear has the same orphan-entry hazard on its own: `beginStructuralOp` can
+        // insert a JS-side registry entry (and the descriptor can point at it) before this
+        // barrier fires and the Swift-side stacks are still empty at that exact moment -- an
+        // early return used to strand that JS-side entry forever, un-clearable by anything
+        // else. The unpin loops and stack clears below are still skipped when both stacks are
+        // genuinely empty -- nothing to unpin or clear there.
+        generation += 1
+        clearStructuralRegistry?()
         guard !undoStack.isEmpty || !redoStack.isEmpty else { return }
         DebugLog.log(.undo, "[UnifiedUndoService] invalidateAll: \(reason) (undo=\(undoStack.count) redo=\(redoStack.count))")
+        for entry in undoStack { unpinSnapshots(of: entry) }
+        for entry in redoStack { unpinSnapshots(of: entry) }
         undoStack.removeAll()
         redoStack.removeAll()
     }

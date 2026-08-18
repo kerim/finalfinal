@@ -247,6 +247,21 @@ extension ContentView {
             return
         }
 
+        // Multi-window guard (Phase 5, plan §5 backlog): `DocumentManager.shared` is a single
+        // global slot, but the app can have multiple project windows open. Without this check,
+        // a hierarchy-violation pass scheduled for THIS window's `editorState` could resolve
+        // `db`/`pid` above to whichever project a DIFFERENT window's `ContentView.task` last
+        // installed into the shared slot -- writing corrected sort orders/heading levels into
+        // the wrong project's database. Mirrors the identical check already applied inside the
+        // audited sequence's own in-sequence enforcement call
+        // (`StructuralUndoController.enforceHierarchyInSequence()`) and the other
+        // `requestingProjectId`-style guards in this area
+        // (`performSectionRestoreReplace`/`performRestoreProject`/`performRestoreSectionDuplicate`).
+        guard DocumentManager.shared.projectId == editorState.currentProjectId else {
+            DebugLog.log(.undo, "[ContentView+HierarchyEnforcement] persistEnforcedSections: DocumentManager.shared.projectId != editorState.currentProjectId -- refusing to enforce (cross-project write risk)")
+            return
+        }
+
         // Barrier (docs/plans/patient-rewinding-clockwork.md §4.5, plan §7 Phase 4): hierarchy
         // enforcement renumbers sort orders and heading levels via `reorderAllBlocks` below,
         // same content-mutating-but-not-checkpointed shape as a drag reorder. This function is

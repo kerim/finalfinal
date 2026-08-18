@@ -128,6 +128,8 @@ import { markdownLinkPlugin } from './markdown-link-input-rule';
 import {
   beginStructuralOp,
   cancelPendingInsertions,
+  clearStructuralUndoRegistry,
+  clearStructuralUndoState,
   finalizeStructuralOpPostOpDoc,
   finishStructuralSwapSettle,
   maybeAdvanceRegistryOnSyncOriginTx,
@@ -619,6 +621,11 @@ window.FinalFinal = {
   performStructuralSwap,
   finishStructuralSwapSettle,
   cancelPendingInsertions,
+  // Barrier/eviction JS-side clears (Phase 5, plan §4.1/§4.5/§5 backlog) -- called by
+  // UnifiedUndoService.invalidateAll()/record()'s eviction path via ContentView's
+  // clearStructuralRegistry/clearEditorHistories closures.
+  clearStructuralUndoRegistry,
+  clearStructuralUndoState,
 
   // Combined poll data for batched 3s fallback polling
   getPollData() {

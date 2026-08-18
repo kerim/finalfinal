@@ -104,6 +104,8 @@ import {
 import { handleTablePaste } from './table-paste';
 import {
   beginStructuralOp,
+  clearStructuralUndoRegistry,
+  clearStructuralUndoState,
   finalizeStructuralOpPostOpDoc,
   handleGlobalUndoRedoKeydown,
   maybeAdvanceRegistryOnSyncOriginTx,
@@ -528,6 +530,11 @@ window.FinalFinal = {
   // registry population is exposed here -- see undo-coordinator.ts's header.
   beginStructuralOp,
   finalizeStructuralOpPostOpDoc,
+  // Barrier/eviction JS-side clears (Phase 5, plan §4.1/§4.5/§5 backlog) -- called by
+  // UnifiedUndoService.invalidateAll()/record()'s eviction path via ContentView's
+  // clearStructuralRegistry/clearEditorHistories closures.
+  clearStructuralUndoRegistry,
+  clearStructuralUndoState,
 
   // Combined poll data for batched 3s fallback polling
   getPollData() {
