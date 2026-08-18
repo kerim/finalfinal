@@ -53,9 +53,63 @@ extension ContentView {
     }
 
     func updateSection(_ section: SectionViewModel) {
+        // Barrier (docs/plans/patient-rewinding-clockwork.md §4.5/H8, Decision 2 of the
+        // Phase 3 review round): section metadata (status/tags/wordGoal) lives on the block
+        // row, not in the document text the unified-undo routing guard compares -- a
+        // metadata-only edit leaves that equality check satisfied, so without this a
+        // structural undo would silently fire and wipe the edit along with reverting the
+        // structural op. Invalidate the whole timeline rather than trying to special-case
+        // "does this specific entry's snapshot predate this edit" -- the same fail-safe
+        // posture every other H8 barrier in the plan's hazard catalog uses.
+        //
+        // EXCEPT when this call is an ECHO of a DB-driven section refresh rather than a
+        // genuine user edit (review round MF-1, REWRITTEN in the round-4 pass per the judge's
+        // finding): `mergeSections` mutates existing `SectionViewModel`s IN PLACE, so
+        // `refreshSections()` at the end of every
+        // performSectionRestoreReplace/performUndo/performRedo -- landing a restored/undone
+        // snapshot's (routinely different) section status -- fires the SAME
+        // `.onChange(of: section.status)` → `onSectionUpdated` path a real user edit would.
+        // Without a guard, a structural op's own refresh would invalidate the very undo entry
+        // it just recorded, degrading structural undo to a silent no-op.
+        //
+        // The ORIGINAL guard here was a flag (`EditorViewState.isRefreshingSections`, set
+        // before the DB-driven merge and cleared a runloop turn later via
+        // `DispatchQueue.main.async`) resting on an unverified assumption about exactly when
+        // SwiftUI's `.onChange` fires relative to that queued clear -- a reviewer traced that
+        // it could fail in EITHER direction (the flag still up when a genuine concurrent user
+        // edit's `.onChange` fires, wrongly suppressing it; or already cleared before the
+        // refresh's own `.onChange` fires, letting the original self-wipe bug back in), and
+        // neither direction is verifiable by a unit test, since none of them construct a real
+        // SwiftUI view hierarchy where `.onChange` timing could actually be observed.
+        //
+        // Replaced with a decidable check instead: compare the incoming section's
+        // status/tags/wordGoal/goalType/aggregateGoal/aggregateGoalType against the block row
+        // CURRENTLY persisted in the DB. They come out equal, field for field, exactly when
+        // this call is an echo of a value the DB already holds (a DB-driven refresh handing
+        // back what it just read); a genuine user edit is, by construction, changing at least
+        // one of these fields, so the comparison is false and the barrier fires. No flag, no
+        // runloop timing assumption, and it's directly unit-testable (unlike the flag it
+        // replaces).
+        guard let db = documentManager.projectDatabase else { return }
+        let metadataUnchanged: Bool = {
+            guard let existing = try? db.fetchBlock(id: section.id) else {
+                // Can't determine whether this is an echo -- fail safe like every other H8
+                // barrier and treat it as a real change.
+                return false
+            }
+            return (existing.status ?? .writing) == section.status
+                && (existing.tags ?? []) == section.tags
+                && existing.wordGoal == section.wordGoal
+                && existing.goalType == section.goalType
+                && existing.aggregateGoal == section.aggregateGoal
+                && existing.aggregateGoalType == section.aggregateGoalType
+        }()
+        if !metadataUnchanged {
+            unifiedUndoService.invalidateAll(reason: "section metadata edited (status/tags/wordGoal)")
+        }
+
         // Save all section metadata in a single atomic transaction to prevent
         // intermediate ValueObservation fires from resetting fields.
-        guard let db = documentManager.projectDatabase else { return }
         let statusValue = section.status == .final_ ? "final" : section.status.rawValue
         let tagsString: String? = {
             let data = try? JSONEncoder().encode(section.tags)

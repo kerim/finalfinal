@@ -144,8 +144,11 @@ declare global {
       requestUnifiedUndo: () => void;
       requestUnifiedRedo: () => void;
       setUndoDescriptor: (descriptor: { undoTopOpId?: string; redoTopOpId?: string }) => void;
-      receiveUndoOutcome: (opId: string, outcome: 'performed' | 'fallback') => void;
-      receiveRedoOutcome: (opId: string, outcome: 'performed' | 'fallback') => void;
+      receiveUndoOutcome: (opId: string, outcome: 'performed' | 'fallback' | 'failed') => void;
+      receiveRedoOutcome: (opId: string, outcome: 'performed' | 'fallback' | 'failed') => void;
+      // Structural op lifecycle (Phase 3, plan §4.4) -- called by StructuralUndoController.swift.
+      beginStructuralOp: (opId: string) => boolean;
+      finalizeStructuralOpPostOpDoc: (opId: string) => boolean;
       // Combined poll data
       getPollData: () => string;
       // Test snapshot hook

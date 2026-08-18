@@ -12,16 +12,21 @@ import { gfm } from '@milkdown/kit/preset/gfm';
 import { redoDepth, undo, undoDepth } from '@milkdown/kit/prose/history';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { blockIdPlugin, resetBlockIdState } from '../block-id-plugin';
-import { resetBlockSyncState, setSyncPaused } from '../block-sync-plugin';
+import { blockSyncPlugin, hasPendingChanges, resetBlockSyncState, setSyncPaused } from '../block-sync-plugin';
 import { getPendingSlashUndo, setEditorInstance, setPendingSlashUndo } from '../editor-state';
+import { highlightPlugin } from '../highlight-plugin';
 import { configureSlash, slash } from '../slash-commands';
 import {
+  beginStructuralOp,
   decideRedoRouting,
   decideUndoRouting,
+  finalizeStructuralOpPostOpDoc,
+  getRegistry,
   handleGlobalUndoRedoKeydown,
   handleUndoReplyFromSwift,
   handleUnifiedUndoKeydown,
   isLatched,
+  maybeAdvanceRegistryOnSyncOriginTx,
   maybeNotifyHistoryEdited,
   requestUnifiedRedo,
   requestUnifiedUndo,
@@ -465,6 +470,302 @@ describe('undo-coordinator live wiring (real Milkdown editor, always-empty Phase
       maybeNotifyHistoryEdited(tr);
     });
 
+    expect(postMessage).not.toHaveBeenCalled();
+  });
+
+  // === §4.6 advancement rule (maybeAdvanceRegistryOnSyncOriginTx) ===
+  // Round-5 must-fix: the rule was documented (§4.6) and even claimed "already shipped" in a
+  // stale comment, but no code ever implemented it. These tests exercise the real function.
+
+  it('maybeAdvanceRegistryOnSyncOriginTx does nothing when the registry is empty (constraint 3: near-zero per-keystroke cost)', async () => {
+    const e = await makeEditor('Paragraph one.');
+    const view = e.ctx.get(editorViewCtx);
+
+    expect(() =>
+      maybeAdvanceRegistryOnSyncOriginTx(view.state.tr.insertText('X').setMeta('addToHistory', false))
+    ).not.toThrow();
+    expect(getRegistry().size).toBe(0);
+  });
+
+  it('maybeAdvanceRegistryOnSyncOriginTx does not advance for a non-sync-origin transaction (addToHistory not false)', async () => {
+    const e = await makeEditor('Paragraph one.');
+    const view = e.ctx.get(editorViewCtx);
+    const preOpDoc = view.state.doc;
+    setRegistryEntry('op-1', { checkpoint: view.state as any, postOpDoc: preOpDoc, preOpDoc });
+
+    maybeAdvanceRegistryOnSyncOriginTx(view.state.tr.insertText('X'));
+
+    expect(getRegistry().get('op-1')?.postOpDoc).toBe(preOpDoc);
+  });
+
+  it('maybeAdvanceRegistryOnSyncOriginTx advances postOpDoc when the doc before a sync-origin transaction structurally matches it', async () => {
+    const e = await makeEditor('Paragraph one.');
+    const view = e.ctx.get(editorViewCtx);
+    const opStartDoc = view.state.doc;
+    // Simulate the op's own content push landing (this is what postOpDoc gets captured as).
+    view.dispatch(view.state.tr.insertText('OP').setMeta('addToHistory', false));
+    const postOpDoc = view.state.doc;
+    setRegistryEntry('op-1', { checkpoint: view.state as any, postOpDoc, preOpDoc: opStartDoc });
+
+    // A later sync-origin transaction -- a delayed bibliography/footnote resync, or RAF-time
+    // normalization -- rewrites the doc again (H5).
+    const resyncTr = view.state.tr.insertText('RESYNC').setMeta('addToHistory', false);
+    view.dispatch(resyncTr);
+    maybeAdvanceRegistryOnSyncOriginTx(resyncTr);
+
+    const entry = getRegistry().get('op-1');
+    expect(entry?.postOpDoc.eq(view.state.doc)).toBe(true);
+    expect(entry?.postOpDoc.eq(postOpDoc)).toBe(false);
+    // preOpDoc is untouched -- the resync's "before" doc matched postOpDoc, not preOpDoc.
+    expect(entry?.preOpDoc.eq(opStartDoc)).toBe(true);
+  });
+
+  it('maybeAdvanceRegistryOnSyncOriginTx advances preOpDoc (redo target) the same way', async () => {
+    const e = await makeEditor('Paragraph one.');
+    const view = e.ctx.get(editorViewCtx);
+    const preOpDoc = view.state.doc;
+
+    // A later sync-origin transaction whose "before" doc is preOpDoc itself.
+    const resyncTr = view.state.tr.insertText('RESYNC').setMeta('addToHistory', false);
+    view.dispatch(resyncTr);
+
+    // Finalized entry shape: postOpDoc is a DISTINCT object from preOpDoc, as it is once
+    // finalizeStructuralOpPostOpDoc has run -- NOT the beginStructuralOp mid-op placeholder
+    // shape (postOpDoc === preOpDoc by reference). A placeholder-shaped entry is inert to
+    // advancement (see the regression test below) -- this test exercises the real
+    // advancement path on an entry that's actually eligible for it.
+    const postOpDoc = view.state.doc;
+    setRegistryEntry('op-1', { checkpoint: view.state as any, postOpDoc, preOpDoc });
+
+    maybeAdvanceRegistryOnSyncOriginTx(resyncTr);
+
+    expect(getRegistry().get('op-1')?.preOpDoc.eq(resyncTr.doc)).toBe(true);
+  });
+
+  it("regression: the op's OWN content push (still mid-op, before finalizeStructuralOpPostOpDoc has run) must not corrupt preOpDoc -- the exact live production bug behind redo2 hanging (notes.md 2026-08-18)", async () => {
+    const e = await makeEditor('Paragraph one.');
+    const view = e.ctx.get(editorViewCtx);
+    const opStartDoc = view.state.doc;
+
+    // Op-sequence step 3: begin the op. Registers the mid-op placeholder entry --
+    // postOpDoc === preOpDoc by reference, per beginStructuralOp's doc comment.
+    expect(beginStructuralOp('op-1')).toBe(true);
+
+    // Op-sequence step 6: the op's own content push lands (mirrors setContentWithBlockIds,
+    // dispatched with addToHistory:false). main.ts's view.dispatch override calls
+    // maybeAdvanceRegistryOnSyncOriginTx on EVERY sync-origin transaction, including this
+    // one -- BEFORE finalizeStructuralOpPostOpDoc (step 7) ever runs.
+    const pushTr = view.state.tr.insertText('RESTORED').setMeta('addToHistory', false);
+    view.dispatch(pushTr);
+    maybeAdvanceRegistryOnSyncOriginTx(pushTr);
+
+    // Op-sequence step 7: capture postOpDoc for real.
+    expect(finalizeStructuralOpPostOpDoc('op-1')).toBe(true);
+
+    // Without the fix, pushTr.before equals the placeholder postOpDoc (=== preOpDoc), so the
+    // §4.6 rule wrongly advances preOpDoc forward onto the post-op doc -- permanently
+    // corrupting the redo equality target for this entry's whole lifetime, even though
+    // finalizeStructuralOpPostOpDoc correctly repairs postOpDoc right after.
+    const entry = getRegistry().get('op-1');
+    expect(entry?.preOpDoc.eq(opStartDoc)).toBe(true);
+
+    // Real-world consequence: structural redo against the ORIGINAL pre-op doc must still
+    // route structurally. This is exactly what failed live -- redo2 fell through to a no-op
+    // text redo because preOpDoc had already been silently corrupted to equal postOpDoc.
+    const decision = decideRedoRouting({
+      descriptor: { redoTopOpId: 'op-1' },
+      registry: getRegistry(),
+      pendingMapsEmpty: true,
+      latched: false,
+      currentDoc: opStartDoc,
+      docsEqual: (a, b) => a.eq(b),
+    });
+    expect(decision).toEqual({ action: 'structural', opId: 'op-1' });
+  });
+
+  it('maybeAdvanceRegistryOnSyncOriginTx does not advance when the transaction is unrelated to either reference', async () => {
+    const e = await makeEditor('Paragraph one.');
+    const view = e.ctx.get(editorViewCtx);
+    const preOpDoc = view.state.doc;
+    // A real, non-sync-origin edit moves the live doc away from preOpDoc/postOpDoc first.
+    view.dispatch(view.state.tr.insertText('UNRELATED'));
+    setRegistryEntry('op-1', { checkpoint: view.state as any, postOpDoc: preOpDoc, preOpDoc });
+
+    const resyncTr = view.state.tr.insertText('X').setMeta('addToHistory', false);
+    view.dispatch(resyncTr);
+    maybeAdvanceRegistryOnSyncOriginTx(resyncTr);
+
+    const entry = getRegistry().get('op-1');
+    expect(entry?.postOpDoc.eq(preOpDoc)).toBe(true);
+    expect(entry?.preOpDoc.eq(preOpDoc)).toBe(true);
+  });
+
+  it('integration: postOpDoc captured at push-tr keeps tracking through RAF normalization / sync-origin resyncs, and equality routing recognizes the advanced state as reachable (plan §8)', async () => {
+    const e = await makeEditor('Paragraph one.');
+    const view = e.ctx.get(editorViewCtx);
+
+    // Op-sequence step 3: begin the op (closeHistory + capture preOpDoc/placeholder postOpDoc).
+    expect(beginStructuralOp('op-1')).toBe(true);
+
+    // Op-sequence step 6: the op's own content push lands, then postOpDoc is captured from
+    // that push transaction's own resulting doc (step 7) -- deliberately NOT waiting for any
+    // later normalization (per finalizeStructuralOpPostOpDoc's doc comment).
+    view.dispatch(view.state.tr.insertText('RESTORED').setMeta('addToHistory', false));
+    expect(finalizeStructuralOpPostOpDoc('op-1')).toBe(true);
+    expect(getRegistry().get('op-1')?.postOpDoc.eq(view.state.doc)).toBe(true);
+
+    // A subsequent sync-origin transaction lands AFTER capture -- e.g. RAF-time normalization
+    // or a delayed bibliography/footnote resync (H5) -- rewriting the doc again.
+    const resyncTr = view.state.tr.insertText('BIB').setMeta('addToHistory', false);
+    view.dispatch(resyncTr);
+    maybeAdvanceRegistryOnSyncOriginTx(resyncTr);
+
+    const finalDoc = view.state.doc;
+    // Without the advancement rule this would still equal the pre-resync doc, and equality
+    // routing below would fall through forever -- the exact H5 "permanently bricked entry"
+    // hazard the rule exists to prevent.
+    expect(getRegistry().get('op-1')?.postOpDoc.eq(finalDoc)).toBe(true);
+
+    const decision = decideUndoRouting({
+      descriptor: { undoTopOpId: 'op-1' },
+      registry: getRegistry(),
+      pendingMapsEmpty: true,
+      latched: false,
+      currentDoc: finalDoc,
+      docsEqual: (a, b) => a.eq(b),
+    });
+    expect(decision).toEqual({ action: 'structural', opId: 'op-1' });
+  });
+});
+
+// === Live-wiring regression: the stale-pendingMapsEmpty redo race (notes.md 2026-08-17/18) ===
+//
+// Bug: pendingMapsEmpty() used to read block-sync-plugin's hasPendingChanges() directly --
+// that map is only CLEARED once Swift's poll drains it via getBlockChanges(), up to
+// BlockSyncService's 2.0s cadence, not synchronously when the local 100ms debounce settles.
+// A text edit that lands, settles, and leaves the DOCUMENT already matching the routing
+// target (docsEqual) could still read hasPendingChanges() === true purely because Swift
+// hadn't polled yet -- silently falling through to a text-redo no-op instead of firing the
+// structural redo. These tests exercise the REAL block-sync-plugin machinery (not a fake)
+// with fake timers standing in for its 100ms debounce, so they fail against the old
+// `!hasPendingChanges()` implementation and pass against the fixed `hasUnsettledLocalEdit()`
+// one -- Swift's poll never runs in this test environment at all, so the old implementation
+// would leave pendingUpdates permanently non-empty for the rest of the test.
+describe('undo-coordinator live wiring — stale pendingMapsEmpty redo/undo race', () => {
+  let editor: Editor | null = null;
+
+  afterEach(async () => {
+    vi.useRealTimers();
+    if (editor) {
+      await editor.destroy();
+      editor = null;
+    }
+    setEditorInstance(null);
+    resetBlockIdState();
+    resetBlockSyncState();
+    setSyncPaused(false);
+    resetUndoCoordinatorState();
+    setPendingSlashUndo(false);
+    delete (window as any).webkit;
+  });
+
+  // Mirrors block-sync-pause-race.test.ts's makeEditor, plus history + slash (needed for the
+  // real capture-phase keydown wiring under test here).
+  async function makeEditorWithBlockSync(markdown: string): Promise<Editor> {
+    const div = document.createElement('div');
+    document.body.appendChild(div);
+    const e = await Editor.make()
+      .config((ctx) => {
+        ctx.set(rootCtx, div);
+        ctx.set(defaultValueCtx, markdown);
+      })
+      .config(configureSlash)
+      .use(blockIdPlugin)
+      .use(commonmark)
+      .use(gfm)
+      .use(highlightPlugin)
+      .use(historyPlugin)
+      .use(blockSyncPlugin)
+      .use(slash)
+      .create();
+    editor = e;
+    setEditorInstance(e);
+    return e;
+  }
+
+  it('routes structurally when block-sync pending maps are stale-but-settled and the doc already matches the redo target', async () => {
+    const e = await makeEditorWithBlockSync('Paragraph one.');
+    const view = e.ctx.get(editorViewCtx);
+    const originalDoc = view.state.doc;
+
+    vi.useFakeTimers();
+
+    // Text edit #1 (stands in for the canonical scenario's "redo1: text-redo of A"): diverges
+    // the doc, then settle block-sync's 100ms debounce so its diff gets computed and
+    // committed into the pending-change maps -- exactly the moment hasPendingChanges()
+    // becomes true and (under the old implementation) would stay true until a Swift poll that
+    // never happens in this test.
+    view.dispatch(view.state.tr.insertText('X'));
+    await vi.advanceTimersByTimeAsync(150);
+    expect(hasPendingChanges()).toBe(true); // sanity: the stale condition genuinely exists
+
+    // Undo the edit via the editor's OWN text undo (not unified-undo) -- brings the doc back
+    // to exactly `originalDoc`, mirroring "the document already matches the routing target"
+    // after a chain of real text edits. This is itself a docChanged transaction, so block-sync
+    // schedules ANOTHER 100ms debounce for it -- settle that one too so no debounce is
+    // in-flight at the moment of the keydown below (the one case this fix does NOT relax).
+    undo(view.state, view.dispatch);
+    expect(view.state.doc.eq(originalDoc)).toBe(true);
+    await vi.advanceTimersByTimeAsync(150);
+
+    // Both debounces have now settled, but Swift never polled -- hasPendingChanges() is still
+    // (and, absent a real Swift poll, will remain) true. This is the exact stale-but-safe
+    // condition the fix targets.
+    expect(hasPendingChanges()).toBe(true);
+
+    setRegistryEntry('op-1', {
+      checkpoint: view.state as any,
+      postOpDoc: view.state.tr.insertText('POST').doc, // any doc distinct from originalDoc
+      preOpDoc: originalDoc,
+    });
+    setUndoDescriptor({ redoTopOpId: 'op-1' });
+    const postMessage = vi.fn();
+    (window as any).webkit = { messageHandlers: { structuralRedoRequested: { postMessage } } };
+    const event = new KeyboardEvent('keydown', { key: 'z', metaKey: true, shiftKey: true, cancelable: true });
+
+    const consumed = handleUnifiedUndoKeydown(event, view, 'redo');
+
+    expect(consumed).toBe(true);
+    expect(event.defaultPrevented).toBe(true);
+    expect(postMessage).toHaveBeenCalledWith({ opId: 'op-1' });
+  });
+
+  it("still falls through while block-sync's local debounce is actively in flight (the fix is not a blanket bypass)", async () => {
+    const e = await makeEditorWithBlockSync('Paragraph one.');
+    const view = e.ctx.get(editorViewCtx);
+    const originalDoc = view.state.doc;
+
+    vi.useFakeTimers();
+
+    setRegistryEntry('op-1', {
+      checkpoint: view.state as any,
+      postOpDoc: view.state.tr.insertText('POST').doc,
+      preOpDoc: originalDoc,
+    });
+    setUndoDescriptor({ redoTopOpId: 'op-1' });
+    const postMessage = vi.fn();
+    (window as any).webkit = { messageHandlers: { structuralRedoRequested: { postMessage } } };
+
+    // Diverge then revert the doc WITHOUT letting either debounce settle -- a transaction
+    // landed within the last 100ms and block-sync hasn't diffed it yet.
+    view.dispatch(view.state.tr.insertText('X'));
+    undo(view.state, view.dispatch);
+    expect(view.state.doc.eq(originalDoc)).toBe(true);
+
+    const event = new KeyboardEvent('keydown', { key: 'z', metaKey: true, shiftKey: true, cancelable: true });
+    const consumed = handleUnifiedUndoKeydown(event, view, 'redo');
+
+    expect(consumed).toBe(false); // fallthrough: let Milkdown's own keymap handle it
     expect(postMessage).not.toHaveBeenCalled();
   });
 });

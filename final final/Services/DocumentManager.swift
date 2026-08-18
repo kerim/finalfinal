@@ -388,6 +388,14 @@ final class DocumentManager {
     /// block moves the incremental block-sync diff alone would miss.
     var flushBeforeExport: (() async -> Void)?
 
+    /// Hook to the main-window `StructuralUndoController` (docs/plans/patient-rewinding-clockwork.md
+    /// §4.4), wired by ContentView the same way `flushBeforeExport` is above. Lets
+    /// window-scoped callers -- VersionHistoryWindow's restore-replace confirmation, and the
+    /// editors' `structuralUndoRequested`/`structuralRedoRequested` WKScriptMessageHandler
+    /// dispatch -- reach the controller without threading a new reference through every
+    /// intermediate view/coordinator.
+    weak var structuralUndoController: StructuralUndoController?
+
     /// Fetch and flush the current project's blocks, unfiltered. Shared by `exportBlocks()`
     /// and `loadContentForExport(bibliographyPlaceholder:)` so both see the exact same
     /// flush-then-fetch sequence.

@@ -436,6 +436,7 @@ extension ContentView {
                     },
                     onWebViewReady: { webView in
                         findBarState.activeWebView = webView
+                        structuralUndoController.activeWebView = webView
                         // Sync current annotation display state - see annotationDisplayModesJSON's
                         // doc comment for why this fresh WebView wouldn't otherwise learn it.
                         if let json = annotationDisplayModesJSON(editorState) {
@@ -513,6 +514,7 @@ extension ContentView {
                     },
                     onWebViewReady: { webView in
                         findBarState.activeWebView = webView
+                        structuralUndoController.activeWebView = webView
                         // Sync current annotation display state - see annotationDisplayModesJSON's
                         // doc comment for why this fresh WebView wouldn't otherwise learn it.
                         if let json = annotationDisplayModesJSON(editorState) {

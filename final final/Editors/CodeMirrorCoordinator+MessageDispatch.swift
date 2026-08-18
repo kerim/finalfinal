@@ -26,7 +26,45 @@ extension CodeMirrorEditor.Coordinator {
         if handleNavigationMessage(message) { return }
         if handleMediaMessage(message) { return }
         if handleFootnoteMessage(message) { return }
+        if handleUndoMessage(message) { return }
         _ = handleSpellcheckMessage(message)
+    }
+
+    /// Unified-undo bridge messages (docs/plans/patient-rewinding-clockwork.md §4.4) -- Phase 3.
+    nonisolated func handleUndoMessage(_ message: WKScriptMessage) -> Bool {
+        switch message.name {
+        case "structuralUndoRequested":
+            guard let body = message.body as? [String: Any], let opId = body["opId"] as? String else { return true }
+            let requestingWebView = message.webView
+            Task { @MainActor in
+                await routeStructuralRequest(opId: opId, direction: .undo, from: requestingWebView, editorLabel: "CodeMirrorEditor")
+            }
+            return true
+
+        case "structuralRedoRequested":
+            guard let body = message.body as? [String: Any], let opId = body["opId"] as? String else { return true }
+            let requestingWebView = message.webView
+            Task { @MainActor in
+                await routeStructuralRequest(opId: opId, direction: .redo, from: requestingWebView, editorLabel: "CodeMirrorEditor")
+            }
+            return true
+
+        case "historyEdited":
+            DebugLog.log(.undo, "[CodeMirrorEditor] historyEdited: real edit while structural redo entry exists")
+            return true
+
+        case "structuralUndoRefused":
+            guard let body = message.body as? [String: Any] else { return true }
+            let direction = (body["direction"] as? String) ?? "undo"
+            DebugLog.log(.undo, "[CodeMirrorEditor] structural undo refused (direction=\(direction)): beeping")
+            Task { @MainActor in
+                NSSound.beep()
+            }
+            return true
+
+        default:
+            return false
+        }
     }
 
     // MARK: - Tier 2: family routers

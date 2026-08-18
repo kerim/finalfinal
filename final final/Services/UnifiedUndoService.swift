@@ -126,6 +126,29 @@ final class UnifiedUndoService {
         return .performed(top)
     }
 
+    /// Attaches a freshly-captured redo snapshot id to the entry now on top of the redo
+    /// stack (Phase 3, plan §4.4 undo step 2 -- called right after `performUndo` moves the
+    /// entry there). No-op if the top entry's id doesn't match `opId` (defense in depth
+    /// against a barrier racing the caller between `performUndo` and this call).
+    func attachRedoSnapshot(opId: UUID, redoSnapshotId: String) {
+        guard var top = redoStack.last, top.id == opId else { return }
+        top.redoSnapshotId = redoSnapshotId
+        redoStack[redoStack.count - 1] = top
+    }
+
+    /// Replaces the entry now on top of the undo stack with a version carrying a
+    /// freshly-captured undo snapshot id and no redo snapshot (Phase 3, plan §4.4 -- called
+    /// right after `performRedo` moves the entry there; that entry hasn't been undone again
+    /// yet, so its previous `redoSnapshotId` no longer applies). No-op if the top entry's id
+    /// doesn't match `opId`.
+    func replaceTopOfUndoStack(opId: UUID, freshUndoSnapshotId: String) {
+        guard let top = undoStack.last, top.id == opId else { return }
+        undoStack[undoStack.count - 1] = StructuralEntry(
+            id: top.id, kind: top.kind, title: top.title,
+            undoSnapshotId: freshUndoSnapshotId, redoSnapshotId: nil, createdAt: top.createdAt
+        )
+    }
+
     /// Barrier: wipes the timeline (plan §4.5). Does NOT itself clear editor histories --
     /// every real barrier call site (project switch, mode switch, zoom, drag reorder, ...)
     /// already has its own existing mechanism for that; unlike eviction (above), a full

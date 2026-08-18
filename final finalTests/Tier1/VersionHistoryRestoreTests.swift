@@ -104,6 +104,69 @@ struct VersionHistoryRestoreTests {
         #expect(!autoSnapshots.isEmpty, "Safety backup should be an automatic snapshot")
     }
 
+    // MARK: - Unified Undo: createUndoPointSnapshot (docs/plans/patient-rewinding-clockwork.md §4.4)
+    //
+    // Unlike createAutoSnapshot, this must NEVER skip on unchanged content -- an undo/redo
+    // point must exist every time the unified-undo op sequence asks for one.
+
+    @Test("createUndoPointSnapshot never dedups, unlike createAutoSnapshot")
+    func createUndoPointSnapshotBypassesDedup() throws {
+        let db = try TestFixtureFactory.createTemporary(content: TestFixtureFactory.testContent)
+        let (service, _) = try createSnapshotService(db: db)
+
+        // Baseline: createAutoSnapshot on unchanged content is a no-op the second time.
+        _ = try service.createAutoSnapshot()
+        #expect(try service.createAutoSnapshot() == nil, "sanity: createAutoSnapshot dedups on unchanged content")
+
+        // createUndoPointSnapshot must create a real row every time, even back to back with
+        // completely unchanged content -- the exact scenario two structural ops with no
+        // user typing between them produce.
+        let firstId = try service.createUndoPointSnapshot()
+        let secondId = try service.createUndoPointSnapshot()
+        #expect(firstId != secondId, "each call must create its own row, never reuse the latest by hash")
+
+        let all = try service.fetchAllSnapshots()
+        #expect(all.contains { $0.id == firstId })
+        #expect(all.contains { $0.id == secondId })
+    }
+
+    @Test("createUndoPointSnapshot captures current section metadata (status/tags/wordGoal), not just markdown")
+    func createUndoPointSnapshotCapturesSectionMetadata() throws {
+        let db = try TestFixtureFactory.createTemporary(content: TestFixtureFactory.testContent)
+        let pid = try TestFixtureFactory.getProjectId(from: db)
+        let (service, _) = try createSnapshotService(db: db)
+
+        // TestFixtureFactory.createTemporary only parses the markdown into the Block table --
+        // the Section table is populated by SectionSyncService in the real app, not by
+        // fixture creation, so db.fetchSections(projectId:) is empty here unless a section is
+        // inserted explicitly. Matches restoreSectionAsDuplicatePreservesHeader's pattern above.
+        let target = Section(
+            projectId: pid,
+            sortOrder: 0,
+            headerLevel: 1,
+            title: "Test Document",
+            markdownContent: "# Test Document\n\nThis is a test paragraph for automated testing.\n"
+        )
+        try db.insertSection(target)
+
+        // Metadata-only change: same markdown/content hash, different status/tags/wordGoal --
+        // exactly the case createAutoSnapshot's hash-based dedup is blind to (plan §2/§4.4:
+        // "createAutoSnapshot's dedup hash-skip ... ignores Section metadata").
+        var updated = target
+        updated.status = .final_
+        updated.tags = ["undo-point-metadata-test"]
+        updated.wordGoal = 4242
+        try db.updateSection(updated)
+
+        let snapshotId = try service.createUndoPointSnapshot()
+        let snapshotSections = try service.fetchSections(for: snapshotId)
+        let snapshotSection = try #require(snapshotSections.first { $0.title == target.title })
+
+        #expect(snapshotSection.status == .final_)
+        #expect(snapshotSection.tags == ["undo-point-metadata-test"])
+        #expect(snapshotSection.wordGoal == 4242)
+    }
+
     // MARK: - Hash
 
     @Test("Hash computation is deterministic")

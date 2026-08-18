@@ -101,6 +101,46 @@ final class SnapshotService {
         )
     }
 
+    /// Create a snapshot for the unified undo timeline (plan §4.4 step 4 / §4.4 undo step 2).
+    /// Unlike `createAutoSnapshot()`, this NEVER skips on unchanged-content hash: an undo/redo
+    /// point snapshot must exist every time it's requested so the timeline's inverse payload is
+    /// always available, even when the document is byte-identical to the latest auto-backup
+    /// (e.g. two structural ops in a row with no user typing between them, or undo immediately
+    /// followed by redo). `createAutoSnapshot()`'s dedup hash-skip only compares
+    /// `content.markdown`, which ignores Section metadata (status/tags/wordGoal) entirely --
+    /// reusing "the latest snapshot by hash" here could silently hand back a snapshot whose
+    /// metadata predates a metadata-only edit, which is exactly the trap plan §2/§4.4 warns
+    /// against ("never 'reuse latest by hash'").
+    /// - Returns: The created snapshot's id, always non-nil (this never returns nil the way
+    ///   `createAutoSnapshot()` can).
+    @discardableResult
+    func createUndoPointSnapshot() throws -> String {
+        // Assemble fresh markdown from blocks (source of truth) -- same pattern as
+        // createManualSnapshot/createAutoSnapshot above.
+        let blocks = try database.fetchBlocks(projectId: projectId)
+        let assembledMarkdown = BlockParser.assembleMarkdownForEditor(from: blocks)
+
+        try database.saveContent(markdown: assembledMarkdown, for: projectId)
+
+        guard let content = try database.fetchContent(for: projectId) else {
+            throw SnapshotError.noContent
+        }
+
+        let hash = Self.computeHash(assembledMarkdown)
+        let sections = try database.fetchSections(projectId: projectId)
+        DebugLog.log(.undo, "[SnapshotService] createUndoPointSnapshot: \(sections.count) sections, \(blocks.count) blocks (no dedup skip)")
+
+        let snapshot = try database.createSnapshot(
+            projectId: projectId,
+            name: nil,
+            isAutomatic: true,
+            content: content,
+            sections: sections,
+            contentHash: hash
+        )
+        return snapshot.id
+    }
+
     // MARK: - Hash Computation
 
     /// Compute SHA256 hash of content for deduplication

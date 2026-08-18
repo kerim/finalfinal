@@ -57,9 +57,12 @@ extension View {
                 )
             }
             .onReceive(NotificationCenter.default.publisher(for: .didSaveCursorPosition)) { notification in
-                // Block toggle only during states that would cause data corruption
+                // Block toggle only during states that would cause data corruption.
+                // .structuralUndo added in the Phase 3 review round: a mode toggle mid-
+                // sequence would reassign the WebView StructuralUndoController is still
+                // operating on (docs/plans/patient-rewinding-clockwork.md §4.4).
                 switch editorState.contentState {
-                case .projectSwitch, .zoomTransition:
+                case .projectSwitch, .zoomTransition, .structuralUndo:
                     return  // Content is being replaced — toggle could flush stale data
                 default:
                     break  // Allow toggle during .idle, .editorTransition, .bibliographyUpdate, .annotationEdit, .dragReorder, .hierarchyEnforcement

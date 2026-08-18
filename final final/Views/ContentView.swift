@@ -60,6 +60,7 @@ struct ContentView: View {
     @Environment(\.openWindow) private var openWindow
     @State internal var editorState = EditorViewState()
     @State internal var unifiedUndoService = UnifiedUndoService()
+    @State internal var structuralUndoController = StructuralUndoController()
     @State internal var cursorPositionToRestore: CursorPosition?
     @State internal var sectionSyncService = SectionSyncService()
     @State internal var blockSyncService = BlockSyncService()
@@ -265,6 +266,16 @@ struct ContentView: View {
                     await editorState.blockSyncService?.fetchContentFromWebView()
                 }
             }
+            structuralUndoController.configure(
+                editorState: editorState,
+                blockSyncService: blockSyncService,
+                sectionSyncService: sectionSyncService,
+                bibliographySyncService: bibliographySyncService,
+                footnoteSyncService: footnoteSyncService,
+                annotationSyncService: annotationSyncService,
+                unifiedUndoService: unifiedUndoService
+            )
+            DocumentManager.shared.structuralUndoController = structuralUndoController
             await initializeProject()
 
             // Restore focus mode from previous session if needed. The launch race between

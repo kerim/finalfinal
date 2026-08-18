@@ -12,12 +12,16 @@ import { EditorView } from '@codemirror/view';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { setEditorExtensions, setEditorView } from '../editor-state';
 import {
+  beginStructuralOp,
   decideRedoRouting,
   decideUndoRouting,
+  finalizeStructuralOpPostOpDoc,
+  getRegistry,
   handleGlobalUndoRedoKeydown,
   handleUndoReplyFromSwift,
   handleUnifiedUndoKeydown,
   isLatched,
+  maybeAdvanceRegistryOnSyncOriginTx,
   maybeNotifyHistoryEdited,
   requestUnifiedRedo,
   requestUnifiedUndo,
@@ -414,5 +418,180 @@ describe('undo-coordinator live wiring (real CodeMirror EditorView, always-empty
     });
 
     expect(postMessage).not.toHaveBeenCalled();
+  });
+
+  // === §4.6 advancement rule (maybeAdvanceRegistryOnSyncOriginTx) ===
+  // Round-5 must-fix: mirrors web/milkdown/src/__tests__/undo-coordinator.test.ts's suite --
+  // the rule was documented (§4.6) and even claimed "already shipped" in a stale comment, but
+  // no code ever implemented it.
+
+  it('maybeAdvanceRegistryOnSyncOriginTx does nothing when the registry is empty (constraint 3: near-zero per-keystroke cost)', () => {
+    const v = makeEditor('Paragraph one.');
+    const tr = v.state.update({
+      changes: { from: 0, insert: 'X' },
+      annotations: Transaction.addToHistory.of(false),
+    });
+
+    expect(() => maybeAdvanceRegistryOnSyncOriginTx(tr)).not.toThrow();
+    expect(getRegistry().size).toBe(0);
+  });
+
+  it('maybeAdvanceRegistryOnSyncOriginTx does not advance for a non-sync-origin transaction (addToHistory annotation not false)', () => {
+    const v = makeEditor('Paragraph one.');
+    const preOpDoc = v.state.doc;
+    setRegistryEntry('op-1', { checkpoint: v.state as any, postOpDoc: preOpDoc, preOpDoc });
+    const tr = v.state.update({ changes: { from: 0, insert: 'X' } });
+
+    maybeAdvanceRegistryOnSyncOriginTx(tr);
+
+    expect(getRegistry().get('op-1')?.postOpDoc).toBe(preOpDoc);
+  });
+
+  it('maybeAdvanceRegistryOnSyncOriginTx advances postOpDoc when the doc before a sync-origin transaction structurally matches it', () => {
+    const v = makeEditor('Paragraph one.');
+    const opStartDoc = v.state.doc;
+    // Simulate the op's own content push landing (this is what postOpDoc gets captured as).
+    v.dispatch({ changes: { from: 0, insert: 'OP' }, annotations: Transaction.addToHistory.of(false) });
+    const postOpDoc = v.state.doc;
+    setRegistryEntry('op-1', { checkpoint: v.state as any, postOpDoc, preOpDoc: opStartDoc });
+
+    // A later sync-origin transaction -- a delayed bibliography/footnote resync -- rewrites
+    // the doc again (H5).
+    const resyncTr = v.state.update({
+      changes: { from: 0, insert: 'RESYNC' },
+      annotations: Transaction.addToHistory.of(false),
+    });
+    v.dispatch(resyncTr);
+    maybeAdvanceRegistryOnSyncOriginTx(resyncTr);
+
+    const entry = getRegistry().get('op-1');
+    expect(entry?.postOpDoc.eq(v.state.doc)).toBe(true);
+    expect(entry?.postOpDoc.eq(postOpDoc)).toBe(false);
+    // preOpDoc is untouched -- the resync's "before" doc matched postOpDoc, not preOpDoc.
+    expect(entry?.preOpDoc.eq(opStartDoc)).toBe(true);
+  });
+
+  it('maybeAdvanceRegistryOnSyncOriginTx advances preOpDoc (redo target) the same way', () => {
+    const v = makeEditor('Paragraph one.');
+    const preOpDoc = v.state.doc;
+
+    // A later sync-origin transaction whose "before" doc is preOpDoc itself.
+    const resyncTr = v.state.update({
+      changes: { from: 0, insert: 'RESYNC' },
+      annotations: Transaction.addToHistory.of(false),
+    });
+    v.dispatch(resyncTr);
+
+    // Finalized entry shape: postOpDoc is a DISTINCT object from preOpDoc, as it is once
+    // finalizeStructuralOpPostOpDoc has run -- NOT the beginStructuralOp mid-op placeholder
+    // shape (postOpDoc === preOpDoc by reference). A placeholder-shaped entry is inert to
+    // advancement (see the regression test below) -- this test exercises the real
+    // advancement path on an entry that's actually eligible for it.
+    const postOpDoc = v.state.doc;
+    setRegistryEntry('op-1', { checkpoint: v.state as any, postOpDoc, preOpDoc });
+
+    maybeAdvanceRegistryOnSyncOriginTx(resyncTr);
+
+    expect(getRegistry().get('op-1')?.preOpDoc.eq(resyncTr.newDoc)).toBe(true);
+  });
+
+  it("regression: the op's OWN content push (still mid-op, before finalizeStructuralOpPostOpDoc has run) must not corrupt preOpDoc -- the exact live production bug behind redo2 hanging (notes.md 2026-08-18)", () => {
+    const v = makeEditor('Paragraph one.');
+    const opStartDoc = v.state.doc;
+
+    // Op-sequence step 3: begin the op. Registers the mid-op placeholder entry --
+    // postOpDoc === preOpDoc by reference, per beginStructuralOp's doc comment.
+    expect(beginStructuralOp('op-1')).toBe(true);
+
+    // Op-sequence step 6: the op's own content push lands (mirrors setContent, dispatched
+    // with the addToHistory:false annotation). main.ts's EditorView.updateListener calls
+    // maybeAdvanceRegistryOnSyncOriginTx on EVERY sync-origin transaction, including this
+    // one -- BEFORE finalizeStructuralOpPostOpDoc (step 7) ever runs.
+    const pushTr = v.state.update({
+      changes: { from: 0, insert: 'RESTORED' },
+      annotations: Transaction.addToHistory.of(false),
+    });
+    v.dispatch(pushTr);
+    maybeAdvanceRegistryOnSyncOriginTx(pushTr);
+
+    // Op-sequence step 7: capture postOpDoc for real.
+    expect(finalizeStructuralOpPostOpDoc('op-1')).toBe(true);
+
+    // Without the fix, pushTr.startState.doc equals the placeholder postOpDoc (===
+    // preOpDoc), so the §4.6 rule wrongly advances preOpDoc forward onto the post-op doc --
+    // permanently corrupting the redo equality target for this entry's whole lifetime, even
+    // though finalizeStructuralOpPostOpDoc correctly repairs postOpDoc right after.
+    const entry = getRegistry().get('op-1');
+    expect(entry?.preOpDoc.eq(opStartDoc)).toBe(true);
+
+    // Real-world consequence: structural redo against the ORIGINAL pre-op doc must still
+    // route structurally. This is exactly what failed live -- redo2 fell through to a no-op
+    // text redo because preOpDoc had already been silently corrupted to equal postOpDoc.
+    const decision = decideRedoRouting({
+      descriptor: { redoTopOpId: 'op-1' },
+      registry: getRegistry(),
+      pendingMapsEmpty: true,
+      latched: false,
+      currentDoc: opStartDoc,
+      docsEqual: (a, b) => a.eq(b),
+    });
+    expect(decision).toEqual({ action: 'structural', opId: 'op-1' });
+  });
+
+  it('maybeAdvanceRegistryOnSyncOriginTx does not advance when the transaction is unrelated to either reference', () => {
+    const v = makeEditor('Paragraph one.');
+    const preOpDoc = v.state.doc;
+    // A real, non-sync-origin edit moves the live doc away from preOpDoc/postOpDoc first.
+    v.dispatch({ changes: { from: 0, insert: 'UNRELATED' } });
+    setRegistryEntry('op-1', { checkpoint: v.state as any, postOpDoc: preOpDoc, preOpDoc });
+
+    const resyncTr = v.state.update({
+      changes: { from: 0, insert: 'X' },
+      annotations: Transaction.addToHistory.of(false),
+    });
+    v.dispatch(resyncTr);
+    maybeAdvanceRegistryOnSyncOriginTx(resyncTr);
+
+    const entry = getRegistry().get('op-1');
+    expect(entry?.postOpDoc.eq(preOpDoc)).toBe(true);
+    expect(entry?.preOpDoc.eq(preOpDoc)).toBe(true);
+  });
+
+  it('integration: postOpDoc captured at push-tr keeps tracking through sync-origin resyncs, and equality routing recognizes the advanced state as reachable (plan §8)', () => {
+    const v = makeEditor('Paragraph one.');
+
+    // Op-sequence step 3: begin the op (isolateHistory + capture preOpDoc/placeholder postOpDoc).
+    expect(beginStructuralOp('op-1')).toBe(true);
+
+    // Op-sequence step 6/7: the op's own content push lands, then postOpDoc is captured from
+    // the current doc -- deliberately NOT waiting for any later normalization.
+    v.dispatch({ changes: { from: 0, insert: 'RESTORED' }, annotations: Transaction.addToHistory.of(false) });
+    expect(finalizeStructuralOpPostOpDoc('op-1')).toBe(true);
+    expect(getRegistry().get('op-1')?.postOpDoc.eq(v.state.doc)).toBe(true);
+
+    // A subsequent sync-origin transaction lands AFTER capture -- e.g. a delayed
+    // bibliography/footnote resync (H5) -- rewriting the doc again.
+    const resyncTr = v.state.update({
+      changes: { from: 0, insert: 'BIB' },
+      annotations: Transaction.addToHistory.of(false),
+    });
+    v.dispatch(resyncTr);
+    maybeAdvanceRegistryOnSyncOriginTx(resyncTr);
+
+    const finalDoc = v.state.doc;
+    // Without the advancement rule this would still equal the pre-resync doc, and equality
+    // routing below would fall through forever -- the exact H5 "permanently bricked entry"
+    // hazard the rule exists to prevent.
+    expect(getRegistry().get('op-1')?.postOpDoc.eq(finalDoc)).toBe(true);
+
+    const decision = decideUndoRouting({
+      descriptor: { undoTopOpId: 'op-1' },
+      registry: getRegistry(),
+      pendingMapsEmpty: true,
+      latched: false,
+      currentDoc: finalDoc,
+      docsEqual: (a, b) => a.eq(b),
+    });
+    expect(decision).toEqual({ action: 'structural', opId: 'op-1' });
   });
 });

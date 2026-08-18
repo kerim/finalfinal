@@ -126,7 +126,13 @@ import { inlineCodeCursorPlugin } from './inline-code-cursor';
 import { linkCursorPlugin } from './link-cursor';
 import { markdownLinkPlugin } from './markdown-link-input-rule';
 import {
+  beginStructuralOp,
+  cancelPendingInsertions,
+  finalizeStructuralOpPostOpDoc,
+  finishStructuralSwapSettle,
+  maybeAdvanceRegistryOnSyncOriginTx,
   maybeNotifyHistoryEdited,
+  performStructuralSwap,
   receiveRedoOutcome,
   receiveUndoOutcome,
   requestUnifiedRedo,
@@ -301,19 +307,24 @@ async function initEditor() {
   view.dispatch = (tr) => {
     originalDispatch(tr);
 
-    // Unified-undo §4.6 predicate -- deliberately runs on EVERY transaction (its own
-    // descriptor.redoTopOpId check short-circuits at a single property read whenever no
-    // structural redo entry exists, i.e. always in Phase 2 -- see undo-coordinator.ts).
+    // Unified-undo §4.2/§4.6 predicates -- deliberately run on EVERY transaction (each one's
+    // own cheap first check short-circuits whenever there's nothing in the registry/descriptor
+    // to act on -- see undo-coordinator.ts). The two are mutually exclusive by construction
+    // (one requires addToHistory !== false, the other requires === false), so call order
+    // between them doesn't matter.
     //
-    // DEFERRED (Phase 3, do not fix now): this sits ABOVE the getIsSettingContent() early
-    // return below. Harmless today (descriptor.redoTopOpId never exists, so
-    // maybeNotifyHistoryEdited always no-ops at its own first check regardless of ordering),
-    // but once Phase 3 populates descriptor.redoTopOpId, a programmatic content-set
-    // transaction that doesn't carry addToHistory:false would still fire historyEdited here
-    // and wrongly invalidate the redo entry -- setContent()/setContentWithBlockIds() should
-    // be audited to confirm every such transaction sets that meta, or this check should move
-    // below the getIsSettingContent() guard.
+    // DEFERRED (Phase 3, do not fix now): maybeNotifyHistoryEdited sits ABOVE the
+    // getIsSettingContent() early return below. Harmless today (descriptor.redoTopOpId never
+    // exists, so maybeNotifyHistoryEdited always no-ops at its own first check regardless of
+    // ordering), but once Phase 3 populates descriptor.redoTopOpId, a programmatic
+    // content-set transaction that doesn't carry addToHistory:false would still fire
+    // historyEdited here and wrongly invalidate the redo entry -- setContent()/
+    // setContentWithBlockIds() should be audited to confirm every such transaction sets that
+    // meta, or this check should move below the getIsSettingContent() guard.
     maybeNotifyHistoryEdited(tr);
+    // §4.6 advancement rule: absorbs sync-origin transactions (addToHistory:false) that land
+    // after a structural op's postOpDoc/preOpDoc was captured -- see undo-coordinator.ts.
+    maybeAdvanceRegistryOnSyncOriginTx(tr);
 
     if (getIsSettingContent()) return;
 
@@ -601,6 +612,13 @@ window.FinalFinal = {
   setUndoDescriptor,
   receiveUndoOutcome,
   receiveRedoOutcome,
+  // Structural op lifecycle (Phase 3) -- called by StructuralUndoController.swift at the
+  // audited op-sequence/undo-sequence boundaries (plan §4.4).
+  beginStructuralOp,
+  finalizeStructuralOpPostOpDoc,
+  performStructuralSwap,
+  finishStructuralSwapSettle,
+  cancelPendingInsertions,
 
   // Combined poll data for batched 3s fallback polling
   getPollData() {

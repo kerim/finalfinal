@@ -46,9 +46,12 @@ extension EditorViewState {
     /// Gates on debounce interval and blocks during data-sensitive transitions.
     func requestEditorModeToggle() {
         guard canToggleEditorMode else { return }
-        // Don't start the save chain during data-sensitive transitions
+        // Don't start the save chain during data-sensitive transitions. .structuralUndo
+        // added in the Phase 3 review round: a mode toggle mid-sequence would reassign the
+        // WebView StructuralUndoController is still operating on (docs/plans/
+        // patient-rewinding-clockwork.md §4.4).
         switch contentState {
-        case .projectSwitch, .zoomTransition:
+        case .projectSwitch, .zoomTransition, .structuralUndo:
             return
         default:
             break

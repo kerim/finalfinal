@@ -103,7 +103,10 @@ import {
 } from './spellcheck-plugin';
 import { handleTablePaste } from './table-paste';
 import {
+  beginStructuralOp,
+  finalizeStructuralOpPostOpDoc,
   handleGlobalUndoRedoKeydown,
+  maybeAdvanceRegistryOnSyncOriginTx,
   maybeNotifyHistoryEdited,
   receiveRedoOutcome,
   receiveUndoOutcome,
@@ -318,12 +321,18 @@ function initEditor() {
         updateCitationAddButton(update.view);
       }
     }),
-    // Unified-undo §4.6 predicate -- deliberately runs on EVERY transaction in the update
-    // (its own descriptor.redoTopOpId check short-circuits at a single property read
-    // whenever no structural redo entry exists, i.e. always in Phase 2 -- see
-    // undo-coordinator.ts).
+    // Unified-undo §4.2/§4.6 predicates -- deliberately run on EVERY transaction in the
+    // update (each one's own cheap first check short-circuits whenever there's nothing in
+    // the registry/descriptor to act on -- see undo-coordinator.ts). The two are mutually
+    // exclusive by construction (one requires the addToHistory annotation !== false, the
+    // other requires === false), so call order between them doesn't matter.
     EditorView.updateListener.of((update) => {
-      for (const tr of update.transactions) maybeNotifyHistoryEdited(tr);
+      for (const tr of update.transactions) {
+        maybeNotifyHistoryEdited(tr);
+        // §4.6 advancement rule: absorbs sync-origin transactions (addToHistory === false)
+        // that land after a structural op's postOpDoc/preOpDoc was captured.
+        maybeAdvanceRegistryOnSyncOriginTx(tr);
+      }
     }),
     // Debounced push-based content messaging to Swift (replaces 500ms polling as primary)
     (() => {
@@ -514,6 +523,11 @@ window.FinalFinal = {
   setUndoDescriptor,
   receiveUndoOutcome,
   receiveRedoOutcome,
+  // Structural op lifecycle (Phase 3) -- called by StructuralUndoController.swift. Source
+  // mode never checkpoint-swaps (degraded undo path, plan §4.4 undo step 3b), so only
+  // registry population is exposed here -- see undo-coordinator.ts's header.
+  beginStructuralOp,
+  finalizeStructuralOpPostOpDoc,
 
   // Combined poll data for batched 3s fallback polling
   getPollData() {

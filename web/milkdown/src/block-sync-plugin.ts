@@ -4,6 +4,7 @@
 
 import type { Mark, Node } from '@milkdown/kit/prose/model';
 import { Plugin, PluginKey } from '@milkdown/kit/prose/state';
+import type { EditorView } from '@milkdown/kit/prose/view';
 import { $prose } from '@milkdown/kit/utils';
 import { type Align, formatTable, type ParsedTable } from '../../shared/format-table';
 import { getAllBlockIds, getBlockIdZoomMode, SYNC_DIAG_DETAIL } from './block-id-plugin';
@@ -980,6 +981,27 @@ export function flushPendingBlockChanges(): void {
   runPendingDetectChanges();
 }
 
+/**
+ * True only in the narrow window between a docChanged transaction landing and its
+ * diff being computed by the 100ms debounce above (`detectTimer !== null`) -- the
+ * ONLY moment a just-made edit's content genuinely isn't reflected anywhere in
+ * block-sync's bookkeeping yet.
+ *
+ * Deliberately NOT the same thing as `hasPendingChanges()`: that stays true from the
+ * moment the debounce fires until Swift's poll drains it via `getBlockChanges()` --
+ * bounded only by `BlockSyncService`'s fixed 2.0s cadence, not by anything local. A
+ * caller gating on `hasPendingChanges()` alone (as `undo-coordinator.ts`'s routing
+ * check used to) would see a stale "non-empty" reading for up to ~2s after a text
+ * edit that had already fully settled, purely because Swift hadn't polled yet --
+ * see that file's `pendingMapsEmpty()` for the concrete bug this caused (a
+ * mistimed redo silently falling through to a text-redo no-op). This function is
+ * the race-free replacement: it settles within one 100ms debounce cycle,
+ * independent of Swift's poll timing.
+ */
+export function hasUnsettledLocalEdit(): boolean {
+  return detectTimer !== null;
+}
+
 // Wrap ProseMirror plugin with $prose for Milkdown compatibility
 export const blockSyncPlugin = $prose(() => {
   return new Plugin<BlockSyncPluginState>({
@@ -1107,6 +1129,22 @@ export function updateSnapshotIds(mapping: Map<string, string>): void {
       currentState.pendingDeletes.add(newId);
     }
   }
+}
+
+/**
+ * Re-point the module-level `currentState` cache to the plugin state actually embedded in
+ * `view.state` (docs/plans/patient-rewinding-clockwork.md §4.4 undo step 3a). `currentState`
+ * is normally kept in sync with the live view by `apply()` above -- but a checkpoint SWAP
+ * (`view.updateState(checkpoint)`) replaces `view.state` wholesale without ever routing
+ * through `apply()`, so after a swap `currentState` still points at the pre-swap EditorState's
+ * plugin-state object, not the checkpoint's. Every function in this file that reads/writes
+ * `currentState` (`resetAndSnapshot`, `detectPausedEditsAndSnapshot`, `updateSnapshotIds`,
+ * `getBlockChanges`, ...) would then silently operate on a stale object: the first edit typed
+ * after a structural undo would be diffed against the WRONG baseline and lost. Call this
+ * immediately after every `updateState()`/`setState()` checkpoint swap, before pausing ends.
+ */
+export function rebindCurrentStateFromView(view: EditorView): void {
+  currentState = blockSyncPluginKey.getState(view.state) ?? null;
 }
 
 /**

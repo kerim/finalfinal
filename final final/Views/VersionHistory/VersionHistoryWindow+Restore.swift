@@ -5,6 +5,16 @@
 
 import SwiftUI
 
+/// Mode for restoring a section.
+/// Formerly defined at the bottom of the now-deleted VersionHistorySheet.swift (dead sheet,
+/// confirmed unreferenced) -- this enum itself was still live (VersionHistoryWindow.swift,
+/// VersionHistoryWindow+Restore.swift, DocumentPreviewView.swift), so it moved here rather
+/// than being deleted along with the sheet.
+enum SectionRestoreMode {
+    case replace   // Replace existing section
+    case duplicate // Insert as new section
+}
+
 // MARK: - Section Restore
 
 extension VersionHistoryWindow {
@@ -47,10 +57,12 @@ extension VersionHistoryWindow {
                 await performSectionRestore()
             }
         }
+        .accessibilityIdentifier("version-history-restore-confirm")
         Button("Cancel", role: .cancel) {
             pendingRestoreSection = nil
             pendingRestoreMode = nil
         }
+        .accessibilityIdentifier("version-history-restore-cancel")
     }
 
     @ViewBuilder
@@ -60,8 +72,10 @@ extension VersionHistoryWindow {
                 await performFullRestore()
             }
         }
+        .accessibilityIdentifier("version-history-full-restore-confirm")
         Toggle("Create safety backup first", isOn: $createSafetyBackup)
         Button("Cancel", role: .cancel) {}
+            .accessibilityIdentifier("version-history-full-restore-cancel")
     }
 
     // MARK: - Section Picker
@@ -186,18 +200,41 @@ extension VersionHistoryWindow {
               let mode = pendingRestoreMode,
               !projectClosed else { return }
 
-        let service = SnapshotService(database: database, projectId: projectId)
+        switch mode {
+        case .replace:
+            // Routed as a REQUEST into the main-window StructuralUndoController (plan §4.4,
+            // "main-window request handoff") -- NOT a direct SnapshotService call. The
+            // controller runs the full audited op sequence (mode-aware flush, checkpoint
+            // capture, forced undo-point snapshot, the existing restoreSectionReplace DB
+            // mutation, forced bibliography/footnote resync, content push, timeline record)
+            // and reports success/failure; this window only handles the UI side (error
+            // display, dismiss). Restore-as-duplicate below is UNCHANGED this round -- it
+            // still calls SnapshotService directly and posts .projectDidOpen, same as before
+            // Phase 3 -- see the coder brief: only .replace is wired to the unified timeline
+            // this round.
+            let targetId = targetSectionId ?? section.originalSectionId ?? ""
+            guard let controller = DocumentManager.shared.structuralUndoController else {
+                errorMessage = "Restore failed: unified undo controller not available"
+                pendingRestoreSection = nil
+                pendingRestoreMode = nil
+                targetSectionId = nil
+                return
+            }
+            let ok = await controller.performSectionRestoreReplace(
+                snapshotSectionId: section.id, targetSectionId: targetId, requestingProjectId: projectId
+            )
+            guard ok else {
+                errorMessage = "Restore failed"
+                pendingRestoreSection = nil
+                pendingRestoreMode = nil
+                targetSectionId = nil
+                return
+            }
+            dismissWindow(id: "version-history")
 
-        do {
-            switch mode {
-            case .replace:
-                let targetId = targetSectionId ?? section.originalSectionId ?? ""
-                try service.restoreSectionReplace(
-                    snapshotSectionId: section.id,
-                    targetSectionId: targetId,
-                    createSafetyBackup: true
-                )
-            case .duplicate:
+        case .duplicate:
+            let service = SnapshotService(database: database, projectId: projectId)
+            do {
                 // Insert after the last section
                 let insertAfter = coordinator.currentSections.last?.id
                 try service.restoreSectionAsDuplicate(
@@ -205,15 +242,12 @@ extension VersionHistoryWindow {
                     insertAfterSectionId: insertAfter,
                     createSafetyBackup: true
                 )
+                // Notify main window to refresh (skip flush — blocks already rebuilt)
+                NotificationCenter.default.post(name: .projectDidOpen, object: nil, userInfo: ["isRestore": true])
+                dismissWindow(id: "version-history")
+            } catch {
+                errorMessage = "Restore failed: \(error.localizedDescription)"
             }
-
-            // Notify main window to refresh (skip flush — blocks already rebuilt)
-            NotificationCenter.default.post(name: .projectDidOpen, object: nil, userInfo: ["isRestore": true])
-
-            // Close window after successful restore
-            dismissWindow(id: "version-history")
-        } catch {
-            errorMessage = "Restore failed: \(error.localizedDescription)"
         }
 
         pendingRestoreSection = nil

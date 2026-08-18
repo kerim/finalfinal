@@ -99,6 +99,21 @@ class EditorViewState {
                 contentStateWatchdog = Task { [weak self] in
                     try? await Task.sleep(for: .seconds(5))
                     guard !Task.isCancelled, let self else { return }
+                    // Exempt .structuralUndo (docs/plans/patient-rewinding-clockwork.md §4.4,
+                    // review round CRIT fix): a unified-undo op/undo/redo sequence
+                    // (StructuralUndoController) can legitimately run longer than 5s --
+                    // multiple JS round trips, two synchronous DB writes, up to two 1s/3s
+                    // bibliography/footnote flushes. The controller itself already guarantees
+                    // contentState returns to .idle on every one of its own exit paths
+                    // (success or failure, via `defer { isPerforming = false }` alongside
+                    // explicit `contentState = .idle` on each return). A force-reset HERE,
+                    // mid-sequence, would let BlockSyncService's poll -- gated only on
+                    // contentState == .idle -- resume and read block state mid-restore: the
+                    // exact content-laundering hazard (H1) this whole design exists to
+                    // prevent. If the sequence is genuinely stuck (a real bug), staying stuck
+                    // and visible is safer than silently resuming sync over a half-restored
+                    // document.
+                    guard self.contentState != .structuralUndo else { return }
                     if self.contentState != .idle {
                         if self.contentState == .zoomTransition {
                             self.isZoomingContent = false

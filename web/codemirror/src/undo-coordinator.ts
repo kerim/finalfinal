@@ -20,7 +20,7 @@
 // the Milkdown WebView -- see the plan's §2 "Source mode caveat"), so the
 // "blockSync pending-change maps are empty" routing condition is trivially always true here.
 
-import { redo, undo } from '@codemirror/commands';
+import { isolateHistory, redo, redoDepth, undo, undoDepth } from '@codemirror/commands';
 import { type EditorState, type Text, Transaction } from '@codemirror/state';
 import type { EditorView } from '@codemirror/view';
 import { getEditorView } from './editor-state';
@@ -31,7 +31,10 @@ import { getEditorView } from './editor-state';
  * these until Phase 3 -- the type is defined now per the plan so Phase 3 only has to
  * populate the registry, not design its shape. */
 export interface UndoRegistryEntry {
-  /** Full EditorState captured at op time. Unused in Phase 2 (nothing reads it yet). */
+  /** Full EditorState captured at op time. Source mode uses the DEGRADED undo path (plan
+   * §4.4 undo step 3b) -- regenerated sourceContent + minimal-diff setContent, never a
+   * checkpoint swap -- so this is captured for type-symmetry with Milkdown's registry and
+   * possible future use, but nothing reads it in v1. */
   checkpoint: EditorState;
   /** Document immediately after the op -- the equality target for structural undo (§4.2). */
   postOpDoc: Text;
@@ -58,11 +61,18 @@ export type RoutingDecision =
 
 const registry = new Map<string, UndoRegistryEntry>();
 let descriptor: UndoDescriptor = {};
-// DEFERRED (Phase 3, do not fix now): no timeout and no reset-on-project-switch/mode-switch --
-// if Swift's reply is ever lost (crash, dropped message), this stays true forever and every
-// subsequent Cmd-Z silently swallows. Harmless today (nothing ever sets it), but Phase 3 needs
-// either a timeout or a barrier hook that force-clears it.
 let latched = false;
+/** Belt-and-braces timeout for the latch -- mirrors Milkdown's undo-coordinator.ts (see its
+ * comment for the full rationale: a lost Swift reply must not swallow Cmd-Z forever). */
+const LATCH_TIMEOUT_MS = 3000;
+let latchTimeoutId: ReturnType<typeof setTimeout> | null = null;
+
+function clearLatchTimeout(): void {
+  if (latchTimeoutId !== null) {
+    clearTimeout(latchTimeoutId);
+    latchTimeoutId = null;
+  }
+}
 
 export function getRegistry(): Map<string, UndoRegistryEntry> {
   return registry;
@@ -97,6 +107,7 @@ export function resetUndoCoordinatorState(): void {
   registry.clear();
   descriptor = {};
   latched = false;
+  clearLatchTimeout();
 }
 
 // === Pure routing decision (plan §4.2) ===
@@ -156,14 +167,113 @@ function liveRoutingParams(view: EditorView): RoutingParams<Text> {
   };
 }
 
+/** True when CodeMirror's own text undo/redo has nothing to do -- the trigger condition for
+ * the plan §4.2 refusal beep (a Cmd-Z that would otherwise be a silent no-op). */
+function hasNoTextHistory(view: EditorView, direction: 'undo' | 'redo'): boolean {
+  return direction === 'undo' ? undoDepth(view.state) === 0 : redoDepth(view.state) === 0;
+}
+
+/** Refusal UX (plan §4.2) -- mirrors Milkdown's undo-coordinator.ts. */
+function maybeBeepOnRefusal(view: EditorView, direction: 'undo' | 'redo'): void {
+  if (!hasNoTextHistory(view, direction)) return;
+  (window as any).webkit?.messageHandlers?.errorHandler?.postMessage({
+    type: 'debug',
+    message: `[undo-coordinator] refusal beep: no structural entry and no text ${direction} available`,
+  });
+  (window as any).webkit?.messageHandlers?.structuralUndoRefused?.postMessage({ direction });
+}
+
+// === Structural op lifecycle (plan §4.4) ===
+// Mirrors Milkdown's undo-coordinator.ts. CodeMirror/Source mode never performs a checkpoint
+// swap (the degraded undo path, plan §4.4 undo step 3b, regenerates sourceContent from the
+// restored DB instead) so there is no performStructuralSwap/finishStructuralSwapSettle here
+// -- only registry population for the equality-based routing decision (§4.2), which is
+// identical regardless of which editor performed the op.
+
+/** Op-sequence step 3: isolate the current history group (H3) and capture the pre-op
+ * checkpoint + preOpDoc. `postOpDoc` starts equal to `preOpDoc` as a placeholder;
+ * `finalizeStructuralOpPostOpDoc` overwrites it once the op's content push has landed. */
+export function beginStructuralOp(opId: string): boolean {
+  const view = getEditorView();
+  if (!view) return false;
+  view.dispatch({ annotations: isolateHistory.of('full') });
+  const preOpDoc = view.state.doc;
+  setRegistryEntry(opId, { checkpoint: view.state, postOpDoc: preOpDoc, preOpDoc });
+  return true;
+}
+
+/** Op-sequence step 6/7: capture `postOpDoc` from the current doc, called by Swift right
+ * after its own content push (`setContent`) resolves. This deliberately doesn't wait for any
+ * later normalization; `maybeAdvanceRegistryOnSyncOriginTx` (§4.6, below -- wired into the
+ * `EditorView.updateListener` in main.ts alongside `maybeNotifyHistoryEdited`) is what
+ * actually absorbs any sync-origin transaction that lands after this call, by advancing this
+ * entry's `postOpDoc`/`preOpDoc` reference forward whenever the doc immediately before such a
+ * transaction structurally matches one of them. */
+export function finalizeStructuralOpPostOpDoc(opId: string): boolean {
+  const view = getEditorView();
+  if (!view) return false;
+  const entry = registry.get(opId);
+  if (!entry) return false;
+  registry.set(opId, { ...entry, postOpDoc: view.state.doc });
+  return true;
+}
+
+/**
+ * §4.6 derived-content advancement rule (plan §4.6, H5) -- CodeMirror mirror of Milkdown's
+ * undo-coordinator.ts function of the same name: when a sync-origin transaction lands
+ * (`Transaction.addToHistory` annotation `=== false` -- the established provenance marker),
+ * for each registry entry, if the doc BEFORE this transaction (`tr.startState.doc`)
+ * structurally equals the entry's `postOpDoc` or `preOpDoc` reference, advance that reference
+ * to the doc AFTER this transaction (`tr.newDoc`). Keeps a structural entry's equality target
+ * (§4.2) tracking harmless derived-content churn (a delayed bibliography fetch, an async
+ * footnote renumber) that lands after the entry was captured, instead of permanently bricking
+ * the entry's equality check the moment such a resync fires after the op (H5).
+ *
+ * Deliberately disjoint from `maybeNotifyHistoryEdited`'s trigger condition (that one requires
+ * the annotation `!== false`; this one requires `=== false`), so call order relative to it in
+ * the update-listener loop doesn't matter -- a transaction can only ever satisfy one of the
+ * two. Costs one property read (`registry.size === 0`) per transaction in the common case (no
+ * structural entries recorded yet), matching constraint 3 (no per-keystroke cost).
+ */
+export function maybeAdvanceRegistryOnSyncOriginTx(tr: Transaction): void {
+  if (registry.size === 0) return;
+  if (tr.annotation(Transaction.addToHistory) !== false) return;
+  if (!tr.docChanged) return;
+  const before = tr.startState.doc;
+  const after = tr.newDoc;
+  for (const [opId, entry] of registry) {
+    // Mid-op entry: postOpDoc is still beginStructuralOp's placeholder (the SAME object as
+    // preOpDoc), so the op's OWN content push has tr.before === preOpDoc. Advancing here drags
+    // the redo equality target (§4.2/§4.6) forward onto the post-op doc, making structural redo
+    // unroutable for the entry's whole lifetime. finalizeStructuralOpPostOpDoc re-arms it.
+    if (entry.postOpDoc === entry.preOpDoc) continue;
+    const advancesPost = entry.postOpDoc.eq(before);
+    const advancesPre = entry.preOpDoc.eq(before);
+    if (!advancesPost && !advancesPre) continue;
+    registry.set(opId, {
+      ...entry,
+      postOpDoc: advancesPost ? after : entry.postOpDoc,
+      preOpDoc: advancesPre ? after : entry.preOpDoc,
+    });
+  }
+}
+
 function requestStructural(opId: string, direction: 'undo' | 'redo'): void {
   latched = true;
+  clearLatchTimeout();
+  latchTimeoutId = setTimeout(() => {
+    latchTimeoutId = null;
+    if (!latched) return;
+    latched = false;
+    (window as any).webkit?.messageHandlers?.errorHandler?.postMessage({
+      type: 'debug',
+      message: `[undo-coordinator] latch timeout: no reply from Swift for ${direction} opId=${opId} -- self-clearing`,
+    });
+  }, LATCH_TIMEOUT_MS);
   const messageName = direction === 'undo' ? 'structuralUndoRequested' : 'structuralRedoRequested';
   // Safe no-op if Swift hasn't registered this handler yet (Phase 3+ wires it) -- same
   // optional-chaining pattern as every other Swift bridge postMessage call in this codebase
-  // (e.g. contentChanged in main.ts). Structurally unreachable in Phase 2: descriptor.
-  // undoTopOpId/redoTopOpId never exist, so decideUndoRouting/decideRedoRouting never
-  // return 'structural' and this function is never called.
+  // (e.g. contentChanged in main.ts).
   (window as any).webkit?.messageHandlers?.[messageName]?.postMessage({ opId });
 }
 
@@ -177,7 +287,10 @@ export function handleUnifiedUndoKeydown(e: KeyboardEvent, view: EditorView, dir
   const decision =
     direction === 'undo' ? decideUndoRouting(liveRoutingParams(view)) : decideRedoRouting(liveRoutingParams(view));
 
-  if (decision.action === 'fallthrough') return false;
+  if (decision.action === 'fallthrough') {
+    maybeBeepOnRefusal(view, direction);
+    return false;
+  }
 
   e.preventDefault();
   e.stopPropagation();
@@ -228,6 +341,7 @@ function requestUnified(direction: 'undo' | 'redo'): void {
   if (decision.action === 'swallow') return; // in-flight -- drop, matches the keydown path
 
   if (decision.action === 'fallthrough') {
+    maybeBeepOnRefusal(view, direction);
     if (direction === 'undo') undo(view);
     else redo(view);
     return;
@@ -259,11 +373,24 @@ export function requestUnifiedRedo(): void {
  * possible), but Phase 3 should track and compare the in-flight opId explicitly.
  */
 export function handleUndoReplyFromSwift(
-  reply: { opId: string; outcome: 'performed' | 'fallback' },
+  reply: { opId: string; outcome: 'performed' | 'fallback' | 'failed' },
   direction: 'undo' | 'redo'
 ): void {
   if (!latched) return;
   latched = false;
+  clearLatchTimeout();
+  if (reply.outcome === 'failed') {
+    // Post-commit failure (plan review round MF-4) -- mirrors Milkdown's undo-coordinator.ts.
+    // The DB has already been restored, but the Source-mode settle (the `setContent` content
+    // push) didn't complete. Replaying a plain text-undo/redo here (the `fallback` handling
+    // below) would apply an EXTRA edit on top of an already-committed DB write. Report and
+    // stop -- do not touch editor content.
+    (window as any).webkit?.messageHandlers?.errorHandler?.postMessage({
+      type: 'debug',
+      message: `[undo-coordinator] structural ${direction} failed post-commit (opId=${reply.opId}) -- NOT replaying a text ${direction} on top of an already-restored DB`,
+    });
+    return;
+  }
   if (reply.outcome !== 'fallback') return;
   const view = getEditorView();
   if (!view) return;
@@ -271,10 +398,10 @@ export function handleUndoReplyFromSwift(
   else redo(view);
 }
 
-export function receiveUndoOutcome(opId: string, outcome: 'performed' | 'fallback'): void {
+export function receiveUndoOutcome(opId: string, outcome: 'performed' | 'fallback' | 'failed'): void {
   handleUndoReplyFromSwift({ opId, outcome }, 'undo');
 }
-export function receiveRedoOutcome(opId: string, outcome: 'performed' | 'fallback'): void {
+export function receiveRedoOutcome(opId: string, outcome: 'performed' | 'fallback' | 'failed'): void {
   handleUndoReplyFromSwift({ opId, outcome }, 'redo');
 }
 
