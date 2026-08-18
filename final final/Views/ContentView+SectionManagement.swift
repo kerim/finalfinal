@@ -220,8 +220,12 @@ extension ContentView {
         // 6. Insert at calculated position
         sections.insert(removed, at: finalIndex)
 
-        // 7. Finalize (shared logic)
-        finalizeSectionReorder(sections: sections)
+        // 7. Dispatch into the audited structural-op sequence (Phase 7, plan §7) instead of
+        // the old synchronous finalizeSectionReorder, which unconditionally invalidated the
+        // whole unified-undo timeline. StructuralUndoController.performSectionReorder now
+        // owns everything downstream: sort-order/offset recompute, hierarchy fixup, and the
+        // single DB write, all inside the same audited sequence the other five op kinds use.
+        dispatchSectionReorder(sections: sections, request: request)
     }
 
     /// Reorder a subtree (parent + all children move together, levels adjusted relatively)
@@ -298,149 +302,100 @@ extension ContentView {
             sections.insert(section, at: insertionIndex + offset)
         }
 
-        // 6. Finalize (shared logic)
-        finalizeSectionReorder(sections: sections)
+        // 6. Dispatch into the audited structural-op sequence (Phase 7, plan §7) -- see
+        // reorderSingleSection's matching comment.
+        dispatchSectionReorder(sections: sections, request: request)
     }
 
-    /// Finalize section reorder - recalculate offsets, parent relationships, persist via blocks
-    func finalizeSectionReorder(sections: [SectionViewModel]) {
-        // Barrier (docs/plans/patient-rewinding-clockwork.md §4.5, plan §7 Phase 4): a drag
-        // reorder renumbers sortOrder wholesale via `reorderAllBlocks` below
-        // (`persistBlocksBeforeRebuild()`), which the snapshot-inverse design tolerates fine
-        // for content, but the structural timeline's checkpoint/postOpDoc equality guard has
-        // no way to distinguish "user reordered sections" from "nothing changed" -- a
-        // structural undo landing after a reorder could restore content whose section order
-        // no longer matches what's on screen. Fail safe like every other content-mutating
-        // barrier: wipe the timeline rather than special-case it.
-        unifiedUndoService.invalidateAll(reason: "sidebar drag reorder")
-
-        // Set content state to suppress polling during rebuild
-        // NOTE: No defer — contentState is managed by the persist Task below
-        editorState.contentState = .dragReorder
-
-        var mutableSections = recalculateSortOrders(sections)
-        mutableSections = applyComputedOffsets(to: mutableSections)
-
-        // Single atomic update to trigger SwiftUI
-        editorState.sections = mutableSections
-
-        // Recalculate parent relationships and enforce hierarchy
-        editorState.recalculateParentRelationships()
-        enforceHierarchyConstraints()
-
-        // Persist blocks to database BEFORE rebuilding content
-        // (rebuildDocumentContent reads from DB, so DB must be current)
-        persistBlocksBeforeRebuild()
-
-        // Rebuild document content (now reads correct order from DB)
-        rebuildDocumentContent()
-
-        // Async: push block IDs + legacy section persist
-        scheduleAsyncReorderPersistTasks()
-    }
-
-    /// Recalculate sequential sort orders after a reorder.
-    func recalculateSortOrders(_ sections: [SectionViewModel]) -> [SectionViewModel] {
-        var mutableSections = sections
-        for index in mutableSections.indices {
-            mutableSections[index] = mutableSections[index].withUpdates(
-                sortOrder: Double(index)
-            )
-        }
-        return mutableSections
-    }
-
-    /// Compute offsets from blocks (consistent with updateSourceContentIfNeeded) and apply
-    /// them to the given sections. Returns the sections unchanged if the database is unavailable
-    /// or the offset computation fails.
-    func applyComputedOffsets(to sections: [SectionViewModel]) -> [SectionViewModel] {
-        guard let db = documentManager.projectDatabase,
-              let pid = documentManager.projectId else {
-            return sections
-        }
-
-        var mutableSections = sections
-        do {
-            let fetchedBlocks: [Block]
-            if let zoomedIds = editorState.zoomedSectionIds {
-                let allBlocks = try db.fetchBlocks(projectId: pid)
-                fetchedBlocks = filterBlocksForZoom(
-                    allBlocks, zoomedIds: zoomedIds,
-                    zoomedBlockRange: editorState.zoomedBlockRange)
-            } else {
-                fetchedBlocks = try db.fetchBlocks(projectId: pid)
-            }
-            let blockOffset = computeBlockOffsets(fetchedBlocks)
-            for index in mutableSections.indices {
-                if let off = blockOffset[mutableSections[index].id] {
-                    mutableSections[index] = mutableSections[index].withUpdates(startOffset: off)
-                }
-            }
-        } catch { }
-
-        return mutableSections
-    }
-
-    /// Compute per-block character offsets in document order (headings sort before body
-    /// blocks at the same sortOrder). Mirrors BlockParser.assembleMarkdown's filtering.
-    func computeBlockOffsets(_ blocks: [Block]) -> [String: Int] {
-        let sorted = blocks.sorted { a, b in
-            let aKey = (a.sortOrder, a.blockType == .heading ? 0 : 1)
-            let bKey = (b.sortOrder, b.blockType == .heading ? 0 : 1)
-            return aKey < bKey
-        }
-        // MUST stay in sync with BlockParser.assembleMarkdown filtering
-        let nonEmpty = sorted.filter { !BlockParser.isEmptyFragment($0.markdownFragment) }
-        var blockOffset: [String: Int] = [:]
-        var offset = 0
-        for (i, block) in nonEmpty.enumerated() {
-            if i > 0 { offset += 2 }
-            blockOffset[block.id] = offset
-            offset += block.markdownFragment.count
-        }
-        return blockOffset
-    }
-
-    /// Persist blocks to database BEFORE rebuilding content
-    /// (rebuildDocumentContent reads from DB, so DB must be current).
-    func persistBlocksBeforeRebuild() {
-        guard let db = documentManager.projectDatabase,
-              let pid = documentManager.projectId else {
+    /// Dispatch a completed drag-drop reorder into `StructuralUndoController`'s audited
+    /// sequence (Phase 7, plan §7). Replaces the old synchronous `finalizeSectionReorder`,
+    /// which recomputed sort orders/offsets, ran the in-memory hierarchy fixup, persisted via
+    /// `db.reorderAllBlocks`, and unconditionally invalidated the whole unified-undo timeline
+    /// -- all of that now lives inside `StructuralUndoController.performSectionReorder`,
+    /// sharing the same checkpoint/snapshot machinery as restore/delete/duplicate, so a
+    /// reorder is itself undoable rather than wiping whatever came before it (the gap this
+    /// phase exists to close -- see plan §7's Phase 7 entry).
+    ///
+    /// The legacy `Section`-table persist (`persistReorderedBlocks_legacySections`, non-critical,
+    /// unrelated to the Block table `db.reorderAllBlocks` writes) still runs as a trailing
+    /// fire-and-forget task after the op completes, gated on success so it doesn't re-persist a
+    /// refused/failed reorder's stale ordering.
+    ///
+    /// `request` is the raw drop request `sections` was computed from -- kept alongside the
+    /// computed array only for MF-3's stash/retry below, not used for anything else here.
+    ///
+    /// Ownership of `editorState.sectionDropInFlight` transfers here from whichever drop
+    /// delegate's `onDrop` closure called this (MF-2, plan §7) -- every return path below
+    /// must eventually clear it (directly, or by handing it to a retried dispatch), or
+    /// ContentView's `onDragEnded` stays permanently guarded off and the block-sync poll never
+    /// re-arms.
+    func dispatchSectionReorder(sections: [SectionViewModel], request: SectionReorderRequest) {
+        // MF-4 (review round): a no-op reorder (dropped back where it started) must not mint a
+        // snapshot or undo entry. Compared against `editorState.sections` LIVE, at call time --
+        // id sequence + headerLevel is what actually determines document order/structure (see
+        // `OutlineSidebar.structuralSignature(of:)`'s identical criterion for "did anything
+        // structural change"). No machinery touched: nothing is dispatched, no Task spawned.
+        if Self.sectionOrderUnchanged(sections, from: editorState.sections) {
+            editorState.sectionDropInFlight = false
+            editorState.contentState = .idle
             return
         }
 
-        do {
-            var headingUpdates: [String: HeadingUpdate] = [:]
-            for vm in editorState.sections {
-                headingUpdates[vm.id] = HeadingUpdate(
-                    markdownFragment: vm.markdownContent,
-                    headingLevel: vm.headerLevel
-                )
+        Task {
+            defer {
+                // MF-3 (review round): if a concurrent drop got refused while THIS reorder (or
+                // an even earlier retry) was in flight, its request is stashed below. Retrying
+                // it here -- inside this Task's own exit, after ownership of dropInFlight would
+                // otherwise be released -- re-arms the flag instead of clearing it, since a
+                // retry is still "reorder work in flight" from the same guard's point of view
+                // (ContentView.swift's onDragEnded doc comment): there's no new AppKit drag
+                // session backing this retry, but a later UNRELATED drag's own Path A could
+                // still race it the same way MF-2 closed for the original drop otherwise.
+                // `reorderSection` (not reorderSingleSection/reorderSubtree directly) re-runs
+                // the self-drop/same-position guards too, not just the recompute -- the same
+                // safety checks a genuine drop gets. The stash itself lives on `editorState`
+                // (a class), not a `ContentView` `@State` property -- see
+                // `EditorViewState.pendingSectionReorderRequest`'s doc comment for why.
+                if let stashed = editorState.pendingSectionReorderRequest {
+                    editorState.pendingSectionReorderRequest = nil
+                    editorState.sectionDropInFlight = true
+                    reorderSection(stashed)
+                } else {
+                    editorState.sectionDropInFlight = false
+                }
             }
-            try db.reorderAllBlocks(
-                sections: editorState.sections,
-                projectId: pid,
-                headingUpdates: headingUpdates
-            )
-        } catch {
-            DebugLog.log(.outline, "[ContentView] Error persisting reordered blocks: \(error)")
+
+            let ok = await structuralUndoController.performSectionReorder(sections: sections)
+            if ok {
+                // performStructuralOp's own success path already returns contentState to
+                // .idle as its last step -- nothing to do here.
+                await persistReorderedBlocks_legacySections()
+            } else {
+                // MF-2 point 4 (review round): performStructuralOp's refusal paths (already
+                // `isPerforming`, zoom refusal, precheck refusal) all `return false` without
+                // ever touching contentState -- previously this was accidentally papered over
+                // by onDragEnded's un-gated .idle write, which MF-2's fix above now correctly
+                // suppresses while a drop is still in flight. Without this explicit reset nothing
+                // else would ever move contentState off .dragReorder for a refused reorder.
+                editorState.contentState = .idle
+
+                // MF-3 (review round): stash the RAW request, not a retry of this now-stale
+                // computed `sections` array -- the defer above re-derives a fresh target order
+                // from editorState.sections as it stood at retry time, not from whatever was
+                // true when this now-refused attempt was dispatched.
+                editorState.pendingSectionReorderRequest = request
+            }
         }
     }
 
-    /// Kick off async follow-up work after a reorder: push block IDs to the web editor,
-    /// then fire-and-forget the legacy section table persist.
-    func scheduleAsyncReorderPersistTasks() {
-        editorState.currentPersistTask?.cancel()
-        editorState.currentPersistTask = Task {
-            guard !Task.isCancelled else { return }
-            try? await Task.sleep(for: .milliseconds(100))
-            guard !Task.isCancelled else { return }
-            await blockSyncService.pushBlockIds()
-            editorState.contentState = .idle
-        }
-
-        // Legacy section persist (fire-and-forget, non-critical)
-        Task { await persistReorderedBlocks_legacySections() }
+    /// MF-4 (review round): pure comparison, no dependency on `self` -- directly unit-testable.
+    /// `target`/`current` are considered structurally unchanged when they have the same
+    /// sections, in the same order, at the same header levels -- the same id+headerLevel
+    /// criterion `OutlineSidebar.structuralSignature(of:)` already uses to decide "did anything
+    /// structural change" for that view's own update-skip optimization.
+    static func sectionOrderUnchanged(_ target: [SectionViewModel], from current: [SectionViewModel]) -> Bool {
+        guard target.count == current.count else { return false }
+        return zip(target, current).allSatisfy { $0.id == $1.id && $0.headerLevel == $1.headerLevel }
     }
 
     /// Persist legacy section table after reorder (fire-and-forget, non-critical)

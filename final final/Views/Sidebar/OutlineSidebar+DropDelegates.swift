@@ -23,6 +23,10 @@ struct SectionDropDelegate: DropDelegate {
     @Binding var pendingDropId: UUID?  // Guards against race conditions in async drop handling
     @Binding var lastDropLocation: CGPoint?  // Deduplicates simultaneous delegate fires
     @Binding var isDragging: Bool  // Track drag state for sync suppression
+    /// MF-2 (Phase 7 review round, plan §7): set synchronously in `performDrop`, before
+    /// `return true` -- see `EditorViewState.sectionDropInFlight`'s doc comment for the race
+    /// this closes.
+    @Binding var dropInFlight: Bool
     let onDrop: (SectionTransfer, DropPosition) -> Void
     var onDragStarted: (() -> Void)?
     var onDragEnded: (() -> Void)?
@@ -90,11 +94,22 @@ struct SectionDropDelegate: DropDelegate {
         let capturedPosition = position
         dropPosition = nil
 
+        // MF-2 (Phase 7 review round): set synchronously, BEFORE `return true` below -- this
+        // must land before AppKit can fire the drag source's `draggingSession(_:endedAt:)`
+        // callback (DraggableCardView.swift), which happens almost immediately once this
+        // method returns `true` and is fully decoupled from the async `loadTransferable`
+        // completion below.
+        dropInFlight = true
+
         // Timeout to prevent permanently stuck drops
         Task { @MainActor in
             try? await Task.sleep(for: .seconds(2))
             if self.pendingDropId == dropId {
                 self.pendingDropId = nil
+                // The load never completed -- this drop is abandoned, so nothing downstream
+                // will ever call onDrop for it. Relinquish the flag here too, or a genuinely
+                // stuck load would suppress the block-sync poll indefinitely.
+                self.dropInFlight = false
             }
         }
 
@@ -102,10 +117,21 @@ struct SectionDropDelegate: DropDelegate {
         _ = provider.loadTransferable(type: SectionTransfer.self) { result in
             Task { @MainActor in
                 // Only execute if this is still the pending drop
-                guard self.pendingDropId == dropId else { return }
+                guard self.pendingDropId == dropId else {
+                    // MF-2: this bail never reaches onDrop -- a later timeout/dedup already
+                    // claimed (or will claim) responsibility for the flag, but relinquish it
+                    // here too in case that path already ran and cleared it, or never will.
+                    self.dropInFlight = false
+                    return
+                }
 
                 if case .success(let transfer) = result {
                     self.onDrop(transfer, capturedPosition)
+                    // Ownership of dropInFlight transfers to dispatchSectionReorder's Task
+                    // from here -- do NOT clear it on this path.
+                } else {
+                    // MF-2: a non-success transfer result never reaches onDrop either.
+                    self.dropInFlight = false
                 }
                 self.pendingDropId = nil
 
@@ -144,6 +170,9 @@ struct EndDropDelegate: DropDelegate {
     @Binding var pendingDropId: UUID?  // Guards against race conditions in async drop handling
     @Binding var lastDropLocation: CGPoint?  // Deduplicates simultaneous delegate fires
     @Binding var isDragging: Bool  // Track drag state for sync suppression
+    /// MF-2 (Phase 7 review round, plan §7): see `SectionDropDelegate`'s matching property doc
+    /// comment.
+    @Binding var dropInFlight: Bool
     let onDrop: (SectionTransfer, DropPosition) -> Void
     var onDragStarted: (() -> Void)?
     var onDragEnded: (() -> Void)?
@@ -195,11 +224,16 @@ struct EndDropDelegate: DropDelegate {
         let capturedPosition = position
         dropPosition = nil
 
+        // MF-2 (Phase 7 review round): see SectionDropDelegate's matching comment -- must be
+        // set synchronously, before `return true` below.
+        dropInFlight = true
+
         // Timeout to prevent permanently stuck drops
         Task { @MainActor in
             try? await Task.sleep(for: .seconds(2))
             if self.pendingDropId == dropId {
                 self.pendingDropId = nil
+                self.dropInFlight = false
             }
         }
 
@@ -207,10 +241,16 @@ struct EndDropDelegate: DropDelegate {
         _ = provider.loadTransferable(type: SectionTransfer.self) { result in
             Task { @MainActor in
                 // Only execute if this is still the pending drop
-                guard self.pendingDropId == dropId else { return }
+                guard self.pendingDropId == dropId else {
+                    self.dropInFlight = false
+                    return
+                }
 
                 if case .success(let transfer) = result {
                     self.onDrop(transfer, capturedPosition)
+                    // Ownership transfers to dispatchSectionReorder's Task from here.
+                } else {
+                    self.dropInFlight = false
                 }
                 self.pendingDropId = nil
 

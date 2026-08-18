@@ -378,6 +378,235 @@ struct StructuralUndoControllerTests {
         #expect(try fixture.db.fetchBlock(id: bibId) != nil, "refusal must not touch the block")
     }
 
+    // MARK: - Phase 7: sidebar drag-reorder as a tracked structural op (plan §7)
+
+    /// Builds a fixture using `richTestContent` (`TestFixtureFactory.swift` -- "designed for
+    /// meaningful reorder ... tests"), whose multiple top-level (h2) sections under one h1
+    /// root give a valid, hierarchy-preserving pair to swap. `makeFixture()`'s two-heading doc
+    /// (an H1 root plus a single H2 child) can't support a meaningful reorder test -- an H1
+    /// must stay first, so there is nothing to swap without violating hierarchy. Mirrors
+    /// `makeFixture()`'s JS-round-trip stubbing so the whole audited sequence runs end to end;
+    /// `editorState.sections` is seeded from `fetchOutlineBlocks` (blocks), NOT the legacy
+    /// `Section` table, matching how the real app populates it.
+    private func makeReorderFixture() throws -> (
+        db: ProjectDatabase, pid: String,
+        controller: StructuralUndoController, editorState: EditorViewState,
+        unifiedUndoService: UnifiedUndoService
+    ) {
+        let db = try TestFixtureFactory.createTemporary(content: TestFixtureFactory.richTestContent)
+        let pid = try TestFixtureFactory.getProjectId(from: db)
+
+        let editorState = EditorViewState()
+        editorState.projectDatabase = db
+        editorState.currentProjectId = pid
+        editorState.content = TestFixtureFactory.richTestContent
+        editorState.sections = try db.fetchOutlineBlocks(projectId: pid).map { SectionViewModel(from: $0) }
+
+        let blockSyncService = BlockSyncService()
+        let sectionSyncService = SectionSyncService()
+        let bibliographySyncService = BibliographySyncService()
+        bibliographySyncService.configure(database: db, projectId: pid)
+        let footnoteSyncService = FootnoteSyncService()
+        footnoteSyncService.configure(database: db, projectId: pid)
+        let annotationSyncService = AnnotationSyncService()
+        let unifiedUndoService = UnifiedUndoService()
+
+        let controller = StructuralUndoController()
+        controller.configure(
+            editorState: editorState,
+            blockSyncService: blockSyncService,
+            sectionSyncService: sectionSyncService,
+            bibliographySyncService: bibliographySyncService,
+            footnoteSyncService: footnoteSyncService,
+            annotationSyncService: annotationSyncService,
+            unifiedUndoService: unifiedUndoService
+        )
+        controller.testEvalBoolOverride = { js in Self.realisticEvalBoolDefault(js) }
+        controller.testEvalVoidOverride = { _ in true }
+
+        return (db, pid, controller, editorState, unifiedUndoService)
+    }
+
+    /// Swaps the array POSITIONS of two same-level sibling sections by title, leaving header
+    /// levels/content untouched -- a minimal, hierarchy-preserving reorder (no enforcement
+    /// pass needed) so the tests below can assert purely on order, mirroring exactly what
+    /// `reorderSingleSection` builds today before dispatching into the controller.
+    private func swapSections(_ sections: [SectionViewModel], _ titleA: String, _ titleB: String) throws -> [SectionViewModel] {
+        var result = sections
+        let indexA = try #require(result.firstIndex { $0.title == titleA })
+        let indexB = try #require(result.firstIndex { $0.title == titleB })
+        result.swapAt(indexA, indexB)
+        return result
+    }
+
+    @Test("performSectionReorder records a .sectionReorder entry and persists the new sort order")
+    func performSectionReorderRecordsUndoEntry() async throws {
+        let fixture = try makeReorderFixture()
+        let before = fixture.editorState.sections
+        let beforeTitles = before.map(\.title)
+        let beforeMethodologyIdx = try #require(beforeTitles.firstIndex(of: "Methodology"))
+        let beforeResultsIdx = try #require(beforeTitles.firstIndex(of: "Results and Discussion"))
+        #expect(beforeMethodologyIdx < beforeResultsIdx, "fixture precondition: Methodology precedes Results and Discussion")
+
+        let swapped = try swapSections(before, "Methodology", "Results and Discussion")
+
+        let ok = await fixture.controller.performSectionReorder(sections: swapped)
+        #expect(ok)
+
+        #expect(fixture.editorState.contentState == .idle, "contentState must return to idle after the sequence completes")
+        let entry = try #require(fixture.unifiedUndoService.undoStack.last)
+        #expect(entry.kind == .sectionReorder)
+        #expect(fixture.unifiedUndoService.redoStack.isEmpty, "a fresh op must clear/leave empty the redo stack")
+
+        // The undo-point snapshot the entry points at must actually exist (same pattern as
+        // every other op's "records a real entry" test).
+        let snapshotService = SnapshotService(database: fixture.db, projectId: fixture.pid)
+        let undoSnapshots = try snapshotService.fetchAllSnapshots()
+        #expect(undoSnapshots.contains { $0.id == entry.undoSnapshotId })
+
+        // DB must reflect the new order: "Results and Discussion" now sorts before "Methodology".
+        let afterBlocks = try fixture.db.fetchOutlineBlocks(projectId: fixture.pid)
+        let afterTitles = afterBlocks.map(\.outlineTitle)
+        let afterMethodologyIdx = try #require(afterTitles.firstIndex(of: "Methodology"))
+        let afterResultsIdx = try #require(afterTitles.firstIndex(of: "Results and Discussion"))
+        #expect(afterResultsIdx < afterMethodologyIdx, "Results and Discussion must now sort before Methodology")
+    }
+
+    @Test("performSectionReorder undo reverts the section order to pre-reorder")
+    func performSectionReorderUndoRevertsOrder() async throws {
+        let fixture = try makeReorderFixture()
+        let swapped = try swapSections(fixture.editorState.sections, "Methodology", "Results and Discussion")
+
+        let ok = await fixture.controller.performSectionReorder(sections: swapped)
+        #expect(ok)
+        let entry = try #require(fixture.unifiedUndoService.undoStack.last)
+
+        await fixture.controller.handleStructuralRequest(opId: entry.id.uuidString, direction: .undo)
+        #expect(fixture.unifiedUndoService.redoStack.last?.id == entry.id, "a successful undo moves the entry to the redo stack")
+        #expect(fixture.unifiedUndoService.undoStack.isEmpty)
+
+        let afterUndoTitles = try fixture.db.fetchOutlineBlocks(projectId: fixture.pid).map(\.outlineTitle)
+        let methodologyIdx = try #require(afterUndoTitles.firstIndex(of: "Methodology"))
+        let resultsIdx = try #require(afterUndoTitles.firstIndex(of: "Results and Discussion"))
+        #expect(methodologyIdx < resultsIdx, "undo must restore Methodology before Results and Discussion (pre-reorder order)")
+    }
+
+    @Test("Combined scenario: restore then reorder then undo twice undoes both, in correct chronological order (plan §7's motivating gap)")
+    func restoreThenReorderThenUndoTwiceInChronologicalOrder() async throws {
+        let fixture = try makeReorderFixture()
+        let snapshotService = SnapshotService(database: fixture.db, projectId: fixture.pid)
+        let pristineSnapshot = try snapshotService.createManualSnapshot(name: "Pristine")
+
+        // Mutate the live document (simulating an edit made after the snapshot) so the
+        // upcoming restore is actually detectable -- mirrors makeFixture()'s reasoning for the
+        // other restore tests. performStructuralOp's step 2 (modeAwareFlush) reparses
+        // editorState.content into the DB in WYSIWYG mode (the fixture default) BEFORE the
+        // restore's own DB read, so setting editorState.content here (rather than poking the
+        // Block table directly) is what actually lands this as "the current DB state" at the
+        // moment the restore runs -- see performSectionDeleteRefusesBibliography's matching
+        // comment for the same mechanism.
+        let mutatedContent = TestFixtureFactory.richTestContent.replacingOccurrences(
+            of: "This study employs a mixed-methods approach",
+            with: "MUTATED body -- if this text survives the restore, the restore is broken"
+        )
+        fixture.editorState.content = mutatedContent
+
+        // 1. Restore -- reverts the mutation, records a .restoreProject entry.
+        let restoreOk = await fixture.controller.performRestoreProject(
+            snapshotId: pristineSnapshot.id, requestingProjectId: fixture.pid
+        )
+        #expect(restoreOk)
+        let restoreEntry = try #require(fixture.unifiedUndoService.undoStack.last)
+        #expect(restoreEntry.kind == .restoreProject)
+
+        let afterRestoreBlocks = try fixture.db.fetchBlocks(projectId: fixture.pid)
+        #expect(!afterRestoreBlocks.contains { $0.markdownFragment.contains("MUTATED body") })
+        #expect(afterRestoreBlocks.contains { $0.markdownFragment.contains("This study employs a mixed-methods approach") })
+
+        // 2. Reorder -- the natural follow-up to a restore landing a section in the wrong
+        // place (the exact combined workflow this phase exists to support). Restoring a whole
+        // project mints fresh block ids (SnapshotService.restoreEntireProject deletes/reinserts
+        // everything), so the sections to swap must be re-read AFTER the restore, not reused
+        // from before it.
+        let postRestoreSections = fixture.editorState.sections
+        let swapped = try swapSections(postRestoreSections, "Methodology", "Results and Discussion")
+        let reorderOk = await fixture.controller.performSectionReorder(sections: swapped)
+        #expect(reorderOk)
+        let reorderEntry = try #require(fixture.unifiedUndoService.undoStack.last)
+        #expect(reorderEntry.kind == .sectionReorder)
+        #expect(fixture.unifiedUndoService.undoStack.map(\.id) == [restoreEntry.id, reorderEntry.id],
+                "both ops must be on the undo stack, oldest first")
+
+        // 3. Undo #1 -- must undo the REORDER (last-in, first-out), not the restore.
+        await fixture.controller.handleStructuralRequest(opId: reorderEntry.id.uuidString, direction: .undo)
+        #expect(fixture.unifiedUndoService.undoStack.map(\.id) == [restoreEntry.id],
+                "after one undo, only the restore entry remains on the undo stack")
+        #expect(fixture.unifiedUndoService.redoStack.map(\.id) == [reorderEntry.id])
+
+        let afterFirstUndoTitles = try fixture.db.fetchOutlineBlocks(projectId: fixture.pid).map(\.outlineTitle)
+        let methodologyIdx = try #require(afterFirstUndoTitles.firstIndex(of: "Methodology"))
+        let resultsIdx = try #require(afterFirstUndoTitles.firstIndex(of: "Results and Discussion"))
+        #expect(methodologyIdx < resultsIdx, "undoing the reorder must restore the post-restore (pre-reorder) order")
+
+        // 4. Undo #2 -- must undo the RESTORE, bringing the mutated text back.
+        await fixture.controller.handleStructuralRequest(opId: restoreEntry.id.uuidString, direction: .undo)
+        #expect(fixture.unifiedUndoService.undoStack.isEmpty, "both entries now undone")
+        #expect(fixture.unifiedUndoService.redoStack.map(\.id) == [reorderEntry.id, restoreEntry.id],
+                "redo stack holds both entries, most-recently-undone (the restore) on top")
+
+        let afterSecondUndoBlocks = try fixture.db.fetchBlocks(projectId: fixture.pid)
+        #expect(afterSecondUndoBlocks.contains { $0.markdownFragment.contains("MUTATED body") },
+                "undoing the restore must bring back the pre-restore mutation")
+    }
+
+    @Test("MF-1 (review round): performSectionReorder succeeds while zoomed instead of refusing (zoomed reorder is a deliberately shipped feature, git history 12cef025 -- not an accident)")
+    func performSectionReorderSucceedsWhileZoomed() async throws {
+        let fixture = try makeReorderFixture()
+        let before = fixture.editorState.sections
+        let methodologySection = try #require(before.first { $0.title == "Methodology" })
+        fixture.editorState.zoomedSectionId = methodologySection.id
+        fixture.editorState.zoomedSectionIds = [methodologySection.id]
+
+        let swapped = try swapSections(before, "Methodology", "Results and Discussion")
+
+        let ok = await fixture.controller.performSectionReorder(sections: swapped)
+        #expect(ok, "a reorder while zoomed must succeed under .allowWhileZoomed, not refuse under .refuseIfZoomed")
+
+        let entry = try #require(fixture.unifiedUndoService.undoStack.last)
+        #expect(entry.kind == .sectionReorder)
+
+        let afterTitles = try fixture.db.fetchOutlineBlocks(projectId: fixture.pid).map(\.outlineTitle)
+        let methodologyIdx = try #require(afterTitles.firstIndex(of: "Methodology"))
+        let resultsIdx = try #require(afterTitles.firstIndex(of: "Results and Discussion"))
+        #expect(resultsIdx < methodologyIdx, "Results and Discussion must now sort before Methodology, even though the reorder ran while zoomed")
+    }
+
+    @Test("MF-1 (review round): undoing a reorder recorded while zoomed zooms back out")
+    func undoingReorderRecordedWhileZoomedZoomsOut() async throws {
+        let fixture = try makeReorderFixture()
+        let before = fixture.editorState.sections
+        let methodologySection = try #require(before.first { $0.title == "Methodology" })
+        fixture.editorState.zoomedSectionId = methodologySection.id
+        fixture.editorState.zoomedSectionIds = [methodologySection.id]
+
+        let swapped = try swapSections(before, "Methodology", "Results and Discussion")
+        let ok = await fixture.controller.performSectionReorder(sections: swapped)
+        #expect(ok)
+        #expect(
+            fixture.editorState.zoomedSectionId != nil,
+            "fixture precondition: .allowWhileZoomed does not zoom out on its own, unlike .autoZoomOut"
+        )
+
+        let entry = try #require(fixture.unifiedUndoService.undoStack.last)
+        await fixture.controller.handleStructuralRequest(opId: entry.id.uuidString, direction: .undo)
+
+        #expect(
+            fixture.editorState.zoomedSectionId == nil,
+            "performUndo must zoom out before restoring -- restoreEntireProject mints fresh section ids, so leaving the old zoomedSectionId in place would strand it on an id that no longer exists post-restore"
+        )
+        #expect(fixture.unifiedUndoService.redoStack.last?.id == entry.id)
+    }
+
     @Test("Must-fix 3 regression: a failed finalizeStructuralOpPostOpDoc aborts the op and records no entry")
     func finalizeStructuralOpPostOpDocFailureAbortsOpAndRecordsNoEntry() async throws {
         let fixture = try makeFixture()

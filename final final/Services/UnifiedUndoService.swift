@@ -23,6 +23,11 @@ struct StructuralEntry: Identifiable, Equatable {
         case restoreSectionDuplicate
         case sectionDelete
         case sectionDuplicate
+        /// Sidebar drag-reorder (single-section or subtree), Phase 7 (plan §7) -- promoted
+        /// from a timeline-wiping barrier to a sixth tracked structural op. Title "Reorder
+        /// Sections" (unused in the actual menu per plan §4.7; kept for parity/diagnostics
+        /// with the other five, matching their plain-noun-phrase convention).
+        case sectionReorder
     }
 
     let id: UUID

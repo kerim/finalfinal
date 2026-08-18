@@ -192,6 +192,38 @@ class EditorViewState {
     var statusFilter: SectionStatus?
     var headerLevelFilter: Int?
 
+    /// MF-2 (Phase 7 review round, plan §7): true from the moment a sidebar drop delegate's
+    /// `performDrop` accepts a drop through to the moment `dispatchSectionReorder`'s Task body
+    /// finishes (success, refusal, or failure) -- see `ContentView.swift`'s `onDragEnded`
+    /// closure doc comment for the race this closes. `isPerforming` alone can't cover the gap:
+    /// it only goes true once `StructuralUndoController.performSectionReorder`'s Task actually
+    /// starts running, but the drag SOURCE's own `endedAt:` callback
+    /// (`DraggableCardView.swift`'s `draggingSession(_:endedAt:operation:)`) fires almost
+    /// immediately once `performDrop` returns `true` -- fully decoupled from the drop TARGET's
+    /// own async `loadTransferable` completion that actually spawns the reorder Task. This
+    /// flag is set synchronously in `performDrop`, before that race window opens, and is
+    /// exposed as a `@Binding` to both drop delegates (`OutlineSidebar+DropDelegates.swift`)
+    /// alongside their existing `pendingDropId`/`isDragging` bindings.
+    var sectionDropInFlight: Bool = false
+
+    /// MF-3 (Phase 7 review round): a reorder request refused because another one was already
+    /// in flight (`StructuralUndoController.isPerforming`), stashed here so `dispatchSectionReorder`
+    /// can retry it once the in-flight one's `Task` exits. Deliberately on `EditorViewState`
+    /// (a class), not a `ContentView` `@State` property: root-caused live (diagnostic trace,
+    /// not guessed) that a `@State`-wrapped struct property written from inside a `Task { }`
+    /// closure on `ContentView` does not reliably persist to be read back by that SAME closure's
+    /// own `defer` a fraction of a millisecond later -- confirmed even on the main thread, same
+    /// synchronous execution, no intervening `await`. Plausible cause: `@State`'s subscript
+    /// setter commits through a SwiftUI transaction/diffing path that needs an active view graph
+    /// to actually flush, which a `ContentView` instance never has outside of being genuinely
+    /// mounted in a window -- true in production, not true for a bare `ContentView()` built
+    /// directly (as this project's own test suite does for exactly these methods). A plain
+    /// stored property on a class has no such dependency: the write is visible to the next
+    /// read unconditionally, mounted view or not. This is a correctness fix, not just a
+    /// testability one -- the original `@State` version was never proven to commit reliably
+    /// even in production before a `Task`'s `defer` reads it back.
+    var pendingSectionReorderRequest: SectionReorderRequest?
+
     // MARK: - Document Goal Settings
     var documentGoal: Int?
     var documentGoalType: GoalType = .approx
@@ -335,8 +367,10 @@ class EditorViewState {
     // mutating `vm.parentId` below, or the equality-guarded `apply()` mutations in
     // `EditorViewState+ObservableListDiff.swift`. Most of these element mutations happen inside
     // the cache-consistent merge path (`applySectionsUpdate` re-arms right after them), but
-    // `finalizeSectionReorder` (`ContentView+SectionManagement.swift`) is a second, real caller
-    // of `recalculateParentRelationships()` that sits outside that path. It's still safe
+    // `StructuralUndoController.performSectionReorder`'s `mutate` closure
+    // (`Services/StructuralUndoController.swift`, Phase 7 -- absorbed the old
+    // `ContentView+SectionManagement.swift`'s `finalizeSectionReorder`) is a second, real
+    // caller of `recalculateParentRelationships()` that sits outside that path. It's still safe
     // there: `editorState.sections = mutableSections`, an unconditional whole-array
     // reassignment immediately before the call, clears the cache via `sections`'s `didSet`,
     // and nothing between that write and the call re-arms it -- `applySectionsUpdate` is the
@@ -345,8 +379,9 @@ class EditorViewState {
     // clears the cache, but that's incidental to this invariant: the cache is already nil by
     // then, so removing that trailing write wouldn't reopen anything. The preceding write is
     // what's load-bearing here, not something this type structurally enforces on its own: a
-    // future edit to `finalizeSectionReorder` that removes the preceding `editorState.sections
-    // = mutableSections` write could silently reopen a stale-cache window without anything
+    // future edit to `performSectionReorder`'s `mutate` closure that removes the preceding
+    // `editorState.sections = mutableSections` write could silently reopen a stale-cache
+    // window without anything
     // here catching it. Any future code that needs the cache to notice an element mutation
     // must route it through `applySectionsUpdate`'s merge path rather than mutating a
     // `SectionViewModel` directly -- there is deliberately no escape hatch for that case.
@@ -566,9 +601,11 @@ class EditorViewState {
     /// (above, in this file, at the `recalculateParentRelationships()` call inside it) -- it
     /// runs on every database observation tick, which can fire every keystroke, so replacing
     /// identities here would undo Fix 2 on the very next line. The drag-reorder path
-    /// (`ContentView+SectionManagement.swift`'s `finalizeSectionReorder`) is the other caller,
-    /// invoked once per user action via `editorState.recalculateParentRelationships()`, instead
-    /// of duplicating the parent-recalculation logic locally the way it used to. Either way,
+    /// (`StructuralUndoController.performSectionReorder`'s `mutate` closure, Phase 7 --
+    /// absorbed the old `ContentView+SectionManagement.swift` `finalizeSectionReorder`) is the
+    /// other caller, invoked once per user action via
+    /// `editorState.recalculateParentRelationships()`, instead of duplicating the
+    /// parent-recalculation logic locally the way it used to. Either way,
     /// in-place mutation is the right choice for this method; `withUpdates` still exists and
     /// remains in use elsewhere on the drag path (e.g. `recalculateSortOrders`/
     /// `applyComputedOffsets`) for identity-replacing updates that are unaffected by this

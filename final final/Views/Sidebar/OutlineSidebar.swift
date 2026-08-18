@@ -35,6 +35,10 @@ struct OutlineSidebar: View {
     var onDragStarted: (() -> Void)?
     /// Called when drag operation ends - use to resume sync
     var onDragEnded: (() -> Void)?
+    /// MF-2 (Phase 7 review round, plan §7): bound through to both drop delegates
+    /// (`OutlineSidebar+DropDelegates.swift`) as their `dropInFlight` binding -- see
+    /// `EditorViewState.sectionDropInFlight`'s doc comment.
+    @Binding var sectionDropInFlight: Bool
     /// Sidebar context-menu section operations: duplicate/delete a section's full subtree
     /// (docs/plans/patient-rewinding-clockwork.md §7 Phase 4). Nil-defaulted so existing call
     /// sites are unaffected; see SectionCardView's context menu for the UI.
@@ -270,11 +274,21 @@ struct OutlineSidebar: View {
                             pendingDropId: $pendingDropId,
                             lastDropLocation: $lastDropLocation,
                             isDragging: $isDragging,
+                            dropInFlight: $sectionDropInFlight,
                             onDrop: { transfer, position in
                                 handleDropAtEnd(dropped: transfer, position: position)
                             },
                             onDragStarted: onDragStarted,
-                            onDragEnded: onDragEnded
+                            onDragEnded: {
+                                // MF-2 point 6 (Phase 7 review round, plan §7): previously wired
+                                // to the real `onDragEnded` closure directly, unlike
+                                // SectionDropDelegate's own no-op below -- that asymmetry meant
+                                // an end-of-list drop invoked ContentView's guarded onDragEnded
+                                // TWICE per drag (once here, once via DraggableCardView's drag-
+                                // source completion). Already handled by DraggableCardView --
+                                // see ContentView.swift's onDragEnded doc comment (Path A) for
+                                // why that's the single source of truth for both delegate types.
+                            }
                         ))
                 }
             }
@@ -437,6 +451,7 @@ struct OutlineSidebar: View {
             pendingDropId: $pendingDropId,
             lastDropLocation: $lastDropLocation,
             isDragging: $isDragging,
+            dropInFlight: $sectionDropInFlight,
             onDrop: { transfer, position in
                 handleDrop(dropped: transfer, position: position, targetSection: section)
             },
@@ -651,6 +666,7 @@ struct OutlineSidebar: View {
     @Previewable @State var docGoal: Int? = 1000
     @Previewable @State var docGoalType: GoalType = .approx
     @Previewable @State var excludeBib: Bool = false
+    @Previewable @State var dropInFlight: Bool = false
 
     OutlineSidebar(
         sections: $sections,
@@ -676,7 +692,8 @@ struct OutlineSidebar: View {
             print("Zoom out")
         },
         onDragStarted: { print("Drag started") },
-        onDragEnded: { print("Drag ended") }
+        onDragEnded: { print("Drag ended") },
+        sectionDropInFlight: $dropInFlight
     )
     .frame(width: 300, height: 500)
     .environment(ThemeManager.shared)

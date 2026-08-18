@@ -96,6 +96,11 @@ struct ContentView: View {
     @State internal var pendingBibliographyRebuild = false
     @State internal var pendingNotesRebuild = false
 
+    // MF-3's single-slot reorder-retry stash lives on `editorState.pendingSectionReorderRequest`
+    // (a class property), not here -- see that property's doc comment for why a `ContentView`
+    // `@State` property was root-caused as unreliable for this specific write-then-read-via-
+    // Task-closure pattern.
+
     /// Callback when project is closed (to return to picker)
     var onProjectClosed: (() -> Void)?
 
@@ -409,12 +414,57 @@ struct ContentView: View {
                     }
                 },
                 onDragStarted: {
-                    editorState.contentState = .dragReorder
+                    // MF-2 point 7 (Phase 7 review round): guard the contentState write the
+                    // same way onDragEnded below is guarded -- if a PRIOR reorder's audited
+                    // sequence is still mid-flight (isPerforming) when a NEW drag starts,
+                    // don't stomp that sequence's own .structuralUndo contentState with
+                    // .dragReorder. cancelPendingSync() stays unconditional: it's a cheap,
+                    // idempotent debounce cancel with no ordering hazard either way.
+                    if !structuralUndoController.isPerforming {
+                        editorState.contentState = .dragReorder
+                    }
                     sectionSyncService.cancelPendingSync()
                 },
                 onDragEnded: {
-                    editorState.contentState = .idle
+                    // MF-2 (Phase 7 review round, plan §7 -- corrects the prior round's factually
+                    // wrong claim that onDrop and onDragEnded "run synchronously with no await
+                    // between them"): this closure is ContentView's REAL onDragEnded target, but
+                    // it is reached through exactly ONE of two decoupled paths per drag, and they
+                    // are NOT interchangeable:
+                    //
+                    // Path A -- the drag SOURCE's own completion, `DraggableCardView.swift`'s
+                    // `draggingSession(_:endedAt:operation:)`, wired above via
+                    // `onDragEnded: { clearDragState(); onDragEnded?() }`. AppKit fires this
+                    // almost immediately once a drop delegate's `performDrop` returns `true` --
+                    // it does NOT wait for the drop target's own async `loadTransferable` work.
+                    // Both `SectionDropDelegate` and `EndDropDelegate` (OutlineSidebar.swift's
+                    // `sectionCard`/`sectionsList`) now wire their OWN `onDragEnded` parameter to
+                    // a no-op ("already handled by DraggableCardView") specifically so Path A is
+                    // the single source that ever reaches this closure -- see those call sites'
+                    // comments; a prior asymmetry where EndDropDelegate wired the real closure
+                    // directly meant an end-of-list drop invoked this guarded body TWICE.
+                    //
+                    // Path B -- the drop TARGET's async completion (`loadTransferable` ->
+                    // `onDrop` -> `dispatchSectionReorder`'s `Task`), which is what actually
+                    // spawns `StructuralUndoController.performSectionReorder`'s audited sequence.
+                    // Path A is fully decoupled from Path B's timing: for the common case, Path A
+                    // fires while `isPerforming` is STILL `false` (the reorder Task hasn't even
+                    // started), so an isPerforming-only guard here does nothing and this closure
+                    // would set contentState = .idle prematurely, re-arming the block-sync poll
+                    // mid-reorder -- the normal case, not an edge case.
+                    //
+                    // `editorState.sectionDropInFlight` (set synchronously in `performDrop`,
+                    // before AppKit can fire Path A -- see its own doc comment) closes exactly
+                    // that gap: it's the "a reorder is about to start, or already stashed for
+                    // retry" flag; `isPerforming` covers "a reorder's audited sequence already
+                    // claimed the latch". Both are needed -- neither alone spans the whole window
+                    // from drop-accepted to the reorder Task's own `defer` clearing the flag
+                    // (`dispatchSectionReorder`, ContentView+SectionManagement.swift).
+                    if !structuralUndoController.isPerforming && !editorState.sectionDropInFlight {
+                        editorState.contentState = .idle
+                    }
                 },
+                sectionDropInFlight: $editorState.sectionDropInFlight,
                 onDuplicateSection: { sectionId in
                     duplicateSectionFromSidebar(sectionId)
                 },
