@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import WebKit
 
 extension ContentView {
     /// Image metadata for passing to JS setContentWithBlockIds
@@ -398,6 +399,39 @@ extension ContentView {
         return jsonString
     }
 
+    /// Gives a freshly claimed/created WebView native macOS keyboard focus, so
+    /// Cmd-Z/Cmd-Shift-Z route through `UndoRedoCommands`'s `focusedWebView()` check
+    /// (via `NSApp.keyWindow?.firstResponder`) as soon as the WebView is ready --
+    /// without this, switching editor mode (WYSIWYG<->Source) via its keyboard
+    /// shortcut leaves undo silently no-op'ing until the user clicks into the
+    /// document, since the mode switch never otherwise hands the new WebView
+    /// first-responder status. Same underlying gap the Find-bar fix closed
+    /// (`FindBarState.swift`), different trigger.
+    ///
+    /// `onWebViewReady` can fire synchronously from `makeNSView` -- the preloaded-
+    /// WebView path SwiftUI takes both on first editor creation and on every mode
+    /// switch -- BEFORE SwiftUI has actually attached the returned view to the
+    /// window, so `webView.window` is nil at that point and `makeFirstResponder`
+    /// would silently fail if called inline. Defer to the next run-loop turn,
+    /// where attachment has normally completed; if it still hasn't (window still
+    /// nil), retry once more a turn later. Mirrors `EquationDialog`'s
+    /// makeFirstResponder retry pattern ("can silently fail... retrying once on
+    /// the next run-loop turn... is a standard, safe defensive pattern").
+    @MainActor
+    private func restoreEditorFocus(_ webView: WKWebView) {
+        DispatchQueue.main.async { [weak webView] in
+            guard let webView else { return }
+            if let window = webView.window {
+                window.makeFirstResponder(webView)
+            } else {
+                DispatchQueue.main.async { [weak webView] in
+                    guard let webView, let window = webView.window else { return }
+                    window.makeFirstResponder(webView)
+                }
+            }
+        }
+    }
+
     @ViewBuilder
     var editorView: some View {
         // Wait for preload to complete before showing editor
@@ -452,6 +486,7 @@ extension ContentView {
                     onWebViewReady: { webView in
                         findBarState.activeWebView = webView
                         structuralUndoController.activeWebView = webView
+                        restoreEditorFocus(webView)
                         // Sync current annotation display state - see annotationDisplayModesJSON's
                         // doc comment for why this fresh WebView wouldn't otherwise learn it.
                         if let json = annotationDisplayModesJSON(editorState) {
@@ -530,6 +565,7 @@ extension ContentView {
                     onWebViewReady: { webView in
                         findBarState.activeWebView = webView
                         structuralUndoController.activeWebView = webView
+                        restoreEditorFocus(webView)
                         // Sync current annotation display state - see annotationDisplayModesJSON's
                         // doc comment for why this fresh WebView wouldn't otherwise learn it.
                         if let json = annotationDisplayModesJSON(editorState) {
