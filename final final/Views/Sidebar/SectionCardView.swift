@@ -15,6 +15,14 @@ struct SectionCardView: View {
     var isGhost: Bool = false  // When true, render at 30% opacity (drag source in subtree drag)
     var isActive: Bool = false  // When true, show left accent bar (cursor is in this section)
     var onHoverChanged: ((Bool) -> Void)?  // Bubbles hover state to parent (bypasses PassthroughHostingView hit-test)
+    /// Right-click/control-click context menu: duplicate/delete this section's full subtree
+    /// (docs/plans/patient-rewinding-clockwork.md §7 Phase 4). Both nil-defaulted so every
+    /// other call site (drag preview, etc.) is unaffected.
+    var onDuplicate: (() -> Void)?
+    var onDelete: (() -> Void)?
+    /// True while the editor is zoomed into any section -- disables duplicate/delete (see
+    /// ContentView+SectionOperations.swift's `isSectionOperationAvailable`).
+    var isZoomed: Bool = false
 
     @Environment(ThemeManager.self) private var themeManager
     @Environment(GoalColorSettingsManager.self) private var goalManager
@@ -92,6 +100,14 @@ struct SectionCardView: View {
                     .frame(width: 3)
                     .padding(.vertical, 4)
             }
+        }
+        .contextMenu {
+            Button("Duplicate Section") { onDuplicate?() }
+                .disabled(section.isBibliography || section.isNotes || isZoomed)
+                .accessibilityIdentifier("section-duplicate-button")
+            Button("Delete Section", role: .destructive) { onDelete?() }
+                .disabled(section.isBibliography || section.isNotes || isZoomed)
+                .accessibilityIdentifier("section-delete-button")
         }
     }
 

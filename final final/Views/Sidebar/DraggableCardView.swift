@@ -38,6 +38,13 @@ struct DraggableCardView: NSViewRepresentable, Equatable {
     let onDoubleClick: (ZoomMode) -> Void
     let onSectionUpdated: ((SectionViewModel) -> Void)?  // Called when word goal changes
     var onHoverChanged: ((Bool) -> Void)?  // Bubbles hover from SectionCardView to OutlineSidebar
+    /// Threaded straight through to SectionCardView's context menu (plan §7 Phase 4) -- see
+    /// its doc comments.
+    var onDuplicate: (() -> Void)?
+    var onDelete: (() -> Void)?
+    /// Plain value flag (not a closure): affects the context menu's disabled state, so it's
+    /// folded into `==` below alongside `isGhost`/`isActive`.
+    var isZoomed: Bool = false
 
     /// Manual `Equatable` conformance so SwiftUI can skip `updateNSView` when nothing that
     /// matters actually changed. The compiler can't synthesize this: closures aren't
@@ -53,8 +60,9 @@ struct DraggableCardView: NSViewRepresentable, Equatable {
     ///    `SectionCardView` via `@Observable`'s own tracking -- `updateNSView` doesn't need
     ///    to re-run for that. A different reference means a genuinely different section and
     ///    must re-wire the hosted view.
-    ///  - `isGhost` / `isActive`: plain value flags that directly affect how
-    ///    `SectionCardView` renders and aren't otherwise observable.
+    ///  - `isGhost` / `isActive` / `isZoomed`: plain value flags that directly affect how
+    ///    `SectionCardView` renders (`isZoomed` gates its context menu's disabled state) and
+    ///    aren't otherwise observable.
     ///  - `structuralSignature`: NOT a render input by itself. Closures are excluded from this
     ///    comparison because they can't be compared and none of them affects what THIS card
     ///    renders -- but excluding them only stays safe as long as a stale copy is never
@@ -69,7 +77,7 @@ struct DraggableCardView: NSViewRepresentable, Equatable {
     ///    `OutlineSidebar.structuralSignature(of:)`.
     static func == (lhs: DraggableCardView, rhs: DraggableCardView) -> Bool {
         lhs.section === rhs.section && lhs.isGhost == rhs.isGhost && lhs.isActive == rhs.isActive
-            && lhs.structuralSignature == rhs.structuralSignature
+            && lhs.isZoomed == rhs.isZoomed && lhs.structuralSignature == rhs.structuralSignature
     }
 
     @Environment(ThemeManager.self) private var themeManager
@@ -92,7 +100,10 @@ struct DraggableCardView: NSViewRepresentable, Equatable {
             onSectionUpdated: onSectionUpdated,
             isGhost: isGhost,
             isActive: isActive,
-            onHoverChanged: onHoverChanged
+            onHoverChanged: onHoverChanged,
+            onDuplicate: onDuplicate,
+            onDelete: onDelete,
+            isZoomed: isZoomed
         )
         .environment(themeManager)
         .environment(GoalColorSettingsManager.shared)
@@ -125,7 +136,10 @@ struct DraggableCardView: NSViewRepresentable, Equatable {
             onSectionUpdated: onSectionUpdated,
             isGhost: isGhost,
             isActive: isActive,
-            onHoverChanged: onHoverChanged
+            onHoverChanged: onHoverChanged,
+            onDuplicate: onDuplicate,
+            onDelete: onDelete,
+            isZoomed: isZoomed
         )
         .environment(themeManager)
         .environment(GoalColorSettingsManager.shared)

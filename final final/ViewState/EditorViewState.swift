@@ -433,41 +433,52 @@ class EditorViewState {
 
     /// Re-fetch outline blocks from database and update sections.
     /// Called when ValueObservation may have been dropped during non-idle contentState.
-    /// Heavy DB work runs off the main actor; the section assignment lands back on @MainActor.
+    /// Fire-and-forget wrapper around `refreshSectionsAwaiting()` for callers that don't need
+    /// to know when the fetch lands (the original/common case).
     func refreshSections() {
+        Task { [weak self] in
+            await self?.refreshSectionsAwaiting()
+        }
+    }
+
+    /// Awaited version of `refreshSections()` (MF-1, `StructuralUndoController`'s audited
+    /// sequences, docs/plans/patient-rewinding-clockwork.md §4.4/§4.5 Phase 4 review round):
+    /// those sequences need to know the DB fetch has actually landed in `sections` before
+    /// running hierarchy enforcement in-sequence, so they can't use the fire-and-forget
+    /// `refreshSections()` above. Same body as before, just awaited directly instead of
+    /// wrapped in its own untracked `Task`. Heavy DB work runs off the main actor; the section
+    /// assignment lands back on @MainActor.
+    func refreshSectionsAwaiting() async {
         guard let db = projectDatabase, let pid = currentProjectId else {
             DebugLog.log(.outline, "[EditorViewState:refresh] BAIL: no db/pid")
             return
         }
-        Task { [weak self] in
-            do {
-                let outlineBlocks = try await Task.detached(priority: .userInitiated) {
-                    try db.fetchOutlineBlocks(projectId: pid)
-                }.value
+        do {
+            let outlineBlocks = try await Task.detached(priority: .userInitiated) {
+                try db.fetchOutlineBlocks(projectId: pid)
+            }.value
 
-                let blockIds = outlineBlocks.map(\.id)
-                let needsAggregate = Set(outlineBlocks.filter { $0.aggregateGoal != nil }.map(\.id))
-                let counts = await Self.fetchBatchWordCounts(
-                    database: db,
-                    blockIds: blockIds,
-                    needsAggregate: needsAggregate
-                )
+            let blockIds = outlineBlocks.map(\.id)
+            let needsAggregate = Set(outlineBlocks.filter { $0.aggregateGoal != nil }.map(\.id))
+            let counts = await Self.fetchBatchWordCounts(
+                database: db,
+                blockIds: blockIds,
+                needsAggregate: needsAggregate
+            )
 
-                guard let self else { return }
-                DebugLog.log(.outline, "[EditorViewState:refresh] \(outlineBlocks.count) sections (contentState=\(self.contentState))")
+            DebugLog.log(.outline, "[EditorViewState:refresh] \(outlineBlocks.count) sections (contentState=\(contentState))")
 
-                if self.isOutlineUnchanged(blocks: outlineBlocks, counts: counts) {
-                    self.onSectionsUpdated?()
-                    return
-                }
-
-                // See the observation-loop call site above for why `applySectionsUpdate` merges
-                // into a local copy rather than passing `&self.sections` directly.
-                self.applySectionsUpdate(from: outlineBlocks, counts: counts)
-                self.onSectionsUpdated?()
-            } catch {
-                DebugLog.log(.outline, "[EditorViewState] refreshSections error: \(error)")
+            if isOutlineUnchanged(blocks: outlineBlocks, counts: counts) {
+                onSectionsUpdated?()
+                return
             }
+
+            // See the observation-loop call site above for why `applySectionsUpdate` merges
+            // into a local copy rather than passing `&self.sections` directly.
+            applySectionsUpdate(from: outlineBlocks, counts: counts)
+            onSectionsUpdated?()
+        } catch {
+            DebugLog.log(.outline, "[EditorViewState] refreshSections error: \(error)")
         }
     }
 

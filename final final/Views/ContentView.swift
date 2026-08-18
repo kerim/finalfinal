@@ -299,6 +299,14 @@ struct ContentView: View {
                 ZoomBreadcrumb(
                     zoomedSection: zoomedSection,
                     onZoomOut: {
+                        // Barrier (docs/plans/patient-rewinding-clockwork.md §4.5, plan §7
+                        // Phase 4): a USER-initiated zoom out, hooked here rather than inside
+                        // EditorViewState+Zoom.swift's zoomOut() itself -- the structural-op
+                        // sequence already calls zoomOut() as its OWN internal housekeeping
+                        // (StructuralUndoController's autoZoomOut policy), and hooking inside
+                        // zoomOut() would make an op falsely invalidate its own just-recorded
+                        // entry.
+                        unifiedUndoService.invalidateAll(reason: "user zoomed out (breadcrumb)")
                         let savedSectionId = editorState.zoomedSectionId
                         findBarState.clearSearch()
                         editorState.contentState = .zoomTransition
@@ -336,6 +344,10 @@ struct ContentView: View {
                 },
                 currentSectionId: editorState.currentSectionId,
                 onZoomToSection: { sectionId, mode in
+                    // Barrier -- user-initiated zoom in (see the breadcrumb onZoomOut's
+                    // matching comment above for why this is hooked at the call site, not
+                    // inside EditorViewState+Zoom.swift's zoomToSection()).
+                    unifiedUndoService.invalidateAll(reason: "user zoomed in")
                     findBarState.clearSearch()
                     editorState.contentState = .zoomTransition
                     Task {
@@ -346,6 +358,9 @@ struct ContentView: View {
                     }
                 },
                 onZoomOut: {
+                    // Barrier -- user-initiated zoom out from the sidebar (see the breadcrumb
+                    // onZoomOut's matching comment above).
+                    unifiedUndoService.invalidateAll(reason: "user zoomed out (sidebar)")
                     let savedSectionId = editorState.zoomedSectionId
                     findBarState.clearSearch()
                     editorState.contentState = .zoomTransition
@@ -365,6 +380,12 @@ struct ContentView: View {
                 },
                 onDragEnded: {
                     editorState.contentState = .idle
+                },
+                onDuplicateSection: { sectionId in
+                    duplicateSectionFromSidebar(sectionId)
+                },
+                onDeleteSection: { sectionId in
+                    deleteSectionFromSidebar(sectionId)
                 }
             )
         }

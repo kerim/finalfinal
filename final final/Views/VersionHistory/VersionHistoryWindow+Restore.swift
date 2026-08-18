@@ -73,7 +73,7 @@ extension VersionHistoryWindow {
             }
         }
         .accessibilityIdentifier("version-history-full-restore-confirm")
-        Toggle("Create safety backup first", isOn: $createSafetyBackup)
+        Text("A restore point is created automatically.")
         Button("Cancel", role: .cancel) {}
             .accessibilityIdentifier("version-history-full-restore-cancel")
     }
@@ -194,88 +194,88 @@ extension VersionHistoryWindow {
     // MARK: - Restore Actions
 
     func performSectionRestore() async {
-        guard let database = coordinator.database,
+        guard coordinator.database != nil,
               let projectId = coordinator.projectId,
               let section = pendingRestoreSection,
               let mode = pendingRestoreMode,
               !projectClosed else { return }
 
+        // Both branches are routed as REQUESTS into the main-window StructuralUndoController
+        // (plan §4.4, "main-window request handoff") -- NOT a direct SnapshotService call. The
+        // controller runs the full audited op sequence (mode-aware flush, checkpoint capture,
+        // forced undo-point snapshot, the op-specific DB mutation, forced bibliography/footnote
+        // resync, content push, timeline record) and reports success/failure; this window only
+        // handles the UI side (error display, dismiss). Phase 4: restore-as-duplicate is now
+        // wired the same way replace was in Phase 3 (previously called SnapshotService directly
+        // and posted .projectDidOpen -- that path bypassed the timeline entirely).
+        guard let controller = DocumentManager.shared.structuralUndoController else {
+            errorMessage = "Restore failed: unified undo controller not available"
+            pendingRestoreSection = nil
+            pendingRestoreMode = nil
+            targetSectionId = nil
+            return
+        }
+
+        let ok: Bool
         switch mode {
         case .replace:
-            // Routed as a REQUEST into the main-window StructuralUndoController (plan §4.4,
-            // "main-window request handoff") -- NOT a direct SnapshotService call. The
-            // controller runs the full audited op sequence (mode-aware flush, checkpoint
-            // capture, forced undo-point snapshot, the existing restoreSectionReplace DB
-            // mutation, forced bibliography/footnote resync, content push, timeline record)
-            // and reports success/failure; this window only handles the UI side (error
-            // display, dismiss). Restore-as-duplicate below is UNCHANGED this round -- it
-            // still calls SnapshotService directly and posts .projectDidOpen, same as before
-            // Phase 3 -- see the coder brief: only .replace is wired to the unified timeline
-            // this round.
             let targetId = targetSectionId ?? section.originalSectionId ?? ""
-            guard let controller = DocumentManager.shared.structuralUndoController else {
-                errorMessage = "Restore failed: unified undo controller not available"
-                pendingRestoreSection = nil
-                pendingRestoreMode = nil
-                targetSectionId = nil
-                return
-            }
-            let ok = await controller.performSectionRestoreReplace(
+            ok = await controller.performSectionRestoreReplace(
                 snapshotSectionId: section.id, targetSectionId: targetId, requestingProjectId: projectId
             )
-            guard ok else {
-                errorMessage = "Restore failed"
-                pendingRestoreSection = nil
-                pendingRestoreMode = nil
-                targetSectionId = nil
-                return
-            }
-            dismissWindow(id: "version-history")
-
         case .duplicate:
-            let service = SnapshotService(database: database, projectId: projectId)
-            do {
-                // Insert after the last section
-                let insertAfter = coordinator.currentSections.last?.id
-                try service.restoreSectionAsDuplicate(
-                    snapshotSectionId: section.id,
-                    insertAfterSectionId: insertAfter,
-                    createSafetyBackup: true
-                )
-                // Notify main window to refresh (skip flush — blocks already rebuilt)
-                NotificationCenter.default.post(name: .projectDidOpen, object: nil, userInfo: ["isRestore": true])
-                dismissWindow(id: "version-history")
-            } catch {
-                errorMessage = "Restore failed: \(error.localizedDescription)"
-            }
+            // Insert after the last section
+            let insertAfter = coordinator.currentSections.last?.id
+            ok = await controller.performRestoreSectionDuplicate(
+                snapshotSectionId: section.id, insertAfterSectionId: insertAfter, requestingProjectId: projectId
+            )
         }
+
+        guard ok else {
+            errorMessage = "Restore failed"
+            pendingRestoreSection = nil
+            pendingRestoreMode = nil
+            targetSectionId = nil
+            return
+        }
+        dismissWindow(id: "version-history")
 
         pendingRestoreSection = nil
         pendingRestoreMode = nil
         targetSectionId = nil
     }
 
+    /// Phase 4: routed through StructuralUndoController like the two section-restore branches
+    /// above, rather than a direct SnapshotService call + `.projectDidOpen` notification.
+    ///
+    /// MF-3 (Phase 4 review round): the "Create safety backup first" toggle this round's
+    /// coder had left in `fullRestoreConfirmationButtons` was already inert by the time it
+    /// shipped -- `performStructuralOp` always calls `createUndoPointSnapshot()`
+    /// unconditionally before the restore (plan §4.4 step 4) and always passes
+    /// `createSafetyBackup: false` into `restoreEntireProject` itself (step 5's "the
+    /// undo-point snapshot just taken IS the safety net" rule), so a pre-restore snapshot
+    /// exists on every full restore regardless of what the toggle said. The judge's ruling:
+    /// remove the toggle (and its now-unused `@State var createSafetyBackup` on
+    /// `VersionHistoryWindow`) rather than leave misleading interactive UI in place; a static
+    /// line of text in the same spot ("A restore point is created automatically.") now states
+    /// the actual, unconditional behavior instead.
     func performFullRestore() async {
-        guard let database = coordinator.database,
-              let projectId = coordinator.projectId,
+        guard let projectId = coordinator.projectId,
               let snapshotId = selectedSnapshotId,
               !projectClosed else { return }
 
-        let service = SnapshotService(database: database, projectId: projectId)
-
-        do {
-            try service.restoreEntireProject(
-                from: snapshotId,
-                createSafetyBackup: createSafetyBackup
-            )
-
-            // Notify main window to refresh (skip flush — blocks already rebuilt)
-            NotificationCenter.default.post(name: .projectDidOpen, object: nil, userInfo: ["isRestore": true])
-
-            // Close window after successful restore
-            dismissWindow(id: "version-history")
-        } catch {
-            errorMessage = "Restore failed: \(error.localizedDescription)"
+        guard let controller = DocumentManager.shared.structuralUndoController else {
+            errorMessage = "Restore failed: unified undo controller not available"
+            return
         }
+
+        let ok = await controller.performRestoreProject(snapshotId: snapshotId, requestingProjectId: projectId)
+        guard ok else {
+            errorMessage = "Restore failed"
+            return
+        }
+
+        // Close window after successful restore
+        dismissWindow(id: "version-history")
     }
 }

@@ -291,13 +291,21 @@ extension ContentView {
         // Toggle local state
         annotation.isCompleted.toggle()
 
-        // Document-level: DB-only update (no markdown to modify)
+        // Document-level: DB-only update (no markdown to modify) -- NOT a barrier (plan §2's
+        // hazard table): it never touches editor content, so it's invisible to both the doc
+        // and outside the timeline's concern entirely.
         if annotation.isDocumentLevel {
             if let db = documentManager.projectDatabase {
                 try? db.updateAnnotationCompletion(id: annotation.id, isCompleted: annotation.isCompleted)
             }
             return
         }
+
+        // Barrier (docs/plans/patient-rewinding-clockwork.md §4.5, plan §7 Phase 4): this
+        // inline (content-mutating) branch rewrites editorState.content directly, outside the
+        // structural-op checkpoint machinery -- a structural undo landing after this could
+        // revert the toggle along with whatever it's actually undoing.
+        unifiedUndoService.invalidateAll(reason: "inline annotation completion toggled")
 
         // Update markdown content
         editorState.content = annotationSyncService.updateTaskCompletion(
@@ -311,7 +319,8 @@ extension ContentView {
 
     /// Handle annotation text update from sidebar editing
     func handleAnnotationTextUpdate(_ annotation: AnnotationViewModel, newText: String) {
-        // Document-level: DB-only update (no markdown to modify)
+        // Document-level: DB-only update (no markdown to modify) -- NOT a barrier, same
+        // reasoning as toggleAnnotationCompletion's document-level branch above.
         if annotation.isDocumentLevel {
             if let db = documentManager.projectDatabase {
                 try? db.updateAnnotationText(id: annotation.id, text: newText)
@@ -319,6 +328,12 @@ extension ContentView {
             annotation.text = newText
             return
         }
+
+        // Barrier (docs/plans/patient-rewinding-clockwork.md §4.5, plan §7 Phase 4): this
+        // inline (content-mutating) branch rewrites editorState.content directly, outside the
+        // structural-op checkpoint machinery -- same reasoning as
+        // toggleAnnotationCompletion's inline branch above.
+        unifiedUndoService.invalidateAll(reason: "inline annotation text edited")
 
         // 1. Suppress sync via content state to prevent feedback loop
         editorState.contentState = .annotationEdit

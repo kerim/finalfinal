@@ -32,7 +32,6 @@ struct VersionHistoryWindow: View {
 
     /// For full project restore confirmation
     @State var showFullRestoreConfirmation = false
-    @State var createSafetyBackup = true
 
     /// Track if the project was closed while window is open
     @State var projectClosed = false

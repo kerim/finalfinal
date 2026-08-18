@@ -304,6 +304,16 @@ extension ContentView {
 
     /// Finalize section reorder - recalculate offsets, parent relationships, persist via blocks
     func finalizeSectionReorder(sections: [SectionViewModel]) {
+        // Barrier (docs/plans/patient-rewinding-clockwork.md §4.5, plan §7 Phase 4): a drag
+        // reorder renumbers sortOrder wholesale via `reorderAllBlocks` below
+        // (`persistBlocksBeforeRebuild()`), which the snapshot-inverse design tolerates fine
+        // for content, but the structural timeline's checkpoint/postOpDoc equality guard has
+        // no way to distinguish "user reordered sections" from "nothing changed" -- a
+        // structural undo landing after a reorder could restore content whose section order
+        // no longer matches what's on screen. Fail safe like every other content-mutating
+        // barrier: wipe the timeline rather than special-case it.
+        unifiedUndoService.invalidateAll(reason: "sidebar drag reorder")
+
         // Set content state to suppress polling during rebuild
         // NOTE: No defer — contentState is managed by the persist Task below
         editorState.contentState = .dragReorder

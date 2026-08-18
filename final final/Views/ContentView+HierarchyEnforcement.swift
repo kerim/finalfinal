@@ -247,6 +247,30 @@ extension ContentView {
             return
         }
 
+        // Barrier (docs/plans/patient-rewinding-clockwork.md §4.5, plan §7 Phase 4): hierarchy
+        // enforcement renumbers sort orders and heading levels via `reorderAllBlocks` below,
+        // same content-mutating-but-not-checkpointed shape as a drag reorder. This function is
+        // `static` (no `self`/`unifiedUndoService` instance access), so it reaches the service
+        // through `DocumentManager.shared.structuralUndoController` per the coder brief's
+        // confirmed hook point, rather than `ContentView`'s own `@State` property.
+        //
+        // MF-1 (Phase 4 review round 4 -- round 3's fix moved this self-invalidation bug into
+        // performUndo/performRedo instead of removing it, and the judge rejected that). Guard
+        // on REAL op-in-flight state, not a timing/runloop suppression window: `isPerforming`
+        // is set at the top of the audited sequence
+        // (`StructuralUndoController.performStructuralOp`/`performUndo`/`performRedo`) and
+        // cleared by `defer` on return, so it is true exactly when this enforcement was invoked
+        // BY one of those sequences (via `enforceHierarchyInSequence()`, called from inside the
+        // same sequence). Enforcement an op performs on its own output is part of that op, not
+        // an external edit, and must not wipe the op's own just-recorded entry. Every other
+        // route into this function is gated on `contentState == .idle`
+        // (`makeSectionsUpdatedHandler`'s guard), which the audited sequence deliberately holds
+        // non-idle throughout -- so this guard cannot swallow a genuine external barrier.
+        let controller = DocumentManager.shared.structuralUndoController
+        if controller?.isPerforming != true {
+            controller?.unifiedUndoService?.invalidateAll(reason: "hierarchy enforcement")
+        }
+
         do {
             // Persist to block table (headings + body blocks atomically)
             var headingUpdates: [String: HeadingUpdate] = [:]

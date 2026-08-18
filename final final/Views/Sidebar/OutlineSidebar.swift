@@ -35,6 +35,11 @@ struct OutlineSidebar: View {
     var onDragStarted: (() -> Void)?
     /// Called when drag operation ends - use to resume sync
     var onDragEnded: (() -> Void)?
+    /// Sidebar context-menu section operations: duplicate/delete a section's full subtree
+    /// (docs/plans/patient-rewinding-clockwork.md §7 Phase 4). Nil-defaulted so existing call
+    /// sites are unaffected; see SectionCardView's context menu for the UI.
+    var onDuplicateSection: ((String) -> Void)?
+    var onDeleteSection: ((String) -> Void)?
 
     @Environment(ThemeManager.self) private var themeManager
     @State private var dropPosition: DropPosition?
@@ -390,7 +395,10 @@ struct OutlineSidebar: View {
             onSectionUpdated: onSectionUpdated,
             onHoverChanged: { isHovering in
                 hoveredCardId = isHovering ? section.id : nil
-            }
+            },
+            onDuplicate: onDuplicateSection.map { callback in { callback(section.id) } },
+            onDelete: onDeleteSection.map { callback in { callback(section.id) } },
+            isZoomed: zoomedSectionId != nil
         )
         .id(section.id)
         .onGeometryChange(for: CGRect.self) { proxy in
