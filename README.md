@@ -96,6 +96,8 @@ Right-click sections to:
 
 * Add **word goals** with progress tracking. Can set minimum, maximum, or approximate (+/- 5%) goals. 
 
+* **Duplicate** or **Delete** a section, including everything nested under it. Both can be undone with **⌘Z**, in order with everything else you've done — see Version History below.
+
 ### Source View
 
 Press **⌘/** to toggle between WYSIWYG and source view. Source mode shows raw markdown for precise editing.
@@ -125,6 +127,8 @@ All settings are on by default. Changes take effect the next time you enter focu
 ### Version History
 
 Press **⌘⇧S** to save a named version. Access all versions with **⌘⌥V** (or the “Version History” menu option, to compare or restore previous drafts. 
+
+Restoring a version — the whole project or just one section — can be undone with **⌘Z**, right alongside your ordinary typing undo. **⌘Z** always steps back through whatever you did most recently, whether that was typing or a restore, and **⌘⇧Z** replays forward again in the same order.
 
 ### Styling
 

@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **Undo (⌘Z) and Redo (⌘⇧Z) now cover restoring a previous version and duplicating or deleting a section from the outline sidebar, not just typing** — before, once you confirmed a restore from Version History, or deleted or duplicated a section, that was final; now ⌘Z undoes it like anything else you did, and steps back through everything — typing included — in the exact order you did it. For example: type a sentence, restore an earlier version, then type another sentence; ⌘Z removes the second sentence, ⌘Z again reverts the restore, and a third ⌘Z removes the first sentence, with ⌘⇧Z replaying all three back in order. If there's genuinely nothing left to undo, you'll now hear a short beep instead of nothing happening.
+- **Duplicate and Delete are new options when you right-click a section in the outline sidebar** — Delete removes the section and everything nested under it; Duplicate makes a copy right after it, with "copy" added to the heading. Both can be undone.
+
 ## [0.2.125] - 2026-08-17
 
 ### Added
