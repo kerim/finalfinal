@@ -586,6 +586,86 @@ describe('undo-coordinator live wiring (real Milkdown editor, always-empty Phase
     expect(decision).toEqual({ action: 'structural', opId: 'op-1' });
   });
 
+  it("regression: a NEW op's own primary content push must not silently advance a DIFFERENT, already-finalized entry's equality target -- the exact restore-then-reorder collision behind the second Cmd-Z silently doing nothing (notes.md 2026-08-18). This must fail without the whole-function mid-op guard.", async () => {
+    const e = await makeEditor('Paragraph one.');
+    const view = e.ctx.get(editorViewCtx);
+
+    // Op A (e.g. a version restore) begins and finalizes -- entryA.postOpDoc is now a real,
+    // distinct document (DOC_A), not the beginStructuralOp placeholder.
+    expect(beginStructuralOp('op-A')).toBe(true);
+    view.dispatch(view.state.tr.insertText('RESTORED').setMeta('addToHistory', false));
+    expect(finalizeStructuralOpPostOpDoc('op-A')).toBe(true);
+    const entryABefore = getRegistry().get('op-A');
+    const docA = view.state.doc; // === entryA.postOpDoc
+
+    // Op B (e.g. a drag reorder) begins immediately after, with nothing else having changed in
+    // between -- beginStructuralOp captures preOpDoc = docA, exactly matching op A's postOpDoc.
+    expect(beginStructuralOp('op-B')).toBe(true);
+
+    // Op B's OWN primary content push: a sync-origin transaction whose "before" doc is docA --
+    // mirroring exactly what happens when two structural ops run back-to-back with no
+    // intervening real edit.
+    const pushTrB = view.state.tr.insertText('REORDERED').setMeta('addToHistory', false);
+    view.dispatch(pushTrB);
+    maybeAdvanceRegistryOnSyncOriginTx(pushTrB);
+
+    // entryA must be COMPLETELY UNCHANGED. Without the fix, entryA.postOpDoc.eq(before) is true
+    // (docA == docA) because op B is not entryA's own mid-op entry, so the old single-entry
+    // guard doesn't skip it -- entryA.postOpDoc gets wrongly advanced to op B's post-push doc,
+    // permanently breaking the second Cmd-Z.
+    const entryAAfter = getRegistry().get('op-A');
+    expect(entryAAfter?.postOpDoc).toBe(entryABefore?.postOpDoc);
+    expect(entryAAfter?.preOpDoc).toBe(entryABefore?.preOpDoc);
+    expect(entryAAfter?.postOpDoc.eq(docA)).toBe(true);
+
+    // Real-world consequence: once op B is later undone (routing the doc back to docA), the
+    // routing check for the now-top-of-stack entryA must still see postOpDoc.eq(currentDoc).
+    const decision = decideUndoRouting({
+      descriptor: { undoTopOpId: 'op-A' },
+      registry: getRegistry(),
+      pendingMapsEmpty: true,
+      latched: false,
+      currentDoc: docA,
+      docsEqual: (a, b) => a.eq(b),
+    });
+    expect(decision).toEqual({ action: 'structural', opId: 'op-A' });
+  });
+
+  it("maybeAdvanceRegistryOnSyncOriginTx still advances a matching entry when NO entry is mid-op, even with a second finalized entry present -- confirms the cross-entry guard above does not disable the rule's legitimate case (genuine async derived-content churn, e.g. a delayed bibliography/footnote resync landing well after any op has finished)", async () => {
+    const e = await makeEditor('Paragraph one.');
+    const view = e.ctx.get(editorViewCtx);
+
+    // Op A finalizes.
+    expect(beginStructuralOp('op-A')).toBe(true);
+    view.dispatch(view.state.tr.insertText('RESTORED').setMeta('addToHistory', false));
+    expect(finalizeStructuralOpPostOpDoc('op-A')).toBe(true);
+    const entryABefore = getRegistry().get('op-A');
+
+    // Op B ALSO finalizes -- both entries are now finalized (postOpDoc !== preOpDoc for
+    // either), so no entry is mid-op by the time the resync below fires.
+    expect(beginStructuralOp('op-B')).toBe(true);
+    view.dispatch(view.state.tr.insertText('REORDERED').setMeta('addToHistory', false));
+    expect(finalizeStructuralOpPostOpDoc('op-B')).toBe(true);
+    const docB = view.state.doc; // === entryB.postOpDoc
+
+    // A genuine async derived-content resync lands well after both ops finished, matching op
+    // B's postOpDoc (the current live doc) -- this is the rule's actual intended trigger.
+    const resyncTr = view.state.tr.insertText('BIB').setMeta('addToHistory', false);
+    view.dispatch(resyncTr);
+    maybeAdvanceRegistryOnSyncOriginTx(resyncTr);
+
+    // Op B's matching reference advances...
+    const entryBAfter = getRegistry().get('op-B');
+    expect(entryBAfter?.postOpDoc.eq(view.state.doc)).toBe(true);
+    expect(entryBAfter?.postOpDoc.eq(docB)).toBe(false);
+
+    // ...while op A, whose reference doesn't match this transaction's "before" doc, is
+    // completely untouched.
+    const entryAAfter = getRegistry().get('op-A');
+    expect(entryAAfter?.postOpDoc).toBe(entryABefore?.postOpDoc);
+    expect(entryAAfter?.preOpDoc).toBe(entryABefore?.preOpDoc);
+  });
+
   it('maybeAdvanceRegistryOnSyncOriginTx does not advance when the transaction is unrelated to either reference', async () => {
     const e = await makeEditor('Paragraph one.');
     const view = e.ctx.get(editorViewCtx);

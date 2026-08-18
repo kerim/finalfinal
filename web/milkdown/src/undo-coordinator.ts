@@ -315,6 +315,30 @@ export function finalizeStructuralOpPostOpDoc(opId: string): boolean {
  * block-ID push -- that lands after the entry was captured, instead of permanently bricking
  * the entry's equality check the moment such a resync fires after the op (H5).
  *
+ * CROSS-ENTRY GUARD (found live 2026-08-18, notes.md): the mid-op skip below used to be scoped
+ * to a single entry -- `if (entry.postOpDoc === entry.preOpDoc) continue`, protecting only an
+ * op's OWN entry from its own sequence corrupting itself. That is not enough once two entries
+ * can be live in the registry at once (possible since Phase 7 made reorder a tracked op instead
+ * of a registry-clearing barrier). Concrete collision: the user restores a section (op A
+ * finalizes, `entryA.postOpDoc = DOC_A`), then immediately drag-reorders it (op B begins). Op
+ * B's OWN primary content push is a sync-origin transaction with `tr.before = DOC_A` (nothing
+ * changed between A finishing and B starting) and `tr.doc = DOC_B`. A single-entry guard only
+ * skips B's own (still-placeholder) entry -- it does nothing to stop this same transaction from
+ * scanning `entryA` too, finding `entryA.postOpDoc.eq(before)` true (`DOC_A == DOC_A`), and
+ * wrongly advancing `entryA.postOpDoc` to `DOC_B`. After the user undoes B (back to `DOC_A`),
+ * the routing check for the now-top-of-stack `entryA` needs `entryA.postOpDoc.eq(currentDoc)`
+ * -- but `postOpDoc` is now `DOC_B`, not `DOC_A`, so it fails and the second Cmd-Z silently
+ * does nothing instead of undoing the restore.
+ *
+ * Fixed by widening the guard to the whole function: while ANY entry in the registry is
+ * currently mid-op (same detector as before -- `postOpDoc === preOpDoc`; at most one entry can
+ * be mid-op at a time, since `StructuralUndoController.isPerforming`'s latch prevents concurrent
+ * structural op sequences), skip advancing EVERY entry for this transaction, not just the
+ * mid-op one. This is the rule's actual documented intent: only genuine async derived-content
+ * churn landing OUTSIDE of any active op's own sequence window should ever advance another
+ * entry -- never a new op's own primary push or its own pre-finalize resyncs reaching back and
+ * silently mutating a DIFFERENT, already-finalized entry's equality target.
+ *
  * Deliberately disjoint from `maybeNotifyHistoryEdited`'s trigger condition (that one requires
  * `addToHistory !== false`; this one requires `=== false`), so call order relative to it in the
  * dispatch pipeline doesn't matter -- a transaction can only ever satisfy one of the two.
@@ -326,14 +350,18 @@ export function maybeAdvanceRegistryOnSyncOriginTx(tr: Transaction): void {
   if (registry.size === 0) return;
   if (tr.getMeta('addToHistory') !== false) return;
   if (!tr.docChanged) return;
+
+  // Whole-function mid-op guard (see doc comment above): if ANY entry is currently mid-op, this
+  // transaction could be that op's own primary push (or one of its own pre-finalize resyncs)
+  // reaching back onto a DIFFERENT, already-finalized entry -- never advance anything until the
+  // in-flight op has finalized. Exact, not a heuristic: at most one entry is ever mid-op at a
+  // time (StructuralUndoController.isPerforming's latch).
+  const anyMidOp = [...registry.values()].some((entry) => entry.postOpDoc === entry.preOpDoc);
+  if (anyMidOp) return;
+
   const before = tr.before;
   const after = tr.doc;
   for (const [opId, entry] of registry) {
-    // Mid-op entry: postOpDoc is still beginStructuralOp's placeholder (the SAME object as
-    // preOpDoc), so the op's OWN content push has tr.before === preOpDoc. Advancing here drags
-    // the redo equality target (§4.2/§4.6) forward onto the post-op doc, making structural redo
-    // unroutable for the entry's whole lifetime. finalizeStructuralOpPostOpDoc re-arms it.
-    if (entry.postOpDoc === entry.preOpDoc) continue;
     const advancesPost = entry.postOpDoc.eq(before);
     const advancesPre = entry.preOpDoc.eq(before);
     if (!advancesPost && !advancesPre) continue;
