@@ -64,6 +64,7 @@ final class FindBarState {
     func hide() {
         isVisible = false
         clearHighlights()
+        restoreEditorFocus()
     }
 
     /// Toggle visibility
@@ -296,6 +297,34 @@ final class FindBarState {
                     self?.currentMatch = 0
                 }
             }
+        }
+    }
+
+    /// Return keyboard focus to the editor webview when the find bar closes.
+    ///
+    /// Root cause of "search breaks undo permanently" (live user report): closing the find
+    /// bar unmounts its SwiftUI `TextField` (`ContentView+ContentRebuilding.swift` only
+    /// instantiates `FindBarView` while `isVisible` is true), but nothing ever explicitly
+    /// hands the window's native first-responder status back to the editor's `WKWebView`.
+    /// `UndoRedoCommands.performUndo()/performRedo()` route to the editor's JS undo/redo ONLY
+    /// when a `WKWebView` is found by walking up from `NSApp.keyWindow?.firstResponder`
+    /// (`UndoRedoCommands.focusedWebView()`) -- otherwise they fall through to a nil-target
+    /// `undo:`/`redo:` responder-chain send, which is a silent no-op once the find bar's own
+    /// field (the prior first responder) has been torn down and nothing meaningful claims the
+    /// role. This reproduces exactly as reported: Cmd-Z appears to "completely stop working",
+    /// for actions before AND after the search, until the user happens to click directly in
+    /// the editor (which naturally reclaims first responder via normal AppKit mouse handling).
+    ///
+    /// Mirrors the established two-step pattern already used elsewhere in this codebase for
+    /// returning focus to the editor after another control held it
+    /// (`MilkdownCoordinator+Content.swift.scrollToFootnoteDefinition`): JS `view.focus()`
+    /// sets DOM/ProseMirror focus only, never the NSWindow responder chain, so both calls are
+    /// required.
+    private func restoreEditorFocus() {
+        guard let webView = activeWebView else { return }
+        webView.evaluateJavaScript("window.FinalFinal.focus()") { _, _ in }
+        if let window = webView.window {
+            window.makeFirstResponder(webView)
         }
     }
 
