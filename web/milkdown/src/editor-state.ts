@@ -32,11 +32,29 @@ export function setIsSettingContent(value: boolean): void {
   isSettingContent = value;
 }
 
+/** N3 (major, Phase B remediation plan): how long a `setPendingSlashUndo(true)` stays
+ * honorable before it's considered stale. Nothing resets this flag except an actual editing
+ * keystroke (character key, Backspace, Delete -- see the keydown handler in
+ * slash-commands.ts) -- a slash command followed by clicking elsewhere, scrolling, or simply
+ * waiting leaves it sitting `true` indefinitely. 5s comfortably covers "the user hit Cmd-Z
+ * right away after the slash command fired" (the actual use case) while bounding how long an
+ * unrelated LATER Cmd-Z can be misrouted into the smart two-step slash-undo instead of a
+ * plain (or structural) undo. */
+export const PENDING_SLASH_UNDO_FRESHNESS_MS = 5000;
+let pendingSlashUndoSetAt = 0;
+
 export function getPendingSlashUndo(): boolean {
   return pendingSlashUndo;
 }
 export function setPendingSlashUndo(value: boolean): void {
   pendingSlashUndo = value;
+  if (value) pendingSlashUndoSetAt = Date.now();
+}
+/** True only while `pendingSlashUndo` is set AND was set within the freshness window (N3).
+ * Use this instead of `getPendingSlashUndo()` at every Cmd-Z decision point so a stale flag
+ * can never silently swallow an unrelated later undo (structural or plain-text). */
+export function isPendingSlashUndoFresh(): boolean {
+  return pendingSlashUndo && Date.now() - pendingSlashUndoSetAt <= PENDING_SLASH_UNDO_FRESHNESS_MS;
 }
 
 export function getPendingSlashRedo(): boolean {

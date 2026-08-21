@@ -257,6 +257,12 @@ declare global {
       performStructuralSwap: (opId: string, direction: 'undo' | 'redo') => boolean;
       finishStructuralSwapSettle: () => boolean;
       cancelPendingInsertions: () => void;
+      // N4 (Phase B remediation plan): force-closes editing popups, clears find/replace state.
+      closeEditingPopupsAndClearBoundaryState: () => void;
+      // N6 (Phase B remediation plan): removes just the ONE mid-sequence op's own
+      // not-yet-finalized registry entry after a forward-op failure -- does NOT clear
+      // editor text-undo history (unlike clearStructuralUndoState/eviction, below).
+      clearFailedStructuralOpEntry: (opId: string) => void;
       // Barrier/eviction JS-side clears (Phase 5, plan §4.1/§4.5/§5 backlog).
       clearStructuralUndoRegistry: () => void;
       // MF-1 (Phase 5 review round): scoped to one evicted opId, not a whole-registry clear.

@@ -49,7 +49,8 @@ struct StructuralUndoBarrierTests {
             editorState: editorState, blockSyncService: BlockSyncService(),
             sectionSyncService: SectionSyncService(), bibliographySyncService: BibliographySyncService(),
             footnoteSyncService: FootnoteSyncService(), annotationSyncService: AnnotationSyncService(),
-            unifiedUndoService: unifiedUndoService
+            unifiedUndoService: unifiedUndoService,
+            findBarState: FindBarState()
         )
 
         // DocumentManager.shared is a process-wide singleton -- save/restore every field this
@@ -88,7 +89,8 @@ struct StructuralUndoBarrierTests {
             editorState: editorState, blockSyncService: BlockSyncService(),
             sectionSyncService: SectionSyncService(), bibliographySyncService: BibliographySyncService(),
             footnoteSyncService: FootnoteSyncService(), annotationSyncService: AnnotationSyncService(),
-            unifiedUndoService: unifiedUndoService
+            unifiedUndoService: unifiedUndoService,
+            findBarState: FindBarState()
         )
 
         let priorController = DocumentManager.shared.structuralUndoController

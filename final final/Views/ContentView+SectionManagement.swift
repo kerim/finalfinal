@@ -365,25 +365,38 @@ extension ContentView {
                 }
             }
 
-            let ok = await structuralUndoController.performSectionReorder(sections: sections)
-            if ok {
+            let outcome = await structuralUndoController.performSectionReorder(sections: sections)
+            switch outcome {
+            case .performed:
                 // performStructuralOp's own success path already returns contentState to
                 // .idle as its last step -- nothing to do here.
                 await persistReorderedBlocks_legacySections()
-            } else {
+            case .refused:
                 // MF-2 point 4 (review round): performStructuralOp's refusal paths (already
-                // `isPerforming`, zoom refusal, precheck refusal) all `return false` without
-                // ever touching contentState -- previously this was accidentally papered over
-                // by onDragEnded's un-gated .idle write, which MF-2's fix above now correctly
-                // suppresses while a drop is still in flight. Without this explicit reset nothing
-                // else would ever move contentState off .dragReorder for a refused reorder.
+                // `isPerforming`, zoom refusal, precheck refusal) all refuse BEFORE the DB
+                // write, without ever touching contentState -- previously this was
+                // accidentally papered over by onDragEnded's un-gated .idle write, which
+                // MF-2's fix above now correctly suppresses while a drop is still in flight.
+                // Without this explicit reset nothing else would ever move contentState off
+                // .dragReorder for a refused reorder.
                 editorState.contentState = .idle
 
                 // MF-3 (review round): stash the RAW request, not a retry of this now-stale
                 // computed `sections` array -- the defer above re-derives a fresh target order
                 // from editorState.sections as it stood at retry time, not from whatever was
-                // true when this now-refused attempt was dispatched.
+                // true when this now-refused attempt was dispatched. Only safe because
+                // `.refused` means nothing was written -- see the `.failedAfterCommit` case
+                // below for why that outcome must NOT retry the same way.
                 editorState.pendingSectionReorderRequest = request
+            case .failedAfterCommit:
+                // N2 (Phase B remediation plan): the DB reorder write already committed, but a
+                // later step in the audited sequence failed -- the new order is NOT undoable
+                // via the normal Cmd-Z timeline. Deliberately does NOT stash `request` for a
+                // retry the way `.refused` does above: the document has ALREADY been
+                // reordered, so replaying the same (now stale) target order on top of it would
+                // misapply it a second time rather than safely retrying a no-op.
+                DebugLog.log(.undo, "[ContentView] performSectionReorder: DB write committed but the op failed to finish recording -- not undoable via Cmd-Z; not retrying (the reorder already happened)")
+                editorState.contentState = .idle
             }
         }
     }

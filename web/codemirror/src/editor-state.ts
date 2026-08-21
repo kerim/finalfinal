@@ -28,11 +28,22 @@ export function setEditorExtensions(ext: Extension[]): void {
 
 let pendingSlashUndo = false;
 
+/** N3 (major, Phase B remediation plan) -- mirrors Milkdown's editor-state.ts (see its
+ * comment for the full rationale): how long a `setPendingSlashUndo(true)` stays honorable
+ * before it's considered stale. */
+export const PENDING_SLASH_UNDO_FRESHNESS_MS = 5000;
+let pendingSlashUndoSetAt = 0;
+
 export function getPendingSlashUndo(): boolean {
   return pendingSlashUndo;
 }
 export function setPendingSlashUndo(value: boolean): void {
   pendingSlashUndo = value;
+  if (value) pendingSlashUndoSetAt = Date.now();
+}
+/** True only while `pendingSlashUndo` is set AND was set within the freshness window (N3). */
+export function isPendingSlashUndoFresh(): boolean {
+  return pendingSlashUndo && Date.now() - pendingSlashUndoSetAt <= PENDING_SLASH_UNDO_FRESHNESS_MS;
 }
 
 // --- Citation CAYW picker state ---

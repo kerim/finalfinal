@@ -13,10 +13,12 @@ import {
   apiFindPrevious,
   apiGetSearchState,
   apiReplaceAll,
+  cancelPendingInsertions,
   citationPickerCallback,
   citationPickerCancelled,
   citationPickerError,
   clearSearch,
+  closeEditingPopupsAndClearBoundaryState,
   find,
   focusEditor,
   formatTable,
@@ -71,7 +73,7 @@ import { caywRemapPlugin } from './cayw-remap-plugin';
 import { updateCitationAddButton } from './citations';
 import {
   getEditorView,
-  getPendingSlashUndo,
+  isPendingSlashUndoFresh,
   setEditorExtensions,
   setEditorView,
   setPendingSlashUndo,
@@ -105,6 +107,7 @@ import {
 import { handleTablePaste } from './table-paste';
 import {
   beginStructuralOp,
+  clearFailedStructuralOpEntry,
   clearStructuralUndoRegistry,
   clearStructuralUndoState,
   finalizeStructuralOpPostOpDoc,
@@ -157,7 +160,14 @@ function initEditor() {
       {
         key: 'Mod-z',
         run: (view) => {
-          if (getPendingSlashUndo()) {
+          // N3 (major, Phase B remediation plan): isPendingSlashUndoFresh() (not
+          // getPendingSlashUndo()) -- bounds how long a stale flag stays honorable; see
+          // editor-state.ts's doc comment. This binding only ever runs AFTER the
+          // capture-phase unified-undo interceptor (main.ts's document-level keydown
+          // listener registered below) has already declined to route the keystroke
+          // structurally -- CodeMirror's ordering was already structural-first, the
+          // canonical order now also applied to Milkdown.
+          if (isPendingSlashUndoFresh()) {
             // Undo the slash command insertion
             undo(view);
 
@@ -604,6 +614,19 @@ window.FinalFinal = {
   // registry population is exposed here -- see undo-coordinator.ts's header.
   beginStructuralOp,
   finalizeStructuralOpPostOpDoc,
+  // N1 (Phase B remediation plan): cancels pending CAYW/image-drop insertions at every
+  // structural op/undo/redo boundary -- see api.ts's doc comment. Previously absent here,
+  // so Swift's unconditional `window.FinalFinal.cancelPendingInsertions?.()` silently
+  // no-op'd in Source mode.
+  cancelPendingInsertions,
+  // N4 (Phase B remediation plan): force-closes editing popups, clears find/replace state,
+  // invalidates the scroll-map (heading-metrics) cache at the same boundaries.
+  closeEditingPopupsAndClearBoundaryState,
+  // N6 (Phase B remediation plan): removes just the ONE mid-sequence op's own
+  // not-yet-finalized registry entry after a forward-op failure -- see undo-coordinator.ts's
+  // doc comment for why this must NOT clear editor text-undo history the way
+  // clearStructuralUndoState (eviction) does.
+  clearFailedStructuralOpEntry,
   // Barrier/eviction JS-side clears (Phase 5, plan §4.1/§4.5/§5 backlog) -- called by
   // UnifiedUndoService.invalidateAll()/record()'s eviction path via ContentView's
   // clearStructuralRegistry/clearEditorHistories closures.

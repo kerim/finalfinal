@@ -13,7 +13,12 @@ import { redoDepth, undo, undoDepth } from '@milkdown/kit/prose/history';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { blockIdPlugin, resetBlockIdState } from '../block-id-plugin';
 import { blockSyncPlugin, hasPendingChanges, resetBlockSyncState, setSyncPaused } from '../block-sync-plugin';
-import { getPendingSlashUndo, setEditorInstance, setPendingSlashUndo } from '../editor-state';
+import {
+  getPendingSlashUndo,
+  PENDING_SLASH_UNDO_FRESHNESS_MS,
+  setEditorInstance,
+  setPendingSlashUndo,
+} from '../editor-state';
 import { highlightPlugin } from '../highlight-plugin';
 import { configureSlash, slash } from '../slash-commands';
 import {
@@ -23,6 +28,7 @@ import {
   decideRedoRouting,
   decideUndoRouting,
   finalizeStructuralOpPostOpDoc,
+  getInFlightOpId,
   getRegistry,
   getUndoDescriptor,
   handleGlobalUndoRedoKeydown,
@@ -34,6 +40,7 @@ import {
   requestUnifiedRedo,
   requestUnifiedUndo,
   resetUndoCoordinatorState,
+  setInFlightOpId,
   setLatched,
   setRegistryEntry,
   setUndoDescriptor,
@@ -203,6 +210,7 @@ describe('undo-coordinator live wiring (real Milkdown editor, always-empty Phase
   let editor: Editor | null = null;
 
   afterEach(async () => {
+    vi.useRealTimers(); // safety net for the N3 stale-flag test below, which uses fake timers
     if (editor) {
       await editor.destroy();
       editor = null;
@@ -290,38 +298,85 @@ describe('undo-coordinator live wiring (real Milkdown editor, always-empty Phase
     expect(undoDepth(view.state)).toBe(depthBefore); // editor's own undo did NOT run
   });
 
-  it("slash's smart-undo pending-flag window takes priority over unified-undo routing (merged handler, not a double listener)", async () => {
+  // N3 (major, Phase B remediation plan): the canonical order is now structural-FIRST
+  // (unified with CodeMirror's own existing order), not slash-first. The three tests below
+  // replace the single pre-N3 test that asserted the opposite priority.
+
+  it("slash's smart-undo still fires when unified-undo naturally falls through (the realistic case: the slash command's own edit already broke doc equality)", async () => {
     const e = await makeEditor('Paragraph one.');
     const view = e.ctx.get(editorViewCtx);
-    // Configure the registry so that, IF unified-undo's own branch were reached for this
-    // keystroke, it would make a real 'structural' decision (preventDefault + latch +
-    // postMessage) -- a genuine discriminator (review finding: the previous version of this
-    // test only asserted pendingSlashUndo cleared, which happens on ANY single-character
-    // keypress via the unrelated "reset flags" block further down in this same handler,
-    // regardless of which branch -- or no branch at all -- actually ran; it would still have
-    // passed with unified-undo's handler deleted entirely).
-    setRegistryEntry('op-1', { checkpoint: view.state as any, postOpDoc: view.state.doc, preOpDoc: view.state.doc });
+    const preSlashDoc = view.state.doc;
+    // Registry entry's postOpDoc is the doc BEFORE the simulated slash edit below -- once
+    // that edit lands, currentDoc no longer equals postOpDoc, so structural routing falls
+    // through on its own, exactly as it would in real production use (a slash command always
+    // mutates the document). This is the realistic scenario the pre-N3 test's artificial
+    // "don't actually change the doc" setup never exercised.
+    setRegistryEntry('op-1', { checkpoint: view.state as any, postOpDoc: preSlashDoc, preOpDoc: preSlashDoc });
     setUndoDescriptor({ undoTopOpId: 'op-1' });
     const postMessage = vi.fn();
     (window as any).webkit = { messageHandlers: { structuralUndoRequested: { postMessage } } };
-    // Simulates "a slash command just ran" without actually running one -- the real
-    // production integration point is the single document-level capture listener
-    // registered by configureSlash(), which contains BOTH branches merged in code order.
+    // Simulates "a slash command just ran": a real doc-changing edit, then the flag is armed
+    // -- the real production integration point is the single document-level capture listener
+    // registered by configureSlash(), which contains both branches merged in code order.
+    view.dispatch(view.state.tr.insertText('inserted'));
     setPendingSlashUndo(true);
     const event = new KeyboardEvent('keydown', { key: 'z', metaKey: true, cancelable: true });
 
     document.dispatchEvent(event);
 
-    // Slash's branch consumed the keystroke (its unconditional setPendingSlashUndo(false)
-    // ran, and it calls preventDefault() itself)...
+    // Structural routing ran FIRST (N3) but found no match (doc changed) and fell through;
+    // slash's branch then consumed the keystroke.
     expect(getPendingSlashUndo()).toBe(false);
     expect(event.defaultPrevented).toBe(true);
-    // ...but unified-undo's OWN branch never got a turn: no structural request was posted
-    // and the latch was never taken, even though the registry above was deliberately set up
-    // so it WOULD have posted one had it been reached -- the actual regression a
-    // double-listener (or wrong ordering) would cause.
     expect(postMessage).not.toHaveBeenCalled();
     expect(isLatched()).toBe(false);
+  });
+
+  it('unified-undo routing wins over a fresh, pending slash-undo flag when the document genuinely, structurally matches a registered entry (N3: structural-first)', async () => {
+    const e = await makeEditor('Paragraph one.');
+    const view = e.ctx.get(editorViewCtx);
+    // Deliberately construct the "spurious equality" edge (docs/architecture/unified-undo.md's
+    // routing section) rather than the unrealistic "no edit at all" shape the old test used:
+    // the registry's postOpDoc genuinely, structurally equals the CURRENT document.
+    setRegistryEntry('op-1', { checkpoint: view.state as any, postOpDoc: view.state.doc, preOpDoc: view.state.doc });
+    setUndoDescriptor({ undoTopOpId: 'op-1' });
+    const postMessage = vi.fn();
+    (window as any).webkit = { messageHandlers: { structuralUndoRequested: { postMessage } } };
+    setPendingSlashUndo(true); // fresh and pending -- would win under the OLD (pre-N3) order
+    const event = new KeyboardEvent('keydown', { key: 'z', metaKey: true, cancelable: true });
+
+    document.dispatchEvent(event);
+
+    // Structural wins: it's the more specific, document-verified match, checked first.
+    expect(postMessage).toHaveBeenCalledWith({ opId: 'op-1' });
+    expect(isLatched()).toBe(true);
+  });
+
+  it('a STALE pendingSlashUndo (older than the freshness window) does not swallow the keystroke at all -- N3, the actual bug this closes', async () => {
+    await makeEditor('Paragraph one.');
+    // No structural entry registered -- unified-undo routing falls through on its own.
+    const postMessage = vi.fn();
+    (window as any).webkit = { messageHandlers: { structuralUndoRequested: { postMessage } } };
+    vi.useFakeTimers();
+    setPendingSlashUndo(true);
+    await vi.advanceTimersByTimeAsync(PENDING_SLASH_UNDO_FRESHNESS_MS + 1); // now stale
+    const event = new KeyboardEvent('keydown', { key: 'z', metaKey: true, cancelable: true });
+
+    document.dispatchEvent(event);
+
+    // Under the OLD (unbounded) check, this stale flag would have fired the smart-undo
+    // branch, calling preventDefault()/stopPropagation() and consuming the keystroke. With
+    // the freshness bound, it must NOT fire -- the event is left completely untouched by this
+    // handler and falls through to Milkdown's own plain undo keymap, exactly as if no slash
+    // command had ever run. NOTE: deliberately NOT asserting on getPendingSlashUndo() here --
+    // the unrelated "reset flags on any editing key" block further down in this same handler
+    // clears it for ANY single-character key (including 'z') regardless of which branch, if
+    // any, actually consumed the event -- the same false-positive shape the original version
+    // of this test file's "slash wins" test was written to avoid. event.defaultPrevented and
+    // postMessage are the only reliable discriminators of which branch actually ran.
+    expect(event.defaultPrevented).toBe(false);
+    expect(postMessage).not.toHaveBeenCalled();
+    vi.useRealTimers();
   });
 
   it('handleUnifiedUndoKeydown fires preventDefault, holds the latch, and posts structuralUndoRequested with the right opId when routing decides structural', async () => {
@@ -392,6 +447,7 @@ describe('undo-coordinator live wiring (real Milkdown editor, always-empty Phase
     const view = e.ctx.get(editorViewCtx);
     view.dispatch(view.state.tr.insertText('X'));
     setLatched(true);
+    setInFlightOpId('op-1');
 
     handleUndoReplyFromSwift({ opId: 'op-1', outcome: 'fallback' }, 'undo');
 
@@ -405,6 +461,7 @@ describe('undo-coordinator live wiring (real Milkdown editor, always-empty Phase
     view.dispatch(view.state.tr.insertText('X'));
     const depthBefore = undoDepth(view.state);
     setLatched(true);
+    setInFlightOpId('op-1');
 
     handleUndoReplyFromSwift({ opId: 'op-1', outcome: 'performed' }, 'undo');
 
@@ -418,6 +475,53 @@ describe('undo-coordinator live wiring (real Milkdown editor, always-empty Phase
     expect(() => handleUndoReplyFromSwift({ opId: 'op-1', outcome: 'fallback' }, 'undo')).not.toThrow();
 
     expect(isLatched()).toBe(false);
+  });
+
+  // === N5 (Phase B remediation plan): reply must match the specific in-flight opId ===
+
+  it('handleUndoReplyFromSwift ignores a reply for a stale opId even while the latch is held for a DIFFERENT request', async () => {
+    const e = await makeEditor('Paragraph one.');
+    const view = e.ctx.get(editorViewCtx);
+    view.dispatch(view.state.tr.insertText('X'));
+    const depthBefore = undoDepth(view.state);
+    setLatched(true);
+    setInFlightOpId('op-current'); // the latch is genuinely held, but for a DIFFERENT opId
+
+    // A stale reply for a superseded/earlier request arrives.
+    handleUndoReplyFromSwift({ opId: 'op-stale', outcome: 'fallback' }, 'undo');
+
+    // The mismatched reply must be ignored entirely: no text-undo replayed, and the latch
+    // (still legitimately held for op-current) must NOT be released by someone else's reply.
+    expect(undoDepth(view.state)).toBe(depthBefore);
+    expect(isLatched()).toBe(true);
+    expect(getInFlightOpId()).toBe('op-current');
+  });
+
+  it('a genuine reply for the actual in-flight opId still works correctly (control for the mismatch test above)', async () => {
+    const e = await makeEditor('Paragraph one.');
+    const view = e.ctx.get(editorViewCtx);
+    view.dispatch(view.state.tr.insertText('X'));
+    setLatched(true);
+    setInFlightOpId('op-current');
+
+    handleUndoReplyFromSwift({ opId: 'op-current', outcome: 'fallback' }, 'undo');
+
+    expect(undoDepth(view.state)).toBe(0);
+    expect(isLatched()).toBe(false);
+    expect(getInFlightOpId()).toBe(null);
+  });
+
+  it('requestStructural (via handleUnifiedUndoKeydown) records the requested opId as in-flight', async () => {
+    const e = await makeEditor('Paragraph one.');
+    const view = e.ctx.get(editorViewCtx);
+    setRegistryEntry('op-99', { checkpoint: view.state as any, postOpDoc: view.state.doc, preOpDoc: view.state.doc });
+    setUndoDescriptor({ undoTopOpId: 'op-99' });
+    (window as any).webkit = { messageHandlers: { structuralUndoRequested: { postMessage: vi.fn() } } };
+    const event = new KeyboardEvent('keydown', { key: 'z', metaKey: true, cancelable: true });
+
+    handleUnifiedUndoKeydown(event, view, 'undo');
+
+    expect(getInFlightOpId()).toBe('op-99');
   });
 
   // === historyEdited predicate (plan §4.1/§4.6) ===
@@ -912,5 +1016,116 @@ describe('undo-coordinator live wiring — stale pendingMapsEmpty redo/undo race
 
     expect(consumed).toBe(false); // fallthrough: let Milkdown's own keymap handle it
     expect(postMessage).not.toHaveBeenCalled();
+  });
+});
+
+// === N8 (Phase B remediation plan): the 3s latch self-clear timeout ===
+// Zero test coverage previously existed for this belt-and-braces mechanism (a lost Swift
+// reply -- multi-window mismatch bailing without one, a torn-down WebView, a crash
+// mid-sequence -- must not swallow every future Cmd-Z/Cmd-Shift-Z for the rest of the
+// session). Uses the same real-editor-plus-fake-timers pattern already established above
+// (the "stale pendingMapsEmpty redo/undo race" describe block).
+describe('undo-coordinator latch self-clear timeout (N8)', () => {
+  let editor: Editor | null = null;
+
+  afterEach(async () => {
+    vi.useRealTimers();
+    if (editor) {
+      await editor.destroy();
+      editor = null;
+    }
+    setEditorInstance(null);
+    resetUndoCoordinatorState();
+    delete (window as any).webkit;
+  });
+
+  async function makeEditor(markdown: string): Promise<Editor> {
+    const div = document.createElement('div');
+    document.body.appendChild(div);
+    const e = await Editor.make()
+      .config((ctx) => {
+        ctx.set(rootCtx, div);
+        ctx.set(defaultValueCtx, markdown);
+      })
+      .use(blockIdPlugin)
+      .use(commonmark)
+      .use(gfm)
+      .use(historyPlugin)
+      .create();
+    editor = e;
+    setEditorInstance(e);
+    return e;
+  }
+
+  it('self-clears the latch after 3s with no reply from Swift, so a later Cmd-Z is not swallowed forever', async () => {
+    const e = await makeEditor('Paragraph one.');
+    const view = e.ctx.get(editorViewCtx);
+    setRegistryEntry('op-1', { checkpoint: view.state as any, postOpDoc: view.state.doc, preOpDoc: view.state.doc });
+    setUndoDescriptor({ undoTopOpId: 'op-1' });
+    (window as any).webkit = { messageHandlers: { structuralUndoRequested: { postMessage: vi.fn() } } };
+    vi.useFakeTimers();
+
+    const event = new KeyboardEvent('keydown', { key: 'z', metaKey: true, cancelable: true });
+    handleUnifiedUndoKeydown(event, view, 'undo');
+    expect(isLatched()).toBe(true); // request sent, latch held, no reply has arrived yet
+
+    await vi.advanceTimersByTimeAsync(3000);
+
+    expect(isLatched()).toBe(false); // self-cleared, not stuck forever
+    expect(getInFlightOpId()).toBe(null);
+  });
+
+  it('does NOT self-clear before 3s -- a reply that genuinely takes a while is not preempted', async () => {
+    const e = await makeEditor('Paragraph one.');
+    const view = e.ctx.get(editorViewCtx);
+    setRegistryEntry('op-1', { checkpoint: view.state as any, postOpDoc: view.state.doc, preOpDoc: view.state.doc });
+    setUndoDescriptor({ undoTopOpId: 'op-1' });
+    (window as any).webkit = { messageHandlers: { structuralUndoRequested: { postMessage: vi.fn() } } };
+    vi.useFakeTimers();
+
+    const event = new KeyboardEvent('keydown', { key: 'z', metaKey: true, cancelable: true });
+    handleUnifiedUndoKeydown(event, view, 'undo');
+
+    await vi.advanceTimersByTimeAsync(2999);
+
+    expect(isLatched()).toBe(true);
+  });
+
+  it('a genuine reply that arrives before the timeout cancels the pending timer, so it cannot later fire against a newer request', async () => {
+    const e = await makeEditor('Paragraph one.');
+    const view = e.ctx.get(editorViewCtx);
+    setRegistryEntry('op-1', { checkpoint: view.state as any, postOpDoc: view.state.doc, preOpDoc: view.state.doc });
+    setUndoDescriptor({ undoTopOpId: 'op-1' });
+    (window as any).webkit = { messageHandlers: { structuralUndoRequested: { postMessage: vi.fn() } } };
+    vi.useFakeTimers();
+
+    const event = new KeyboardEvent('keydown', { key: 'z', metaKey: true, cancelable: true });
+    handleUnifiedUndoKeydown(event, view, 'undo');
+    handleUndoReplyFromSwift({ opId: 'op-1', outcome: 'performed' }, 'undo');
+    expect(isLatched()).toBe(false);
+
+    // Let 1s elapse before the second request, so the (already-cleared) first timer's
+    // ORIGINAL fire time (t=3000ms from its own scheduling) and the second timer's fire time
+    // (t=1000ms + 3000ms = t=4000ms overall) are distinguishable -- without this gap, both
+    // timers would be scheduled at the same virtual instant and this test couldn't tell
+    // "cancelled" apart from "coincidentally fires at the same time as the new one".
+    await vi.advanceTimersByTimeAsync(1000);
+
+    // A second, later request now latches for a NEW opId.
+    setRegistryEntry('op-2', { checkpoint: view.state as any, postOpDoc: view.state.doc, preOpDoc: view.state.doc });
+    setUndoDescriptor({ undoTopOpId: 'op-2' });
+    const event2 = new KeyboardEvent('keydown', { key: 'z', metaKey: true, cancelable: true });
+    handleUnifiedUndoKeydown(event2, view, 'undo');
+    expect(getInFlightOpId()).toBe('op-2');
+
+    // Advance to t=3000ms overall -- exactly when the FIRST request's original timer would
+    // have fired had it not been cancelled, but 1s BEFORE the second request's own fresh 3s
+    // window elapses (t=4000ms). If the first (already-cleared) timer were still live, it
+    // would fire here and could clear the second request's latch prematurely --
+    // clearLatchTimeout() on the first reply must have prevented that.
+    await vi.advanceTimersByTimeAsync(2000);
+
+    expect(isLatched()).toBe(true);
+    expect(getInFlightOpId()).toBe('op-2');
   });
 });

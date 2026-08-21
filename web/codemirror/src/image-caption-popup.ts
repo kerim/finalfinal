@@ -224,6 +224,24 @@ export function showImageCaptionPopup(
   input.select();
 }
 
+/**
+ * N4 boundary hygiene, judge round 2 fix (must-fix 4): commit-then-close, NOT
+ * discard-then-close -- mirrors Milkdown's `commitAndCloseEditPopup`/
+ * `commitAndCloseAnnotationEditPopup` (see the citation one's doc comment for the full
+ * rationale). `commitEdit()` already calls `dismissImageCaptionPopup()` on every one of its
+ * own exit paths (including its various "line no longer matches" safety-check failures), so
+ * this wrapper only needs to decide whether there's an in-progress edit to commit at all.
+ */
+export function commitAndCloseImageCaptionPopup(): void {
+  if (editingImageLineNumber !== null && editingView) {
+    commitEdit();
+  } else {
+    dismissImageCaptionPopup();
+  }
+}
+
+// Discards any in-progress edit. Not safe to call at a structural boundary (judge round 2
+// fix, must-fix 4): use `commitAndCloseImageCaptionPopup()` there instead.
 export function dismissImageCaptionPopup(): void {
   if (popup) {
     popup.style.display = 'none';

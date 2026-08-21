@@ -46,7 +46,8 @@ struct ContentViewSectionReorderTests {
             bibliographySyncService: view.bibliographySyncService,
             footnoteSyncService: view.footnoteSyncService,
             annotationSyncService: view.annotationSyncService,
-            unifiedUndoService: view.unifiedUndoService
+            unifiedUndoService: view.unifiedUndoService,
+            findBarState: view.findBarState
         )
         view.structuralUndoController.testEvalBoolOverride = { js in
             StructuralUndoControllerTests.realisticEvalBoolDefault(js)

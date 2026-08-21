@@ -316,7 +316,15 @@ extension ContentView {
     }
 
     /// Handle project opened notification
-    func handleProjectOpened(isRestore: Bool = false) async {
+    ///
+    /// N9 (Phase B remediation plan): the `isRestore` parameter this function used to take is
+    /// gone -- every `.projectDidOpen` post site (grepped and confirmed) passes bare
+    /// `object: nil`, so `notification.userInfo?["isRestore"]` was always `nil`/`false` at the
+    /// one caller (`ViewNotificationModifiers.swift`'s `withFileNotifications`), meaning
+    /// `isRestore` was already dead on arrival: version-history restores are routed entirely
+    /// through `StructuralUndoController`'s own audited sequence today (plan §4.4), not through
+    /// this notification at all.
+    func handleProjectOpened() async {
         // Barrier (plan §4.5, Phase 5 backlog): a project switch must invalidate the unified
         // undo timeline -- it's per-project in-memory state (plan §4.1/§4.8), and
         // `unifiedUndoService` is a single `@State` instance owned by ContentView, so it
@@ -333,12 +341,8 @@ extension ContentView {
         // the barrier instead would be worse) -- could still finish and record its entry,
         // re-seeding the NEW project's (now-current)
         // timeline with an entry that actually describes a mutation performed against the OLD
-        // project's database. Fires for a version-restore reopen too (`isRestore`) -- that path
-        // is itself one of the five structural op kinds, whose own audited sequence already
-        // recorded/updated the timeline before this notification landed; a stale timeline from
-        // BEFORE the restore is exactly as wrong here as one from a different project would be.
-        // Runs first, before any of the flush/reset work below, so a late in-flight structural
-        // op's epoch check has the earliest possible chance to catch this.
+        // project's database. Runs first, before any of the flush/reset work below, so a late
+        // in-flight structural op's epoch check has the earliest possible chance to catch this.
         unifiedUndoService.invalidateAll(reason: "project switch")
 
         // Stop block polling FIRST — prevents poll timer from firing during
@@ -347,19 +351,15 @@ extension ContentView {
         blockSyncService.stopPolling()
 
         // Flush all pending content to OLD project's database before switching.
-        // Skip flush after version restore — blocks were already rebuilt by SnapshotService
-        // and flushing would overwrite restored content with stale pre-restore editor content.
-        if !isRestore {
-            await flushAllPendingContent()
+        await flushAllPendingContent()
 
-            // Flush pending debounced bibliography/footnote updates before the reset()
-            // calls below discard them. Runs independent of flushAllPendingContent()'s
-            // editor-content state (pending sync lives in the services themselves,
-            // captured at debounce-schedule time) and is bounded to ~3s via the same
-            // helper the quit path uses, so a hung Zotero/BBT fetch can't stall a
-            // project switch indefinitely.
-            await editorState.flushPendingBibliographyAndFootnoteSync()
-        }
+        // Flush pending debounced bibliography/footnote updates before the reset()
+        // calls below discard them. Runs independent of flushAllPendingContent()'s
+        // editor-content state (pending sync lives in the services themselves,
+        // captured at debounce-schedule time) and is bounded to ~3s via the same
+        // helper the quit path uses, so a hung Zotero/BBT fetch can't stall a
+        // project switch indefinitely.
+        await editorState.flushPendingBibliographyAndFootnoteSync()
 
         // Stop remaining services
         editorState.stopObserving()
@@ -410,7 +410,7 @@ extension ContentView {
                     updateSourceContentIfNeeded(intentionalReplacement: true)
                     await blockSyncService.setContentWithBlockIds(
                         markdown: result.markdown, blockIds: result.blockIds,
-                        imageMeta: result.imageMeta, detectPausedEdits: isRestore,
+                        imageMeta: result.imageMeta, detectPausedEdits: false,
                         expectedBlocks: result.expectedBlocks)
                 }
                 editorState.isResettingContent = false

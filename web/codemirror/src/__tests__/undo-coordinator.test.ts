@@ -18,6 +18,7 @@ import {
   decideRedoRouting,
   decideUndoRouting,
   finalizeStructuralOpPostOpDoc,
+  getInFlightOpId,
   getRegistry,
   getUndoDescriptor,
   handleGlobalUndoRedoKeydown,
@@ -29,6 +30,7 @@ import {
   requestUnifiedRedo,
   requestUnifiedUndo,
   resetUndoCoordinatorState,
+  setInFlightOpId,
   setLatched,
   setRegistryEntry,
   setUndoDescriptor,
@@ -360,6 +362,7 @@ describe('undo-coordinator live wiring (real CodeMirror EditorView, always-empty
     const v = makeEditor('Paragraph one.');
     v.dispatch({ changes: { from: 0, insert: 'X' } });
     setLatched(true);
+    setInFlightOpId('op-1');
 
     handleUndoReplyFromSwift({ opId: 'op-1', outcome: 'fallback' }, 'undo');
 
@@ -372,6 +375,7 @@ describe('undo-coordinator live wiring (real CodeMirror EditorView, always-empty
     v.dispatch({ changes: { from: 0, insert: 'X' } });
     const depthBefore = undoDepth(v.state);
     setLatched(true);
+    setInFlightOpId('op-1');
 
     handleUndoReplyFromSwift({ opId: 'op-1', outcome: 'performed' }, 'undo');
 
@@ -385,6 +389,35 @@ describe('undo-coordinator live wiring (real CodeMirror EditorView, always-empty
     expect(() => handleUndoReplyFromSwift({ opId: 'op-1', outcome: 'fallback' }, 'undo')).not.toThrow();
 
     expect(isLatched()).toBe(false);
+  });
+
+  // === N5 (Phase B remediation plan): reply must match the specific in-flight opId ===
+
+  it('handleUndoReplyFromSwift ignores a reply for a stale opId even while the latch is held for a DIFFERENT request', () => {
+    const v = makeEditor('Paragraph one.');
+    v.dispatch({ changes: { from: 0, insert: 'X' } });
+    const depthBefore = undoDepth(v.state);
+    setLatched(true);
+    setInFlightOpId('op-current');
+
+    handleUndoReplyFromSwift({ opId: 'op-stale', outcome: 'fallback' }, 'undo');
+
+    expect(undoDepth(v.state)).toBe(depthBefore);
+    expect(isLatched()).toBe(true);
+    expect(getInFlightOpId()).toBe('op-current');
+  });
+
+  it('a genuine reply for the actual in-flight opId still works correctly (control for the mismatch test above)', () => {
+    const v = makeEditor('Paragraph one.');
+    v.dispatch({ changes: { from: 0, insert: 'X' } });
+    setLatched(true);
+    setInFlightOpId('op-current');
+
+    handleUndoReplyFromSwift({ opId: 'op-current', outcome: 'fallback' }, 'undo');
+
+    expect(undoDepth(v.state)).toBe(0);
+    expect(isLatched()).toBe(false);
+    expect(getInFlightOpId()).toBe(null);
   });
 
   // === historyEdited predicate (plan §4.1/§4.6) ===
@@ -762,5 +795,101 @@ describe('undo-coordinator live wiring (real CodeMirror EditorView, always-empty
 
     expect(getRegistry().has('op-evicted')).toBe(false);
     expect(getRegistry().has('op-current')).toBe(true);
+  });
+});
+
+// === N8 (Phase B remediation plan): the 3s latch self-clear timeout ===
+// Zero test coverage previously existed for this belt-and-braces mechanism (a lost Swift
+// reply must not swallow every future Cmd-Z/Cmd-Shift-Z for the rest of the session).
+// Mirrors Milkdown's undo-coordinator.test.ts N8 block.
+describe('undo-coordinator latch self-clear timeout (N8)', () => {
+  let view: EditorView | null = null;
+
+  afterEach(() => {
+    vi.useRealTimers();
+    setEditorView(null);
+    setEditorExtensions([]);
+    if (view) {
+      view.destroy();
+      view = null;
+    }
+    resetUndoCoordinatorState();
+    delete (window as any).webkit;
+  });
+
+  function makeEditor(doc: string): EditorView {
+    const div = document.createElement('div');
+    document.body.appendChild(div);
+    const extensions = [markdown({ base: markdownLanguage }), history()];
+    const v = new EditorView({
+      state: EditorState.create({ doc, extensions }),
+      parent: div,
+    });
+    view = v;
+    setEditorView(v);
+    setEditorExtensions(extensions);
+    return v;
+  }
+
+  it('self-clears the latch after 3s with no reply from Swift, so a later Cmd-Z is not swallowed forever', async () => {
+    const v = makeEditor('Paragraph one.');
+    setRegistryEntry('op-1', { checkpoint: v.state as any, postOpDoc: v.state.doc, preOpDoc: v.state.doc });
+    setUndoDescriptor({ undoTopOpId: 'op-1' });
+    (window as any).webkit = { messageHandlers: { structuralUndoRequested: { postMessage: vi.fn() } } };
+    vi.useFakeTimers();
+
+    const event = new KeyboardEvent('keydown', { key: 'z', metaKey: true, cancelable: true });
+    handleUnifiedUndoKeydown(event, v, 'undo');
+    expect(isLatched()).toBe(true);
+
+    await vi.advanceTimersByTimeAsync(3000);
+
+    expect(isLatched()).toBe(false);
+    expect(getInFlightOpId()).toBe(null);
+  });
+
+  it('does NOT self-clear before 3s -- a reply that genuinely takes a while is not preempted', async () => {
+    const v = makeEditor('Paragraph one.');
+    setRegistryEntry('op-1', { checkpoint: v.state as any, postOpDoc: v.state.doc, preOpDoc: v.state.doc });
+    setUndoDescriptor({ undoTopOpId: 'op-1' });
+    (window as any).webkit = { messageHandlers: { structuralUndoRequested: { postMessage: vi.fn() } } };
+    vi.useFakeTimers();
+
+    const event = new KeyboardEvent('keydown', { key: 'z', metaKey: true, cancelable: true });
+    handleUnifiedUndoKeydown(event, v, 'undo');
+
+    await vi.advanceTimersByTimeAsync(2999);
+
+    expect(isLatched()).toBe(true);
+  });
+
+  it('a genuine reply that arrives before the timeout cancels the pending timer, so it cannot later fire against a newer request', async () => {
+    const v = makeEditor('Paragraph one.');
+    setRegistryEntry('op-1', { checkpoint: v.state as any, postOpDoc: v.state.doc, preOpDoc: v.state.doc });
+    setUndoDescriptor({ undoTopOpId: 'op-1' });
+    (window as any).webkit = { messageHandlers: { structuralUndoRequested: { postMessage: vi.fn() } } };
+    vi.useFakeTimers();
+
+    const event = new KeyboardEvent('keydown', { key: 'z', metaKey: true, cancelable: true });
+    handleUnifiedUndoKeydown(event, v, 'undo');
+    handleUndoReplyFromSwift({ opId: 'op-1', outcome: 'performed' }, 'undo');
+    expect(isLatched()).toBe(false);
+
+    // Let 1s elapse before the second request -- see Milkdown's mirror test for why this gap
+    // is needed to distinguish "cancelled" from "coincidentally fires at the same time".
+    await vi.advanceTimersByTimeAsync(1000);
+
+    setRegistryEntry('op-2', { checkpoint: v.state as any, postOpDoc: v.state.doc, preOpDoc: v.state.doc });
+    setUndoDescriptor({ undoTopOpId: 'op-2' });
+    const event2 = new KeyboardEvent('keydown', { key: 'z', metaKey: true, cancelable: true });
+    handleUnifiedUndoKeydown(event2, v, 'undo');
+    expect(getInFlightOpId()).toBe('op-2');
+
+    // t=3000ms overall: when the first request's original timer would have fired, but 1s
+    // before the second request's own fresh 3s window elapses.
+    await vi.advanceTimersByTimeAsync(2000);
+
+    expect(isLatched()).toBe(true);
+    expect(getInFlightOpId()).toBe('op-2');
   });
 });

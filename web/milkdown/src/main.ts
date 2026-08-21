@@ -129,8 +129,10 @@ import { markdownLinkPlugin } from './markdown-link-input-rule';
 import {
   beginStructuralOp,
   cancelPendingInsertions,
+  clearFailedStructuralOpEntry,
   clearStructuralUndoRegistry,
   clearStructuralUndoState,
+  closeEditingPopupsAndClearBoundaryState,
   finalizeStructuralOpPostOpDoc,
   finishStructuralSwapSettle,
   maybeAdvanceRegistryOnSyncOriginTx,
@@ -647,6 +649,13 @@ window.FinalFinal = {
   performStructuralSwap,
   finishStructuralSwapSettle,
   cancelPendingInsertions,
+  // N4 (Phase B remediation plan): force-closes editing popups, clears find/replace state.
+  closeEditingPopupsAndClearBoundaryState,
+  // N6 (Phase B remediation plan): removes just the ONE mid-sequence op's own
+  // not-yet-finalized registry entry after a forward-op failure -- see undo-coordinator.ts's
+  // doc comment for why this must NOT clear editor text-undo history the way
+  // clearStructuralUndoState (eviction) does.
+  clearFailedStructuralOpEntry,
   // Barrier/eviction JS-side clears (Phase 5, plan §4.1/§4.5/§5 backlog) -- called by
   // UnifiedUndoService.invalidateAll()/record()'s eviction path via ContentView's
   // clearStructuralRegistry/clearEditorHistories closures.

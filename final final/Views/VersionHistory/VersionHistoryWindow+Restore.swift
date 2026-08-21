@@ -216,33 +216,44 @@ extension VersionHistoryWindow {
             return
         }
 
-        let ok: Bool
+        let outcome: StructuralUndoController.StructuralOpOutcome
         switch mode {
         case .replace:
             let targetId = targetSectionId ?? section.originalSectionId ?? ""
-            ok = await controller.performSectionRestoreReplace(
+            outcome = await controller.performSectionRestoreReplace(
                 snapshotSectionId: section.id, targetSectionId: targetId, requestingProjectId: projectId
             )
         case .duplicate:
             // Insert after the last section
             let insertAfter = coordinator.currentSections.last?.id
-            ok = await controller.performRestoreSectionDuplicate(
+            outcome = await controller.performRestoreSectionDuplicate(
                 snapshotSectionId: section.id, insertAfterSectionId: insertAfter, requestingProjectId: projectId
             )
         }
 
-        guard ok else {
-            errorMessage = "Restore failed"
+        // N2 (Phase B remediation plan): three-way outcome, not a bare Bool -- distinguishes
+        // "refused before anything happened" from "it happened but couldn't finish recording"
+        // (not undoable via Cmd-Z), rather than showing the same generic "Restore failed" for
+        // both, which used to lie about the .failedAfterCommit case (a restore that DID
+        // happen). This absorbs the plan's previously-deferred "generic Restore failed message
+        // is misleading" item.
+        switch outcome {
+        case .performed:
+            dismissWindow(id: "version-history")
             pendingRestoreSection = nil
             pendingRestoreMode = nil
             targetSectionId = nil
-            return
+        case .refused:
+            errorMessage = "Restore failed. Nothing was changed."
+            pendingRestoreSection = nil
+            pendingRestoreMode = nil
+            targetSectionId = nil
+        case .failedAfterCommit:
+            errorMessage = "The section was restored, but the change couldn't be added to Undo history."
+            pendingRestoreSection = nil
+            pendingRestoreMode = nil
+            targetSectionId = nil
         }
-        dismissWindow(id: "version-history")
-
-        pendingRestoreSection = nil
-        pendingRestoreMode = nil
-        targetSectionId = nil
     }
 
     /// Phase 4: routed through StructuralUndoController like the two section-restore branches
@@ -269,13 +280,17 @@ extension VersionHistoryWindow {
             return
         }
 
-        let ok = await controller.performRestoreProject(snapshotId: snapshotId, requestingProjectId: projectId)
-        guard ok else {
-            errorMessage = "Restore failed"
-            return
+        // N2 (Phase B remediation plan): three-way outcome -- see performSectionRestore's
+        // matching comment.
+        let outcome = await controller.performRestoreProject(snapshotId: snapshotId, requestingProjectId: projectId)
+        switch outcome {
+        case .performed:
+            // Close window after successful restore
+            dismissWindow(id: "version-history")
+        case .refused:
+            errorMessage = "Restore failed. Nothing was changed."
+        case .failedAfterCommit:
+            errorMessage = "The project was restored, but the change couldn't be added to Undo history."
         }
-
-        // Close window after successful restore
-        dismissWindow(id: "version-history")
     }
 }

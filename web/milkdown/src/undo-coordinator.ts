@@ -15,6 +15,7 @@ import { closeHistory, isHistoryTransaction, redo, redoDepth, undo, undoDepth } 
 import type { Node } from '@milkdown/kit/prose/model';
 import type { EditorState, Transaction } from '@milkdown/kit/prose/state';
 import type { EditorView } from '@milkdown/kit/prose/view';
+import { commitAndCloseAnnotationEditPopup } from './annotation-edit-popup';
 import { clearEditorHistory, getContent } from './api-content';
 import { clearBlockIds } from './block-id-plugin';
 import {
@@ -24,8 +25,11 @@ import {
   setSyncPaused,
 } from './block-sync-plugin';
 import { resetCAYWState } from './cayw';
+import { commitAndCloseEditPopup } from './citation-edit-popup';
 import { getEditorInstance, setCurrentContent } from './editor-state';
+import { clearSearch } from './find-replace';
 import { consumePendingDropPos, consumePendingPastePos } from './image-plugin';
+import { hideLinkPopups } from './link-tooltip';
 
 // Real user-transaction counter for the permanent `[UnifiedUndo]` fallthrough log below
 // (undo-mode-switch-focus investigation legacy -- kept because it proved genuinely useful
@@ -84,6 +88,16 @@ export type RoutingDecision =
 const registry = new Map<string, UndoRegistryEntry>();
 let descriptor: UndoDescriptor = {};
 let latched = false;
+/** N5 (minor, Phase B remediation plan): the opId of the specific in-flight request the
+ * latch is currently held for. Previously the latch alone gated `handleUndoReplyFromSwift`
+ * -- "harmless today" per a comment that predated Phase 3 (real ops) and was stale by the
+ * time this was reviewed: with real structural entries, a stale/duplicate reply (a
+ * multi-window mismatch's own late reply, a race between the latch timeout firing and a
+ * genuine reply arriving) could be misapplied to a DIFFERENT request that happened to latch
+ * afterward, purely because the latch was still (or newly) held. Set by `requestStructural`,
+ * cleared whenever the latch itself clears (a real reply, the timeout, or a manual
+ * `setLatched(false)` in tests). */
+let inFlightOpId: string | null = null;
 /** Belt-and-braces timeout for the latch (review round, promoted from the Phase 2 DEFERRED
  * note above): if Swift's reply is ever lost -- a multi-window mismatch bailing without a
  * reply, a torn-down WebView, a crash mid-sequence -- this self-clears the latch instead of
@@ -148,6 +162,19 @@ export function clearStructuralUndoState(opId: string): void {
   }
   deleteRegistryEntry(opId);
 }
+
+/** N6 (minor, Phase B remediation plan): mid-sequence forward-op failure cleanup -- mirrors
+ * CodeMirror's `undo-coordinator.ts` function of the same name. Removes just the ONE
+ * in-flight op's own registry entry (created by `beginStructuralOp`, never finalized because
+ * a later step in `performStructuralOp` failed) WITHOUT touching this editor's own
+ * text-undo history (unlike `clearStructuralUndoState` above, which is eviction-only): the
+ * op failed, but the user's prior typing history is still perfectly valid. Without this, a
+ * failed forward op left the registry entry (a full retained ProseMirror `EditorState`)
+ * permanently leaked -- keyed by a fresh opId every time, so never overwritten and never
+ * referenced by the descriptor Swift pushes (a failed op is never `record()`-ed). */
+export function clearFailedStructuralOpEntry(opId: string): void {
+  deleteRegistryEntry(opId);
+}
 export function getUndoDescriptor(): UndoDescriptor {
   return descriptor;
 }
@@ -163,6 +190,16 @@ export function isLatched(): boolean {
 export function setLatched(value: boolean): void {
   latched = value;
 }
+/** Test-only accessor/setter for the in-flight opId (N5). Not part of the window.FinalFinal
+ * bridge -- production code only ever sets this via `requestStructural`. Tests that simulate
+ * "the latch is held" directly via `setLatched(true)` (bypassing `requestStructural`) must
+ * also set this if they intend `handleUndoReplyFromSwift` to accept a specific opId. */
+export function getInFlightOpId(): string | null {
+  return inFlightOpId;
+}
+export function setInFlightOpId(opId: string | null): void {
+  inFlightOpId = opId;
+}
 
 /** Test-only full reset, mirroring resetBlockIdState()/resetBlockSyncState() elsewhere in
  * this codebase's test suites. Not part of the window.FinalFinal bridge. */
@@ -170,6 +207,7 @@ export function resetUndoCoordinatorState(): void {
   registry.clear();
   descriptor = {};
   latched = false;
+  inFlightOpId = null;
   clearLatchTimeout();
 }
 
@@ -287,6 +325,37 @@ export function cancelPendingInsertions(): void {
   resetCAYWState();
   consumePendingDropPos();
   consumePendingPastePos();
+}
+
+/**
+ * N4 (major, Phase B remediation plan): checkpoint-swap/structural-boundary hygiene. Called
+ * at the same three boundaries as `cancelPendingInsertions` above (op start, undo start,
+ * redo start) -- force-closes any open editing popup (annotation edit, citation edit, link
+ * tooltip) and clears find/replace's cached document positions/query, so none of them can
+ * act on stale offsets against the document a structural op/undo/redo is about to swap out
+ * from under them. This was called for in the original design's Phase 0 inventory and never
+ * landed (plan §Phase 0(e)).
+ *
+ * No separate scroll-map cache exists on the Milkdown side to invalidate here (unlike
+ * CodeMirror's heading-metrics cache, `codemirror/src/api.ts`'s mirror of this function) --
+ * the checkpoint swap's wholesale `view.updateState()` already replaces the entire
+ * ProseMirror view state, which inherently invalidates any DOM-position-dependent internal
+ * caches as a side effect of the swap itself.
+ *
+ * Judge round 2 fix (must-fix 4): the annotation/citation popups are force-closed via
+ * COMMIT-then-close, not discard-then-close -- `hideAnnotationEditPopup`/`hideEditPopup`
+ * silently threw away an in-progress edit, and since `handleSlashKeydown` is a capture-phase
+ * document listener, a Cmd-Z with the caret inside one of these popups' inputs would route
+ * structurally and reach this boundary call, discarding whatever the user had just typed.
+ * Safe to commit here specifically because this call runs BEFORE `mutate` (the op's DB
+ * write), against the still-valid pre-op document -- see each `commitAndClose*` function's
+ * own doc comment.
+ */
+export function closeEditingPopupsAndClearBoundaryState(): void {
+  commitAndCloseAnnotationEditPopup();
+  commitAndCloseEditPopup();
+  hideLinkPopups();
+  clearSearch();
 }
 
 /** Op-sequence step 3: close the current history group (H3 -- prevents this op's boundary
@@ -444,6 +513,14 @@ export function performStructuralSwap(opId: string, direction: 'undo' | 'redo'):
   view.updateState(target);
   rebindCurrentStateFromView(view);
   clearBlockIds();
+  // N7 (minor, Phase B remediation plan): plan §4.3 specified a post-swap scrollIntoView so
+  // the restored caret stays visible; never implemented. `updateState()` swaps in the
+  // checkpoint's own selection wholesale but does not itself scroll the viewport to it --
+  // without this, a swap that restores the caret somewhere currently off-screen leaves it
+  // there. Dispatched as its own no-op-doc transaction (matching the pattern used elsewhere
+  // in this codebase, e.g. find-replace.ts's goToMatch) rather than folded into the swap
+  // itself, since `updateState` bypasses the normal dispatch/scrollIntoView pipeline.
+  view.dispatch(view.state.tr.scrollIntoView());
   return true;
 }
 
@@ -478,11 +555,13 @@ function clearLatchTimeout(): void {
 
 function requestStructural(opId: string, direction: 'undo' | 'redo'): void {
   latched = true;
+  inFlightOpId = opId; // N5: track the specific request this latch is now held for
   clearLatchTimeout();
   latchTimeoutId = setTimeout(() => {
     latchTimeoutId = null;
     if (!latched) return;
     latched = false;
+    inFlightOpId = null;
     (window as any).webkit?.messageHandlers?.errorHandler?.postMessage({
       type: 'debug',
       message: `[undo-coordinator] latch timeout: no reply from Swift for ${direction} opId=${opId} -- self-clearing`,
@@ -641,7 +720,22 @@ export function handleUndoReplyFromSwift(
   direction: 'undo' | 'redo'
 ): void {
   if (!latched) return;
+  // N5 (minor, Phase B remediation plan): match against the specific in-flight opId, not
+  // just "is the latch held" -- a reply for a stale/superseded request must not be applied
+  // as if it were the reply for whatever is (or, after a timeout, isn't) actually latched
+  // now. `inFlightOpId` is set by `requestStructural` and can only ever match the ONE
+  // request the latch is currently held for (H7: only one structural sequence in flight at
+  // a time), so a mismatch here is unambiguously a stale reply -- ignore it without
+  // touching the latch, which still belongs to the real in-flight request.
+  if (reply.opId !== inFlightOpId) {
+    (window as any).webkit?.messageHandlers?.errorHandler?.postMessage({
+      type: 'debug',
+      message: `[undo-coordinator] ignoring ${direction} reply for stale opId=${reply.opId} (in-flight opId=${inFlightOpId})`,
+    });
+    return;
+  }
   latched = false;
+  inFlightOpId = null;
   clearLatchTimeout();
   if (reply.outcome === 'failed') {
     // Post-commit failure (plan review round MF-4): the DB has already been restored to a

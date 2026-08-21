@@ -81,6 +81,12 @@ export type RoutingDecision =
 const registry = new Map<string, UndoRegistryEntry>();
 let descriptor: UndoDescriptor = {};
 let latched = false;
+/** N5 (minor, Phase B remediation plan): the opId of the specific in-flight request the
+ * latch is currently held for -- mirrors Milkdown's undo-coordinator.ts (see its comment for
+ * the full rationale: matching only "is the latch held" let a stale/duplicate reply be
+ * misapplied to whatever happened to be latched afterward). Set by `requestStructural`,
+ * cleared whenever the latch itself clears. */
+let inFlightOpId: string | null = null;
 /** Belt-and-braces timeout for the latch -- mirrors Milkdown's undo-coordinator.ts (see its
  * comment for the full rationale: a lost Swift reply must not swallow Cmd-Z forever). */
 const LATCH_TIMEOUT_MS = 3000;
@@ -138,6 +144,19 @@ export function clearStructuralUndoState(opId: string): void {
   clearHistory();
   deleteRegistryEntry(opId);
 }
+
+/** N6 (minor, Phase B remediation plan): mid-sequence forward-op failure cleanup. Removes
+ * just the ONE in-flight op's own registry entry (created by `beginStructuralOp`, never
+ * finalized because a later step in `performStructuralOp` failed) -- unlike
+ * `clearStructuralUndoState` above (eviction), this must NOT clear this editor's own
+ * text-undo history: the op failed, but the user's prior typing history is still perfectly
+ * valid and must survive the failure. Without this, a failed forward op left the registry
+ * entry (a full retained `EditorState`) permanently leaked -- it's keyed by a fresh opId
+ * every time, so it's never overwritten and never referenced by the descriptor Swift pushes
+ * (a failed op is never `record()`-ed), just dead memory for the rest of the session. */
+export function clearFailedStructuralOpEntry(opId: string): void {
+  deleteRegistryEntry(opId);
+}
 export function getUndoDescriptor(): UndoDescriptor {
   return descriptor;
 }
@@ -153,12 +172,21 @@ export function isLatched(): boolean {
 export function setLatched(value: boolean): void {
   latched = value;
 }
+/** Test-only accessor/setter for the in-flight opId (N5). Not part of the
+ * window.FinalFinal bridge -- production code only ever sets this via `requestStructural`. */
+export function getInFlightOpId(): string | null {
+  return inFlightOpId;
+}
+export function setInFlightOpId(opId: string | null): void {
+  inFlightOpId = opId;
+}
 
 /** Test-only full reset. Not part of the window.FinalFinal bridge. */
 export function resetUndoCoordinatorState(): void {
   registry.clear();
   descriptor = {};
   latched = false;
+  inFlightOpId = null;
   clearLatchTimeout();
 }
 
@@ -353,11 +381,13 @@ export function maybeAdvanceRegistryOnSyncOriginTx(tr: Transaction): void {
 
 function requestStructural(opId: string, direction: 'undo' | 'redo'): void {
   latched = true;
+  inFlightOpId = opId; // N5: track the specific request this latch is now held for
   clearLatchTimeout();
   latchTimeoutId = setTimeout(() => {
     latchTimeoutId = null;
     if (!latched) return;
     latched = false;
+    inFlightOpId = null;
     (window as any).webkit?.messageHandlers?.errorHandler?.postMessage({
       type: 'debug',
       message: `[undo-coordinator] latch timeout: no reply from Swift for ${direction} opId=${opId} -- self-clearing`,
@@ -500,7 +530,18 @@ export function handleUndoReplyFromSwift(
   direction: 'undo' | 'redo'
 ): void {
   if (!latched) return;
+  // N5 (minor, Phase B remediation plan) -- mirrors Milkdown's undo-coordinator.ts: match
+  // against the specific in-flight opId, not just "is the latch held". See that file's
+  // matching comment for the full rationale.
+  if (reply.opId !== inFlightOpId) {
+    (window as any).webkit?.messageHandlers?.errorHandler?.postMessage({
+      type: 'debug',
+      message: `[undo-coordinator] ignoring ${direction} reply for stale opId=${reply.opId} (in-flight opId=${inFlightOpId})`,
+    });
+    return;
+  }
   latched = false;
+  inFlightOpId = null;
   clearLatchTimeout();
   if (reply.outcome === 'failed') {
     // Post-commit failure (plan review round MF-4) -- mirrors Milkdown's undo-coordinator.ts.

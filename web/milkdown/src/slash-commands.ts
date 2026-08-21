@@ -13,7 +13,7 @@ import { openCAYWPicker } from './cayw';
 import {
   getEditorInstance,
   getPendingSlashRedo,
-  getPendingSlashUndo,
+  isPendingSlashUndoFresh,
   setPendingSlashRedo,
   setPendingSlashUndo,
 } from './editor-state';
@@ -394,9 +394,50 @@ function executeSlashCommand(index: number) {
 function handleSlashKeydown(e: KeyboardEvent): boolean {
   const editorInstance = getEditorInstance();
 
-  // Smart undo: after slash command, undo removes both the result AND the "/" trigger
+  // N3 (major, Phase B remediation plan): unified-undo routing (structural op/undo/redo)
+  // now runs FIRST, ahead of slash's own smart-undo/redo branches below -- the canonical
+  // order decided across both editors, matching CodeMirror's existing order (its
+  // capture-phase interceptor already ran before its own slash logic; only Milkdown had
+  // this backwards). Merged into THIS same capture-phase handler rather than a second
+  // independently-registered `document.addEventListener('keydown', ..., true)` listener:
+  // this function's own `e.stopPropagation()` calls below (not `stopImmediatePropagation()`)
+  // would NOT stop a second listener registered on the same `document` node from also
+  // running for the same keydown, so a separate listener could fire alongside slash's
+  // branches -- ordering by code position here keeps the two mutually exclusive by
+  // construction, not by registration accident.
+  //
+  // Reordering ahead of slash's own branches is safe in the realistic case, not just in the
+  // empty-registry Phase 2 state: `decideUndoRouting`/`decideRedoRouting`'s document-equality
+  // target means a slash command's own edit (it always mutates the document) breaks equality
+  // against any prior structural entry's postOpDoc almost always immediately -- so structural
+  // routing naturally falls through to `false` right after a slash command fires, and control
+  // reaches the smart-undo/redo branches below exactly as before. The only case this ordering
+  // changes behavior is the narrow "spurious equality" edge already accepted elsewhere in this
+  // design (docs/architecture/unified-undo.md's routing section: the live document happens to
+  // coincidentally re-equal a structural entry's target) -- structural correctly wins there,
+  // since it is the more specific, document-verified match.
+  if (editorInstance) {
+    const view = editorInstance.ctx.get(editorViewCtx);
+    if (handleGlobalUndoRedoKeydown(e, view)) {
+      // Judge round 2 "fold in if cheap" item: a structural hit (undo/redo routed to Swift,
+      // or swallowed by the in-flight latch) means the live document is no longer whatever
+      // slash's own pending-flag window was tracking -- reset both flags so a LATER Cmd-Z
+      // doesn't try to run the smart two-step slash-undo/redo against a document a
+      // structural op has since changed out from under it.
+      setPendingSlashUndo(false);
+      setPendingSlashRedo(false);
+      return true;
+    }
+  }
+
+  // Smart undo: after slash command, undo removes both the result AND the "/" trigger.
+  // isPendingSlashUndoFresh() (not getPendingSlashUndo()) -- N3: bounds how long a stale
+  // flag stays honorable; see editor-state.ts's doc comment. Nothing resets this flag except
+  // an actual editing keystroke (the "reset flags" block below), so without the freshness
+  // bound a slash command followed by clicking elsewhere and waiting could leave this flag
+  // silently armed to hijack an unrelated LATER Cmd-Z.
   if (e.key === 'z' && (e.metaKey || e.ctrlKey) && !e.shiftKey) {
-    if (getPendingSlashUndo() && editorInstance) {
+    if (isPendingSlashUndoFresh() && editorInstance) {
       e.preventDefault();
       e.stopPropagation();
 
@@ -456,29 +497,6 @@ function handleSlashKeydown(e: KeyboardEvent): boolean {
 
       return true;
     }
-  }
-
-  // Unified-undo routing (docs/plans/patient-rewinding-clockwork.md §4.2). Deliberately
-  // merged into THIS same capture-phase handler rather than a second independently
-  // -registered `document.addEventListener('keydown', ..., true)` listener: this function's
-  // own `e.stopPropagation()` calls above (not `stopImmediatePropagation()`) would NOT stop
-  // a second listener registered on the same `document` node from also running for the same
-  // keydown, so a separate listener could fire alongside (or instead of, depending on
-  // registration order) slash's smart-undo branches above -- ordering by code position here
-  // keeps slash's pending-flag window strictly first, by construction, not by registration
-  // accident. Runs only when neither smart-undo branch above already consumed the keystroke
-  // (both `return true` when they fire). With the always-empty Phase 2 registry this always
-  // falls through to Milkdown's own undo/redo keymap, unchanged.
-  //
-  // DEFERRED (Phase 3, do not fix now): this sits ABOVE the "reset flags on any editing key"
-  // block below. Fine today because handleGlobalUndoRedoKeydown always returns false here
-  // (empty registry) and this function returns early on true anyway -- but once routing can
-  // actually return true for a real structural op, re-examine whether pendingSlashUndo/Redo
-  // should still reach the reset block on that path, or whether a structural hit should
-  // itself count as "an editing key" for reset purposes.
-  if (editorInstance) {
-    const view = editorInstance.ctx.get(editorViewCtx);
-    if (handleGlobalUndoRedoKeydown(e, view)) return true;
   }
 
   // Reset flags on any editing key (typing, backspace, delete)
