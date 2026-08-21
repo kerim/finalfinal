@@ -321,11 +321,7 @@ final class FindBarState {
     /// sets DOM/ProseMirror focus only, never the NSWindow responder chain, so both calls are
     /// required.
     private func restoreEditorFocus() {
-        guard let webView = activeWebView else { return }
-        webView.evaluateJavaScript("window.FinalFinal.focus()") { _, _ in }
-        if let window = webView.window {
-            window.makeFirstResponder(webView)
-        }
+        EditorFocusRestoration.restoreFocus(to: activeWebView, context: "find-bar hide")
     }
 
     /// Clear search highlights

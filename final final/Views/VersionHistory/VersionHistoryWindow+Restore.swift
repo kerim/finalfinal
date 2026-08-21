@@ -23,6 +23,36 @@ extension VersionHistoryWindow {
         // Could show section details or highlight
     }
 
+    // MARK: - Focus Restoration (Phase C audit)
+
+    /// Deferred one run-loop turn so the window's own close transition has settled first
+    /// (mirrors `ContentView+ContentRebuilding.restoreEditorFocus`'s retry pattern for the
+    /// same class of timing reason), then restores both focus halves to the main editor's
+    /// WebView -- called from `.onDisappear` (`VersionHistoryWindow.swift`), the one choke
+    /// point every dismissal mechanism (buttons, post-restore auto-close, standard titlebar
+    /// close) actually passes through. NOT Cmd-W: this app rebinds it app-wide to "Close
+    /// Project" (`FileCommands.swift`), so it never closes this window at all.
+    ///
+    /// Multi-window guard (review round fix), same reasoning as
+    /// `performSectionRestoreReplace`'s guard (`StructuralUndoController.swift`, ~:512):
+    /// `DocumentManager.shared.structuralUndoController` is a single global slot -- with two
+    /// project windows open, this window (opened against `requestingProjectId`, captured by
+    /// the caller before `coordinator.close()` clears it) could otherwise restore focus into
+    /// a DIFFERENT project's window.
+    func restoreFocusAfterVersionHistoryClose(requestingProjectId: String?) {
+        DispatchQueue.main.async {
+            let controller = DocumentManager.shared.structuralUndoController
+            guard let requestingProjectId, controller?.editorState?.currentProjectId == requestingProjectId else {
+                DebugLog.log(.undo,
+                    "[VersionHistoryWindow] onDisappear: active project changed since " +
+                    "this window opened (or was never known) -- skipping focus restore " +
+                    "to avoid restoring focus into a different project's window")
+                return
+            }
+            EditorFocusRestoration.restoreFocus(to: controller?.activeWebView, context: "version-history close")
+        }
+    }
+
     func handleRestoreRequest(section: SnapshotSectionViewModel, mode: SectionRestoreMode) {
         guard !projectClosed else { return }
 
@@ -239,7 +269,7 @@ extension VersionHistoryWindow {
         // is misleading" item.
         switch outcome {
         case .performed:
-            dismissWindow(id: "version-history")
+            closeVersionHistoryWindow()
             pendingRestoreSection = nil
             pendingRestoreMode = nil
             targetSectionId = nil
@@ -286,7 +316,7 @@ extension VersionHistoryWindow {
         switch outcome {
         case .performed:
             // Close window after successful restore
-            dismissWindow(id: "version-history")
+            closeVersionHistoryWindow()
         case .refused:
             errorMessage = "Restore failed. Nothing was changed."
         case .failedAfterCommit:

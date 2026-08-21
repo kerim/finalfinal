@@ -556,14 +556,22 @@ export function insertBreak(): void {
   }
 }
 
-export function focus(): void {
+/// Returns whether the editor's content DOM actually holds focus afterward -- NOT just
+/// whether `view.focus()` was called without throwing. `view.focus()` alone always
+/// "succeeds" even when the editor instance is torn down or `document.activeElement` never
+/// actually moves (a still-loading page, a detached DOM), which made the Swift-side
+/// EditorFocusRestoration log line "JS focus() ok" indistinguishable from a silent no-op
+/// (review round fix -- Phase C's whole point is making these failures diagnosable from
+/// logs, per the mode-switch fix's original "zero .undo lines" gap).
+export function focus(): boolean {
   const editorInstance = getEditorInstance();
-  if (!editorInstance) return;
+  if (!editorInstance) return false;
   try {
     const view = editorInstance.ctx.get(editorViewCtx);
     view.focus();
+    return view.hasFocus();
   } catch {
-    // Focus failed, ignore
+    return false;
   }
 }
 

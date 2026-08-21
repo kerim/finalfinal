@@ -440,26 +440,36 @@ extension ContentView {
     /// type's settle-window guard). `applyFirstResponder`'s per-attempt outcome
     /// stays as permanent (not diagnostic-only) logging: cheap, and useful
     /// visibility into this codepath for any future focus-adjacent report.
+    ///
+    /// Phase C (focus-restoration audit) routed this call site through the shared
+    /// `EditorFocusRestoration` helper, adding the `window.FinalFinal.focus()` DOM half here
+    /// for the first time (previously AppKit-only). Defense-in-depth, not a bug fix -- the
+    /// investigation above already ruled this path out -- and safe: idempotent, harmless
+    /// no-op if `window.FinalFinal` isn't ready yet.
     @MainActor
     private func restoreEditorFocus(_ webView: WKWebView) {
         DispatchQueue.main.async { [weak webView] in
             guard let webView else { return }
-            if let window = webView.window {
-                applyFirstResponder(webView: webView, window: window, attempt: "first")
+            if webView.window != nil {
+                applyFirstResponder(webView: webView, attempt: "first")
             } else {
                 DispatchQueue.main.async { [weak webView] in
-                    guard let webView, let window = webView.window else { return }
-                    applyFirstResponder(webView: webView, window: window, attempt: "retry")
+                    guard let webView, webView.window != nil else { return }
+                    applyFirstResponder(webView: webView, attempt: "retry")
                 }
             }
         }
     }
 
+    /// Delegates to the shared `EditorFocusRestoration` helper (both focus halves — see its
+    /// doc comment). The defer/retry wrapper above stays local to this call site: it exists
+    /// only to work around a freshly-created WebView not yet attached to a window at
+    /// `onWebViewReady` time, unrelated to the focus-halves logic itself.
     @MainActor
-    private func applyFirstResponder(webView: WKWebView, window: NSWindow, attempt: String) {
-        let becameFirstResponder = window.makeFirstResponder(webView)
-        DebugLog.log(.undo, "[restoreEditorFocus] attempt=\(attempt) mode=\(editorState.editorMode.rawValue) "
-            + "makeFirstResponder=\(becameFirstResponder)")
+    private func applyFirstResponder(webView: WKWebView, attempt: String) {
+        EditorFocusRestoration.restoreFocus(
+            to: webView,
+            context: "mode-switch attempt=\(attempt) mode=\(editorState.editorMode.rawValue)")
     }
 
     @ViewBuilder

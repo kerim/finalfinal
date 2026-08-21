@@ -46,7 +46,9 @@ extension CodeMirrorEditor.Coordinator {
                 alert.informativeText = error.localizedDescription
                 alert.alertStyle = .warning
                 alert.addButton(withTitle: "OK")
-                alert.beginSheetModal(for: window)
+                alert.beginSheetModal(for: window) { [weak self] _ in
+                    EditorFocusRestoration.restoreFocus(to: self?.webView, context: "CodeMirrorEditor paste-image-error alert dismiss")
+                }
             }
         }
     }
@@ -82,7 +84,9 @@ extension CodeMirrorEditor.Coordinator {
                 alert.informativeText = error.localizedDescription
                 alert.alertStyle = .warning
                 alert.addButton(withTitle: "OK")
-                alert.beginSheetModal(for: window)
+                alert.beginSheetModal(for: window) { [weak self] _ in
+                    EditorFocusRestoration.restoreFocus(to: self?.webView, context: "CodeMirrorEditor image-picker-error alert dismiss")
+                }
             }
         }
     }

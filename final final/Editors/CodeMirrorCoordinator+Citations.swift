@@ -14,6 +14,15 @@ extension CodeMirrorEditor.Coordinator {
 
     /// Show a native NSAlert for Zotero-related errors
     /// JS alert() is silently swallowed in WKWebView (no WKUIDelegate), so we must use native alerts.
+    ///
+    /// App-modal (`runModal()`, not a sheet), fixed as part of the Phase C focus-restoration
+    /// audit's Tier 3 review: given a judge-directed negative control found AppKit does NOT
+    /// reliably restore both focus halves even for the more favorable separate-window case
+    /// (see `EditorFocusRestoration`'s doc comment and `docs/architecture/unified-undo.md`),
+    /// an app-modal alert over the SAME window (an even closer analogue to the already-
+    /// confirmed find-bar/EquationDialog gap) is treated as a real gap, not assumed safe.
+    /// `runModal()` blocks until dismissed and returns synchronously, so the restore call
+    /// right after it is guaranteed to run after the alert has actually closed.
     @MainActor
     private func showZoteroAlert(title: String, message: String) {
         let alert = NSAlert()
@@ -22,6 +31,7 @@ extension CodeMirrorEditor.Coordinator {
         alert.alertStyle = .warning
         alert.addButton(withTitle: "OK")
         alert.runModal()
+        EditorFocusRestoration.restoreFocus(to: webView, context: "CodeMirrorEditor Zotero alert dismiss")
     }
 
     /// Handle CAYW citation picker request from web editor

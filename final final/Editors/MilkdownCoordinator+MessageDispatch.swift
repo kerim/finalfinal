@@ -343,7 +343,9 @@ extension MilkdownEditor.Coordinator {
             alert.informativeText = "The pasted table was truncated to \(rows) rows × \(cols) columns."
             alert.alertStyle = .informational
             alert.addButton(withTitle: "OK")
-            alert.beginSheetModal(for: window)
+            alert.beginSheetModal(for: window) { [weak self] _ in
+                EditorFocusRestoration.restoreFocus(to: self?.webView, context: "MilkdownEditor table-truncated alert dismiss")
+            }
         }
     }
 

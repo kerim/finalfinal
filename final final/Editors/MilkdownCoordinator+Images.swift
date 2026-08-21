@@ -50,7 +50,9 @@ extension MilkdownEditor.Coordinator {
                 alert.informativeText = error.localizedDescription
                 alert.alertStyle = .warning
                 alert.addButton(withTitle: "OK")
-                alert.beginSheetModal(for: window)
+                alert.beginSheetModal(for: window) { [weak self] _ in
+                    EditorFocusRestoration.restoreFocus(to: self?.webView, context: "MilkdownEditor paste-image-error alert dismiss")
+                }
             }
         }
     }
@@ -84,7 +86,9 @@ extension MilkdownEditor.Coordinator {
                 alert.informativeText = error.localizedDescription
                 alert.alertStyle = .warning
                 alert.addButton(withTitle: "OK")
-                alert.beginSheetModal(for: window)
+                alert.beginSheetModal(for: window) { [weak self] _ in
+                    EditorFocusRestoration.restoreFocus(to: self?.webView, context: "MilkdownEditor image-picker-error alert dismiss")
+                }
             }
         }
     }

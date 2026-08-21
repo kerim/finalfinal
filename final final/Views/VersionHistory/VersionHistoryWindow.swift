@@ -109,7 +109,24 @@ struct VersionHistoryWindow: View {
             projectClosed = true
         }
         .onDisappear {
+            // Phase C focus-restoration audit: this is the ONE choke point every dismissal
+            // mechanism passes through -- the "Close" buttons' `closeVersionHistoryWindow()`,
+            // the post-restore auto-closes, AND the standard titlebar close button (which
+            // never routed through `closeVersionHistoryWindow()` -- review round fix). NOT
+            // Cmd-W: this app rebinds Cmd-W app-wide to "Close Project" (`FileCommands.swift`
+            // replaces the standard command groups, so there is no File > Close item at all),
+            // so it never reaches this window as a close at all.
+            //
+            // Real negative-control runs (driver, three separate vmtest cycles) proved all
+            // three of the paths above already restore focus correctly via AppKit's automatic
+            // key-window handback, with this call removed entirely -- this is NOT a confirmed
+            // bug fix the way the find-bar and mode-switch fixes were. Kept anyway as one
+            // choke point / defense-in-depth rather than three near-duplicate call sites, and
+            // because it costs nothing measurable. See docs/architecture/unified-undo.md for
+            // the full account of what was and wasn't empirically confirmed.
+            let requestingProjectId = coordinator.projectId
             coordinator.close()
+            restoreFocusAfterVersionHistoryClose(requestingProjectId: requestingProjectId)
         }
         .confirmationDialog(
             "Restore Section",
@@ -157,7 +174,7 @@ struct VersionHistoryWindow: View {
             }
 
             Button("Close") {
-                dismissWindow(id: "version-history")
+                closeVersionHistoryWindow()
             }
             .buttonStyle(.bordered)
             .controlSize(.small)
@@ -278,7 +295,7 @@ struct VersionHistoryWindow: View {
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 300)
             Button("Close Window") {
-                dismissWindow(id: "version-history")
+                closeVersionHistoryWindow()
             }
             Spacer()
         }
@@ -299,7 +316,7 @@ struct VersionHistoryWindow: View {
             Text("Open a project and try again.")
                 .foregroundStyle(themeManager.currentTheme.editorTextSecondary)
             Button("Close") {
-                dismissWindow(id: "version-history")
+                closeVersionHistoryWindow()
             }
             Spacer()
         }
@@ -345,6 +362,19 @@ struct VersionHistoryWindow: View {
             Spacer()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    // MARK: - Close
+
+    /// Closes this window. The actual focus-restoration (Phase C audit) lives in `.onDisappear`
+    /// above, NOT here -- that's the one choke point every dismissal mechanism passes through
+    /// (this button, the post-restore auto-closes, and the titlebar close button, the last of
+    /// which never called this function at all -- review round fix). Cmd-W does NOT close this
+    /// window at all: this app rebinds it app-wide to "Close Project" (`FileCommands.swift`),
+    /// so it's not a dismissal path here to begin with. Kept as a named action for readability
+    /// at the button call sites, not because it does anything beyond `dismissWindow` itself.
+    func closeVersionHistoryWindow() {
+        dismissWindow(id: "version-history")
     }
 
 }

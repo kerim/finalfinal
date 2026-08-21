@@ -124,6 +124,12 @@ enum EquationDialog {
             // sheet's lifetime (NSControl.target/NSTextView.delegate hold it
             // weakly) -- it's never otherwise referenced in this closure.
             _ = coordinator
+            // Focus-restoration audit (Phase C): this sheet dismisses on both Insert AND
+            // Cancel, and neither path previously handed focus back to the editor -- `defer`
+            // covers both the early return below and the fall-through Insert path.
+            defer {
+                EditorFocusRestoration.restoreFocus(to: webView, context: "\(logLabel) equation dialog dismiss")
+            }
             guard response == .alertFirstButtonReturn else { return }
             let isDisplay = segmentControl.selectedSegment == 1
             let raw = isDisplay ? textView.string : textField.stringValue

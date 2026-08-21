@@ -589,10 +589,18 @@ export function insertBreak(): void {
   insertAtCursor('\n\n<!-- ::break:: -->\n\n');
 }
 
-export function focusEditor(): void {
+/// Returns whether the editor's content DOM actually holds focus afterward -- NOT just
+/// whether `view.focus()` was called. `view.focus()` alone always "succeeds" even when
+/// there's no live view or `document.activeElement` never actually moves (a still-loading
+/// page, a detached DOM), which made the Swift-side EditorFocusRestoration log line "JS
+/// focus() ok" indistinguishable from a silent no-op (review round fix -- Phase C's whole
+/// point is making these failures diagnosable from logs, per the mode-switch fix's original
+/// "zero .undo lines" gap).
+export function focusEditor(): boolean {
   const view = getEditorView();
-  if (!view) return;
+  if (!view) return false;
   view.focus();
+  return view.hasFocus;
 }
 
 export function initialize(options: {

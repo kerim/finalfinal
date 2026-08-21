@@ -28,12 +28,41 @@ extension View {
         // re-render, but the headline case -- app already running, an open fails --
         // had nothing to force that re-render and the sheet simply never appeared.)
         let pending = ProjectOpenErrorState.shared.pending
+        // Focus-restoration audit (Phase C): this sheet can appear "over an unrelated open
+        // project" (see file header) -- a Repair/OpenAnyway failure or a second open-attempt's
+        // error surfacing while an editor with a focused WebView is already on screen.
+        // `onDismiss` fires once the sheet has actually closed, regardless of which of
+        // Cancel/OK/Escape/programmatic-clear triggered it.
+        //
+        // Multi-window guard (review round fix): this host is mounted inside the WindowGroup
+        // content, so EVERY open project window independently presents this sheet whenever
+        // `ProjectOpenErrorState.shared.pending` is non-nil -- but `DocumentManager.shared.
+        // structuralUndoController` is a single global last-writer-wins slot, unrelated to
+        // which window's sheet actually just closed. Unlike VersionHistoryWindow (which has
+        // a captured `coordinator.projectId` to compare), there is no project identity in
+        // hand at this call site at all -- a failure here can be a launch-time/picker error
+        // with no project open yet. Resolve from the ACTUAL key window instead: a sheet
+        // dismissing on window W hands key status back to W, so if the global slot's
+        // `activeWebView` doesn't belong to the now-key window, it belongs to some other
+        // window and must not be touched. If no editor is mounted at all, `activeWebView` is
+        // nil and this is a harmless no-op either way.
+        let onDismiss: () -> Void = {
+            let controller = DocumentManager.shared.structuralUndoController
+            guard let activeWebView = controller?.activeWebView, activeWebView.window === NSApp.keyWindow else {
+                DebugLog.log(.undo,
+                    "[ProjectOpenErrorHost] onDismiss: active WebView's window is not the " +
+                    "current key window -- skipping focus restore to avoid restoring focus " +
+                    "into a different project's window")
+                return
+            }
+            EditorFocusRestoration.restoreFocus(to: activeWebView, context: "project-open-error sheet dismiss")
+        }
         return self.sheet(item: Binding(
             get: { pending },
             set: { newValue in
                 if newValue == nil { ProjectOpenErrorState.shared.clear() }  // covers Escape / any SwiftUI-initiated dismiss
             }
-        )) { failure in
+        ), onDismiss: onDismiss, content: { failure in
             ProjectOpenErrorSheetContent(failure: failure)
                 // Injected directly on the presented content, not relied on via
                 // modifier-chain ordering in FinalFinalApp.body: a sheet's content
@@ -41,7 +70,7 @@ extension View {
                 // modifier, so anchoring the injection here holds regardless of how
                 // FinalFinalApp.body's modifier chain is reordered later.
                 .environment(ThemeManager.shared)
-        }
+        })
     }
 }
 
