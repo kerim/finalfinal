@@ -24,7 +24,25 @@ import { isolateHistory, redo, redoDepth, undo, undoDepth } from '@codemirror/co
 import { type EditorState, type Text, Transaction } from '@codemirror/state';
 import type { EditorView } from '@codemirror/view';
 import { clearHistory } from './api';
+import { derivedCorrection } from './derived-correction';
 import { getEditorView } from './editor-state';
+
+// Real user-transaction counter for the permanent `[UnifiedUndo]` fallthrough log below
+// (undo-mode-switch-focus investigation legacy -- kept because it proved genuinely useful
+// diagnostic signal, not because it's still under investigation). Same
+// `Transaction.addToHistory` provenance marker `maybeAdvanceRegistryOnSyncOriginTx` already
+// uses for the opposite check (`=== false`); this counts the complement (`!== false`, i.e.
+// NOT a sync-origin/programmatic push) on every doc-changing transaction. Wired into the
+// `EditorView.updateListener` in main.ts.
+let userTxCount = 0;
+export function noteUserTransaction(tr: Transaction): void {
+  // P3 (4e, undo-mode-switch-focus second timing gap): a `derivedCorrection`-annotated
+  // transaction IS user-undoable (addToHistory !== false) by design, but it isn't a real
+  // user keystroke -- exclude it so this diagnostic counter still means what its name says.
+  if (tr.docChanged && tr.annotation(Transaction.addToHistory) !== false && !tr.annotation(derivedCorrection)) {
+    userTxCount += 1;
+  }
+}
 
 // === Types (plan §4.1) ===
 
@@ -296,7 +314,19 @@ export function finalizeStructuralOpPostOpDoc(opId: string): boolean {
  */
 export function maybeAdvanceRegistryOnSyncOriginTx(tr: Transaction): void {
   if (registry.size === 0) return;
-  if (tr.annotation(Transaction.addToHistory) !== false) return;
+  // P3 (4e, undo-mode-switch-focus second timing gap): a `derivedCorrection`-annotated
+  // transaction is dispatched WITHOUT `addToHistory: false` (it's deliberately
+  // user-undoable, §4b) but must still be treated as sync-origin here -- it's an automatic
+  // correction, not a real user edit, and a structural entry's postOpDoc/preOpDoc equality
+  // target must keep tracking it exactly as it would any other derived refresh.
+  //
+  // FILED RESIDUAL, Phase-3 prerequisite (do not fix this round): widening this predicate
+  // means a derived correction now advances postOpDoc even though it's ALSO user-undoable.
+  // Undoing it could leave the live doc unequal to postOpDoc, so the next Cmd-Z would fall
+  // through to text-undo instead of routing to a structural entry -- orphaning it (not
+  // corrupting anything, just missing an entry). Unreachable today: no structural entries
+  // exist yet (descriptor.undoTopOpId is never populated until Phase 3).
+  if (tr.annotation(Transaction.addToHistory) !== false && !tr.annotation(derivedCorrection)) return;
   if (!tr.docChanged) return;
 
   // Whole-function mid-op guard (see doc comment above): if ANY entry is currently mid-op, this
@@ -349,6 +379,23 @@ function requestStructural(opId: string, direction: 'undo' | 'redo'): void {
 export function handleUnifiedUndoKeydown(e: KeyboardEvent, view: EditorView, direction: 'undo' | 'redo'): boolean {
   const decision =
     direction === 'undo' ? decideUndoRouting(liveRoutingParams(view)) : decideRedoRouting(liveRoutingParams(view));
+
+  // Permanent routing/history visibility (undo-mode-switch-focus investigation legacy --
+  // kept because it proved useful for diagnosing undo behavior generally, not because it's
+  // still under investigation; DOM-focus state was checked extensively during that
+  // investigation and confirmed never the actual defect, so it's no longer logged here).
+  // NOT the actual undo()/redo() call -- this function never makes it for the keydown path
+  // (CodeMirror's own `Mod-z` keymap binding in main.ts does, after this returns false and
+  // the event bubbles); see that keymap's own command-level logging for the real return
+  // value + before/after doc length on THIS path, and `requestUnified` below for the
+  // RPC/menu path's (which DOES call undo()/redo() directly, right here).
+  (window as any).webkit?.messageHandlers?.errorHandler?.postMessage({
+    type: 'debug',
+    message:
+      `[UnifiedUndo] keydown direction=${direction} decision=${decision.action} ` +
+      `undoDepth=${undoDepth(view.state)} redoDepth=${redoDepth(view.state)} ` +
+      `docLength=${view.state.doc.length} userTxCount=${userTxCount}`,
+  });
 
   if (decision.action === 'fallthrough') {
     maybeBeepOnRefusal(view, direction);
@@ -405,8 +452,21 @@ function requestUnified(direction: 'undo' | 'redo'): void {
 
   if (decision.action === 'fallthrough') {
     maybeBeepOnRefusal(view, direction);
-    if (direction === 'undo') undo(view);
-    else redo(view);
+    // This IS the real, sole invocation of undo()/redo() for the RPC/menu path
+    // (UndoRedoCommands.swift's performUndo/performRedo ->
+    // window.FinalFinal.requestUnifiedUndo/requestUnifiedRedo -> here) -- logging around it
+    // adds no extra call, just captures what the command actually reports (permanent
+    // visibility, undo-mode-switch-focus investigation legacy).
+    const docLengthBefore = view.state.doc.length;
+    const commandReturned = direction === 'undo' ? undo(view) : redo(view);
+    const docLengthAfter = view.state.doc.length;
+    (window as any).webkit?.messageHandlers?.errorHandler?.postMessage({
+      type: 'debug',
+      message:
+        `[UnifiedUndo] menu-path-invocation direction=${direction} ` +
+        `commandReturned=${commandReturned} docLengthBefore=${docLengthBefore} ` +
+        `docLengthAfter=${docLengthAfter}`,
+    });
     return;
   }
 
@@ -483,7 +543,11 @@ export function receiveRedoOutcome(opId: string, outcome: 'performed' | 'fallbac
 export function maybeNotifyHistoryEdited(tr: Transaction): void {
   if (descriptor.redoTopOpId === undefined) return;
   if (!tr.docChanged) return;
-  if (tr.annotation(Transaction.addToHistory) === false) return;
+  // P3 (4e, undo-mode-switch-focus second timing gap): a `derivedCorrection`-annotated
+  // transaction IS user-undoable (so it does NOT hit the addToHistory===false check just
+  // above) but it's still an automatic correction, not a genuine user edit -- must not
+  // count as "the user edited history" for the redo-branch invalidation this guards.
+  if (tr.annotation(Transaction.addToHistory) === false || tr.annotation(derivedCorrection)) return;
   if (tr.isUserEvent('undo') || tr.isUserEvent('redo')) return;
   (window as any).webkit?.messageHandlers?.historyEdited?.postMessage({});
 }

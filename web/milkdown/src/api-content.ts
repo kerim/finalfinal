@@ -1,7 +1,7 @@
 // Content-related API method implementations for window.FinalFinal
 
 import { editorViewCtx, parserCtx } from '@milkdown/kit/core';
-import { history as pmHistory } from '@milkdown/kit/prose/history';
+import { closeHistory, history as pmHistory } from '@milkdown/kit/prose/history';
 import type { NodeType, Node as ProsemirrorNode, ResolvedPos } from '@milkdown/kit/prose/model';
 import { Slice } from '@milkdown/kit/prose/model';
 import { type Plugin, Selection, type Transaction } from '@milkdown/kit/prose/state';
@@ -45,6 +45,7 @@ import {
 } from './editor-state';
 import { clearSearch } from './find-replace';
 import { consumePendingDropPos, consumePendingPastePos } from './image-plugin';
+import { getRecentUserEditSpan } from './recent-edit-span';
 import { isSourceModeEnabled } from './source-mode-plugin';
 import { syncLog } from './sync-debug';
 import type { Block, ExpectedBlockMeta, ImageBlockMeta } from './types';
@@ -1438,27 +1439,69 @@ export function updateHeadingLevels(changes: Array<{ blockId: string; newLevel: 
         idToPos.set(id, pos);
       }
 
-      let tr = view.state.tr;
+      // P3 WYSIWYG (undo-mode-switch-focus second timing gap): split changes into
+      // overlapping-the-user's-recent-edit vs not. Positions are resolved ONCE here
+      // against the pre-dispatch doc -- setNodeMarkup is attr-only and never shifts
+      // positions, so these `pos` values stay valid across BOTH transactions below, even
+      // though the second is built against the state left by the first's dispatch.
+      const recentSpan = getRecentUserEditSpan();
+      const overlapping: Array<{ pos: number; newLevel: number }> = [];
+      const silent: Array<{ pos: number; newLevel: number }> = [];
       let appliedCount = 0;
+
       for (const change of changes) {
         const pos = idToPos.get(change.blockId);
         if (pos === undefined) {
           syncLog('API:updateHeadingLevels', `WARN: blockId ${change.blockId.slice(0, 8)} not found`);
           continue;
         }
-        const node = tr.doc.nodeAt(pos);
+        const node = view.state.doc.nodeAt(pos);
         if (!node || node.type.name !== 'heading') continue;
-        tr = tr.setNodeMarkup(pos, undefined, {
-          ...node.attrs,
-          level: change.newLevel,
-        });
-        appliedCount++;
+        const overlaps = recentSpan !== null && pos < recentSpan.to && pos + node.nodeSize > recentSpan.from;
+        (overlaps ? overlapping : silent).push({ pos, newLevel: change.newLevel });
       }
 
-      if (tr.steps.length > 0) {
-        // Hierarchy enforcement is a programmatic, sync-origin push (like the other
-        // programmatic dispatches in this file) — it must not land as a user-undoable step.
-        view.dispatch(tr.setMeta('addToHistory', false));
+      // Non-overlapping changes: keep today's silent dispatch verbatim -- hierarchy
+      // enforcement is a programmatic, sync-origin push, must not land as a
+      // user-undoable step.
+      if (silent.length > 0) {
+        let tr = view.state.tr;
+        for (const { pos, newLevel } of silent) {
+          const node = tr.doc.nodeAt(pos);
+          if (!node || node.type.name !== 'heading') continue;
+          tr = tr.setNodeMarkup(pos, undefined, { ...node.attrs, level: newLevel });
+          appliedCount++;
+        }
+        if (tr.steps.length > 0) {
+          view.dispatch(tr.setMeta('addToHistory', false));
+        }
+      }
+
+      // Overlapping changes: undoable, isolated on BOTH history boundaries.
+      if (overlapping.length > 0) {
+        let tr = view.state.tr;
+        for (const { pos, newLevel } of overlapping) {
+          const node = tr.doc.nodeAt(pos);
+          if (!node || node.type.name !== 'heading') continue;
+          tr = tr.setNodeMarkup(pos, undefined, { ...node.attrs, level: newLevel });
+          appliedCount++;
+        }
+        if (tr.steps.length > 0) {
+          // Leading boundary: closeHistory resets prevTime to 0 BEFORE this transaction
+          // applies, so it can never join the user's still-open typing group. Tagged
+          // derivedCorrection (not addToHistory:false -- deliberately left undoable) so
+          // undo-coordinator.ts's three provenance predicates route it correctly.
+          view.dispatch(closeHistory(tr).setMeta('derivedCorrection', true));
+          // Trailing boundary -- not optional. Without this second dispatch, the state
+          // left by the one above stores prevTime = tr.time from the correction ITSELF,
+          // so the user's very next transaction within newGroupDelay (500ms, unconfigured
+          // here) at an adjacent position would join the correction's own undo group --
+          // "user resumes typing right where the correction just happened" is the common
+          // case, not an edge case. A second, EMPTY closeHistory dispatch resets
+          // prevTime back to 0 for whatever comes next (applyTransaction performs the
+          // reset and returns early at zero steps).
+          view.dispatch(closeHistory(view.state.tr));
+        }
       }
 
       // Update currentContent to match post-surgery state

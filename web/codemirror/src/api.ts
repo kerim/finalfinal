@@ -1,3 +1,4 @@
+import { isolateHistory } from '@codemirror/commands';
 import {
   findNext as cmFindNext,
   findPrevious as cmFindPrevious,
@@ -7,11 +8,12 @@ import {
   SearchQuery,
   setSearchQuery,
 } from '@codemirror/search';
-import { EditorState, Transaction } from '@codemirror/state';
+import { type ChangeSet, EditorState, Transaction } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
 import { escapeAltAttr } from '../../shared/image-caption-attrs';
 import { stripAnchors } from './anchor-plugin';
 import { hideCitationAddButton, mergeCitations } from './citations';
+import { derivedCorrection } from './derived-correction';
 import {
   allocateCAYWRequestId,
   clearPendingCAYWRequests,
@@ -37,8 +39,9 @@ import {
 import { setFocusModeEffect, setFocusModeEnabled } from './focus-mode-plugin';
 import { dismissImageCaptionPopup } from './image-caption-popup';
 import { installLineHeightFix, invalidateHeadingMetricsCache } from './line-height-fix';
+import { getRecentUserEditSpan } from './recent-edit-span';
 import { formatTableCommand, insertTableCommand } from './table-format';
-import { computeMinimalChange } from './text-diff';
+import { computeMinimalChanges } from './text-diff';
 import type { AnnotationType, FindOptions, FindResult, ParsedAnnotation, SearchState } from './types';
 
 // --- Pending drop position for image drops ---
@@ -114,20 +117,26 @@ export function countWords(text: string): number {
 
 // --- API implementations ---
 
-export function setContent(markdown: string, options?: { scrollToStart?: boolean }): void {
+export function setContent(
+  markdown: string,
+  options?: { scrollToStart?: boolean; origin?: 'derived' | 'intentional' }
+): void {
   const view = getEditorView();
   if (!view) return;
 
   dismissImageCaptionPopup();
 
-  // Confine the change to the span that actually differs instead of always doing a
-  // whole-document replace. See text-diff.ts's computeMinimalChange doc comment for
+  // Confine the changes to the spans that actually differ instead of always doing a
+  // whole-document replace. See text-diff.ts's computeMinimalChanges doc comment for
   // why: CodeMirror maps any selection inside a fully-replaced range to the START of
   // the replacement, so replacing everything silently teleported the cursor (and
   // scroll anchor) to position 0 on every derived-content push (e.g. a
-  // bibliography-section resync after a citation insert).
+  // bibliography-section resync after a citation insert). Multi-span (P1,
+  // undo-mode-switch-focus second timing gap): unrelated text sitting BETWEEN two
+  // separated corrections keeps its own undo history too, instead of being swallowed
+  // into one giant replaced range the way a single-span diff would.
   const current = view.state.doc.toString();
-  const change = computeMinimalChange(current, markdown);
+  const changes = computeMinimalChanges(current, markdown);
 
   // scrollToStart is the zoom-transition path: it deliberately resets to the top,
   // which the old whole-document replace achieved as a side effect of position
@@ -136,15 +145,83 @@ export function setContent(markdown: string, options?: { scrollToStart?: boolean
   // own mapping keeps the cursor (and scroll anchor) wherever it was for any change
   // that doesn't span it -- the whole point of this fix.
   //
-  // Accepted residual: if the cursor happens to sit INSIDE the specific span that
-  // changed, it now maps to the start of that span rather than jumping to document
-  // position 0. Strictly better than today.
-  if (change || options?.scrollToStart) {
-    view.dispatch({
-      ...(change ? { changes: change } : {}),
-      ...(options?.scrollToStart ? { selection: { anchor: 0 } } : {}),
-      annotations: Transaction.addToHistory.of(false),
-    });
+  // Accepted residual: if the cursor happens to sit INSIDE a span that changed, it
+  // now maps to the start of that span rather than jumping to document position 0.
+  // Strictly better than today.
+  if (changes.length > 0 || options?.scrollToStart) {
+    // M3 (judge-review): `origin` is Swift's OWN existing intentional-vs-derived
+    // classification (`isForced` in CodeMirrorCoordinator+Handlers.swift's
+    // shouldPushContent), threaded through explicitly -- this file no longer infers it
+    // from overlap alone. `origin: 'intentional'` (the default when the caller omits
+    // `options` entirely, e.g. `initialize()`'s own internal call -- unclassified must
+    // never accidentally become undoable) is NEVER eligible for undoable treatment:
+    // covers project load, mode-switch mount, zoom (both directions), and structural
+    // undo/redo restore. `scrollToStart` (the zoom-in transition) implies intentional
+    // regardless, as a belt-and-braces backstop even if `origin` were ever omitted.
+    //
+    // CONFIRMED FAILURE CASE this replaces: zoom-in doesn't remount CodeMirror (unlike a
+    // mode switch), so a JS-side-only "does this span overlap the user's last edit"
+    // heuristic could classify the ENTIRE zoom content replacement as "overlapping"
+    // (nothing distinguished it from an ordinary derived push) -- making the whole
+    // zoom-in transition wrongly undoable, so Cmd-Z would restore the un-zoomed document
+    // inside the zoomed view.
+    const isIntentional = (options?.origin ?? 'intentional') === 'intentional' || options?.scrollToStart === true;
+
+    if (isIntentional) {
+      view.dispatch({
+        ...(changes.length > 0 ? { changes } : {}),
+        ...(options?.scrollToStart ? { selection: { anchor: 0 } } : {}),
+        annotations: Transaction.addToHistory.of(false),
+      });
+    } else {
+      // P3 (4b, undo-mode-switch-focus second timing gap): partition PER SPAN (judge-
+      // review M3 -- a single boolean over the whole dispatch used to make a push with
+      // one overlapping and one unrelated correction wrongly treat BOTH as undoable
+      // together). A derived push that overlaps text the user just typed is, from the
+      // user's perspective, an automatic correction competing with their own edit --
+      // not invisible background sync. Dispatched as its OWN undoable step
+      // (isolateHistory so it can't merge into the user's still-open typing group
+      // either side) instead of the usual silent `addToHistory: false`, so Cmd-Z first
+      // undoes the correction, then undoes the user's own typing. Tagged
+      // `derivedCorrection` so undo-coordinator.ts's three provenance predicates (§4e)
+      // can tell this apart from both an ordinary user edit and an ordinary silent
+      // derived push. Non-overlapping spans keep today's silent behavior verbatim.
+      const recentSpan = getRecentUserEditSpan();
+      const overlaps = (c: { from: number; to: number }) =>
+        recentSpan !== null && c.from < recentSpan.to && c.to > recentSpan.from;
+      const silentChanges = changes.filter((c) => !overlaps(c));
+      const overlappingChanges = changes.filter(overlaps);
+
+      // ORDERING TRAP (M3): both sets were computed against the ORIGINAL document. The
+      // silent set must dispatch FIRST (it's the common case and preserves today's
+      // behavior exactly when nothing overlaps), and the overlapping set's positions
+      // must then be mapped through the silent dispatch's own ChangeSet before its
+      // dispatch -- the live document has already moved once the first transaction
+      // applies.
+      let mappedThroughSilent: ChangeSet | null = null;
+      if (silentChanges.length > 0) {
+        const tr = view.state.update({ changes: silentChanges, annotations: Transaction.addToHistory.of(false) });
+        mappedThroughSilent = tr.changes;
+        view.dispatch(tr);
+      }
+
+      if (overlappingChanges.length > 0) {
+        const remapped = mappedThroughSilent
+          ? overlappingChanges.map((c) => ({
+              from: mappedThroughSilent!.mapPos(c.from, -1),
+              to: mappedThroughSilent!.mapPos(c.to, 1),
+              insert: c.insert,
+            }))
+          : overlappingChanges;
+        view.dispatch({
+          changes: remapped,
+          annotations: [derivedCorrection.of(true), isolateHistory.of('full')],
+        });
+      }
+
+      // scrollToStart never applies here: it forces `origin: 'intentional'` above (an
+      // overlapping/undoable dispatch is never reached with scrollToStart set).
+    }
   }
 
   // Force CodeMirror to re-measure line heights after content change.

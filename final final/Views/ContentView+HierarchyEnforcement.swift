@@ -122,6 +122,16 @@ extension ContentView {
 
         editorState.contentState = .hierarchyEnforcement
         defer { editorState.contentState = .idle }
+        // P2 (undo-mode-switch-focus second timing gap, M2 fix): this phase of the
+        // reconciliation chain also holds the in-flight token CodeMirrorCoordinator.
+        // shouldPushContent consults (via SectionSyncService.isSyncPending) to extend its
+        // settle window -- acquires its OWN token, released via `defer` right alongside
+        // contentState's own reset, so every exit path below (including the
+        // `guard let bss = ... else { return }` further down) releases it without having
+        // to be enumerated. No gate needed against a concurrent acquirer: each acquisition
+        // is independent (see SectionSyncService.isSyncPending's doc comment).
+        let syncPendingToken = syncService.acquireSyncPending()
+        defer { syncService.releaseSyncPending(syncPendingToken) }
 
         // 1. Save original heading levels to compute diff
         let originalLevels = Dictionary(
@@ -232,6 +242,9 @@ extension ContentView {
             }
             let withAnchors = sectionSync.injectSectionAnchors(
                 markdown: content, sections: adjusted)
+            // DERIVED REFRESH (default): background hierarchy-violation correction, not a
+            // deliberate user-facing replacement event -- must go through the settle-window
+            // guard like any other derived DB-driven refresh.
             editorState.sourceContent = sectionSync.injectBibliographyMarker(
                 markdown: withAnchors, sections: editorState.sections)
         }

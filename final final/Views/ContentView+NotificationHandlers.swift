@@ -60,6 +60,9 @@ extension ContentView {
             }
 
             editorState.content = result.markdown  // sidebar sync (won't trigger WKWebView push)
+            // DERIVED REFRESH (default): notification-driven bibliography resync -- can fire
+            // at arbitrary moments, including mid-typing (the undo-mode-switch-focus root
+            // cause scenario). Must go through the settle-window guard, never force through.
             updateSourceContentIfNeeded()
 
             await blockSyncService.setContentWithBlockIds(
@@ -98,6 +101,8 @@ extension ContentView {
             }
 
             editorState.content = result.markdown
+            // DERIVED REFRESH (default): notification-driven Notes/footnote-definitions
+            // resync -- same reasoning as handleBibliographySectionChanged above.
             updateSourceContentIfNeeded()
 
             await blockSyncService.setContentWithBlockIds(
@@ -213,6 +218,12 @@ extension ContentView {
 
             editorState.content = result.markdown
             editorState.pendingImageMeta = result.imageMeta
+            // DERIVED REFRESH (default, genuinely ambiguous -- flagged): a deliberate user
+            // action (footnote insertion) synthesizes new content, so a case could be made
+            // for INTENTIONAL, but this is exactly the call site the comment below already
+            // documents as a KNOWN residual data-loss window -- leaving it DERIVED means the
+            // new settle-window guard actively helps this pre-existing issue rather than
+            // bypassing it.
             updateSourceContentIfNeeded()
 
             // Known residual limitation (left as-is, not fixed here): keystrokes typed in
@@ -280,7 +291,12 @@ extension ContentView {
                     editorState: editorState,
                     syncService: sectionSyncService
                 )
-                updateSourceContentIfNeeded()
+                // INTENTIONAL REPLACEMENT (flagged -- genuinely nested/ambiguous): part of
+                // handleDidZoomOut()'s own zoom-TRANSITION handling (hierarchy violations
+                // accumulated while zoomed get cleaned up as this transition completes), so
+                // classified with the other zoom-transition sites rather than as an
+                // independent background enforcement pass.
+                updateSourceContentIfNeeded(intentionalReplacement: true)
             }
         }
 

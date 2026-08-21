@@ -37,6 +37,50 @@ class SectionSyncService {
     /// Content we last synced - prevents feedback loop from ValueObservation
     private var lastSyncedContent: String = ""
 
+    /// P2 (undo-mode-switch-focus second timing gap, judge-review M2 fix): true while a
+    /// content-triggered reconciliation is in flight -- spans BOTH the 500ms debounce +
+    /// `syncContent` in THIS file, AND `ContentView.enforceHierarchyAsync` (ContentView+
+    /// HierarchyEnforcement.swift). `CodeMirrorCoordinator.shouldPushContent` (via the
+    /// `isReconciliationPending` closure) extends its settle-window suppression while
+    /// this is true, capped at 2s there as a backstop against a leaked flag.
+    ///
+    /// Backed by a SET of tokens, not a plain Bool -- the earlier plain-Bool design had
+    /// three unsynchronized writers (`contentChanged`'s debounce Task, `syncNow`'s direct
+    /// path, `enforceHierarchyAsync`) coordinating through a shared
+    /// `debounceGeneration`-matching scheme that didn't actually cover all three:
+    /// `cancelPendingSync()` bumped the generation without touching the flag (a
+    /// mid-flight task's defer then saw the mismatch and refused to clear, leaking `true`
+    /// forever), while `syncNow` cancelled WITHOUT bumping the generation (so that SAME
+    /// cancelled task's defer DID still match and clear -- possibly while `syncNow`'s own
+    /// work was still in flight), and `enforceHierarchyAsync` cleared unconditionally
+    /// with no gate at all. A token set sidesteps all of this: every acquirer gets a
+    /// UNIQUE token via `acquireSyncPending()` and releases exactly that token via
+    /// `releaseSyncPending(_:)` (idempotent, ignores an already-released/unknown token) --
+    /// cancellation still runs a Task's own `defer`, which still only ever touches its
+    /// own token, so no generation-matching bookkeeping is needed at all.
+    private var activeSyncPendingTokens: Set<Int> = []
+    private var nextSyncPendingToken: Int = 0
+
+    var isSyncPending: Bool { !activeSyncPendingTokens.isEmpty }
+
+    /// Acquire a reconciliation-in-flight token. Caller must release it (via
+    /// `releaseSyncPending(_:)`, ideally in a `defer` wrapping the actual work scope)
+    /// when done -- release is idempotent, so it's safe to call even if the work was
+    /// cancelled partway through.
+    @discardableResult
+    func acquireSyncPending() -> Int {
+        nextSyncPendingToken += 1
+        let token = nextSyncPendingToken
+        activeSyncPendingTokens.insert(token)
+        return token
+    }
+
+    /// Idempotent: releasing an already-released (or never-acquired/foreign) token is a
+    /// safe no-op -- it can never clear a DIFFERENT, still-active acquirer's token.
+    func releaseSyncPending(_ token: Int) {
+        activeSyncPendingTokens.remove(token)
+    }
+
     // MARK: - Public API
 
     /// Configure the service for a specific project
@@ -119,22 +163,30 @@ class SectionSyncService {
     /// - Parameters:
     ///   - markdown: The markdown content to sync
     ///   - zoomedIds: Optional set of zoomed section IDs (pass when zoomed to avoid replacing full array)
-    func contentChanged(_ markdown: String, zoomedIds: Set<String>? = nil) {
+    func contentChanged(_ markdown: String, zoomedIds: Set<String>? = nil, suppressReconcile: Bool = false) {
         // Skip if content transition is in progress (drag, zoom, etc.)
         guard !(editorState?.isBusy ?? false) else { return }
 
         // Idempotent check: skip if this is content we just synced
         guard markdown != lastSyncedContent else { return }
 
+        // P2: the token must be acquired ONLY once a debounce is actually scheduled --
+        // both early returns above must never acquire one (a skipped call means no
+        // reconciliation work is actually pending).
         debounceTask?.cancel()
         debounceGeneration += 1
         let myGeneration = debounceGeneration
+        let syncPendingToken = acquireSyncPending()
         debounceTask = Task {
+            // M2: single owner via defer, releasing exactly the token THIS acquisition
+            // got -- unconditional, no generation-matching needed (see isSyncPending's
+            // doc comment for why the old generation-matching scheme was unsound).
+            defer { self.releaseSyncPending(syncPendingToken) }
             try? await Task.sleep(for: debounceInterval)
             guard !Task.isCancelled else { return }
             // Double-check: if another contentChanged fired during sleep, skip
             guard self.debounceGeneration == myGeneration else { return }
-            await syncContent(markdown, zoomedIds: zoomedIds, fromEditorChange: true)
+            await syncContent(markdown, zoomedIds: zoomedIds, fromEditorChange: true, suppressReconcile: suppressReconcile)
         }
     }
 
@@ -149,9 +201,18 @@ class SectionSyncService {
     ///   content is definitionally the user's current state at that point, not a
     ///   pre-round-trip programmatic sync) so Getting Started edit-detection sees it. Defaults
     ///   to `false` for programmatic/terminal syncs (initial load, version-history prep, etc.).
-    func syncNow(_ markdown: String, fromEditorChange: Bool = false) async {
+    /// - Parameter suppressReconcile: P3 §4d -- see `syncContent`'s matching parameter doc
+    ///   comment. Exposed here too (not just the debounced `contentChanged` path) so any
+    ///   caller can request suppression, and so this entry point is directly testable.
+    func syncNow(_ markdown: String, fromEditorChange: Bool = false, suppressReconcile: Bool = false) async {
+        // M2: this cancels any pending debounce task directly (cancellation still runs
+        // THAT task's own `defer`, releasing only ITS OWN token -- see isSyncPending's
+        // doc comment), then acquires its OWN token for its own work scope, wrapped in
+        // `defer` here. No generation bookkeeping needed either way.
         debounceTask?.cancel()
-        await syncContent(markdown, fromEditorChange: fromEditorChange)
+        let syncPendingToken = acquireSyncPending()
+        defer { releaseSyncPending(syncPendingToken) }
+        await syncContent(markdown, fromEditorChange: fromEditorChange, suppressReconcile: suppressReconcile)
     }
 
     /// Synchronous section sync for app termination / project close.
@@ -237,7 +298,16 @@ class SectionSyncService {
     ///   `contentChanged` path (genuinely settled editor content) or an explicitly-flagged
     ///   `syncNow` flush of the user's real current state. Gates Getting Started edit
     ///   detection so a programmatic/terminal sync never poisons or falsely trips it.
-    private func syncContent(_ markdown: String, zoomedIds: Set<String>? = nil, fromEditorChange: Bool = false) async {
+    /// - Parameter suppressReconcile: P3 §4d (undo-mode-switch-focus second timing gap).
+    ///   When true, skips ONLY steps 3-4 below (reconcile + applySectionChanges) --
+    ///   step 5 (the DB content-of-record persist) ALWAYS runs regardless, or undone
+    ///   text would never reach the database and `updateSourceContentIfNeeded()` could
+    ///   later resurrect stale content. Set true when the content that triggered this
+    ///   sync came from an undo (the user just stepped back through an automatic
+    ///   correction, per P3's undoable-derived-correction fix) -- reconciling immediately
+    ///   would otherwise re-detect and re-apply the very correction just undone, before
+    ///   the user's next Cmd-Z can reach their own original typing.
+    private func syncContent(_ markdown: String, zoomedIds: Set<String>? = nil, fromEditorChange: Bool = false, suppressReconcile: Bool = false) async {
         guard let db = projectDatabase, let pid = projectId else { return }
 
         // When zoomed, update zoomed sections in-place
@@ -264,17 +334,20 @@ class SectionSyncService {
                 let headers = SectionSyncService.parseHeaders(
                     from: markdown, existingBibTitle: existingBibTitle,
                     existingNotesTitle: existingNotesTitle, fallbackBibTitle: fallbackBibTitle)
-                guard !headers.isEmpty else { return }
 
-                // 3. Reconcile to find minimal changes
-                let changes = reconciler.reconcile(headers: headers, dbSections: dbSections, projectId: pid)
-
-                // 4. Apply changes to database (if any)
-                if !changes.isEmpty {
-                    try db.applySectionChanges(changes, for: pid)
+                // 3-4. Reconcile + apply -- skipped entirely while suppressed (§4d). Guarded
+                // on `!headers.isEmpty` same as before, only now nested under the
+                // suppression check rather than an early return, since step 5 below must
+                // still run even when headers is empty or suppression is active.
+                if !suppressReconcile && !headers.isEmpty {
+                    let changes = reconciler.reconcile(headers: headers, dbSections: dbSections, projectId: pid)
+                    if !changes.isEmpty {
+                        try db.applySectionChanges(changes, for: pid)
+                    }
                 }
 
-                // 5. Save full content to database ONLY when not zoomed
+                // 5. Save full content to database ONLY when not zoomed -- ALWAYS runs,
+                // suppression or not (content-of-record is never suppressed).
                 if !isZoomed {
                     try db.saveContent(markdown: markdown, for: pid)
                 }

@@ -28,7 +28,9 @@ extension CodeMirrorEditor {
         var scrollToOffsetBinding: Binding<Int?>
         var scrollToAnnotationIndexBinding: Binding<Int?>
         var isResettingContentBinding: Binding<Bool>
-        let onContentChange: (String) -> Void
+        /// P3 §4c/4d: second parameter is `wasUndo` -- see CodeMirrorEditor's matching
+        /// property doc comment.
+        let onContentChange: (String, Bool) -> Void
         let onStatsChange: (Int, Int) -> Void
         let onSectionChange: (String) -> Void
         let onCursorPositionSaved: (CursorPosition) -> Void
@@ -43,6 +45,41 @@ extension CodeMirrorEditor {
         var lastReceivedFromEditor: Date = .distantPast
         var lastPushedContent: String = ""
         var lastPushTime: Date = .distantPast
+
+        /// Timestamp of the most recent inbound `contentChanged` message -- set
+        /// unconditionally at the top of that dispatch (CodeMirrorCoordinator+
+        /// MessageDispatch.swift), ahead of `handleContentPush`'s own early-return guards,
+        /// so it reflects every real local edit even in cases that guard skips (mid-
+        /// contentState transition, the 150ms push grace window, mid-reset). Deliberately
+        /// NOT `lastReceivedFromEditor`, which IS skipped in those cases and would
+        /// therefore understate how recently the user actually typed. Reset to
+        /// `.distantPast` on every `isEditorReady` false->true transition (a freshly
+        /// mounted instance has no local edits of its own -- see `shouldPushContent`'s
+        /// settle-window guard, undo-mode-switch-focus fix).
+        var lastLocalEditAt: Date = .distantPast
+
+        /// P3 (4c/4d, undo-mode-switch-focus second timing gap): the most recent
+        /// `contentChanged` message's `wasUndo` flag (sticky-OR across the JS-side 50ms
+        /// debounce window -- see main.ts). Captured on every `contentChanged` dispatch;
+        /// NOT YET consumed by `SectionSyncService`'s re-correction suppression (§4d) --
+        /// that wiring is deferred, see this round's coder report.
+        var lastContentChangeWasUndo: Bool = false
+
+        /// Debounced retry timer for a settle-window-suppressed push -- see
+        /// `scheduleDeferredRecompute()`.
+        var deferredPushTimer: Timer?
+
+        /// Latest `forcedPushGeneration` value seen from the view (set every `updateNSView`
+        /// cycle, mirroring `contentGeneration`'s own plumbing). Compared against
+        /// `lastHonouredForcedPushGeneration` in `shouldPushContent`.
+        var forcedPushGeneration: Int = 0
+
+        /// The `forcedPushGeneration` value last actually honoured (forced a push through,
+        /// bypassing the settle-window guard). Generation-scoped, not a sticky boolean --
+        /// `updateNSView` runs many times per state change, so a plain flag would leak
+        /// across cycles and disable the guard permanently after the first intentional
+        /// replacement. Mirrors `lastPollCacheResetGeneration`'s pattern below.
+        var lastHonouredForcedPushGeneration: Int = 0
 
         var lastThemeCss: String = ""
         var lastFocusModeState: Bool = false
@@ -114,13 +151,41 @@ extension CodeMirrorEditor {
         /// Callback to provide WebView reference
         var onWebViewReady: ((WKWebView) -> Void)?
 
+        /// Callback wired from ContentView, re-invoking the real `updateSourceContentIfNeeded()`
+        /// against the NOW-current `editorState.content`. Called by
+        /// `scheduleDeferredRecompute()` when a settle-window-suppressed push's retry timer
+        /// fires -- undo-mode-switch-focus fix, must-fix F2 (judge review round): a
+        /// settle-window-suppressed push must be RE-DERIVED at retry time, never replayed as
+        /// the stale string that was suppressed. See that function's own doc comment.
+        var onContentRecompute: (() -> Void)?
+
+        /// P2 (undo-mode-switch-focus second timing gap): backing closure for
+        /// CodeMirrorEditor's matching property -- see its doc comment.
+        var isReconciliationPending: (() -> Bool)?
+
+        /// When `isReconciliationPending` was FIRST observed true (nil while it's false).
+        /// `SectionSyncService.isSyncPending` is a plain Bool with no timestamp of its
+        /// own, so `shouldPushContent` tracks this here to apply the 2s hard-cap backstop.
+        var reconciliationPendingSince: Date?
+
+        /// M3 (judge-review): whether the LAST call to `shouldPushContent` that returned
+        /// `true` was the intentional-replacement (`isForced`) branch, vs. an ordinary
+        /// derived push. `setContent` reads this to tell the JS side which classification
+        /// this push is (`origin: 'intentional' | 'derived'`) -- JS's own P3 overlap logic
+        /// no longer guesses "intentional vs. derived" from anything else. Confirmed failure
+        /// case this replaces: zoom-in doesn't remount CodeMirror, so typing right before a
+        /// zoom could get the ENTIRE zoom content replacement classified as "overlapping" by
+        /// a JS-side-only heuristic, making it wrongly undoable (Cmd-Z would then restore the
+        /// un-zoomed document inside the zoomed view).
+        var lastPushWasForced: Bool = false
+
         init(
             content: Binding<String>,
             cursorPositionToRestore: Binding<CursorPosition?>,
             scrollToOffset: Binding<Int?>,
             scrollToAnnotationIndex: Binding<Int?>,
             isResettingContent: Binding<Bool>,
-            onContentChange: @escaping (String) -> Void,
+            onContentChange: @escaping (String, Bool) -> Void,
             onStatsChange: @escaping (Int, Int) -> Void,
             onSectionChange: @escaping (String) -> Void,
             onCursorPositionSaved: @escaping (CursorPosition) -> Void,
@@ -148,6 +213,7 @@ extension CodeMirrorEditor {
 
         deinit {
             pollingTimer?.invalidate()
+            deferredPushTimer?.invalidate()
             if let observer = toggleObserver {
                 NotificationCenter.default.removeObserver(observer)
             }

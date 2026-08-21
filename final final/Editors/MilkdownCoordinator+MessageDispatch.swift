@@ -95,9 +95,30 @@ extension MilkdownEditor.Coordinator {
             return true
 
         case "contentChanged":
-            guard let content = message.body as? String else { return true }
+            // P3 (4c, undo-mode-switch-focus second timing gap): main.ts now posts an object
+            // `{content, wasUndo}` instead of a bare string. Bare-string fallback is
+            // UNSAFE-SILENT (means the web bundle wasn't rebuilt -- wasUndo silently reads as
+            // false), so it's logged once per occurrence rather than swallowed.
+            let content: String?
+            let wasUndo: Bool
+            if let body = message.body as? [String: Any] {
+                content = body["content"] as? String
+                wasUndo = (body["wasUndo"] as? Bool) ?? false
+            } else if let bareString = message.body as? String {
+                content = bareString
+                wasUndo = false
+                DebugLog.log(.sync, "[MilkdownEditor] contentChanged arrived as a bare string -- stale web bundle? run: cd web && pnpm build")
+            } else {
+                content = nil
+                wasUndo = false
+            }
+            guard let content else { return true }
             Task { @MainActor in
-                self.handleContentPush(content)
+                self.lastContentChangeWasUndo = wasUndo
+                // P3 (4d): forwarded through to onContentChange, which ContentView wires
+                // to construct/invalidate editorState.reconcileSuppression (the M1 token
+                // design) -- see MilkdownEditor's onContentChange doc comment.
+                self.handleContentPush(content, wasUndo: wasUndo)
             }
             return true
 

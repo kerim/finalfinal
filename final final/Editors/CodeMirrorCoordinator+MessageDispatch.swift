@@ -93,9 +93,58 @@ extension CodeMirrorEditor.Coordinator {
             return true
 
         case "contentChanged":
-            guard let content = message.body as? String else { return true }
+            // P3 (4c, undo-mode-switch-focus second timing gap): main.ts now posts an object
+            // `{content, wasUndo}` instead of a bare string -- `wasUndo` is a sticky-OR over
+            // the JS-side 50ms aggregating debounce window, true if any transaction folded
+            // into this push was an undo replay. Bare-string fallback is UNSAFE-SILENT (it
+            // means the web bundle wasn't rebuilt after this change -- `wasUndo` silently
+            // reads as false, so the P3 §4d re-correction suppression this value is meant to
+            // drive never engages), so it's logged once per occurrence rather than swallowed.
+            let content: String?
+            let wasUndo: Bool
+            if let body = message.body as? [String: Any] {
+                content = body["content"] as? String
+                wasUndo = (body["wasUndo"] as? Bool) ?? false
+            } else if let bareString = message.body as? String {
+                content = bareString
+                wasUndo = false
+                DebugLog.log(.sync, "[CodeMirrorEditor] contentChanged arrived as a bare string -- stale web bundle? run: cd web && pnpm build")
+            } else {
+                content = nil
+                wasUndo = false
+            }
+            guard let content else { return true }
             Task { @MainActor in
-                self.handleContentPush(content)
+                // Set BEFORE handleContentPush's own early-return guards (mid-contentState
+                // transition, the 150ms push grace window, mid-reset) -- all cases where a
+                // local edit genuinely happened and must still count. Deliberately not
+                // `lastReceivedFromEditor`, which IS skipped in those cases (undo-mode-
+                // switch-focus fix: see `lastLocalEditAt`'s and `shouldPushContent`'s doc
+                // comments in CodeMirrorCoordinator+Core.swift/+Handlers.swift).
+                //
+                // Must-fix F4 (judge review round): EXCEPT when `content` matches what Swift
+                // itself just pushed -- main.ts posts `contentChanged` on any `docChanged`
+                // update with no sync-origin filter, including the transaction `setContent`
+                // itself dispatches, so ~50ms after every legitimate Swift->JS push this
+                // message arrives again as a pure echo. Arming the settle window on that echo
+                // widens the drop window from "user is actively typing" to "any burst of
+                // derived refreshes within 0.6s of each other." Accepted residual: a user who
+                // types then deletes back to the exact pushed content within the ~50ms debounce
+                // won't arm the window either -- documented, not a new bug. Compares against
+                // the EXTRACTED `content`, not the raw message body, now that the body is an
+                // object rather than a bare string.
+                if content != self.lastPushedContent {
+                    self.lastLocalEditAt = Date()
+                }
+                // P3 (4d): `wasUndo` is captured onto the Coordinator here for visibility/
+                // diagnostics, AND separately forwarded into `handleContentPush` below,
+                // which passes it to `onContentChange` -- ContentView's closure there
+                // constructs/invalidates `editorState.reconcileSuppression` (the token
+                // SectionSyncService.contentChanged's `suppressReconcile` and
+                // ContentView+ProjectLifecycle's onSectionsUpdated both consult). See
+                // EditorViewState.ReconcileSuppression's doc comment for the full design.
+                self.lastContentChangeWasUndo = wasUndo
+                self.handleContentPush(content, wasUndo: wasUndo)
             }
             return true
 
@@ -323,7 +372,7 @@ extension CodeMirrorEditor.Coordinator {
                 self.lastPushedContent = rawContent
                 self.lastReceivedFromEditor = Date()
                 self.contentBinding.wrappedValue = rawContent  // Sets sourceContent (with anchors)
-                self.onContentChange(rawContent)  // Strips anchors → updates editorState.content
+                self.onContentChange(rawContent, false)  // Strips anchors → updates editorState.content (never an undo -- Swift-triggered)
                 NotificationCenter.default.post(
                     name: .footnoteInsertedImmediate, object: nil,
                     userInfo: ["label": label]

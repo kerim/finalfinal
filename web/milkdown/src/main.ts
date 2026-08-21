@@ -7,6 +7,7 @@ import { clipboard } from '@milkdown/kit/plugin/clipboard';
 import { history } from '@milkdown/kit/plugin/history';
 import { commonmark } from '@milkdown/kit/preset/commonmark';
 import { gfm, remarkGFMPlugin } from '@milkdown/kit/preset/gfm';
+import { isHistoryTransaction } from '@milkdown/kit/prose/history';
 import { Plugin, PluginKey } from '@milkdown/kit/prose/state';
 import { $prose, getMarkdown } from '@milkdown/kit/utils';
 import { annotationDisplayPlugin } from './annotation-display-plugin';
@@ -134,6 +135,7 @@ import {
   finishStructuralSwapSettle,
   maybeAdvanceRegistryOnSyncOriginTx,
   maybeNotifyHistoryEdited,
+  noteUserTransaction,
   performStructuralSwap,
   receiveRedoOutcome,
   receiveUndoOutcome,
@@ -146,6 +148,7 @@ import { insertEquation, insertEquationDialog } from './api-math';
 import { linkTooltipPlugin, openLinkEdit } from './link-tooltip';
 import { mathPlugin } from './math-plugin';
 import { orderedListOrderPlugin } from './ordered-list-order-plugin';
+import { noteTransactionForEditSpanTracking } from './recent-edit-span';
 import { searchPlugin } from './search-plugin';
 import { sectionBreakPlugin } from './section-break-plugin';
 import { selectionStatsPlugin } from './selection-stats-plugin';
@@ -301,10 +304,19 @@ async function initEditor() {
   const editorInstance = getEditorInstance()!;
   const view = editorInstance.ctx.get(editorViewCtx);
   const originalDispatch = view.dispatch.bind(view);
+
   // Section change tracking state (debounced push to Swift)
   let sectionChangeTimer: ReturnType<typeof setTimeout> | null = null;
   let lastTrackedTitle: string | null = null;
   let lastTrackedBlockId: string | null = null;
+
+  // P3 (4c, undo-mode-switch-focus second timing gap): sticky-OR across the 50ms
+  // aggregating debounce window below -- true if ANY transaction folded into the next
+  // debounced push was an undo replay, so Swift can skip re-correcting a heading the user
+  // just undid instead of racing straight back over it (SectionSyncService's suppression,
+  // §4d). Cleared on every path out of the debounce timer callback (early-return or real
+  // post) so a stale `true` can never ride into a later, unrelated push.
+  let pendingWasUndo = false;
 
   view.dispatch = (tr) => {
     originalDispatch(tr);
@@ -327,27 +339,41 @@ async function initEditor() {
     // §4.6 advancement rule: absorbs sync-origin transactions (addToHistory:false) that land
     // after a structural op's postOpDoc/preOpDoc was captured -- see undo-coordinator.ts.
     maybeAdvanceRegistryOnSyncOriginTx(tr);
+    // Real user-transaction counter for undo-coordinator.ts's permanent `[UnifiedUndo]`
+    // fallthrough log (undo-mode-switch-focus investigation legacy).
+    noteUserTransaction(tr);
+    // P3 WYSIWYG (4a mirror, undo-mode-switch-focus second timing gap): tracks the span
+    // the user last actually typed in, so updateHeadingLevels (api-content.ts) can tell
+    // whether an incoming derived correction overlaps it.
+    noteTransactionForEditSpanTracking(tr);
 
     if (getIsSettingContent()) return;
 
     if (tr.docChanged) {
+      // P3 (4c): fold this transaction's undo-ness into the sticky flag BEFORE
+      // scheduling/re-scheduling the debounce timer below.
+      if (isHistoryTransaction(tr)) pendingWasUndo = true;
       clearContentPushTimer();
       setContentPushTimer(
         setTimeout(() => {
           // Re-check guard: setContent() may have run during the 50ms window
           if (getIsSettingContent()) {
+            pendingWasUndo = false;
             return;
           }
           // Block push before Swift has called setContent/setContentWithBlockIds —
           // prevents stale initialization content from overwriting real content
           if (!getContentHasBeenSet()) {
+            pendingWasUndo = false;
             return;
           }
+          const wasUndo = pendingWasUndo;
+          pendingWasUndo = false;
           const md = editorInstance.action(getMarkdown());
           setCurrentContent(md);
           const firstHeading = md.match(/^#{1,6}\s+.*/m)?.[0]?.slice(0, 60) || '(none)';
           syncLog('ContentPush', `PUSHED: len=${md.length}, firstH="${firstHeading}"`);
-          (window as any).webkit?.messageHandlers?.contentChanged?.postMessage(md);
+          (window as any).webkit?.messageHandlers?.contentChanged?.postMessage({ content: md, wasUndo });
         }, 50)
       );
     }

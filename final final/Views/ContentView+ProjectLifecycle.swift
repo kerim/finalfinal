@@ -157,6 +157,34 @@ extension ContentView {
 
             // Check and enforce hierarchy constraints if violations exist
             if Self.hasHierarchyViolations(in: editorState.sections) {
+                // P3 §4d (undo-mode-switch-focus second timing gap, WYSIWYG mirror, M1
+                // fix): this is the REAL re-trigger mechanism for WYSIWYG mode.
+                // BlockSyncService polls independently of SectionSyncService (own ~2s
+                // timer, own doc-vs-DB diff) -- undoing a heading-level correction in
+                // Milkdown reverts the ProseMirror doc immediately, but the DB (and
+                // therefore editorState.sections, and THIS handler firing) only catches up
+                // once BlockSyncService's next poll pushes that reverted level, ~2s later.
+                // Without this guard, that poll's own DB write would re-trigger
+                // hasHierarchyViolations here and immediately re-run the exact correction
+                // the user just undid -- well before SectionSyncService.contentChanged ever
+                // sees anything, since nothing has touched editorState.content at this
+                // point. This is the hierarchy consumer: consumes its OWN one-shot flag
+                // (`consumedByHierarchy`) on the shared token, independent of
+                // ViewNotificationModifiers.handleContentChange's `consumedByContentSync`
+                // flag -- the whole reason the earlier plain-Bool design failed here is
+                // that consumer fires almost immediately (clearing a shared Bool) while
+                // THIS consumer doesn't fire until the ~2s poll catches up. No content-hash
+                // check here (unlike the content-sync consumer): this handler operates on
+                // editorState.sections, derived from DB blocks, with no comparable markdown
+                // string at this call site to hash against -- the TTL (which exceeds the
+                // poll interval) plus explicit invalidation on a genuinely new edit is the
+                // staleness guard instead.
+                if var token = editorState.reconcileSuppression, !token.isExpired, !token.consumedByHierarchy {
+                    token.consumedByHierarchy = true
+                    editorState.reconcileSuppression = token.isFullyConsumed ? nil : token
+                    DebugLog.log(.sync, "[onSectionsUpdated] hierarchy re-enforcement suppressed (content just undone)")
+                    return
+                }
                 Task { @MainActor in
                     await Self.enforceHierarchyAsync(
                         editorState: editorState,
@@ -235,7 +263,9 @@ extension ContentView {
                 // see BlockParser.bibliographyEndMarker's doc comment.
                 editorState.content = BlockParser.assembleMarkdownForEditor(from: existingBlocks)
                 DebugLog.log(.lifecycle, "[LOAD] Assembled \(existingBlocks.count) blocks -> content length=\(editorState.content.count)")
-                updateSourceContentIfNeeded()
+                // INTENTIONAL REPLACEMENT: initial project load -- no prior local edits to
+                // protect, and the freshly-opened editor must show the real document.
+                updateSourceContentIfNeeded(intentionalReplacement: true)
             } else {
                 // No blocks yet - load from legacy content table and parse into blocks
                 let savedContent = try documentManager.loadContent()
@@ -243,7 +273,8 @@ extension ContentView {
                 if let savedContent = savedContent, !savedContent.isEmpty {
                     let cleanContent = SectionSyncService.stripBibliographyMarker(from: savedContent)
                     editorState.content = cleanContent
-                    updateSourceContentIfNeeded()
+                    // INTENTIONAL REPLACEMENT: initial project load (legacy content path).
+                    updateSourceContentIfNeeded(intentionalReplacement: true)
 
                     // Parse content into blocks for the new system
                     // Preserve existing section metadata if available
@@ -261,7 +292,8 @@ extension ContentView {
                     try db.replaceBlocks(blocks, for: pid)
                 } else {
                     editorState.content = ""
-                    updateSourceContentIfNeeded()
+                    // INTENTIONAL REPLACEMENT: initial project load (empty-document path).
+                    updateSourceContentIfNeeded(intentionalReplacement: true)
                 }
             }
         } catch {
@@ -371,7 +403,11 @@ extension ContentView {
                 if let result = fetchBlocksWithIds() {
                     // Sync editorState.content to prevent polling from overwriting the atomic push
                     editorState.content = result.markdown
-                    updateSourceContentIfNeeded()
+                    // INTENTIONAL REPLACEMENT: project (re)open/restore. (Guarded by
+                    // editorMode == .wysiwyg above, so today this is a no-op --
+                    // updateSourceContentIfNeeded itself only acts in Source mode -- but
+                    // classified for correctness if that guard ever changes.)
+                    updateSourceContentIfNeeded(intentionalReplacement: true)
                     await blockSyncService.setContentWithBlockIds(
                         markdown: result.markdown, blockIds: result.blockIds,
                         imageMeta: result.imageMeta, detectPausedEdits: isRestore,

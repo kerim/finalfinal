@@ -33,10 +33,21 @@ struct CodeMirrorEditor: NSViewRepresentable {
 
     var pollCacheResetGeneration: Int = 0  // bumped by EditorViewState.resetForProjectSwitch()
 
+    /// Bumped by every INTENTIONAL `sourceContent` replacement (zoom, project switch,
+    /// structural undo/redo) -- see `EditorViewState.forcedPushGeneration`'s doc comment.
+    /// Threaded into the coordinator every `updateNSView` cycle; `shouldPushContent`
+    /// compares it against the last value it honoured to decide whether THIS push must
+    /// bypass the settle-window guard (undo-mode-switch-focus fix).
+    var forcedPushGeneration: Int = 0
+
     /// CSS variables for theming - when this changes, updateNSView is called
     var themeCSS: String = ThemeManager.shared.cssVariables
 
-    let onContentChange: (String) -> Void
+    /// P3 §4c/4d (undo-mode-switch-focus second timing gap): second parameter is
+    /// `wasUndo` -- true if the content push that produced this string was (or included,
+    /// sticky-OR) an undo replay. Threaded through so ContentView can suppress
+    /// SectionSyncService's re-correction for content that was just undone.
+    let onContentChange: (String, Bool) -> Void
     let onStatsChange: (Int, Int) -> Void
     let onSectionChange: (String) -> Void
     let onCursorPositionSaved: (CursorPosition) -> Void
@@ -54,6 +65,17 @@ struct CodeMirrorEditor: NSViewRepresentable {
 
     /// Callback to provide the WebView reference (for find operations)
     var onWebViewReady: ((WKWebView) -> Void)?
+
+    /// Re-invokes the real `updateSourceContentIfNeeded()` against NOW-current content.
+    /// Called by the Coordinator's settle-window-suppressed-push retry timer (undo-mode-
+    /// switch-focus fix) -- see `CodeMirrorEditor.Coordinator.scheduleDeferredRecompute()`.
+    var onContentRecompute: (() -> Void)?
+
+    /// P2 (undo-mode-switch-focus second timing gap): returns whether a content-triggered
+    /// reconciliation (SectionSyncService's debounce+syncContent, or ContentView's
+    /// `enforceHierarchyAsync`) is currently in flight. `shouldPushContent` extends its
+    /// settle-window suppression while this returns true, capped at 2s as a backstop.
+    var isReconciliationPending: (() -> Bool)?
 
     func makeNSView(context: Context) -> WKWebView {
         // Try preloaded view first for instant startup
@@ -133,7 +155,10 @@ struct CodeMirrorEditor: NSViewRepresentable {
         context.coordinator.isZoomingContent = isZoomingContent
         context.coordinator.contentState = contentState
         context.coordinator.contentGeneration = contentGeneration
+        context.coordinator.forcedPushGeneration = forcedPushGeneration
         context.coordinator.onContentAcknowledged = onContentAcknowledged
+        context.coordinator.onContentRecompute = onContentRecompute
+        context.coordinator.isReconciliationPending = isReconciliationPending
         context.coordinator.onSectionIdChange = onSectionIdChange
         context.coordinator.onSelectionChange = onSelectionChange
 
@@ -145,12 +170,19 @@ struct CodeMirrorEditor: NSViewRepresentable {
             context.coordinator.setFocusMode(effectiveFocusMode)
         }
 
-        // Skip content/theme pushes during project reset to prevent empty flash
-        guard !isResettingContent else { return }
-
-        if context.coordinator.shouldPushContent(content) {
+        // Judge-review should-fix #3: called UNCONDITIONALLY (even while isResettingContent
+        // is true) so a forcedPushGeneration bump landing during a reset still gets its
+        // credit consumed on THIS cycle -- shouldPushContent itself now refuses to push
+        // while resetting (see its own isResettingContent guard), so this is safe to call
+        // before the "skip content/theme pushes during reset" guard below rather than
+        // being skipped by it entirely, which used to leave the credit banked for
+        // whatever unrelated push happened to run once the reset ended.
+        if context.coordinator.shouldPushContent(content, isResettingContent: isResettingContent) {
             context.coordinator.setContent(content)
         }
+
+        // Skip theme pushes (and anything below) during project reset to prevent empty flash
+        guard !isResettingContent else { return }
 
         // Push pending image metadata for width display in previews
         // Guard behind isEditorReady to avoid losing metadata when JS runtime hasn't initialized yet

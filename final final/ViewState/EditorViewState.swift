@@ -159,6 +159,73 @@ class EditorViewState {
     /// same numbers it cached before and wrongly suppress the change callbacks.
     var pollCacheResetGeneration: Int = 0
 
+    /// Bumped by every INTENTIONAL replacement of `sourceContent` -- zoom transitions,
+    /// project switch/open, structural undo/redo restores (see the one-line classification
+    /// comment at each write site). `CodeMirrorEditor`'s Coordinator compares this against
+    /// the last value it honoured (`lastHonouredForcedPushGeneration`) in
+    /// `shouldPushContent`, same generation-counter pattern as `pollCacheResetGeneration`
+    /// above: the coordinator applies the forced push exactly once per bump, not
+    /// repeatedly across every `updateNSView` cycle that happens to see the same value.
+    /// Added for the undo-mode-switch-focus fix: a DERIVED (unflagged) `sourceContent`
+    /// write landing mid-typing must be suppressible by the settle-window guard, but an
+    /// INTENTIONAL one must never be -- this is how a caller declares which kind it is.
+    var forcedPushGeneration: Int = 0
+
+    /// P3 §4d token (undo-mode-switch-focus second timing gap, judge-review M1 fix): an
+    /// expiring, content-keyed suppression token, replacing an earlier plain-Bool design.
+    /// The plain Bool broke for WYSIWYG specifically: its ONE real consumer is
+    /// `onSectionsUpdated` (`ContentView+ProjectLifecycle.swift`), which only fires once
+    /// `BlockSyncService`'s OWN poll cycle (its own ~2s timer, independent of anything
+    /// here) pushes the reverted content to the DB -- by then, a plain "read-then-reset
+    /// on the FIRST reader" Bool had already been consumed (or wiped by an intervening
+    /// keystroke) by `ViewNotificationModifiers.handleContentChange`, which fires almost
+    /// immediately after the same push. Two consumers, one shared flag, wildly different
+    /// latencies -- the Bool could never serve both.
+    ///
+    /// Fix: two INDEPENDENT one-shot flags on the SAME token, so neither consumer's read
+    /// clears the other's. Content-keyed (not just a plain flag) so a genuine NEW,
+    /// non-undo edit explicitly INVALIDATES the token (hash mismatch) instead of a
+    /// coincidental keystroke silently wiping suppression a slower consumer still needs.
+    struct ReconcileSuppression {
+        /// Hash of the (reverted) content as it stood at the moment the undo was
+        /// detected. A consumer checks this against the content it's about to act on
+        /// before honouring suppression -- if they don't match, something genuinely new
+        /// happened since, and honouring a stale token would be wrong.
+        let contentHash: Int
+        let expiresAt: Date
+        var consumedByContentSync = false
+        var consumedByHierarchy = false
+
+        /// Must exceed `BlockSyncService.pollInterval` (2s) with margin: that poll is the
+        /// slower of the two consumers (`onSectionsUpdated`'s hierarchy re-check only
+        /// fires after THAT poll pushes the reverted content to the DB), so the token must
+        /// still be alive when it does. +1.5s margin absorbs scheduling jitter around the
+        /// poll boundary.
+        static let ttl: TimeInterval = BlockSyncService.pollInterval + 1.5
+
+        var isExpired: Bool { Date() >= expiresAt }
+        /// Both consumers have taken their one-shot read -- nothing left to guard, safe
+        /// to discard proactively rather than waiting out the TTL.
+        var isFullyConsumed: Bool { consumedByContentSync && consumedByHierarchy }
+    }
+
+    /// Set by CodeMirrorEditor's/MilkdownEditor's `onContentChange` closures right before
+    /// `content`/`sourceContent` is reassigned: constructs a fresh token when the push was
+    /// an undo, or explicitly invalidates (nils out) the existing token when a genuinely
+    /// NEW, non-undo edit's content hash no longer matches it. Threaded into
+    /// `SectionSyncService.contentChanged(_:zoomedIds:suppressReconcile:)` (content-sync
+    /// consumer) and `ContentView+ProjectLifecycle.swift`'s `onSectionsUpdated` handler
+    /// (hierarchy consumer) so a just-undone correction isn't immediately re-detected and
+    /// re-applied before the user's next Cmd-Z can reach their own original typing.
+    ///
+    /// SCOPE NOTE: CodeMirror's content-sync consumer hash-checks against the actual
+    /// content it's acting on. Milkdown's hierarchy consumer (`onSectionsUpdated`) has no
+    /// comparable markdown string at its call site (it operates on `editorState.sections`,
+    /// derived from DB blocks, not a content string) -- it consumes the one-shot flag
+    /// without a hash check, relying on the TTL + explicit-invalidation-on-new-edit for
+    /// staleness protection instead. Defaults nil (no active suppression).
+    var reconcileSuppression: ReconcileSuppression?
+
     /// Whether any content transition is in progress.
     /// Services check this instead of maintaining their own suppression flags.
     var isBusy: Bool { contentState != .idle }

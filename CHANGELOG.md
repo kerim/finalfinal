@@ -10,6 +10,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - **Undo (⌘Z) and Redo (⌘⇧Z) now cover restoring a previous version and duplicating or deleting a section from the outline sidebar, not just typing** — before, once you confirmed a restore from Version History, or deleted or duplicated a section, that was final; now ⌘Z undoes it like anything else you did, and steps back through everything — typing included — in the exact order you did it. For example: type a sentence, restore an earlier version, then type another sentence; ⌘Z removes the second sentence, ⌘Z again reverts the restore, and a third ⌘Z removes the first sentence, with ⌘⇧Z replaying all three back in order. If there's genuinely nothing left to undo, you'll now hear a short beep instead of nothing happening.
 - **Duplicate and Delete are new options when you right-click a section in the outline sidebar** — Delete removes the section and everything nested under it; Duplicate makes a copy right after it, with "copy" added to the heading. Both can be undone.
+- **Undo now steps back through automatic corrections instead of skipping them** — when the app automatically fixes something right where you were just typing (in the formatted editor, an automatic heading-level fix; in the source editor, any automatic correction landing on your last edit), ⌘Z now undoes that fix first, then undoes your typing, instead of jumping straight past it as if it never happened.
+
+### Fixed
+
+- **⌘Z no longer goes dead right after switching between the formatted and plain-text editor views** — previously, typing immediately after switching modes (with ⌘/ or by clicking the mode label in the status bar) could make Undo silently do nothing to what you'd just typed. This is fixed in both directions and both ways of switching.
 
 ## [0.2.125] - 2026-08-17
 

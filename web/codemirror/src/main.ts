@@ -82,6 +82,7 @@ import { footnoteDecorationPlugin } from './footnote-decoration-plugin';
 import { customHighlightStyle, headingDecorationPlugin, syntaxHighlighting } from './heading-plugin';
 import { imagePreviewPlugin, setImageMeta } from './image-preview-plugin';
 import { installLineHeightFix } from './line-height-fix';
+import { noteTransactionForEditSpanTracking } from './recent-edit-span';
 import { scrollStabilizer } from './scroll-stabilizer';
 import { selectionStatsPlugin } from './selection-stats-plugin';
 import { selectionToolbarPlugin } from './selection-toolbar-plugin';
@@ -110,6 +111,7 @@ import {
   handleGlobalUndoRedoKeydown,
   maybeAdvanceRegistryOnSyncOriginTx,
   maybeNotifyHistoryEdited,
+  noteUserTransaction,
   receiveRedoOutcome,
   receiveUndoOutcome,
   requestUnifiedRedo,
@@ -172,13 +174,62 @@ function initEditor() {
             setPendingSlashUndo(false);
             return true;
           }
-          // Normal undo
-          return undo(view);
+          // Normal undo. This IS the real invocation of undo() for the raw-keydown path --
+          // handleUnifiedUndoKeydown (undo-coordinator.ts) never calls undo() itself on
+          // fallthrough, it just returns false and lets THIS keymap binding fire when the
+          // event bubbles. Logging around it adds no extra call, just captures what the
+          // command actually reports (return value + doc length before/after) instead of
+          // inferring it -- permanent visibility, undo-mode-switch-focus investigation
+          // legacy.
+          {
+            const docLengthBefore = view.state.doc.length;
+            const commandReturned = undo(view);
+            const docLengthAfter = view.state.doc.length;
+            (window as any).webkit?.messageHandlers?.errorHandler?.postMessage({
+              type: 'debug',
+              message:
+                `[UnifiedUndo] keydown-path-invocation direction=undo ` +
+                `commandReturned=${commandReturned} docLengthBefore=${docLengthBefore} ` +
+                `docLengthAfter=${docLengthAfter}`,
+            });
+            return commandReturned;
+          }
         },
       },
-      // Redo bindings (Mac and Windows)
-      { key: 'Mod-Shift-z', run: (view) => redo(view) },
-      { key: 'Mod-y', run: (view) => redo(view) },
+      // Redo bindings (Mac and Windows). Same wrap-don't-duplicate rationale as the Mod-z
+      // binding above.
+      {
+        key: 'Mod-Shift-z',
+        run: (view) => {
+          const docLengthBefore = view.state.doc.length;
+          const commandReturned = redo(view);
+          const docLengthAfter = view.state.doc.length;
+          (window as any).webkit?.messageHandlers?.errorHandler?.postMessage({
+            type: 'debug',
+            message:
+              `[UnifiedUndo] keydown-path-invocation direction=redo ` +
+              `commandReturned=${commandReturned} docLengthBefore=${docLengthBefore} ` +
+              `docLengthAfter=${docLengthAfter}`,
+          });
+          return commandReturned;
+        },
+      },
+      {
+        key: 'Mod-y',
+        run: (view) => {
+          const docLengthBefore = view.state.doc.length;
+          const commandReturned = redo(view);
+          const docLengthAfter = view.state.doc.length;
+          (window as any).webkit?.messageHandlers?.errorHandler?.postMessage({
+            type: 'debug',
+            message:
+              `[UnifiedUndo] keydown-path-invocation direction=redo ` +
+              `commandReturned=${commandReturned} docLengthBefore=${docLengthBefore} ` +
+              `docLengthAfter=${docLengthAfter}`,
+          });
+          return commandReturned;
+        },
+      },
       // Cmd+B: Bold (toggle)
       {
         key: 'Mod-b',
@@ -334,19 +385,42 @@ function initEditor() {
         // §4.6 advancement rule: absorbs sync-origin transactions (addToHistory === false)
         // that land after a structural op's postOpDoc/preOpDoc was captured.
         maybeAdvanceRegistryOnSyncOriginTx(tr);
+        // Real user-transaction counter for undo-coordinator.ts's permanent
+        // `[UnifiedUndo]` fallthrough log (undo-mode-switch-focus investigation legacy).
+        noteUserTransaction(tr);
+        // P3 (4a, undo-mode-switch-focus second timing gap): tracks the span the user
+        // last actually typed in, so setContent (api.ts) can tell whether an incoming
+        // derived push overlaps it.
+        noteTransactionForEditSpanTracking(tr);
       }
     }),
-    // Debounced push-based content messaging to Swift (replaces 500ms polling as primary)
+    // Debounced push-based content messaging to Swift (replaces 500ms polling as primary).
+    // P3 (4c, undo-mode-switch-focus second timing gap): posts an OBJECT
+    // `{content, wasUndo}` instead of a bare string. `wasUndo` is sticky-OR across the
+    // whole 50ms aggregating window (true if ANY transaction folded into this debounced
+    // push was an undo OR redo replay -- judge-review should-fix #2: widened from
+    // undo-only to match Milkdown's `isHistoryTransaction`, which covers both; a redo
+    // re-applying a correction is just as much "not a real user edit" as an undo
+    // reverting one), so Swift can skip re-correcting a heading the user just undid
+    // instead of racing straight back over it (SectionSyncService's suppression, §4d).
+    // Cleared whenever the debounced callback actually fires (whether it posts or
+    // early-returns) so a stale `true` can never ride into a later, unrelated push.
     (() => {
       let cmPushTimer: ReturnType<typeof setTimeout> | null = null;
+      let pendingWasUndo = false;
       return EditorView.updateListener.of((update) => {
         if (update.docChanged) {
+          for (const tr of update.transactions) {
+            if (tr.isUserEvent('undo') || tr.isUserEvent('redo')) pendingWasUndo = true;
+          }
           if (cmPushTimer) clearTimeout(cmPushTimer);
           cmPushTimer = setTimeout(() => {
+            const wasUndo = pendingWasUndo;
+            pendingWasUndo = false;
             const view = getEditorView();
             if (!view) return;
             const raw = view.state.doc.toString(); // raw includes anchors
-            (window as any).webkit?.messageHandlers?.contentChanged?.postMessage(raw);
+            (window as any).webkit?.messageHandlers?.contentChanged?.postMessage({ content: raw, wasUndo });
           }, 50);
         }
       });

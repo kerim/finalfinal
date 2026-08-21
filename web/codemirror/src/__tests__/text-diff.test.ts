@@ -1,257 +1,92 @@
-// Pure-function tests for computeMinimalChange -- no DOM, no CodeMirror EditorView.
+// Pure-function tests for computeMinimalChanges -- no DOM, no CodeMirror EditorView.
 // See set-content-selection.test.ts for the integration-level tests that exercise this
 // through a real EditorView's setContent() call.
+//
+// judge-review should-fix #9: this file used to also test a single-span
+// `computeMinimalChange` predecessor, deleted from text-diff.ts once
+// `computeMinimalChanges` (below) became setContent's only caller and this was the last
+// remaining user of the singular function.
 
 import { describe, expect, it } from 'vitest';
-import { computeMinimalChange } from '../text-diff';
+import { computeMinimalChanges } from '../text-diff';
 
-describe('computeMinimalChange', () => {
-  it('returns null for identical strings', () => {
-    expect(computeMinimalChange('same text', 'same text')).toBeNull();
-    expect(computeMinimalChange('', '')).toBeNull();
+// P1 (undo-mode-switch-focus, second timing gap): multi-span diff -- see text-diff.ts's
+// own doc comment for the full rationale.
+describe('computeMinimalChanges', () => {
+  it('returns an empty array for identical strings', () => {
+    expect(computeMinimalChanges('same text', 'same text')).toEqual([]);
+    expect(computeMinimalChanges('', '')).toEqual([]);
   });
 
-  it('returns a from=to=oldLen insert for a pure tail append', () => {
-    const oldText = 'Hello world';
-    const appended = ', how are you?';
-    const newText = oldText + appended;
-    const change = computeMinimalChange(oldText, newText);
-    expect(change).toEqual({ from: oldText.length, to: oldText.length, insert: appended });
+  it('two separated differences produce two disjoint spans, not one covering span', () => {
+    const oldText = '# Heading One\n\nSome untouched body text that must not be swallowed.\n\n# Heading Two\n';
+    const newText = '# Fixed One\n\nSome untouched body text that must not be swallowed.\n\n# Fixed Two\n';
+    const changes = computeMinimalChanges(oldText, newText);
+
+    expect(changes.length).toBe(2);
+    // Disjoint: the first change's `to` must not reach into the second's `from`.
+    expect(changes[0].to).toBeLessThanOrEqual(changes[1].from);
+    // Sorted in original-document order.
+    expect(changes[0].from).toBeLessThan(changes[1].from);
+    // The untouched body text between the two headings is NOT inside either span.
+    const untouchedStart = oldText.indexOf('Some untouched');
+    const untouchedEnd = untouchedStart + 'Some untouched body text that must not be swallowed.'.length;
+    for (const c of changes) {
+      const overlapsUntouched = c.from < untouchedEnd && c.to > untouchedStart;
+      expect(overlapsUntouched).toBe(false);
+    }
+
+    // Applying all changes (highest offset first, so earlier offsets stay valid) reproduces newText.
+    let result = oldText;
+    for (const c of [...changes].sort((a, b) => b.from - a.from)) {
+      result = result.slice(0, c.from) + c.insert + result.slice(c.to);
+    }
+    expect(result).toBe(newText);
   });
 
-  it('finds a prefix well past a body-text cursor position for a tail bibliography resync', () => {
-    const body = `${'A'.repeat(500)}\n\n# Body Heading\n\nSome body text the cursor sits in.\n\n`;
-    const oldText = `${body}# References\n\nOld entry (2020).`;
-    const newText = `${body}# References\n\nNew entry (2021).\n\nAnother entry (2022).`;
-    const change = computeMinimalChange(oldText, newText);
-    expect(change).not.toBeNull();
-    // The common prefix must extend at least through the unchanged `body`, well past
-    // any cursor position sitting inside it -- proving the change is confined to the
-    // bibliography tail, not a whole-document replace.
-    expect(change!.from).toBeGreaterThanOrEqual(body.length);
-    expect(oldText.slice(0, change!.from) + change!.insert + oldText.slice(change!.to)).toBe(newText);
+  it('spans are sorted, non-overlapping, and in original-document coordinates for a 3-way change', () => {
+    const oldText = 'line A\nline B\nline C\nline D\nline E\nline F\nline G\n';
+    const newText = 'line A2\nline B\nline C2\nline D\nline E\nline F2\nline G\n';
+    const changes = computeMinimalChanges(oldText, newText);
+
+    expect(changes.length).toBeGreaterThanOrEqual(3);
+    for (let i = 1; i < changes.length; i++) {
+      expect(changes[i].from).toBeGreaterThanOrEqual(changes[i - 1].to);
+      expect(changes[i].from).toBeGreaterThan(changes[i - 1].from);
+    }
+    let result = oldText;
+    for (const c of [...changes].sort((a, b) => b.from - a.from)) {
+      result = result.slice(0, c.from) + c.insert + result.slice(c.to);
+    }
+    expect(result).toBe(newText);
   });
 
-  it('degrades to a whole-document replace for completely different documents', () => {
-    // First and last characters deliberately differ ('C'/'z' vs 'T'/'q') so neither a
-    // shared prefix nor a shared suffix exists -- a genuine no-overlap case.
-    const oldText = 'Completely different content xyz';
-    const newText = 'Totally unrelated new document abq';
-    const change = computeMinimalChange(oldText, newText);
-    expect(change).toEqual({ from: 0, to: oldText.length, insert: newText });
-  });
-
-  it('handles oldText === "" and newText === "" edge cases', () => {
-    expect(computeMinimalChange('', 'new content')).toEqual({ from: 0, to: 0, insert: 'new content' });
-    expect(computeMinimalChange('old content', '')).toEqual({ from: 0, to: 'old content'.length, insert: '' });
-  });
-
-  it('finds a prefix-only change when a heading at the top is edited', () => {
-    const oldText = '# Old Heading\n\nBody text that stays the same.';
-    const newText = '# New Heading\n\nBody text that stays the same.';
-    const change = computeMinimalChange(oldText, newText);
-    expect(change).not.toBeNull();
-    expect(oldText.slice(0, change!.from) + change!.insert + oldText.slice(change!.to)).toBe(newText);
-    // The unchanged body text should be captured entirely by the suffix, i.e. `to`
-    // should land before the body text starts.
-    expect(change!.to).toBeLessThanOrEqual(oldText.indexOf('Body text'));
-  });
-
-  // ---- Surrogate pairs ----
-  // Both tests below use two astral characters that share the SAME leading (high)
-  // surrogate and differ only in the trailing (low) surrogate: U+1F600 (😀) and
-  // U+1F601 (😁). That's the only construction that makes the
-  // *naive* forward prefix scan walk INTO a surrogate pair before it finds a
-  // difference: the scan matches the shared high surrogate, then stops at the
-  // differing low surrogate, landing `from` between the two halves of oldText's
-  // emoji. That's exactly the case the `from` nudge in computeMinimalChange
-  // (text-diff.ts) exists to pull back -- without it, `from` would split the pair.
-  // (A prior version of these two tests used emoji from DIFFERENT rows -- e.g. 😀 vs
-  // 🎉 -- which have different high surrogates, so the scan stops at the first
-  // surrogate without ever entering the pair; the nudge branch was never reached and
-  // both tests passed regardless of whether the nudge existed.)
-
-  it('does not split a surrogate pair when the emoji itself changes', () => {
-    const highSurrogate = '\uD83D'; // shared by both emoji below
-    const oldText = `a${highSurrogate}\uDE00`; // 'a😀'
-    const newText = `a${highSurrogate}\uDE01`; // 'a😁'
-    const change = computeMinimalChange(oldText, newText);
-    expect(change).not.toBeNull();
-    assertNoSurrogateSplit(oldText, newText, change!);
-    // Pin the exact boundary: `from` must land BEFORE the shared high surrogate (1),
-    // not after it (2). Without the nudge, `from` would be 2 -- splitting oldText's
-    // emoji between its high and low surrogate halves -- which assertNoSurrogateSplit
-    // above would also catch, but this pins the precise expected value too.
-    expect(change!.from).toBe(1);
-    expect(change!.to).toBe(oldText.length);
-  });
-
-  // Same shared-high-surrogate mechanism as above, but with unrelated text after the
-  // emoji that must stay OUT of the change -- proving the nudge doesn't degrade into
-  // over-widening the diff to the rest of the document.
-  it('does not split a surrogate pair when the emoji changes and unrelated trailing text is preserved', () => {
-    const highSurrogate = '\uD83D';
-    const tail = 'tail-unchanged';
-    const oldText = `a${highSurrogate}\uDE00${tail}`; // 'a😀tail-unchanged'
-    const newText = `a${highSurrogate}\uDE01${tail}`; // 'a😁tail-unchanged'
-    const change = computeMinimalChange(oldText, newText);
-    expect(change).not.toBeNull();
-    assertNoSurrogateSplit(oldText, newText, change!);
-    // `from` is nudged back to 1 (before the shared high surrogate); `to` lands right
-    // after the emoji (3), so the unchanged tail is captured by the suffix instead of
-    // being swept into the replacement.
-    expect(change!.from).toBe(1);
-    expect(change!.to).toBe(3);
-    expect(change!.insert).toBe(`${highSurrogate}\uDE01`);
-  });
-
-  // ---- Mirror construction: SUFFIX-boundary nudge ----
-  // The two tests above reach the PREFIX nudge (`prefix--` in computeMinimalChange) via
-  // two emoji sharing a HIGH surrogate but differing in the LOW surrogate, which forces
-  // the forward common-prefix scan into the pair. The SUFFIX nudge (the `suffix--`,
-  // keyed on isLowSurrogate at the `to` boundary) is a separate site in the same function
-  // and needs the mirror-image construction to be reached the same way: two characters
-  // sharing the SAME LOW surrogate but differing in the HIGH surrogate, so the
-  // common-suffix scan -- which walks backwards from the end of the string -- matches the
-  // shared low surrogate first, then stops at the differing high surrogate, landing `to`
-  // between the two halves of oldText's pair unless the nudge pulls it back.
-  // (The "does not split...newText" test further below also happens to exercise this same
-  // suffix nudge as a side effect of its own, differently-motivated construction -- see its
-  // comment -- but it never pins the exact `from`/`to` boundary values the way the pair
-  // below does, and it has no shared leading text to prove the nudge doesn't also reach
-  // backwards past an independently-computed prefix.)
-
-  it('does not split a surrogate pair when the emoji itself changes (suffix direction)', () => {
-    const lowSurrogate = '\uDE00'; // shared trailing half of both pairs below
-    const oldText = `\uD83D${lowSurrogate}b`; // a pair, then unrelated 'b'
-    const newText = `\uD83C${lowSurrogate}b`; // a different pair sharing the same low surrogate
-    const change = computeMinimalChange(oldText, newText);
-    expect(change).not.toBeNull();
-    assertNoSurrogateSplit(oldText, newText, change!);
-    // Pin the exact boundary: `to` must land AFTER the shared low surrogate (2), not
-    // before it (1). Without the nudge, `to` would be 1 -- splitting oldText's pair
-    // between its high and low surrogate halves -- which assertNoSurrogateSplit above
-    // would also catch, but this pins the precise expected value too.
-    expect(change!.from).toBe(0);
-    expect(change!.to).toBe(2);
-  });
-
-  // Same shared-low-surrogate mechanism as above, but with unrelated text BEFORE the pair
-  // that must stay OUT of the change -- proving the suffix-side nudge doesn't reach
-  // backwards past the (independently computed) shared prefix.
-  it('does not split a surrogate pair when the emoji changes and unrelated leading text is preserved (suffix direction)', () => {
-    const lowSurrogate = '\uDE00';
-    const head = 'head-unchanged';
-    const oldText = `${head}\uD83D${lowSurrogate}`;
-    const newText = `${head}\uD83C${lowSurrogate}`;
-    const change = computeMinimalChange(oldText, newText);
-    expect(change).not.toBeNull();
-    assertNoSurrogateSplit(oldText, newText, change!);
-    // `from` stays at head.length (the unchanged head is captured by the prefix instead
-    // of being swept into the replacement); `to` lands at oldText.length because nothing
-    // is left over to carve into a suffix once the accidental low-surrogate match is
-    // rejected.
-    expect(change!.from).toBe(head.length);
-    expect(change!.to).toBe(oldText.length);
-    expect(change!.insert).toBe(`\uD83C${lowSurrogate}`);
-  });
-
-  // Exercises the boundary assertNoSurrogateSplit previously never checked: the END of
-  // the insert in newText (as opposed to `to` in oldText). Old and new share a suffix
-  // that starts with the low-surrogate half of an emoji; the character immediately
-  // before that shared suffix differs between old and new (a different high surrogate
-  // in each), and the leading character differs too, so nothing is shared at the start.
-  // Naively cutting the suffix boundary right at the shared low surrogate would leave
-  // the insert ending in a lone, unpaired high surrogate in newText -- the suffix-nudge
-  // logic in computeMinimalChange must pull that low surrogate into the insert instead.
-  it('does not split a surrogate pair between the insert and the shared suffix in newText', () => {
-    const highA = '\uD83D'; // high surrogate, distinct from highB
-    const highB = '\uD83C';
-    const lowShared = '\uDE00'; // low surrogate shared by both old and new's suffix
-    const tail = 'tail-shared-text';
-    const oldText = `X${highA}${lowShared}${tail}`;
-    const newText = `Y${highB}${lowShared}${tail}`;
-
-    const change = computeMinimalChange(oldText, newText);
-    expect(change).not.toBeNull();
-    assertNoSurrogateSplit(oldText, newText, change!);
-    // The insert must end with the full low surrogate (pulled in from what would
-    // otherwise be the shared suffix), not with a lone highB.
-    expect(change!.insert.endsWith(lowShared)).toBe(true);
-  });
-
-  // ---- Round-trip invariant across every case above ----
-  it('satisfies the round-trip invariant old.slice(0, from) + insert + old.slice(to) === new for every case', () => {
-    const cases: Array<[string, string]> = [
-      ['same text', 'same text'],
-      ['Hello world', 'Hello world, how are you?'],
-      ['# Old Heading\n\nBody text.', '# New Heading\n\nBody text.'],
-      ['Completely different content here.', 'Totally unrelated new document text.'],
-      ['', 'new content'],
-      ['old content', ''],
-      ['', ''],
-      ['a😀b', 'a😀c'],
-      ['a😀b', 'a🎉b'],
-    ];
-
-    for (const [oldText, newText] of cases) {
-      const change = computeMinimalChange(oldText, newText);
-      if (change === null) {
-        expect(oldText).toBe(newText);
-        continue;
+  it('never splits a surrogate pair at any emitted boundary', () => {
+    const emoji = '😀'; // 😀, a surrogate pair
+    const oldText = `line one ${emoji} end\nunchanged middle line\nline three ${emoji} end\n`;
+    const newText = `line ONE ${emoji} end\nunchanged middle line\nline THREE ${emoji} end\n`;
+    const changes = computeMinimalChanges(oldText, newText);
+    const isHighSurrogate = (c: number) => c >= 0xd800 && c <= 0xdbff;
+    const isLowSurrogate = (c: number) => c >= 0xdc00 && c <= 0xdfff;
+    for (const c of changes) {
+      for (const pos of [c.from, c.to]) {
+        if (pos > 0 && pos < oldText.length) {
+          const splitsPair = isHighSurrogate(oldText.charCodeAt(pos - 1)) && isLowSurrogate(oldText.charCodeAt(pos));
+          expect(splitsPair).toBe(false);
+        }
       }
-      const result = oldText.slice(0, change.from) + change.insert + oldText.slice(change.to);
-      expect(result).toBe(newText);
     }
   });
 
-  it('cursor-inside-changed-span case: change spans the full replaced region (accepted residual documented in api.ts)', () => {
-    // This case is really exercised end-to-end in set-content-selection.test.ts (where a
-    // real cursor position is mapped through a real dispatch); here we just confirm the
-    // computed span is the one that would cause that mapping.
-    const oldText = 'before [MIDDLE] after';
-    const newText = 'before [CHANGED] after';
-    const change = computeMinimalChange(oldText, newText);
-    expect(change).not.toBeNull();
-    expect(change!.from).toBe('before ['.length);
-    expect(oldText.slice(0, change!.from) + change!.insert + oldText.slice(change!.to)).toBe(newText);
+  it('falls back to a single span when the differing middle exceeds the line-count bound', () => {
+    const commonHead = 'HEAD\n';
+    const commonTail = 'TAIL\n';
+    const oldMiddle = Array.from({ length: 600 }, (_, i) => `old line ${i}`).join('\n');
+    const newMiddle = Array.from({ length: 600 }, (_, i) => `new line ${i}`).join('\n');
+    const oldText = `${commonHead}${oldMiddle}\n${commonTail}`;
+    const newText = `${commonHead}${newMiddle}\n${commonTail}`;
+    const changes = computeMinimalChanges(oldText, newText);
+    expect(changes.length).toBe(1);
+    expect(oldText.slice(0, changes[0].from) + changes[0].insert + oldText.slice(changes[0].to)).toBe(newText);
   });
 });
-
-/**
- * Fails the test if any boundary the change touches splits a UTF-16 surrogate pair, in
- * EITHER oldText or newText. Checks four boundaries total:
- *   - oldText at `from` and `to` (edges of the removed span)
- *   - newText at `from` and at `from + insert.length` (edges of the inserted span)
- * The two `from` boundaries are usually equivalent (oldText and newText agree on the
- * shared prefix up to `from` by construction), but both are checked explicitly rather
- * than assuming that redundancy holds. The newText insert-end boundary is the one that
- * matters most: it sits at a genuinely different offset than `to` whenever
- * `insert.length !== to - from`, and was never checked before this fix -- e.g. an insert
- * ending in a lone high surrogate immediately followed by the shared suffix's low
- * surrogate would have slipped past a check that only ever looked at oldText.
- */
-function assertNoSurrogateSplit(
-  oldText: string,
-  newText: string,
-  change: { from: number; to: number; insert: string }
-): void {
-  const isHighSurrogate = (c: number) => c >= 0xd800 && c <= 0xdbff;
-  const isLowSurrogate = (c: number) => c >= 0xdc00 && c <= 0xdfff;
-
-  const assertBoundarySafe = (text: string, pos: number) => {
-    if (pos > 0 && pos < text.length) {
-      const before = text.charCodeAt(pos - 1);
-      const at = text.charCodeAt(pos);
-      expect(isHighSurrogate(before) && isLowSurrogate(at)).toBe(false);
-    }
-  };
-
-  assertBoundarySafe(oldText, change.from);
-  assertBoundarySafe(oldText, change.to);
-  assertBoundarySafe(newText, change.from);
-  assertBoundarySafe(newText, change.from + change.insert.length);
-
-  // Round-trip must still hold -- proves no data was corrupted by the surrogate nudge.
-  expect(oldText.slice(0, change.from) + change.insert + oldText.slice(change.to)).toBe(newText);
-}

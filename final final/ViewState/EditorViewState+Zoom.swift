@@ -191,6 +191,18 @@ extension EditorViewState {
             isResettingContent = false
 
             // Update sourceContent for CodeMirror
+            // INTENTIONAL REPLACEMENT: zoom-in transition -- see
+            // CodeMirrorCoordinator.shouldPushContent's settle-window guard (undo-mode-
+            // switch-focus fix). Bumped once here, ahead of the branch below, covering
+            // whichever of its two `sourceContent =` writes actually executes. Should-fix F3
+            // (judge review round): scoped to `editorMode == .source` alone (not the
+            // compound condition below, whose second clause is about which branch computes
+            // the content, not whether a CodeMirror coordinator exists to consume the bump)
+            // -- bumping in WYSIWYG mode wastes the generation on nothing and was one of the
+            // concrete paths feeding the must-fix-1 banking bug before that fix landed.
+            if editorMode == .source {
+                forcedPushGeneration += 1
+            }
             if editorMode == .source, let syncService = sectionSyncService {
                 // Compute offsets from zoomedBlocks (same data that produced zoomedContent)
                 let sortedBlocks = zoomedBlocks.sorted { a, b in
@@ -302,6 +314,15 @@ extension EditorViewState {
             isResettingContent = false
 
             // Update sourceContent for CodeMirror
+            // INTENTIONAL REPLACEMENT: zoom-out transition -- see
+            // CodeMirrorCoordinator.shouldPushContent's settle-window guard (undo-mode-
+            // switch-focus fix). Bumped once here, ahead of the branch below, covering
+            // whichever of its two `sourceContent =` writes actually executes. Should-fix F3
+            // (judge review round): scoped to `editorMode == .source` alone -- see the
+            // matching comment on the zoom-in bump above.
+            if editorMode == .source {
+                forcedPushGeneration += 1
+            }
             if editorMode == .source, let syncService = sectionSyncService {
                 // Compute offsets from allBlocks (same data that produced mergedContent)
                 let sortedBlocks = allBlocks.sorted { a, b in

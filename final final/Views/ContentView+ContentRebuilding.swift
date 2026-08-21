@@ -99,6 +99,9 @@ extension ContentView {
         editorState.pendingImageMeta = result.imageMeta
 
         // Update sourceContent for CodeMirror (when in source mode)
+        // DERIVED REFRESH (default): general DB-driven rebuild, not a deliberate
+        // replacement event. (This function has no current callers -- dead code -- but
+        // classified for whoever revives it.)
         updateSourceContentIfNeeded()
 
         Task {
@@ -183,8 +186,22 @@ extension ContentView {
 
     /// Updates sourceContent from current content when in source mode
     /// Recalculates section offsets and injects anchors/bibliography markers
-    func updateSourceContentIfNeeded() {
+    ///
+    /// - Parameter intentionalReplacement: pass `true` when this call is a deliberate,
+    ///   one-time content replacement the CodeMirror coordinator's settle-window guard
+    ///   must apply unconditionally (zoom transitions, project switch/open, structural
+    ///   undo/redo restores) rather than treat as a derived/background refresh that could
+    ///   land mid-typing and silently take a user's undo history with it (undo-mode-
+    ///   switch-focus root cause -- see CodeMirrorCoordinator.shouldPushContent). Defaults
+    ///   to `false` (DERIVED REFRESH) -- every call site below is classified in its own
+    ///   one-line comment; when genuinely unsure, this default is the safe choice, since a
+    ///   wrongly-guarded intentional push only delays (via the deferred-recompute retry),
+    ///   never drops, the content.
+    func updateSourceContentIfNeeded(intentionalReplacement: Bool = false) {
         guard editorState.editorMode == .source else { return }
+        if intentionalReplacement {
+            editorState.forcedPushGeneration += 1
+        }
 
         // Get non-bibliography sections in sort order
         let sectionsForAnchors = editorState.sections
@@ -414,22 +431,35 @@ extension ContentView {
     /// window, so `webView.window` is nil at that point and `makeFirstResponder`
     /// would silently fail if called inline. Defer to the next run-loop turn,
     /// where attachment has normally completed; if it still hasn't (window still
-    /// nil), retry once more a turn later. Mirrors `EquationDialog`'s
-    /// makeFirstResponder retry pattern ("can silently fail... retrying once on
-    /// the next run-loop turn... is a standard, safe defensive pattern").
+    /// nil), retry once more a turn later.
+    ///
+    /// The undo-mode-switch-focus investigation (2026-08) instrumented this path
+    /// heavily and confirmed, across every probe sample, that this AppKit-level
+    /// responder handoff was never the actual defect -- the real root cause was a
+    /// content-push race in `CodeMirrorCoordinator.shouldPushContent` (see that
+    /// type's settle-window guard). `applyFirstResponder`'s per-attempt outcome
+    /// stays as permanent (not diagnostic-only) logging: cheap, and useful
+    /// visibility into this codepath for any future focus-adjacent report.
     @MainActor
     private func restoreEditorFocus(_ webView: WKWebView) {
         DispatchQueue.main.async { [weak webView] in
             guard let webView else { return }
             if let window = webView.window {
-                window.makeFirstResponder(webView)
+                applyFirstResponder(webView: webView, window: window, attempt: "first")
             } else {
                 DispatchQueue.main.async { [weak webView] in
                     guard let webView, let window = webView.window else { return }
-                    window.makeFirstResponder(webView)
+                    applyFirstResponder(webView: webView, window: window, attempt: "retry")
                 }
             }
         }
+    }
+
+    @MainActor
+    private func applyFirstResponder(webView: WKWebView, window: NSWindow, attempt: String) {
+        let becameFirstResponder = window.makeFirstResponder(webView)
+        DebugLog.log(.undo, "[restoreEditorFocus] attempt=\(attempt) mode=\(editorState.editorMode.rawValue) "
+            + "makeFirstResponder=\(becameFirstResponder)")
     }
 
     @ViewBuilder
@@ -460,8 +490,35 @@ extension ContentView {
                     contentGeneration: editorState.contentGeneration,
                     pollCacheResetGeneration: editorState.pollCacheResetGeneration,
                     themeCSS: currentThemeCSS,
-                    onContentChange: { _ in
-                        // Content change handling - could trigger outline parsing here
+                    onContentChange: { newContent, wasUndo in
+                        // Content change handling - could trigger outline parsing here.
+                        // CORRECTED COMMENT (judge review, M1): this closure is NOT a no-op
+                        // for content assignment -- MilkdownCoordinator's handleContentPush
+                        // (MilkdownCoordinator+MessageHandlers.swift) sets
+                        // `self.contentBinding.wrappedValue = content` ONE LINE before
+                        // calling this closure, and that binding IS `$editorState.content`
+                        // (see this MilkdownEditor's `content:` argument above) -- so
+                        // `editorState.content` genuinely is reassigned here, on every
+                        // accepted content push, same as CodeMirror's closure. (An EARLIER
+                        // version of this comment wrongly claimed otherwise.)
+                        //
+                        // P3 §4d (undo-mode-switch-focus second timing gap, M1 token
+                        // design): constructs/refreshes the shared suppression token when
+                        // this push was an undo, or explicitly invalidates a stale token
+                        // when a genuinely new (non-undo) edit's content no longer matches
+                        // it -- see EditorViewState.ReconcileSuppression's doc comment for
+                        // why a plain Bool couldn't serve both this closure's own fast
+                        // consumer (ViewNotificationModifiers.handleContentChange) and the
+                        // slow one (ContentView+ProjectLifecycle's onSectionsUpdated,
+                        // gated behind BlockSyncService's own ~2s poll).
+                        if wasUndo {
+                            editorState.reconcileSuppression = EditorViewState.ReconcileSuppression(
+                                contentHash: newContent.hashValue,
+                                expiresAt: Date().addingTimeInterval(EditorViewState.ReconcileSuppression.ttl)
+                            )
+                        } else if let existing = editorState.reconcileSuppression, existing.contentHash != newContent.hashValue {
+                            editorState.reconcileSuppression = nil
+                        }
                     },
                     onStatsChange: { words, characters in
                         editorState.updateStats(words: words, characters: characters)
@@ -534,15 +591,41 @@ extension ContentView {
                     isZoomingContent: editorState.isZoomingContent,
                     contentGeneration: editorState.contentGeneration,
                     pollCacheResetGeneration: editorState.pollCacheResetGeneration,
+                    forcedPushGeneration: editorState.forcedPushGeneration,
                     themeCSS: currentThemeCSS,
-                    onContentChange: { newContent in
+                    onContentChange: { newContent, wasUndo in
+                        // DERIVED REFRESH (default): mirrors CodeMirror's OWN just-reported
+                        // content back into Swift state -- never a push INTO the editor, so
+                        // the settle-window guard is moot here (shouldPushContent's identical-
+                        // content check already no-ops since this IS what CodeMirror has).
                         // Update sourceContent with raw content (including anchors)
                         // This keeps anchors in sync for mode switch
                         editorState.sourceContent = newContent
 
-                        // Strip anchors and bibliography marker, then update content for sync/sidebar
+                        // Strip anchors and bibliography marker FIRST -- the token's
+                        // contentHash must match what .onChange(of: editorState.content)
+                        // will actually see (the STRIPPED string below), not the raw
+                        // `newContent` (which still has anchors) -- otherwise the
+                        // content-sync consumer's hash check in
+                        // ViewNotificationModifiers.handleContentChange could never match.
                         let cleanContent = sectionSyncService.stripSectionAnchors(from: newContent)
-                        editorState.content = SectionSyncService.stripBibliographyMarker(from: cleanContent)
+                        let strippedContent = SectionSyncService.stripBibliographyMarker(from: cleanContent)
+
+                        // P3 §4d token (undo-mode-switch-focus second timing gap, M1
+                        // design): set BEFORE `content` is reassigned below, so it's
+                        // already in place by the time .onChange(of: editorState.content)
+                        // fires and consumes it -- see EditorViewState.ReconcileSuppression's
+                        // doc comment for the full two-consumer rationale.
+                        if wasUndo {
+                            editorState.reconcileSuppression = EditorViewState.ReconcileSuppression(
+                                contentHash: strippedContent.hashValue,
+                                expiresAt: Date().addingTimeInterval(EditorViewState.ReconcileSuppression.ttl)
+                            )
+                        } else if let existing = editorState.reconcileSuppression, existing.contentHash != strippedContent.hashValue {
+                            editorState.reconcileSuppression = nil
+                        }
+
+                        editorState.content = strippedContent
                     },
                     onStatsChange: { words, characters in
                         editorState.updateStats(words: words, characters: characters)
@@ -583,6 +666,19 @@ extension ContentView {
                                 webView.evaluateJavaScript("window.FinalFinal.setImageMeta(\(json))")
                             }
                         }
+                    },
+                    onContentRecompute: {
+                        // DERIVED (not intentional replacement): re-invokes the real
+                        // recomputation against NOW-current editorState.content, called by
+                        // the Coordinator's settle-window-suppressed-push retry timer
+                        // (undo-mode-switch-focus fix, must-fix F2). Never a stale replay.
+                        updateSourceContentIfNeeded()
+                    },
+                    isReconciliationPending: {
+                        // P2 (undo-mode-switch-focus second timing gap): consulted by
+                        // shouldPushContent to extend its settle window while a
+                        // content-triggered reconciliation is actually in flight.
+                        sectionSyncService.isSyncPending
                     }
                 )
             }
@@ -656,6 +752,12 @@ extension ContentView {
         if let result = fetchBlocksWithIds() {
             editorState.pendingImageMeta = result.imageMeta
         }
+        // DERIVED REFRESH (default, genuinely ambiguous -- flagged): a deliberate user
+        // action (footnote insertion) synthesizes new content, arguably closer to an
+        // intentional replacement, but this path is NOT a mode/zoom/project transition and
+        // can plausibly land while the user keeps typing elsewhere in the zoomed body.
+        // Left DERIVED so the settle-window guard can defer-and-retry rather than risk
+        // taking a concurrent edit's undo history with it.
         updateSourceContentIfNeeded()
 
         // Push to editor via normal content path, then push block IDs for body only

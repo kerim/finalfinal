@@ -305,9 +305,25 @@ extension View {
         services: ContentSyncServices
     ) {
         guard editorState.contentState == .idle else { return }
+
+        // P3 §4d (undo-mode-switch-focus second timing gap, M1 fix): this is the
+        // content-sync consumer -- consumes its OWN one-shot flag on the shared token
+        // (`consumedByContentSync`), independent of the hierarchy consumer's flag in
+        // ContentView+ProjectLifecycle.swift's onSectionsUpdated handler. Hash-checked
+        // against `newValue` (the content this call is actually about to act on): a stale
+        // or since-superseded token must not suppress a genuinely different sync.
+        var suppressReconcile = false
+        if var token = editorState.reconcileSuppression, !token.isExpired, !token.consumedByContentSync {
+            if token.contentHash == newValue.hashValue {
+                suppressReconcile = true
+            }
+            token.consumedByContentSync = true
+            editorState.reconcileSuppression = token.isFullyConsumed ? nil : token
+        }
+
         // BlockSyncService handles content -> block DB sync via polling
         // SectionSyncService syncs the section table (used by version history snapshots)
-        services.sectionSync.contentChanged(newValue, zoomedIds: editorState.zoomedSectionIds)
+        services.sectionSync.contentChanged(newValue, zoomedIds: editorState.zoomedSectionIds, suppressReconcile: suppressReconcile)
         services.annotationSync.contentChanged(newValue)
 
         // When in source mode, re-parse blocks (BlockSyncService only works with Milkdown)
@@ -529,6 +545,13 @@ extension View {
                 markdown: withAnchors,
                 sections: sectionsToInject
             )
+            // DERIVED REFRESH (default) -- but not a gap: this writes the freshly-mounted
+            // CodeMirror instance's OWN mount content, composed just before
+            // toggleEditorMode() below actually mounts it. That new instance's
+            // `lastLocalEditAt` starts (and is defensively reset to) `.distantPast` on its
+            // own mount (CodeMirrorCoordinator.shouldPushContent's undo-mode-switch-focus
+            // fix), so the settle-window guard can never suppress THIS push -- no
+            // `forcedPushGeneration` bump needed here.
             editorState.sourceContent = withBibMarker
             editorState.toggleEditorMode()
             editorState.contentState = .idle

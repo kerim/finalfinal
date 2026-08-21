@@ -333,6 +333,12 @@ final class StructuralUndoController {
             // structural undo that can never fire, degrading forever to a no-op text-undo
             // fallback). Push directly and await it, mirroring the WYSIWYG
             // await-push-then-capture ordering immediately above.
+            // INTENTIONAL REPLACEMENT: structural undo/redo restore -- see
+            // CodeMirrorCoordinator.shouldPushContent's settle-window guard (undo-mode-
+            // switch-focus fix). Must be honoured unconditionally: this is the exact push
+            // the surrounding comment already describes as load-bearing for the routing
+            // equality check below.
+            editorState.forcedPushGeneration += 1
             editorState.sourceContent = result.markdown
             // Must-fix 4 (round-5 review): checked, not discarded -- a silently-failed push
             // here leaves CodeMirror's live doc at the PRE-op content even though the DB and
@@ -1130,6 +1136,14 @@ final class StructuralUndoController {
         // content via plain setContent, wiping the swap.
         editorState.content = result.markdown
         if editorState.editorMode == .source {
+            // INTENTIONAL REPLACEMENT: structural undo/redo restore (3c content-mirror
+            // sync). The actual JS push already happened directly above via raw
+            // evaluateJavaScript, bypassing CodeMirrorCoordinator.setContent() -- so its
+            // lastPushedContent is still stale and the next updateNSView cycle WILL want to
+            // push this same content again through the normal path. Bump so that catch-up
+            // push is honoured unconditionally rather than risking suppression by the
+            // settle-window guard (undo-mode-switch-focus fix).
+            editorState.forcedPushGeneration += 1
             editorState.sourceContent = result.markdown
         }
         NotificationCenter.default.post(

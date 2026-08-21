@@ -100,7 +100,10 @@ struct MilkdownEditor: NSViewRepresentable {
     /// CSS variables for theming - when this changes, updateNSView is called
     var themeCSS: String = ThemeManager.shared.cssVariables
 
-    let onContentChange: (String) -> Void
+    /// P3 §4d (undo-mode-switch-focus second timing gap): second parameter is `wasUndo` --
+    /// true if the content push that produced this string was (or included, sticky-OR) an
+    /// undo replay. Mirrors CodeMirrorEditor's matching property.
+    let onContentChange: (String, Bool) -> Void
     let onStatsChange: (Int, Int) -> Void
     let onSectionChange: (String) -> Void
     let onCursorPositionSaved: (CursorPosition) -> Void
@@ -281,7 +284,8 @@ struct MilkdownEditor: NSViewRepresentable {
         var scrollToOffsetBinding: Binding<Int?>
         var scrollToBlockIdBinding: Binding<String?>
         var isResettingContentBinding: Binding<Bool>
-        let onContentChange: (String) -> Void
+        /// P3 §4d: second parameter is `wasUndo` -- see MilkdownEditor's matching property.
+        let onContentChange: (String, Bool) -> Void
         let onStatsChange: (Int, Int) -> Void
         let onSectionChange: (String) -> Void
         let onCursorPositionSaved: (CursorPosition) -> Void
@@ -296,6 +300,13 @@ struct MilkdownEditor: NSViewRepresentable {
         var lastReceivedFromEditor: Date = .distantPast
         var lastPushedContent: String = ""
         var lastPushTime: Date = .distantPast
+
+        /// P3 (4c/4d, undo-mode-switch-focus second timing gap): the most recent
+        /// `contentChanged` message's `wasUndo` flag (sticky-OR across the JS-side 50ms
+        /// debounce window -- see main.ts). Captured on every `contentChanged` dispatch;
+        /// NOT YET consumed by `SectionSyncService`'s re-correction suppression (§4d) --
+        /// that wiring is deferred, see this round's coder report.
+        var lastContentChangeWasUndo: Bool = false
 
         var lastFocusModeState: Bool = false
         var lastThemeCss: String = ""
@@ -399,7 +410,7 @@ struct MilkdownEditor: NSViewRepresentable {
             scrollToBlockId: Binding<String?>,
             isResettingContent: Binding<Bool>,
             contentState: EditorContentState,
-            onContentChange: @escaping (String) -> Void,
+            onContentChange: @escaping (String, Bool) -> Void,
             onStatsChange: @escaping (Int, Int) -> Void,
             onSectionChange: @escaping (String) -> Void,
             onCursorPositionSaved: @escaping (CursorPosition) -> Void,

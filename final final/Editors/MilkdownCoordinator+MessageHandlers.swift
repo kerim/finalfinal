@@ -588,7 +588,12 @@ extension MilkdownEditor.Coordinator {
 
     /// Handle content pushed from JS via window.webkit.messageHandlers.contentChanged
     /// This is the primary content sync path (replaces 500ms polling)
-    func handleContentPush(_ content: String) {
+    /// - Parameter wasUndo: P3 §4d -- forwarded to `onContentChange` so ContentView can
+    ///   suppress re-correction for content that was just undone. KNOWN RESIDUAL: if any
+    ///   guard below rejects this push (grace period, equality, corruption check), the
+    ///   `wasUndo` signal carried by THIS specific message is dropped along with it --
+    ///   mirrors CodeMirror's identical structure/residual, not a new gap introduced here.
+    func handleContentPush(_ content: String, wasUndo: Bool = false) {
         guard !self.isCleanedUp, self.isEditorReady else { return }
         guard !self.isResettingContentBinding.wrappedValue else { return }
         guard self.contentState == .idle else {
@@ -611,7 +616,7 @@ extension MilkdownEditor.Coordinator {
         self.lastReceivedFromEditor = Date()
         self.lastPushedContent = content
         self.contentBinding.wrappedValue = content
-        self.onContentChange(content)
+        self.onContentChange(content, wasUndo)
     }
 
     // MARK: - 3s Fallback Polling (stats + section title only)

@@ -100,6 +100,8 @@ struct UndoRedoCommands: Commands {
                 }
             }
         } else {
+            DebugLog.log(.undo, "[UndoRedoCommands] performUndo: no focused WKWebView -- "
+                + "falling through to nil-target undo: (this is the silent-no-op path)")
             NSApp.sendAction(Selector(("undo:")), to: nil, from: nil)
         }
     }
@@ -112,6 +114,8 @@ struct UndoRedoCommands: Commands {
                 }
             }
         } else {
+            DebugLog.log(.undo, "[UndoRedoCommands] performRedo: no focused WKWebView -- "
+                + "falling through to nil-target redo: (this is the silent-no-op path)")
             NSApp.sendAction(Selector(("redo:")), to: nil, from: nil)
         }
     }
