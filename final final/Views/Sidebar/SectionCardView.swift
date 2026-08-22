@@ -30,6 +30,11 @@ struct SectionCardView: View {
     @Environment(GoalColorSettingsManager.self) private var goalManager
     @State private var isHovering = false
     @State private var showingGoalEditor = false
+    /// Drives the word count's subtle hover highlight -- separate from `isHovering` (the whole
+    /// card's row highlight), so this control visibly calls out that it has its own
+    /// right-click/ctrl-click behavior (opening the goal editor below), distinct from the
+    /// card-wide Duplicate/Delete Section context menu.
+    @State private var isHoveringWordCount = false
 
     var body: some View {
 
@@ -180,9 +185,20 @@ struct SectionCardView: View {
         Text(section.wordCountDisplay)
             .font(.system(size: TypeScale.smallUI, weight: .medium, design: .monospaced))
             .foregroundColor(wordCountColor)
-            .onTapGesture {
-                showingGoalEditor = true
+            .padding(.horizontal, 4)
+            .padding(.vertical, 2)
+            .background(
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(themeManager.currentTheme.accentColor.opacity(isHoveringWordCount ? 0.14 : 0))
+            )
+            .contentShape(Rectangle())
+            .onHover { hovering in
+                withAnimation(.easeOut(duration: 0.1)) {
+                    isHoveringWordCount = hovering
+                }
             }
+            .background(RightClickCatcher(onRightClick: { showingGoalEditor = true }))
+            .help("Right-click or ctrl-click to set word goals")
             .popover(isPresented: $showingGoalEditor, arrowEdge: .bottom) {
                 WordCountGoalPopover(
                     wordGoal: $section.wordGoal,

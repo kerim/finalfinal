@@ -64,101 +64,6 @@ class StatusMenuHelper {
     }
 }
 
-// MARK: - Right-Click / Ctrl-Click Detection
-
-/// NSViewRepresentable that detects right-click AND ctrl+left-click to show the status menu.
-/// Uses local event monitor so it doesn't block SwiftUI gestures.
-struct StatusMenuTrigger: NSViewRepresentable {
-    @Binding var status: SectionStatus
-    let themeManager: ThemeManager
-
-    func makeNSView(context: Context) -> NSView {
-        let view = RightClickView()
-        view.onRightClick = { [status, themeManager] in
-            StatusMenuHelper.shared.showMenu(
-                for: status,
-                themeManager: themeManager,
-                onSelect: { newStatus in
-                    DispatchQueue.main.async {
-                        self.status = newStatus
-                    }
-                }
-            )
-        }
-        return view
-    }
-
-    func updateNSView(_ nsView: NSView, context: Context) {
-        (nsView as? RightClickView)?.onRightClick = { [status, themeManager] in
-            StatusMenuHelper.shared.showMenu(
-                for: status,
-                themeManager: themeManager,
-                onSelect: { newStatus in
-                    DispatchQueue.main.async {
-                        self.status = newStatus
-                    }
-                }
-            )
-        }
-    }
-}
-
-/// NSView subclass that detects right-click AND ctrl+left-click using local event monitor.
-/// Uses frame-based detection since hitTest returns nil to allow SwiftUI gestures.
-private class RightClickView: NSView {
-    var onRightClick: (() -> Void)?
-    private var eventMonitor: Any?
-
-    override func viewDidMoveToWindow() {
-        super.viewDidMoveToWindow()
-
-        // Always remove existing monitor to prevent duplicates
-        if let monitor = eventMonitor {
-            NSEvent.removeMonitor(monitor)
-            eventMonitor = nil
-        }
-
-        if window != nil {
-            // Monitor BOTH right-click AND ctrl+left-click
-            eventMonitor = NSEvent.addLocalMonitorForEvents(
-                matching: [.rightMouseDown, .leftMouseDown]
-            ) { [weak self] event in
-                guard let self = self else { return event }
-
-                // Check if it's a right-click OR ctrl+left-click
-                let isRightClick = event.type == .rightMouseDown
-                let isCtrlClick = event.type == .leftMouseDown && event.modifierFlags.contains(.control)
-
-                guard isRightClick || isCtrlClick else { return event }
-                guard event.window === self.window else { return event }
-                guard let superview = self.superview else { return event }
-
-                let locationInWindow = event.locationInWindow
-                let locationInSuperview = superview.convert(locationInWindow, from: nil)
-
-                if self.frame.contains(locationInSuperview) {
-                    DispatchQueue.main.async {
-                        self.onRightClick?()
-                    }
-                    return nil  // Consume event to prevent click-through
-                }
-                return event
-            }
-        }
-    }
-
-    override func hitTest(_ point: NSPoint) -> NSView? {
-        // Don't block hit testing - let events pass through to SwiftUI
-        return nil
-    }
-
-    deinit {
-        if let monitor = eventMonitor {
-            NSEvent.removeMonitor(monitor)
-        }
-    }
-}
-
 // MARK: - StatusBadge
 
 /// Colored text label indicating section status
@@ -168,6 +73,10 @@ struct StatusBadge: View {
     @Binding var status: SectionStatus
     @Environment(ThemeManager.self) private var themeManager
     @State private var opacity: Double = 1.0
+    /// Drives the subtle hover highlight below -- separate from `opacity` (the click-feedback
+    /// dim/fade), and separate from the card's own whole-row hover background, so this control
+    /// visibly calls out that it has its own right-click/ctrl-click behavior.
+    @State private var isHovering = false
 
     private var statusColor: Color {
         themeManager.currentTheme.statusColors.color(for: status)
@@ -179,6 +88,12 @@ struct StatusBadge: View {
             .foregroundColor(statusColor)
             .frame(minWidth: 48, alignment: .trailing)
             .opacity(opacity)
+            .padding(.horizontal, 4)
+            .padding(.vertical, 2)
+            .background(
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(themeManager.currentTheme.accentColor.opacity(isHovering ? 0.14 : 0))
+            )
             .contentShape(Rectangle())
             .onTapGesture {
                 // Immediate visual feedback: dim
@@ -195,7 +110,12 @@ struct StatusBadge: View {
             .onLongPressGesture(minimumDuration: 0.5) {
                 showStatusMenu()
             }
-            .background(StatusMenuTrigger(status: $status, themeManager: themeManager))
+            .onHover { hovering in
+                withAnimation(.easeOut(duration: 0.1)) {
+                    isHovering = hovering
+                }
+            }
+            .background(RightClickCatcher(onRightClick: showStatusMenu))
             .help("Click to cycle status, hold or right-click for menu")
     }
 
