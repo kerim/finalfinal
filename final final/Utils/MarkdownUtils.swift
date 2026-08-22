@@ -106,30 +106,63 @@ enum MarkdownUtils {
         var result = content
 
         // Remove heading markers: # ## ### etc at line start
-        applyInlinePattern("^#{1,6}\\s+", options: .anchorsMatchLines, to: &result, template: "")
+        let headingPattern = "^#{1,6}\\s+"
+        if let regex = try? NSRegularExpression(pattern: headingPattern, options: .anchorsMatchLines) {
+            let range = NSRange(result.startIndex..., in: result)
+            result = regex.stringByReplacingMatches(in: result, options: [], range: range, withTemplate: "")
+        }
 
         // Remove bold/italic markers: ** __ * _
         // Handle bold first (** and __), then italic (* and _)
-        applyInlinePattern("\\*\\*(.+?)\\*\\*|__(.+?)__", to: &result, template: "$1$2")
-        applyInlinePattern("\\*([^*]+)\\*|_([^_]+)_", to: &result, template: "$1$2")
+        let boldPattern = "\\*\\*(.+?)\\*\\*|__(.+?)__"
+        if let regex = try? NSRegularExpression(pattern: boldPattern, options: []) {
+            let range = NSRange(result.startIndex..., in: result)
+            result = regex.stringByReplacingMatches(in: result, options: [], range: range, withTemplate: "$1$2")
+        }
+
+        let italicPattern = "\\*([^*]+)\\*|_([^_]+)_"
+        if let regex = try? NSRegularExpression(pattern: italicPattern, options: []) {
+            let range = NSRange(result.startIndex..., in: result)
+            result = regex.stringByReplacingMatches(in: result, options: [], range: range, withTemplate: "$1$2")
+        }
 
         // Remove strikethrough: ~~text~~
-        applyInlinePattern("~~(.+?)~~", to: &result, template: "$1")
+        let strikethroughPattern = "~~(.+?)~~"
+        if let regex = try? NSRegularExpression(pattern: strikethroughPattern, options: []) {
+            let range = NSRange(result.startIndex..., in: result)
+            result = regex.stringByReplacingMatches(in: result, options: [], range: range, withTemplate: "$1")
+        }
 
         // Remove highlight markers: ==text==
-        applyInlinePattern("==(.+?)==", to: &result, template: "$1")
+        let highlightPattern = "==(.+?)=="
+        if let regex = try? NSRegularExpression(pattern: highlightPattern, options: []) {
+            let range = NSRange(result.startIndex..., in: result)
+            result = regex.stringByReplacingMatches(in: result, options: [], range: range, withTemplate: "$1")
+        }
 
         // Remove inline code backticks: `code`
-        applyInlinePattern("`([^`]+)`", to: &result, template: "$1")
+        let inlineCodePattern = "`([^`]+)`"
+        if let regex = try? NSRegularExpression(pattern: inlineCodePattern, options: []) {
+            let range = NSRange(result.startIndex..., in: result)
+            result = regex.stringByReplacingMatches(in: result, options: [], range: range, withTemplate: "$1")
+        }
 
         // Remove images ![alt](url){width=N%} entirely (don't count alt text as words).
         // MUST run before the link stripper, otherwise the link regex matches
         // [alt](url) inside the image syntax and leaves a stray `!alt text` behind.
-        applyInlinePattern("!\\[[^\\]]*\\]\\([^)]+\\)(\\s*\\{[^}]*\\})?", to: &result, template: "")
+        let imagePattern = "!\\[[^\\]]*\\]\\([^)]+\\)(\\s*\\{[^}]*\\})?"
+        if let regex = try? NSRegularExpression(pattern: imagePattern, options: []) {
+            let range = NSRange(result.startIndex..., in: result)
+            result = regex.stringByReplacingMatches(in: result, options: [], range: range, withTemplate: "")
+        }
 
         // Convert links [text](url) to just text. Negative lookbehind `(?<!!)`
         // is belt-and-braces in case the image stripper missed an unusual variant.
-        applyInlinePattern("(?<!!)\\[([^\\]]+)\\]\\([^)]+\\)", to: &result, template: "$1")
+        let linkPattern = "(?<!!)\\[([^\\]]+)\\]\\([^)]+\\)"
+        if let regex = try? NSRegularExpression(pattern: linkPattern, options: []) {
+            let range = NSRange(result.startIndex..., in: result)
+            result = regex.stringByReplacingMatches(in: result, options: [], range: range, withTemplate: "$1")
+        }
 
         // Remove list markers: - * + or 1. 2. etc (unless the caller already
         // knows this isn't really list content -- see stripListMarkers's doc)
@@ -138,7 +171,11 @@ enum MarkdownUtils {
         }
 
         // Remove blockquote markers: > at line start
-        applyInlinePattern("^>+\\s*", options: .anchorsMatchLines, to: &result, template: "")
+        let blockquotePattern = "^>+\\s*"
+        if let regex = try? NSRegularExpression(pattern: blockquotePattern, options: .anchorsMatchLines) {
+            let range = NSRange(result.startIndex..., in: result)
+            result = regex.stringByReplacingMatches(in: result, options: [], range: range, withTemplate: "")
+        }
 
         // Remove section break markers: <!-- ::break:: -->
         // Deliberately a substring removal (matches the marker ANYWHERE in
@@ -159,45 +196,44 @@ enum MarkdownUtils {
         // them feed this function a value that's supposed to answer the
         // classification question, so this pattern intentionally stays a
         // plain substring strip.
-        applyInlinePattern("<!--\\s*::break::\\s*-->", to: &result, template: "")
+        let breakPattern = "<!--\\s*::break::\\s*-->"
+        if let regex = try? NSRegularExpression(pattern: breakPattern, options: []) {
+            let range = NSRange(result.startIndex..., in: result)
+            result = regex.stringByReplacingMatches(in: result, options: [], range: range, withTemplate: "")
+        }
 
         // Remove code fence markers: ```language
-        applyInlinePattern("^```[a-zA-Z]*\\s*$", options: .anchorsMatchLines, to: &result, template: "")
+        let codeFencePattern = "^```[a-zA-Z]*\\s*$"
+        if let regex = try? NSRegularExpression(pattern: codeFencePattern, options: .anchorsMatchLines) {
+            let range = NSRange(result.startIndex..., in: result)
+            result = regex.stringByReplacingMatches(in: result, options: [], range: range, withTemplate: "")
+        }
 
         // Remove horizontal rules: ---, ***, ___
-        applyInlinePattern("^[-*_]{3,}\\s*$", options: .anchorsMatchLines, to: &result, template: "")
+        let hrPattern = "^[-*_]{3,}\\s*$"
+        if let regex = try? NSRegularExpression(pattern: hrPattern, options: .anchorsMatchLines) {
+            let range = NSRange(result.startIndex..., in: result)
+            result = regex.stringByReplacingMatches(in: result, options: [], range: range, withTemplate: "")
+        }
 
         // Remove footnote references: [^1], [^2], etc.
-        applyInlinePattern("\\[\\^\\d+\\](?!:)", to: &result, template: "")
+        let footnoteRefPattern = "\\[\\^\\d+\\](?!:)"
+        if let regex = try? NSRegularExpression(pattern: footnoteRefPattern) {
+            let range = NSRange(result.startIndex..., in: result)
+            result = regex.stringByReplacingMatches(in: result, options: [], range: range, withTemplate: "")
+        }
 
         // Remove footnote definition prefixes: [^1]: at line start
-        applyInlinePattern("^\\[\\^\\d+\\]:\\s*", options: .anchorsMatchLines, to: &result, template: "")
+        let footnoteDefPattern = "^\\[\\^\\d+\\]:\\s*"
+        if let regex = try? NSRegularExpression(pattern: footnoteDefPattern, options: .anchorsMatchLines) {
+            let range = NSRange(result.startIndex..., in: result)
+            result = regex.stringByReplacingMatches(in: result, options: [], range: range, withTemplate: "")
+        }
 
         // Remove annotations: <!-- ::type:: content -->
         result = stripAnnotations(from: result)
 
         return result
-    }
-
-    /// Compile `pattern` (with `options`) and, if it compiles, replace every match in
-    /// `input` with `template` -- in place. Leaves `input` unchanged if the pattern fails
-    /// to compile, matching every one of `stripMarkdownSyntax`'s original inline
-    /// `if let regex = try? ...` blocks: these are compile-time constant patterns, so a
-    /// failure is a programming error (a typo), not a runtime condition worth branching on
-    /// at the call site. Extracted purely to keep `stripMarkdownSyntax` itself branch-free
-    /// per pattern -- each inline `if let` used to add one path to that function's own
-    /// cyclomatic complexity; this helper carries that one branch instead, once, so adding
-    /// or removing a stripped pattern no longer moves `stripMarkdownSyntax` closer to
-    /// SwiftLint's `cyclomatic_complexity` limit.
-    private static func applyInlinePattern(
-        _ pattern: String,
-        options: NSRegularExpression.Options = [],
-        to input: inout String,
-        template: String
-    ) {
-        guard let regex = try? NSRegularExpression(pattern: pattern, options: options) else { return }
-        let range = NSRange(input.startIndex..., in: input)
-        input = regex.stringByReplacingMatches(in: input, options: [], range: range, withTemplate: template)
     }
 
     /// Remove a leading `- `/`* `/`+ `/`N. ` list marker at the start of each line.
