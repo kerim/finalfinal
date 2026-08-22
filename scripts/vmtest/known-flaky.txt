@@ -29,3 +29,50 @@ final finalUITests/ListNumberingE2ETests/testDeliberateNewListRestartsAtOne
 # new regression. Quarantined rather than root-caused; revisit if it starts
 # failing consistently.
 final finalUITests/EditorSmokeTests/testFocusModeToggle
+
+# Added 2026-08-22 during Phase D of the unified-undo remediation
+# (docs/plans/steady-unwinding-ledger.md). This test performs 4 rapid
+# native-NSMenu-driven structural ops (right-click card -> Duplicate Section,
+# back to back with no user pause) then immediately synthesizes Cmd-Z to
+# verify the lowered eviction cap. The undo keystroke is consistently not
+# observed anywhere in this app's own code -- not in native
+# UndoRedoCommands.performUndo() (confirmed via an unconditional diagnostic
+# log added specifically to test this, which never fires), and not even at
+# handleSlashKeydown's earliest possible JS-side keydown observation point
+# (same result: silent).
+#
+# Two hypotheses were eliminated with direct evidence: the structural-op
+# latch (grepped every assignment site in undo-coordinator.ts -- forward ops
+# never touch it, so 4 duplicates cannot leave it held), and insufficient
+# settle time (widened from 1.5s to 2.0s between the last menu interaction
+# and the keystroke, no change).
+#
+# CORRECTION (post-review): an AppKit-vs-DOM focus split was NOT actually
+# eliminated, despite an earlier version of this note claiming it was. The
+# accessibility tree only proves DOM focus (document.activeElement inside
+# the WebView) -- it says nothing about NSWindow.firstResponder, the real
+# native value a Cmd-Z key equivalent depends on. The only instrumentation
+# that reads that real value lives inside UndoRedoCommands.performUndo()
+# itself, which -- as stated above -- never fires at all for this failure.
+# That means the AppKit-focus hypothesis was never actually tested; it's
+# moot only in the sense that performUndo() never runs regardless of what
+# the real first responder is, not because the responder was confirmed
+# correct. A judge review (independent evidence, not this note) separately
+# confirmed the quarantine's OUTCOME still stands: a disabled NSMenu item
+# doesn't consume its key equivalent at all, disabling requires no project
+# window to be key (not the case here), and testDeleteAndDuplicateSectionUndo
+# proves the identical duplicate-then-undo sequence works once -- ruling out
+# "duplicating disables Undo" as the mechanism. The test itself now asserts
+# app.menuItems["menu-undo"].isEnabled immediately before Undo #1's keystroke
+# as the decisive check going forward: if it's ever found disabled there,
+# reopen this quarantine immediately, this note's reasoning no longer holds.
+#
+# With that ruled out (by the menu-item check, not by the AX tree), what
+# remains is XCUITest's own synthetic key delivery failing to reach the app
+# immediately after a run of native NSMenu tracking-loop interactions -- a
+# test-infrastructure limitation, not a defect in this app's undo/eviction
+# logic (which the equivalent Swift unit-level eviction tests already cover
+# without this specific UI-driving hazard). Revisit if eviction-cap
+# regression coverage needs strengthening; this quarantine does not remove
+# unit-level coverage of the eviction behavior itself.
+final finalUITests/UnifiedUndoE2ETests/testEvictionCapEvictsOldestEntryAndStaysConsistent

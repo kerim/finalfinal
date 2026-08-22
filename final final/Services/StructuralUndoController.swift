@@ -368,6 +368,54 @@ final class StructuralUndoController {
         await enforceHierarchyInSequence()
         spy("enforceHierarchyInSequence")
 
+        // Step 7c (2026-08-22, real production bug found via Phase D's e2e suite -- see
+        // `Database+SectionOps.swift`'s `deleteSections`/`duplicateSections` doc comments):
+        // `section` is a separate table from `block`, keyed by its OWN independently-generated
+        // UUID (`SectionReconciler.reconcile()`'s `Section(...)` construction, `Section.swift`'s
+        // `id: String = UUID().uuidString` default) -- there is no shared ID space and no DB
+        // cascade between them. Every real `section` row is created/updated/deleted by
+        // `SectionReconciler`, driven by `SectionSyncService`, reconciling PARSED HEADERS against
+        // EXISTING rows by content/position -- never by a caller passing a `block` id directly.
+        // `deleteSections`/`duplicateSections` used to attempt exactly that (matching `section`
+        // rows by the SAME block ids just mutated in `block`), which can never work: a delete's
+        // `Section.filter(keys: blockIds).deleteAll(db)` matched zero rows every time (a stale
+        // `section` row silently survived every sidebar delete), and a duplicate's
+        // `Section(id: copy.id, ...)` insert created a permanent orphan row under a `block` id no
+        // reconciler pass will ever look up again. This resync is the fix: reconcile `section`
+        // against the post-op content HERE -- must be after `pushPostOpContentAndFinalize` (step
+        // 7) above, never before (`editorState.content` isn't updated to the post-op markdown
+        // until inside that call), and MUST also run after step 7b's `enforceHierarchyInSequence`
+        // above (review-round fix: this resync used to run BEFORE 7b, meaning any heading-level/
+        // sort-order correction 7b then made went unreflected in `section` -- immediately stale
+        // again the instant it converged) -- restores `section` as the correctly-converging
+        // mirror table `Snapshot.swift`'s `section.sortOrder`/`headerLevel` reads assume it
+        // already was. `suppressReconcile` is deliberately left at its default (`false`, i.e.
+        // reconcile) -- that parameter exists for a different, narrower hazard (P3 §4d:
+        // re-detecting a hierarchy correction the user just undid via Cmd-Z on a
+        // heading-breaking edit), not this one, and `restoreEntireProject` (the undo/redo path
+        // for every structural op, `SnapshotService.swift`) already establishes the correct
+        // pattern this mirrors: delete-then-reinsert `section` rows with fresh UUIDs from the
+        // record of truth, never keyed by an unrelated table's id.
+        //
+        // Review-round fix: resolves db/pid from `sectionSyncService`'s OWN stored state
+        // (`configure(database:projectId:)`, set once at project open), not this sequence's own
+        // captured `db`/`pid` parameters -- the same cross-project-write hazard
+        // `enforceHierarchyInSequence()` immediately above already guards against for its own
+        // (also globally-resolved) DB access. Guarded here the identical way, and the nil-service
+        // branch is logged rather than silently skipped -- the exact silent-failure shape the
+        // `deleteSections`/`duplicateSections` bug above was, now with a diagnosable trail
+        // instead of a repeat of it.
+        if let sectionSyncService {
+            if DocumentManager.shared.projectId == editorState.currentProjectId {
+                await sectionSyncService.syncNow(editorState.content)
+                spy("resyncSectionTable")
+            } else {
+                DebugLog.log(.undo, "[StructuralUndoController] performStructuralOp: project switched mid-sequence -- skipping step 7c's section-table resync (cross-project write risk)")
+            }
+        } else {
+            DebugLog.log(.undo, "[StructuralUndoController] performStructuralOp: sectionSyncService is nil -- skipping step 7c's section-table resync")
+        }
+
         // MF-2 (Phase 5 review round): re-check the generation captured at the top of this
         // sequence, right before recording -- a barrier (project switch, mode switch, or any
         // other `invalidateAll`/`invalidateRedoBranch` caller) invalidated the timeline while

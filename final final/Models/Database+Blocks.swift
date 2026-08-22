@@ -58,6 +58,31 @@ extension ProjectDatabase {
         }
     }
 
+    /// Title of the bibliography heading block, if a real (machine-managed) bibliography
+    /// section currently exists at the `block`-table level -- the authoritative source
+    /// (`BibliographySyncService` is the sole writer of `isBibliography` blocks).
+    ///
+    /// Exists specifically for the "first citation ever inserted" gap in
+    /// `SectionSyncService.parseHeaders`'s bibliography detection (2026-08-22): that function's
+    /// `existingBibTitle` parameter is normally seeded from the LEGACY `section` table's own
+    /// prior state (`dbSections.first(where: { $0.isBibliography })?.title`), which is `nil`
+    /// the very first time a bibliography section is created -- `section` hasn't reconciled a
+    /// bibliography row yet, so there is nothing there to seed it from, even though the `block`
+    /// table already has one. Falling back to THIS query lets that first resync recognize the
+    /// bibliography heading immediately, instead of one sync cycle late (during which it gets
+    /// reconciled as an ordinary, non-bibliography section -- a real miscount, not just a stale
+    /// read, since a `section` row created that way keeps `isBibliography = false` forever
+    /// unless something later happens to re-trigger the correct branch).
+    func fetchBibliographyHeadingTitle(projectId: String) throws -> String? {
+        try read { db in
+            try Block
+                .filter(Block.Columns.projectId == projectId)
+                .filter(Block.Columns.blockType == BlockType.heading.rawValue)
+                .filter(Block.Columns.isBibliography == true)
+                .fetchOne(db)?.textContent
+        }
+    }
+
     /// Fetch a single block by ID
     func fetchBlock(id: String) throws -> Block? {
         try read { db in

@@ -115,14 +115,20 @@ extension ProjectDatabase {
     /// write transaction. Returns the deleted root section's display title on success, for use
     /// as a `StructuralEntry` title.
     ///
-    /// Also removes the legacy `section` table row for every deleted leader block, if one
-    /// exists. There is no DB-level cascade from `block` to `section` (they're sibling tables,
-    /// not parent/child) -- `Snapshot.swift` reads `section.sortOrder` directly, so leaving a
-    /// stale row behind (pointing at a heading that no longer exists) would be read by any
-    /// future snapshot/version-history pass. `annotation.sectionId` has `onDelete: .setNull`
-    /// against `section`, which is the correct, harmless behavior for any legacy (pre-block-
-    /// architecture) annotation still anchored to it -- it becomes unsectioned rather than
-    /// dangling.
+    /// Does NOT touch the legacy `section` table (a real production bug, found and fixed
+    /// 2026-08-22 via Phase D's e2e suite -- this file's own header comment above previously,
+    /// wrongly, claimed this function "also removes the legacy `section` table row"). `section`
+    /// is a SEPARATE table from `block`, keyed by its own independently-generated UUID
+    /// (`SectionReconciler.reconcile()`'s `Section(...)` construction, `Section.swift`'s
+    /// `id: String = UUID().uuidString` default) -- there is no shared ID space and no DB
+    /// cascade between them. A `Section.filter(keys: blockIds).deleteAll(db)` here (the removed
+    /// code) matched zero rows every single time, silently -- the stale `section` row for the
+    /// deleted heading survived every sidebar delete, and `Snapshot.swift`'s direct
+    /// `section.sortOrder` reads (Version History) were reading a table that didn't actually
+    /// reflect the delete. `section`-table convergence is `SectionReconciler`'s job, driven by
+    /// `SectionSyncService`, reconciling parsed headers against existing rows by content/position
+    /// -- never by a caller passing a `block` id directly. `StructuralUndoController.performStructuralOp`
+    /// now forces that resync after this DB mutation lands (see its own "Step 7c" comment).
     @discardableResult
     func deleteSections(rootId: String, projectId: String) throws -> String? {
         try write { db in
@@ -136,7 +142,6 @@ extension ProjectDatabase {
             guard fetched.count == orderedIds.count else { return nil }
 
             try Block.filter(keys: orderedIds).deleteAll(db)
-            try Section.filter(keys: orderedIds).deleteAll(db)
 
             return subtree.rootTitle
         }
@@ -150,10 +155,16 @@ extension ProjectDatabase {
     /// bibliography/notes sections or an unresolvable root id. Returns the new (suffixed) title
     /// on success, for use as a `StructuralEntry` title.
     ///
-    /// Also creates the legacy `section` table row for every copied leader block (heading or
-    /// pseudo-section), symmetric with `deleteSections` maintaining that table on its own side
-    /// -- see `deleteSections`'s doc comment for why a stale/missing `section` row matters
-    /// (`Snapshot.swift` reads `section.sortOrder` directly).
+    /// Does NOT touch the legacy `section` table (a real production bug, found and fixed
+    /// 2026-08-22 via Phase D's e2e suite -- see `deleteSections`'s doc comment for the shared
+    /// root cause). The removed code inserted a `Section(id: copy.id, ...)` row keyed by the
+    /// COPY's fresh `block` id -- since `block` and `section` share no ID space, and every real
+    /// `section` row is minted with its OWN independently-generated UUID
+    /// (`SectionReconciler.reconcile()`), that insert created a PERMANENT ORPHAN row no
+    /// reconciler pass could ever find or prune by that id -- active, ongoing data corruption on
+    /// every sidebar duplicate, not just a dead no-op like the delete side's bug. Section-table
+    /// convergence is `SectionReconciler`'s job now; see `deleteSections`'s doc comment and
+    /// `StructuralUndoController.performStructuralOp`'s "Step 7c" comment for the fix.
     @discardableResult
     func duplicateSections(rootId: String, projectId: String) throws -> String? {
         try write { db in
@@ -201,43 +212,11 @@ extension ProjectDatabase {
                     // `copy = original` above carries over the ORIGINAL's stored wordCount
                     // verbatim; appending " copy" to textContent without this call would persist
                     // a one-word-short count forever (wordCount is a stored column, not computed
-                    // on read). Must run before both `copy.insert(db)` below and the `Section`
-                    // row construction further down, which reads `copy.wordCount` for its own
-                    // `wordCount:` field.
+                    // on read). Must run before `copy.insert(db)` below.
                     copy.recalculateWordCount()
                     newTitle = copy.outlineTitle
                 }
                 try copy.insert(db)
-
-                // Mirror deleteSections's legacy `section` table maintenance for the copy's own
-                // leader rows. `parentId` is left nil, recomputed by
-                // `EditorViewState.recalculateParentRelationships()` on the next observation
-                // tick rather than stored authoritatively here.
-                if copy.blockType == .heading || copy.isPseudoSection {
-                    var section = Section(
-                        id: copy.id,
-                        projectId: projectId,
-                        parentId: nil,
-                        sortOrder: Int(copy.sortOrder),
-                        headerLevel: copy.headingLevel ?? 1,
-                        isPseudoSection: copy.isPseudoSection,
-                        isBibliography: copy.isBibliography,
-                        isNotes: copy.isNotes,
-                        title: copy.outlineTitle,
-                        markdownContent: copy.markdownFragment,
-                        status: copy.status ?? .writing,
-                        tags: copy.tags ?? [],
-                        wordGoal: copy.wordGoal,
-                        goalType: copy.goalType,
-                        aggregateGoal: copy.aggregateGoal,
-                        aggregateGoalType: copy.aggregateGoalType,
-                        wordCount: copy.wordCount,
-                        startOffset: 0,
-                        createdAt: copy.createdAt,
-                        updatedAt: copy.updatedAt
-                    )
-                    try section.insert(db)
-                }
             }
 
             return newTitle

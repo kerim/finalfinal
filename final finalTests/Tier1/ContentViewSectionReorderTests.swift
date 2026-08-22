@@ -225,4 +225,99 @@ struct ContentViewSectionReorderTests {
 
         #expect(retried, "MF-3: a refused dispatch's request must be retried, not silently dropped -- the audited sequence must be re-invoked a second time")
     }
+
+    // MARK: - Reproduction: drag-with-level-promotion no-op (2026-08-22 vmtest finding)
+
+    /// INVESTIGATION TEST (2026-08-22): reproduces `UnifiedUndoE2ETests.
+    /// testCanonicalRestoreReorderUndoUndoRedoRedo`'s live vmtest failure -- dragging "Last
+    /// Section" to just before its immediate predecessor "Middle Section" (both real H2
+    /// siblings of an H1 "Anchor Section") reported a genuine `.performed` structural-op
+    /// sequence, yet the persisted section order came back completely unchanged.
+    ///
+    /// `sections: [SectionViewModel]` here is built via `SectionViewModel(from: Block)` from
+    /// `db.fetchOutlineBlocks` -- REAL block ids, the same construction every other test in
+    /// this file and `BlockReorderIntegrityTests.swift` already uses, and the same path
+    /// `EditorViewState.applySectionsUpdate`/`mergeSections` uses in the live app (confirmed by
+    /// tracing every `editorState.sections =` assignment and every `SectionSyncService.
+    /// loadSections()` call site: the ONLY place a `Section`-table-keyed `SectionViewModel`
+    /// exists is `ContentView.swift`'s `onShowHistory` closure, feeding the SEPARATE Version
+    /// History coordinator, never `editorState.sections`). So this is NOT the id-space mismatch
+    /// the delete/duplicate bug turned out to be -- `SectionViewModel.id` genuinely already IS
+    /// the heading block's own id on this path, and `reorderAllBlocks`'s `Block.fetchOne(db,
+    /// key: section.id)` lookups succeed correctly. The one thing this scenario adds beyond
+    /// `performSectionReorderRecordsUndoEntry`'s already-passing same-level swap above: a
+    /// genuine header-LEVEL promotion (H2 -> H1), traced against the real
+    /// `calculateZoneLevel(x:sidebarWidth:predecessorLevel:)` math for the e2e suite's own
+    /// drop coordinates (dx: 0.05, predecessorLevel 1 from Anchor) -- confirmed by hand
+    /// arithmetic to compute newLevel=1, not 2, for that drop.
+    @Test("Reproduces: dragging a section to insertBefore its predecessor, WITH a header-level promotion, must actually persist the new order")
+    func reorderWithLevelPromotionActuallyPersistsNewOrder() async throws {
+        let content = """
+        # Anchor Section
+
+        Anchor section body text for word counting.
+
+        ## Middle Section
+
+        Middle section body text for word counting purposes.
+
+        ## Last Section
+
+        Last section body text for word counting purposes too.
+        """
+        let db = try TestFixtureFactory.createTemporary(content: content)
+        let pid = try TestFixtureFactory.getProjectId(from: db)
+
+        let view = ContentView()
+        view.editorState.projectDatabase = db
+        view.editorState.currentProjectId = pid
+        view.editorState.content = content
+        view.editorState.sections = try db.fetchOutlineBlocks(projectId: pid).map { SectionViewModel(from: $0) }
+
+        view.bibliographySyncService.configure(database: db, projectId: pid)
+        view.footnoteSyncService.configure(database: db, projectId: pid)
+
+        view.structuralUndoController.configure(
+            editorState: view.editorState,
+            blockSyncService: view.blockSyncService,
+            sectionSyncService: view.sectionSyncService,
+            bibliographySyncService: view.bibliographySyncService,
+            footnoteSyncService: view.footnoteSyncService,
+            annotationSyncService: view.annotationSyncService,
+            unifiedUndoService: view.unifiedUndoService,
+            findBarState: view.findBarState
+        )
+        view.structuralUndoController.testEvalBoolOverride = { js in
+            StructuralUndoControllerTests.realisticEvalBoolDefault(js)
+        }
+        view.structuralUndoController.testEvalVoidOverride = { _ in true }
+
+        let sections = view.editorState.sections
+        let anchor = try #require(sections.first { $0.title == "Anchor Section" })
+        let last = try #require(sections.first { $0.title == "Last Section" })
+
+        // Mirrors OutlineSidebar.handleDrop's .insertBefore(idx: 1) branch exactly: targetSectionId
+        // is the PREDECESSOR of the drop index (Anchor, idx-1), newLevel=1 is the confirmed
+        // calculateZoneLevel output for this suite's own drop coordinates.
+        let request = SectionReorderRequest(
+            sectionId: last.id, targetSectionId: anchor.id, newLevel: 1, newParentId: nil
+        )
+        view.reorderSection(request)
+
+        // dispatchSectionReorder's Task is fire-and-forget -- poll for the entry to land
+        // (same pattern as refusedReorderStashesAndRetriesItself above).
+        var recorded = false
+        for _ in 0..<100 {
+            if !view.unifiedUndoService.undoStack.isEmpty { recorded = true; break }
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+        #expect(recorded, "the reorder should record a .sectionReorder undo entry")
+
+        let afterBlocks = try db.fetchOutlineBlocks(projectId: pid)
+        let afterTitles = afterBlocks.map(\.outlineTitle)
+        #expect(
+            afterTitles == ["Anchor Section", "Last Section", "Middle Section"],
+            "dragging Last Section to before Middle Section, with a level promotion to H1, must persist -- got \(afterTitles)"
+        )
+    }
 }

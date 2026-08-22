@@ -394,6 +394,25 @@ function executeSlashCommand(index: number) {
 function handleSlashKeydown(e: KeyboardEvent): boolean {
   const editorInstance = getEditorInstance();
 
+  // DIAGNOSTIC (2026-08-22, eviction-cap Undo #1 investigation): this is the EARLIEST point
+  // in this app's own code a Cmd-Z can be observed -- this function IS the registered
+  // `document.addEventListener('keydown', ..., true)` listener (see its own registration
+  // below). `handleUnifiedUndoKeydown` (undo-coordinator.ts) unconditionally logs a
+  // `[UnifiedUndo] keydown direction=...` line on EVERY invocation, regardless of routing
+  // decision -- so a diagnostic log delta with zero such lines for a Cmd-Z that visibly did
+  // nothing means one of exactly two things: (a) this function ran but `editorInstance` was
+  // falsy, skipping the `handleGlobalUndoRedoKeydown` call entirely (the `if (editorInstance)`
+  // guard a few lines down), or (b) this function never ran at all -- the keydown never
+  // reached the WebView's DOM, a delivery issue below this codebase entirely. Logging
+  // unconditionally, scoped to Cmd-Z/Cmd-Shift-Z specifically (not every keystroke), is the
+  // only way to distinguish those two from the next diagnostic capture.
+  if (e.key.toLowerCase() === 'z' && (e.metaKey || e.ctrlKey)) {
+    (window as any).webkit?.messageHandlers?.errorHandler?.postMessage({
+      type: 'debug',
+      message: `[UnifiedUndo] handleSlashKeydown entered for Cmd-Z: hasEditorInstance=${!!editorInstance}`,
+    });
+  }
+
   // N3 (major, Phase B remediation plan): unified-undo routing (structural op/undo/redo)
   // now runs FIRST, ahead of slash's own smart-undo/redo branches below -- the canonical
   // order decided across both editors, matching CodeMirror's existing order (its

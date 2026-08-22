@@ -27,6 +27,56 @@ enum TestMode {
         ProcessInfo.processInfo.environment["FF_TEST_FIXTURE_PATH"]
     }
 
+    /// UI-test-only override for `UnifiedUndoService`'s 50-entry eviction cap (Phase D, plan
+    /// §9.3 -- a decision the user already made, not re-litigated here). Lets an e2e test
+    /// exercise real eviction (oldest entry dropped, its editor text-undo history cleared) in a
+    /// handful of operations instead of 51. `nil` (unset, unparseable, <= 0, or `isUITesting` is
+    /// false) leaves the real 50-entry cap untouched -- read fresh on every access rather than
+    /// cached, so it can never silently latch a stale value across a project switch within the
+    /// same test process.
+    ///
+    /// Review fix (was missing `isUITesting &&`, unlike every sibling flag here): without that
+    /// guard, a user with `FF_UNDO_EVICTION_CAP` set in their own shell profile for unrelated
+    /// reasons would silently get a capped undo history in a Release build too -- not test-only
+    /// at all, despite this property's own name and every caller's doc comments.
+    static var undoEvictionCapOverride: Int? {
+        guard isUITesting,
+              let raw = ProcessInfo.processInfo.environment["FF_UNDO_EVICTION_CAP"],
+              let value = Int(raw), value > 0 else { return nil }
+        return value
+    }
+
+    /// UI-test-only bypass for `ZoteroService`'s real Zotero/Better-BibTeX network calls (Phase
+    /// D, plan §8.2 "the Zotero seam") -- lets a citation-bearing e2e scenario exercise the CAYW
+    /// insert path (and the N1 `cancelPendingInsertions` port, Phase B) without a real running
+    /// Zotero, which is unavailable in the vmtest VM/CI. Deliberately its own flag, not folded
+    /// into `isUITesting`: every OTHER UI test relies on `ZoteroService.ping()` genuinely
+    /// failing there, so gating this on the general flag would silently fake a Zotero
+    /// connection for every UI test, not just the one that wants it. See
+    /// `ZoteroService.ping()`/`ZoteroService.openCAYWPicker()` for the mock branches this gates.
+    static var isUITestingZoteroMockEnabled: Bool {
+        isUITesting && ProcessInfo.processInfo.environment["FF_UI_TESTING_ZOTERO_MOCK"] == "1"
+    }
+
+    /// Optional artificial delay (milliseconds) `ZoteroService.openCAYWPicker()`'s mock path
+    /// waits before returning its canned result, when `isUITestingZoteroMockEnabled` is set.
+    /// Zero (the default, and always when unset/unparseable) mimics an instant Zotero response.
+    /// A test that needs a genuine in-flight window to interleave a structural op into -- proving
+    /// N1's `cancelPendingInsertions` port actually cancels a REAL pending request, not just one
+    /// that already resolved before the op ran -- sets this explicitly.
+    ///
+    /// Review fix (was missing `isUITesting &&`, unlike every sibling flag here -- the same gap
+    /// `undoEvictionCapOverride` above already had fixed once this phase): without that guard, a
+    /// user with `FF_UI_TESTING_ZOTERO_MOCK_DELAY_MS` set in their own shell profile for
+    /// unrelated reasons would have this value ready to read outside any UI test, not test-only
+    /// at all despite this property's own name.
+    static var uiTestingZoteroMockDelayMilliseconds: Int {
+        guard isUITesting,
+              let raw = ProcessInfo.processInfo.environment["FF_UI_TESTING_ZOTERO_MOCK_DELAY_MS"],
+              let value = Int(raw), value > 0 else { return 0 }
+        return value
+    }
+
     /// Narrow, opt-in escape hatch for exactly one pre-existing UI test
     /// (`ProjectOpenErrorE2ETests.testOpenRecentOnDeletedProjectShowsErrorSheetWhileAppRunning`),
     /// which must exercise the real `openProject` -> `addToRecentProjects` flow against a

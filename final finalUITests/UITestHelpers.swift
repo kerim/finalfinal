@@ -374,6 +374,108 @@ enum AppFileHelper {
     }
 }
 
+// MARK: - Fixture Database Helpers (sqlite3 CLI)
+//
+// Reads are safe to run WHILE the app holds the DB open -- WAL mode allows concurrent readers,
+// the same pattern already proven in E2ESectionReconcilerPseudoSectionTests.swift/
+// NestedListE2ETests.swift/HrTypedConversionE2ETests.swift. Writes (fixture doctoring) must only
+// ever run with the app terminated, never against a live connection -- callers are responsible
+// for that ordering, matching those same precedents.
+//
+// MISDIAGNOSIS, CORRECTED (2026-08-22 vmtest investigation, UnifiedUndoE2ETests): a real failure
+// once showed the app's own diagnostic log reporting a structural delete completed end-to-end,
+// while `read()` moments later still saw the pre-delete row count -- diagnosed at the time as
+// cross-process WAL visibility latency (a separate `sqlite3` CLI connection not yet seeing the
+// app's committed frames) and "fixed" by forcing `PRAGMA wal_checkpoint(TRUNCATE)` on every
+// `read()` call. A later review traced the ACTUAL cause: `querySectionCount()`/
+// `queryOrderedSectionTitles()` read `FROM section` (the legacy mirror table), and the
+// `deleteSections`/`duplicateSections` bug active at the time (`Database+SectionOps.swift`,
+// since fixed) matched `section` rows by `block` ids -- an ID space `section` never used -- so
+// it deleted nothing there at all. The read was reporting the DB's true, unchanged `section`
+// state correctly the whole time; there was never a visibility race to fix. The forced
+// checkpoint was not just inert but a live liability: `TRUNCATE` is an aggressive checkpoint
+// mode that blocks readers/writers and rewrites the WAL file, and this ran 4x/second (once per
+// `waitUntil` poll tick) from a separate process against the live app's actively-writing
+// database -- exactly the kind of contention this suite's own eviction-cap test (rapid
+// back-to-back structural ops) is most sensitive to. Removed entirely; `read()` below is a
+// plain query again.
+
+/// Shared `sqlite3` CLI wrapper for reading/writing a test fixture's `content.sqlite` from
+/// inside the test runner. Factored out of the section-reconciler pattern above so new e2e tests
+/// don't each re-derive the same `Process`/`Pipe` boilerplate.
+enum FixtureDatabase {
+    /// Runs a write statement (UPDATE/INSERT/etc.) against `<fixturePath>/content.sqlite`.
+    /// Caller must ensure the app is terminated first -- see this enum's own doc comment. No
+    /// checkpoint needed here (unlike `read` below): the app hasn't opened its own connection
+    /// yet at the point this is used (fixture seeding, before `launchForTesting`), so there is no
+    /// concurrent writer whose frames could be sitting unmerged in the WAL.
+    static func write(fixturePath: String, sql: String, file: StaticString = #filePath, line: UInt = #line) {
+        _ = run(dbPath: fixturePath + "/content.sqlite", sql: sql, file: file, line: line)
+    }
+
+    /// Runs a `SELECT` against `<fixturePath>/content.sqlite` and returns raw stdout. Safe to
+    /// call while the app is open (WAL mode) -- see this enum's own doc comment. No checkpoint
+    /// forced here (there was one; removed 2026-08-22 -- see this enum's own doc comment for
+    /// why it was a misdiagnosis, not a real fix).
+    @discardableResult
+    static func read(fixturePath: String, sql: String, file: StaticString = #filePath, line: UInt = #line) -> String {
+        run(dbPath: fixturePath + "/content.sqlite", sql: sql, file: file, line: line)
+    }
+
+    /// Escapes a raw string for embedding in a single-quoted SQL literal.
+    static func escape(_ rawValue: String) -> String {
+        rawValue.replacingOccurrences(of: "'", with: "''")
+    }
+
+    @discardableResult
+    private static func run(dbPath: String, sql: String, file: StaticString, line: UInt) -> String {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/sqlite3")
+        process.arguments = [dbPath, sql]
+        let stdoutPipe = Pipe()
+        let stderrPipe = Pipe()
+        process.standardOutput = stdoutPipe
+        process.standardError = stderrPipe
+        do {
+            try process.run()
+        } catch {
+            XCTFail("FixtureDatabase: sqlite3 failed to launch: \(error)", file: file, line: line)
+            return ""
+        }
+        // Deadlock fix (2026-08-22): both pipes MUST be drained CONCURRENTLY, before
+        // `waitUntilExit()`, not read sequentially or after. A pipe's buffer is small (~64KB) --
+        // if sqlite3 ever writes more than that to EITHER stdout or stderr, the child blocks on
+        // a full pipe nobody is reading. `waitUntilExit()` alone would then deadlock forever
+        // (this process waiting for a child that can't finish); reading stdout-then-stderr
+        // sequentially on one thread is not safe either -- a child that blocks mid-write on a
+        // full stderr buffer while this process is still draining stdout would never produce
+        // stdout's EOF either, hanging the FIRST read. Draining both pipes on separate queues at
+        // the same time removes any ordering dependency between them. Safe today only because
+        // the committed fixture is tiny -- `queryAllMarkdownConcatenated()` is exactly the query
+        // whose output scales with document size, and would be the first to hit this the moment
+        // this suite (or a future one reusing this helper) points at a realistic document.
+        let stdoutQueue = DispatchQueue(label: "FixtureDatabase.stdout")
+        var stdoutData = Data()
+        let stdoutDone = DispatchSemaphore(value: 0)
+        stdoutQueue.async {
+            stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
+            stdoutDone.signal()
+        }
+        let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+        stdoutDone.wait()
+        process.waitUntilExit()
+        if process.terminationStatus != 0 {
+            let stderr = String(data: stderrData, encoding: .utf8) ?? ""
+            XCTFail(
+                "FixtureDatabase: sqlite3 query failed (status \(process.terminationStatus)) "
+                    + "against \(dbPath): \(stderr)\nSQL: \(sql)",
+                file: file, line: line
+            )
+        }
+        return String(data: stdoutData, encoding: .utf8) ?? ""
+    }
+}
+
 // MARK: - Fixture Helpers
 
 enum TestFixtureHelper {

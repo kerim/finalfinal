@@ -119,24 +119,40 @@ struct SectionDeleteDuplicateOpsTests {
         #expect(sectionBAfter.sortOrder == sectionB.sortOrder)
     }
 
-    @Test("delete removes the legacy section row for the deleted heading")
+    @Test("delete does not touch a real section row -- convergence is SectionReconciler's job now (2026-08-22 fix)")
     @MainActor
-    func deleteRemovesLegacySectionRow() throws {
+    func deleteDoesNotTouchRealSectionRow() throws {
         let db = try TestFixtureFactory.createTemporary(content: Self.content)
         let pid = try TestFixtureFactory.getProjectId(from: db)
         let blocks = try TestFixtureFactory.fetchBlocks(from: db)
         let sectionA = try #require(blocks.first { $0.textContent == "Section A" })
 
-        // Legacy section table: seed a row for the heading being deleted (production code
-        // populates this via SectionSyncService; seeded directly here to isolate the
-        // section-table cleanup this test targets).
-        try db.insertSection(Section(
-            id: sectionA.id, projectId: pid, sortOrder: 1, headerLevel: 2, title: "Section A"
-        ))
-        #expect(try db.fetchSection(id: sectionA.id) != nil)
+        // A REAL section row, seeded the way `SectionReconciler.reconcile()` actually creates
+        // one in production: its OWN independently-generated UUID (`Section.swift`'s
+        // `id: String = UUID().uuidString` default), NOT the heading's block id. This is the
+        // exact shape of the bug found via Phase D's e2e suite: the OLD `deleteSections` deleted
+        // `Section` rows by matching `Block` ids (`Section.filter(keys: blockIds)`) -- since
+        // `block` and `section` share no ID space, that call matched zero rows every time,
+        // silently, leaving this exact row (title "Section A", independent id) stranded forever.
+        // This test's predecessor (`deleteRemovesLegacySectionRow`, removed) seeded the row
+        // WRONGLY keyed by the block id, which is why it appeared to pass despite the
+        // production code being broken -- it was testing a scenario that never occurs for real.
+        let realSectionRow = Section(
+            projectId: pid, sortOrder: 1, headerLevel: 2, title: "Section A"
+        )
+        try db.insertSection(realSectionRow)
+        let realRowId = realSectionRow.id
+        #expect(try db.fetchSection(id: realRowId) != nil, "sanity: the seeded row should exist before delete")
 
-        _ = try db.deleteSections(rootId: sectionA.id, projectId: pid)
-        #expect(try db.fetchSection(id: sectionA.id) == nil)
+        _ = try #require(try db.deleteSections(rootId: sectionA.id, projectId: pid))
+
+        // deleteSections alone must leave this row exactly as it was -- proves the removed
+        // `Section.filter(keys:).deleteAll(db)` call (which never actually matched anything in
+        // production) is genuinely gone, not silently still failing the same way. Actual
+        // convergence (this row disappearing once the deleted heading is gone from the document)
+        // is `StructuralUndoController.performStructuralOp`'s forced `SectionSyncService.syncNow`
+        // resync, exercised end-to-end in `StructuralUndoControllerSectionConvergenceTests.swift`.
+        #expect(try db.fetchSection(id: realRowId) != nil, "deleteSections must not touch the section table at all")
     }
 
     @Test("duplicate deep-copies the subtree with fresh ids, a \" copy\" heading suffix, and does not disturb any other block's sortOrder")
@@ -199,9 +215,9 @@ struct SectionDeleteDuplicateOpsTests {
         #expect(copiedHeading.wordCount == originalWordCount + 1)
     }
 
-    @Test("duplicate creates a legacy section row for the copy's heading")
+    @Test("duplicate does not create any section row keyed by the copy's block id -- that was a real, active data-corruption bug (2026-08-22 fix)")
     @MainActor
-    func duplicateCreatesSectionRowForCopy() throws {
+    func duplicateDoesNotOrphanSectionRow() throws {
         let db = try TestFixtureFactory.createTemporary(content: Self.content)
         let pid = try TestFixtureFactory.getProjectId(from: db)
         let before = try TestFixtureFactory.fetchBlocks(from: db)
@@ -214,9 +230,18 @@ struct SectionDeleteDuplicateOpsTests {
             after.first { $0.textContent == "Section A copy" }?.id
         )
 
-        let sectionRow = try db.fetchSection(id: copiedHeadingId)
-        #expect(sectionRow != nil)
-        #expect(sectionRow?.title == "Section A copy")
+        // The OLD (broken) behavior -- this test's predecessor, `duplicateCreatesSectionRowForCopy`,
+        // removed -- inserted `Section(id: copy.id, ...)`, i.e. a `section` row keyed by this
+        // exact fresh `block` id. Since every REAL `section` row gets its own independently-
+        // generated UUID (`SectionReconciler.reconcile()`, never a `block` id), no reconciler
+        // pass could ever find or prune a row planted under a `block` id -- this was a permanent
+        // orphan created on EVERY sidebar duplicate, confirmed empirically (4 duplicates -> 4
+        // accumulated orphan rows that never got cleaned up). `duplicateSections` must not touch
+        // the `section` table at all; convergence (the copy correctly getting its own
+        // independently-keyed row) is `StructuralUndoController.performStructuralOp`'s forced
+        // `SectionSyncService.syncNow` resync, exercised end-to-end in
+        // `StructuralUndoControllerSectionConvergenceTests.swift`.
+        #expect(try db.fetchSection(id: copiedHeadingId) == nil, "duplicateSections must not insert a section row keyed by the copy's block id")
     }
 
     // MARK: - Annotation survival (parked worktree's must-fix #1, delete half)

@@ -230,7 +230,12 @@ class SectionSyncService {
         do {
             let dbSections = try db.fetchSections(projectId: pid)
 
-            let existingBibTitle = dbSections.first(where: { $0.isBibliography })?.title
+            // Falls back to the `block` table's own bibliography heading (the authoritative
+            // signal) when `section` hasn't reconciled one yet -- see
+            // `fetchBibliographyHeadingTitle`'s doc comment for why (the "first citation ever"
+            // gap, 2026-08-22).
+            let existingBibTitle = try dbSections.first(where: { $0.isBibliography })?.title
+                ?? db.fetchBibliographyHeadingTitle(projectId: pid)
             let existingNotesTitle = dbSections.first(where: { $0.isNotes })?.title
             let headers = SectionSyncService.parseHeaders(
                 from: markdown,
@@ -328,8 +333,12 @@ class SectionSyncService {
                 // 1. Get current DB sections first (need to identify bibliography by title)
                 let dbSections = try db.fetchSections(projectId: pid)
 
-                // 2. Parse headers from markdown (pass existing bibliography/notes title for detection)
-                let existingBibTitle = dbSections.first(where: { $0.isBibliography })?.title
+                // 2. Parse headers from markdown (pass existing bibliography/notes title for
+                // detection). Falls back to the `block` table's own bibliography heading when
+                // `section` hasn't reconciled one yet -- see `fetchBibliographyHeadingTitle`'s
+                // doc comment for why (the "first citation ever" gap, 2026-08-22).
+                let existingBibTitle = try dbSections.first(where: { $0.isBibliography })?.title
+                    ?? db.fetchBibliographyHeadingTitle(projectId: pid)
                 let existingNotesTitle = dbSections.first(where: { $0.isNotes })?.title
                 let headers = SectionSyncService.parseHeaders(
                     from: markdown, existingBibTitle: existingBibTitle,
@@ -393,8 +402,11 @@ class SectionSyncService {
                 // Fetch existing sections from database first (need bibliography title for detection)
                 let existingSections = try db.fetchSections(projectId: pid)
 
-                // Parse zoomed markdown to extract section content (pass bibliography/notes title for detection)
-                let existingBibTitle = existingSections.first(where: { $0.isBibliography })?.title
+                // Parse zoomed markdown to extract section content (pass bibliography/notes
+                // title for detection). Same `block`-table fallback as the non-zoomed path --
+                // see `fetchBibliographyHeadingTitle`'s doc comment.
+                let existingBibTitle = try existingSections.first(where: { $0.isBibliography })?.title
+                    ?? db.fetchBibliographyHeadingTitle(projectId: pid)
                 let existingNotesTitle = existingSections.first(where: { $0.isNotes })?.title
                 let headers = SectionSyncService.parseHeaders(
                     from: strippedMarkdown, existingBibTitle: existingBibTitle,

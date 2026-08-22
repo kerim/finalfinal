@@ -154,8 +154,22 @@ function initEditor() {
     // the async Zotero round-trip is in flight — see cayw-remap-plugin.ts.
     caywRemapPlugin,
     keymap.of([
-      // Filter out Mod-/ (toggle comment) from default keymap to allow Swift to handle mode toggle
-      ...defaultKeymap.filter((k) => k.key !== 'Mod-/'),
+      // Filter out Mod-/ (toggle comment) from default keymap to allow Swift to handle mode
+      // toggle. Filter out Shift-Mod-k (@codemirror/commands' defaultKeymap binds this to
+      // deleteLine) for the identical reason: this app's own native "Insert > Citation..." menu
+      // command (EditorCommands.swift, .keyboardShortcut("k", modifiers: [.command, .shift]))
+      // uses the exact same combo. CONFIRMED via a live vmtest run (2026-08-22,
+      // testCitationInsertRacedAgainstStructuralOpIsCancelledNotCorrupted's positive-control
+      // failure): CodeMirror's own keymap facet was winning that race every time -- the
+      // diagnostic log delta showed a real document edit (`docChanged: true`, then
+      // `historyEdited`/`invalidateRedoBranch`) and ZERO `.zotero`-category activity, meaning
+      // deleteLine ran and consumed/prevented the event before the native menu's key equivalent
+      // ever got a chance, exactly like the already-filtered Mod-/ case. No other Insert-menu
+      // shortcut in this app collides with a default-keymap letter binding (confirmed: `grep`
+      // for "Shift-Mod-" in the installed @codemirror/commands package returns only this entry
+      // and the unrelated Shift-Mod-\\ bracket-match binding) -- this is an isolated collision,
+      // not a broader pattern to keep hunting for.
+      ...defaultKeymap.filter((k) => k.key !== 'Mod-/' && k.key !== 'Shift-Mod-k'),
       // Custom undo: after slash command, also removes the "/" trigger
       {
         key: 'Mod-z',

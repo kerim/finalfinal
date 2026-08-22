@@ -483,16 +483,17 @@ const bibliographyEndDeleteKeymap = Prec.highest(
     { key: 'Alt-Backspace', run: (view: EditorView) => isBibliographyEndMarkerAdjacent(view.state, 'before') },
     { key: 'Mod-Backspace', run: (view: EditorView) => isBibliographyEndMarkerAdjacent(view.state, 'before') },
     { key: 'Ctrl-Alt-h', run: (view: EditorView) => isBibliographyEndMarkerAdjacent(view.state, 'before') },
-    // deleteLine (Cmd-Shift-K) — whole-line danger, not edge-adjacency; see the section comment
-    // above `isBibliographyEndMarkerLine` for why this uses a different predicate than the nine
-    // bindings above. Note: in the shipped app, this exact chord is also bound to a native macOS
-    // menu item ("Insert Citation"), which likely intercepts the keystroke before the web view
-    // ever sees it — but that's an accidental side effect of unrelated menu wiring, not a real
-    // defense, and nothing else in this codebase records that dependency, so this binding is not
-    // relying on it.
-    { key: 'Shift-Mod-k', run: (view: EditorView) => isBibliographyEndMarkerLine(view.state) },
   ])
 );
+// REMOVED (2026-08-22): a `Shift-Mod-k` -> `deleteLine` guard binding used to live in the keymap
+// above, protecting against `defaultKeymap`'s own whole-line-delete binding on that chord. That
+// danger no longer exists: `main.ts` now filters `Shift-Mod-k` out of `defaultKeymap` entirely
+// (a real, separate fix -- that chord is this app's native "Insert Citation" menu shortcut, and
+// CodeMirror's own `deleteLine` binding was silently winning the race against it). With
+// `deleteLine` gone from the keymap, this `Prec.highest`-wrapped binding no longer prevented
+// anything -- it just unconditionally swallowed `Shift-Mod-k` (via `isBibliographyEndMarkerLine`
+// returning true) whenever the cursor sat on the bibliography end-marker line, silently blocking
+// Insert Citation in that one cursor position with no defensive purpose left to justify it.
 
 /**
  * Line-relocation protection (`moveLine`/`copyLine`, i.e. Alt-ArrowUp/Down and

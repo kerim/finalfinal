@@ -93,6 +93,20 @@ struct UndoRedoCommands: Commands {
     /// exactly what the system-default Undo item did -- so a focused native text field's own
     /// undo manager handles it, never the document.
     private static func performUndo() {
+        // DIAGNOSTIC (2026-08-22, eviction-cap Undo #1 investigation): the AX tree at the
+        // moment of a Cmd-Z that visibly did nothing showed `editor-area`'s WebView/TextView
+        // chain correctly marked "Keyboard Focused" at the DOM level -- but that's
+        // `document.activeElement` inside the WebView, not `NSWindow.firstResponder`. This is
+        // the one place that native value is actually read for a Cmd-Z decision
+        // (`focusedWebView()` below), so logging it here -- unconditionally, every call, not
+        // just the "no webview found" branch already logged further down -- is the only way to
+        // see definitively whether AppKit's own responder chain agrees with the DOM at the
+        // exact moment this fires, or whether this function is even being reached at all for a
+        // given Cmd-Z (its total absence from a diagnostic log delta is itself informative: it
+        // would mean the key equivalent never reached this menu item in the first place, a
+        // different mechanism than a wrong-but-present first responder).
+        let responderDescription = NSApp.keyWindow?.firstResponder.map { "\(type(of: $0))" } ?? "nil (no key window or no first responder)"
+        DebugLog.log(.undo, "[UndoRedoCommands] performUndo: NSApp.keyWindow?.firstResponder = \(responderDescription)")
         if let webView = focusedWebView() {
             webView.evaluateJavaScript("window.FinalFinal.requestUnifiedUndo()") { _, error in
                 if let error {

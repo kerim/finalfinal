@@ -231,6 +231,18 @@ final class ZoteroService {
     /// Check if Zotero is running and Better BibTeX is accessible
     /// Uses the cayw?probe=true endpoint which returns "ready" when BBT is available
     func ping() async -> Bool {
+        // Phase D UI-testing seam (plan §8.2 "the Zotero seam") -- lets a citation-bearing e2e
+        // scenario exercise the CAYW insert path without a real running Zotero. See
+        // `openCAYWPicker()`'s matching mock branch and `TestMode.isUITestingZoteroMockEnabled`'s
+        // own doc comment for why this is its own flag, not folded into the general UI-testing
+        // flag every other test relies on `ping()` genuinely failing under.
+        if TestMode.isUITestingZoteroMockEnabled {
+            isConnected = true
+            lastPingTime = Date()
+            connectionError = nil
+            return true
+        }
+
         guard let url = URL(string: "\(baseURL)/better-bibtex/cayw?probe=true") else {
             return false
         }

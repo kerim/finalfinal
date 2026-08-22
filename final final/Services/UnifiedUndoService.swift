@@ -69,8 +69,17 @@ struct StructuralEntry: Identifiable, Equatable {
 @MainActor
 @Observable
 final class UnifiedUndoService {
-    /// Cap per plan §4.1.
-    static let capacity = 50
+    /// Cap per plan §4.1. UI-test-only override (Phase D, plan §9.3):
+    /// `TestMode.undoEvictionCapOverride` lets a permanent e2e test exercise real eviction in a
+    /// handful of operations instead of 51 -- see
+    /// `UnifiedUndoE2ETests.testEvictionCapEvictsOldestEntryAndStaysConsistent`. Computed (not a
+    /// stored `let`) so it reads the environment at call time; every existing caller --
+    /// including `UnifiedUndoServiceTests`, which asserts exact eviction boundaries at the real
+    /// value -- is unaffected in the normal case, since the override is `nil` unless a UI test
+    /// explicitly launches with `FF_UNDO_EVICTION_CAP` set.
+    static var capacity: Int {
+        TestMode.undoEvictionCapOverride ?? 50
+    }
 
     private(set) var undoStack: [StructuralEntry] = []
     private(set) var redoStack: [StructuralEntry] = []
