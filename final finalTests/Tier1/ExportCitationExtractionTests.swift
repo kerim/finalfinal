@@ -166,9 +166,9 @@ struct ExportCitationExtractionTests {
     func fetchBibliographyJSONHandleOnlyReturnsNilJSONWithNotFoundKey() async throws {
         try await ZoteroNetworkTestLock.shared.run {
             MockBBTURLProtocol.reset()
-            let previousCache = ZoteroService.shared.cachedLibraryIDs
-            ZoteroService.shared.cachedLibraryIDs = [ZoteroService.personalLibraryID]
-            defer { ZoteroService.shared.cachedLibraryIDs = previousCache }
+            let previousCache = ZoteroService.shared.cachedLibraries
+            ZoteroService.shared.cachedLibraries = [ZoteroLibrary(id: ZoteroService.personalLibraryID, name: "My Library")]
+            defer { ZoteroService.shared.cachedLibraries = previousCache }
 
             let notFoundJSON = #"{"jsonrpc":"2.0","result":{"errors":{"kerim":0},"items":{}},"id":1}"#
             MockBBTURLProtocol.responses["item.pandoc_filter"] = (200, Data(notFoundJSON.utf8))
@@ -190,9 +190,9 @@ struct ExportCitationExtractionTests {
     func fetchBibliographyJSONMixedBatchReturnsPartialJSON() async throws {
         try await ZoteroNetworkTestLock.shared.run {
             MockBBTURLProtocol.reset()
-            let previousCache = ZoteroService.shared.cachedLibraryIDs
-            ZoteroService.shared.cachedLibraryIDs = [ZoteroService.personalLibraryID]
-            defer { ZoteroService.shared.cachedLibraryIDs = previousCache }
+            let previousCache = ZoteroService.shared.cachedLibraries
+            ZoteroService.shared.cachedLibraries = [ZoteroLibrary(id: ZoteroService.personalLibraryID, name: "My Library")]
+            defer { ZoteroService.shared.cachedLibraries = previousCache }
 
             // swiftlint:disable line_length
             let mixedJSON = """

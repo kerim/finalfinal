@@ -157,6 +157,7 @@
 		5DCCCD27DB39DACD3CDDDBB4 /* ExportSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = B188809C6D7BE7E2CB11C3A3 /* ExportSettings.swift */; };
 		5E65B667DA5C19888B7BF88E /* Typography.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE36F17D91BD28DBE49E98F8 /* Typography.swift */; };
 		60057D2E9D7300D4004A5DC6 /* BibliographyPlacementExportTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACA53058F86D56872B938CF3 /* BibliographyPlacementExportTests.swift */; };
+		611DA07EC53D6CD0DC50A6A5 /* ZoteroLibraryScopeTests+GroupScopeByName.swift in Sources */ = {isa = PBXBuildFile; fileRef = E34DF3B19EEE7F362D7D3591 /* ZoteroLibraryScopeTests+GroupScopeByName.swift */; };
 		612F76A9AC746AC2A8A6C8CB /* ZoomDataIntegrityCountMismatchTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E9AD7E7D5BB907AF08313DC0 /* ZoomDataIntegrityCountMismatchTests.swift */; };
 		63072A9E8DE3BC6324759AE9 /* ProjectDatabase.swift in Sources */ = {isa = PBXBuildFile; fileRef = DFB3FE823FEA8DAD86CD01A9 /* ProjectDatabase.swift */; };
 		639B3B47C550E26A3EE3F0D2 /* PandocLocator.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF38A145CE15C32F45EBB00D /* PandocLocator.swift */; };
@@ -727,6 +728,7 @@
 		E16909CB53D2BCFD8CC1B0BF /* ZoteroService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZoteroService.swift; sourceTree = "<group>"; };
 		E1CCFECDA6EF65B53C684359 /* ExportService+Diagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ExportService+Diagnostics.swift"; sourceTree = "<group>"; };
 		E2BEC2E8F18731A82D861A36 /* ProjectRepairServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectRepairServiceTests.swift; sourceTree = "<group>"; };
+		E34DF3B19EEE7F362D7D3591 /* ZoteroLibraryScopeTests+GroupScopeByName.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ZoteroLibraryScopeTests+GroupScopeByName.swift"; sourceTree = "<group>"; };
 		E614BA7EFA79C8EAF96B80C0 /* AppearanceSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppearanceSettings.swift; sourceTree = "<group>"; };
 		E673DA14AB0CE672FD60FB47 /* ViewNotificationModifiers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ViewNotificationModifiers.swift; sourceTree = "<group>"; };
 		E73273BD2D10F6D5912C9778 /* EditorTestHelper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorTestHelper.swift; sourceTree = "<group>"; };
@@ -1306,6 +1308,7 @@
 				B74C8F818689D9A62910CDD8 /* ZoteroLibraryScopeTests.swift */,
 				B9E84A9E73C67AA6C65C84BA /* ZoteroLibraryScopeTests+CaseInsensitivity.swift */,
 				C40F7F01A5564D0FB229F5D2 /* ZoteroLibraryScopeTests+ExportDecodeError.swift */,
+				E34DF3B19EEE7F362D7D3591 /* ZoteroLibraryScopeTests+GroupScopeByName.swift */,
 				018EB97BE7EBF74CEB041D4F /* ZoteroLibraryScopeTests+RawBatchFallback.swift */,
 			);
 			path = Tier1;
@@ -1729,6 +1732,7 @@
 				3CCD23FA0FAA8B8B1247B0B5 /* ZoteroExportDecodeResultTests.swift in Sources */,
 				7A3A35319C27A8AB3097E244 /* ZoteroLibraryScopeTests+CaseInsensitivity.swift in Sources */,
 				53870951193FF6433568FC60 /* ZoteroLibraryScopeTests+ExportDecodeError.swift in Sources */,
+				611DA07EC53D6CD0DC50A6A5 /* ZoteroLibraryScopeTests+GroupScopeByName.swift in Sources */,
 				9D40C54991F37DAAEF0C52D0 /* ZoteroLibraryScopeTests+RawBatchFallback.swift in Sources */,
 				BF25AA707A567763D04A46EA /* ZoteroLibraryScopeTests.swift in Sources */,
 				7C511DB47A7113E8833C262E /* ZoteroServiceConnectionTests.swift in Sources */,

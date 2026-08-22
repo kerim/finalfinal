@@ -129,31 +129,53 @@ struct ZoteroLibraryScopeTests {
 
     // MARK: - item.pandoc_filter request body
 
-    @Test("pandocFilterRequestBody always includes a library scope, with library IDs as JSON strings")
-    func requestBodyIncludesLibraryScopeAsStrings() throws {
-        let body = ZoteroService.pandocFilterRequestBody(citekeys: ["friedman2010"], libraryIDs: [2, 19])
+    @Test("pandocFilterRequestBody with .personal scope puts a bare Int (never a String or [String]) at params[2]")
+    func requestBodyPersonalScopeIsABareInt() throws {
+        let body = ZoteroService.pandocFilterRequestBody(citekeys: ["friedman2010"], scope: .personal)
 
         #expect(body["method"] as? String == "item.pandoc_filter")
         let params = try #require(body["params"] as? [Any])
-        // [citekeys, asCSL, libraryID] — a library scope must always be the 3rd element.
-        // The old (buggy) item.export call only ever sent 2 params with no library scope at
-        // all, so this shape alone is a regression guard for the root cause.
+        // [citekeys, asCSL, scope] — a library scope must always be the 3rd element. The old
+        // (buggy) item.export call only ever sent 2 params with no library scope at all, so
+        // this shape alone is a regression guard for the root cause.
         #expect(params.count == 3)
 
-        let libraryIDs = try #require(params[2] as? [String])
         #expect(
-            libraryIDs == ["2", "19"],
-            "Library IDs must serialize as JSON strings, not numbers — BBT's oneOf schema rejects a numeric array"
+            params[2] as? Int == ZoteroService.personalLibraryID,
+            "The personal library must be scoped by a bare JSON number matching personalLibraryID"
+        )
+        #expect(params[2] as? String == nil, "Must NOT serialize as a string — BBT reads a string as a library NAME")
+        #expect(params[2] as? [String] == nil, "Must NOT serialize as an array — that spelling is for group libraries")
+    }
+
+    @Test("pandocFilterRequestBody with .libraryNames scope puts exactly that [String] at params[2]")
+    func requestBodyLibraryNamesScopeIsThatExactStringArray() throws {
+        let body = ZoteroService.pandocFilterRequestBody(
+            citekeys: ["friedman2010"], scope: .libraryNames(["Kerim's Bibliographies", "Sifo-Futing"])
+        )
+
+        #expect(body["method"] as? String == "item.pandoc_filter")
+        let params = try #require(body["params"] as? [Any])
+        #expect(params.count == 3)
+
+        let names = try #require(params[2] as? [String])
+        #expect(
+            names == ["Kerim's Bibliographies", "Sifo-Futing"],
+            "Group libraries must serialize as an array of their exact display names, not stringified ids"
         )
     }
 
-    @Test("groupLibraryIDs excludes the personal library (id 1) from a full user.groups list")
-    func groupLibraryIDsExcludesPersonal() {
-        let all = Array(1...19)
-        let groups = ZoteroService.groupLibraryIDs(from: all)
+    @Test("groupLibraryNames excludes the personal library (id 1) from a full user.groups list, returning names")
+    func groupLibraryNamesExcludesPersonal() {
+        var libraries = [ZoteroLibrary(id: 1, name: "My Library")]
+        for id in 2...19 {
+            libraries.append(ZoteroLibrary(id: id, name: "Group \(id)"))
+        }
 
-        #expect(!groups.contains(1))
-        #expect(groups.sorted() == Array(2...19))
+        let names = ZoteroService.groupLibraryNames(from: libraries)
+
+        #expect(!names.contains("My Library"))
+        #expect(names == (2...19).map { "Group \($0)" })
     }
 
     @Test("orderedUniqueCitekeys deduplicates while preserving first-occurrence order")
@@ -225,8 +247,8 @@ struct ZoteroLibraryScopeTests {
 
     // MARK: - user.groups response decoding
 
-    @Test("user.groups fixture (19 libraries, no collections key) parses to the correct set of library IDs")
-    func parseLibraryIDsFromUserGroupsFixture() throws {
+    @Test("user.groups fixture (19 libraries, no collections key) parses to the correct set of libraries")
+    func parseLibrariesFromUserGroupsFixture() throws {
         // Synthesized (middle entries) — id 1 "My Library" and id 19 "Sifo-Futing" match the
         // developer's real library names; BBT only includes `collections` per entry when the
         // caller passes `includeCollections` (we don't), so this fixture omits it entirely.
@@ -237,18 +259,90 @@ struct ZoteroLibraryScopeTests {
         entries.append(#"{"id":19,"name":"Sifo-Futing"}"#)
         let json = #"{"jsonrpc":"2.0","result":[\#(entries.joined(separator: ","))],"id":7}"#
 
-        let ids = try ZoteroService.parseLibraryIDs(from: Data(json.utf8))
+        let libraries = try ZoteroService.parseLibraries(from: Data(json.utf8))
 
-        #expect(ids.count == 19)
-        #expect(Set(ids) == Set(1...19))
-        #expect(ZoteroService.groupLibraryIDs(from: ids).sorted() == Array(2...19))
+        #expect(libraries.count == 19)
+        #expect(Set(libraries.map(\.id)) == Set(1...19))
+        let expectedGroupNames = ["Kerim's Bibliographies"] + (3...18).map { "Group \($0)" } + ["Sifo-Futing"]
+        #expect(
+            ZoteroService.groupLibraryNames(from: libraries) == expectedGroupNames,
+            """
+            Must be the exact 18 group names (id 2, 3-18, 19), not just a matching count -- a \
+            regression that included "My Library" while dropping a different group would \
+            still total 18 under a bare count check
+            """
+        )
     }
 
-    @Test("user.groups entries with a missing name field still parse — only id is decoded")
-    func parseLibraryIDsToleratesMissingName() throws {
-        let json = #"{"jsonrpc":"2.0","result":[{"id":1,"name":"My Library"},{"id":19}],"id":1}"#
-        let ids = try ZoteroService.parseLibraryIDs(from: Data(json.utf8))
-        #expect(Set(ids) == Set([1, 19]))
+    @Test(
+        """
+        user.groups entries with a missing name field, OR a wrong-typed name field, still parse \
+        -- the whole decode succeeds and both malformed entries end up with name == nil, while \
+        properly-named entries decode correctly; groupLibraryNames then drops both malformed \
+        entries while keeping the properly-named one
+        """
+    )
+    func parseLibrariesToleratesMissingOrWrongTypedName() throws {
+        let json = #"{"jsonrpc":"2.0","result":[{"id":1,"name":"My Library"},{"id":19},{"id":20,"name":123}],"id":1}"#
+        let libraries = try ZoteroService.parseLibraries(from: Data(json.utf8))
+
+        #expect(libraries.count == 3, "A single malformed entry must not fail the whole decode")
+        #expect(libraries.first { $0.id == 1 }?.name == "My Library")
+        #expect(libraries.first { $0.id == 19 }?.name == nil, "Missing name key must decode to nil, not throw")
+        #expect(libraries.first { $0.id == 20 }?.name == nil, "Wrong-typed (numeric) name must decode to nil, not throw")
+
+        let names = ZoteroService.groupLibraryNames(from: libraries)
+        #expect(names.isEmpty, "Both id 19 (nameless) and id 20 (wrong-typed name) must be dropped -- neither has a usable name")
+    }
+
+    @Test("parseLibraries throws for a missing OR explicitly-null result key, never silently degrading to []")
+    func parseLibrariesThrowsOnMissingOrNullResult() throws {
+        // A malformed/protocol-violating envelope -- per parseLibraries's doc comment, this must
+        // throw rather than degrade to "zero libraries", which would get cached and never
+        // self-heal (only a "JSON-RPC error:"-prefixed message triggers the stale-cache retry in
+        // performGroupPhase).
+        let missingResultJSON = #"{"jsonrpc":"2.0","id":7}"#
+        #expect(throws: (any Error).self) {
+            _ = try ZoteroService.parseLibraries(from: Data(missingResultJSON.utf8))
+        }
+
+        let nullResultJSON = #"{"jsonrpc":"2.0","result":null,"id":7}"#
+        #expect(throws: (any Error).self) {
+            _ = try ZoteroService.parseLibraries(from: Data(nullResultJSON.utf8))
+        }
+    }
+
+    @Test(
+        """
+        A malformed entry (missing/non-numeric id) inside result is skipped, not fatal to the \
+        whole decode -- the well-formed entries around it still parse, and decoding terminates in \
+        bounded time rather than looping forever. Pins the fix documented on \
+        GroupsRPCResponse.init's superDecoder() comment: a naive decode-in-a-loop never advances \
+        this JSONDecoder's unkeyed-container index on a throwing element, so it would spin forever \
+        re-decoding the same malformed entry rather than skip it
+        """
+    )
+    func parseLibrariesSkipsMalformedEntryWithoutHanging() throws {
+        let json = #"{"result":[{"id":1,"name":"My Library"},{"name":"No ID"},{"id":19,"name":"Sifo-Futing"}]}"#
+        let data = Data(json.utf8)
+
+        // A real, thread-level timeout (not cooperative-cancellation) -- if parseLibraries ever
+        // regresses to a naive loop that spins forever on the malformed element, this test must
+        // fail promptly instead of hanging the whole suite.
+        let semaphore = DispatchSemaphore(value: 0)
+        var outcome: Result<[ZoteroLibrary], Error>?
+        DispatchQueue.global().async {
+            outcome = Result { try ZoteroService.parseLibraries(from: data) }
+            semaphore.signal()
+        }
+        guard semaphore.wait(timeout: .now() + 2) == .success else {
+            Issue.record("parseLibraries did not return within 2s -- looks like an infinite-loop regression")
+            return
+        }
+
+        let libraries = try #require(outcome).get()
+        #expect(libraries.count == 2, "The malformed entry (missing id) must be skipped, not fail or hang the whole decode")
+        #expect(Set(libraries.map(\.id)) == [1, 19])
     }
 
     // MARK: - End-to-end via mocked HTTP: regression guard, phase-2 wiring, fallback, not-found
@@ -277,8 +371,11 @@ struct ZoteroLibraryScopeTests {
             #expect(!pandocRequests.isEmpty, "Must call item.pandoc_filter, not just item.export")
 
             let params = try #require(pandocRequests.first?.body["params"] as? [Any])
-            let libraryIDs = try #require(params[safe: 2] as? [String])
-            #expect(libraryIDs == ["1"], "Phase 1 must scope to the personal library (id \"1\") and must be tried first")
+            let scopeID = try #require(params[safe: 2] as? Int)
+            #expect(
+                scopeID == ZoteroService.personalLibraryID,
+                "Phase 1 must scope to the personal library (a bare Int) and must be tried first"
+            )
 
             // Fully resolved in phase 1, so phase 2 (user.groups + a second pandoc_filter call)
             // must never fire — proves personal library is genuinely tried first.
@@ -303,8 +400,8 @@ struct ZoteroLibraryScopeTests {
             // swiftlint:enable line_length
             MockBBTURLProtocol.responseOverride = { method, params in
                 guard method == "item.pandoc_filter" else { return nil }
-                let libraryIDs = (params.count > 2 ? params[2] : nil) as? [String] ?? []
-                if libraryIDs == ["1"] {
+                let scope = params.count > 2 ? params[2] : nil
+                if scope as? Int == ZoteroService.personalLibraryID {
                     return (200, Data(personalNotFoundJSON.utf8))
                 }
                 return (200, Data(groupFoundJSON.utf8))

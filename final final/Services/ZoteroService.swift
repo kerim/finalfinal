@@ -218,13 +218,13 @@ final class ZoteroService {
     /// CSL items indexed by citekey (populated by search results)
     private var itemsByKey: [String: CSLItem] = [:]
 
-    /// Session cache of library IDs known to Better BibTeX (from `user.groups`) — the
+    /// Session cache of libraries known to Better BibTeX (from `user.groups`) — the
     /// personal library plus every group/shared library the user belongs to. Populated
-    /// lazily by `fetchLibraryIDs()`; pass `forceRefresh: true` there to bypass this cache
+    /// lazily by `fetchLibraries()`; pass `forceRefresh: true` there to bypass this cache
     /// (a group could be joined/left mid-session). No automatic polling.
-    /// Not `private`: `fetchLibraryIDs()` lives in `ZoteroService+LibraryScope.swift`, a
+    /// Not `private`: `fetchLibraries()` lives in `ZoteroService+LibraryScope.swift`, a
     /// different file, and Swift's `private` doesn't extend to extensions in other files.
-    var cachedLibraryIDs: [Int]?
+    var cachedLibraries: [ZoteroLibrary]?
 
     // MARK: - API Methods
 

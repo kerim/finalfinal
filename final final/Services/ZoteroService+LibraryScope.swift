@@ -18,17 +18,84 @@ import Foundation
 
 // MARK: - BBT response shapes
 
-/// A Zotero library as reported by BBT's `user.groups` JSON-RPC method. Only `id` is read —
-/// `name` is deliberately not modeled (a malformed/missing `name` on one entry must not throw
-/// the whole decode and silently degrade to the unscoped fallback).
-private struct BBTLibrary: Decodable {
+/// A Zotero library as reported by BBT's `user.groups` JSON-RPC method.
+///
+/// `id` is required; `name` is decoded leniently. A missing, null, OR wrong-typed `name`
+/// (e.g. a JSON number) degrades to `nil` for that one entry instead of throwing — a single
+/// malformed library must not fail the whole `user.groups` decode and silently drop the
+/// group phase back to the unscoped fallback. Preserves the tolerance of the `BBTLibrary`
+/// struct this replaces, which sidestepped the problem by not modeling `name` at all.
+struct ZoteroLibrary: Equatable, Sendable {
     let id: Int
+    let name: String?
 }
 
+extension ZoteroLibrary: Decodable {
+    private enum CodingKeys: String, CodingKey { case id, name }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(Int.self, forKey: .id)
+        name = try? container.decode(String.self, forKey: .name)
+    }
+}
+
+/// `result` decodes with genuine PER-ENTRY isolation: a single malformed library entry (e.g. a
+/// missing or non-numeric `id` — the one field `ZoteroLibrary.init(from:)` still lets throw) is
+/// logged and skipped, rather than failing the whole array decode the way the compiler-
+/// synthesized `Array<ZoteroLibrary>: Decodable` conformance would. Losing the entire array to
+/// one bad entry would disable ALL group libraries for that resolution, not just the bad one —
+/// see `performGroupPhase`'s doc comment for why that matters.
+///
+/// `result` is `nil` when the key is absent or explicitly `null` (a malformed/protocol-violating
+/// envelope — `parseLibraries` throws on this) and `[]` when the key is present with a valid,
+/// possibly-empty array (a user with zero libraries is not realistic for a real Zotero install,
+/// but is a valid JSON shape and must not be conflated with the malformed case above).
 private struct GroupsRPCResponse: Decodable {
     let jsonrpc: String?
-    let result: [BBTLibrary]?
+    let result: [ZoteroLibrary]?
     let error: JSONRPCError?
+
+    private enum CodingKeys: String, CodingKey { case jsonrpc, result, error }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        jsonrpc = try container.decodeIfPresent(String.self, forKey: .jsonrpc)
+        error = try container.decodeIfPresent(JSONRPCError.self, forKey: .error)
+
+        // Key absent, or present but null, both mean "no result" — `decodeNil` only throws
+        // `keyNotFound` when the key is missing, so `contains` must be checked first to keep
+        // that call safe; comma-separated `guard` conditions short-circuit like `&&`, so
+        // `decodeNil` is never reached when `contains` is false.
+        guard container.contains(.result), try !container.decodeNil(forKey: .result) else {
+            result = nil
+            return
+        }
+
+        // Decode element-by-element via `superDecoder()` rather than
+        // `nestedUnkeyedContainer(forKey:).decode(ZoteroLibrary.self)` in a loop: this project's
+        // JSONDecoder does NOT advance an unkeyed container's index when `decode(_:)` itself
+        // throws (verified empirically — a naive do/catch loop around `decode(_:)` spins forever
+        // re-decoding the same malformed element). `superDecoder()` captures the element and
+        // advances the index unconditionally, before we attempt to decode it, so a throwing
+        // element is safely skipped without looping.
+        var unkeyed = try container.nestedUnkeyedContainer(forKey: .result)
+        var libraries: [ZoteroLibrary] = []
+        while !unkeyed.isAtEnd {
+            let elementDecoder = try unkeyed.superDecoder()
+            do {
+                libraries.append(try ZoteroLibrary(from: elementDecoder))
+            } catch {
+                DebugLog.log(
+                    .zotero,
+                    "[ZoteroService] Skipping malformed library entry in user.groups response (\(error)) — " +
+                    "the rest of the user.groups list still decodes; this one library's citekeys will be " +
+                    "reported not-found rather than disabling the whole group-library phase"
+                )
+            }
+        }
+        result = libraries
+    }
 }
 
 /// Raw (undecoded) outcome of a single `item.pandoc_filter` call.
@@ -135,20 +202,49 @@ extension ZoteroService {
 
     // MARK: - Request building
 
+    /// How a single `item.pandoc_filter` call is scoped, and how that scope serializes into the
+    /// 3rd positional parameter. The two cases serialize to DIFFERENT JSON types on purpose —
+    /// see `pandocFilterRequestBody`'s doc comment.
+    enum PandocFilterScope {
+        /// The personal library, by its stable numeric id. Serializes to a bare JSON number.
+        case personal
+        /// Group/shared libraries, by display name. Serializes to a JSON array of strings.
+        case libraryNames([String])
+    }
+
     /// Build the JSON-RPC request body for BBT's `item.pandoc_filter` method.
     ///
-    /// CRITICAL: `libraryID` (3rd positional param) must be serialized as an array of
-    /// STRINGS, e.g. `["2","3"]` — NOT integers. The installed BBT's JSON schema for this
-    /// parameter is `oneOf: [string, number, string[]]`; passing a *numeric* array fails
-    /// schema validation outright ("must match exactly one schema in oneOf"), even though
-    /// every individual ID is itself a number — only a `string[]` satisfies that `oneOf`.
-    /// Verified live against a real Zotero 9.0.6 + Better BibTeX 9.0.47 install. Do NOT
-    /// "helpfully" change `libraryIDs.map { String($0) }` back to a plain `[Int]`.
-    nonisolated static func pandocFilterRequestBody(citekeys: [String], libraryIDs: [Int]) -> [String: Any] {
-        [
+    /// CRITICAL — the 3rd positional parameter is a library SCOPE, and its two accepted spellings
+    /// are not interchangeable. Both branches below were verified live on 2026-08-22 against this
+    /// developer's own running install (Zotero 10.0, Better BibTeX 9.0.57) by issuing
+    /// `item.pandoc_filter` calls directly at `http://127.0.0.1:23119/better-bibtex/json-rpc`:
+    ///
+    /// - A bare JSON NUMBER (e.g. `1`) resolves the personal library correctly. That is the only
+    ///   form this code uses a number for; `.personal` is the sole case that produces one.
+    /// - An array of library-NAME STRINGS (e.g. `["Sifo-Futing"]`) resolves group/shared libraries
+    ///   correctly, and a batched array resolves several in one call.
+    /// - Stringified numeric IDs — bare `"1"` or an array such as `["19"]`, `["6623119"]` — FAIL
+    ///   with `could not find library <id>`, for the personal library and group libraries alike.
+    ///   BBT reads a string here as a library NAME, not as an id in string clothing.
+    ///
+    /// This corrects an earlier comment at this site which claimed BBT's `oneOf: [string, number,
+    /// string[]]` schema required `libraryIDs.map { String($0) }` and cited a Zotero 9.0.6 / BBT
+    /// 9.0.47 verification for it. The schema does accept those types; what the old comment got
+    /// wrong is what BBT *does* with a string — it matches it by name, so stringified IDs matched
+    /// nothing and every scoped call silently returned zero items. Do NOT reintroduce
+    /// `.map { String($0) }` over library IDs in either branch.
+    nonisolated static func pandocFilterRequestBody(citekeys: [String], scope: PandocFilterScope) -> [String: Any] {
+        let scopeValue: Any
+        switch scope {
+        case .personal:
+            scopeValue = personalLibraryID
+        case .libraryNames(let names):
+            scopeValue = names
+        }
+        return [
             "jsonrpc": "2.0",
             "method": "item.pandoc_filter",
-            "params": [citekeys, true, libraryIDs.map { String($0) }]
+            "params": [citekeys, true, scopeValue]
         ]
     }
 
@@ -212,27 +308,77 @@ extension ZoteroService {
         )
     }
 
-    /// Parse a raw `user.groups` JSON-RPC response body into a flat list of library IDs.
-    nonisolated static func parseLibraryIDs(from data: Data) throws -> [Int] {
+    /// Parse a raw `user.groups` JSON-RPC response body into the list of libraries it reports.
+    ///
+    /// Throws when `result` is missing or `null` — a malformed/protocol-violating envelope that
+    /// should never happen for a valid Zotero install (every install has at least a personal
+    /// library). Silently treating that shape as "zero libraries" would get cached and never
+    /// self-heal, since the stale-library retry in `performGroupPhase` only fires on a
+    /// `"JSON-RPC error:"`-prefixed message. A genuinely empty array (`"result":[]` — not
+    /// realistic for Zotero, but a valid JSON shape) is NOT this case and still returns `[]`
+    /// successfully, same as `parsePandocFilterResponseRaw`'s analogous guard on `result`.
+    nonisolated static func parseLibraries(from data: Data) throws -> [ZoteroLibrary] {
         let decoded = try JSONDecoder().decode(GroupsRPCResponse.self, from: data)
         if let rpcError = decoded.error {
             throw ZoteroError.invalidResponse("JSON-RPC error: \(rpcError.message)")
         }
-        return (decoded.result ?? []).map(\.id)
+        guard let result = decoded.result else {
+            throw ZoteroError.invalidResponse("Missing result in user.groups response")
+        }
+        return result
     }
 
-    /// Extract every group/shared library ID from a full `user.groups` library-ID list
-    /// (excludes the personal library, id 1).
-    nonisolated static func groupLibraryIDs(from allLibraryIDs: [Int]) -> [Int] {
-        allLibraryIDs.filter { $0 != personalLibraryID }
+    /// Group-library display names for the group phase, in input order.
+    ///
+    /// Excludes the personal library by its stable `personalLibraryID` — never by display
+    /// name, per this file's invariant. Then drops entries whose `name` is nil or
+    /// whitespace-only (logged — a library that silently becomes unsearchable is the failure
+    /// mode this whole file exists to eliminate), and de-duplicates by exact string while
+    /// preserving order.
+    ///
+    /// Names are returned UNTRIMMED and deduped as exact strings: they are matched against
+    /// Zotero's own stored library name, so trimming here risks breaking a legitimate match on
+    /// a library whose real name has leading/trailing whitespace. Trimming is used only to
+    /// *test* emptiness, never to rewrite the value.
+    ///
+    /// Known, accepted limitation: two DIFFERENT group libraries that happen to share the exact
+    /// same display name collapse to a single entry in the returned list (the dedupe above is
+    /// by exact string, with no notion of "these are actually two libraries"). A citekey that
+    /// exists only in the "shadowed" library — the one whose name lost the dedupe — is then
+    /// reported not-found, even though it does exist in one of the user's libraries. This is not
+    /// detected or warned about here: BBT's `item.pandoc_filter` scope parameter gives this code
+    /// no other handle for batching multiple group libraries into one call than their display
+    /// names, so there is no id-based (or otherwise disambiguating) alternative available at
+    /// this layer. Detecting/warning about duplicate names is tracked as a separate follow-up,
+    /// not attempted here.
+    nonisolated static func groupLibraryNames(from libraries: [ZoteroLibrary]) -> [String] {
+        var seen = Set<String>()
+        var names: [String] = []
+        for library in libraries where library.id != personalLibraryID {
+            guard let name = library.name,
+                  !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                DebugLog.log(
+                    .zotero,
+                    "[ZoteroService] Group library id \(library.id) has no usable name in the " +
+                    "user.groups response — dropping it from the group-library phase; citekeys " +
+                    "that exist only in it will be reported not-found"
+                )
+                continue
+            }
+            if seen.insert(name).inserted { names.append(name) }
+        }
+        return names
     }
 
-    /// Heuristic for "the group-library phase failed because BBT rejected a library ID we had
-    /// cached" (e.g. a group was left/deleted mid-session, so a cached ID is now stale). True
-    /// for a JSON-RPC-level error object *from BBT itself* (as opposed to a network/transport
-    /// failure) — the closest identifiable signal available, since BBT doesn't document a
-    /// dedicated "unknown library" error code separate from its generic invalid-parameters
-    /// error.
+    /// Heuristic for "the group-library phase failed because BBT rejected a group library NAME
+    /// we had cached" (e.g. a group was left/deleted, or renamed, mid-session, so a cached name
+    /// is now stale). Group libraries are identified by display name, not by id — see
+    /// `groupLibraryNames` — so this is about a stale/renamed NAME, never a stale id; the
+    /// personal-library path never hits this retry, since it's still id-based and BBT's
+    /// personal-library id doesn't get "renamed." True for a JSON-RPC-level error object *from
+    /// BBT itself* (as opposed to a network/transport failure) — the closest identifiable signal
+    /// available, since BBT doesn't document a dedicated "unknown library" error code separate
+    /// from its generic invalid-parameters error.
     private nonisolated static func looksLikeStaleLibraryError(_ error: Error) -> Bool {
         guard case let ZoteroError.invalidResponse(message) = error else { return false }
         return message.hasPrefix("JSON-RPC error:")
@@ -300,9 +446,9 @@ extension ZoteroService {
 
     // MARK: - Network primitives
 
-    /// Perform a single `item.pandoc_filter` JSON-RPC call scoped to `libraryIDs`.
+    /// Perform a single `item.pandoc_filter` JSON-RPC call scoped to `scope`.
     fileprivate func performPandocFilterRequestRaw(
-        citekeys: [String], libraryIDs: [Int]
+        citekeys: [String], scope: PandocFilterScope
     ) async throws -> PandocFilterRawOutcome {
         guard let url = URL(string: "\(baseURL)/better-bibtex/json-rpc") else {
             throw ZoteroError.invalidResponse("Invalid URL")
@@ -313,7 +459,7 @@ extension ZoteroService {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.timeoutInterval = Self.pandocFilterTimeout
         request.httpBody = try JSONSerialization.data(
-            withJSONObject: Self.pandocFilterRequestBody(citekeys: citekeys, libraryIDs: libraryIDs)
+            withJSONObject: Self.pandocFilterRequestBody(citekeys: citekeys, scope: scope)
         )
 
         let (data, response) = try await URLSession.shared.data(for: request)
@@ -324,13 +470,13 @@ extension ZoteroService {
         return try Self.parsePandocFilterResponseRaw(data)
     }
 
-    /// Fetch every library ID Better BibTeX knows about (personal + all group/shared
-    /// libraries the user belongs to), via `user.groups`. Session-cached; pass
-    /// `forceRefresh: true` to bypass the cache — used by `performGroupPhase` when a cached
-    /// library ID looks stale (a group could be joined/left mid-session; there's no automatic
-    /// polling for that otherwise).
-    func fetchLibraryIDs(forceRefresh: Bool = false) async throws -> [Int] {
-        if !forceRefresh, let cached = cachedLibraryIDs {
+    /// Fetch every library Better BibTeX knows about (personal + all group/shared libraries
+    /// the user belongs to), via `user.groups`. Session-cached; pass `forceRefresh: true` to
+    /// bypass the cache — used by `performGroupPhase` when a cached library looks stale (a
+    /// group could be joined/left mid-session; there's no automatic polling for that
+    /// otherwise).
+    func fetchLibraries(forceRefresh: Bool = false) async throws -> [ZoteroLibrary] {
+        if !forceRefresh, let cached = cachedLibraries {
             return cached
         }
 
@@ -354,38 +500,38 @@ extension ZoteroService {
             throw ZoteroError.noResponse
         }
 
-        let ids = try Self.parseLibraryIDs(from: data)
-        cachedLibraryIDs = ids
-        return ids
+        let libraries = try Self.parseLibraries(from: data)
+        cachedLibraries = libraries
+        return libraries
     }
 
     /// Attempt phase 2 (group libraries) for `unresolved` citekeys. Returns `nil` if there are
     /// no group libraries to search.
     ///
-    /// If the request fails in a way that looks like a stale cached library ID (see
-    /// `looksLikeStaleLibraryError`), invalidates the library-ID cache and retries once with a
-    /// forced refresh before giving up — a group could have been left mid-session, in which
-    /// case a cached ID BBT no longer recognizes would otherwise silently reinstate the
-    /// original unscoped-lookup bug for the rest of the session. `forceRefresh`'s only caller
-    /// is this retry.
+    /// If the request fails in a way that looks like a stale cached group NAME (see
+    /// `looksLikeStaleLibraryError`), invalidates the cached library list and retries once with
+    /// a forced refresh before giving up — a group could have been left, deleted, or renamed
+    /// mid-session, in which case a cached name BBT no longer recognizes would otherwise
+    /// silently reinstate the original unscoped-lookup bug for the rest of the session.
+    /// `forceRefresh`'s only caller is this retry.
     fileprivate func performGroupPhase(unresolved: [String]) async throws -> PandocFilterRawOutcome? {
-        let libraryIDs = try await fetchLibraryIDs()
-        let groupIDs = Self.groupLibraryIDs(from: libraryIDs)
-        guard !groupIDs.isEmpty else { return nil }
+        let libraries = try await fetchLibraries()
+        let groupNames = Self.groupLibraryNames(from: libraries)
+        guard !groupNames.isEmpty else { return nil }
 
         do {
-            return try await performPandocFilterRequestRaw(citekeys: unresolved, libraryIDs: groupIDs)
+            return try await performPandocFilterRequestRaw(citekeys: unresolved, scope: .libraryNames(groupNames))
         } catch {
             guard !Self.isCancellation(error), Self.looksLikeStaleLibraryError(error) else { throw error }
             DebugLog.log(
                 .zotero,
                 "[ZoteroService] Group-library item.pandoc_filter call failed (\(error)) — " +
-                "looks like a stale cached library ID; invalidating cache and retrying once"
+                "looks like a stale cached group library name; invalidating cache and retrying once"
             )
-            let freshLibraryIDs = try await fetchLibraryIDs(forceRefresh: true)
-            let freshGroupIDs = Self.groupLibraryIDs(from: freshLibraryIDs)
-            guard !freshGroupIDs.isEmpty else { return nil }
-            return try await performPandocFilterRequestRaw(citekeys: unresolved, libraryIDs: freshGroupIDs)
+            let freshLibraries = try await fetchLibraries(forceRefresh: true)
+            let freshGroupNames = Self.groupLibraryNames(from: freshLibraries)
+            guard !freshGroupNames.isEmpty else { return nil }
+            return try await performPandocFilterRequestRaw(citekeys: unresolved, scope: .libraryNames(freshGroupNames))
         }
     }
 
@@ -448,7 +594,7 @@ extension ZoteroService {
     ///   items, so `stillUnresolved` above would be non-empty and phase 2 would run instead.)
     func resolveRawViaPandocFilter(_ requested: [String]) async throws -> PandocFilterRawOutcome {
         let personalOutcome = try await performPandocFilterRequestRaw(
-            citekeys: requested, libraryIDs: [Self.personalLibraryID]
+            citekeys: requested, scope: .personal
         )
 
         let resolvedLower = Set(personalOutcome.items.keys.map { $0.lowercased() })
