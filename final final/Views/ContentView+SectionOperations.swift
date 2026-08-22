@@ -5,8 +5,8 @@
 //  Sidebar section delete/duplicate (right-click/control-click context menu). Forward DB ops
 //  ported from the parked `sidebar-section-delete-dup` worktree (see
 //  Models/Database+SectionOps.swift). Undo/redo is NOT a separate mechanism here -- both ops
-//  are `StructuralEntry.Kind` cases on the unified chronological timeline
-//  (docs/plans/patient-rewinding-clockwork.md §4.4/§7 Phase 4), driven end to end by
+//  are `StructuralEntry.Kind` cases on the unified chronological timeline (see
+//  docs/architecture/unified-undo.md's audited-sequences section), driven end to end by
 //  `StructuralUndoController.performSectionDelete`/`performSectionDuplicate` (the shared
 //  audited sequence: flush, checkpoint, forced undo-point snapshot, the DB mutation, forced
 //  bibliography/footnote resync, content push, timeline record).

@@ -3,17 +3,18 @@
 //  final final
 //
 //  Replaces the system default Edit > Undo/Redo menu items
-//  (docs/plans/patient-rewinding-clockwork.md §4.7). Phase 2: activation routes through the
-//  same JS routing decision the keyboard interceptor uses -- never a direct
-//  UnifiedUndoService.performUndo()/performRedo() call from here, which would bypass the
-//  content-equality guard the JS side enforces (plan §4.2/§4.7). With zero structural
-//  entries recorded yet, the JS routing decision always falls through to the editor's own
-//  text undo, so this is a no-behavior-change wiring: pressing Cmd-Z / using the menu item
-//  behaves exactly as it did before this phase.
+//  (docs/architecture/unified-undo.md).
+//  Menu activation routes through the same JS routing decision the keyboard interceptor
+//  uses -- never a direct UnifiedUndoService.performUndo()/performRedo() call from here,
+//  which would bypass the content-equality guard the JS side enforces (see
+//  docs/architecture/unified-undo.md's routing section). When
+//  the timeline has nothing on top, that JS routing decision falls through to the editor's
+//  own text undo, so Cmd-Z / the menu item behaves exactly like plain text undo whenever
+//  there's no structural entry to consider.
 //
 //  Plain "Undo"/"Redo" titles are deliberate (not "Undo Delete Section..."): a structural
-//  title could lie once real entries exist, since the timeline top isn't necessarily the
-//  next chronological step (plan §4.7).
+//  title would lie whenever newer text edits exist, since the timeline top is not
+//  necessarily the next chronological step.
 //
 //  Review finding (round 1, must-fix): the system `.undoRedo` group this replaces dispatches
 //  the classic `undo:`/`redo:` action with a NIL target, which walks the responder chain to

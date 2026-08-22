@@ -388,8 +388,9 @@ final class DocumentManager {
     /// block moves the incremental block-sync diff alone would miss.
     var flushBeforeExport: (() async -> Void)?
 
-    /// Hook to the main-window `StructuralUndoController` (docs/plans/patient-rewinding-clockwork.md
-    /// §4.4), wired by ContentView the same way `flushBeforeExport` is above. Lets
+    /// Hook to the main-window `StructuralUndoController` (see
+    /// docs/architecture/unified-undo.md's Components table), wired by ContentView the same
+    /// way `flushBeforeExport` is above. Lets
     /// window-scoped callers -- VersionHistoryWindow's restore-replace confirmation, and the
     /// editors' `structuralUndoRequested`/`structuralRedoRequested` WKScriptMessageHandler
     /// dispatch -- reach the controller without threading a new reference through every

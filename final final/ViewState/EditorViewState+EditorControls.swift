@@ -48,8 +48,8 @@ extension EditorViewState {
         guard canToggleEditorMode else { return }
         // Don't start the save chain during data-sensitive transitions. .structuralUndo
         // added in the Phase 3 review round: a mode toggle mid-sequence would reassign the
-        // WebView StructuralUndoController is still operating on (docs/plans/
-        // patient-rewinding-clockwork.md §4.4).
+        // WebView StructuralUndoController is still operating on
+        // (docs/architecture/unified-undo.md).
         switch contentState {
         case .projectSwitch, .zoomTransition, .structuralUndo:
             return

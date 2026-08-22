@@ -8,8 +8,8 @@
 //  StructuralUndoController/editorState plumbing that can't be exercised without a live app;
 //  there is no separate "DB-layer-only" reimplementation to diverge from what production runs).
 //
-//  Ported from the parked `sidebar-section-delete-dup` worktree
-//  (docs/plans/patient-rewinding-clockwork.md §6/§7 Phase 4), adapted for this phase's DB-layer
+//  Ported from the parked `sidebar-section-delete-dup` worktree,
+//  adapted for this phase's DB-layer
 //  API change: `deleteSections`/`duplicateSections` now return the affected section's title
 //  (`String?`) rather than a `SectionOperationRecord`, because undo is no longer a verbatim
 //  row-level inverse (`restoreDeletedBlocks`/`canUndoSectionOperation`/`deleteBlocks` are gone)

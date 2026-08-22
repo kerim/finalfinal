@@ -3,7 +3,7 @@
 //  final finalTests
 //
 //  Phase 7 of the unified chronological undo system
-//  (docs/plans/patient-rewinding-clockwork.md), review round MF-3/MF-4. These two must-fixes
+//  (docs/architecture/unified-undo.md), review round MF-3/MF-4. These two must-fixes
 //  live in `ContentView+SectionManagement.swift`'s `dispatchSectionReorder`, one layer above
 //  `StructuralUndoController` (covered by `StructuralUndoControllerTests.swift`) -- a prior
 //  coder round noted this layer was previously considered untestable without a live

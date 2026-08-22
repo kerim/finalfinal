@@ -1133,7 +1133,7 @@ export function updateSnapshotIds(mapping: Map<string, string>): void {
 
 /**
  * Re-point the module-level `currentState` cache to the plugin state actually embedded in
- * `view.state` (docs/plans/patient-rewinding-clockwork.md §4.4 undo step 3a). `currentState`
+ * `view.state` (see docs/architecture/unified-undo.md's Checkpoints section). `currentState`
  * is normally kept in sync with the live view by `apply()` above -- but a checkpoint SWAP
  * (`view.updateState(checkpoint)`) replaces `view.state` wholesale without ever routing
  * through `apply()`, so after a swap `currentState` still points at the pre-swap EditorState's

@@ -53,9 +53,10 @@ extension ContentView {
     }
 
     func updateSection(_ section: SectionViewModel) {
-        // Barrier (docs/plans/patient-rewinding-clockwork.md §4.5/H8, Decision 2 of the
-        // Phase 3 review round): section metadata (status/tags/wordGoal) lives on the block
-        // row, not in the document text the unified-undo routing guard compares -- a
+        // Barrier (see docs/architecture/unified-undo.md's Barriers section, hazard H8;
+        // Decision 2 of the Phase 3 review round): section metadata (status/tags/wordGoal)
+        // lives on the block row, not in the document text the unified-undo routing guard
+        // compares -- a
         // metadata-only edit leaves that equality check satisfied, so without this a
         // structural undo would silently fire and wipe the edit along with reverting the
         // structural op. Invalidate the whole timeline rather than trying to special-case

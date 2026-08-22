@@ -135,7 +135,7 @@ enum EditorContentState {
     case dragReorder       // During sidebar drag-drop reorder
     case projectSwitch     // During project switch (prevents old content bleed)
     case annotationEdit    // During sidebar annotation text edit (prevents feedback loop)
-    /// During a unified-undo structural op / undo / redo sequence
-    /// (docs/plans/patient-rewinding-clockwork.md §4.4) -- StructuralUndoController.swift.
+    /// During a unified-undo structural op / undo / redo sequence -- see
+    /// docs/architecture/unified-undo.md's audited-sequences section, StructuralUndoController.swift.
     case structuralUndo
 }

@@ -40,8 +40,9 @@ struct OutlineSidebar: View {
     /// `EditorViewState.sectionDropInFlight`'s doc comment.
     @Binding var sectionDropInFlight: Bool
     /// Sidebar context-menu section operations: duplicate/delete a section's full subtree
-    /// (docs/plans/patient-rewinding-clockwork.md §7 Phase 4). Nil-defaulted so existing call
-    /// sites are unaffected; see SectionCardView's context menu for the UI.
+    /// (see docs/architecture/unified-undo.md's unified-timeline-concept section for the
+    /// `.sectionDelete`/`.sectionDuplicate` timeline entries this drives). Nil-defaulted so
+    /// existing call sites are unaffected; see SectionCardView's context menu for the UI.
     var onDuplicateSection: ((String) -> Void)?
     var onDeleteSection: ((String) -> Void)?
 

@@ -104,7 +104,8 @@ struct VersionHistoryRestoreTests {
         #expect(!autoSnapshots.isEmpty, "Safety backup should be an automatic snapshot")
     }
 
-    // MARK: - Unified Undo: createUndoPointSnapshot (docs/plans/patient-rewinding-clockwork.md §4.4)
+    // MARK: - Unified Undo: createUndoPointSnapshot (see docs/architecture/unified-undo.md's
+    // "Why a snapshot is the universal inverse" section)
     //
     // Unlike createAutoSnapshot, this must NEVER skip on unchanged content -- an undo/redo
     // point must exist every time the unified-undo op sequence asks for one.

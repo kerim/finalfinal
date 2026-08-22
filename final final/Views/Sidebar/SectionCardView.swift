@@ -16,7 +16,9 @@ struct SectionCardView: View {
     var isActive: Bool = false  // When true, show left accent bar (cursor is in this section)
     var onHoverChanged: ((Bool) -> Void)?  // Bubbles hover state to parent (bypasses PassthroughHostingView hit-test)
     /// Right-click/control-click context menu: duplicate/delete this section's full subtree
-    /// (docs/plans/patient-rewinding-clockwork.md §7 Phase 4). Both nil-defaulted so every
+    /// (see docs/architecture/unified-undo.md's unified-timeline-concept section for the
+    /// `.sectionDelete`/`.sectionDuplicate` timeline entries this drives). Both nil-defaulted
+    /// so every
     /// other call site (drag preview, etc.) is unaffected.
     var onDuplicate: (() -> Void)?
     var onDelete: (() -> Void)?

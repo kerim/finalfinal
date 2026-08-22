@@ -2,8 +2,8 @@
 //  UnifiedUndoServiceTests.swift
 //  final finalTests
 //
-//  Phase 2 skeleton tests (docs/plans/patient-rewinding-clockwork.md): the stack/eviction/
-//  barrier bookkeeping in UnifiedUndoService, exercised in isolation -- no editor, no
+//  Unit tests for UnifiedUndoService (docs/architecture/unified-undo.md): the stack/eviction/
+//  barrier bookkeeping, exercised in isolation -- no editor, no
 //  database, no real structural operation. Nothing in this suite depends on JS or a
 //  WKWebView; the JS-side routing truth table lives in
 //  web/{milkdown,codemirror}/src/__tests__/undo-coordinator.test.ts.
@@ -13,7 +13,7 @@ import Testing
 import Foundation
 @testable import final_final
 
-@Suite("UnifiedUndoService — Phase 2 skeleton")
+@Suite("UnifiedUndoService")
 @MainActor
 struct UnifiedUndoServiceTests {
 

@@ -27,7 +27,7 @@ enum DebugLog {
         case reentrancy  // [Reentrancy] crash-forensics: deferred main-queue @Observable writes
                          // from inside NSViewRepresentable.updateNSView (Milkdown/CodeMirror editors)
         case undo        // [UnifiedUndoService] unified chronological undo: routing decisions,
-                          // refusals, degradations, barriers (docs/plans/patient-rewinding-clockwork.md)
+                          // refusals, degradations, barriers (docs/architecture/unified-undo.md)
     }
 
     /// Default: only lifecycle + zotero + editor. Add categories here when debugging.

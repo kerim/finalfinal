@@ -42,7 +42,8 @@ extension CodeMirrorEditor.Coordinator {
         }
         controller.add(self, name: "openEquationDialog")
         controller.add(self, name: "selectionChanged")
-        // Unified-undo bridge (docs/plans/patient-rewinding-clockwork.md §4.4) -- Phase 3.
+        // Unified-undo bridge (docs/architecture/unified-undo.md's registry/descriptor
+        // bridge protocol section) -- Phase 3.
         controller.add(self, name: "structuralUndoRequested")
         controller.add(self, name: "structuralRedoRequested")
         controller.add(self, name: "historyEdited")

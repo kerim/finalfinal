@@ -99,8 +99,9 @@ class EditorViewState {
                 contentStateWatchdog = Task { [weak self] in
                     try? await Task.sleep(for: .seconds(5))
                     guard !Task.isCancelled, let self else { return }
-                    // Exempt .structuralUndo (docs/plans/patient-rewinding-clockwork.md §4.4,
-                    // review round CRIT fix): a unified-undo op/undo/redo sequence
+                    // Exempt .structuralUndo (see docs/architecture/unified-undo.md's
+                    // audited-sequences section, review round CRIT fix): a unified-undo
+                    // op/undo/redo sequence
                     // (StructuralUndoController) can legitimately run longer than 5s --
                     // multiple JS round trips, two synchronous DB writes, up to two 1s/3s
                     // bibliography/footnote flushes. The controller itself already guarantees
@@ -544,8 +545,9 @@ class EditorViewState {
     }
 
     /// Awaited version of `refreshSections()` (MF-1, `StructuralUndoController`'s audited
-    /// sequences, docs/plans/patient-rewinding-clockwork.md §4.4/§4.5 Phase 4 review round):
-    /// those sequences need to know the DB fetch has actually landed in `sections` before
+    /// sequences -- see docs/architecture/unified-undo.md's audited-sequences and Barriers
+    /// sections, Phase 4 review round): those sequences need to know the DB fetch has
+    /// actually landed in `sections` before
     /// running hierarchy enforcement in-sequence, so they can't use the fire-and-forget
     /// `refreshSections()` above. Same body as before, just awaited directly instead of
     /// wrapped in its own untracked `Task`. Heavy DB work runs off the main actor; the section

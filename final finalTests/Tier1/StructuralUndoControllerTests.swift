@@ -4,7 +4,7 @@
 //
 //  Tier 1: Silent Killers
 //  Phase 3 of the unified chronological undo system
-//  (docs/plans/patient-rewinding-clockwork.md). Things the plan/review round specifically
+//  (docs/architecture/unified-undo.md). Things the plan/review round specifically
 //  call out as needing a test because an e2e run can't catch them:
 //
 //  1. H6 ordering: the mode-aware flush (§4.4 step 2) MUST run before

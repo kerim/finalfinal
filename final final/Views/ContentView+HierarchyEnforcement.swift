@@ -275,9 +275,10 @@ extension ContentView {
             return
         }
 
-        // Barrier (docs/plans/patient-rewinding-clockwork.md §4.5, plan §7 Phase 4): hierarchy
-        // enforcement renumbers sort orders and heading levels via `reorderAllBlocks` below,
-        // same content-mutating-but-not-checkpointed shape as a drag reorder. This function is
+        // Barrier (see docs/architecture/unified-undo.md's Barriers section): hierarchy
+        // enforcement renumbers sort orders and heading levels via `reorderAllBlocks` below --
+        // a content-mutating change that runs outside any structural op's own checkpoint/
+        // audited sequence. This function is
         // `static` (no `self`/`unifiedUndoService` instance access), so it reaches the service
         // through `DocumentManager.shared.structuralUndoController` per the coder brief's
         // confirmed hook point, rather than `ContentView`'s own `@State` property.

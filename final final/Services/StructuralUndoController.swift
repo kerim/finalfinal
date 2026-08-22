@@ -3,21 +3,23 @@
 //  final final
 //
 //  Phase 3 of the unified chronological undo system
-//  (docs/plans/patient-rewinding-clockwork.md). Owns the two audited sequences for
-//  `restoreSectionReplace` (§4.4): the forward op sequence and the undo/redo sequence.
+//  (docs/architecture/unified-undo.md). Owns the two audited sequences for
+//  `restoreSectionReplace` (see the doc's audited-sequences section): the forward op sequence
+//  and the undo/redo sequence.
 //
 //  Lives at main-window scope (owned by ContentView, alongside UnifiedUndoService) so it can
 //  reach `editorState`, the live WKWebView, and every sync service -- the Version History
 //  window's restore button is a REQUEST into this controller, never a direct SnapshotService
-//  call (plan §4.4, "main-window request handoff").
+//  call (see the doc's audited-sequences section, "main-window request handoff").
 //
-//  Phase 4: the audited forward sequence (plan §4.4) is now generalized behind
-//  `performStructuralOp` and shared by all five structural ops -- restore-replace (Phase 3),
-//  full-project restore, restore-as-duplicate (both deferred from Phase 3), and sidebar
-//  section delete/duplicate (new this phase, DB layer ported from the parked
-//  `sidebar-section-delete-dup` worktree). `performUndo`/`performRedo` below were already
-//  generic across every `StructuralEntry.Kind` -- they only ever restore from a snapshot id,
-//  never touch op-specific DB methods -- so no change was needed there.
+//  Phase 4: the audited forward sequence (see docs/architecture/unified-undo.md's
+//  audited-sequences section) is now generalized behind `performStructuralOp` and shared by
+//  all six structural ops -- restore-replace (Phase 3), full-project restore,
+//  restore-as-duplicate (both deferred from Phase 3), sidebar section delete/duplicate
+//  (Phase 4, DB layer ported from the parked `sidebar-section-delete-dup` worktree), and
+//  section reorder (Phase 7). `performUndo`/`performRedo` below were already generic across
+//  every `StructuralEntry.Kind` -- they only ever restore from a snapshot id, never touch
+//  op-specific DB methods -- so no change was needed there.
 //
 
 import SwiftUI
@@ -174,7 +176,8 @@ final class StructuralUndoController {
         case allowWhileZoomed
     }
 
-    /// The one shared audited sequence (plan §4.4, "one implementation used by all five ops")
+    /// The one shared audited sequence (see docs/architecture/unified-undo.md's
+    /// audited-sequences section, "one implementation used by all six ops")
     /// -- every lettered item from checkpoint capture through registry advancement, minus the
     /// one thing that actually differs between ops: the DB mutation itself (step 5), supplied
     /// by the caller as `mutate`. `mutationSpyName` preserves each op's original ordering-spy
@@ -449,7 +452,7 @@ final class StructuralUndoController {
     }
 
     /// Step 7 of the shared audited sequence, factored out because it's identical across all
-    /// five ops: push the post-mutation DB content to the live editor (mode-aware), settle
+    /// six ops: push the post-mutation DB content to the live editor (mode-aware), settle
     /// block ids, reconcile annotations (must-fix 5, round-5 review -- a section-body swap or
     /// delete/duplicate can shift annotation charOffsets the same way an undo/redo restore
     /// can), then ask JS to capture `postOpDoc` from the push transaction's own doc. Returns
@@ -1404,8 +1407,9 @@ final class StructuralUndoController {
         }
     }
 
-    /// MF-1 fix (Phase 4 review round -- docs/plans/patient-rewinding-clockwork.md §4.5): run
-    /// hierarchy enforcement synchronously (awaited) from INSIDE the audited sequence, reusing
+    /// MF-1 fix (Phase 4 review round -- see docs/architecture/unified-undo.md's Barriers
+    /// section): run hierarchy enforcement synchronously (awaited) from INSIDE the audited
+    /// sequence, reusing
     /// `ContentView.enforceHierarchyAsync`/`persistEnforcedSections` directly rather than
     /// duplicating their logic.
     ///

@@ -2,20 +2,26 @@
 //  UnifiedUndoService.swift
 //  final final
 //
-//  Phase 2 skeleton for the unified chronological undo system
-//  (docs/plans/patient-rewinding-clockwork.md). Owns the native structural-operation
-//  timeline; the web editors keep owning text undo (JS undo-coordinator module, mirrored in
+//  The unified chronological undo system's native timeline
+//  (docs/architecture/unified-undo.md). Owns the
+//  native structural-operation timeline -- undo/redo stacks of `StructuralEntry`, barriers,
+//  eviction; the web editors keep owning text undo (JS undo-coordinator module, mirrored in
 //  web/milkdown/src/undo-coordinator.ts and web/codemirror/src/undo-coordinator.ts).
 //
-//  Phase 2 wires ZERO real structural operations. record()/performUndo()/performRedo()/
-//  invalidateAll() are all correct and unit-tested, but nothing calls them yet -- Phase 3+
-//  adds the version-restore/section-delete/section-duplicate call sites (plan §7).
+//  All six structural operations (version-history restore in its three forms, section
+//  delete, section duplicate, and section reorder) are wired end to end through
+//  `StructuralUndoController`, the only caller of `record()`, `performUndo()`, and
+//  `performRedo()` below. `invalidateAll()` (the barrier mechanism) is called separately, by
+//  the view layer -- ContentView and its extensions, ViewNotificationModifiers -- at each of
+//  the barrier events themselves (project switch, mode switch, zoom, hierarchy enforcement,
+//  section-metadata edits, inline annotation edits); see the Barriers section of
+//  docs/architecture/unified-undo.md.
 //
 
 import SwiftUI
 
-/// One structural (non-text) operation on the unified undo timeline (plan §4.1). Defined
-/// now even though nothing constructs one until Phase 3.
+/// One structural (non-text) operation on the unified undo timeline (see
+/// docs/architecture/unified-undo.md's unified-timeline-concept section).
 struct StructuralEntry: Identifiable, Equatable {
     enum Kind: Equatable {
         case restoreProject
@@ -23,9 +29,9 @@ struct StructuralEntry: Identifiable, Equatable {
         case restoreSectionDuplicate
         case sectionDelete
         case sectionDuplicate
-        /// Sidebar drag-reorder (single-section or subtree), Phase 7 (plan §7) -- promoted
+        /// Sidebar drag-reorder (single-section or subtree), added Phase 7 -- promoted
         /// from a timeline-wiping barrier to a sixth tracked structural op. Title "Reorder
-        /// Sections" (unused in the actual menu per plan §4.7; kept for parity/diagnostics
+        /// Sections" (unused in the actual menu; kept for parity/diagnostics
         /// with the other five, matching their plain-noun-phrase convention).
         case sectionReorder
     }
@@ -36,11 +42,10 @@ struct StructuralEntry: Identifiable, Equatable {
     /// Snapshot to restore FROM when this entry is undone (the pre-op state).
     let undoSnapshotId: String
     /// Snapshot to restore FROM when this entry is redone (the post-op state), captured at
-    /// undo time (plan §4.4 step 2) -- nil until this entry has actually been undone once.
-    /// DEFERRED (Phase 3, do not fix now): `var` so it's technically settable, but nothing
-    /// in `UnifiedUndoService` has a setter path for it yet -- `performUndo`/`performRedo`
-    /// are pure bookkeeping today and never populate it. Phase 3's audited undo sequence
-    /// (plan §4.4 step 2, "capture the redo checkpoint/snapshot") owns writing this.
+    /// undo time (see docs/architecture/unified-undo.md's audited-sequences section) -- nil
+    /// until this entry has actually been undone once.
+    /// `var` because `attachRedoSnapshot(opId:redoSnapshotId:)` below writes it in place once
+    /// `StructuralUndoController`'s audited undo sequence captures the redo snapshot.
     var redoSnapshotId: String?
     let createdAt: Date
 
@@ -61,15 +66,18 @@ struct StructuralEntry: Identifiable, Equatable {
     }
 }
 
-/// Native timeline of structural operations (plan §4.1). Per-project lifetime, in-memory
-/// only -- no persistence across relaunch, matching editor-history lifetime (plan §4.8).
+/// Native timeline of structural operations (see docs/architecture/unified-undo.md's
+/// unified-timeline-concept section). Per-project lifetime, in-memory only -- no persistence
+/// across relaunch, matching editor-history lifetime (see the doc's "what this system
+/// deliberately does not do" section).
 ///
-/// Phase 2: fully built and unit-tested, but nothing calls `record()`, `performUndo()`,
-/// `performRedo()`, or `invalidateAll()` yet.
+/// `StructuralUndoController` calls `record()`, `performUndo()`, and `performRedo()` for all
+/// six structural operations; the view layer calls `invalidateAll()` at every barrier event.
 @MainActor
 @Observable
 final class UnifiedUndoService {
-    /// Cap per plan §4.1. UI-test-only override (Phase D, plan §9.3):
+    /// Cap of 50 entries (see docs/architecture/unified-undo.md's unified-timeline-concept
+    /// section). UI-test-only override (Phase D):
     /// `TestMode.undoEvictionCapOverride` lets a permanent e2e test exercise real eviction in a
     /// handful of operations instead of 51 -- see
     /// `UnifiedUndoE2ETests.testEvictionCapEvictsOldestEntryAndStaysConsistent`. Computed (not a
@@ -103,8 +111,9 @@ final class UnifiedUndoService {
     /// Set by ContentView (Phase 5, `ContentView.swift`'s `.task` block right after
     /// `structuralUndoController.configure(...)`) to actually clear the active editor's JS
     /// history for ONE evicted entry AND remove that entry from the undo-coordinator's
-    /// registry (`window.FinalFinal.clearStructuralUndoState(opId)`, plan §4.1/§4.5's eviction
-    /// mini-barrier). Takes the evicted entry's id (MF-1, Phase 5 review round): the JS-side
+    /// registry (`window.FinalFinal.clearStructuralUndoState(opId)`; see
+    /// docs/architecture/unified-undo.md's Eviction section, "mini-barrier"). Takes the
+    /// evicted entry's id (MF-1, Phase 5 review round): the JS-side
     /// target used to be a whole-registry clear (`clearStructuralUndoRegistry`/`clearRegistry`),
     /// but `record()` below runs as the LAST step of `performStructuralOp` -- AFTER that same
     /// op's own registry entry has already been created and finalized -- so a whole-registry
@@ -119,26 +128,28 @@ final class UnifiedUndoService {
 
     /// Set alongside `clearEditorHistories` -- the lighter barrier-only counterpart
     /// (`window.FinalFinal.clearStructuralUndoRegistry()`): clears the JS registry/descriptor
-    /// WITHOUT touching the editor's own text-undo history (plan §5 backlog: "barriers should
-    /// clear the JS registry"). Used by `invalidateAll()` below -- a barrier (zoom,
-    /// project/mode switch, drag reorder, hierarchy enforcement, ...) must not wipe legitimate
-    /// in-flight text-undo steps, only the now-invalid structural checkpoints. Correctness was
-    /// already backstopped without this (a stale opId request gets `.fallback`, plan §4.2); this
-    /// closes the per-session `EditorState` leak (every checkpoint retains a full ProseMirror/CM
-    /// doc) and lets the JS-side fast path skip a doomed equality check once cleared.
+    /// WITHOUT touching the editor's own text-undo history. Used by `invalidateAll()` below --
+    /// a barrier (zoom, project/mode switch, hierarchy enforcement, section-metadata edits,
+    /// inline annotation edits, ...) must not wipe legitimate in-flight text-undo steps, only
+    /// the now-invalid structural checkpoints. Correctness was already backstopped without
+    /// this (a stale opId request gets `.fallback` -- see docs/architecture/unified-undo.md's
+    /// routing section); this closes the per-session `EditorState` leak (every checkpoint
+    /// retains a full ProseMirror/CM doc) and lets the JS-side fast path skip a doomed
+    /// equality check once cleared.
     var clearStructuralRegistry: (() -> Void)?
 
     /// Record a completed structural operation. Clears the redo stack (a fresh operation
     /// invalidates any previously-undone-then-abandoned redo path) and evicts the oldest
     /// undo entry once the cap is exceeded.
     ///
-    /// Eviction is a MINI-BARRIER (plan §4.1/§4.5): it also clears both editors' JS
-    /// histories via `clearEditorHistories`. Skipping that would leave pre-boundary text
-    /// steps reachable past a boundary the timeline no longer guards against -- reopening
-    /// the laundering (H1) and rebase-collapse (H2) hazards. Wired for real in Phase 5:
-    /// every discarded entry's undo/redo-point snapshot ids are also unpinned
-    /// (`SnapshotService`'s in-memory pin set, plan §4.4/§9), so they rejoin the normal
-    /// auto-backup population and prune on the usual Time-Machine schedule.
+    /// Eviction is a MINI-BARRIER (see docs/architecture/unified-undo.md's Eviction
+    /// section): it also clears both editors' JS histories via `clearEditorHistories`.
+    /// Skipping that would leave pre-boundary text steps reachable past a boundary the
+    /// timeline no longer guards against -- reopening the laundering (H1) and rebase-collapse
+    /// (H2) hazards. Wired for real in Phase 5: every discarded entry's undo/redo-point
+    /// snapshot ids are also unpinned (`SnapshotService`'s in-memory pin set -- see the doc's
+    /// Snapshot pin/prune interplay section), so they rejoin the normal auto-backup
+    /// population and prune on the usual Time-Machine schedule.
     func record(_ entry: StructuralEntry) {
         // A fresh op abandons any previously-undone redo path -- unpin every discarded
         // entry's snapshots before the stack itself is cleared.
@@ -153,7 +164,8 @@ final class UnifiedUndoService {
         }
     }
 
-    /// Unpins both of an entry's snapshot ids (plan §4.4/§9's in-memory pin set) -- shared by
+    /// Unpins both of an entry's snapshot ids (see docs/architecture/unified-undo.md's
+    /// Snapshot pin/prune interplay section) -- shared by
     /// every path that permanently discards a `StructuralEntry` (eviction, a fresh op
     /// abandoning the redo branch, `invalidateAll`, `replaceTopOfUndoStack`'s stale undo
     /// snapshot). See `SnapshotService.pinUndoPointSnapshot`'s doc comment for why this is an
@@ -168,11 +180,12 @@ final class UnifiedUndoService {
     enum UndoOutcome: Equatable {
         /// `opId` matched the top of the stack; it has moved to the opposite stack.
         /// Bookkeeping only -- Phase 3+ wraps this with the actual snapshot restore /
-        /// checkpoint swap (plan §4.4's audited undo/redo sequences).
+        /// checkpoint swap (see docs/architecture/unified-undo.md's audited-sequences
+        /// section).
         case performed(StructuralEntry)
         /// `opId` did not match the top of the stack (or the stack was empty) -- the JS
         /// side must reply "fall back" and perform the text undo/redo it suppressed
-        /// (plan §4.2).
+        /// (see docs/architecture/unified-undo.md's routing section).
         case mismatch
     }
 
@@ -193,8 +206,9 @@ final class UnifiedUndoService {
     }
 
     /// Attaches a freshly-captured redo snapshot id to the entry now on top of the redo
-    /// stack (Phase 3, plan §4.4 undo step 2 -- called right after `performUndo` moves the
-    /// entry there). No-op if the top entry's id doesn't match `opId` (defense in depth
+    /// stack (Phase 3 -- see docs/architecture/unified-undo.md's audited-sequences section --
+    /// called right after `performUndo` moves the entry there). No-op if the top entry's id
+    /// doesn't match `opId` (defense in depth
     /// against a barrier racing the caller between `performUndo` and this call).
     func attachRedoSnapshot(opId: UUID, redoSnapshotId: String) {
         guard var top = redoStack.last, top.id == opId else { return }
@@ -203,7 +217,8 @@ final class UnifiedUndoService {
     }
 
     /// Replaces the entry now on top of the undo stack with a version carrying a
-    /// freshly-captured undo snapshot id and no redo snapshot (Phase 3, plan §4.4 -- called
+    /// freshly-captured undo snapshot id and no redo snapshot (Phase 3 -- see
+    /// docs/architecture/unified-undo.md's audited-sequences section -- called
     /// right after `performRedo` moves the entry there; that entry hasn't been undone again
     /// yet, so its previous `redoSnapshotId` no longer applies). No-op if the top entry's id
     /// doesn't match `opId`.
@@ -219,7 +234,9 @@ final class UnifiedUndoService {
         )
     }
 
-    /// Redo-branch barrier (plan §4.6): a genuine new text edit landed in the live editor while
+    /// Redo-branch barrier (see docs/architecture/unified-undo.md's registry/descriptor
+    /// bridge protocol section, `historyEdited`): a genuine new text edit landed in the live
+    /// editor while
     /// a structural redo entry still exists. Clears ONLY the redo stack -- the undo stack is
     /// left untouched -- exactly mirroring how `record()` (above) clears the redo stack, not
     /// the undo stack, when a fresh structural op is recorded. Without this, a structural undo
@@ -239,14 +256,15 @@ final class UnifiedUndoService {
         generation += 1
     }
 
-    /// Barrier: wipes the timeline (plan §4.5). Does NOT clear the editor's own text-undo
-    /// history -- every real barrier call site (project switch, mode switch, zoom, drag
-    /// reorder, hierarchy enforcement, section metadata edit, inline annotation ops) already
-    /// has its own existing mechanism for that where needed (e.g. `resetForProjectSwitch()`'s
-    /// history clear), and a barrier must not wipe legitimate in-flight text-undo steps that
-    /// have nothing to do with the invalidated structural timeline. It DOES (Phase 5) unpin
-    /// every discarded entry's snapshot ids and clear the JS registry/descriptor via
-    /// `clearStructuralRegistry` (plan §5 backlog) -- see that closure's doc comment.
+    /// Barrier: wipes the timeline (see docs/architecture/unified-undo.md's Barriers
+    /// section). Does NOT clear the editor's own text-undo history -- every real barrier call
+    /// site (project switch, mode switch, zoom, hierarchy enforcement, section metadata edit,
+    /// inline annotation ops) already has its own existing mechanism for that where needed
+    /// (e.g. `resetForProjectSwitch()`'s history clear), and a barrier must not wipe
+    /// legitimate in-flight text-undo steps that have nothing to do with the invalidated
+    /// structural timeline. It DOES (Phase 5) unpin every discarded entry's snapshot ids and
+    /// clear the JS registry/descriptor via `clearStructuralRegistry` -- see that closure's
+    /// doc comment.
     func invalidateAll(reason: String) {
         // MF-5 (Phase 5 review round): the generation bump and the JS registry clear both run
         // UNCONDITIONALLY, before the empty-stack early return below -- moved here from after
@@ -272,7 +290,7 @@ final class UnifiedUndoService {
     }
 }
 
-// MARK: - FocusedValue (menu enablement, plan §4.7 -- ViewCommands.swift:9 convention)
+// MARK: - FocusedValue (menu enablement -- ViewCommands.swift:9 convention)
 
 private struct UnifiedUndoServiceFocusedKey: FocusedValueKey {
     typealias Value = UnifiedUndoService

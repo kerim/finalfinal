@@ -319,7 +319,7 @@ extension ContentView {
             return
         }
 
-        // Barrier (docs/plans/patient-rewinding-clockwork.md §4.5, plan §7 Phase 4): this
+        // Barrier (see docs/architecture/unified-undo.md's Barriers section): this
         // inline (content-mutating) branch rewrites editorState.content directly, outside the
         // structural-op checkpoint machinery -- a structural undo landing after this could
         // revert the toggle along with whatever it's actually undoing.
@@ -347,7 +347,7 @@ extension ContentView {
             return
         }
 
-        // Barrier (docs/plans/patient-rewinding-clockwork.md §4.5, plan §7 Phase 4): this
+        // Barrier (see docs/architecture/unified-undo.md's Barriers section): this
         // inline (content-mutating) branch rewrites editorState.content directly, outside the
         // structural-op checkpoint machinery -- same reasoning as
         // toggleAnnotationCompletion's inline branch above.

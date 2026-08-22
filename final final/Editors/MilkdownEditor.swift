@@ -65,7 +65,8 @@ private func registerMilkdownMessageHandlers(on controller: WKUserContentControl
     controller.add(coordinator, name: "tableInsertTruncated")
     controller.add(coordinator, name: "openEquationDialog")
     controller.add(coordinator, name: "selectionChanged")
-    // Unified-undo bridge (docs/plans/patient-rewinding-clockwork.md §4.4) -- Phase 3.
+    // Unified-undo bridge (docs/architecture/unified-undo.md's registry/descriptor bridge
+    // protocol section) -- Phase 3.
     controller.add(coordinator, name: "structuralUndoRequested")
     controller.add(coordinator, name: "structuralRedoRequested")
     controller.add(coordinator, name: "historyEdited")

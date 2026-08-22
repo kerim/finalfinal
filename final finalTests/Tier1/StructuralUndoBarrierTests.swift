@@ -2,19 +2,23 @@
 //  StructuralUndoBarrierTests.swift
 //  final finalTests
 //
-//  Phase 4 (docs/plans/patient-rewinding-clockwork.md §4.5/§7): invalidateAll barrier
-//  coverage for the four call sites this phase adds.
+//  Phase 4 (see docs/architecture/unified-undo.md's Barriers section): invalidateAll barrier
+//  coverage for the barrier call sites that phase adds.
 //
-//  Of the four, only ContentView+HierarchyEnforcement.swift's
-//  `persistEnforcedSections(editorState:)` is a `static` function reachable without a live
-//  SwiftUI view hierarchy -- the other three (drag reorder's `finalizeSectionReorder`, the two
+//  Phase 4 originally added four barrier call sites, including sidebar drag reorder's
+//  `finalizeSectionReorder`. Phase 7 later promoted drag reorder to a sixth tracked
+//  `StructuralEntry.Kind` (`.sectionReorder`, see docs/architecture/unified-undo.md) and
+//  removed its `invalidateAll` call entirely -- it is no longer a barrier at all, so it is not
+//  covered here. Of the three barrier call sites that remain, only
+//  ContentView+HierarchyEnforcement.swift's `persistEnforcedSections(editorState:)` is a
+//  `static` function reachable without a live SwiftUI view hierarchy -- the other two (the two
 //  inline-annotation branches in `toggleAnnotationCompletion`/`handleAnnotationTextUpdate`, and
 //  the three zoom call sites in `sidebarView`) are instance methods/closures on `ContentView`
 //  itself, a SwiftUI View struct with @State/@Environment storage that nothing in this test
 //  target ever instantiates directly (grep confirms no `ContentView(` construction anywhere
 //  under final finalTests/) -- matching the existing precedent that Phase 3's own
 //  `updateSection` metadata-edit barrier (ContentView+SectionManagement.swift) has no direct
-//  unit test either. Those three are covered by the driver's manual/e2e verification instead
+//  unit test either. Those two are covered by the driver's manual/e2e verification instead
 //  (see the coder's final report for the exact repro steps) rather than a novel
 //  ContentView-instantiation pattern with no precedent in this suite.
 //

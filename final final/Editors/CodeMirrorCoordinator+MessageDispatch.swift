@@ -30,7 +30,8 @@ extension CodeMirrorEditor.Coordinator {
         _ = handleSpellcheckMessage(message)
     }
 
-    /// Unified-undo bridge messages (docs/plans/patient-rewinding-clockwork.md §4.4) -- Phase 3.
+    /// Unified-undo bridge messages (docs/architecture/unified-undo.md's registry/descriptor
+    /// bridge protocol section) -- Phase 3.
     nonisolated func handleUndoMessage(_ message: WKScriptMessage) -> Bool {
         switch message.name {
         case "structuralUndoRequested":

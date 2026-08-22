@@ -631,12 +631,14 @@ window.FinalFinal = {
   clearSearch: clearSearchApi,
   getSearchState: getSearchStateApi,
 
-  // Unified-undo API (docs/plans/patient-rewinding-clockwork.md) -- Phase 2 skeleton.
-  // requestUnifiedUndo/Redo are the menu-path entry points (Edit > Undo/Redo); with no
-  // structural entries ever recorded in this phase, both always fall through to Milkdown's
-  // own text undo/redo. setUndoDescriptor/receiveUndoOutcome/receiveRedoOutcome are the
-  // Swift -> JS bridge targets Phase 3+ wires once real structural operations exist -- no
-  // Swift call site invokes any of the three yet.
+  // Unified-undo API (docs/architecture/unified-undo.md). requestUnifiedUndo/Redo are the
+  // menu-path entry points (Edit > Undo/Redo), routing through the same document-equality
+  // decision as the keyboard interceptor; when the native timeline has nothing on top, both
+  // fall through to Milkdown's own text undo/redo. setUndoDescriptor is pushed by
+  // StructuralUndoController.pushDescriptor() after every recorded op, undo, and redo -- NOT
+  // after a barrier, which instead resets JS-local descriptor state via
+  // clearStructuralUndoRegistry() below. receiveUndoOutcome/receiveRedoOutcome are Swift's
+  // one-shot reply to a JS-initiated structuralUndoRequested/structuralRedoRequested.
   requestUnifiedUndo,
   requestUnifiedRedo,
   setUndoDescriptor,

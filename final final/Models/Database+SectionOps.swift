@@ -4,16 +4,17 @@
 //
 //  Forward DB ops for sidebar section delete/duplicate (right-click/control-click context
 //  menu on a sidebar card). Ported from the parked `sidebar-section-delete-dup` worktree
-//  (docs/plans/patient-rewinding-clockwork.md §6) for Phase 4 of the unified chronological
-//  undo system.
+//  for Phase 4 of the unified chronological undo system
+//  (docs/architecture/unified-undo.md).
 //
 //  Unlike that worktree's original single-slot verbatim-inverse design, these are FORWARD
 //  ops only -- there is no `restoreDeletedBlocks`/`deleteBlocks`/`canUndoSectionOperation`/
 //  `SectionOperationRecord` here. Undo of `.sectionDelete`/`.sectionDuplicate` is handled the
 //  same way as every other structural op: `StructuralUndoController` captures a forced
 //  undo-point snapshot BEFORE calling into this file, and undoes by restoring that snapshot
-//  wholesale (plan §4.4's "one implementation used by all five ops" / snapshot-inverse
-//  design, §6's "port the idea, generalized"). See `StructuralUndoController.performSectionDelete`/
+//  wholesale (see docs/architecture/unified-undo.md's audited-sequences section, "one
+//  implementation used by all six ops" / snapshot-inverse design). See
+//  `StructuralUndoController.performSectionDelete`/
 //  `performSectionDuplicate`.
 //
 //  Duplicate = a verbatim deep copy of every Block row in the section's subtree, fresh UUIDs,

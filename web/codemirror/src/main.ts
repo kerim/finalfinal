@@ -505,18 +505,18 @@ function initEditor() {
 
   setEditorView(view);
 
-  // Unified-undo capture-phase keydown interceptor (docs/plans/patient-rewinding-clockwork.md
-  // §4.2/§4.7). No merge point needed here the way Milkdown's slash-commands.ts has one --
-  // see undo-coordinator.ts's header for why. With the always-empty Phase 2 registry this
-  // always returns false (fallthrough), leaving CodeMirror's own `Mod-z`/`Mod-Shift-z`/
-  // `Mod-y` keymap bindings (including their embedded smart-slash-undo logic) completely
-  // untouched.
+  // Unified-undo capture-phase keydown interceptor (docs/architecture/unified-undo.md).
+  // No merge point needed here the way Milkdown's slash-commands.ts has one -- see
+  // undo-coordinator.ts's header for why. Routes to the real document-equality decision in
+  // undo-coordinator.ts; when nothing structural is on top of the timeline, it falls through
+  // to CodeMirror's own `Mod-z`/`Mod-Shift-z`/`Mod-y` keymap bindings (including their
+  // embedded smart-slash-undo logic) untouched.
   //
-  // DEFERRED (Phase 3, do not fix now): no event-target check -- this fires for a Cmd-Z
-  // typed anywhere in the document (a native text field, a dialog, etc.), not just inside
-  // this editor. Harmless today (getEditorView() gate aside, routing always falls through to
-  // a no-op here since nothing but the editor's own keymap reacts to the untouched event),
-  // but worth scoping to editor-owned targets before Phase 3 makes the structural path live.
+  // DEFERRED (do not fix now): still no event-target check -- this fires for a Cmd-Z typed
+  // anywhere in the document (a native text field, a dialog, etc.), not just inside this
+  // editor. Harmless when routing falls through (nothing but the editor's own keymap reacts
+  // to the untouched event) but worth scoping to editor-owned targets, since routing can now
+  // genuinely go structural.
   document.addEventListener(
     'keydown',
     (e) => {
@@ -612,12 +612,14 @@ window.FinalFinal = {
   getSearchState: apiGetSearchState,
   resetForProjectSwitch,
 
-  // Unified-undo API (docs/plans/patient-rewinding-clockwork.md) -- Phase 2 skeleton.
-  // requestUnifiedUndo/Redo are the menu-path entry points (Edit > Undo/Redo); with no
-  // structural entries ever recorded in this phase, both always fall through to
-  // CodeMirror's own text undo/redo. setUndoDescriptor/receiveUndoOutcome/receiveRedoOutcome
-  // are the Swift -> JS bridge targets Phase 3+ wires once real structural operations
-  // exist -- no Swift call site invokes any of the three yet.
+  // Unified-undo API (docs/architecture/unified-undo.md). requestUnifiedUndo/Redo are the
+  // menu-path entry points (Edit > Undo/Redo), routing through the same document-equality
+  // decision as the keyboard interceptor; when the native timeline has nothing on top, both
+  // fall through to CodeMirror's own text undo/redo. setUndoDescriptor is pushed by
+  // StructuralUndoController.pushDescriptor() after every recorded op, undo, and redo -- NOT
+  // after a barrier, which instead resets JS-local descriptor state via
+  // clearStructuralUndoRegistry() below. receiveUndoOutcome/receiveRedoOutcome are Swift's
+  // one-shot reply to a JS-initiated structuralUndoRequested/structuralRedoRequested.
   requestUnifiedUndo,
   requestUnifiedRedo,
   setUndoDescriptor,

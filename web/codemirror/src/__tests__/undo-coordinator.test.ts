@@ -1,9 +1,11 @@
 // @vitest-environment jsdom
-// Phase 2 exit-criteria tests (docs/plans/patient-rewinding-clockwork.md §7 Phase 2, §8):
-// (1) a routing truth table against fake registries -- pure, no real editor needed; and
-// (2) live-wiring proofs that with the Phase 2 permanently-empty registry, every path
-// (keyboard interceptor, menu-path requestUnifiedUndo/Redo, the Swift reply handler)
-// behaves EXACTLY like CodeMirror's own undo/redo with no unified-undo wiring at all.
+// Routing/registry test suite for undo-coordinator.ts (see docs/architecture/unified-undo.md):
+// (1) a routing truth table against fake registries, both empty and populated -- pure, no
+// real editor needed; (2) live-wiring proofs against a real CodeMirror EditorView, including
+// the always-empty-registry case where every path (keyboard interceptor, menu-path
+// requestUnifiedUndo/Redo, the Swift reply handler) falls through to CodeMirror's own
+// undo/redo unchanged; and (3) registry-advancement, eviction, and latch self-clear
+// regression tests for real production bugs found after real structural ops shipped.
 
 import { history, redoDepth, undo, undoDepth } from '@codemirror/commands';
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';

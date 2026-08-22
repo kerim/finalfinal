@@ -369,8 +369,8 @@ struct ContentView: View {
                 ZoomBreadcrumb(
                     zoomedSection: zoomedSection,
                     onZoomOut: {
-                        // Barrier (docs/plans/patient-rewinding-clockwork.md §4.5, plan §7
-                        // Phase 4): a USER-initiated zoom out, hooked here rather than inside
+                        // Barrier (see docs/architecture/unified-undo.md's Barriers section):
+                        // a USER-initiated zoom out, hooked here rather than inside
                         // EditorViewState+Zoom.swift's zoomOut() itself -- the structural-op
                         // sequence already calls zoomOut() as its OWN internal housekeeping
                         // (StructuralUndoController's autoZoomOut policy), and hooking inside

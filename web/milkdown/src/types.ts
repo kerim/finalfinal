@@ -242,10 +242,12 @@ declare global {
       // Math equation API
       insertEquation: (latex: string, isDisplay: boolean) => void;
       insertEquationDialog: () => void;
-      // Unified-undo API (docs/plans/patient-rewinding-clockwork.md) -- Phase 2 skeleton.
-      // See undo-coordinator.ts for the full design; no Swift call site invokes
-      // setUndoDescriptor/receiveUndoOutcome/receiveRedoOutcome yet -- Phase 3+ wires them
-      // alongside the first real structural operations.
+      // Unified-undo API (docs/architecture/unified-undo.md). See undo-coordinator.ts for
+      // the full routing design. setUndoDescriptor is pushed by
+      // StructuralUndoController.pushDescriptor() after every recorded op, undo, and redo --
+      // NOT after a barrier, which instead resets JS-local descriptor state via
+      // clearStructuralUndoRegistry() below. receiveUndoOutcome/receiveRedoOutcome are Swift's
+      // one-shot reply to a JS-initiated structuralUndoRequested/structuralRedoRequested.
       requestUnifiedUndo: () => void;
       requestUnifiedRedo: () => void;
       setUndoDescriptor: (descriptor: { undoTopOpId?: string; redoTopOpId?: string }) => void;

@@ -2,13 +2,14 @@
 // Mirrored (not shared) in web/milkdown/src/undo-coordinator.ts -- see that file's header
 // for why this is two near-identical files rather than one shared module.
 //
-// Phase 2 skeleton (docs/plans/patient-rewinding-clockwork.md §4.1/§4.2/§4.6/§4.7): builds
-// the registry, descriptor, routing decision, in-flight latch, and historyEdited predicate
-// with ZERO real structural entries ever recorded. `descriptor.undoTopOpId`/`redoTopOpId`
-// never exist in this phase, so every routing decision below falls through to CodeMirror's
-// own text undo/redo (@codemirror/commands) unchanged -- this module adds no user-visible
-// behavior yet. Phase 3+ starts calling `setUndoDescriptor()`/populating the registry from
-// real structural operations (version restore, section delete/duplicate).
+// Routing module (docs/architecture/unified-undo.md): owns the registry, descriptor,
+// document-equality routing decision, in-flight latch, and historyEdited predicate that
+// decide, on every Cmd-Z/Cmd-Shift-Z, whether the next step back is a structural operation
+// (version restore, section delete/duplicate/reorder -- handed to Swift) or plain text (left
+// to CodeMirror's own text undo/redo, @codemirror/commands). `descriptor.undoTopOpId`/
+// `redoTopOpId` reflect whatever is actually on top of the native `UnifiedUndoService`
+// stacks; when both are empty (nothing structural recorded, or everything already undone),
+// every routing decision falls through unchanged to CodeMirror's own history.
 //
 // Unlike Milkdown, CodeMirror has no existing capture-phase document keydown interceptor to
 // merge into (its "smart slash undo" lives inside a bubble-phase keymap binding, main.ts's
@@ -44,25 +45,29 @@ export function noteUserTransaction(tr: Transaction): void {
   }
 }
 
-// === Types (plan §4.1) ===
+// === Types (see docs/architecture/unified-undo.md's registry/descriptor bridge protocol
+// section) ===
 
-/** One registered structural op's editor-side inverse material. Nothing constructs one of
- * these until Phase 3 -- the type is defined now per the plan so Phase 3 only has to
- * populate the registry, not design its shape. */
+/** One registered structural op's editor-side inverse material, populated by
+ * `beginStructuralOp`/`finalizeStructuralOpPostOpDoc` for every real structural op. */
 export interface UndoRegistryEntry {
-  /** Full EditorState captured at op time. Source mode uses the DEGRADED undo path (plan
-   * §4.4 undo step 3b) -- regenerated sourceContent + minimal-diff setContent, never a
+  /** Full EditorState captured at op time. Source mode uses the DEGRADED undo path (see
+   * docs/architecture/unified-undo.md's Checkpoints section, "Source mode never
+   * checkpoint-swaps") -- regenerated sourceContent + minimal-diff setContent, never a
    * checkpoint swap -- so this is captured for type-symmetry with Milkdown's registry and
    * possible future use, but nothing reads it in v1. */
   checkpoint: EditorState;
-  /** Document immediately after the op -- the equality target for structural undo (§4.2). */
+  /** Document immediately after the op -- the equality target for structural undo (see the
+   * doc's routing section). */
   postOpDoc: Text;
   /** Document immediately before the op -- the equality target for structural redo. */
   preOpDoc: Text;
 }
 
-/** Swift-pushed pointer to the top of each stack (plan §4.1). `{}` (both fields absent) is
- * Phase 2's permanent state -- nothing ever calls `setUndoDescriptor`. */
+/** Swift-pushed pointer to the top of each stack (see docs/architecture/unified-undo.md's
+ * registry/descriptor bridge protocol section), pushed by `pushDescriptor()` after every
+ * recorded op, undo, and redo. `{}` (both fields absent) is the steady state whenever
+ * nothing structural is recorded, or everything has been undone. */
 export interface UndoDescriptor {
   undoTopOpId?: string;
   redoTopOpId?: string;
@@ -71,8 +76,9 @@ export interface UndoDescriptor {
 export type RoutingDecision =
   | { action: 'structural'; opId: string }
   | { action: 'fallthrough' }
-  // In-flight latch held (plan §4.7 H7): drop the keystroke entirely, don't even fall
-  // through to the editor's own undo -- a second Cmd-Z while a structural undo is settling
+  // In-flight latch held (hazard H7, see docs/architecture/unified-undo.md): drop the
+  // keystroke entirely, don't even fall through to the editor's own undo -- a second Cmd-Z
+  // while a structural undo is settling
   // must not interleave with it.
   | { action: 'swallow' };
 
@@ -112,7 +118,8 @@ export function clearRegistry(): void {
   registry.clear();
 }
 
-/** Barrier-only registry clear (plan §4.5/§5 backlog): clears the registry and resets the
+/** Barrier-only registry clear (see docs/architecture/unified-undo.md's Barriers section):
+ * clears the registry and resets the
  * descriptor to `{}` WITHOUT touching this editor's own text-undo history -- unlike
  * `clearStructuralUndoState()` (eviction, below), a barrier must not wipe legitimate in-flight
  * text-undo steps, only the now-invalid structural checkpoints/descriptor. See Milkdown's
@@ -124,12 +131,14 @@ export function clearStructuralUndoRegistry(): void {
   setUndoDescriptor({});
 }
 
-/** Eviction mini-barrier (plan §4.1/§4.5): the oldest structural entry just fell off the undo
+/** Eviction mini-barrier (see docs/architecture/unified-undo.md's Eviction section): the
+ * oldest structural entry just fell off the undo
  * stack at capacity. Clears this editor's OWN text-undo history (`clearHistory`, `./api.ts`)
  * AND removes just that ONE evicted entry from the registry -- pre-boundary text steps must not
  * stay reachable past a boundary the timeline no longer guards against (H1/H2). Note: this
  * editor has no checkpoint-swap path (Source mode is always the degraded, non-checkpoint path,
- * plan §4.4 undo step 3b), so `clearHistory()`'s full-`EditorState` rebuild (rather than a
+ * see docs/architecture/unified-undo.md's Checkpoints section), so `clearHistory()`'s
+ * full-`EditorState` rebuild (rather than a
  * scoped swap) is fine here -- it's the same technique `resetForProjectSwitch()` already uses.
  *
  * Takes the evicted entry's `opId` and calls `deleteRegistryEntry(opId)` (MF-1, Phase 5 review
@@ -160,9 +169,10 @@ export function clearFailedStructuralOpEntry(opId: string): void {
 export function getUndoDescriptor(): UndoDescriptor {
   return descriptor;
 }
-/** Bridge target for window.FinalFinal.setUndoDescriptor -- called by Swift on every
- * timeline change (record/undo/redo/barrier). Never called in Phase 2: no Swift call site
- * changes UnifiedUndoService's stacks yet. */
+/** Bridge target for window.FinalFinal.setUndoDescriptor -- called by Swift's
+ * `StructuralUndoController.pushDescriptor()` after every recorded op, undo, and redo. NOT
+ * called on a barrier -- barriers reset descriptor state locally via
+ * `clearStructuralUndoRegistry()` below instead. */
 export function setUndoDescriptor(next: UndoDescriptor): void {
   descriptor = next;
 }
@@ -190,7 +200,7 @@ export function resetUndoCoordinatorState(): void {
   clearLatchTimeout();
 }
 
-// === Pure routing decision (plan §4.2) ===
+// === Pure routing decision (see docs/architecture/unified-undo.md's routing section) ===
 // Generic over the doc type so the routing truth-table tests can run against fake
 // registries/comparators with no real editor -- the live wrappers below plug in
 // CodeMirror's real Text.eq and the real registry/descriptor/latch module state.
@@ -248,12 +258,14 @@ function liveRoutingParams(view: EditorView): RoutingParams<Text> {
 }
 
 /** True when CodeMirror's own text undo/redo has nothing to do -- the trigger condition for
- * the plan §4.2 refusal beep (a Cmd-Z that would otherwise be a silent no-op). */
+ * the refusal beep (a Cmd-Z that would otherwise be a silent no-op; see
+ * docs/architecture/unified-undo.md's routing section). */
 function hasNoTextHistory(view: EditorView, direction: 'undo' | 'redo'): boolean {
   return direction === 'undo' ? undoDepth(view.state) === 0 : redoDepth(view.state) === 0;
 }
 
-/** Refusal UX (plan §4.2) -- mirrors Milkdown's undo-coordinator.ts. */
+/** Refusal UX (see docs/architecture/unified-undo.md's routing section) -- mirrors
+ * Milkdown's undo-coordinator.ts. */
 function maybeBeepOnRefusal(view: EditorView, direction: 'undo' | 'redo'): void {
   if (!hasNoTextHistory(view, direction)) return;
   (window as any).webkit?.messageHandlers?.errorHandler?.postMessage({
@@ -263,12 +275,13 @@ function maybeBeepOnRefusal(view: EditorView, direction: 'undo' | 'redo'): void 
   (window as any).webkit?.messageHandlers?.structuralUndoRefused?.postMessage({ direction });
 }
 
-// === Structural op lifecycle (plan §4.4) ===
+// === Structural op lifecycle (see docs/architecture/unified-undo.md's audited-sequences
+// section) ===
 // Mirrors Milkdown's undo-coordinator.ts. CodeMirror/Source mode never performs a checkpoint
-// swap (the degraded undo path, plan §4.4 undo step 3b, regenerates sourceContent from the
-// restored DB instead) so there is no performStructuralSwap/finishStructuralSwapSettle here
-// -- only registry population for the equality-based routing decision (§4.2), which is
-// identical regardless of which editor performed the op.
+// swap (the degraded undo path, see the doc's Checkpoints section, regenerates sourceContent
+// from the restored DB instead) so there is no performStructuralSwap/finishStructuralSwapSettle
+// here -- only registry population for the equality-based routing decision (see the doc's
+// routing section), which is identical regardless of which editor performed the op.
 
 /** Op-sequence step 3: isolate the current history group (H3) and capture the pre-op
  * checkpoint + preOpDoc. `postOpDoc` starts equal to `preOpDoc` as a placeholder;
@@ -299,7 +312,8 @@ export function finalizeStructuralOpPostOpDoc(opId: string): boolean {
 }
 
 /**
- * §4.6 derived-content advancement rule (plan §4.6, H5) -- CodeMirror mirror of Milkdown's
+ * Derived-content advancement rule (hazard H5, see docs/architecture/unified-undo.md's
+ * registry/descriptor bridge protocol section) -- CodeMirror mirror of Milkdown's
  * undo-coordinator.ts function of the same name: when a sync-origin transaction lands
  * (`Transaction.addToHistory` annotation `=== false` -- the established provenance marker),
  * for each registry entry, if the doc BEFORE this transaction (`tr.startState.doc`)
@@ -463,13 +477,13 @@ export function handleGlobalUndoRedoKeydown(e: KeyboardEvent, view: EditorView):
 }
 
 /**
- * Menu-path entry point (window.FinalFinal.requestUnifiedUndo/requestUnifiedRedo). Plan
- * §4.7: menu activation must run the SAME routing decision as the keyboard interceptor --
- * never a direct UnifiedUndoService.performUndo()/performRedo() call from Swift, which
- * would bypass the equality guard. Unlike the keydown path there is no native event to fall
- * through to, so the fallthrough case here directly invokes CodeMirror's own undo/redo
- * command -- with the always-empty Phase 2 registry, this is the ONLY path ever taken, so
- * Undo/Redo menu clicks behave exactly as they would with no unified-undo wiring at all.
+ * Menu-path entry point (window.FinalFinal.requestUnifiedUndo/requestUnifiedRedo). Menu
+ * activation must run the SAME routing decision as the keyboard interceptor -- never a
+ * direct UnifiedUndoService.performUndo()/performRedo() call from Swift, which would bypass
+ * the equality guard. Unlike the keydown path there is no native event to fall through to,
+ * so the fallthrough case here directly invokes CodeMirror's own undo/redo command --
+ * whenever the timeline has nothing on top (or routing otherwise refuses), Undo/Redo menu
+ * clicks behave exactly as they would with no unified-undo wiring at all.
  */
 function requestUnified(direction: 'undo' | 'redo'): void {
   const view = getEditorView();
@@ -511,19 +525,15 @@ export function requestUnifiedRedo(): void {
 }
 
 /**
- * Swift's reply to a structuralUndoRequested/structuralRedoRequested message (plan §4.2):
+ * Swift's reply to a structuralUndoRequested/structuralRedoRequested message (see
+ * docs/architecture/unified-undo.md's "Three-way reply protocol" section):
  * "fallback" means Swift's top entry no longer matched the opId JS sent (a barrier raced
  * the keystroke) -- JS must perform the text undo/redo it suppressed when it preventDefault
  * -ed, never silently drop the keystroke. "performed" means Swift actually restored the
- * structural entry; Phase 3+ owns updating checkpoints/content on that path, nothing more
- * to do here. A reply that arrives while NOT latched (stale/duplicate) is ignored. Never
- * called in Phase 2 -- nothing ever sends the request this replies to.
- *
- * DEFERRED (Phase 3, do not fix now): this only checks whether the latch is currently held,
- * not whether `reply.opId` matches the specific request that set it -- a reply for a stale
- * request could be misapplied to a newer in-flight one if two requests are ever in flight in
- * quick succession. Harmless today (nothing ever calls requestStructural, so no reply is ever
- * possible), but Phase 3 should track and compare the in-flight opId explicitly.
+ * structural entry; there is nothing more to do here. A reply that arrives while NOT latched
+ * (stale/duplicate), or for a stale `opId` while a DIFFERENT request is in flight (checked
+ * against `inFlightOpId` below -- N5, Phase B remediation plan), is ignored rather than
+ * misapplied.
  */
 export function handleUndoReplyFromSwift(
   reply: { opId: string; outcome: 'performed' | 'fallback' | 'failed' },
@@ -570,16 +580,18 @@ export function receiveRedoOutcome(opId: string, outcome: 'performed' | 'fallbac
 }
 
 /**
- * §4.6 predicate, corrected per plan §4.1 (an earlier draft broke the canonical redo case):
- * fires only for transactions that ADD a NEW history item -- docChanged, not sync-origin
- * (Transaction.addToHistory annotation === false), not a history replay (@codemirror/commands
- * sets the "undo"/"redo" userEvent on transactions it produces; `isUserEvent` is CodeMirror's
- * public detector, matching or exceeding specificity like `"undo.foo"`). Sent only while a
- * structural redo entry exists, per constraint 3 (no per-keystroke cost): the
- * descriptor.redoTopOpId check is a single property read and runs before any of the other
- * (cheap, but not free) checks, so with Phase 2's permanently-empty descriptor this function
- * costs one property comparison per keystroke and nothing else. Call from the
- * EditorView.updateListener registered in main.ts, once per transaction in the update.
+ * `historyEdited` predicate (see docs/architecture/unified-undo.md's registry/descriptor
+ * bridge protocol section; corrected in review -- an earlier draft broke the canonical redo
+ * case): fires only for transactions that ADD a NEW history item -- docChanged, not
+ * sync-origin (Transaction.addToHistory annotation === false), not a history replay
+ * (@codemirror/commands sets the "undo"/"redo" userEvent on transactions it produces;
+ * `isUserEvent` is CodeMirror's public detector, matching or exceeding specificity like
+ * `"undo.foo"`). Sent only while a structural redo entry exists, per constraint 3 (no
+ * per-keystroke cost): the descriptor.redoTopOpId check is a single property read and runs
+ * before any of the other (cheap, but not free) checks, so in the steady state (no redo
+ * entry) this function costs one property comparison per keystroke and nothing else. Call
+ * from the EditorView.updateListener registered in main.ts, once per transaction in the
+ * update.
  */
 export function maybeNotifyHistoryEdited(tr: Transaction): void {
   if (descriptor.redoTopOpId === undefined) return;
