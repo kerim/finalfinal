@@ -167,7 +167,7 @@ enum BlockParser {
     /// ContentView+ContentRebuilding.swift), so a custom header name falling through to
     /// "ordinary heading" here would silently drop isBibliography from every entry
     /// paragraph below it -- the heading itself gets re-flagged by title match in
-    /// Database+BlocksReorder.swift's replaceBlocks, but the entries don't, leaving stale
+    /// Database+BlocksReplace.swift's replaceBlocks, but the entries don't, leaving stale
     /// entries stranded as duplicate body text on the very next bibliography write.
     /// BlockParser.parse() is a nonisolated static func called from both @MainActor
     /// production call sites AND non-@MainActor test contexts (e.g.
