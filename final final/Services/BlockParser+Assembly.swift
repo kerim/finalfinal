@@ -103,7 +103,7 @@ extension BlockParser {
         // in document order" reliably selects the real header, never a false-positive
         // heading-shaped entry.
         //
-        // Known, out-of-scope gap: Database+BlocksReorder.swift's applyPreservedHeading can
+        // Known, out-of-scope gap: Database+BlocksReplace.swift's applyPreservedHeading can
         // reattach isBibliography = true to a heading block via title-based occurrence-index
         // matching during block reconciliation -- a path entirely separate from
         // updateBibliographyBlock's atomic delete-all/insert-all guarantee above relies on.

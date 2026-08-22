@@ -149,6 +149,7 @@
 		5AFFFF64449FC6C7058004E5 /* ContentView+ContentRebuilding.swift in Sources */ = {isa = PBXBuildFile; fileRef = E856C7AE9A5FD0C74735140C /* ContentView+ContentRebuilding.swift */; };
 		5B5AFBF103A6E02BD4EB4898 /* Database+Annotations.swift in Sources */ = {isa = PBXBuildFile; fileRef = 728F6240519F3BDA2753E515 /* Database+Annotations.swift */; };
 		5C8E6A7488B476D8A15B7261 /* SparkleUpdater.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01ED574A0A94CED8E6212C09 /* SparkleUpdater.swift */; };
+		5CB0F96BD92EAFE942CBD16A /* Database+BlocksReplace.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3801050BDCDC043F4E8A5120 /* Database+BlocksReplace.swift */; };
 		5CFFB24BEA134E545911B746 /* ExportSettingsCSLStyleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A484A68DC76BB9E3BADEEBCA /* ExportSettingsCSLStyleTests.swift */; };
 		5D11CB5DD10F6D6E3560D087 /* PreferencesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 87026C4D0F2AEB394A0A85D9 /* PreferencesView.swift */; };
 		5D5D63B64DE179E23936CFCE /* AnnotationFilterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 18247CD049B78F944DCB3676 /* AnnotationFilterTests.swift */; };
@@ -487,6 +488,7 @@
 		355B348D7655EE1EA841872D /* SmokeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SmokeTests.swift; sourceTree = "<group>"; };
 		35C18FBDBA272C8795CE46F1 /* ExportCitekeyCanonicalizationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportCitekeyCanonicalizationTests.swift; sourceTree = "<group>"; };
 		374D7FF771D6B32ACD8C031A /* FullScreenTransitionModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FullScreenTransitionModel.swift; sourceTree = "<group>"; };
+		3801050BDCDC043F4E8A5120 /* Database+BlocksReplace.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Database+BlocksReplace.swift"; sourceTree = "<group>"; };
 		38966163E9812E157C3C33BE /* ProjectIntegrityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectIntegrityTests.swift; sourceTree = "<group>"; };
 		3A039544E54D1306A86A1EFF /* FullScreenTransitionModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FullScreenTransitionModelTests.swift; sourceTree = "<group>"; };
 		3A530A55D9265E47C5CF4EB3 /* LanguageToolProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LanguageToolProvider.swift; sourceTree = "<group>"; };
@@ -951,6 +953,7 @@
 				ECB913D920F02EB698E5C34B /* Database+BlocksInsert.swift */,
 				8787EE28839E44DAAF698741 /* Database+BlocksObservation.swift */,
 				5902C341D97A143E13EC44CA /* Database+BlocksReorder.swift */,
+				3801050BDCDC043F4E8A5120 /* Database+BlocksReplace.swift */,
 				DDC88DC217831BA18037CB1B /* Database+BlocksWordCount.swift */,
 				13133CB5518EA086A3120EDE /* Database+CRUD.swift */,
 				088E1684775FDAA8145804FE /* Database+SectionOps.swift */,
@@ -1812,6 +1815,7 @@
 				6BE748673F82E72A785F49CB /* Database+BlocksInsert.swift in Sources */,
 				7DFBEF78C3DD381D347A324C /* Database+BlocksObservation.swift in Sources */,
 				4C7E2457DC3A7DA2BCE893AB /* Database+BlocksReorder.swift in Sources */,
+				5CB0F96BD92EAFE942CBD16A /* Database+BlocksReplace.swift in Sources */,
 				1CB5D59D6B0C2C767547192A /* Database+BlocksWordCount.swift in Sources */,
 				ACAF912B9BF42D9FD97B82C2 /* Database+CRUD.swift in Sources */,
 				C20DE040A1F0645D4D42C83F /* Database+SectionOps.swift in Sources */,

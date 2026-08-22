@@ -154,7 +154,7 @@ struct BibliographySourceModeFlushTests {
         // by the .bibliographySectionChanged notification this function posts at the
         // end). This is what makes the test ordering-sensitive: flushContentToDatabase()
         // does a wholesale delete-and-reinsert of every block for the project
-        // (Database+BlocksReorder.swift's replaceBlocks deletes ALL rows for the project
+        // (Database+BlocksReplace.swift's replaceBlocks deletes ALL rows for the project
         // before reinserting only what it re-parses from editorState.content). If the
         // flush ran AFTER the bibliography write instead of before, it would delete the
         // bibliography rows just written -- because they're not present in
