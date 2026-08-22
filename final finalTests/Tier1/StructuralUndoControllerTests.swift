@@ -375,7 +375,7 @@ struct StructuralUndoControllerTests {
         // bibliography refusal ever runs, making this test fail for the wrong reason (the row is
         // just gone, not "refused and left alone"). Mirror the block into editorState.content so
         // the reparse re-derives a "Bibliography" heading, which `replaceBlocks`' title-match
-        // preservation (Database+BlocksReplace.swift's `applyPreservedHeading`) then re-attaches
+        // preservation (Database+BlocksReorder.swift's `applyPreservedHeading`) then re-attaches
         // to this same bibId with isBibliography carried over.
         fixture.editorState.content += "\n\n# Bibliography\n"
 
@@ -555,7 +555,7 @@ struct StructuralUndoControllerTests {
 
         #expect(
             outcome == .refused,
-            "reorderAllBlocks is a single `try write {}` transaction (Database+BlocksReorder.swift:39) -- GRDB rolls back the whole thing on throw, so this must be .refused, not .failedAfterCommit"
+            "reorderAllBlocks is a single `try write {}` transaction (Database+BlocksReorder.swift:291) -- GRDB rolls back the whole thing on throw, so this must be .refused, not .failedAfterCommit"
         )
         #expect(fixture.unifiedUndoService.undoStack.isEmpty, "a refused op must not record an entry")
     }

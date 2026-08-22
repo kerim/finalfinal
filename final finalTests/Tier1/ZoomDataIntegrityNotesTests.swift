@@ -333,7 +333,7 @@ extension ZoomDataIntegrityTests {
     // `startSortOrder + newBlocks.count + offset`. If `insertEnd` doesn't reserve room for them
     // too, the trailing content isn't shifted far enough forward, and the re-anchored preserved
     // rows collide with — or land numerically past — it. See `shiftBlocksAfterRange`'s doc
-    // comment in Database+BlocksReplace.swift for the mechanism.
+    // comment in Database+BlocksReorder.swift for the mechanism.
 
     @Test("replaceBlocksInRange shifts trailing content far enough for both a multi-insert batch AND its re-anchored preserved rows (endSortOrder non-nil)")
     func replaceBlocksInRangeReservesRoomForPreservedRowsOnInteriorShift() throws {

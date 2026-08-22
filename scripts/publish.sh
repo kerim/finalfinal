@@ -45,22 +45,66 @@ git fetch origin
 ORIGIN_MAIN=$(git rev-parse origin/main)
 LOCAL_MAIN=$(git rev-parse main)
 
+# Re-derive the tracking ref from origin/main's tip.
+#
+# Each filtered commit keeps its original subject and author date, so the remote
+# tip identifies exactly one commit on main even after the local one has been
+# amended or rebased. Echoes that commit; echoes nothing if there is no match.
+resync_tracking_ref() {
+    local target line
+    target=$(git log -1 --format='%s%x1f%aI' "$ORIGIN_MAIN")
+
+    while IFS= read -r line; do
+        if [ "${line#*$'\x1f'}" = "$target" ]; then
+            printf '%s\n' "${line%%$'\x1f'*}"
+            return 0
+        fi
+    done < <(git log --format='%H%x1f%s%x1f%aI' main)
+
+    return 1
+}
+
 # Read the tracking ref (last local commit we filtered)
 LAST_LOCAL=$(git rev-parse --verify refs/publish/last-local 2>/dev/null || echo "")
 
-if [ -n "$LAST_LOCAL" ]; then
-    # Tracking ref exists — use it for the commit range
-    # Verify the tracking ref is an ancestor of local main
-    if ! git merge-base --is-ancestor "$LAST_LOCAL" "$LOCAL_MAIN"; then
-        echo -e "${RED}Error: refs/publish/last-local (${LAST_LOCAL:0:7}) is not an ancestor of main.${NC}"
-        echo -e "${RED}Local history may have been rewritten. Use --force to reset.${NC}"
+# A tracking ref that has fallen off main means main was amended or rebased
+# since the last publish. Self-heal by matching the remote tip back to main.
+# Do NOT fall through to the merge-base path below: that would refilter the
+# entire history and force-push a rewritten public branch.
+if [ -n "$LAST_LOCAL" ] && ! git merge-base --is-ancestor "$LAST_LOCAL" "$LOCAL_MAIN"; then
+    echo -e "${YELLOW}Tracking ref (${LAST_LOCAL:0:7}) is no longer on main — local history was rewritten.${NC}"
+
+    RESYNCED=$(resync_tracking_ref || true)
+    if [ -z "$RESYNCED" ]; then
+        echo -e "${RED}Error: could not match origin/main's tip to any commit on main.${NC}"
+        echo -e "${RED}  origin/main tip: $(git log -1 --format='%s (%aI)' "$ORIGIN_MAIN")${NC}"
+        echo -e "${YELLOW}Resync by hand: git update-ref refs/publish/last-local <commit>${NC}"
         exit 1
     fi
 
+    LAST_LOCAL="$RESYNCED"
+    git update-ref refs/publish/last-local "$LAST_LOCAL"
+    echo -e "${GREEN}  Tracking ref resynced to ${LAST_LOCAL:0:7} ($(git log -1 --format='%s' "$LAST_LOCAL"))${NC}"
+fi
+
+# A missing tracking ref — first run, migration, or the ref was lost — recovers
+# the same way, so that only a genuinely unpublished remote reaches the
+# merge-base fallback below.
+if [ -z "$LAST_LOCAL" ]; then
+    RESYNCED=$(resync_tracking_ref || true)
+    if [ -n "$RESYNCED" ]; then
+        LAST_LOCAL="$RESYNCED"
+        git update-ref refs/publish/last-local "$LAST_LOCAL"
+        echo -e "${GREEN}Tracking ref recovered from origin/main: ${LAST_LOCAL:0:7} ($(git log -1 --format='%s' "$LAST_LOCAL"))${NC}"
+    fi
+fi
+
+if [ -n "$LAST_LOCAL" ]; then
+    # Tracking ref in hand — use it for the commit range
     RANGE_BASE="$LAST_LOCAL"
     echo -e "${GREEN}Tracking ref found: ${LAST_LOCAL:0:7}${NC}"
 else
-    # No tracking ref — first run or migration
+    # Nothing published yet that we can recognise — fall back to the merge-base
     MERGE_BASE=$(git merge-base main origin/main 2>/dev/null || echo "")
 
     if [ -z "$MERGE_BASE" ]; then

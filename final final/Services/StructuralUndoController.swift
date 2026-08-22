@@ -738,7 +738,7 @@ final class StructuralUndoController {
             zoomPolicy: .allowWhileZoomed, mutationSpyName: "reorderAllBlocks",
             // Judge round 2 fix (must-fix 1 / must-fix 6): `persistReorder`'s
             // `db.reorderAllBlocks` write is documented as a single atomic transaction
-            // (`Database+BlocksReorder.swift:39`) -- a throw anywhere in this closure means
+            // (`Database+BlocksReorder.swift:291`) -- a throw anywhere in this closure means
             // the DB is clean (rolled back), even though `editorState.sections` was already
             // reassigned in-memory a few lines above the persist call (must-fix 6: a
             // DB-clean/memory-dirty throw). `.atomic` -> `.refused` on any throw is what
@@ -858,7 +858,7 @@ final class StructuralUndoController {
 
     /// Absorbed from `ContentView+SectionManagement.swift`'s `persistBlocksBeforeRebuild`
     /// (Phase 7) -- the single real DB write in the old `finalizeSectionReorder`
-    /// (`Database+BlocksReorder.swift:39`, a single atomic transaction). Throws instead of
+    /// (`Database+BlocksReorder.swift:291`, a single atomic transaction). Throws instead of
     /// logging-and-swallowing so a failure here correctly aborts this op's `mutate` closure
     /// (matching every other op's `mutate` contract) rather than silently recording an entry
     /// for a reorder that never actually persisted.
