@@ -160,7 +160,7 @@ enum BlockParser {
     /// Whether `trimmed` is the heading that opens the bibliography section.
     ///
     /// The configured header name (normally read via the @MainActor
-    /// ExportSettingsManager.shared.bibliographyHeaderName, e.g. a user-set "Works
+    /// ExportSettingsManager.shared.effectiveBibliographyHeaderName, e.g. a user-set "Works
     /// Cited") must be recognized alongside the built-in References/Bibliography
     /// literals: in Source Mode the <!-- ::auto-bibliography:: --> marker is already
     /// stripped out of editorState.content before this parse ever sees it (see
@@ -177,6 +177,9 @@ enum BlockParser {
     /// `update()` calls `settings.save()` synchronously, so UserDefaults is always in
     /// sync with the manager's cached value): reading straight from UserDefaults here is
     /// thread-safe and avoids threading an @MainActor read through every call site.
+    /// `effectiveBibliographyHeaderName` (rather than the raw stored value) trims
+    /// surrounding whitespace and falls back to the shipped default when the stored name
+    /// is empty or whitespace-only -- see that computed property's doc comment.
     ///
     /// Not `private`: Database+BlocksInsert.swift's `buildInsertedBlock` also calls this, for the
     /// editor-diff insert-path containment check (an inserted fragment that is itself the
@@ -186,7 +189,7 @@ enum BlockParser {
     /// heading" inheritance semantics used by `parse()` above.
     static func isBibliographyHeading(_ trimmed: String) -> Bool {
         if trimmed.contains("<!-- ::auto-bibliography:: -->") { return true }
-        let titles = ["References", "Bibliography", ExportSettings.load().bibliographyHeaderName]
+        let titles = ["References", "Bibliography", ExportSettings.load().effectiveBibliographyHeaderName]
         return titles.contains { trimmed == "# \($0)" || trimmed == "## \($0)" }
     }
 

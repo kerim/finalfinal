@@ -225,7 +225,7 @@ class SectionSyncService {
         guard !isContentZoomed else { return }
 
         guard let db = projectDatabase, let pid = projectId else { return }
-        let fallbackBibTitle = ExportSettingsManager.shared.bibliographyHeaderName
+        let fallbackBibTitle = ExportSettingsManager.shared.effectiveBibliographyHeaderName
 
         do {
             let dbSections = try db.fetchSections(projectId: pid)
@@ -312,7 +312,12 @@ class SectionSyncService {
     ///   correction, per P3's undoable-derived-correction fix) -- reconciling immediately
     ///   would otherwise re-detect and re-apply the very correction just undone, before
     ///   the user's next Cmd-Z can reach their own original typing.
-    private func syncContent(_ markdown: String, zoomedIds: Set<String>? = nil, fromEditorChange: Bool = false, suppressReconcile: Bool = false) async {
+    private func syncContent(
+        _ markdown: String,
+        zoomedIds: Set<String>? = nil,
+        fromEditorChange: Bool = false,
+        suppressReconcile: Bool = false
+    ) async {
         guard let db = projectDatabase, let pid = projectId else { return }
 
         // When zoomed, update zoomed sections in-place
@@ -326,7 +331,7 @@ class SectionSyncService {
         // Capture @MainActor values before detaching
         let isZoomed = isContentZoomed
         let reconciler = self.reconciler
-        let fallbackBibTitle = ExportSettingsManager.shared.bibliographyHeaderName
+        let fallbackBibTitle = ExportSettingsManager.shared.effectiveBibliographyHeaderName
 
         do {
             try await Task.detached(priority: .utility) {
@@ -391,7 +396,7 @@ class SectionSyncService {
         guard let db = projectDatabase, let pid = projectId else { return }
 
         // Capture @MainActor value before detaching
-        let fallbackBibTitle = ExportSettingsManager.shared.bibliographyHeaderName
+        let fallbackBibTitle = ExportSettingsManager.shared.effectiveBibliographyHeaderName
 
         // Strip mini #Notes section (zoom-notes marker) before parsing
         let (strippedMarkdown, miniNotesContent) = Self.stripZoomNotes(from: markdown)
