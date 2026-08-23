@@ -225,17 +225,17 @@ class SectionSyncService {
         guard !isContentZoomed else { return }
 
         guard let db = projectDatabase, let pid = projectId else { return }
-        let fallbackBibTitle = ExportSettingsManager.shared.effectiveBibliographyHeaderName
+        let fallbackBibTitle = ExportSettingsManager.shared.bibliographyHeaderName
 
         do {
             let dbSections = try db.fetchSections(projectId: pid)
 
-            // Falls back to the `block` table's own bibliography heading (the authoritative
-            // signal) when `section` hasn't reconciled one yet -- see
-            // `fetchBibliographyHeadingTitle`'s doc comment for why (the "first citation ever"
-            // gap, 2026-08-22).
-            let existingBibTitle = try dbSections.first(where: { $0.isBibliography })?.title
-                ?? db.fetchBibliographyHeadingTitle(projectId: pid)
+            // The `block` table's own bibliography heading is the authoritative signal;
+            // falls back to the `section` table's `isBibliography` flag only when the block
+            // table hasn't reconciled one yet -- see `fetchBibliographyHeadingTitle`'s doc
+            // comment for why (the "first citation ever" gap, 2026-08-22).
+            let existingBibTitle = try db.fetchBibliographyHeadingTitle(projectId: pid)
+                ?? dbSections.first(where: { $0.isBibliography })?.title
             let existingNotesTitle = dbSections.first(where: { $0.isNotes })?.title
             let headers = SectionSyncService.parseHeaders(
                 from: markdown,
@@ -245,10 +245,17 @@ class SectionSyncService {
             )
             guard !headers.isEmpty else { return }
 
+            // Broader than existingBibTitle's heading-only query -- see
+            // hasBibliographyBlocks' doc comment for why the immortal-row check below needs
+            // this instead (MUST-FIX: an orphaned non-heading bibliography block would be
+            // invisible to fetchBibliographyHeadingTitle alone).
+            let bibliographyExistsInBlocks = try db.hasBibliographyBlocks(projectId: pid)
+
             let changes = reconciler.reconcile(
                 headers: headers,
                 dbSections: dbSections,
-                projectId: pid
+                projectId: pid,
+                bibliographyExistsInBlocks: bibliographyExistsInBlocks
             )
 
             if !changes.isEmpty {
@@ -331,7 +338,7 @@ class SectionSyncService {
         // Capture @MainActor values before detaching
         let isZoomed = isContentZoomed
         let reconciler = self.reconciler
-        let fallbackBibTitle = ExportSettingsManager.shared.effectiveBibliographyHeaderName
+        let fallbackBibTitle = ExportSettingsManager.shared.bibliographyHeaderName
 
         do {
             try await Task.detached(priority: .utility) {
@@ -339,11 +346,13 @@ class SectionSyncService {
                 let dbSections = try db.fetchSections(projectId: pid)
 
                 // 2. Parse headers from markdown (pass existing bibliography/notes title for
-                // detection). Falls back to the `block` table's own bibliography heading when
-                // `section` hasn't reconciled one yet -- see `fetchBibliographyHeadingTitle`'s
-                // doc comment for why (the "first citation ever" gap, 2026-08-22).
-                let existingBibTitle = try dbSections.first(where: { $0.isBibliography })?.title
-                    ?? db.fetchBibliographyHeadingTitle(projectId: pid)
+                // detection). The `block` table's own bibliography heading is the authoritative
+                // signal; falls back to the `section` table's `isBibliography` flag only when
+                // the block table hasn't reconciled one yet -- see
+                // `fetchBibliographyHeadingTitle`'s doc comment for why (the "first citation
+                // ever" gap, 2026-08-22).
+                let existingBibTitle = try db.fetchBibliographyHeadingTitle(projectId: pid)
+                    ?? dbSections.first(where: { $0.isBibliography })?.title
                 let existingNotesTitle = dbSections.first(where: { $0.isNotes })?.title
                 let headers = SectionSyncService.parseHeaders(
                     from: markdown, existingBibTitle: existingBibTitle,
@@ -354,7 +363,14 @@ class SectionSyncService {
                 // suppression check rather than an early return, since step 5 below must
                 // still run even when headers is empty or suppression is active.
                 if !suppressReconcile && !headers.isEmpty {
-                    let changes = reconciler.reconcile(headers: headers, dbSections: dbSections, projectId: pid)
+                    // Broader than existingBibTitle's heading-only query -- see
+                    // hasBibliographyBlocks' doc comment for why the immortal-row check
+                    // needs this instead of fetchBibliographyHeadingTitle alone.
+                    let bibliographyExistsInBlocks = try db.hasBibliographyBlocks(projectId: pid)
+                    let changes = reconciler.reconcile(
+                        headers: headers, dbSections: dbSections, projectId: pid,
+                        bibliographyExistsInBlocks: bibliographyExistsInBlocks
+                    )
                     if !changes.isEmpty {
                         try db.applySectionChanges(changes, for: pid)
                     }
@@ -396,7 +412,7 @@ class SectionSyncService {
         guard let db = projectDatabase, let pid = projectId else { return }
 
         // Capture @MainActor value before detaching
-        let fallbackBibTitle = ExportSettingsManager.shared.effectiveBibliographyHeaderName
+        let fallbackBibTitle = ExportSettingsManager.shared.bibliographyHeaderName
 
         // Strip mini #Notes section (zoom-notes marker) before parsing
         let (strippedMarkdown, miniNotesContent) = Self.stripZoomNotes(from: markdown)
@@ -408,42 +424,61 @@ class SectionSyncService {
                 let existingSections = try db.fetchSections(projectId: pid)
 
                 // Parse zoomed markdown to extract section content (pass bibliography/notes
-                // title for detection). Same `block`-table fallback as the non-zoomed path --
-                // see `fetchBibliographyHeadingTitle`'s doc comment.
-                let existingBibTitle = try existingSections.first(where: { $0.isBibliography })?.title
-                    ?? db.fetchBibliographyHeadingTitle(projectId: pid)
+                // title for detection). Same block-table-authoritative lookup as the
+                // non-zoomed path (falls back to the `section` table's `isBibliography` flag
+                // only when the block table hasn't reconciled one yet) -- see
+                // `fetchBibliographyHeadingTitle`'s doc comment.
+                let existingBibTitle = try db.fetchBibliographyHeadingTitle(projectId: pid)
+                    ?? existingSections.first(where: { $0.isBibliography })?.title
                 let existingNotesTitle = existingSections.first(where: { $0.isNotes })?.title
                 let headers = SectionSyncService.parseHeaders(
                     from: strippedMarkdown, existingBibTitle: existingBibTitle,
                     existingNotesTitle: existingNotesTitle, fallbackBibTitle: fallbackBibTitle)
+
+                // The bibliography heading is now emitted as a ParsedHeader (see
+                // parseHeaders), but the zoomed change-computation functions below align
+                // `headers` against `zoomedExisting` purely by ARRAY INDEX -- the bibliography
+                // heading was never in that array before this change (it's excluded from
+                // `zoomedExisting`/`allSorted` matching entirely and reconciled separately by
+                // the non-zoomed path), so it must be filtered out here or every subsequent
+                // header would be paired against the wrong positional slot.
+                let bodyHeaders = headers.filter { !$0.isBibliography }
 
                 // If mini #Notes was edited while zoomed, sync definitions back to main Notes block
                 if let miniNotes = miniNotesContent {
                     SectionSyncService.syncMiniNotesBackDetached(miniNotes, db: db, pid: pid)
                 }
 
-                // Build lookup of zoomed sections by sortOrder within zoomed subset
+                // Build lookup of zoomed sections by sortOrder within zoomed subset.
+                // Excludes isBibliography/isNotes rows for the same reason `bodyHeaders`
+                // filters `headers` above: the update/insertion/deletion helpers below pair
+                // this array against `bodyHeaders` purely by ARRAY INDEX. Without this filter,
+                // a flagged bibliography/notes row that happens to be included in the zoomed
+                // section set would occupy a slot in this array with no counterpart in
+                // `bodyHeaders`, shifting every subsequent index out of alignment -- and in
+                // particular `zoomedDeletionChanges` would delete whatever unrelated trailing
+                // section that misalignment shifted into the "removed" slice.
                 let zoomedExisting = existingSections
-                    .filter { zoomedIds.contains($0.id) }
+                    .filter { zoomedIds.contains($0.id) && !$0.isBibliography && !$0.isNotes }
                     .sorted { $0.sortOrder < $1.sortOrder }
 
                 let allSorted = existingSections.sorted { $0.sortOrder < $1.sortOrder }
 
                 // Match parsed headers to existing zoomed sections by position and update
-                var changes = SectionSyncService.zoomedUpdateChanges(headers: headers, zoomedExisting: zoomedExisting)
+                var changes = SectionSyncService.zoomedUpdateChanges(headers: bodyHeaders, zoomedExisting: zoomedExisting)
 
                 var updatedIds = zoomedIds
 
                 // Handle NEW sections (user added headers while zoomed)
                 let insertions = SectionSyncService.zoomedInsertionChanges(
-                    headers: headers, zoomedExisting: zoomedExisting,
+                    headers: bodyHeaders, zoomedExisting: zoomedExisting,
                     allSorted: allSorted, zoomedIds: zoomedIds, pid: pid
                 )
                 changes.append(contentsOf: insertions.changes)
                 updatedIds.formUnion(insertions.insertedIds)
 
                 // Handle DELETED sections (user removed headers while zoomed)
-                let deletions = SectionSyncService.zoomedDeletionChanges(headers: headers, zoomedExisting: zoomedExisting)
+                let deletions = SectionSyncService.zoomedDeletionChanges(headers: bodyHeaders, zoomedExisting: zoomedExisting)
                 changes.append(contentsOf: deletions.changes)
                 updatedIds.subtract(deletions.removedIds)
 

@@ -15,7 +15,6 @@ extension SectionSyncService {
     ///   - existingBibTitle: Title of the existing bibliography section (if any) to detect bibliography by title match
     ///   - existingNotesTitle: Title of the existing notes section (if any) to detect notes by title match
     ///   - fallbackBibTitle: Bibliography header name from settings (captured on MainActor before calling)
-    // swiftlint:disable:next function_parameter_count
     nonisolated static func parseHeaders(
         from markdown: String,
         existingBibTitle: String? = nil,
@@ -35,6 +34,7 @@ extension SectionSyncService {
             let level: Int
             let title: String
             let isPseudoSection: Bool
+            let isBibliography: Bool
         }
 
         var boundaries: [SectionBoundary] = []
@@ -83,7 +83,8 @@ extension SectionSyncService {
                         startOffset: currentOffset,
                         level: lastActualHeaderLevel,
                         title: "§ Section Break",
-                        isPseudoSection: true
+                        isPseudoSection: true,
+                        isBibliography: false
                     ))
                     // Do NOT update lastActualHeaderLevel - pseudo-sections don't affect it
                 }
@@ -94,7 +95,19 @@ extension SectionSyncService {
                     if header.title == bibHeaderName && existingBibTitle != nil {
                         inAutoBibliography = true
                         bibliographyStartOffset = currentOffset
-                        // Don't add to boundaries - bibliography is managed separately
+                        // Emit a boundary (flagged isBibliography) so the reconciler can see
+                        // this heading and thread the verdict into a real Section row --
+                        // previously dropped entirely here, which is why Section.isBibliography
+                        // was never set true by any production writer. Deliberately does NOT
+                        // update lastActualHeaderLevel: this heading is machine-managed, not a
+                        // real structural heading subsequent pseudo-sections should inherit from.
+                        boundaries.append(SectionBoundary(
+                            startOffset: currentOffset,
+                            level: header.level,
+                            title: header.title,
+                            isPseudoSection: false,
+                            isBibliography: true
+                        ))
                     } else if header.title == notesHeaderName && existingNotesTitle != nil {
                         inAutoNotes = true
                         notesStartOffset = currentOffset
@@ -107,7 +120,8 @@ extension SectionSyncService {
                             startOffset: currentOffset,
                             level: header.level,
                             title: header.title,
-                            isPseudoSection: false
+                            isPseudoSection: false,
+                            isBibliography: false
                         ))
                         pendingNotesOffset = currentOffset
                         pendingNotesBoundaryIndex = boundaries.count - 1
@@ -117,7 +131,8 @@ extension SectionSyncService {
                             startOffset: currentOffset,
                             level: header.level,
                             title: header.title,
-                            isPseudoSection: false
+                            isPseudoSection: false,
+                            isBibliography: false
                         ))
                     }
                 }
@@ -194,7 +209,8 @@ extension SectionSyncService {
                 isPseudoSection: boundary.isPseudoSection,
                 startOffset: boundary.startOffset,
                 markdownContent: sectionMarkdown,
-                wordCount: wordCount
+                wordCount: wordCount,
+                isBibliography: boundary.isBibliography
             ))
         }
 

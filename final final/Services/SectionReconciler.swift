@@ -20,6 +20,34 @@ struct ParsedHeader: Sendable {
     let startOffset: Int        // Character offset where section starts
     let markdownContent: String // Full markdown content of this section
     let wordCount: Int
+    let isBibliography: Bool    // True for the machine-managed bibliography heading
+
+    // Explicit memberwise init: `isBibliography` is declared here with no inline default
+    // (`let isBibliography: Bool`), so Swift's synthesized memberwise init would require every
+    // caller to pass it explicitly. This explicit init supplies a `= false` default on the
+    // parameter instead, so it's written out here to keep every existing call site
+    // (including the 3 test factories in SectionReconcilerTests.swift,
+    // SectionReconcilerPseudoSectionTests.swift, and SectionSyncServiceZoomInsertionTests.swift)
+    // compiling unchanged.
+    init(
+        position: Int,
+        title: String,
+        level: Int,
+        isPseudoSection: Bool,
+        startOffset: Int,
+        markdownContent: String,
+        wordCount: Int,
+        isBibliography: Bool = false
+    ) {
+        self.position = position
+        self.title = title
+        self.level = level
+        self.isPseudoSection = isPseudoSection
+        self.startOffset = startOffset
+        self.markdownContent = markdownContent
+        self.wordCount = wordCount
+        self.isBibliography = isBibliography
+    }
 }
 
 /// Core reconciliation engine for section sync
@@ -32,20 +60,80 @@ struct SectionReconciler: Sendable {
     ///   - headers: Headers parsed from the current markdown content
     ///   - dbSections: Existing sections from the database
     ///   - projectId: Project ID for new sections
+    ///   - bibliographyExistsInBlocks: Whether ANY `isBibliography`-flagged block (heading,
+    ///     entry, or terminator -- not just the heading) currently survives at the `block`
+    ///     table level. Defaults to `true`, which preserves every existing call site's
+    ///     (~30 test call sites plus every production caller as of this parameter's
+    ///     introduction) prior behavior unchanged: a flagged `Section` row stays exempt from
+    ///     the delete sweep below regardless of what the parsed headers say. Only a caller
+    ///     that has ACTUALLY run the broader `hasBibliographyBlocks`-style check (not the
+    ///     heading-only `fetchBibliographyHeadingTitle`, which can't see an orphaned entry/
+    ///     terminator block surviving after its heading is gone) should ever pass `false`.
     /// - Returns: Array of changes to apply (insert/update/delete)
     func reconcile(
         headers: [ParsedHeader],
         dbSections: [Section],
-        projectId: String
+        projectId: String,
+        bibliographyExistsInBlocks: Bool = true
     ) -> [SectionChange] {
         var changes: [SectionChange] = []
         var matchedDBIds: Set<String> = []
+
+        // Two-signal AND: the bibliography counts as "gone" only when NEITHER signal claims
+        // it survives -- not `bibliographyExistsInBlocks` (the block-level check, covering
+        // orphaned entry/terminator blocks a heading-only query would miss) AND no parsed
+        // header in THIS pass is itself flagged `isBibliography` (a header can still be
+        // flagged even when the caller's own block-level check alone would say "gone" --
+        // e.g. a stale/racy read -- so both signals must agree before an immortal-row
+        // exemption is lifted). See the delete-sweep loop below for where this is consumed:
+        // deletes a currently-exempt flagged row rather than un-flagging it, since an
+        // un-flagged row re-entering the title-matching pool would recreate MUST-FIX 1's
+        // exact role-swap risk with bibliography-shaped content.
+        let bibliographyGone = !bibliographyExistsInBlocks && !headers.contains { $0.isBibliography }
 
         // Sort DB sections by position for matching
         let sortedDB = dbSections.sorted { $0.sortOrder < $1.sortOrder }
 
         // Match each parsed header to a database section
         for (index, header) in headers.enumerated() {
+            if header.isBibliography {
+                // Dedicated match path for the machine-managed bibliography heading -- see
+                // findBibliographyMatch's doc comment for why this must NOT reuse findMatch
+                // unmodified (MUST-FIX 1: no pure-proximity fallback).
+                if let match = findBibliographyMatch(header, in: sortedDB, excluding: matchedDBIds) {
+                    matchedDBIds.insert(match.id)
+
+                    // MUST-FIX 2: buildUpdates alone returns nil on the steady-state case
+                    // (title/level/content/position already match) -- exactly the case the
+                    // self-heal exists to repair, since the ONLY thing that needs to change
+                    // is the flag itself. Seed with an empty SectionUpdates() so the flip is
+                    // never silently dropped, but only emit a change when something actually
+                    // differs (an already-flagged, already-matching row must stay a no-op).
+                    var updates = buildUpdates(header: header, existing: match, newPosition: index)
+                    if !match.isBibliography {
+                        if updates == nil { updates = SectionUpdates() }
+                        updates?.isBibliography = true
+                    }
+                    if let updates {
+                        changes.append(.update(id: match.id, updates: updates))
+                    }
+                } else {
+                    let newSection = Section(
+                        projectId: projectId,
+                        sortOrder: index,
+                        headerLevel: header.level,
+                        isPseudoSection: header.isPseudoSection,
+                        isBibliography: true,
+                        title: header.title,
+                        markdownContent: header.markdownContent,
+                        wordCount: header.wordCount,
+                        startOffset: header.startOffset
+                    )
+                    changes.append(.insert(newSection))
+                }
+                continue
+            }
+
             if let match = findMatch(header, in: sortedDB, excluding: matchedDBIds) {
                 matchedDBIds.insert(match.id)
 
@@ -71,8 +159,12 @@ struct SectionReconciler: Sendable {
         }
 
         // Unmatched DB sections were deleted from markdown
-        // EXCEPT bibliography/notes sections which are managed separately by their sync services
-        for section in sortedDB where !matchedDBIds.contains(section.id) && !section.isBibliography && !section.isNotes {
+        // EXCEPT bibliography/notes sections which are managed separately by their sync
+        // services -- UNLESS the bibliography is verifiably gone via BOTH signals
+        // (bibliographyGone above), in which case a stale flagged row must be swept away
+        // like any other unmatched row instead of staying immortal.
+        for section in sortedDB where !matchedDBIds.contains(section.id) && !section.isNotes {
+            if section.isBibliography && !bibliographyGone { continue }
             changes.append(.delete(id: section.id))
             // Deliberately excludes title: it's a literal excerpt of the user's
             // manuscript, and this line reaches the persistent DiagnosticLogFile
@@ -90,6 +182,55 @@ struct SectionReconciler: Sendable {
     }
 
     // MARK: - Private Matching Logic
+
+    /// Dedicated match for the machine-managed bibliography heading.
+    ///
+    /// (a) If a row is already flagged `isBibliography`, it IS the bibliography row by
+    /// definition -- match it directly regardless of title/position drift.
+    ///
+    /// (b) Otherwise, self-heal onto an unflagged row, but ONLY through evidence-bearing
+    /// tiers -- exact position + `passesMatchGate`, then in-range (±3) + `passesMatchGate`.
+    /// `passesMatchGate` itself already treats `header.title == existing.title` as evidence
+    /// (alongside `contentRelated`), so title equality is covered at both distances without
+    /// a separate unbounded tier. An earlier version of this function additionally had an
+    /// unbounded, ungated "same title anywhere in the document" tier between these two --
+    /// deliberately removed: unlike Tier 2 in `findMatch` (real user headings, where a title
+    /// match away from its old position is ordinary drag-drop reordering), a bibliography
+    /// heading's title is drawn from a small, user-configurable, often-reused vocabulary
+    /// ("References", "Bibliography", "Works Cited"). An unbounded title match could
+    /// permanently convert a user's real, distant, same-titled section -- e.g. a chapter
+    /// titled "References" in an edited volume, far from the actual bibliography -- into the
+    /// flagged bibliography row, silently swapping their content's identity. Position
+    /// continuity (exact or ±3) is required before title is trusted as corroborating
+    /// evidence, exactly as it already is for every other section via `findMatch`'s Tier 1
+    /// and Tier 3. Deliberately does NOT fall back further to `findMatch`'s final
+    /// `related.isEmpty ? inRange : related` pure-proximity behavior either: that would let
+    /// an ordinary, unrelated section left unmatched elsewhere in the document (no title/
+    /// content evidence, edited beyond recognition) get silently reclassified as the
+    /// bibliography merely for sitting at an adjacent sortOrder -- the same role-swap risk
+    /// through a different path (MUST-FIX 1, round 1). When no evidence-bearing candidate
+    /// exists, returning `nil` here routes the caller to insert a fresh row instead.
+    private func findBibliographyMatch(
+        _ header: ParsedHeader,
+        in sections: [Section],
+        excluding: Set<String>
+    ) -> Section? {
+        let unmatched = sections.filter { !excluding.contains($0.id) }
+
+        if let flagged = unmatched.first(where: { $0.isBibliography }) {
+            return flagged
+        }
+
+        let candidates = unmatched.filter { !$0.isBibliography && !$0.isNotes }
+
+        if let exact = candidates.first(where: { $0.sortOrder == header.position }),
+           passesMatchGate(header, exact) {
+            return exact
+        }
+
+        let inRange = candidates.filter { abs($0.sortOrder - header.position) <= 3 }
+        return inRange.first(where: { passesMatchGate(header, $0) })
+    }
 
     /// Three-tier matching strategy for robust section identification
     /// - Parameters:

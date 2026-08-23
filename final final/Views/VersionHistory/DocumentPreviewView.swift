@@ -108,20 +108,20 @@ struct SnapshotSectionViewModel: Identifiable, Equatable {
     /// Initialize from SnapshotSection
     ///
     /// Unconditionally strips the bibliography-end terminator (`BlockParser.bibliographyEndMarker`)
-    /// rather than gating on `isBibliography`. Traced: `Section.isBibliography` is never actually set
-    /// `true` by any production writer — `SectionReconciler.reconcile()`'s insert path constructs
-    /// `Section` without an `isBibliography:` argument (defaults `false`), and `SectionUpdates` has no
-    /// field to set it later either. Meanwhile `SectionSyncService.parseHeaders()` only special-cases a "# Bibliography"
-    /// heading (skipping it as a boundary) when `existingBibTitle != nil` — i.e. when a `Section` row
-    /// already carries `isBibliography == true` — which per the above never happens. So the heading is
-    /// parsed as an ORDINARY section, and when bibliography content is the document's last content
-    /// (no following heading), that section's extracted span runs to end-of-document and can legitimately
-    /// include the terminator that `BlockParser.assembleMarkdownForEditor` appended to `editorState.content`
-    /// — the exact text `SectionSyncService.syncNow` reconciles into the `Section` table on every debounced
-    /// sync and before every snapshot (`ContentView+ProjectLifecycle.swift`'s `handleSaveVersion`). An
-    /// `isBibliography`-gated strip would silently never fire for that real row, so this strips
-    /// unconditionally instead — a pure substring removal, a no-op on the 99%+ of sections that never
-    /// contain the marker text at all.
+    /// rather than gating on `isBibliography`. `Section.isBibliography` IS now set `true` along this
+    /// path: `SectionSyncService.parseHeaders()` flags the "# Bibliography" heading boundary as
+    /// `isBibliography` when `existingBibTitle != nil`, and `SectionReconciler.reconcile()` threads
+    /// that flag through into the `Section` row it inserts or updates. But this view model reads
+    /// `SnapshotSection` rows — version-history snapshots and legacy rows captured before this flag
+    /// existed or before that row was ever reconciled through the fixed path — and those can still
+    /// carry `isBibliography == false` while their content legitimately runs to end-of-document and
+    /// includes the terminator that `BlockParser.assembleMarkdownForEditor` appended to
+    /// `editorState.content` — the exact text `SectionSyncService.syncNow` reconciles into the
+    /// `Section` table on every debounced sync and before every snapshot
+    /// (`ContentView+ProjectLifecycle.swift`'s `handleSaveVersion`). An `isBibliography`-gated strip
+    /// would silently never fire for those older/unreconciled rows, so this strips unconditionally
+    /// instead — a pure substring removal, a no-op on the 99%+ of sections that never contain the
+    /// marker text at all.
     init(from section: SnapshotSection) {
         let stripped = SectionSyncService.stripBibliographyEndMarker(from: section.markdownContent)
         self.id = section.id

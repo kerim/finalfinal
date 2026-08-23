@@ -423,11 +423,14 @@ class SectionViewModel: Identifiable {
         // comment).
         //
         // Unconditional, NOT gated on section.isBibliography: DocumentPreviewView.swift's
-        // SnapshotSectionViewModel documents that Section.isBibliography is never actually
-        // set true by any production writer, so a gated strip here would silently never
-        // fire, letting the raw terminator text leak into this sidebar card's preview.
-        // Both strips are pure substring removals — safe no-ops on any section that
-        // doesn't contain the marker text at all.
+        // SnapshotSectionViewModel documents that Section.isBibliography IS now set true
+        // by SectionSyncService.parseHeaders() -> SectionReconciler.reconcile(), but this
+        // strip still needs to handle snapshot/legacy rows that predate the flag (or were
+        // never reconciled through that path), where isBibliography can still be false
+        // even though the terminator text is present. A gated strip here would silently
+        // never fire for those rows, letting the raw terminator text leak into this
+        // sidebar card's preview. Both strips are pure substring removals — safe no-ops
+        // on any section that doesn't contain the marker text at all.
         self.markdownContent = SectionSyncService.stripBibliographyEndMarker(
             from: section.markdownContent.replacingOccurrences(of: "<!-- ::auto-bibliography:: -->", with: "")
         )

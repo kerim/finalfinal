@@ -79,7 +79,25 @@ extension ProjectDatabase {
                 .filter(Block.Columns.projectId == projectId)
                 .filter(Block.Columns.blockType == BlockType.heading.rawValue)
                 .filter(Block.Columns.isBibliography == true)
+                .order(Block.Columns.sortOrder)
                 .fetchOne(db)?.textContent
+        }
+    }
+
+    /// Whether ANY `isBibliography`-flagged block exists at all, regardless of `blockType` --
+    /// unlike `fetchBibliographyHeadingTitle`, which filters on `blockType == .heading` and so
+    /// only answers "does a bibliography HEADING exist". An orphaned entry or terminator block
+    /// (non-heading) could in principle survive after its heading is removed; a caller that
+    /// needs to know whether the bibliography is COMPLETELY gone (e.g. `SectionReconciler`'s
+    /// `bibliographyExistsInBlocks` immortal-row check) must use this broader query instead,
+    /// or it would wrongly treat "heading gone" as "bibliography gone" while an orphaned block
+    /// still carries the flag.
+    func hasBibliographyBlocks(projectId: String) throws -> Bool {
+        try read { db in
+            try Block
+                .filter(Block.Columns.projectId == projectId)
+                .filter(Block.Columns.isBibliography == true)
+                .fetchCount(db) > 0
         }
     }
 
@@ -261,7 +279,8 @@ extension ProjectDatabase {
             // own deletions inside their own transactions. A delete arriving via the editor
             // diff for one of these rows is a stale-diff artifact — reject it.
             if let existing = try Block.fetchOne(db, key: id), existing.isBibliography || existing.isNotes {
-                DebugLog.log(.data, "[Database+Blocks] Rejecting editor-diff delete of \(existing.isNotes ? "notes" : "bibliography") block: \(id.prefix(8))")
+                let kind = existing.isNotes ? "notes" : "bibliography"
+                DebugLog.log(.data, "[Database+Blocks] Rejecting editor-diff delete of \(kind) block: \(id.prefix(8))")
                 continue
             }
             try Block.deleteOne(db, key: id)
@@ -311,7 +330,11 @@ extension ProjectDatabase {
             let currentLabel = FootnoteSyncService.parseNotesLabel(from: block.markdownFragment)?.label
             let incomingLabel = FootnoteSyncService.parseNotesLabel(from: incomingFragment)?.label
             if incomingLabel != currentLabel {
-                DebugLog.log(.data, "[Database+Blocks] Rejecting label-changing update to notes block: \(update.id.prefix(8)) (\(currentLabel ?? "nil")→\(incomingLabel ?? "nil"))")
+                DebugLog.log(
+                    .data,
+                    "[Database+Blocks] Rejecting label-changing update to notes block: " +
+                    "\(update.id.prefix(8)) (\(currentLabel ?? "nil")→\(incomingLabel ?? "nil"))"
+                )
                 return
             }
         }

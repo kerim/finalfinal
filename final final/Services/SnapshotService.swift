@@ -255,9 +255,12 @@ final class SnapshotService {
         // Rebuild blocks from restored content to keep blocks table in sync.
         // Build metadata from snapshot sections to preserve status/tags/wordGoal.
         var metadata: [String: SectionMetadata] = [:]
-        for ss in snapshotSections {
-            metadata[ss.title] = SectionMetadata(
-                status: ss.status, tags: ss.tags.isEmpty ? nil : ss.tags, wordGoal: ss.wordGoal)
+        for snapshotSection in snapshotSections {
+            metadata[snapshotSection.title] = SectionMetadata(
+                status: snapshotSection.status,
+                tags: snapshotSection.tags.isEmpty ? nil : snapshotSection.tags,
+                wordGoal: snapshotSection.wordGoal
+            )
         }
         let blocks = BlockParser.parse(
             markdown: snapshot.previewMarkdown,
@@ -309,7 +312,12 @@ final class SnapshotService {
             markdown: contentRecord.markdown, projectId: projectId,
             existingSectionMetadata: metadata.isEmpty ? nil : metadata
         )
-        try database.replaceBlocks(blocks, for: projectId)
+        // preservingMachineManagedBlocks: true -- rebuildContentFromSections (above) excludes
+        // isBibliography sections from contentRecord.markdown, so `blocks` here has NO
+        // bibliography content at all. An unconditional replaceBlocks would permanently wipe
+        // the real bibliography (owned by BibliographySyncService) instead of leaving it
+        // alone -- see replaceBlocks' doc comment.
+        try database.replaceBlocks(blocks, for: projectId, preservingMachineManagedBlocks: true)
     }
 
     /// Restore a section from a snapshot as a new duplicate section
@@ -372,7 +380,9 @@ final class SnapshotService {
             markdown: contentRecord.markdown, projectId: projectId,
             existingSectionMetadata: metadataForBlocks.isEmpty ? nil : metadataForBlocks
         )
-        try database.replaceBlocks(blocks, for: projectId)
+        // preservingMachineManagedBlocks: true -- see restoreSectionReplace's matching call
+        // for why (rebuildContentFromSections excludes bibliography from this markdown).
+        try database.replaceBlocks(blocks, for: projectId, preservingMachineManagedBlocks: true)
     }
 
     // MARK: - Pruning
@@ -473,9 +483,16 @@ final class SnapshotService {
     }
 
     /// Rebuild content.markdown from current sections
+    ///
+    /// Excludes `isBibliography`-flagged rows: that content is a frozen, potentially-stale
+    /// mirror of the machine-managed bibliography (the real content lives at the `block`
+    /// level, owned by `BibliographySyncService`). Re-emitting it here on a version-history
+    /// restore would resurrect a stale bibliography copy instead of leaving the real one
+    /// alone.
     private func rebuildContentFromSections() throws {
         let sections = try database.fetchSections(projectId: projectId)
         let markdown = sections
+            .filter { !$0.isBibliography }
             .map { MarkdownUtils.ensuringTrailingBlankLine($0.markdownContent) }
             .joined()
 

@@ -73,6 +73,21 @@ extension ContentView {
                 expectedBlocks: result.expectedBlocks)
             editorState.isResettingContent = false
             editorState.contentState = .idle
+
+            // The `editorState.content = result.markdown` assignment above happened while
+            // contentState == .bibliographyUpdate, so ViewNotificationModifiers.handleContentChange's
+            // `guard editorState.contentState == .idle else { return }` silently dropped the
+            // onChange(of: editorState.content) firing for it -- neither sectionSyncService nor
+            // annotationSyncService ever saw this content. Force both syncs explicitly now that
+            // we're back to .idle, rather than leaving the `section` table and annotation
+            // positions stale until the user's next keystroke re-triggers onChange.
+            // sectionSyncService.syncNow correctly omits `fromEditorChange` (defaults to false)
+            // here -- same reasoning as the pre-round-trip programmatic sync in
+            // ContentView+ProjectLifecycle.swift:51 (configureForCurrentProject): a
+            // notification-driven bibliography regeneration is not a genuine editor edit, so it
+            // must not trip Getting-Started edit-detection.
+            await sectionSyncService.syncNow(editorState.content)
+            await annotationSyncService.syncNow(editorState.content)
         }
     }
 
