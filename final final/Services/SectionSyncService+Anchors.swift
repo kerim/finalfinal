@@ -124,14 +124,24 @@ extension SectionSyncService {
 
         // Find the bibliography header in the markdown
         // The header might be prefixed with a section anchor: <!-- @sid:UUID --># Bibliography
-        let bibHeaderName = ExportSettingsManager.shared.bibliographyHeaderName
+        let bibHeaderName = ExportSettingsManager.shared.effectiveBibliographyHeaderName
 
         // Try to find the header with or without anchor prefix
-        // Pattern: optional anchor + "# HeaderName"
+        // Pattern: line-start + optional anchor + "#" or "##" + " HeaderName" + line-end.
+        // Anchored on both ends (via `^`/`$` with `.anchorsMatchLines`) so this can never
+        // match mid-line inside a legitimate `## <name>` H2 heading (unanchored, "# Name"
+        // matches the substring starting at the second "#" of "## Name", corrupting the
+        // content with the marker inserted between the two "#" characters), and can never
+        // match an EARLIER ordinary heading that's merely a textual prefix of the
+        // bibliography name (e.g. "# Bibliography Notes" before the real "# Bibliography"
+        // heading later in the document -- unanchored, "# Bibliography" matches as a
+        // prefix of that first line and `firstMatch` stops there). `#{1,2}` mirrors
+        // `BlockParser.isBibliographyHeading`, which accepts both the `#` and `##` forms.
         let anchorPrefixPattern = #"(<!-- @sid:[0-9a-fA-F-]+ -->)?"#
-        let headerPattern = anchorPrefixPattern + #"# \#(bibHeaderName)"#
+        let escapedHeaderName = NSRegularExpression.escapedPattern(for: bibHeaderName)
+        let headerPattern = "^" + anchorPrefixPattern + #"#{1,2} \#(escapedHeaderName)$"#
 
-        guard let regex = try? NSRegularExpression(pattern: headerPattern, options: []) else {
+        guard let regex = try? NSRegularExpression(pattern: headerPattern, options: [.anchorsMatchLines]) else {
             return markdown
         }
 

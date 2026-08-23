@@ -225,7 +225,7 @@ class SectionSyncService {
         guard !isContentZoomed else { return }
 
         guard let db = projectDatabase, let pid = projectId else { return }
-        let fallbackBibTitle = ExportSettingsManager.shared.bibliographyHeaderName
+        let fallbackBibTitle = ExportSettingsManager.shared.effectiveBibliographyHeaderName
 
         do {
             let dbSections = try db.fetchSections(projectId: pid)
@@ -338,7 +338,7 @@ class SectionSyncService {
         // Capture @MainActor values before detaching
         let isZoomed = isContentZoomed
         let reconciler = self.reconciler
-        let fallbackBibTitle = ExportSettingsManager.shared.bibliographyHeaderName
+        let fallbackBibTitle = ExportSettingsManager.shared.effectiveBibliographyHeaderName
 
         do {
             try await Task.detached(priority: .utility) {
@@ -412,7 +412,7 @@ class SectionSyncService {
         guard let db = projectDatabase, let pid = projectId else { return }
 
         // Capture @MainActor value before detaching
-        let fallbackBibTitle = ExportSettingsManager.shared.bibliographyHeaderName
+        let fallbackBibTitle = ExportSettingsManager.shared.effectiveBibliographyHeaderName
 
         // Strip mini #Notes section (zoom-notes marker) before parsing
         let (strippedMarkdown, miniNotesContent) = Self.stripZoomNotes(from: markdown)

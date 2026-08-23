@@ -313,7 +313,7 @@ final class BibliographySyncService {
 
         // Build markdown WITHOUT marker (marker is injected only for CodeMirror source mode)
         // This follows the section anchor pattern: store clean content, inject markers for source view
-        let headerName = ExportSettingsManager.shared.bibliographyHeaderName
+        let headerName = ExportSettingsManager.shared.effectiveBibliographyHeaderName
         var markdown = "# \(headerName)\n\n"
         markdown += entries.joined(separator: "\n\n")
         markdown += "\n\n"
@@ -455,7 +455,7 @@ final class BibliographySyncService {
         database: ProjectDatabase
     ) async throws {
         // Read @MainActor property BEFORE entering GRDB write closure
-        let headerName = ExportSettingsManager.shared.bibliographyHeaderName
+        let headerName = ExportSettingsManager.shared.effectiveBibliographyHeaderName
         try database.write { db in
             // Fetch the existing bibliography blocks BEFORE deleting them, so the regenerated
             // bibliography can be reinserted back where the old one was, instead of always

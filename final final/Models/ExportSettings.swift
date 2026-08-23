@@ -136,9 +136,30 @@ struct ExportSettings: Codable, Sendable {
 
     // MARK: - Persistence
 
+    /// Test seam: `BlockParserBibliographyHeaderNameTests` overrides this to a per-test
+    /// isolated `UserDefaults(suiteName:)` instance so tests never read/write the real
+    /// `UserDefaults.standard` domain -- a crash mid-test between a write and its cleanup
+    /// would otherwise permanently change the user's real bibliography header name.
+    /// Defaults to `AppDefaults.store` -- `.standard` in production, unchanged -- because
+    /// unit tests run inside the real app process (see `AppDefaults.swift`'s doc comment):
+    /// `UserDefaults.standard` during ANY test run is the user's live settings domain, not
+    /// a sandboxed double. Every OTHER path into `save()` besides this suite's own isolated
+    /// override -- the settings-pane setters, `resetToDefaults()`, etc. -- would otherwise
+    /// keep writing the user's real export settings for the whole duration of any test run.
+    /// Same shape as `DiagnosticLogFile._userDefaults`/`.userDefaults` (see that file's doc
+    /// comment); `nonisolated(unsafe)` because `load()`/`save()` below are plain,
+    /// non-actor-isolated struct methods called from both @MainActor call sites and
+    /// non-@MainActor contexts (e.g. `BlockParser.isBibliographyHeading`, a `nonisolated
+    /// static func`).
+    nonisolated(unsafe) private static var _userDefaults: UserDefaults = AppDefaults.store
+    static var userDefaults: UserDefaults {
+        get { _userDefaults }
+        set { _userDefaults = newValue }
+    }
+
     /// Load settings from UserDefaults
     static func load() -> ExportSettings {
-        guard let data = UserDefaults.standard.data(forKey: Keys.settingsKey),
+        guard let data = userDefaults.data(forKey: Keys.settingsKey),
               let settings = try? JSONDecoder().decode(ExportSettings.self, from: data) else {
             return .default
         }
@@ -148,7 +169,7 @@ struct ExportSettings: Codable, Sendable {
     /// Save settings to UserDefaults
     func save() {
         if let data = try? JSONEncoder().encode(self) {
-            UserDefaults.standard.set(data, forKey: Keys.settingsKey)
+            ExportSettings.userDefaults.set(data, forKey: Keys.settingsKey)
         }
     }
 
@@ -452,6 +473,11 @@ final class ExportSettingsManager {
         get { settings.bibliographyHeaderName }
         set { update { $0.bibliographyHeaderName = newValue } }
     }
+
+    /// Trimmed, never-empty header name — the value every consumer that matches or
+    /// displays the bibliography heading should read. See
+    /// `ExportSettings.effectiveBibliographyHeaderName`.
+    var effectiveBibliographyHeaderName: String { settings.effectiveBibliographyHeaderName }
 
     var useCustomCSLStyle: Bool {
         get { settings.useCustomCSLStyle }
