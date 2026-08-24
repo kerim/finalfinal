@@ -62,6 +62,21 @@ enum BlockParser {
             // which DOES persist as a `.bibliography`-typed Block).
             if trimmed == bibliographyEndMarker {
                 inBibliographySection = false
+                // Record the boundary on the block we just emitted, so `replaceBlocks`'
+                // carry-forward has an inclusive upper bound (the marker itself produces no
+                // Block, by design — see this constant's doc comment).
+                //
+                // `blocks` is empty when the terminator is the document's very first raw block
+                // (a stray paste, or a document truncated above it); the plain `!blocks.isEmpty`
+                // check below is what keeps that from being an out-of-bounds write on
+                // `blocks[blocks.count - 1]`. Two adjacent terminators simply re-set the same
+                // block's flag — idempotent.
+                //
+                // Deliberately flags the block that PRECEDES the marker in raw-block order, not
+                // in visual order.
+                if !blocks.isEmpty {
+                    blocks[blocks.count - 1].endsBibliographyRun = true
+                }
                 continue
             }
 

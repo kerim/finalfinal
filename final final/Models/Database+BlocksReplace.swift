@@ -92,6 +92,21 @@ extension ProjectDatabase {
     ///   instead of leaving it alone. `restoreEntireProject` stays on the default `false`:
     ///   its markdown is reassembled from the FULL block table, bibliography included.
     ///
+    ///   On the DEFAULT (`false`) path only, `replaceBlocks` now also carries a restored
+    ///   `isBibliography` flag forward onto the non-heading entry rows beneath a heading when
+    ///   `applyPreservedHeading` re-flagged that heading from preserved metadata but the fresh
+    ///   parse didn't itself recognize it (a custom bibliography header name changed since the
+    ///   heading was written, or a demoted heading level). The carry is bounded by whichever
+    ///   comes first — the next heading, or the document's own end-of-bibliography marker
+    ///   (`BlockParser.bibliographyEndMarker`, via the transient `Block.endsBibliographyRun`
+    ///   flag `BlockParser.parse()` sets) — and capped by how many non-heading `isBibliography`
+    ///   rows the project already had. See `carryBibliographyFlagForward` for the full
+    ///   mechanism. This is PREVENTIVE — it stops the flag from being lost on a document that
+    ///   is currently healthy — not CURATIVE: it does not repair a document already in the
+    ///   damaged state (heading flagged, entries not), where the terminator already sits
+    ///   immediately after the heading and bounds nothing to carry. That limitation is
+    ///   deliberate.
+    ///
     ///   When `true`, reuses the same protection/reanchoring machinery
     ///   `replaceBlocksInRange` uses for its zoomed re-parse path (`buildHeadingQueues`,
     ///   `deleteBlocksInRange`, `handleMachineManagedBlock`, `reanchorPreservedRows`) —
@@ -200,7 +215,8 @@ extension ProjectDatabase {
 
             // Original behavior (preservingMachineManagedBlocks == false): delete every
             // existing block and reinsert `blocks` fresh, preserving only heading id/
-            // metadata by title match.
+            // metadata by title match — plus the bibliography carry-forward described in this
+            // function's doc comment above.
 
             // Queue existing headings by title, in existing-document order. A duplicate title
             // (two headings both named "Notes", say) gets a queue of length > 1; consuming the
@@ -213,20 +229,56 @@ extension ProjectDatabase {
                 headingsByTitle[block.textContent, default: []].append(PreservedHeading(from: block))
             }
 
-            try Block.filter(Block.Columns.projectId == projectId).deleteAll(db)
+            // Prepare every block in memory FIRST — heading id/metadata restoration and image
+            // metadata gap-fill both only read `existingBlocks`/`imageMetaBySrc` (already
+            // fetched above), never the live table — so hoisting this above the delete is
+            // behavior-preserving for both of those on its own. It has to happen before the
+            // delete because `carryBibliographyFlagForward` right below needs the WHOLE
+            // prepared array (to find the next heading, or the terminator) before it can run.
+            var prepared = blocks
 
-            for var block in blocks {
+            // Indices of headings where `applyPreservedHeading` had to RESTORE isBibliography
+            // from preserved metadata because the fresh parse itself didn't recognise the
+            // heading (a detection mismatch) — as opposed to a healthy heading the parser
+            // already flagged on its own. Only the former should ever arm
+            // `carryBibliographyFlagForward` below; see that function's doc comment for why.
+            var mismatchedBibliographyHeadingIndices: Set<Int> = []
+
+            for index in prepared.indices {
+                let parserRecognisedBibliography = prepared[index].blockType == .heading && prepared[index].isBibliography
+
                 // Preserve heading ID and metadata by occurrence-indexed title match (see
                 // applyPreservedHeading): pop the front of this title's queue and apply id +
                 // metadata from that SAME popped entry in one branch, so they can never come
                 // from two different existing occurrences of the same title. A unique title
                 // has a one-element queue, which behaves exactly like the old first-match-wins.
-                applyPreservedHeading(to: &block, queues: &headingsByTitle)
+                applyPreservedHeading(to: &prepared[index], queues: &headingsByTitle)
+
+                if prepared[index].blockType == .heading, prepared[index].isBibliography, !parserRecognisedBibliography {
+                    mismatchedBibliographyHeadingIndices.insert(index)
+                }
 
                 // Preserve image metadata by imageSrc match (see applyPreservedImageMetadata).
-                if applyPreservedImageMetadata(to: &block, index: &imageMetaBySrc) {
+                if applyPreservedImageMetadata(to: &prepared[index], index: &imageMetaBySrc) {
+                    let block = prepared[index]
                     DebugLog.log(.data, "[replaceBlocks] Image block src=\(block.imageSrc ?? "nil") width=\(block.imageWidth ?? -1)")
                 }
+            }
+
+            // Carry a restored isBibliography heading flag forward onto the entry rows beneath
+            // it — see `carryBibliographyFlagForward`'s doc comment for the full mechanism and
+            // its bounds. `budget` is the count of non-heading isBibliography rows the project
+            // already had, from BEFORE this replace — a pure cap, independent of anything the
+            // carry itself decides to flag.
+            carryBibliographyFlagForward(
+                &prepared,
+                mismatchedHeadingIndices: mismatchedBibliographyHeadingIndices,
+                budget: existingBlocks.filter { $0.isBibliography && $0.blockType != .heading }.count
+            )
+
+            try Block.filter(Block.Columns.projectId == projectId).deleteAll(db)
+
+            for var block in prepared {
                 try block.insert(db)
             }
 
@@ -489,6 +541,85 @@ private extension ProjectDatabase {
             block.aggregateGoalType = preserved.metadata.aggregateGoalType
             if preserved.metadata.isBibliography { block.isBibliography = true }
             if preserved.metadata.isNotes { block.isNotes = true }
+        }
+    }
+
+    /// Restore `isBibliography` onto the entry rows beneath a heading that
+    /// `applyPreservedHeading` just re-flagged from preserved metadata BECAUSE the fresh
+    /// parse itself failed to recognise the heading (a detection mismatch) — never for a
+    /// heading the parse recognised on its own. `mismatchedHeadingIndices` (built by the
+    /// caller's prep loop, by comparing each heading's parser-derived `isBibliography` before
+    /// `applyPreservedHeading` runs against its restored value after) is exactly that set: a
+    /// healthy, parser-recognised heading's entries are already correctly flagged and need no
+    /// help, and must never spend the `budget` below.
+    ///
+    /// WHY THIS EXISTS: `applyPreservedHeading` restores the flag onto the HEADING only.
+    /// When `BlockParser.parse()` didn't recognise that heading (a custom header name since
+    /// changed, a demoted heading level), every entry below it comes back unflagged. The next
+    /// bibliography regeneration then deletes only the flagged heading and regenerates,
+    /// leaving the old entries behind as duplicate body text in the document and in every
+    /// export.
+    ///
+    /// TWO BOUNDS, WHICHEVER COMES FIRST — the terminator bound is ADDITIVE, it does NOT
+    /// replace the next-heading rule:
+    ///  - a heading stops the run, exactly as `BlockParser.sectionFlagCarriedForward` does;
+    ///  - the first block after the arming heading carrying `endsBibliographyRun` stops it
+    ///    too, inclusively, and can stop it EARLIER than a heading would.
+    /// Reading the terminator as replacing the heading rule would let a run cross an
+    /// intervening chapter heading and flag it — never do that.
+    ///
+    /// The terminator search MUST start strictly after the arming heading, and MUST take the
+    /// FIRST match, not the last. A `lastIndex` search over the whole array lets a duplicate
+    /// or stale terminator anywhere downstream extend the run over real user prose — flagged
+    /// prose is dropped from every export and then deleted outright by the next regeneration.
+    /// No terminator after the heading => carry NOTHING: an unbounded run is worse than an
+    /// unrestored one.
+    ///
+    /// `assembleMarkdownForEditor` emits exactly ONE terminator per document — after the last
+    /// flagged row anywhere, not one per section — so in a document with more than one
+    /// bibliography-titled heading only the LAST such section is genuinely terminator-bounded;
+    /// an earlier mismatched section's forward search finds that later terminator (past its
+    /// own section) and effectively falls back to the next-heading bound only. This is still
+    /// safe (a heading always stops the run, and `budget` still caps it) but is strictly less
+    /// precise than the single-section case — documented here rather than left implicit.
+    ///
+    /// `budget` is the second, independent bound: never flag more non-heading blocks in one
+    /// call than the project currently HAS non-heading `isBibliography` rows. A pure count —
+    /// no content matching against existing rows, deliberately. This caps the blast radius
+    /// even if the predicate above is later changed and gets it wrong.
+    ///
+    /// KNOWN LIMITATION, by design: on a document ALREADY in the damaged state (heading
+    /// flagged, entries not), the assembler places the terminator directly after the heading,
+    /// so this arms and disarms in the same step and restores nothing. This prevents
+    /// recurrence on a healthy document; it does not heal an already-broken one.
+    func carryBibliographyFlagForward(
+        _ blocks: inout [Block],
+        mismatchedHeadingIndices: Set<Int>,
+        budget: Int
+    ) {
+        guard budget > 0 else { return }
+        var remaining = budget
+        var index = blocks.startIndex
+        while index < blocks.endIndex {
+            guard blocks[index].blockType == .heading, blocks[index].isBibliography,
+                  mismatchedHeadingIndices.contains(index) else {
+                index += 1
+                continue
+            }
+            guard let end = blocks[blocks.index(after: index)...]
+                .firstIndex(where: { $0.endsBibliographyRun }) else {
+                index += 1
+                continue
+            }
+            var cursor = blocks.index(after: index)
+            while cursor <= end {
+                if blocks[cursor].blockType == .heading { break }
+                if remaining == 0 { break }
+                blocks[cursor].isBibliography = true
+                remaining -= 1
+                cursor = blocks.index(after: cursor)
+            }
+            index = cursor
         }
     }
 

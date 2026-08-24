@@ -87,6 +87,22 @@ struct Block: Codable, Identifiable, Equatable, Sendable, FetchableRecord, Mutab
     var isNotes: Bool               // Footnote notes section
     var isPseudoSection: Bool       // Section break markers
 
+    /// TRANSIENT — parse-time only, never persisted. Set by `BlockParser.parse()` on the
+    /// block immediately preceding a `bibliographyEndMarker` raw block: "the bibliography
+    /// run ends here, at me, inclusive." `parse()` emits no Block for the marker itself, so
+    /// without this the closing boundary is invisible to `replaceBlocks`, whose carry-forward
+    /// needs it to bound how far a restored heading flag may travel.
+    ///
+    /// Deliberately absent from `Columns` and `CodingKeys` below, so it is neither written to
+    /// nor read from the `block` table — a row fetched from the database always has it `false`.
+    ///
+    /// TRAP: this field is transient and excluded from persistence, but it DOES participate in
+    /// `Block`'s synthesized `Equatable` conformance (declared on the struct above) — there is
+    /// no custom `==`. A parser-fresh `Block` (which may have this `true`) must therefore never
+    /// be compared with `==` against a persisted one (which always has it `false`) without
+    /// accounting for that, or an otherwise-identical pair will compare unequal.
+    var endsBibliographyRun: Bool = false
+
     var createdAt: Date
     var updatedAt: Date
 
