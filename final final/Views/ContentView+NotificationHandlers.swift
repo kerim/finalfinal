@@ -128,6 +128,19 @@ extension ContentView {
                 expectedBlocks: result.expectedBlocks)
             editorState.isResettingContent = false
             editorState.contentState = .idle
+
+            // The `editorState.content = result.markdown` assignment above happened while
+            // contentState == .bibliographyUpdate (reused for Notes rebuilds too), so
+            // ViewNotificationModifiers.handleContentChange's
+            // `guard editorState.contentState == .idle else { return }` silently dropped the
+            // onChange(of: editorState.content) firing for it -- neither sectionSyncService nor
+            // annotationSyncService ever saw this content. Force both syncs explicitly now that
+            // we're back to .idle, rather than leaving the `section` table and annotation
+            // positions stale until the user's next keystroke re-triggers onChange.
+            // sectionSyncService.syncNow correctly omits `fromEditorChange` (defaults to false)
+            // here -- same reasoning as handleBibliographySectionChanged above.
+            await sectionSyncService.syncNow(editorState.content)
+            await annotationSyncService.syncNow(editorState.content)
         }
     }
 
