@@ -42,13 +42,6 @@ enum BlockParser {
         // But keep code blocks and other multi-line structures together
         let rawBlocks = splitIntoRawBlocks(markdown)
 
-        // Read once for the whole parse rather than per-block: `isBibliographyHeading`
-        // defaults to loading this itself (via `ExportSettings.load()`, a UserDefaults
-        // read plus a full JSONDecoder decode) for its other, single-block call sites,
-        // but doing that once per raw block in the loop below is wasted work that scales
-        // with document size for no benefit -- the setting can't change mid-parse.
-        let bibliographyHeaderName = ExportSettings.load().effectiveBibliographyHeaderName
-
         var inBibliographySection = false
         var inNotesSection = false
 
@@ -74,7 +67,7 @@ enum BlockParser {
             // Both flags run until the next heading that doesn't re-open them.
             inBibliographySection = sectionFlagCarriedForward(
                 current: inBibliographySection,
-                opensSection: isBibliographyHeading(trimmed, bibliographyHeaderName: bibliographyHeaderName),
+                opensSection: isBibliographyHeading(trimmed),
                 blockType: blockType
             )
             inNotesSection = sectionFlagCarriedForward(
@@ -188,28 +181,15 @@ enum BlockParser {
     /// surrounding whitespace and falls back to the shipped default when the stored name
     /// is empty or whitespace-only -- see that computed property's doc comment.
     ///
-    /// `bibliographyHeaderName` defaults to a fresh `ExportSettings.load()` so existing
-    /// single-block call sites (Database+BlocksInsert.swift's `buildInsertedBlock`, and
-    /// this file's own test suite) are unaffected and keep reading the live setting with
-    /// no call-site change. `parse()` above is the one caller that invokes this inside a
-    /// per-raw-block loop; it computes the header name ONCE before the loop and passes it
-    /// explicitly, so a large document doesn't pay a UserDefaults read + full
-    /// `ExportSettings` decode per block just to extract this one string -- the setting
-    /// can't change mid-parse, so there's nothing to gain from re-reading it every
-    /// iteration.
-    ///
     /// Not `private`: Database+BlocksInsert.swift's `buildInsertedBlock` also calls this, for the
     /// editor-diff insert-path containment check (an inserted fragment that is itself the
     /// bibliography-opening heading is flagged `isBibliography = true` regardless of anchor
     /// placement). That is a narrower, single-block check distinct from this file's own
     /// `sectionFlagCarriedForward`, which drives the full-reparse "every block until the next
     /// heading" inheritance semantics used by `parse()` above.
-    static func isBibliographyHeading(
-        _ trimmed: String,
-        bibliographyHeaderName: String = ExportSettings.load().effectiveBibliographyHeaderName
-    ) -> Bool {
+    static func isBibliographyHeading(_ trimmed: String) -> Bool {
         if trimmed.contains("<!-- ::auto-bibliography:: -->") { return true }
-        let titles = ["References", "Bibliography", bibliographyHeaderName]
+        let titles = ["References", "Bibliography", ExportSettings.load().effectiveBibliographyHeaderName]
         return titles.contains { trimmed == "# \($0)" || trimmed == "## \($0)" }
     }
 
