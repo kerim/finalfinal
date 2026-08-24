@@ -116,9 +116,10 @@ struct OutlineParser {
         var inCodeBlock = false
         var inAutoBibliography = false  // Track auto-generated bibliography section
 
-        // Bibliography detection: use existing title if provided
-        // Don't fall back to ExportSettingsManager here as this is a nonisolated context
-        // The caller should always provide the bibliography title for correct detection
+        // Bibliography detection: use existing title if provided.
+        // existingBibTitle is passed in by the caller (rather than read from
+        // ExportSettingsManager here) precisely so this nonisolated context never
+        // needs to touch it.
         let bibHeaderName = existingBibTitle
 
         for line in markdown.split(separator: "\n", omittingEmptySubsequences: false) {
