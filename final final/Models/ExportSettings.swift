@@ -425,6 +425,15 @@ final class ExportSettingsManager {
     func resetToDefaults() {
         settings = .default
         settings.save()
+        // Mirrors the `useCustomCSLStyle`/`customCSLStylePath` setters below: those are the
+        // only settings whose individual setter currently posts a change notification (every
+        // open editor's `MilkdownCoordinator` observes `.citationStyleChanged` to re-push the
+        // effective CSL style). Posting it here too keeps a reset in sync with a normal edit --
+        // without this, a reset back to the bundled style would leave any already-open
+        // document showing a stale custom style until an unrelated trigger (e.g. reopening the
+        // document) happened to re-push it. `bibliographyHeaderName` and every other setting
+        // here have no such per-setter notification to mirror -- see their setters below.
+        NotificationCenter.default.post(name: .citationStyleChanged, object: nil)
     }
 
     /// Convenience accessors
