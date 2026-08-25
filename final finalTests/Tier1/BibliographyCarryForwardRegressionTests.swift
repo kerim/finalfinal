@@ -11,8 +11,9 @@
 //  This file covers: round-trip idempotency; that the transient `endsBibliographyRun` marker
 //  is never persisted; that a heading BlockParser.parse() already recognises never arms the
 //  carry (both directly through parse() and end-to-end through replaceBlocks); that the
-//  preservingMachineManagedBlocks: true branch is untouched by this fix; and that two
-//  independently-mismatched bibliography sections in one document both carry correctly.
+//  preservingMachineManagedBlocks: true branch is untouched by this fix; and that of two
+//  independently-mismatched bibliography sections in one document, only the one whose own run
+//  has no interior heading before the document's single terminator is restored and carried.
 //
 
 import Testing
@@ -266,15 +267,17 @@ struct BibliographyCarryForwardRegressionTests {
         )
     }
 
-    // MARK: - M2: multi-section carry, only the last section is genuinely terminator-bounded
+    // MARK: - M2: multi-section carry — only the section whose own run has no interior heading
+    // before the document's single terminator is restored (bib-heading-false-positive follow-up)
 
     @Test(
         """
-        Two independently-mismatched bibliography sections in one document both carry \
-        correctly, even though only the last is genuinely terminator-bounded
+        Two independently-mismatched bibliography sections in one document: the first section's \
+        computed run spans across the second section's heading (an interior heading), so its own \
+        restore is suppressed; only the second, genuinely terminator-bounded section carries
         """
     )
-    func twoMismatchedSectionsBothCarryCorrectly() throws {
+    func onlyTheSectionWithNoInteriorHeadingCarries() throws {
         let content = """
         # Intro
 
@@ -308,25 +311,38 @@ struct BibliographyCarryForwardRegressionTests {
 
         let after = try BibliographyCarryForwardSupport.blocks(db, projectId)
         #expect(after.count == 8, "Intro, body, two headings, four entries — the terminator emits no Block")
+        // `bibliographyRunEnd` finds the SAME (only) terminator-adjacent block for both headings,
+        // since `assembleMarkdownForEditor` emits exactly one terminator per document. For the
+        // FIRST heading, that means its scanned range runs all the way to "Entry four." — which
+        // contains the second heading, an interior heading -- so `hasGenuineBibliographyRun` now
+        // (bib-heading-false-positive follow-up: scans the WHOLE range, not just the immediately-
+        // next block) correctly refuses to restore it, mirroring `BibliographyOpeningSelector`'s
+        // own tier-2 rule. This is a real, deliberate behavior change from the previous round,
+        // where `hasGenuineBibliographyRun` only checked the immediately-next block (not itself a
+        // heading) and so armed regardless -- `carryBibliographyFlagForward`'s own independent
+        // stop-at-heading loop then bounded the actual carry, which happened to still cover Entry
+        // one/Entry two. The heading's flag itself is no longer resurrected at all now, which is
+        // more correct: an interior heading anywhere in the run is not evidence for THIS
+        // candidate, per `BibliographyOpeningSelector`'s own tier 2.
         #expect(
-            try BibliographyCarryForwardSupport.isFlagged(after, BibliographyCarryForwardSupport.syntheticHeader),
-            "First heading re-flagged by applyPreservedHeading's title match"
+            try BibliographyCarryForwardSupport.isFlagged(after, BibliographyCarryForwardSupport.syntheticHeader) == false,
+            "First heading's own run spans across the second heading (an interior heading) — its stale flag is no longer restored"
         )
         #expect(
             try BibliographyCarryForwardSupport.isFlagged(after, BibliographyCarryForwardSupport.syntheticHeader2),
-            "Second heading re-flagged by applyPreservedHeading's title match"
+            "Second heading re-flagged by applyPreservedHeading's title match -- its own run has no interior heading"
         )
         #expect(
-            try BibliographyCarryForwardSupport.isFlagged(after, "Entry one."),
-            """
-            First section's entries are carried forward, falling back to the next-heading bound \
-            — the document's one terminator sits past this section, not right after it
-            """
+            try BibliographyCarryForwardSupport.isFlagged(after, "Entry one.") == false,
+            "With the first heading's flag never restored, there is nothing to carry forward onto Entry one"
         )
-        #expect(try BibliographyCarryForwardSupport.isFlagged(after, "Entry two."), "First section's entries carried forward")
+        #expect(
+            try BibliographyCarryForwardSupport.isFlagged(after, "Entry two.") == false,
+            "With the first heading's flag never restored, there is nothing to carry forward onto Entry two"
+        )
         #expect(
             try BibliographyCarryForwardSupport.isFlagged(after, "Entry three."),
-            "Second section is genuinely terminator-bounded — the document's one terminator sits right after it"
+            "Second section is genuinely terminator-bounded, with no interior heading in its own run"
         )
         #expect(try BibliographyCarryForwardSupport.isFlagged(after, "Entry four."), "Second section's entries carried forward")
         #expect(

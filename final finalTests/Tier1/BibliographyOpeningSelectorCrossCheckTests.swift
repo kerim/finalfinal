@@ -209,6 +209,38 @@ struct BibliographyOpeningSelectorCrossCheckTests {
         #expect(result == markdown, "Site C must return the markdown unchanged without a terminator")
     }
 
+    // MARK: - Fixture: an unrelated real heading interior to the run -- all three select nothing
+    // (bib-heading-false-positive follow-up)
+
+    @Test("Cross-check: an unrelated real heading interior to the candidate's run, before the terminator -- all three sites select nothing")
+    @MainActor
+    func interiorHeadingAllSitesSelectNothing() throws {
+        let markdown = """
+        # Bibliography
+
+        A user chapter that merely shares the title, with real prose of its own.
+
+        # Later
+
+        More text, an unrelated real heading interior to the run.
+
+        \(BlockParser.bibliographyEndMarker)
+        """
+        assertFixtureIsInScope(markdown)
+
+        // Site A
+        let blocks = BlockParser.parse(markdown: markdown, projectId: "p1")
+        #expect(blocks.allSatisfy { !$0.isBibliography }, "Site A must select nothing -- the interior heading invalidates the run")
+
+        // Site B
+        let headers = SectionSyncService.parseHeaders(from: markdown, existingBibTitle: Self.title)
+        #expect(headers.filter { $0.isBibliography }.isEmpty, "Site B must select nothing -- the interior heading invalidates the run")
+
+        // Site C
+        let result = SectionSyncService().injectBibliographyMarker(markdown: markdown, sections: sections(bibliography: true))
+        #expect(result == markdown, "Site C must return the markdown unchanged -- no marker written when an interior heading invalidates the run")
+    }
+
     // MARK: - Fixture: standalone-marker orphan + a real marker -- exercises `select`'s
     // isStandaloneMarker-implies-isMarker debug assert at all three sites' own tokenizers
     // (t-341706cb follow-up: bare-marker orphan false positive)

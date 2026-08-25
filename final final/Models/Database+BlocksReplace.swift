@@ -564,10 +564,12 @@ private extension ProjectDatabase {
     ///   `!parseFoundBibliographyHeading && hasGenuineBibliographyRun(...)` instead — TWO
     ///   conditions, both required: the fresh parse recognised NO bibliography heading at all
     ///   anywhere in the document, AND this specific heading has a genuine, non-empty,
-    ///   terminator-bounded run beneath it (see `hasGenuineBibliographyRun`'s doc comment —
-    ///   this second condition mirrors `BibliographyOpeningSelector`'s own empty-run
-    ///   suppression rule, so a document already in the KNOWN-LIMITATION damaged state can't
-    ///   have its stale flag resurrected onto a heading with nothing real beneath it). When
+    ///   terminator-bounded run beneath it with no interior heading anywhere in that run (see
+    ///   `hasGenuineBibliographyRun`'s doc comment — this second condition mirrors
+    ///   `BibliographyOpeningSelector`'s own tier-2 rule in full, both its empty-run suppression
+    ///   AND its interior-heading invalidation, so a document already in the KNOWN-LIMITATION
+    ///   damaged state can't have its stale flag resurrected onto a heading with nothing real
+    ///   beneath it, or with a real, unrelated heading sitting inside the same run). When
     ///   both hold, this is `true` and behaves exactly as before (needed for
     ///   `carryBibliographyFlagForward`'s detection-mismatch case). When the fresh parse DID
     ///   recognise a (correctly selected, per `BlockParser.parse`'s pre-scan) bibliography
@@ -630,11 +632,18 @@ private extension ProjectDatabase {
     ///
     /// `assembleMarkdownForEditor` emits exactly ONE terminator per document — after the last
     /// flagged row anywhere, not one per section — so in a document with more than one
-    /// bibliography-titled heading only the LAST such section is genuinely terminator-bounded;
-    /// an earlier mismatched section's forward search finds that later terminator (past its
-    /// own section) and effectively falls back to the next-heading bound only. This is still
-    /// safe (a heading always stops the run, and `budget` still caps it) but is strictly less
-    /// precise than the single-section case — documented here rather than left implicit.
+    /// bibliography-titled heading only the LAST such section is genuinely terminator-bounded.
+    /// Before the bib-heading-false-positive follow-up fix to `hasGenuineBibliographyRun` (see
+    /// that function's doc comment), an earlier mismatched section's forward search would find
+    /// that later terminator (past its own section) and this function would fall back to
+    /// bounding the carry at the next heading instead — safe, but strictly less precise than the
+    /// single-section case. `hasGenuineBibliographyRun` now scans its own full candidate range
+    /// for an interior heading too, so it refuses to arm a heading whose apparent run spans a
+    /// LATER heading in the first place: `mismatchedHeadingIndices` never includes that earlier
+    /// heading, and this function is simply never entered for it. Only the true last section —
+    /// the one whose own scanned range contains no interior heading — is ever armed here in
+    /// practice. This function's own next-heading/budget bounds remain necessary regardless, as
+    /// defense in depth against any future caller that arms `mismatchedHeadingIndices` directly.
     ///
     /// `budget` is the second, independent bound: never flag more non-heading blocks in one
     /// call than the project currently HAS non-heading `isBibliography` rows. A pure count —
@@ -691,22 +700,31 @@ private extension ProjectDatabase {
 
     /// Whether the heading at `headingIndex` has a genuine, non-empty, terminator-bounded run
     /// beneath it in `blocks`: a terminator exists after it (`bibliographyRunEnd` is non-nil)
-    /// AND the very next block is not itself a heading. Mirrors
-    /// `carryBibliographyFlagForward`'s own loop exactly — that loop starts flagging at
-    /// `index + 1` and `break`s immediately, flagging nothing, the moment it hits a heading —
-    /// so "genuine" here means precisely "carry-forward would flag at least one block", and
-    /// mirrors `BibliographyOpeningSelector`'s own empty-run suppression rule (heading-exclusion
-    /// applied to the `[Block]` shape here, rather than to raw text there) so the restore gate
-    /// and a fresh parse's own selection can never disagree about whether a shape counts as
-    /// evidence. Deliberately NOT folded into `BibliographyOpeningSelector` itself: different
-    /// question (where does a run end, given `[Block]` with no text form) over an incompatible
-    /// data shape (no terminator-carrying line/block exists here — only a transient flag on the
-    /// preceding content block).
+    /// AND no block anywhere in `(headingIndex, end]` — not just the block immediately after
+    /// the heading — is itself a heading. Mirrors `carryBibliographyFlagForward`'s own loop
+    /// exactly — that loop starts flagging at `index + 1` and `break`s the moment it hits a
+    /// heading, wherever in the range that heading falls — so "genuine" here means precisely
+    /// "carry-forward would flag at least one block", and mirrors `BibliographyOpeningSelector`'s
+    /// own tier-2 interior-heading rule (the SAME rule — ANY heading strictly between the
+    /// candidate and where the run ends invalidates it — applied to the `[Block]` shape here,
+    /// rather than to raw text there) so the restore gate and a fresh parse's own selection can
+    /// never disagree about whether a shape counts as evidence: a heading two blocks down the
+    /// run is just as disqualifying as a heading immediately after it. Deliberately NOT folded
+    /// into `BibliographyOpeningSelector` itself: different question (where does a run end,
+    /// given `[Block]` with no text form) over an incompatible data shape (no terminator-carrying
+    /// line/block exists here — only a transient flag on the preceding content block).
     func hasGenuineBibliographyRun(in blocks: [Block], after headingIndex: Int) -> Bool {
         guard let end = bibliographyRunEnd(in: blocks, after: headingIndex) else { return false }
         let cursor = blocks.index(after: headingIndex)
         guard cursor <= end else { return false }
-        return blocks[cursor].blockType != .heading
+        // Scan the WHOLE run (cursor...end), not just the immediately-next block: a heading
+        // ANYWHERE in that range — not only as the very first block — ends the candidate's
+        // section, exactly as BibliographyOpeningSelector's tier 2 now requires (see that file's
+        // doc comment). Checking only blocks[cursor] let a heading later in the same range (e.g.
+        // an unrelated real "# Notes" heading two blocks down) go undetected, which could
+        // resurrect a stale isBibliography flag onto a heading whose run this selector-level rule
+        // would refuse to select on a fresh parse.
+        return !blocks[cursor...end].contains { $0.blockType == .heading }
     }
 
     /// Build the pop-queue of existing headings by title (consumed occurrence-by-occurrence

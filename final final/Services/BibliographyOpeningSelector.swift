@@ -49,16 +49,20 @@ import Foundation
 ///    `isTerminator`. If there is none, select nothing. Otherwise take the LAST `isCandidate`
 ///    unit strictly before it.
 ///    - No candidate before the terminator -> select nothing.
-///    - The candidate's run is EMPTY if there is no non-empty, non-candidate, non-heading unit
-///      strictly between it and the terminator — i.e. only headings and/or blank units sit in
-///      between. `isHeading` units are excluded from this content check deliberately, to match
-///      `Database+BlocksReplace.swift`'s `carryBibliographyFlagForward`, which already stops a
-///      run dead at ANY heading (`if blocks[cursor].blockType == .heading { break }`). Without
-///      this the selector and the carry-forward machinery could disagree about the exact
-///      damaged shape this whole fix targets: `# Bibliography` / `## Notes` (a subsection
-///      heading, no real content) / terminator — a bare subsection heading with nothing under
-///      it must NOT count as evidence of a genuine run.
-///    - If the run is empty -> select nothing. Do NOT fall through to an earlier candidate.
+///    - The candidate's run is the units strictly between it and the terminator.
+///    - A run containing ANY `isHeading` unit is INVALID — that heading ends the candidate's
+///      section, so the terminator bounds a LATER section and is not evidence for this
+///      candidate at all. Select nothing. Do NOT truncate-and-retry, and do NOT fall through to
+///      an earlier candidate: this is stricter than `carryBibliographyFlagForward`, which merely
+///      truncates its flagging at a heading, and stricter than `Database+BlocksReplace.swift`'s
+///      `hasGenuineBibliographyRun`, which mirrors this same rule at the `[Block]` level.
+///      Deliberate: those two decide how far an ALREADY-restored flag travels; this decides
+///      whether a heading may be flagged AT ALL, and over-flagging a user's own heading is the
+///      failure this file exists to prevent. Concretely, this is what fixes: `[user's bare-title
+///      "Bibliography" heading] [prose] [unrelated real heading] [prose] [stranded terminator]`
+///      — previously selected the user's heading, now selects nothing.
+///    - Otherwise the run is EMPTY if every unit in it is blank; empty -> select nothing. Do NOT
+///      fall through to an earlier candidate.
 ///    - Otherwise -> select the candidate.
 ///
 /// WHY SUPPRESSION, NOT FALLBACK: `Database+BlocksReplace.swift`'s own KNOWN LIMITATION comment
@@ -89,9 +93,10 @@ import Foundation
 ///    ever ran does NOT stay "exactly as damaged as before" — it changes shape. On its next
 ///    full reparse, `Database+BlocksReplace.swift`'s restore gate (`applyPreservedHeading`'s
 ///    `restoringBibliography` parameter, gated by `hasGenuineBibliographyRun`) requires the
-///    SAME evidence this selector requires: a genuine, non-empty, terminator-bounded run. A
-///    document in this damaged shape has none — `assembleMarkdownForEditor` never even emits a
-///    terminator, since the unflagged entries give it nothing to bound a run on — so the
+///    SAME evidence this selector requires: a genuine, non-empty, terminator-bounded run with
+///    no interior heading. A document in this damaged shape has none — `assembleMarkdownForEditor`
+///    never even emits a terminator, since the unflagged entries give it nothing to bound a run
+///    on — so the
 ///    heading's own stale flag is now correctly DROPPED rather than resurrected by title-match
 ///    preservation. The document ends up uniformly unflagged (heading included), not left in
 ///    the old split state (heading flagged, entries not). This is still not a repair — the
@@ -112,6 +117,17 @@ import Foundation
 ///    state LEAVES THE OLD HEADING ORPHANED IN THE DOCUMENT, unflagged, doing nothing. This is
 ///    still the correct trade — visible and fixable by the user beats silent permanent data
 ///    loss — but it is a real, user-visible consequence, not merely "reads as unmanaged."
+/// 4. A genuine bibliography run that itself contains a subsection heading — e.g. `# Bibliography`
+///    / entries / `## Primary Sources` / entries / terminator — now selects nothing instead of
+///    the outer heading. No test pins this shape either way. This is NOT purely a hand-edited or
+///    hypothetical shape: `assembleMarkdownForEditor` emits exactly ONE terminator per document
+///    (see `bibliographyRunEnd`'s doc comment), so a document with MORE THAN ONE
+///    bibliography-titled heading — e.g. after a heading rename leaves an old, now-unflagged
+///    "Bibliography"-titled heading behind alongside a new real one — can have tier 2's "last
+///    candidate before the terminator" logic span across that earlier heading, an app-producible
+///    shape. It resolves SAFELY under the stricter rule (selects nothing, never the wrong
+///    candidate), which errs toward not flagging a heading the user wrote — this file's declared
+///    trade — rather than "no known app path produces this."
 enum BibliographyOpeningSelector {
 
     /// One tokenized unit of a call site's own content sequence (raw blocks for
@@ -209,9 +225,15 @@ enum BibliographyOpeningSelector {
         }
 
         let contentRange = (candidateIndex + 1)..<terminatorIndex
-        let runHasContent = units[contentRange].contains { unit in
-            !unit.isEmpty && !unit.isCandidate && !unit.isHeading && !unit.isTerminator
+
+        // A heading strictly between the candidate and the terminator ENDS the candidate's
+        // section. The terminator then bounds some LATER section, not this one, so it is no
+        // evidence for this candidate at all -> select nothing.
+        if units[contentRange].contains(where: { $0.isHeading }) {
+            return .none
         }
+
+        let runHasContent = units[contentRange].contains { !$0.isEmpty }
 
         return runHasContent ? .candidate(candidateIndex) : .none
     }

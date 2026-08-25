@@ -110,8 +110,8 @@ struct BibliographyOpeningSelectorTests {
         )
     }
 
-    @Test("C2b (must-fix 1): a subsection heading between the candidate and the terminator does not count as content")
-    func subsectionHeadingBetweenCandidateAndTerminatorDoesNotCountAsContent() throws {
+    @Test("C2b (must-fix 1): a subsection heading between the candidate and the terminator invalidates the run")
+    func subsectionHeadingBetweenCandidateAndTerminatorInvalidatesTheRun() throws {
         let markdown = """
         # Bibliography
 
@@ -124,7 +124,7 @@ struct BibliographyOpeningSelectorTests {
 
         #expect(
             blocks.allSatisfy { !$0.isBibliography },
-            "A bare subsection heading with nothing under it must not count as evidence of a genuine run"
+            "A subsection heading anywhere in the run invalidates it -- it is not merely excluded from an emptiness check"
         )
     }
 
@@ -365,23 +365,22 @@ struct BibliographyOpeningSelectorTests {
 
     @Test("""
     C9: injectBibliographyMarker -- an anchor-prefixed non-candidate heading between the candidate and the \
-    terminator, with nothing else in the run, must be excluded from the emptiness check (matching sites A/B) \
-    and select nothing, not write a marker
+    terminator, with nothing else in the run, must be recognized as a heading (matching sites A/B) and \
+    invalidate the run, selecting nothing rather than writing a marker
     """)
     @MainActor
-    func siteCAnchorPrefixedNonCandidateHeadingIsExcludedFromContentCheck() throws {
+    func siteCAnchorPrefixedNonCandidateHeadingInvalidatesTheRun() throws {
         // Mirrors production input: every real caller pipes `injectSectionAnchors(...)` output
         // straight into this function, and the real bibliography heading itself is excluded
         // from anchor injection (so the candidate line below stays bare) -- but an ORDINARY
         // heading sitting in the run, like "# Appendix" here, IS anchor-prefixed, exactly as
-        // it would be for real CodeMirror source-mode content. Nothing else sits between the
-        // candidate and the terminator, so once the anchored heading is correctly recognized
-        // as a heading (not content), this run is EMPTY -- the same shape `BlockParser`'s own
-        // pre-scan refuses to select on (a bare subsection heading with nothing under it is not
-        // evidence of a genuine run). Before this fix, the anchor-prefixed line failed
-        // `isHeading`'s bare `^#{1,6}\s` regex, got scored as CONTENT instead, and this site
-        // wrote a permanent marker onto "# Bibliography" despite there being no real
-        // bibliography content in the document at all.
+        // it would be for real CodeMirror source-mode content. Once the anchored heading is
+        // correctly recognized as a heading (not content), it invalidates the run outright --
+        // the same shape `BlockParser`'s own pre-scan refuses to select on (a subsection heading
+        // anywhere in the run is not evidence of a genuine run for the outer candidate). Before
+        // this fix, the anchor-prefixed line failed `isHeading`'s bare `^#{1,6}\s` regex, got
+        // scored as CONTENT instead, and this site wrote a permanent marker onto "# Bibliography"
+        // despite there being no real bibliography content in the document at all.
         let markdown = """
         # Bibliography
 
@@ -401,7 +400,182 @@ struct BibliographyOpeningSelectorTests {
 
         #expect(
             result == markdown,
-            "The anchored heading must be excluded from the run's content check, leaving an empty run -- no marker must be written"
+            "The anchored heading must be recognized as a heading and invalidate the run -- no marker must be written"
+        )
+    }
+
+    // MARK: - Interior heading must stop tier 2 dead, anywhere in the run
+    // (bib-heading-false-positive follow-up: the user's own "Bibliography" heading was
+    // selected when an unrelated real heading sat further down the same run, before the
+    // terminator -- the old rule only checked for non-empty, non-heading content anywhere in
+    // the range and never asked whether any of that content was ITSELF a heading.)
+
+    @Test("Interior heading: the user's real reproduction shape -- candidate, prose, unrelated interior heading, prose, terminator selects nothing anywhere")
+    func interiorHeadingUserReproductionShapeSelectsNothing() throws {
+        let markdown = """
+        # Paper Title
+
+        Intro prose.
+
+        # Bibliography
+
+        Prose the user wrote under their own heading.
+
+        # Notes
+
+        Notes prose.
+
+        \(BlockParser.bibliographyEndMarker)
+        """
+
+        let blocks = BlockParser.parse(markdown: markdown, projectId: "p1")
+
+        #expect(
+            blocks.allSatisfy { !$0.isBibliography },
+            """
+            Pre-fix: the user's own "Bibliography" heading was selected because the old rule only \
+            checked for non-empty, non-heading content anywhere in the run and skipped over the \
+            interior "# Notes" heading entirely -- the next regeneration would then have rewritten \
+            the bibliography mid-document, under the user's own heading, and deleted "Notes" as a \
+            section along the way.
+            """
+        )
+        #expect(
+            blocks.first { $0.blockType == .heading && $0.textContent == "Bibliography" }?.isBibliography == false,
+            "The user's own heading must not be selected"
+        )
+        #expect(
+            blocks.first { $0.textContent == "Prose the user wrote under their own heading." }?.isBibliography == false,
+            "The user's own prose must not be flagged"
+        )
+        #expect(
+            blocks.first { $0.blockType == .heading && $0.textContent == "Notes" }?.isBibliography == false,
+            "The unrelated interior heading must not be flagged"
+        )
+        #expect(
+            blocks.first { $0.textContent == "Notes prose." }?.isBibliography == false,
+            "The unrelated interior heading's prose must not be flagged"
+        )
+    }
+
+    @Test("Interior heading (Unit-level, minimal): [candidate, content, heading, content, terminator] selects nothing")
+    func interiorHeadingUnitLevelMinimalSelectsNothing() {
+        let units: [BibliographyOpeningSelector.Unit] = [
+            // index 0: candidate heading.
+            BibliographyOpeningSelector.Unit(
+                isMarker: false, isTerminator: false, isCandidate: true, isHeading: true,
+                isEmpty: false, isStandaloneMarker: false
+            ),
+            // index 1: content.
+            BibliographyOpeningSelector.Unit(
+                isMarker: false, isTerminator: false, isCandidate: false, isHeading: false,
+                isEmpty: false, isStandaloneMarker: false
+            ),
+            // index 2: interior heading -- not itself a candidate.
+            BibliographyOpeningSelector.Unit(
+                isMarker: false, isTerminator: false, isCandidate: false, isHeading: true,
+                isEmpty: false, isStandaloneMarker: false
+            ),
+            // index 3: content.
+            BibliographyOpeningSelector.Unit(
+                isMarker: false, isTerminator: false, isCandidate: false, isHeading: false,
+                isEmpty: false, isStandaloneMarker: false
+            ),
+            // index 4: terminator.
+            BibliographyOpeningSelector.Unit(
+                isMarker: false, isTerminator: true, isCandidate: false, isHeading: false,
+                isEmpty: false, isStandaloneMarker: false
+            )
+        ]
+
+        #expect(
+            BibliographyOpeningSelector.select(units) == .none,
+            "An interior heading anywhere in the run, not just as the first unit, must invalidate it"
+        )
+    }
+
+    @Test("Interior heading (Unit-level positive control): [candidate, content, content, terminator] still selects the candidate")
+    func interiorHeadingUnitLevelPositiveControlStillSelects() {
+        let units: [BibliographyOpeningSelector.Unit] = [
+            BibliographyOpeningSelector.Unit(
+                isMarker: false, isTerminator: false, isCandidate: true, isHeading: true,
+                isEmpty: false, isStandaloneMarker: false
+            ),
+            BibliographyOpeningSelector.Unit(
+                isMarker: false, isTerminator: false, isCandidate: false, isHeading: false,
+                isEmpty: false, isStandaloneMarker: false
+            ),
+            BibliographyOpeningSelector.Unit(
+                isMarker: false, isTerminator: false, isCandidate: false, isHeading: false,
+                isEmpty: false, isStandaloneMarker: false
+            ),
+            BibliographyOpeningSelector.Unit(
+                isMarker: false, isTerminator: true, isCandidate: false, isHeading: false,
+                isEmpty: false, isStandaloneMarker: false
+            )
+        ]
+
+        #expect(
+            BibliographyOpeningSelector.select(units) == .candidate(0),
+            "With no interior heading, a genuine non-empty run still selects the candidate -- the new rule must not over-suppress"
+        )
+    }
+
+    @Test("Interior heading boundary pin: immediately after the candidate, with real content further down, still invalidates the run")
+    func interiorHeadingImmediatelyAfterCandidateInvalidatesRun() {
+        let units: [BibliographyOpeningSelector.Unit] = [
+            BibliographyOpeningSelector.Unit(
+                isMarker: false, isTerminator: false, isCandidate: true, isHeading: true,
+                isEmpty: false, isStandaloneMarker: false
+            ),
+            // index 1: heading immediately after the candidate.
+            BibliographyOpeningSelector.Unit(
+                isMarker: false, isTerminator: false, isCandidate: false, isHeading: true,
+                isEmpty: false, isStandaloneMarker: false
+            ),
+            // index 2: real content after the interior heading.
+            BibliographyOpeningSelector.Unit(
+                isMarker: false, isTerminator: false, isCandidate: false, isHeading: false,
+                isEmpty: false, isStandaloneMarker: false
+            ),
+            BibliographyOpeningSelector.Unit(
+                isMarker: false, isTerminator: true, isCandidate: false, isHeading: false,
+                isEmpty: false, isStandaloneMarker: false
+            )
+        ]
+
+        #expect(
+            BibliographyOpeningSelector.select(units) == .none,
+            "The rule is 'anywhere in the range', not 'the first unit' -- real content downstream of the interior heading must not rescue the run"
+        )
+    }
+
+    @Test("Interior heading boundary pin: immediately before the terminator also invalidates the run")
+    func interiorHeadingImmediatelyBeforeTerminatorInvalidatesRun() {
+        let units: [BibliographyOpeningSelector.Unit] = [
+            BibliographyOpeningSelector.Unit(
+                isMarker: false, isTerminator: false, isCandidate: true, isHeading: true,
+                isEmpty: false, isStandaloneMarker: false
+            ),
+            // index 1: real content immediately after the candidate.
+            BibliographyOpeningSelector.Unit(
+                isMarker: false, isTerminator: false, isCandidate: false, isHeading: false,
+                isEmpty: false, isStandaloneMarker: false
+            ),
+            // index 2: heading immediately before the terminator.
+            BibliographyOpeningSelector.Unit(
+                isMarker: false, isTerminator: false, isCandidate: false, isHeading: true,
+                isEmpty: false, isStandaloneMarker: false
+            ),
+            BibliographyOpeningSelector.Unit(
+                isMarker: false, isTerminator: true, isCandidate: false, isHeading: false,
+                isEmpty: false, isStandaloneMarker: false
+            )
+        ]
+
+        #expect(
+            BibliographyOpeningSelector.select(units) == .none,
+            "The rule is 'anywhere in the range', not 'only the first unit' -- real content earlier in the run must not shield a later interior heading"
         )
     }
 
