@@ -197,9 +197,21 @@ struct BibliographyCarryForwardTests {
 
         let after = try BibliographyCarryForwardSupport.blocks(db, projectId)
         #expect(after.count == 3)
+        // t-341706cb round 8: `applyPreservedHeading`'s restore gate now ALSO requires a
+        // genuine, non-empty, terminator-bounded run beneath the heading (see
+        // `hasGenuineBibliographyRun`'s doc comment on `Database+BlocksReplace.swift`) — not
+        // just `!parseFoundBibliographyHeading` alone, as before. In this exact damaged shape
+        // (heading flagged, entries not), `assembleMarkdownForEditor` never even emits a
+        // terminator at all (the LAST block, "Entry two.", isn't flagged, so there is nothing
+        // to bound a run on), so `bibliographyRunEnd` finds none and the heading's OWN stale
+        // flag is now suppressed too, not just the entries'. This is the intentional,
+        // documented consequence disclosed on `BibliographyOpeningSelector`'s "DISCLOSED
+        // CONSEQUENCES" #3: an already-damaged document stays exactly as damaged (now
+        // uniformly unflagged, rather than a heading-flagged/entries-unflagged split state) —
+        // visible and fixable by the user, never silently repaired past this the wrong way.
         #expect(
-            try BibliographyCarryForwardSupport.isFlagged(after, BibliographyCarryForwardSupport.syntheticHeader),
-            "The heading flag survives, as it always did"
+            try BibliographyCarryForwardSupport.isFlagged(after, BibliographyCarryForwardSupport.syntheticHeader) == false,
+            "KNOWN LIMITATION, round 8 revision — the heading's stale flag is no longer resurrected without a genuine run either"
         )
         #expect(try BibliographyCarryForwardSupport.isFlagged(after, "Entry one.") == false, "KNOWN LIMITATION — not repaired")
         #expect(try BibliographyCarryForwardSupport.isFlagged(after, "Entry two.") == false, "KNOWN LIMITATION — not repaired")

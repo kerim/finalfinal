@@ -468,14 +468,18 @@ final class BibliographySyncService {
                 .fetchAll(db)
 
             // Anchor = the sortOrder the regenerated bibliography should return to: the REAL
-            // bibliography section's own heading position. A heading matching the configured
-            // bibliography header name is flagged `isBibliography = true` by the insert-time
-            // containment logic (see `Database+BlocksInsert.swift`'s `resolveInsertPlacement`)
-            // regardless of WHERE in the document it's inserted -- so a user typing or pasting
-            // an ordinary heading with that same text near the top of an otherwise-ordinary
-            // document (a completely normal thing to do) creates a second flagged heading.
-            // Picking the lowest-sortOrder flagged heading unconditionally could then pick that
-            // stray heading instead of the real section's, relocating the entire regenerated
+            // bibliography section's own heading position. The insert-time path (see
+            // `Database+BlocksInsert.swift`'s `resolveInsertPlacement`/`buildInsertedBlock`)
+            // only flags a heading `isBibliography = true` when it carries the literal
+            // `<!-- ::auto-bibliography:: -->` marker (`BlockParser.hasBibliographyMarker`) --
+            // a bare-title heading a user types or pastes (e.g. an ordinary "# Bibliography"
+            // chapter heading, a completely normal thing to write) is NOT flagged by that path
+            // at all, regardless of where in the document it lands. A second flagged heading
+            // can still occur, though: pasted text that happens to carry the marker literally,
+            // or a historical orphan already flagged in the DB from before this and the
+            // insert-time fix (see the "Historical orphans" comment further below) -- so
+            // picking the lowest-sortOrder flagged heading unconditionally could still pick the
+            // wrong one instead of the real section's, relocating the entire regenerated
             // bibliography to the wrong position.
             //
             // Disambiguate with the same containment rule `resolveInsertPlacement` already
@@ -487,12 +491,19 @@ final class BibliographySyncService {
             // ordinary content after it does not.
             //
             // Falls back to the simpler "first flagged heading, unconditional" selector -- and,
-            // failing that, the first surviving bibliography block of any type -- when no
-            // heading satisfies the stricter check. Covers first-ever generation (no heading
-            // exists yet to satisfy anything) and an already-degenerate state (e.g. a
-            // heading-only bibliography with no surviving entries after it) so those cases
-            // don't regress. `nil` means there was no prior bibliography at all, which keeps
-            // today's append-at-the-end behavior unchanged.
+            // failing that, the first surviving bibliography block that is NOT a bare opening
+            // marker (see `isBareOpeningMarker` below) -- when no heading satisfies the stricter
+            // check. Covers first-ever generation (no heading exists yet to satisfy anything)
+            // and an already-degenerate state (e.g. a heading-only bibliography with no
+            // surviving entries after it) so those cases don't regress. The bare-marker
+            // exclusion at this last level exists because a marker orphan (an entire block
+            // whose content IS the bare opening-marker literal, left behind when CodeMirror's
+            // Source Mode hides the marker as an invisible atomic decoration and the user
+            // deletes the visible bibliography section around it) is not a heading, so it can
+            // only ever surface here -- unexcluded, it would hijack regeneration to the
+            // orphan's stale mid-document position instead of the document end. `nil` means
+            // there was no prior bibliography at all (or the only surviving block WAS a bare
+            // marker orphan), which keeps today's append-at-the-end behavior.
             let realBibliographyHeadingAnchor = try existingBib.first { candidate in
                 guard candidate.blockType == .heading else { return false }
                 let nextBlock = try Block
@@ -504,7 +515,7 @@ final class BibliographySyncService {
             }?.sortOrder
             let anchor = realBibliographyHeadingAnchor
                 ?? existingBib.first { $0.blockType == .heading }?.sortOrder
-                ?? existingBib.first?.sortOrder
+                ?? existingBib.first { !$0.isBareOpeningMarker }?.sortOrder
 
             // Delete ALL existing bibliography blocks (handles duplicates)
             try Block
@@ -590,6 +601,22 @@ final class BibliographySyncService {
             // document) project open just reassembles them via `assembleMarkdownForEditor`
             // and never reparses at all. Clearing existing historical orphans would need a
             // dedicated one-time migration — out of scope here.
+            //
+            // UPDATE: the orphan-as-anchor half of this harm is now closed. The `anchor`
+            // derivation above excludes any bare-opening-marker block (`isBareOpeningMarker`,
+            // both the unstripped-literal and legacy-load stripped-empty shapes) from its last
+            // fallback level, so a historical orphan row can no longer hijack regeneration to
+            // its own stale position. Deriving the anchor is not this comment's job, so it does
+            // not delete anything on its own — but that is not the end of the story for a project
+            // that actually regenerates: the orphan row is still flagged `isBibliography == true`
+            // (that flag is exactly why it had to be excluded above), so the SAME regeneration's
+            // own `deleteAll(isBibliography == true)` call just below removes it as a side effect,
+            // like any other stale bibliography row — see `BibliographyOrphanMarkerAnchorTests.
+            // swift`, which asserts this twice. The genuine remaining gap is narrower than "the
+            // orphan is never cleaned up": a project that has an orphan but NEVER regenerates (no
+            // citation is ever added or removed afterward) still has that orphan sitting in the
+            // database forever, since nothing on the read/display path deletes it either. That
+            // case alone still requires the dedicated one-time migration described above.
 
             for (index, fragment) in rawBlocks.enumerated() {
                 let isHeading = fragment.hasPrefix("#")
@@ -632,5 +659,22 @@ final class BibliographySyncService {
         } catch {
             DebugLog.log(.bib, "[BibliographySyncService] Error removing bibliography: \(error)")
         }
+    }
+}
+
+/// Single use: `updateBibliographyBlock`'s anchor-fallback chain above.
+private extension Block {
+    /// A "bare opening marker" block names no real bibliography content: it is either the
+    /// unstripped marker literal on its own (a document parsed WITHOUT
+    /// strippingBibliographyMarkerFromBlocks), or — on the legacy-load path, where the
+    /// marker literal is stripped out of the stored fragment before classification — an
+    /// EMPTY fragment on a block that is NOT `.heading`-typed (the only way an
+    /// `isBibliography`-flagged, non-heading block can have empty content is if its entire
+    /// original text WAS the marker, stripped away). Both shapes must be excluded from the
+    /// anchor fallback, or a legacy-document orphan can still hijack regeneration.
+    var isBareOpeningMarker: Bool {
+        let trimmedFragment = markdownFragment.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedFragment == BlockParser.bibliographyStartMarker { return true }
+        return trimmedFragment.isEmpty && blockType != .heading
     }
 }

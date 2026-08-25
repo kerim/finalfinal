@@ -332,6 +332,11 @@ struct BatchWordCountsTests {
     @MainActor
     func migrationPreservesBibliographyProse() throws {
         // Set up: `# Bibliography` heading marks subsequent blocks as bibliography per BlockParser.
+        // t-341706cb round 9: tier 3 (bare-title-anywhere) is deleted, so a bare-title heading
+        // now needs a genuine terminator-bounded, non-empty run to be recognized as evidence —
+        // see `BibliographyOpeningSelector`. The terminator below is real evidence a generated
+        // bibliography would carry (`BlockParser+Assembly.swift` writes it after the last
+        // bibliography block); it produces zero Blocks itself.
         let doc = """
         # Chapter
 
@@ -340,6 +345,8 @@ struct BatchWordCountsTests {
         # Bibliography
 
         Smith, J. (2020). Title. Journal. 3(1). 1-10.
+
+        <!-- ::auto-bibliography-end:: -->
         """
         let db = try TestFixtureFactory.createTemporary(content: doc)
         let pid = try TestFixtureFactory.getProjectId(from: db)
@@ -468,6 +475,11 @@ struct BatchWordCountsTests {
     @Test("excludeBibliography toggle end-to-end via real EditorViewState")
     @MainActor
     func excludeBibliographyToggleIsOnlyLever() throws {
+        // t-341706cb round 9: tier 3 (bare-title-anywhere) is deleted, so a bare-title heading
+        // now needs a genuine terminator-bounded, non-empty run to be recognized as evidence —
+        // see `BibliographyOpeningSelector`. The terminator below is real evidence a generated
+        // bibliography would carry (`BlockParser+Assembly.swift` writes it after the last
+        // bibliography block); it produces zero Blocks itself.
         let doc = """
         # Chapter
 
@@ -476,6 +488,8 @@ struct BatchWordCountsTests {
         # Bibliography
 
         Smith, J. (2020). Title. Journal. 3(1). 1-10.
+
+        <!-- ::auto-bibliography-end:: -->
         """
         let db = try TestFixtureFactory.createTemporary(content: doc)
         let pid = try TestFixtureFactory.getProjectId(from: db)

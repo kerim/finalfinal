@@ -244,15 +244,44 @@ extension ProjectDatabase {
             // `carryBibliographyFlagForward` below; see that function's doc comment for why.
             var mismatchedBibliographyHeadingIndices: Set<Int> = []
 
+            // Whether the fresh parse recognised ANY bibliography heading at all, anywhere in
+            // `blocks` — see `applyPreservedHeading`'s `restoringBibliography` doc comment for
+            // why this is a single, call-wide gate rather than a per-heading check: once the
+            // fresh parse has correctly identified the real heading, restoring a stale
+            // `isBibliography` flag onto any OTHER heading by title match would just be the
+            // bare-title false positive persisting through this function instead of being
+            // fixed by it.
+            let parseFoundBibliographyHeading = blocks.contains {
+                ($0.blockType == .heading || $0.blockType == .bibliography) && $0.isBibliography
+            }
+
             for index in prepared.indices {
                 let parserRecognisedBibliography = prepared[index].blockType == .heading && prepared[index].isBibliography
+
+                // Gated on BOTH conditions: the fresh parse recognised no bibliography heading
+                // at all (as before), AND this specific heading has a genuine, non-empty,
+                // terminator-bounded run beneath it in `prepared` — see
+                // `hasGenuineBibliographyRun`'s doc comment. Without the second condition, a
+                // document already in the KNOWN-LIMITATION damaged state (heading flagged,
+                // entries not, terminator immediately after the heading) would resurrect the
+                // stale flag onto a heading with nothing real beneath it — the empty-run
+                // shape `BibliographyOpeningSelector` itself refuses to select as evidence.
+                // Only meaningful for headings (`applyPreservedHeading` only ever reads this
+                // for `block.blockType == .heading`), so non-heading blocks skip the check.
+                let restoringBibliography = !parseFoundBibliographyHeading
+                    && prepared[index].blockType == .heading
+                    && hasGenuineBibliographyRun(in: prepared, after: index)
 
                 // Preserve heading ID and metadata by occurrence-indexed title match (see
                 // applyPreservedHeading): pop the front of this title's queue and apply id +
                 // metadata from that SAME popped entry in one branch, so they can never come
                 // from two different existing occurrences of the same title. A unique title
                 // has a one-element queue, which behaves exactly like the old first-match-wins.
-                applyPreservedHeading(to: &prepared[index], queues: &headingsByTitle)
+                applyPreservedHeading(
+                    to: &prepared[index],
+                    queues: &headingsByTitle,
+                    restoringBibliography: restoringBibliography
+                )
 
                 if prepared[index].blockType == .heading, prepared[index].isBibliography, !parserRecognisedBibliography {
                     mismatchedBibliographyHeadingIndices.insert(index)
@@ -527,7 +556,31 @@ private extension ProjectDatabase {
     /// (not two separate lookups), so they can never come from two different existing
     /// occurrences of the same title. A unique title has a one-element queue, which behaves
     /// exactly like the old first-match-wins.
-    func applyPreservedHeading(to block: inout Block, queues: inout [String: [PreservedHeading]]) {
+    /// - Parameter restoringBibliography: Whether a preserved `isBibliography` flag is OR'd
+    ///   back onto `block` by this call. Defaults to `true`, matching every pre-existing call
+    ///   site's behavior unchanged (`replaceBlocksInRange`, and `replaceBlocks`'
+    ///   `preservingMachineManagedBlocks == true` path). `replaceBlocks`' default
+    ///   (`preservingMachineManagedBlocks == false`) path passes
+    ///   `!parseFoundBibliographyHeading && hasGenuineBibliographyRun(...)` instead — TWO
+    ///   conditions, both required: the fresh parse recognised NO bibliography heading at all
+    ///   anywhere in the document, AND this specific heading has a genuine, non-empty,
+    ///   terminator-bounded run beneath it (see `hasGenuineBibliographyRun`'s doc comment —
+    ///   this second condition mirrors `BibliographyOpeningSelector`'s own empty-run
+    ///   suppression rule, so a document already in the KNOWN-LIMITATION damaged state can't
+    ///   have its stale flag resurrected onto a heading with nothing real beneath it). When
+    ///   both hold, this is `true` and behaves exactly as before (needed for
+    ///   `carryBibliographyFlagForward`'s detection-mismatch case). When the fresh parse DID
+    ///   recognise a (correctly selected, per `BlockParser.parse`'s pre-scan) bibliography
+    ///   heading, OR this heading's own run is empty, this is `false` for that heading —
+    ///   otherwise an already-wrongly-flagged heading still sitting in the DB (e.g. a
+    ///   bare-title user heading a stale parse once mistook for the real one) would have its
+    ///   stale flag OR'd back in by this title match, making the false positive permanent
+    ///   instead of letting the corrected fresh parse win.
+    func applyPreservedHeading(
+        to block: inout Block,
+        queues: inout [String: [PreservedHeading]],
+        restoringBibliography: Bool = true
+    ) {
         if block.blockType == .heading,
            var queue = queues[block.textContent], !queue.isEmpty {
             let preserved = queue.removeFirst()
@@ -539,7 +592,7 @@ private extension ProjectDatabase {
             block.goalType = preserved.metadata.goalType
             block.aggregateGoal = preserved.metadata.aggregateGoal
             block.aggregateGoalType = preserved.metadata.aggregateGoalType
-            if preserved.metadata.isBibliography { block.isBibliography = true }
+            if restoringBibliography, preserved.metadata.isBibliography { block.isBibliography = true }
             if preserved.metadata.isNotes { block.isNotes = true }
         }
     }
@@ -606,8 +659,7 @@ private extension ProjectDatabase {
                 index += 1
                 continue
             }
-            guard let end = blocks[blocks.index(after: index)...]
-                .firstIndex(where: { $0.endsBibliographyRun }) else {
+            guard let end = bibliographyRunEnd(in: blocks, after: index) else {
                 index += 1
                 continue
             }
@@ -621,6 +673,40 @@ private extension ProjectDatabase {
             }
             index = cursor
         }
+    }
+
+    /// Returns the index of the first block after `headingIndex` carrying `endsBibliographyRun`
+    /// — the transient marker `BlockParser.parse()` sets on the block immediately preceding a
+    /// `BlockParser.bibliographyEndMarker` line — or `nil` if no such block exists (no
+    /// terminator anywhere after this heading). Shared by `carryBibliographyFlagForward`
+    /// (which carries the flag FORWARD onto entries beneath a restored heading) and
+    /// `replaceBlocks`' restore gate, via `hasGenuineBibliographyRun` below (which decides
+    /// WHETHER to restore the heading's flag at all), so the two questions — "where does this
+    /// run end" and "should I restore this heading" — can never disagree about where the run
+    /// ends.
+    func bibliographyRunEnd(in blocks: [Block], after headingIndex: Int) -> Int? {
+        guard headingIndex < blocks.index(before: blocks.endIndex) else { return nil }
+        return blocks[blocks.index(after: headingIndex)...].firstIndex(where: { $0.endsBibliographyRun })
+    }
+
+    /// Whether the heading at `headingIndex` has a genuine, non-empty, terminator-bounded run
+    /// beneath it in `blocks`: a terminator exists after it (`bibliographyRunEnd` is non-nil)
+    /// AND the very next block is not itself a heading. Mirrors
+    /// `carryBibliographyFlagForward`'s own loop exactly — that loop starts flagging at
+    /// `index + 1` and `break`s immediately, flagging nothing, the moment it hits a heading —
+    /// so "genuine" here means precisely "carry-forward would flag at least one block", and
+    /// mirrors `BibliographyOpeningSelector`'s own empty-run suppression rule (heading-exclusion
+    /// applied to the `[Block]` shape here, rather than to raw text there) so the restore gate
+    /// and a fresh parse's own selection can never disagree about whether a shape counts as
+    /// evidence. Deliberately NOT folded into `BibliographyOpeningSelector` itself: different
+    /// question (where does a run end, given `[Block]` with no text form) over an incompatible
+    /// data shape (no terminator-carrying line/block exists here — only a transient flag on the
+    /// preceding content block).
+    func hasGenuineBibliographyRun(in blocks: [Block], after headingIndex: Int) -> Bool {
+        guard let end = bibliographyRunEnd(in: blocks, after: headingIndex) else { return false }
+        let cursor = blocks.index(after: headingIndex)
+        guard cursor <= end else { return false }
+        return blocks[cursor].blockType != .heading
     }
 
     /// Build the pop-queue of existing headings by title (consumed occurrence-by-occurrence

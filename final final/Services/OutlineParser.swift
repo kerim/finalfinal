@@ -141,7 +141,12 @@ struct OutlineParser {
             // Parse header if not in code block AND not in auto-bibliography
             if !inCodeBlock && !inAutoBibliography,
                let header = parseHeaderLine(trimmed, at: currentOffset) {
-                // Detect bibliography by title match (when no marker is present)
+                // Detect bibliography by title match (when no marker is present). This runs on
+                // every save via rebuildOutlineCache; its output (ProjectStore.outlineNodes)
+                // currently has no reader outside this file. If an outline UI is ever wired up
+                // to consume it, this bare-title bibliography detection needs the same two-tier
+                // treatment as BlockParser/SectionSyncService (see
+                // BibliographyOpeningSelector.swift) -- it has not received it here.
                 if let bibTitle = bibHeaderName, header.title == bibTitle {
                     inAutoBibliography = true
                     // Don't add to headers - bibliography is managed separately

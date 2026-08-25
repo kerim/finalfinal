@@ -56,6 +56,23 @@ extension SectionSyncService {
 
         // First pass: find all headers and pseudo-sections
         let lines = markdown.split(separator: "\n", omittingEmptySubsequences: false)
+
+        // Pre-scan: select the ONE line offset (if any) that opens the bibliography section
+        // by title match, delegating to the same shared `BibliographyOpeningSelector` two-tier
+        // rule `BlockParser.parse`'s `selectBibliographyOpeningIndex` uses — a legacy marker
+        // line wins outright; otherwise the LAST candidate title match strictly before the
+        // first terminator, provided a genuine non-empty run separates them; otherwise nothing.
+        // Without this, the loop below opened the section at the FIRST title match, which is
+        // exactly backwards for a document containing a user heading that merely equals the
+        // bibliography header name ABOVE the real, machine-managed heading.
+        let selectedBibliographyOffset = selectBibliographyOpeningOffset(
+            lines: lines,
+            bibHeaderName: bibHeaderName,
+            existingBibTitle: existingBibTitle,
+            notesHeaderName: notesHeaderName,
+            existingNotesTitle: existingNotesTitle
+        )
+
         for line in lines {
             let lineStr = String(line)
             let trimmed = lineStr.trimmingCharacters(in: .whitespaces)
@@ -65,13 +82,36 @@ extension SectionSyncService {
                 inCodeBlock = !inCodeBlock
             }
 
-            // Legacy marker support: still detect marker if present in old content
-            // This ensures backward compatibility during transition
-            if trimmed.hasPrefix("<!-- ::auto-bibliography:: -->") {
-                inAutoBibliography = true
-                bibliographyStartOffset = currentOffset
+            // Legacy marker support: still detect marker if present in old content. This is NOT
+            // an independent detection mechanism -- it defers entirely to the shared-selector-
+            // backed pre-scan (`selectedBibliographyOffset`) above: a marker line only opens the
+            // managed region when it IS the one line the pre-scan itself selected. An orphan
+            // marker the pre-scan judged unsupported (see `BibliographyOpeningSelector`'s
+            // `markerIsSupported`) falls through here as a no-op line, exactly like any other
+            // comment the parser doesn't recognize -- it must never latch `inAutoBibliography`
+            // on its own account, or every heading for the rest of the document (including a
+            // correctly-placed real bibliography) silently vanishes from the outline.
+            if trimmed.hasPrefix(BlockParser.bibliographyStartMarker) {
+                if currentOffset == selectedBibliographyOffset {
+                    inAutoBibliography = true
+                    bibliographyStartOffset = currentOffset
+                }
+                // MUST run on both branches: an unselected marker line that fails to advance
+                // currentOffset desyncs every subsequent line's offset from the real markdown,
+                // silently breaking `selectedBibliographyOffset` matching and the reconciler's
+                // section boundaries.
                 currentOffset += lineStr.count + 1  // +1 for newline
                 continue  // Skip - header on same line, don't parse as separate section
+            }
+
+            // The managed region is terminator-bounded, matching the pre-scan's own gating
+            // exactly: once `BlockParser.bibliographyEndMarker` is seen (by exact equality on
+            // the trimmed line, never `.contains`) while the region is open, close it so headings
+            // after it (e.g. a real "Appendix") surface again instead of being absorbed forever.
+            if inAutoBibliography && !inCodeBlock && !inAutoNotes && trimmed == BlockParser.bibliographyEndMarker {
+                inAutoBibliography = false
+                currentOffset += lineStr.count + 1  // +1 for newline
+                continue
             }
 
             // Skip headers inside code blocks or auto-managed sections
@@ -90,9 +130,15 @@ extension SectionSyncService {
                 }
                 // Check for header
                 else if let header = parseHeaderLine(trimmed) {
-                    // Detect bibliography by title match (when no marker is present)
-                    // This allows detection even after marker is removed from stored content
-                    if header.title == bibHeaderName && existingBibTitle != nil {
+                    // Detect bibliography by title match (when no marker is present) — but
+                    // ONLY at the pre-scan's selected offset, not at every title match: a
+                    // title match that isn't the selected line falls through to the branches
+                    // below (notes / import-detection / ordinary heading) exactly like any
+                    // other non-matching heading. This allows detection even after the marker
+                    // is removed from stored content, while telling a bare-title user heading
+                    // apart from the real, machine-managed one — see
+                    // `selectBibliographyOpeningOffset`'s doc comment for the full rule.
+                    if currentOffset == selectedBibliographyOffset {
                         inAutoBibliography = true
                         bibliographyStartOffset = currentOffset
                         // Emit a boundary (flagged isBibliography) so the reconciler can see
@@ -215,6 +261,116 @@ extension SectionSyncService {
         }
 
         return headers
+    }
+
+    /// Selects the character offset (matching `currentOffset` in the main loop above) of the
+    /// ONE line that opens the bibliography section, or `nil` if none does. Mirrors the main
+    /// loop's own code-fence and `inAutoNotes` gating (guards below), but — unlike an earlier
+    /// version of this comment claimed — that mirroring is no longer complete: the main loop
+    /// also skips every heading while it is inside the bibliography region (`inAutoBibliography`)
+    /// and closes that region at the terminator, and neither of those is modeled here. So the
+    /// candidate/terminator set found by this pre-scan can diverge from what the main loop would
+    /// actually reach. Concretely: a `notesHeaderName`-titled heading nested inside what the main
+    /// loop treats as the bibliography region (and correctly skips over) still latches this
+    /// function's `inAutoNotes` here, which can blind the pre-scan to the real terminator and
+    /// return `.none` where the main loop's own view of the document never hit that confusion.
+    /// This divergence is a known, deferred gap — not fixed here — so treat this function's
+    /// result as an approximation of the main loop's reachable set, not a guarantee of it.
+    /// Tokenizes each line into a `BibliographyOpeningSelector.Unit` and delegates the actual
+    /// decision to `BibliographyOpeningSelector.select` — see that type's doc comment for the full two-tier
+    /// rule and why tier 3 ("last title match anywhere, no evidence required") was deleted
+    /// rather than weakened.
+    ///
+    /// This site's predicates, all required:
+    /// 1. **Code fences** — mirrors the main loop's exact ``` toggling; gates `isTerminator`,
+    ///    `isCandidate`, and `isHeading`.
+    /// 2. **`isMarker`** — a line prefixed `<!-- ::auto-bibliography:: -->`, checked
+    ///    unconditionally (not gated by code-fence/notes state) — exactly matching the main
+    ///    loop's own unconditional marker check.
+    /// 3. **`inAutoNotes` latch** — mirrors the main loop's existing open-and-never-close Notes
+    ///    semantics exactly (set once true by a `notesHeaderName` title match, gated on
+    ///    `existingNotesTitle != nil`, and never cleared), so Notes-then-Bibliography behavior
+    ///    is unchanged. Also gates `isTerminator`/`isCandidate`/`isHeading`.
+    /// 4. **`isTerminator`** — `BlockParser.bibliographyEndMarker`, matched by EXACT equality
+    ///    on the trimmed line (never `.contains`).
+    ///
+    /// `isCandidate` — exactly the main loop's own bibliography-title condition, NOT
+    /// `BlockParser.isBibliographyHeading`'s broader three-title set: a line is a candidate iff
+    /// it parses as a header AND `header.title == bibHeaderName`, gated on
+    /// `existingBibTitle != nil`. Using the broader set here would return an offset the main
+    /// loop's exact-match condition could never equal, silently dropping the bibliography
+    /// boundary from the outline entirely. Bibliography is checked BEFORE notes — matching the
+    /// main loop's own ordering exactly — so a colliding header name configured for both can't
+    /// latch `inAutoNotes` and wrongly exclude the real bibliography candidate.
+    ///
+    /// `isHeading` — any line `parseHeaderLine` recognizes as a header, at ANY level (1–6), not
+    /// just the bibliography title — matching site A's (`BlockParser`) carry-forward-alignment
+    /// intent: a heading that isn't the bibliography title still ends a run for run-emptiness
+    /// purposes.
+    private nonisolated static func selectBibliographyOpeningOffset(
+        lines: [Substring],
+        bibHeaderName: String,
+        existingBibTitle: String?,
+        notesHeaderName: String,
+        existingNotesTitle: String?
+    ) -> Int? {
+        var currentOffset = 0
+        var inCodeBlock = false
+        var inAutoNotes = false
+
+        var offsets: [Int] = []
+        var units: [BibliographyOpeningSelector.Unit] = []
+        offsets.reserveCapacity(lines.count)
+        units.reserveCapacity(lines.count)
+
+        for line in lines {
+            let lineStr = String(line)
+            let trimmed = lineStr.trimmingCharacters(in: .whitespaces)
+
+            if trimmed.hasPrefix("```") {
+                inCodeBlock.toggle()
+            }
+
+            // Unconditional, exactly like the main loop's own marker check.
+            let isMarker = trimmed.hasPrefix(BlockParser.bibliographyStartMarker)
+
+            var isTerminator = false
+            var isCandidate = false
+            var isHeading = false
+
+            if !inCodeBlock && !inAutoNotes {
+                if trimmed == BlockParser.bibliographyEndMarker {
+                    isTerminator = true
+                } else if let header = parseHeaderLine(trimmed) {
+                    isHeading = true
+                    // Bibliography checked BEFORE notes — see this function's doc comment.
+                    if header.title == bibHeaderName && existingBibTitle != nil {
+                        isCandidate = true
+                    } else if header.title == notesHeaderName && existingNotesTitle != nil {
+                        inAutoNotes = true
+                    }
+                }
+            }
+
+            offsets.append(currentOffset)
+            units.append(BibliographyOpeningSelector.Unit(
+                isMarker: isMarker,
+                isTerminator: isTerminator,
+                isCandidate: isCandidate,
+                isHeading: isHeading,
+                isEmpty: trimmed.isEmpty,
+                isStandaloneMarker: trimmed == BlockParser.bibliographyStartMarker
+            ))
+
+            currentOffset += lineStr.count + 1 // +1 for newline, matching the main loop below
+        }
+
+        switch BibliographyOpeningSelector.select(units) {
+        case .marker(let index), .candidate(let index):
+            return offsets[index]
+        case .none:
+            return nil
+        }
     }
 
     struct LocalParsedHeader {

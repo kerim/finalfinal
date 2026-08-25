@@ -57,6 +57,8 @@ struct BibliographySectionFlagTests {
         # References
 
         Entry one.
+
+        <!-- ::auto-bibliography-end:: -->
         """
 
         let headers = SectionSyncService.parseHeaders(from: markdown, existingBibTitle: "References")

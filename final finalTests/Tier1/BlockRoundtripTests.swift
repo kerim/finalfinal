@@ -309,6 +309,11 @@ struct BlockRoundtripTests {
 
     @Test("Block parser handles bibliography detection")
     func blockParserBibliography() throws {
+        // t-341706cb round 9: tier 3 (bare-title-anywhere) is deleted, so a bare-title heading
+        // now needs a genuine terminator-bounded, non-empty run to be recognized as evidence —
+        // see `BibliographyOpeningSelector`. The terminator below is real evidence a generated
+        // bibliography would carry (`BlockParser+Assembly.swift` writes it after the last
+        // bibliography block); it produces zero Blocks itself.
         let content = """
         # Doc
 
@@ -317,6 +322,8 @@ struct BlockRoundtripTests {
         # References
 
         Author. (2023). Title.
+
+        <!-- ::auto-bibliography-end:: -->
         """
 
         let blocks = BlockParser.parse(markdown: content, projectId: "test")

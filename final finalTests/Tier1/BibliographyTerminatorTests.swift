@@ -100,14 +100,14 @@ struct BibliographyTerminatorTests {
         )
     }
 
-    @Test("Full reparse with NO terminator reproduces the legacy carry-to-end-of-document behavior (documented, expected gap)")
-    func fullReparseWithoutTerminatorReproducesLegacyGap() throws {
+    @Test("Full reparse with NO terminator selects nothing — the trailing paragraph is correctly NOT flagged (t-341706cb: tier 3 deleted)")
+    func fullReparseWithoutTerminatorSelectsNothing() throws {
         let db = try TestFixtureFactory.createTemporary(content: TestFixtureFactory.richTestContent)
         let pid = try TestFixtureFactory.getProjectId(from: db)
 
         let existingBlocks = try TestFixtureFactory.fetchBlocks(from: db)
 
-        // No terminator here — models content saved BEFORE this fix shipped. Plain
+        // No terminator here — models content saved BEFORE the terminator fix shipped. Plain
         // assembleMarkdown (not assembleMarkdownForEditor), matching what pre-upgrade
         // editorState.content would contain.
         let assembled = BlockParser.assembleMarkdown(from: existingBlocks)
@@ -118,15 +118,26 @@ struct BibliographyTerminatorTests {
         let trailingBlock = try #require(
             reparsed.last { $0.markdownFragment.contains("A trailing note the user typed") }
         )
+        // t-341706cb round 9: this used to pin the LEGACY carry-to-end-of-document behavior
+        // (tier 3 — "last title match anywhere, no evidence required" — would still open the
+        // section here and carry the flag all the way to this trailing paragraph). Tier 3 is
+        // now PERMANENTLY DELETED (see `BibliographyOpeningSelector`'s doc comment): with no
+        // marker and no terminator anywhere in this markdown, `select(_:)` finds no terminator
+        // at all and returns `.none` — nothing opens the section, so nothing gets flagged,
+        // including this trailing note. This is no longer a documented gap to route around; it
+        // IS the intended fix (bare-title-anywhere false-positive flagging is exactly the bug
+        // this task exists to close). The disclosed cost — a legacy, marker-less AND
+        // terminator-less document loses its bibliography flag on this path too — is accepted
+        // and covered separately by `BlockParser.parse`'s
+        // `strippingBibliographyMarkerFromBlocks` parameter (see `BibliographyOpeningSelector`'s
+        // "DISCLOSED CONSEQUENCES" #1).
         #expect(
-            trailingBlock.isBibliography == true,
+            trailingBlock.isBibliography == false,
             """
-            EXPECTED, DOCUMENTED GAP — not a regression: pre-upgrade content with no \
-            terminator still carries isBibliography to the end of the document on a full \
-            reparse, exactly as before this fix. This self-heals on first touch: the next \
-            time editorState.content is rebuilt from blocks (Source Mode toggle, any \
-            flushContentToDatabase() call), assembleMarkdownForEditor adds the terminator \
-            going forward. See BlockParser.bibliographyEndMarker's doc comment.
+            NEW, INTENDED BEHAVIOR (t-341706cb) — not a gap: with tier 3 deleted, a full \
+            reparse with no marker and no terminator anywhere selects nothing at all, so this \
+            trailing paragraph — exactly the false-positive text this task exists to stop \
+            silently dropping from exports — is correctly left unflagged.
             """
         )
     }

@@ -112,13 +112,68 @@ extension SectionSyncService {
 
     /// Inject bibliography marker before the bibliography section header
     /// Used when building sourceContent for CodeMirror (follows section anchor pattern)
+    ///
+    /// Unlike sites A (`BlockParser`) and B (`SectionSyncService.parseHeaders`), this site had no
+    /// content tokenizer at all before this redesign — the entire function used to be one
+    /// `regex.firstMatch(...)` against the whole string, followed by an unconditional insert at
+    /// whatever it found (or an unconditional early return if it found nothing). There was no
+    /// marker `.contains` check, no terminator scan, and no "last match anywhere" fallback; see
+    /// `git show 097e4ba1:"final final/Services/SectionSyncService+Anchors.swift"` for that exact
+    /// prior shape. It now enumerates `markdown` BY LINE (same granularity as site B, via
+    /// `enumerateSubstrings(.byLines)`) into a `[BibliographyOpeningSelector.Unit]` sequence and
+    /// delegates the actual decision to `BibliographyOpeningSelector.select` — see that type's
+    /// doc comment for the full two-tier rule and why tier 3 was deleted rather than weakened.
+    ///
+    /// This site's predicates:
+    /// - `isMarker`: `line.contains("<!-- ::auto-bibliography:: -->")` (mirrors the old
+    ///   document-wide `.contains` check — now per-line, but the FIRST line satisfying it is
+    ///   still unit index 0's marker match, matching the old unconditional-first-match
+    ///   behavior).
+    /// - `isTerminator`: the trimmed line exactly equals `BlockParser.bibliographyEndMarker`
+    ///   (mirrors the old exact-equality scan; a glued/doubled marker line can CONTAIN the
+    ///   terminator literal without ever being the terminator itself, so a substring search
+    ///   would bind the wrong bound).
+    /// - `isCandidate`: the existing anchored regex (`#{1,2} <escaped effectiveBibliographyHeaderName>`,
+    ///   with optional `@sid` anchor prefix) matches that line. Regex match `NSRange`s are
+    ///   mapped onto the line sequence below by locating which line each match's start falls
+    ///   within.
+    /// - `isHeading`: any line matching a `#{1,6}\s` heading pattern, with the SAME optional
+    ///   `@sid` anchor prefix `isCandidate` tolerates — broader than `isCandidate` otherwise (a
+    ///   heading that ISN'T the bibliography title still counts as a heading for run-emptiness
+    ///   purposes, matching must-fix 1's intent). The anchor-prefix tolerance matters because
+    ///   every production caller pipes `injectSectionAnchors(...)` output straight into this
+    ///   function, so a non-candidate heading in the run is anchor-prefixed too
+    ///   (`<!-- @sid:UUID --># Chapter`) and would otherwise fail the bare pattern (the line
+    ///   starts with `<!--`), getting miscounted as content instead of excluded as a heading.
+    ///   Unlike sites A/B, this site has no code-fence or Notes-latch gating at all (row 9 of
+    ///   the per-site behavior table), so `isHeading`/`isCandidate`/`isTerminator` are computed
+    ///   unconditionally per line.
+    /// - `isEmpty`: blank/whitespace-only lines.
+    ///
+    /// `.marker` -> return `markdown` unchanged (the markdown already unambiguously identifies
+    /// its own bibliography heading; injecting a SECOND marker onto some other line, e.g. a
+    /// bare-title heading that merely shares the bibliography's title, would leave two markers
+    /// in the document — `BlockParser.parse`'s own tier 1 then takes the FIRST marker it finds
+    /// in raw-block order, which need not be the one this function would otherwise have
+    /// chosen). `.none` -> ALSO return `markdown` unchanged — this is a deliberate behavior
+    /// change from before, not a preserved one: the old code (see the doc comment above) had no
+    /// tier concept and no terminator concept at all — it simply took `regex.firstMatch`'s
+    /// result, i.e. the FIRST title-matching heading anywhere in the document, and wrote onto it
+    /// unconditionally whenever one existed. That could write a real marker onto an EARLIER
+    /// decoy heading that merely shares the bibliography title (with the genuine, terminator-
+    /// bounded section sitting further down), or onto a heading with no real content beneath it
+    /// at all — exactly the shapes `BlockParser` now deliberately refuses to flag. Both paths are
+    /// closed here: nothing is written unless `select` finds real evidence. `.candidate(i)` ->
+    /// insert the marker at that line's start range — matching the old code's own insertion
+    /// mechanics (insert at the matched heading's start), just now gated on `select`'s evidence
+    /// instead of firing unconditionally on the first regex match.
     /// - Parameters:
     ///   - markdown: The markdown content (with section anchors already injected)
     ///   - sections: Current sections to identify bibliography
     /// - Returns: Markdown with bibliography marker injected before the bibliography header
     func injectBibliographyMarker(markdown: String, sections: [SectionViewModel]) -> String {
-        // Find the bibliography section
-        guard let bibSection = sections.first(where: { $0.isBibliography }) else {
+        // Bail if there is no bibliography section at all.
+        guard sections.contains(where: { $0.isBibliography }) else {
             return markdown
         }
 
@@ -140,22 +195,71 @@ extension SectionSyncService {
         let anchorPrefixPattern = #"(<!-- @sid:[0-9a-fA-F-]+ -->)?"#
         let escapedHeaderName = NSRegularExpression.escapedPattern(for: bibHeaderName)
         let headerPattern = "^" + anchorPrefixPattern + #"#{1,2} \#(escapedHeaderName)$"#
+        // `isHeading` below needs this SAME anchor-prefix tolerance: every production caller of
+        // this function pipes `injectSectionAnchors(...)` output straight in, so a non-candidate
+        // heading sitting between the selected candidate and the terminator is anchor-prefixed
+        // (`<!-- @sid:UUID --># Chapter`) exactly like the candidate heading itself. Without this,
+        // such a line's bare `#{1,6}\s` check fails (the line starts with `<!--`), so it gets
+        // scored as CONTENT rather than excluded as a heading -- letting this site select and
+        // permanently WRITE a marker onto a heading `BlockParser` deliberately refuses to flag.
+        let headingLinePattern = "^" + anchorPrefixPattern + #"#{1,6}\s"#
 
         guard let regex = try? NSRegularExpression(pattern: headerPattern, options: [.anchorsMatchLines]) else {
             return markdown
         }
 
         let nsRange = NSRange(markdown.startIndex..., in: markdown)
-        guard let match = regex.firstMatch(in: markdown, options: [], range: nsRange),
-              let range = Range(match.range, in: markdown) else {
-            return markdown
+        let matches = regex.matches(in: markdown, options: [], range: nsRange)
+
+        // Tokenize the markdown by line -- see this function's doc comment.
+        var lineRanges: [Range<String.Index>] = []
+        markdown.enumerateSubstrings(in: markdown.startIndex..<markdown.endIndex, options: .byLines) { _, lineRange, _, _ in
+            lineRanges.append(lineRange)
         }
 
-        // Insert the marker at the start of the matched range (before any anchor)
-        var result = markdown
-        let marker = "<!-- ::auto-bibliography:: -->"
-        result.insert(contentsOf: marker, at: range.lowerBound)
-        return result
+        // Map each regex match's start position onto the line it falls within, so isCandidate
+        // can be a per-line boolean like every other predicate.
+        var candidateLineIndices: Set<Int> = []
+        for match in matches {
+            guard let matchStart = Range(match.range, in: markdown)?.lowerBound else { continue }
+            if let lineIndex = lineRanges.firstIndex(where: { $0.contains(matchStart) || $0.upperBound == matchStart }) {
+                candidateLineIndices.insert(lineIndex)
+            }
+        }
+
+        let units: [BibliographyOpeningSelector.Unit] = lineRanges.enumerated().map { index, range in
+            let line = String(markdown[range])
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            return BibliographyOpeningSelector.Unit(
+                isMarker: line.contains("<!-- ::auto-bibliography:: -->"),
+                isTerminator: trimmed == BlockParser.bibliographyEndMarker,
+                isCandidate: candidateLineIndices.contains(index),
+                isHeading: trimmed.range(of: headingLinePattern, options: .regularExpression) != nil,
+                isEmpty: trimmed.isEmpty,
+                isStandaloneMarker: trimmed == BlockParser.bibliographyStartMarker
+            )
+        }
+
+        // Site C bails on ANY marker, supported or not — independent of the selector's tier-1
+        // support rule. This is a genuine, deliberate BEHAVIOR CHANGE from before this redesign,
+        // not a preserved one: the old function (see the doc comment above) had no marker check
+        // at all and would happily write a second marker onto whatever `regex.firstMatch` found,
+        // even into a document that already carried one elsewhere. That guard is new here because
+        // falling through to tier 2 in a document that already has a marker would insert a SECOND
+        // marker; `BlockParser.parse` then takes the FIRST marker it finds in raw-block order,
+        // which need not be this one — so a second write here could silently pick the wrong
+        // opening for every other reader of the document.
+        guard !units.contains(where: { $0.isMarker }) else { return markdown }
+
+        switch BibliographyOpeningSelector.select(units) {
+        case .marker, .none:
+            return markdown
+        case .candidate(let index):
+            var result = markdown
+            let marker = "<!-- ::auto-bibliography:: -->"
+            result.insert(contentsOf: marker, at: lineRanges[index].lowerBound)
+            return result
+        }
     }
 
     /// Strip bibliography marker from markdown

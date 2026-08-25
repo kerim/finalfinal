@@ -506,6 +506,8 @@ extension BibliographySectionFlagTests {
         # References
 
         Doe, J. (2020). An Early Paper.
+
+        <!-- ::auto-bibliography-end:: -->
         """
         let content2 = """
         # Introduction
@@ -517,6 +519,8 @@ extension BibliographySectionFlagTests {
         Doe, J. (2020). An Early Paper.
 
         Smith, A. (2021). A Later Paper.
+
+        <!-- ::auto-bibliography-end:: -->
         """
 
         let db = try TestFixtureFactory.createTemporary(content: content1)

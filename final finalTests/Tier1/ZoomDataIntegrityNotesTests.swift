@@ -133,6 +133,12 @@ extension ZoomDataIntegrityTests {
 
     @Test("replaceBlocksInRange never inserts a duplicate Bibliography row; the existing one survives untouched")
     func replaceBlocksInRangeProtectsBibliographyRow() throws {
+        // t-341706cb round 9: tier 3 (bare-title-anywhere) is deleted, so a bare-title heading
+        // now needs a genuine terminator-bounded, non-empty run to be recognized as evidence —
+        // see `BibliographyOpeningSelector`. The terminator below is real evidence a generated
+        // bibliography would carry (`BlockParser+Assembly.swift` writes it after the last
+        // bibliography block); it produces zero Blocks itself, so `bibEntryBefore`'s lookup
+        // below still finds exactly the one real entry paragraph.
         let content = """
         # Title
 
@@ -143,6 +149,8 @@ extension ZoomDataIntegrityTests {
         # Bibliography
 
         Smith, J. (2020). Example reference.
+
+        <!-- ::auto-bibliography-end:: -->
         """
         let db = try TestFixtureFactory.createTemporary(content: content)
         let pid = try TestFixtureFactory.getProjectId(from: db)

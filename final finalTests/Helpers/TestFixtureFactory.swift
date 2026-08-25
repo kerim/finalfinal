@@ -151,6 +151,8 @@ enum TestFixtureFactory {
     Smith, J. (2023). Balancing openness and cultural protocols in language archives. *Journal of Language Documentation*, 15(2), 112-134.
 
     Wilkinson, M. D., et al. (2016). The FAIR Guiding Principles for scientific data management. *Scientific Data*, 3, 160018.
+
+    <!-- ::auto-bibliography-end:: -->
     """
 
     // MARK: - Fixture Creation

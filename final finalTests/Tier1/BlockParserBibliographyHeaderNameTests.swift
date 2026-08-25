@@ -135,10 +135,17 @@ struct InjectBibliographyMarkerMatchingTests {
     @Test("An H2 bibliography heading gets the marker, uncorrupted")
     @MainActor
     func h2BibliographyHeadingGetsMarkerUncorrupted() {
+        // t-341706cb round 9: `injectBibliographyMarker` now requires a genuine
+        // terminator-bounded, non-empty run before it will write a marker at all — no
+        // terminator means `.none` and the markdown returns UNCHANGED (see
+        // `BibliographyOpeningSelector` and this function's `.marker, .none: return markdown`
+        // branch). The terminator below is real evidence a generated bibliography would carry.
         let markdown = """
         ## Bibliography
 
         Entry one.
+
+        <!-- ::auto-bibliography-end:: -->
         """
         let sections = [section(title: "Bibliography", headerLevel: 2, isBibliography: true)]
         let syncService = SectionSyncService()
@@ -158,6 +165,13 @@ struct InjectBibliographyMarkerMatchingTests {
     @Test("An earlier heading that's a textual prefix of the bibliography name is not matched")
     @MainActor
     func earlierPrefixHeadingIsNotMatched() {
+        // t-341706cb round 9: `injectBibliographyMarker` now requires a genuine
+        // terminator-bounded, non-empty run before it will write a marker at all — no
+        // terminator means `.none` and the markdown returns UNCHANGED (see
+        // `BibliographyOpeningSelector` and this function's `.marker, .none: return markdown`
+        // branch). The terminator below is real evidence a generated bibliography would carry,
+        // bounding the run under the real "# Bibliography" heading (not the earlier, unrelated
+        // "# Bibliography Notes" heading, which stays a non-candidate either way).
         let markdown = """
         # Bibliography Notes
 
@@ -166,6 +180,8 @@ struct InjectBibliographyMarkerMatchingTests {
         # Bibliography
 
         Entry one.
+
+        <!-- ::auto-bibliography-end:: -->
         """
         let sections = [
             section(title: "Bibliography Notes", headerLevel: 1, isBibliography: false),

@@ -377,7 +377,15 @@ struct StructuralUndoControllerTests {
         // the reparse re-derives a "Bibliography" heading, which `replaceBlocks`' title-match
         // preservation (Database+BlocksReplace.swift's `applyPreservedHeading`) then re-attaches
         // to this same bibId with isBibliography carried over.
-        fixture.editorState.content += "\n\n# Bibliography\n"
+        //
+        // t-341706cb round 8: a bare "# Bibliography" heading with nothing beneath it is no
+        // longer enough -- tier 3 is deleted, and `hasGenuineBibliographyRun`'s restore gate
+        // (Database+BlocksReplace.swift) requires a real, terminator-bounded run before it will
+        // OR a stale flag back onto a heading the fresh parse didn't recognise on its own. An
+        // entry line + terminator gives the fresh parse genuine evidence to recognise
+        // "Bibliography" directly, which reattaches to this same bibId via the title-match
+        // preservation exactly as before.
+        fixture.editorState.content += "\n\n# Bibliography\n\nEntry one.\n\n\(BlockParser.bibliographyEndMarker)\n"
 
         let ok = await fixture.controller.performSectionDelete(rootId: bibId)
         // Judge round 2 fix (must-fix 3): refused via the read-only `precheck` hook, before

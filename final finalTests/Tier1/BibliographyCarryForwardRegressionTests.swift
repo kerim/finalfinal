@@ -89,8 +89,8 @@ struct BibliographyCarryForwardRegressionTests {
 
     @Test(
         """
-        A non-matching heading immediately after a real auto-bibliography marker closes the \
-        section on itself (pre-existing behavior, unaffected by this fix)
+        A standalone marker followed by a non-matching heading, with no terminator, is an \
+        unsupported orphan and flags nothing
         """
     )
     func recognisedHeadingNeedsNoCarry() throws {
@@ -104,27 +104,32 @@ struct BibliographyCarryForwardRegressionTests {
         Trailing user note.
         """
         let parsed = BlockParser.parse(markdown: content, projectId: "p")
-        #expect(try BibliographyCarryForwardSupport.isFlagged(parsed, "auto-bibliography"), "The marker block itself is flagged")
-        // NOTE: this deviates from the plan's original expectation. Traced directly against
-        // `BlockParser.sectionFlagCarriedForward` (unmodified by this fix): "an opening heading
-        // turns it on, any *other* heading turns it off" — the flag is evaluated for the SAME
-        // block being classified, so a heading that doesn't itself match a recognised
-        // bibliography title closes the section ON ITSELF, not just for blocks after it. In
-        // real production content this branch is never reached with an unrecognised heading —
-        // the marker's own generator (`BibliographySyncService.generateBibliographyMarkdown`)
-        // always writes a heading whose text matches the configured name, and Source Mode
-        // already strips the marker out of `editorState.content` before parse() ever sees it
-        // (see `isBibliographyHeading`'s doc comment) — so this test exists only to pin the
-        // pre-existing, unmodified behavior of a synthetic edge case, not to exercise this
-        // task's carry-forward (which never runs here: this test calls `parse()` directly, not
-        // `replaceBlocks`).
+        #expect(
+            try BibliographyCarryForwardSupport.isFlagged(parsed, "auto-bibliography") == false,
+            "The marker block itself is not flagged"
+        )
+        // This fixture is a standalone marker (nothing glued to it, i.e. it sits on its own
+        // line/unit) immediately followed by a heading that is NOT a recognised
+        // bibliography-title candidate — a synthetic/unrecognised heading — with no terminator
+        // anywhere in the content. That is exactly the orphan shape the later orphan-marker fix
+        // (this same task, a follow-up round after the one this comment originally referenced)
+        // now correctly excludes from tier 1:
+        // `BibliographyOpeningSelector.markerIsSupported` treats a standalone marker as
+        // supported only when the next non-empty unit is a bibliography-title candidate, and
+        // the synthetic heading used here deliberately isn't one. So tier 1 no longer selects
+        // this marker. Tier 2 needs a terminator to select a candidate heading, and this content
+        // has none, so tier 2 also returns nothing. Nothing opens the section anywhere in this
+        // document — not the marker block, not the heading, not the entries, not the trailing
+        // note. This test still calls `parse()` directly rather than `replaceBlocks`, so the
+        // 097e4ba1 carry-forward machinery never runs here — that part of the original
+        // reasoning is unaffected by the orphan-marker fix.
         #expect(
             try BibliographyCarryForwardSupport.isFlagged(parsed, BibliographyCarryForwardSupport.syntheticHeader) == false,
-            "A non-matching heading closes the just-opened section on itself"
+            "The non-matching heading is unflagged — nothing opens the section for it to close"
         )
         #expect(
             try BibliographyCarryForwardSupport.isFlagged(parsed, "Entry one.") == false,
-            "Nothing reopens the section after the closing heading"
+            "Nothing opens the section, so entries are never flagged either"
         )
         #expect(try BibliographyCarryForwardSupport.isFlagged(parsed, "Trailing user note.") == false)
     }
@@ -148,11 +153,23 @@ struct BibliographyCarryForwardRegressionTests {
         Entry one.
 
         Entry two.
+
+        \(BlockParser.bibliographyEndMarker)
         """
         // No manual flagging: BlockParser.parse() recognises the built-in "References" title
         // on its own, so the heading and its entries are already correctly flagged before this
         // test ever touches them — unlike every other test in this file, which relies on
         // `flag()` to simulate a heading title parse() can't recognise.
+        //
+        // t-341706cb round 8: this content now carries an explicit terminator, which it didn't
+        // need to before. Tier 3 ("no marker, no terminator -> last/only title match still
+        // wins") is deleted outright by round 8 -- without a terminator here,
+        // `BibliographyOpeningSelector` would now select NOTHING for this content, and this
+        // test's own premise (parse() recognises "References" ON ITS OWN, with no help) would
+        // no longer hold. The terminator restores tier 2 (terminator-bounded, genuine
+        // non-empty run) as the evidence parse() recognises the heading by -- the actual thing
+        // this test exists to pin (that a HEALTHY, parser-recognised heading needs no
+        // carry-forward help) is unaffected by which tier supplied that recognition.
         let (db, projectId) = try BibliographyCarryForwardSupport.seed(content: content, flagged: [])
 
         let before = try BibliographyCarryForwardSupport.blocks(db, projectId)
@@ -192,6 +209,11 @@ struct BibliographyCarryForwardRegressionTests {
         """
     )
     func preservingMachineManagedBlocksPathIsUnaffected() throws {
+        // t-341706cb round 8: carries an explicit terminator for the same reason as
+        // healthyRecognisedHeadingThroughReplaceBlocksNeedsNoCarry above -- with tier 3
+        // deleted, parse() needs terminator-bounded evidence to recognise "References" on
+        // its own; this test's premise (the heading and entries start out flagged before the
+        // preservingMachineManagedBlocks: true branch is ever exercised) depends on that.
         let content = """
         # Intro
 
@@ -202,6 +224,8 @@ struct BibliographyCarryForwardRegressionTests {
         Entry one.
 
         Entry two.
+
+        \(BlockParser.bibliographyEndMarker)
         """
         let (db, projectId) = try BibliographyCarryForwardSupport.seed(content: content, flagged: [])
 

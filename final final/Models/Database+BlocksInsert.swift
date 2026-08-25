@@ -90,16 +90,22 @@ extension ProjectDatabase {
     /// `processEditorDeletes` would refuse to let the user delete it.
     ///
     /// Containment is also suppressed — forced `false` regardless of anchor/next-block
-    /// flags — when the INSERTED fragment is itself a heading that is NOT the
-    /// bibliography-opening heading. Without this, pasting e.g. "## Discussion" between two
+    /// flags — when the INSERTED fragment is itself a heading that does NOT carry the
+    /// bibliography-opening marker. Without this, pasting e.g. "## Discussion" between two
     /// flagged bibliography entries would inherit `isBibliography = true` from its
     /// surroundings, contradicting `BlockParser.sectionFlagCarriedForward`'s rule that ANY
     /// non-matching heading ends the section on a full reparse — and with real teeth here:
     /// `processEditorDeletes`'s safety net would refuse to let the user delete that heading,
     /// and the next bibliography regeneration's flagged-row `deleteAll` would remove it
-    /// outright. The bibliography-opening-heading case itself (e.g. "# References" pasted
+    /// outright. Deliberately MARKER-ONLY (`BlockParser.hasBibliographyMarker`), not
+    /// `BlockParser.isBibliographyHeading`'s broader bare-title match: this single-fragment
+    /// insert path has no document context with which to tell the real bibliography heading
+    /// apart from a user heading that merely shares its title (e.g. a chapter titled
+    /// "Bibliography") — accepting a bare title here would flag that user heading regardless
+    /// of where it's inserted, exactly the false-positive this whole fix removes. The
+    /// bibliography-opening-heading case itself (e.g. a marker-carrying "# References" pasted
     /// directly) is unaffected — that one is flagged `true` independently by
-    /// `buildInsertedBlock`'s own `isBibliographyHeading` check, OR'd in below.
+    /// `buildInsertedBlock`'s own `hasBibliographyMarker` check, OR'd in below.
     ///
     /// Both no-anchor branches (doc-start insert, shared-counter fallback) always resolve
     /// `false` — a block with no bibliography anchor on either side can never be "inside" the
@@ -114,7 +120,7 @@ extension ProjectDatabase {
         let insertTrimmed = insert.markdownFragment.trimmingCharacters(in: .whitespacesAndNewlines)
         let isNonBibliographyHeadingInsert =
             insertTrimmed.range(of: "^(#{1,6})\\s+", options: .regularExpression) != nil
-            && !BlockParser.isBibliographyHeading(insertTrimmed)
+            && !BlockParser.hasBibliographyMarker(insertTrimmed)
 
         let resolvedAfterId = insert.afterBlockId.map { idMapping[$0] ?? $0 }
         if let afterId = resolvedAfterId,
@@ -195,11 +201,14 @@ extension ProjectDatabase {
         block.recalculateWordCount()
 
         // isBibliography: containment resolved by the caller (resolveInsertPlacement) OR'd
-        // with the independent case of the inserted fragment itself being the
-        // bibliography-opening heading (e.g. "# References" typed/pasted directly) — that
-        // heading is "inside" the section it opens regardless of anchor placement.
+        // with the independent case of the inserted fragment itself carrying the
+        // bibliography-opening MARKER (e.g. a marker-carrying "# References" typed/pasted
+        // directly) — that heading is "inside" the section it opens regardless of anchor
+        // placement. Deliberately marker-only, not `BlockParser.isBibliographyHeading`'s
+        // broader bare-title match: see `resolveInsertPlacement`'s doc comment for why this
+        // single-fragment path can't safely adopt a heading by title alone.
         block.isBibliography = isBibliographyContainment
-            || (blockType == .heading && BlockParser.isBibliographyHeading(insertTrimmed))
+            || (blockType == .heading && BlockParser.hasBibliographyMarker(insertTrimmed))
 
         // Mark footnote definitions as isNotes (safety net for editor-created blocks)
         if insertTrimmed.range(of: #"^\[\^\d+\]:\s*"#, options: .regularExpression) != nil {

@@ -271,11 +271,6 @@ extension ContentView {
                 let savedContent = try documentManager.loadContent()
 
                 if let savedContent = savedContent, !savedContent.isEmpty {
-                    let cleanContent = SectionSyncService.stripBibliographyMarker(from: savedContent)
-                    editorState.content = cleanContent
-                    // INTENTIONAL REPLACEMENT: initial project load (legacy content path).
-                    updateSourceContentIfNeeded(intentionalReplacement: true)
-
                     // Parse content into blocks for the new system
                     // Preserve existing section metadata if available
                     let existingSections = try db.fetchSections(projectId: pid)
@@ -284,11 +279,35 @@ extension ContentView {
                         metadata[section.title] = SectionMetadata(from: section)
                     }
 
+                    // Pass `savedContent` UNSTRIPPED so a genuine legacy
+                    // `<!-- ::auto-bibliography:: -->` marker still fires BlockParser.parse's
+                    // tier 1 -- with tier 3 deleted, a legacy document has no other evidence to
+                    // select the bibliography heading on (it predates the terminator too, so
+                    // tier 2 can't fire either). `strippingBibliographyMarkerFromBlocks: true`
+                    // removes the marker literal from each resulting block's own
+                    // markdownFragment, so it never leaks into the editor from here.
                     let blocks = BlockParser.parse(
-                        markdown: cleanContent,
+                        markdown: savedContent,
                         projectId: pid,
-                        existingSectionMetadata: metadata.isEmpty ? nil : metadata
+                        existingSectionMetadata: metadata.isEmpty ? nil : metadata,
+                        strippingBibliographyMarkerFromBlocks: true
                     )
+
+                    // editorState.content MUST be the STRIPPED content -- assembleMarkdownForEditor
+                    // is built from the parsed blocks' own (already marker-stripped)
+                    // markdownFragments, so it never carries the raw marker literal into
+                    // Milkdown/the editor. Only the parse() call above uses unstripped text.
+                    //
+                    // Assigned BEFORE the throwing `db.replaceBlocks` call below, deliberately:
+                    // `assembleMarkdownForEditor(from: blocks)` only needs the already-computed
+                    // `blocks` array, not a successful database write. If `replaceBlocks` throws,
+                    // the catch block at the bottom of this function only logs -- so leaving this
+                    // assignment on the far side of that call would show the user an EMPTY
+                    // document instead of their actual (just-parsed) content.
+                    editorState.content = BlockParser.assembleMarkdownForEditor(from: blocks)
+                    // INTENTIONAL REPLACEMENT: initial project load (legacy content path).
+                    updateSourceContentIfNeeded(intentionalReplacement: true)
+
                     try db.replaceBlocks(blocks, for: pid)
                 } else {
                     editorState.content = ""

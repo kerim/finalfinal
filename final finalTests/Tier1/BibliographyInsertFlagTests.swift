@@ -155,8 +155,8 @@ struct BibliographyInsertFlagTests {
         )
     }
 
-    @Test("Heading-fragment insert with no anchor at all is flagged regardless of placement")
-    func headingFragmentInsertIsFlaggedRegardlessOfAnchor() throws {
+    @Test("Marker-carrying heading-fragment insert with no anchor at all is flagged regardless of placement")
+    func markerCarryingHeadingFragmentInsertIsFlaggedRegardlessOfAnchor() throws {
         let db = try TestFixtureFactory.createTemporary(content: TestFixtureFactory.richTestContent)
         let pid = try TestFixtureFactory.getProjectId(from: db)
 
@@ -165,7 +165,7 @@ struct BibliographyInsertFlagTests {
                 tempId: "temp-heading",
                 blockType: "heading",
                 textContent: "References",
-                markdownFragment: "# References",
+                markdownFragment: "<!-- ::auto-bibliography:: --># References",
                 headingLevel: 1,
                 afterBlockId: nil
             )
@@ -180,11 +180,45 @@ struct BibliographyInsertFlagTests {
         #expect(
             newBlock.isBibliography == true,
             """
-            A bibliography-opening heading fragment must be flagged even with no anchor \
-            (falls through to the shared-counter placement, whose containment always \
-            resolves false) — this is the independent heading-fragment special case, \
-            OR'd with containment
+            A marker-carrying heading fragment must be flagged even with no anchor (falls \
+            through to the shared-counter placement, whose containment always resolves \
+            false) — this is the independent heading-fragment special case, OR'd with \
+            containment
             """
+        )
+    }
+
+    @Test("Bare-title heading-fragment insert with no anchor and no marker is NOT flagged")
+    func bareTitleHeadingFragmentInsertIsNotFlaggedRegardlessOfAnchor() throws {
+        // Before this fix, a bare title match alone (no marker) was enough to flag this
+        // heading true via `BlockParser.isBibliographyHeading`'s broader bare-title check --
+        // meaning a user typing or pasting an ordinary "# References" chapter heading
+        // anywhere in the document got silently adopted as the bibliography heading. The
+        // insert path is now marker-only (`BlockParser.hasBibliographyMarker`); a bare title
+        // alone must never flag it, however it's anchored.
+        let db = try TestFixtureFactory.createTemporary(content: TestFixtureFactory.richTestContent)
+        let pid = try TestFixtureFactory.getProjectId(from: db)
+
+        let changes = BlockChanges(inserts: [
+            BlockInsert(
+                tempId: "temp-heading-bare",
+                blockType: "heading",
+                textContent: "References",
+                markdownFragment: "# References",
+                headingLevel: 1,
+                afterBlockId: nil
+            )
+        ])
+
+        let mapping = try db.applyBlockChangesFromEditor(changes, for: pid)
+        let newId = try #require(mapping["temp-heading-bare"])
+
+        let blocksAfter = try TestFixtureFactory.fetchBlocks(from: db)
+        let newBlock = try #require(blocksAfter.first { $0.id == newId })
+
+        #expect(
+            newBlock.isBibliography == false,
+            "A bare-title heading fragment with no marker must never be adopted as the bibliography heading"
         )
     }
 
