@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **Export preferences now lets you rename what your bibliography heading is called** — type a new name (or clear the field to go back to the default, "Bibliography") and the open document's heading updates instantly, with no need to save or reopen. Renaming works correctly even after renaming more than once, and typing an old name back in is recognized. If another heading in the document already uses the exact name you're switching to, the rename is refused with an on-screen explanation instead of silently doing nothing.
+
+### Fixed
+
+- **A heading elsewhere in your document that happens to share your bibliography's exact title could be mistaken for the real bibliography, silently swallowing every heading that comes after it into the outline** — fixed, including a follow-up case where a genuine heading appearing later in the same run could still slip through undetected.
+- **Renaming your bibliography heading, or the app's own automatic detection of it, could create a second, duplicate bibliography instead of updating the existing one** — the app's internal "this is the bibliography" marker is now always kept accurate, instead of being re-derived from heading text every time.
+- **A custom bibliography heading name set in Export preferences wasn't consistently recognized everywhere the app looks for the bibliography** — five of the six places that check for it were still comparing against the default name, or an untrimmed version of your custom one, which could cause mismatches if your custom name had extra whitespace or special characters.
+- **Deleting a section, duplicating one, or restoring an old version could in rare cases silently strip your bibliography or Notes section of its special status, if the app's detection didn't recognize the heading during that operation** — fixed with a safety net that restores the correct status afterward.
+- **Editing your document's Notes (footnotes) section could occasionally fail to save until you typed something else afterward** — a regeneration of the Notes section could skip its own database sync, so the change wasn't picked up until your next keystroke.
+
 ## [0.2.126] - 2026-08-22
 
 ### Added
