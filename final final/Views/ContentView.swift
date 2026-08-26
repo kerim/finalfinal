@@ -96,6 +96,10 @@ struct ContentView: View {
     @State internal var pendingBibliographyRebuild = false
     @State internal var pendingNotesRebuild = false
 
+    // pendingBibliographyRebuildAfterZoom moved to EditorViewState -- see its doc comment
+    // there (near pendingSectionReorderRequest) for why a bare ContentView `@State` scalar
+    // doesn't reliably commit on a bare-constructed, never-mounted ContentView() in tests.
+
     /// N2 (Phase B remediation plan): honest failure reporting for sidebar section
     /// delete/duplicate. Previously any refusal or failure just logged to DebugLog and showed
     /// nothing to the user -- the three-way `StructuralOpOutcome` protocol lets
@@ -192,6 +196,9 @@ struct ContentView: View {
             .onReceive(NotificationCenter.default.publisher(for: .bibliographySectionChanged)) { _ in
                 handleBibliographySectionChanged()
             }
+            .onReceive(NotificationCenter.default.publisher(for: .bibliographyHeaderNameChanged)) { notification in
+                handleBibliographyHeaderNameChanged(notification)
+            }
             .onReceive(NotificationCenter.default.publisher(for: .notesSectionChanged)) { _ in
                 handleNotesSectionChanged()
             }
@@ -203,6 +210,9 @@ struct ContentView: View {
             }
             .onReceive(NotificationCenter.default.publisher(for: .didZoomOut)) { _ in
                 handleDidZoomOut()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .zoomStateCleared)) { _ in
+                handleZoomStateCleared()
             }
             .onReceive(NotificationCenter.default.publisher(for: .scrollToSection)) { notification in
                 if let sectionId = notification.userInfo?["sectionId"] as? String {
@@ -342,7 +352,8 @@ struct ContentView: View {
                 }
                 webView.evaluateJavaScript("window.FinalFinal.clearStructuralUndoRegistry()") { _, error in
                     if let error {
-                        DebugLog.log(.undo, "[ContentView] clearStructuralRegistry: clearStructuralUndoRegistry failed: \(error.localizedDescription)")
+                        DebugLog.log(.undo, "[ContentView] clearStructuralRegistry: clearStructuralUndoRegistry " +
+                            "failed: \(error.localizedDescription)")
                     }
                 }
             }

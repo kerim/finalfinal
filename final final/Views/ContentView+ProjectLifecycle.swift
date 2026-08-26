@@ -410,6 +410,7 @@ extension ContentView {
 
         suppressNextBibliographyRebuild = true
         pendingBibliographyRebuild = false
+        editorState.pendingBibliographyRebuildAfterZoom = false
         pendingNotesRebuild = false
         pendingFootnoteLabels.reset()
 

@@ -22,15 +22,22 @@
 //  header name. `.serialized` only orders this suite against its own tests (Swift Testing
 //  runs suites concurrently by default).
 //
-//  KNOWN, CURRENTLY-LATENT RISK -- not solved by the above: `ExportSettings.userDefaults`
-//  is a single process-wide static, not a per-suite or per-test value. For the entire
-//  window a test body above is running, ANY of the ~19 other test files that transitively
-//  call `BlockParser.isBibliographyHeading` (directly or indirectly) would read this
-//  suite's temporary store, not the real one. Nothing here prevents that race; it is only
-//  safe today because no other suite happens to use the literal header names
-//  ("Works Cited", etc.) this suite writes. A future suite that does would need its own
-//  explicit coordination with this one, not an assumption that `.serialized` or the
-//  isolated store already covers it.
+//  CROSS-SUITE RACE -- `ExportSettings.userDefaults` is a single process-wide static, not a
+//  per-suite or per-test value, and `.serialized` above only orders THIS suite's own tests
+//  against each other, not against other suites (Swift Testing runs different suites
+//  concurrently by default). This was documented here as a "known, currently-latent" risk
+//  until it stopped being latent: a full-suite run reproduced a failure caused by exactly
+//  this seam, in `BibliographyRenameGraceNameTests`, another suite that swaps this same
+//  static (the third is `ExportSettingsResetNotificationTests`). All 3 now share
+//  `exportSettingsTestLock` (see `ExportSettingsTestLock.swift`), acquired immediately
+//  before this suite's own swap above and released only after the restore in the `defer`
+//  below -- closing the race between any two of these three writers. This does NOT extend
+//  to a fourth kind of test: one that only ever READS via `BlockParser.isBibliographyHeading`'s
+//  default-argument `ExportSettings.load()` fallback without itself swapping the pointer --
+//  such a reader never acquires the lock, so it could still transiently observe one of these
+//  3 suites' throwaway stores while it holds the lock. That narrower risk is unchanged by
+//  this fix and, as before, is only safe today because no such reader test happens to use
+//  the literal header names these 3 suites write.
 //
 //  SCOPE -- this seam only reaches `BlockParser.isBibliographyHeading`, which calls
 //  `ExportSettings.load()` directly. It does NOT reach `ExportSettingsManager.shared`,
@@ -62,11 +69,17 @@ struct BlockParserBibliographyHeaderNameTests {
             Issue.record("Failed to create isolated UserDefaults suite for test")
             return
         }
+        // Cross-suite lock (see ExportSettingsTestLock.swift): must be acquired before the
+        // very first write to the shared `ExportSettings.userDefaults` pointer below, and
+        // held until it is fully restored -- this closes the "KNOWN, CURRENTLY-LATENT RISK"
+        // this file's own doc comment above previously only documented rather than fixed.
+        exportSettingsTestLock.lock()
         let previousStore = ExportSettings.userDefaults
         ExportSettings.userDefaults = suite
         defer {
             ExportSettings.userDefaults = previousStore
             suite.removePersistentDomain(forName: suiteName)
+            exportSettingsTestLock.unlock()
         }
 
         var settings = ExportSettings.default

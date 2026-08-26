@@ -454,9 +454,21 @@ final class BibliographySyncService {
         projectId: String,
         database: ProjectDatabase
     ) async throws {
-        // Read @MainActor property BEFORE entering GRDB write closure
-        let headerName = ExportSettingsManager.shared.effectiveBibliographyHeaderName
         try database.write { db in
+            // Re-derive the effective header name from INSIDE this serialized GRDB write
+            // section -- NOT from a read captured on the MainActor before this closure was
+            // scheduled to run (the prior shape here). `content`'s own heading text was
+            // already baked in by `generateBibliographyMarkdown`, called before this
+            // function, using whatever name was current at THAT moment. If a rename's write
+            // (`BibliographyHeadingRenamer.rename`) commits in between, that baked-in name
+            // goes stale. GRDB serializes writes, so reading the effective name again here --
+            // inside the write closure, rather than before it -- is what makes BOTH
+            // write-orderings converge on whichever name is actually current in settings at
+            // the moment EACH write actually commits, regardless of which of the two closures
+            // was scheduled first. See `BibliographyHeadingRenamer.rename`'s doc comment for
+            // the counterpart half of this fix (why IT doesn't need a busy-guard against this
+            // function).
+            let headerName = ExportSettings.load().effectiveBibliographyHeaderName
             // Fetch the existing bibliography blocks BEFORE deleting them, so the regenerated
             // bibliography can be reinserted back where the old one was, instead of always
             // landing past whatever the user has typed after it since. See the anchor/step
@@ -620,6 +632,15 @@ final class BibliographySyncService {
 
             for (index, fragment) in rawBlocks.enumerated() {
                 let isHeading = fragment.hasPrefix("#")
+                // Rewrite the heading's own markdown text to the freshly-read `headerName`
+                // too, not just `textContent` below -- otherwise a rename landing between
+                // this write being scheduled and it actually committing would leave the
+                // persisted `markdownFragment` (what both editors actually render) showing
+                // the stale name baked into `content` while `textContent` showed the fresh
+                // one, self-desyncing the very row this write is about to insert. Idempotent
+                // when the name hasn't changed: `fragment` already reads "# \(headerName)" in
+                // that case, so this just rebuilds the identical string.
+                let effectiveFragment = isHeading ? "# \(headerName)" : fragment
                 let textContent = isHeading
                     ? headerName
                     : BlockParser.extractTextContent(from: fragment, blockType: .paragraph)
@@ -628,7 +649,7 @@ final class BibliographySyncService {
                     sortOrder: start + Double(index) * step,
                     blockType: isHeading ? .heading : .paragraph,
                     textContent: textContent,
-                    markdownFragment: fragment,
+                    markdownFragment: effectiveFragment,
                     headingLevel: isHeading ? 1 : nil,
                     status: isHeading ? .final_ : nil,
                     wordCount: MarkdownUtils.wordCount(for: textContent),
