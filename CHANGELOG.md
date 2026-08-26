@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.127] - 2026-08-26
+
 ### Added
 
 - **Export preferences now lets you rename what your bibliography heading is called** — type a new name (or clear the field to go back to the default, "Bibliography") and the open document's heading updates instantly, with no need to save or reopen. Renaming works correctly even after renaming more than once, and typing an old name back in is recognized. If another heading in the document already uses the exact name you're switching to, the rename is refused with an on-screen explanation instead of silently doing nothing.
