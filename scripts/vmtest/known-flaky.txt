@@ -76,3 +76,15 @@ final finalUITests/EditorSmokeTests/testFocusModeToggle
 # regression coverage needs strengthening; this quarantine does not remove
 # unit-level coverage of the eviction behavior itself.
 final finalUITests/UnifiedUndoE2ETests/testEvictionCapEvictsOldestEntryAndStaysConsistent
+
+# Added 2026-08-27 during sd-wrap-up for t-18576cf7 (blank-document-open fix). Second
+# occurrence of the identical failure -- "First Cmd-Z should undo the automatic heading
+# correction, NOT the user's own typing -- the marker text should still be present
+# immediately afterward" -- first seen 2026-08-25 during an unrelated wrap-up
+# (bib-heading-false-positive) and deferred as t-e006ebc5. Neither branch that has
+# reproduced this touches heading-hierarchy auto-correction or undo/eviction code, and
+# both times an immediate scoped re-run of just this test passed cleanly. Reads as the
+# same suite-order/state-pollution class already documented for
+# testDeliberateNewListRestartsAtOne and testFocusModeToggle above. Quarantined rather
+# than root-caused; revisit t-e006ebc5 if it starts failing in isolation too.
+final finalUITests/EditorModeSwitchUndoE2ETests/testUndoAfterHeadingBreakingEditInWysiwyg
