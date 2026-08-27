@@ -98,6 +98,11 @@ declare global {
       insertAtCursor: (text: string) => void;
       insertBreak: () => void;
       focus: () => void;
+      /** True only once the editor instance exists AND its DOM is parented into #editor.
+       * Polled by Swift (MilkdownCoordinator+MessageHandlers.swift) before firing
+       * onWebViewReady -- page-load-complete alone fires well before this async mount
+       * actually finishes (t-18576cf7). */
+      isEditorReady: () => boolean;
       // Batch initialization for faster startup
       initialize: (options: {
         content: string;

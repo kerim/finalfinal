@@ -41,6 +41,7 @@ import {
   getContent,
   hasBlockChanges,
   insertImage,
+  replayPendingPreMountContent,
   resetEditorState,
   resetForProjectSwitch,
   scrollToBlock,
@@ -102,12 +103,15 @@ import { dropCursorPlugin } from './drop-cursor-plugin';
 import {
   clearContentPushTimer,
   getContentHasBeenSet,
-  getCurrentContent,
   getEditorInstance,
   getIsSettingContent,
+  getPendingBlockContent,
+  isEditorMounted,
   setContentPushTimer,
   setCurrentContent,
   setEditorInstance,
+  setEditorMounted,
+  setPendingBlockContent,
   setZoomFootnoteState,
 } from './editor-state';
 import { focusModePlugin, isFocusModeEnabled } from './focus-mode-plugin';
@@ -290,15 +294,21 @@ async function initEditor() {
 
     // Restore citation library from localStorage (survives editor toggle)
     restoreCitationLibrary();
-
-    // RACE CONDITION FIX: If content was set before editor was ready, load it now
-    // This handles the case where Swift calls initialize() before initEditor() completes
-    const currentContent = getCurrentContent();
-    if (currentContent?.trim()) {
-      window.FinalFinal.setContent(currentContent);
-    }
   } catch (e) {
     console.error('[Milkdown] Init failed:', e);
+    // M9: a failure here (e.g. inside Editor.make().create()) previously left any pre-mount
+    // pending content silently un-replayed AND un-cleared -- Swift's mount-readiness poll
+    // (notifyWebViewReadyWhenEditorReady) just times out at 3s onto a permanently editor-less
+    // page, with no signal that content was lost. Clear the stash and log so this is at least
+    // diagnosable instead of silently vanishing.
+    const pending = getPendingBlockContent();
+    if (pending) {
+      setPendingBlockContent(null);
+      syncLog(
+        'Bootstrap:initFailed',
+        `content lost: pending block content (len=${pending.markdown.length}, blocks=${pending.blockIds.length}) discarded after Editor.make().create() failure`
+      );
+    }
     throw e;
   }
 
@@ -396,6 +406,15 @@ async function initEditor() {
       }
     }, 150);
   };
+
+  // M8: the mount flag flips -- and therefore any pre-mount content replay it gates on the
+  // Swift side (notifyWebViewReadyWhenEditorReady) -- only AFTER view.dispatch above has been
+  // patched, so the replay's own transactions go through the SAME content-push-debounce and
+  // section-change tracking hooks as every other transaction, instead of silently bypassing
+  // them (previously this ran immediately after root.appendChild, well before the patch just
+  // above existed).
+  setEditorMounted(true);
+  replayPendingPreMountContent();
 
   // Handle auto-correct: intercept replacement text input to prevent heading corruption
   // macOS auto-correct uses DOM manipulation that can confuse ProseMirror's node structure,
@@ -542,6 +561,12 @@ window.FinalFinal = {
   insertBreak,
   focus,
   initialize,
+  // True only once the editor instance exists AND its DOM is parented into #editor -- see
+  // editor-state.ts's isEditorMounted doc comment. Polled by
+  // MilkdownCoordinator+MessageHandlers.swift's notifyWebViewReadyWhenEditorReady before
+  // firing onWebViewReady, closing the race where a page-load-complete callback fired well
+  // before this async mount actually finished (t-18576cf7).
+  isEditorReady: () => isEditorMounted(),
   // Annotation API
   setAnnotationDisplayModes,
   getAnnotations,

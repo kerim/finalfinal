@@ -314,6 +314,23 @@ struct MilkdownEditor: NSViewRepresentable {
         var isEditorReady = false
         var isCleanedUp = false
 
+        /// Fire-once token for `notifyWebViewReadyWhenEditorReady` (MilkdownCoordinator+
+        /// MessageHandlers.swift, t-18576cf7): both `didFinish` and `handlePreloadedView` can
+        /// call into that gate, and this ensures `onWebViewReady` only ever fires once from
+        /// whichever of (success, 3s timeout) reaches it first. `cleanup()` also sets this so
+        /// an in-flight poll can never call back into a torn-down coordinator.
+        var hasNotifiedWebViewReady = false
+
+        /// The `notifyWebViewReadyWhenEditorReady` readiness probe, overridable so tests can
+        /// simulate ready/not-ready without a real WKWebView JS engine round trip -- same seam
+        /// CodeMirrorContentPushGuardTests uses elsewhere in this file's sibling coordinator.
+        /// Default: the real `window.FinalFinal.isEditorReady()` evaluateJavaScript call.
+        var editorReadyProbe: (WKWebView, @escaping (Bool) -> Void) -> Void = { webView, completion in
+            webView.evaluateJavaScript("window.FinalFinal.isEditorReady()") { result, _ in
+                completion(result as? Bool == true)
+            }
+        }
+
         /// Current content state - used to suppress polling during transitions
         var contentState: EditorContentState = .idle
 

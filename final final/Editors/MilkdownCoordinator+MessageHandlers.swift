@@ -41,8 +41,10 @@ extension MilkdownEditor.Coordinator {
         // when switching from CodeMirror where CSL items were fetched)
         pushCachedCitationLibrary()
 
-        // Notify parent that WebView is ready (for find operations)
-        onWebViewReady?(webView)
+        // Notify parent that WebView is ready (for find operations) -- gated on the JS-side
+        // editor instance actually existing and being mounted, not just page load (see
+        // notifyWebViewReadyWhenEditorReady's doc comment).
+        notifyWebViewReadyWhenEditorReady(webView)
     }
 
     /// Push the effective CSL citation style (custom, if configured and valid, else bundled
@@ -88,9 +90,56 @@ extension MilkdownEditor.Coordinator {
         pushCitationStyle()
         pushCachedCitationLibrary()
 
-        // Notify parent that WebView is ready (for find operations)
+        // Notify parent that WebView is ready (for find operations) -- same editor-ready gate
+        // as didFinish above: a preloaded view's page load finished long before this moment,
+        // but that says nothing about whether main.ts's async Editor.make().create() has too.
         if let webView = webView {
+            notifyWebViewReadyWhenEditorReady(webView)
+        }
+    }
+
+    /// Fires `onWebViewReady` only once the Milkdown editor instance exists AND its view DOM
+    /// has been parented into `#editor` (window.FinalFinal.isEditorReady()). Both `didFinish`
+    /// and EditorPreloader's `.ready` state signal page load, which happens well before
+    /// `initEditor()`'s awaited `Editor.make().create()` resolves -- see main.ts. Firing
+    /// `onWebViewReady` (and therefore the first `setContentWithBlockIds` push, see
+    /// ContentView+ContentRebuilding.swift) before that resolves is exactly what let a
+    /// freshly-opened document's content get stashed and then silently dropped by a dead
+    /// replay guard (t-18576cf7's root cause).
+    ///
+    /// Polls every 50ms up to 3s, then fires regardless (better a possible race than a
+    /// permanently-unresponsive editor). `hasNotifiedWebViewReady` makes this fire-once: both
+    /// call sites above can call in, and the timeout branch can never fire after a success
+    /// already has (or vice versa). `isCleanedUp` plus the `self.webView === webView` identity
+    /// check stop an in-flight poll from calling back into a torn-down/re-mounted coordinator;
+    /// `cleanup()` also sets `hasNotifiedWebViewReady = true` for the same reason.
+    func notifyWebViewReadyWhenEditorReady(_ webView: WKWebView, attempt: Int = 0) {
+        guard !hasNotifiedWebViewReady, !isCleanedUp else { return }
+        guard self.webView === webView else { return } // torn down / re-mounted since this was scheduled
+        if attempt >= 60 { // 60 x 50ms = 3s
+            hasNotifiedWebViewReady = true
+            DebugLog.log(.lifecycle,
+                "[MilkdownEditor] editor-ready gate timed out after 3s -- firing onWebViewReady regardless")
             onWebViewReady?(webView)
+            return
+        }
+        editorReadyProbe(webView) { [weak self] ready in
+            guard let self, !self.hasNotifiedWebViewReady, !self.isCleanedUp else { return }
+            if ready {
+                self.hasNotifiedWebViewReady = true
+                DebugLog.log(.editor, "[MilkdownEditor] editor-ready gate satisfied at attempt \(attempt)")
+                self.onWebViewReady?(webView)
+            } else {
+                // [weak webView] (M13): a strong `webView` ref carried through this scheduled
+                // closure would otherwise keep a torn-down WKWebView's content process alive
+                // for up to 3s past dismantleNSView -- the `self.webView === webView` identity
+                // guard above already stops this poll from ACTING on a stale webView, but does
+                // nothing about the closure itself still RETAINING one via this capture.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self, weak webView] in
+                    guard let self, let webView else { return }
+                    self.notifyWebViewReadyWhenEditorReady(webView, attempt: attempt + 1)
+                }
+            }
         }
     }
 
@@ -123,18 +172,52 @@ extension MilkdownEditor.Coordinator {
                 return
             }
 
-            self.performBatchInitialize(content: content, theme: theme, cursor: cursor)
+            // `window.FinalFinal` itself is assigned synchronously at module top-level, well
+            // before main.ts's async `initEditor()` -> `Editor.make().create()` actually
+            // resolves and mounts the editor (see notifyWebViewReadyWhenEditorReady's doc
+            // comment) -- so the check above alone does NOT mean it's safe to push real
+            // content. Probe real mount status via the SAME signal that gate uses, before
+            // deciding (MF1 fix): pushing real content pre-mount used to route through
+            // api-modes.ts's initialize() -> setContent()'s no-instance branch, which stashes
+            // into the legacy `currentContent` slot instead of `pendingBlockContent` and gets
+            // replayed via a full re-parse that mints fresh temporary block IDs.
+            self.editorReadyProbe(webView) { editorMounted in
+                self.performBatchInitialize(content: content, theme: theme, cursor: cursor, editorMounted: editorMounted)
+            }
         }
     }
 
-    /// Actually perform the batch initialization after verifying FinalFinal exists
-    func performBatchInitialize(content: String, theme: String, cursor: CursorPosition?) {
+    /// Pure decision extracted for direct unit-testability (MF1, see
+    /// MilkdownEditorReadyGateTests.swift). Real content must never be pushed via
+    /// `initialize()` before the editor is mounted -- doing so lands it in the JS side's
+    /// legacy `currentContent` stash instead of the block-ID-preserving `pendingBlockContent`
+    /// one -- nor while `onWebViewReady` is already mid-push (isResettingContent).
+    static func effectiveBatchInitContent(content: String, isResettingContent: Bool, editorMounted: Bool) -> String {
+        (isResettingContent || !editorMounted) ? "" : content
+    }
+
+    /// Actually perform the batch initialization after verifying FinalFinal exists.
+    /// - Parameter editorMounted: whether `window.FinalFinal.isEditorReady()` reported the JS
+    ///   editor instance as mounted at the moment `batchInitialize()` probed it -- see
+    ///   `effectiveBatchInitContent` for the decision this drives.
+    func performBatchInitialize(content: String, theme: String, cursor: CursorPosition?, editorMounted: Bool) {
         guard let webView else { return }
 
-        // When isResettingContent is true, onWebViewReady will push content via
-        // setContentWithBlockIds() (which includes image metadata like width/caption).
-        // Skip content here to avoid a race where initialize() overwrites the metadata.
-        let effectiveContent = isResettingContentBinding.wrappedValue ? "" : content
+        // Skip content here whenever the editor isn't mounted yet OR isResettingContent is
+        // true (onWebViewReady is already mid-push via setContentWithBlockIds() -- see that
+        // closure in ContentView+ContentRebuilding.swift, which includes image metadata like
+        // width/caption that initialize() would otherwise race).
+        //
+        // MF1: editorMounted must be checked DIRECTLY, not inferred from isResettingContent.
+        // isResettingContent only flips true INSIDE onWebViewReady, which now itself waits on
+        // the same mount signal (notifyWebViewReadyWhenEditorReady) -- so by the time THIS
+        // method runs, isResettingContent can still be false even though onWebViewReady hasn't
+        // fired yet and the editor isn't mounted. Treating that as "safe to push" was the
+        // actual bug: it let real content reach window.FinalFinal.initialize() before mount.
+        let effectiveContent = Self.effectiveBatchInitContent(
+            content: content,
+            isResettingContent: isResettingContentBinding.wrappedValue,
+            editorMounted: editorMounted)
 
         // Always set lastPushedContent to the REAL content (not empty), so that
         // shouldPushContent() doesn't trigger a redundant push from updateNSView.
@@ -154,7 +237,7 @@ extension MilkdownEditor.Coordinator {
         }
 
         DebugLog.log(.editor,
-            "[batchInit] isResetting=\(isResettingContentBinding.wrappedValue) content=\(content.count) effective=\(effectiveContent.count)")
+            "[batchInit] isResetting=\(isResettingContentBinding.wrappedValue) editorMounted=\(editorMounted) content=\(content.count) effective=\(effectiveContent.count)")
 
         // Build options dictionary for JSON encoding
         // Using JSON instead of template literals handles ALL special characters safely

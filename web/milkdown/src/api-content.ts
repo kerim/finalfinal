@@ -36,9 +36,11 @@ import {
   clearContentPushTimer,
   getCurrentContent,
   getEditorInstance,
+  getPendingBlockContent,
   setContentHasBeenSet,
   setCurrentContent,
   setIsSettingContent,
+  setPendingBlockContent,
   setPendingSlashRedo,
   setPendingSlashUndo,
   setZoomFootnoteState,
@@ -176,6 +178,12 @@ export function setContent(markdown: string, options?: { scrollToStart?: boolean
   // - syncBlockIds() with explicit zoomMode parameter
   const editorInstance = getEditorInstance();
   if (!editorInstance) {
+    // MF3: whichever pre-mount stash was written LAST must win once main.ts's post-mount
+    // replay runs -- that replay unconditionally prefers pendingBlockContent when non-null,
+    // so a plain setContent() call that arrives AFTER an earlier setContentWithBlockIds()
+    // stash must clear it here, or the older, block-ID-bearing content would win instead of
+    // this newer plain push (replayPendingPreMountContent below).
+    setPendingBlockContent(null);
     setCurrentContent(markdown);
     return;
   }
@@ -412,6 +420,10 @@ export function resetForProjectSwitch(): void {
   resetBlockIdState();
   destroyBlockSyncState();
   setCurrentContent('');
+  // MF2: a pre-mount pendingBlockContent stash left over from the PREVIOUS project must not
+  // survive into this one -- otherwise the editor mounting later (or a delayed replay) would
+  // resurrect the previous project's content instead of the one now being switched to.
+  setPendingBlockContent(null);
   setContentHasBeenSet(false);
   setIsSettingContent(false);
   setPendingSlashUndo(false);
@@ -826,7 +838,13 @@ export function setContentWithBlockIds(
   setContentHasBeenSet(true);
   const editorInstance = getEditorInstance();
   if (!editorInstance) {
-    setCurrentContent(markdown);
+    // Editor instance doesn't exist yet (main.ts's initEditor() is still awaiting
+    // Editor.make().create()). Stash the FULL argument set so main.ts's post-mount replay
+    // can call setContentWithBlockIds again with the caller's real block UUIDs, image
+    // metadata, and cursor boundaries intact -- replaying through setContent() instead would
+    // re-parse and mint fresh block IDs (blockIdPlugin), destroying the real ones.
+    setPendingBlockContent({ markdown, blockIds, options });
+    setCurrentContent(markdown); // keep -- other readers still expect this
     return;
   }
 
@@ -973,6 +991,48 @@ export function setContentWithBlockIds(
     setIsSettingContent(false);
     // Delay snapshot + unpause to RAF so normalization transactions are absorbed
     deferredSnapshotAndUnpause(options?.detectPausedEdits ?? false, pausedPushBaseline);
+  }
+}
+
+/**
+ * Replay a content push that arrived before the editor instance existed, once the editor has
+ * just mounted (main.ts's `initEditor()`, called AFTER the dispatch-tracking hooks are
+ * installed, so the replay's own transactions go through the same content-push/section-change
+ * tracking as everything else -- see main.ts's doc comment).
+ *
+ * Both pre-mount no-instance branches above (`setContent`, `setContentWithBlockIds`) stash
+ * their argument(s) rather than applying them. This replays whichever stash was written LAST
+ * (MF3): `pendingBlockContent`, when non-null, always reflects the most recent pre-mount
+ * write -- `setContent`'s own no-instance branch clears it whenever IT runs later, so a
+ * non-null value here can only mean "the most recent pre-mount write was a
+ * setContentWithBlockIds() call," never a stale leftover from an earlier one.
+ *
+ * Replays through the SAME entry point the push originally came in on: `setContentWithBlockIds`
+ * carries the caller's real block UUIDs, image metadata, and cursor boundaries, which would be
+ * lost by round-tripping through `setContent`'s markdown-only re-parse (blockIdPlugin would
+ * mint fresh temporary IDs instead) -- the "destroying all real UUIDs (causing mass deletes)"
+ * hazard ContentView+ContentRebuilding.swift warns about.
+ *
+ * Exported (not inlined in main.ts) so the regression test in
+ * __tests__/pre-mount-content-push.test.ts exercises this exact production code path instead
+ * of a hand-copied duplicate (M20).
+ */
+export function replayPendingPreMountContent(): void {
+  const pending = getPendingBlockContent();
+  if (pending) {
+    setPendingBlockContent(null); // fire-once, before the call
+    setContentWithBlockIds(pending.markdown, pending.blockIds, pending.options);
+    return;
+  }
+  // Legacy/non-block callers (e.g. a plain setContent() that arrived pre-mount): the
+  // no-instance branch above always went through setCurrentContent() too, so replay it here
+  // -- clearing currentContent FIRST, since setContent()'s own `getCurrentContent() ===
+  // markdown` early-return guard would otherwise always match this exact value and silently
+  // swallow the replay (the bug this whole mechanism replaces).
+  const currentContent = getCurrentContent();
+  if (currentContent?.trim()) {
+    setCurrentContent('');
+    setContent(currentContent);
   }
 }
 

@@ -377,6 +377,7 @@
 		F59EF64CCCF90C58F831BC04 /* RadixScales.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C9A6AA1550623CEDFA4ACB8 /* RadixScales.swift */; };
 		F5D1AA51892593DBB494C393 /* BibliographyRegenerationPositionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 538DF289301C8DBF3B530432 /* BibliographyRegenerationPositionTests.swift */; };
 		F7939E166AA455D278D9A901 /* ExportFlushTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 84490CBC1C7AF23477F1345A /* ExportFlushTests.swift */; };
+		F82B7E8B257223571EF923F4 /* MilkdownEditorReadyGateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 78A94C62B1F250F4A5F1DE23 /* MilkdownEditorReadyGateTests.swift */; };
 		F950696D89BC55EE10A6A5A4 /* PreferencesView+Actions.swift in Sources */ = {isa = PBXBuildFile; fileRef = A97DAA603C9EB29DE79FB8EB /* PreferencesView+Actions.swift */; };
 		FA5C8D9CA08A0BB702BD0C7B /* HashBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0CEC9B25AB24040A17CC1589 /* HashBar.swift */; };
 		FA6E217F7950A15AEDE69960 /* AnnotationPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC5B8A956E441E29032AE5F9 /* AnnotationPanel.swift */; };
@@ -635,6 +636,7 @@
 		787A1493E6815DF1DA4E829D /* ImageImportService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageImportService.swift; sourceTree = "<group>"; };
 		788D4C2FB2475A38D3477A97 /* final finalTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "final finalTests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 		78926BF4B3C1DBA2A2E54E63 /* AutoBackupServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutoBackupServiceTests.swift; sourceTree = "<group>"; };
+		78A94C62B1F250F4A5F1DE23 /* MilkdownEditorReadyGateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MilkdownEditorReadyGateTests.swift; sourceTree = "<group>"; };
 		7934C3CFC3DB5223ABD429C6 /* BibliographyRegenerationEdgeCaseTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BibliographyRegenerationEdgeCaseTests.swift; sourceTree = "<group>"; };
 		7A4947E787A1E091BE060589 /* DiagnosticsSettingsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticsSettingsTests.swift; sourceTree = "<group>"; };
 		7C20C6E92294CD47FFE7539F /* MarkdownUtils.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownUtils.swift; sourceTree = "<group>"; };
@@ -1250,6 +1252,7 @@
 				307DA2CD982351B53E2CE918 /* LinkTrailingTextTests.swift */,
 				9BAFE720E2712E7FC9CE8824 /* MathSpecialCharsArgumentOrderTests.swift */,
 				A1136299C7BF49F9B8B7F5CA /* MathSpecialCharsExportTests.swift */,
+				78A94C62B1F250F4A5F1DE23 /* MilkdownEditorReadyGateTests.swift */,
 				547942135791365F536F7DFA /* PasteAboveHeadingOrderBugTests.swift */,
 				6496027A3F7CD0097F05A189 /* ProjectLifecycleTests.swift */,
 				71A4323A1557FDB03B354C28 /* RecentProjectsTests.swift */,
@@ -1525,11 +1528,11 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				D47917AFA657D56AB88775A5 /* GitStamp */,
-				D529D3B3388A2FCF4CDD62EF /* QuickLook Extension */,
 				4A3B93CDDB27C36925E7EC59 /* final final */,
+				D529D3B3388A2FCF4CDD62EF /* QuickLook Extension */,
 				48CF9BA009EA11ACC33BFB55 /* final finalTests */,
 				BD340BCA01ABBD8642AA6DA9 /* final finalUITests */,
+				D47917AFA657D56AB88775A5 /* GitStamp */,
 			);
 		};
 /* End PBXProject section */
@@ -1772,6 +1775,7 @@
 				FEB1FB9DF8BFEB282D0BAE93 /* MathBlockParserTests.swift in Sources */,
 				0FE6ECBF8F551028B552C202 /* MathSpecialCharsArgumentOrderTests.swift in Sources */,
 				33D75A040525127AEF5D5D03 /* MathSpecialCharsExportTests.swift in Sources */,
+				F82B7E8B257223571EF923F4 /* MilkdownEditorReadyGateTests.swift in Sources */,
 				BEA5FBE1BFD3B10ADDA665F0 /* NotesBlockEditorGuardTests.swift in Sources */,
 				A75FA2B1179FBB43CF746657 /* ObservableListDiffTests.swift in Sources */,
 				E581117BD3C50CC266680DE3 /* OutlineObservationTests.swift in Sources */,

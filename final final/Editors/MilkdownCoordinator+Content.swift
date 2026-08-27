@@ -13,6 +13,10 @@ extension MilkdownEditor.Coordinator {
 
     func cleanup() {
         isCleanedUp = true
+        // Stops notifyWebViewReadyWhenEditorReady's poll (MilkdownCoordinator+
+        // MessageHandlers.swift) from calling onWebViewReady?(webView) into this now-dead
+        // coordinator if a poll was still in flight when teardown happened.
+        hasNotifiedWebViewReady = true
         spellcheckTask?.cancel()
         spellcheckTask = nil
         pollingTimer?.invalidate()

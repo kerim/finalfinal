@@ -248,10 +248,22 @@ extension XCUIApplication {
     ///
     /// Re-call after every mutation: a handle resolved before typing goes
     /// stale once the text changes.
+    ///
+    /// `element.exists`-guarded per element (round-2 fix, vmtest strike-2 diagnosis on
+    /// E2EScratchTests.swift: "Failed to get matching snapshot: No matches found for Element
+    /// at index 3"): `allElementsBoundByIndex` snapshots a positional index into the AX tree,
+    /// and touching `.value`/`.label` on an element the tree has since invalidated (a real risk
+    /// while a WebView is still mid-mount/mid-content-replay, e.g. right after a document open
+    /// or reopen -- this app's most AX-tree-mutation-heavy moment) throws instead of returning
+    /// nil. Same fix EditorModeSwitchUndoE2ETests.markerPresent's own doc comment documents for
+    /// the identical failure class: `.exists` is a documented-safe, non-throwing existence
+    /// check, so guarding with it before either property access skips a vanished element
+    /// instead of crashing the scan.
     func editorStaticText(startingWith text: String, timeout: TimeInterval = 10) -> XCUIElement? {
         let deadline = Date(timeIntervalSinceNow: timeout)
         repeat {
             for element in editorArea.staticTexts.allElementsBoundByIndex {
+                guard element.exists else { continue }
                 if let value = element.value as? String, value.hasPrefix(text) {
                     return element
                 }

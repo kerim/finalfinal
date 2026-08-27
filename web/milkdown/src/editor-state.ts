@@ -2,10 +2,51 @@
 // Other modules import getter/setter functions instead of accessing module-level variables directly
 
 import type { Editor } from '@milkdown/kit/core';
+import type { ExpectedBlockMeta, ImageBlockMeta } from './types';
 
 let editorInstance: Editor | null = null;
 let currentContent = '';
 let isSettingContent = false;
+
+// True only once the editor instance exists AND its view DOM has been parented into #editor
+// (main.ts's initEditor(), after `root.appendChild(...)`). Deliberately NOT derived from
+// getEditorInstance() !== null -- setEditorInstance() runs before the DOM append, so a check
+// against the instance alone would report "mounted" one tick too early (t-18576cf7).
+let editorMounted = false;
+
+export function isEditorMounted(): boolean {
+  return editorMounted;
+}
+export function setEditorMounted(value: boolean): void {
+  editorMounted = value;
+}
+
+/** The full argument set of one `setContentWithBlockIds` call that arrived before the editor
+ * instance existed. Stashed whole (not just the markdown string) so main.ts's post-mount
+ * replay can call `setContentWithBlockIds` again with the caller's real block UUIDs, image
+ * metadata, and cursor boundaries intact -- see api-content.ts's no-instance branch and
+ * main.ts's replay block (t-18576cf7). */
+export interface PendingBlockContent {
+  markdown: string;
+  blockIds: string[];
+  options?: {
+    scrollToStart?: boolean;
+    imageMeta?: ImageBlockMeta[];
+    cursorBoundary?: number;
+    cursorBoundaryEnd?: number;
+    detectPausedEdits?: boolean;
+    expected?: ExpectedBlockMeta[];
+    zoomMode?: boolean;
+  };
+}
+let pendingBlockContent: PendingBlockContent | null = null;
+
+export function getPendingBlockContent(): PendingBlockContent | null {
+  return pendingBlockContent;
+}
+export function setPendingBlockContent(value: PendingBlockContent | null): void {
+  pendingBlockContent = value;
+}
 
 // Track slash command execution for smart undo/redo
 let pendingSlashUndo = false;
