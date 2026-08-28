@@ -266,7 +266,7 @@ class EditorViewState {
 
     // MARK: - Sidebar State (Phase 1.6)
     var sections: [SectionViewModel] = [] {
-        didSet { invalidateOutlineCache() }
+        didSet { invalidateOutlineCache(); outlineGeneration &+= 1 }
     }
     var statusFilter: SectionStatus?
     var headerLevelFilter: Int?
@@ -489,6 +489,17 @@ class EditorViewState {
     @ObservationIgnored
     private var lastOutlineCounts: [String: ProjectDatabase.HeadingWordCounts] = [:]
 
+    /// Bumped on every write to `sections` (via its `didSet`) and, additionally, at the end of
+    /// `applySectionsUpdate` (to cover the counts-only path, which re-arms the equality cache
+    /// without writing `sections`). `refreshSectionsAwaiting()` snapshots this before its DB
+    /// fetch and re-checks it after; a mismatch means some other apply (the live observation
+    /// loop, a structural-undo sequence, hierarchy enforcement) landed while this fetch was
+    /// suspended, so the fetch's result is stale and must be dropped rather than merged in --
+    /// otherwise it can overwrite newer data and re-arm the cache with the stale set. See
+    /// `docs/architecture/unified-undo.md` and the class-level cache doc comment above.
+    @ObservationIgnored
+    private(set) var outlineGeneration: Int = 0
+
     /// Clear the outline equality-guard cache. Fires automatically from `sections`'s `didSet`;
     /// private so nothing outside this file can hand-manage it.
     private func invalidateOutlineCache() {
@@ -582,6 +593,7 @@ class EditorViewState {
             DebugLog.log(.outline, "[EditorViewState:refresh] BAIL: no db/pid")
             return
         }
+        let generationAtFetch = outlineGeneration
         do {
             let outlineBlocks = try await Task.detached(priority: .userInitiated) {
                 try db.fetchOutlineBlocks(projectId: pid)
@@ -594,6 +606,20 @@ class EditorViewState {
                 blockIds: blockIds,
                 needsAggregate: needsAggregate
             )
+
+            // MUST-FIX 1 (task plan): `sections` may have been reassigned by another writer
+            // (the live observation loop, a structural-undo sequence, hierarchy enforcement)
+            // while both awaits above were suspended. Applying this fetch's result now would
+            // merge stale outline blocks/counts back over that newer data and re-arm the
+            // equality cache with the stale set. Drop the result instead: still notify via
+            // `onSectionsUpdated?()` because `StructuralUndoController`'s sequences await this
+            // method specifically so hierarchy enforcement runs in-sequence afterward.
+            guard outlineGeneration == generationAtFetch else {
+                DebugLog.log(.outline, "[EditorViewState:refresh] Discarded stale result "
+                             + "(gen \(generationAtFetch) != \(outlineGeneration))")
+                onSectionsUpdated?()
+                return
+            }
 
             DebugLog.log(.outline, "[EditorViewState:refresh] \(outlineBlocks.count) sections (contentState=\(contentState))")
 
@@ -632,6 +658,12 @@ class EditorViewState {
         // Re-arm AFTER the assignment above: `sections`'s didSet would otherwise wipe it.
         lastOutlineBlocks = blocks
         lastOutlineCounts = counts
+        // Unconditional bump: the counts-only path (sectionsChanged == false) re-arms the
+        // cache above without writing `sections`, so it needs its own generation bump to
+        // invalidate any in-flight `refreshSectionsAwaiting()` fetch that's still suspended.
+        // A `didSet` bump firing again when `sectionsChanged` is true is harmless -- it
+        // happens after this method's own re-check, not before it.
+        outlineGeneration &+= 1
         return sectionsChanged
     }
 
