@@ -85,12 +85,14 @@ extension ProjectDatabase {
     ///   metadata by title match. Pass `true` ONLY from the two section-restore call sites
     ///   in `SnapshotService` (`restoreSectionReplace`/`restoreSectionAsDuplicate`): their
     ///   `blocks` come from re-parsing `content.markdown` AFTER
-    ///   `rebuildContentFromSections()` has filtered `isBibliography` sections out of it
-    ///   (see that function's doc comment) — so, unlike every other caller, `blocks`
-    ///   contains NO bibliography content at all, and an unconditional delete-and-replace
-    ///   would permanently wipe the real bibliography (owned by `BibliographySyncService`)
-    ///   instead of leaving it alone. `restoreEntireProject` stays on the default `false`:
-    ///   its markdown is reassembled from the FULL block table, bibliography included.
+    ///   `rebuildContentFromSections()` has filtered `isBibliography` AND `isNotes` sections
+    ///   out of it (see that function's doc comment) — so, unlike every other caller,
+    ///   `blocks` contains NO bibliography or Notes content at all, and an unconditional
+    ///   delete-and-replace would permanently wipe the real bibliography (owned by
+    ///   `BibliographySyncService`) and the real footnote text (owned by
+    ///   `FootnoteSyncService`) instead of leaving them alone. `restoreEntireProject` stays
+    ///   on the default `false`: its markdown is reassembled from the FULL block table,
+    ///   bibliography and Notes included.
     ///
     ///   On the DEFAULT (`false`) path only, `replaceBlocks` now also carries a restored
     ///   `isBibliography` flag forward onto the non-heading entry rows beneath a heading when
@@ -109,23 +111,27 @@ extension ProjectDatabase {
     ///
     ///   When `true`, reuses the same protection/reanchoring machinery
     ///   `replaceBlocksInRange` uses for its zoomed re-parse path (`buildHeadingQueues`,
-    ///   `deleteBlocksInRange`, `handleMachineManagedBlock`, `reanchorPreservedRows`) —
-    ///   but scoped to bibliography ONLY via each helper's `protectingNotes`/
-    ///   `handlingNotes: false` parameter, never Notes. Notes is deliberately given no
-    ///   special handling here for a stronger reason than a preference: Notes content is
-    ///   ABSENT from `blocks` at these two call sites, not merely present-but-unprotected.
-    ///   `parseHeaders` never emits a "Notes" section boundary in the first place, because
-    ///   `Section.isNotes` has no production writer (every `isNotes: true` write constructs
-    ///   a `Block`, never a `Section`) — so `existingNotesTitle` is always nil and
-    ///   `rebuildContentFromSections` cannot emit Notes content into the re-parsed markdown
-    ///   at all. Protecting isBibliography only is therefore the complete and correct
-    ///   answer here, not a narrower choice made for convenience: there is no Notes content
-    ///   in `blocks` to protect or to collide with. (This does mean a single-section
-    ///   restore today deletes the existing Notes rows with no replacement content coming
-    ///   back from `blocks` — `FootnoteSyncService` self-heals the structural "# Notes"
-    ///   heading and terminator afterward, but not the actual footnote text. That is a
-    ///   pre-existing bug, out of scope for this preservation work, and is being filed
-    ///   separately.)
+    ///   `deleteBlocksInRange`, `handleMachineManagedBlock`, `reanchorPreservedRows`) — now
+    ///   scoped to BOTH bibliography AND Notes, on equal footing, via each helper's
+    ///   `protectingNotes`/`handlingNotes: true` parameter. This is genuinely equal footing,
+    ///   not just a structurally-similar call shape: `notesRowByLabel` below is seeded from
+    ///   `buildNotesRowIndex(from: existingBlocks)`, the exact same call
+    ///   `replaceBlocksInRange` makes, so `handleMachineManagedBlock`'s same-label merge path
+    ///   can actually find a preserved row to merge into here too — without that seed, the
+    ///   lookup would be empty and every labeled incoming Notes block would fall through to a
+    ///   normal insert, duplicating the preserved row's footnote definition instead of merging
+    ///   into it. Notes gets the exact same protection bibliography does here because it needs
+    ///   it for the exact same reason:
+    ///   `Section.isNotes` now has a production writer (`SectionReconciler`'s dedicated
+    ///   `isNotes` match path — see that type's doc comment), so `parseHeaders` can emit a
+    ///   flagged "Notes" section boundary, `existingNotesTitle` is no longer always nil, and
+    ///   `rebuildContentFromSections` can genuinely include real footnote text in the
+    ///   markdown these two call sites re-parse into `blocks` — but `rebuildContentFromSections`
+    ///   deliberately excludes it (see that function's doc comment), so `blocks` here is
+    ///   guaranteed Notes-free at these two call sites, same as bibliography. Before this
+    ///   fix, a single-section restore silently deleted the existing Notes rows with no
+    ///   replacement content coming back from `blocks` — the real, production-shaped data-loss
+    ///   bug this preservation path now closes.
     func replaceBlocks(
         _ blocks: [Block],
         for projectId: String,
@@ -145,38 +151,36 @@ extension ProjectDatabase {
             }
 
             if preservingMachineManagedBlocks {
-                // Bibliography-only preservation path -- see this function's doc comment for
-                // why Notes gets no special handling here.
-                let headingQueueResult = buildHeadingQueues(existing: existingBlocks, newBlocks: blocks, protectingNotes: false)
+                // Bibliography + Notes preservation path -- see this function's doc comment
+                // for why both are protected on equal footing here.
+                let headingQueueResult = buildHeadingQueues(existing: existingBlocks, newBlocks: blocks, protectingNotes: true)
                 var headingsByTitle = headingQueueResult.queues
                 let protectedHeadingIds = headingQueueResult.protectedIds
 
-                // Every existing isBibliography row this replace must NOT delete: the
-                // protected "# Bibliography" heading (above) plus every non-heading
-                // bibliography row (entries, terminator). Bibliography-only mirror of
-                // replaceBlocksInRange's `preservedRowIds` (which also includes isNotes rows
-                // there — deliberately dropped here).
+                // Every existing isBibliography/isNotes row this replace must NOT delete: the
+                // protected "# Bibliography"/"# Notes" heading (above) plus every non-heading
+                // bibliography/notes row (entries, terminator). Mirrors
+                // replaceBlocksInRange's `preservedRowIds` exactly.
                 let preservedRowIds: [String] = existingBlocks
                     .filter { block in
                         protectedHeadingIds.contains(block.id) ||
-                        (block.isBibliography && block.blockType != .heading)
+                        ((block.isBibliography || block.isNotes) && block.blockType != .heading)
                     }
                     .map { $0.id }
 
-                // Delete everything else -- see deleteBlocksInRange's `protectingNotes: false`
-                // branch for the exact predicate (never delete a non-heading isBibliography
-                // row or a protectedHeadingIds heading; Notes participates in the normal
-                // delete-and-reinsert flow like any other heading/content).
+                // Delete everything else -- see deleteBlocksInRange's `protectingNotes: true`
+                // branch for the exact predicate (never delete a non-heading isBibliography/
+                // isNotes row or a protectedHeadingIds heading).
                 try deleteBlocksInRange(
                     db: db,
                     projectId: projectId,
                     startSortOrder: nil,
                     endSortOrder: nil,
                     protectedHeadingIds: protectedHeadingIds,
-                    protectingNotes: false
+                    protectingNotes: true
                 )
 
-                var notesRowByLabel: [String: Block] = [:]
+                var notesRowByLabel = buildNotesRowIndex(from: existingBlocks)
                 var claimedNotesLabels: Set<String> = []
 
                 for (index, var block) in blocks.enumerated() {
@@ -185,14 +189,14 @@ extension ProjectDatabase {
                     // Bibliography-shaped incoming block: skip (defensive -- `blocks` never
                     // legitimately contains one at these call sites, since bibliography
                     // content is excluded from the source markdown entirely). `handlingNotes:
-                    // false` means Notes-shaped blocks fall straight through to the normal
-                    // insert flow below instead of being merged into a preserved row.
+                    // true` merges a same-label incoming Notes row into its preserved row in
+                    // place, same as replaceBlocksInRange -- see handleMachineManagedBlock.
                     if try handleMachineManagedBlock(
                         db: db,
                         block: block,
                         notesRowByLabel: &notesRowByLabel,
                         claimedNotesLabels: &claimedNotesLabels,
-                        handlingNotes: false
+                        handlingNotes: true
                     ) {
                         continue
                     }
@@ -202,15 +206,15 @@ extension ProjectDatabase {
                     try block.insert(db)
                 }
 
-                // Re-anchor preserved bibliography rows immediately after all newly-inserted
-                // content -- see reanchorPreservedRows for why leaving them at a stale
-                // position risks a numeric collision with the freshly-sequenced new blocks.
+                // Re-anchor preserved bibliography/Notes rows immediately after all
+                // newly-inserted content -- see reanchorPreservedRows for why leaving them at
+                // a stale position risks a numeric collision with the freshly-sequenced new
+                // blocks.
                 if !preservedRowIds.isEmpty {
                     try reanchorPreservedRows(db: db, rowIds: preservedRowIds, anchorBase: Double(blocks.count))
                 }
 
                 try renumberSortOrders(db: db, projectId: projectId, now: Date())
-                try Self.recomputeSectionParents(db: db, projectId: projectId)
                 return
             }
 
@@ -312,7 +316,6 @@ extension ProjectDatabase {
                 try block.insert(db)
             }
 
-            try Self.recomputeSectionParents(db: db, projectId: projectId)
         }
     }
 
@@ -469,8 +472,6 @@ extension ProjectDatabase {
             // Database+BlocksReorder.swift — see renumberSortOrders for why they must stay
             // separate (a single hoisted `now` here vs. a fresh Date() per row there).
             try renumberSortOrders(db: db, projectId: projectId, now: Date())
-
-            try Self.recomputeSectionParents(db: db, projectId: projectId)
         }
     }
 
@@ -768,11 +769,11 @@ private extension ProjectDatabase {
     /// scenario this guards.
     /// - Parameter protectingNotes: Whether an isNotes heading occurrence beyond the
     ///   consumable count is ALSO protected, alongside isBibliography (always protected
-    ///   regardless of this flag). Defaults to `true`, matching `replaceBlocksInRange`'s
-    ///   only call site unchanged. `replaceBlocks`' new bibliography-only preservation path
-    ///   passes `false`: Notes gets no special protection there -- see that function's doc
-    ///   comment for why (Notes content is absent from its incoming `blocks` entirely, same
-    ///   as bibliography, so there is nothing there for protection to preserve or duplicate).
+    ///   regardless of this flag). Defaults to `true`. Both of `replaceBlocksInRange`'s call
+    ///   site and `replaceBlocks`' bibliography+Notes preservation path pass `true` -- Notes
+    ///   gets the same protection bibliography does, for the same reason (see `replaceBlocks`'
+    ///   doc comment): its incoming `blocks` is guaranteed Notes-free at those call sites, so
+    ///   there is nothing there for a preserved row to collide with.
     func buildHeadingQueues(
         existing: [Block],
         newBlocks: [Block],
@@ -827,10 +828,9 @@ private extension ProjectDatabase {
     ///
     /// - Parameter protectingNotes: Whether a non-heading isNotes row is ALSO exempt from
     ///   deletion, alongside isBibliography (always exempt regardless of this flag).
-    ///   Defaults to `true`, matching `replaceBlocksInRange`'s only call site unchanged.
-    ///   `replaceBlocks`' bibliography-only preservation path passes `false` -- see that
-    ///   function's doc comment for why Notes must go through the normal delete-and-
-    ///   reinsert flow there instead of being preserved.
+    ///   Defaults to `true`. Both `replaceBlocksInRange`'s call site and `replaceBlocks`'
+    ///   bibliography+Notes preservation path pass `true` -- see `replaceBlocks`' doc comment
+    ///   for why Notes is protected on equal footing with bibliography there now.
     func deleteBlocksInRange(
         db: Database,
         projectId: String,
@@ -943,11 +943,10 @@ private extension ProjectDatabase {
     ///    always falls through to the title-match flow, same as any other heading.)
     ///
     /// - Parameter handlingNotes: Whether outcome 2/3 (Notes-shaped merge-or-dedup) is active
-    ///   at all. Defaults to `true`, matching `replaceBlocksInRange`'s only call site
-    ///   unchanged. `replaceBlocks`' bibliography-only preservation path passes `false`: a
-    ///   Notes-shaped block there always falls straight through to a normal insert (outcome
-    ///   1, the bibliography-shaped check, is unaffected by this flag either way) -- see that
-    ///   function's doc comment for why Notes must never be merged into a preserved row there.
+    ///   at all. Defaults to `true`. Both `replaceBlocksInRange`'s call site and
+    ///   `replaceBlocks`' bibliography+Notes preservation path pass `true` -- a Notes-shaped
+    ///   incoming block is merged into its preserved row there too now, on equal footing with
+    ///   `replaceBlocksInRange` -- see `replaceBlocks`' doc comment.
     func handleMachineManagedBlock(
         db: Database,
         block: Block,

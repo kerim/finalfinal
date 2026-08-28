@@ -26,6 +26,7 @@ struct SectionUpdates: Sendable {
     var startOffset: Int?
     var parentId: String??  // Double-optional: nil = don't change, .some(nil) = set to nil
     var isBibliography: Bool?
+    var isNotes: Bool?
 
     init(
         title: String? = nil,
@@ -36,7 +37,8 @@ struct SectionUpdates: Sendable {
         wordCount: Int? = nil,
         startOffset: Int? = nil,
         parentId: String?? = nil,
-        isBibliography: Bool? = nil
+        isBibliography: Bool? = nil,
+        isNotes: Bool? = nil
     ) {
         self.title = title
         self.headerLevel = headerLevel
@@ -47,6 +49,7 @@ struct SectionUpdates: Sendable {
         self.startOffset = startOffset
         self.parentId = parentId
         self.isBibliography = isBibliography
+        self.isNotes = isNotes
     }
 }
 
@@ -339,6 +342,9 @@ extension ProjectDatabase {
                     }
                     if let isBibliography = updates.isBibliography {
                         section.isBibliography = isBibliography
+                    }
+                    if let isNotes = updates.isNotes {
+                        section.isNotes = isNotes
                     }
 
                     section.updatedAt = Date()

@@ -313,10 +313,13 @@ final class SnapshotService {
             existingSectionMetadata: metadata.isEmpty ? nil : metadata
         )
         // preservingMachineManagedBlocks: true -- rebuildContentFromSections (above) excludes
-        // isBibliography sections from contentRecord.markdown, so `blocks` here has NO
-        // bibliography content at all. An unconditional replaceBlocks would permanently wipe
-        // the real bibliography (owned by BibliographySyncService) instead of leaving it
-        // alone -- see replaceBlocks' doc comment.
+        // isBibliography AND isNotes sections from contentRecord.markdown, so `blocks` here has
+        // NO bibliography or Notes content at all. An unconditional replaceBlocks would
+        // permanently wipe the real bibliography (owned by BibliographySyncService) and the
+        // real footnote text (owned by FootnoteSyncService) instead of leaving them alone --
+        // see replaceBlocks' doc comment. This dependency is load-bearing: replaceBlocks'
+        // preservation machinery here assumes `blocks` carries no machine-managed content at
+        // all, so it never has to reconcile a fresh copy against the preserved rows.
         try database.replaceBlocks(blocks, for: projectId, preservingMachineManagedBlocks: true)
     }
 
@@ -381,7 +384,8 @@ final class SnapshotService {
             existingSectionMetadata: metadataForBlocks.isEmpty ? nil : metadataForBlocks
         )
         // preservingMachineManagedBlocks: true -- see restoreSectionReplace's matching call
-        // for why (rebuildContentFromSections excludes bibliography from this markdown).
+        // for why (rebuildContentFromSections excludes bibliography AND Notes from this
+        // markdown -- load-bearing, not cosmetic; see that function's doc comment).
         try database.replaceBlocks(blocks, for: projectId, preservingMachineManagedBlocks: true)
     }
 
@@ -484,15 +488,25 @@ final class SnapshotService {
 
     /// Rebuild content.markdown from current sections
     ///
-    /// Excludes `isBibliography`-flagged rows: that content is a frozen, potentially-stale
-    /// mirror of the machine-managed bibliography (the real content lives at the `block`
-    /// level, owned by `BibliographySyncService`). Re-emitting it here on a version-history
-    /// restore would resurrect a stale bibliography copy instead of leaving the real one
-    /// alone.
+    /// Excludes `isBibliography`- and `isNotes`-flagged rows: that content is a frozen,
+    /// potentially-stale mirror of the machine-managed bibliography/footnotes (the real
+    /// content lives at the `block` level, owned by `BibliographySyncService`/
+    /// `FootnoteSyncService`). Re-emitting it here on a version-history restore would
+    /// resurrect a stale copy instead of leaving the real one alone.
+    ///
+    /// LOAD-BEARING, not cosmetic: both call sites below (`restoreSectionReplace`,
+    /// `restoreSectionAsDuplicate`) re-parse the markdown this produces and feed the result
+    /// into `replaceBlocks(..., preservingMachineManagedBlocks: true)`. That call's own
+    /// preservation machinery depends on `blocks` containing NO isBibliography/isNotes
+    /// content at these two call sites -- see `replaceBlocks`' doc comment. If this filter
+    /// ever again excluded only `isBibliography`, a Notes row's real markdown (now that
+    /// `Section.isNotes` has a production writer -- see `SectionReconciler`) would flow back
+    /// into `blocks` here, colliding with `replaceBlocks`' own Notes preservation and
+    /// duplicating footnote content on every single-section restore.
     private func rebuildContentFromSections() throws {
         let sections = try database.fetchSections(projectId: projectId)
         let markdown = sections
-            .filter { !$0.isBibliography }
+            .filter { !$0.isBibliography && !$0.isNotes }
             .map { MarkdownUtils.ensuringTrailingBlankLine($0.markdownContent) }
             .joined()
 

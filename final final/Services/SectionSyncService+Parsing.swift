@@ -35,19 +35,39 @@ extension SectionSyncService {
             let title: String
             let isPseudoSection: Bool
             let isBibliography: Bool
+            let isNotes: Bool
         }
 
         var boundaries: [SectionBoundary] = []
         var lastActualHeaderLevel: Int = 1  // Default to H1 for pseudo-sections at document start
 
-        // Track where bibliography/notes sections start (to end preceding section there)
+        // Track where bibliography/notes sections start (to end preceding section there).
+        // `confirmedNotesOffsets` is a collection (MUST-FIX 4), not a single scalar, since more
+        // than one candidate below can independently confirm as a real Notes section (the
+        // common case is one; a document could in principle contain two genuine machine-managed
+        // Notes headings across a section split-and-remerge history) -- each confirmed offset
+        // bounds whichever preceding boundary would otherwise swallow past it, in the loop below.
         var bibliographyStartOffset: Int?
-        var notesStartOffset: Int?
+        var confirmedNotesOffsets: [Int] = []
 
-        // For import auto-detection: track "Notes" heading found without existingNotesTitle
-        // Will be confirmed as notes section if content contains [^N]: patterns
-        var pendingNotesOffset: Int?
-        var pendingNotesBoundaryIndex: Int?
+        // A single Notes-titled heading found during the main loop, not yet confirmed as a
+        // real machine-managed Notes section -- see the shared post-loop evidence check below.
+        // Tracked in a COLLECTION (MUST-FIX 4), not two overwritten scalars: a document can
+        // contain multiple headings sharing the same title -- one real, machine-managed
+        // "Notes" section, and one unrelated user heading that merely happens to share the
+        // name (e.g. an appendix literally titled "Notes"). With two scalars, a later
+        // same-titled heading silently overwrote the earlier candidate's offset/index before
+        // the evidence check ever ran, so only the LAST heading titled "Notes" was ever
+        // evidence-checked; if THAT one had no real footnote content beneath it, neither
+        // heading got flagged -- the real, evidenced Notes section earlier in the document
+        // silently lost its isNotes flag purely because of what came after it. Each candidate
+        // below is evaluated against its own content span independently, so an unconfirmed
+        // heading can never blind out a confirmed one.
+        struct PendingNotesCandidate {
+            let offset: Int
+            let boundaryIndex: Int
+        }
+        var pendingNotesCandidates: [PendingNotesCandidate] = []
 
         // Bibliography detection: use existing title if provided, otherwise fall back to configured name
         let bibHeaderName = existingBibTitle ?? fallbackBibTitle
@@ -124,7 +144,8 @@ extension SectionSyncService {
                         level: lastActualHeaderLevel,
                         title: "§ Section Break",
                         isPseudoSection: true,
-                        isBibliography: false
+                        isBibliography: false,
+                        isNotes: false
                     ))
                     // Do NOT update lastActualHeaderLevel - pseudo-sections don't affect it
                 }
@@ -152,25 +173,53 @@ extension SectionSyncService {
                             level: header.level,
                             title: header.title,
                             isPseudoSection: false,
-                            isBibliography: true
+                            isBibliography: true,
+                            isNotes: false
                         ))
                     } else if header.title == notesHeaderName && existingNotesTitle != nil {
-                        inAutoNotes = true
-                        notesStartOffset = currentOffset
-                        // Don't add to boundaries - notes section is managed separately
+                        // MUST-FIX 1: bare title equality alone is NOT evidence a real
+                        // machine-managed Notes section opens here -- unlike bibliography,
+                        // which only latches via an offset the pre-scan selected using
+                        // marker/terminator evidence, this branch used to latch `inAutoNotes`
+                        // unconditionally on title match alone, with no closing condition at
+                        // all, silently swallowing every boundary from here to end-of-document
+                        // on the next parse (real, silent Section-row data loss for any
+                        // document with a heading literally titled "Notes"). Fixed by
+                        // deferring the decision exactly like the import-auto-detection branch
+                        // just below: add as an ordinary (unflagged) boundary for now --
+                        // headers after this point are still recognized normally either way --
+                        // and record its index so the shared post-loop evidence check (below
+                        // the main loop) can retroactively flag it once real footnote content
+                        // ([^N]: pattern) is confirmed beneath it. Deliberately does NOT set
+                        // `inAutoNotes` here (unlike the old, buggy version of this branch), and
+                        // deliberately does NOT update `lastActualHeaderLevel` either --
+                        // pre-existing asymmetry versus the branch below, out of scope to change.
+                        boundaries.append(SectionBoundary(
+                            startOffset: currentOffset,
+                            level: header.level,
+                            title: header.title,
+                            isPseudoSection: false,
+                            isBibliography: false,
+                            isNotes: false
+                        ))
+                        pendingNotesCandidates.append(
+                            PendingNotesCandidate(offset: currentOffset, boundaryIndex: boundaries.count - 1)
+                        )
                     } else if header.title == "Notes" && existingNotesTitle == nil {
                         // Import auto-detection: tentatively add as regular section,
-                        // but record its index so we can remove it if content has [^N]: patterns
+                        // but record its index so we can flag it isNotes if content has [^N]: patterns
                         lastActualHeaderLevel = header.level
                         boundaries.append(SectionBoundary(
                             startOffset: currentOffset,
                             level: header.level,
                             title: header.title,
                             isPseudoSection: false,
-                            isBibliography: false
+                            isBibliography: false,
+                            isNotes: false
                         ))
-                        pendingNotesOffset = currentOffset
-                        pendingNotesBoundaryIndex = boundaries.count - 1
+                        pendingNotesCandidates.append(
+                            PendingNotesCandidate(offset: currentOffset, boundaryIndex: boundaries.count - 1)
+                        )
                     } else {
                         lastActualHeaderLevel = header.level  // Track for subsequent pseudo-sections
                         boundaries.append(SectionBoundary(
@@ -178,7 +227,8 @@ extension SectionSyncService {
                             level: header.level,
                             title: header.title,
                             isPseudoSection: false,
-                            isBibliography: false
+                            isBibliography: false,
+                            isNotes: false
                         ))
                     }
                 }
@@ -187,24 +237,65 @@ extension SectionSyncService {
             currentOffset += lineStr.count + 1 // +1 for newline
         }
 
-        // Import auto-detection: if we found a "Notes" heading without an existing DB entry,
-        // check if its content contains [^N]: footnote definitions to avoid false positives
-        if let pendingIndex = pendingNotesBoundaryIndex, let pendingOffset = pendingNotesOffset {
-            // Extract the content of the pending notes section
-            let nextBoundaryOffset = pendingIndex + 1 < boundaries.count
-                ? boundaries[pendingIndex + 1].startOffset
+        // Evidence check, shared by BOTH the "existingNotesTitle != nil" (MUST-FIX 1) and the
+        // "existingNotesTitle == nil" (import auto-detection) tentative-heading branches above.
+        // The real invariant (MUST-FIX 4): ACROSS the two branches, exactly one can ever fire
+        // for a single parseHeaders call, since existingNotesTitle is a single constant for the
+        // whole call -- that part of the old comment was correct. But WITHIN a single branch,
+        // the SAME branch can fire once per matching heading, so a document with two headings
+        // sharing the notes title produces two entries in `pendingNotesCandidates`, not one --
+        // sharing pending state between the branches was never actually the risk; overwriting
+        // one candidate's state with another's, within a single branch, was. Each candidate is
+        // therefore evaluated independently right here, against its OWN content span, so a
+        // later same-titled heading with no real evidence can never suppress an earlier one
+        // that has it (see `pendingNotesCandidates`'s doc comment above for the concrete
+        // data-loss scenario this avoids). Check whether each candidate's own content contains
+        // [^N]: footnote-definition patterns to avoid false positives on a heading that merely
+        // shares the notes title/name with no real footnote content beneath it.
+        for candidate in pendingNotesCandidates {
+            // Extract the content of this candidate's own section
+            let nextBoundaryOffset = candidate.boundaryIndex + 1 < boundaries.count
+                ? boundaries[candidate.boundaryIndex + 1].startOffset
                 : markdown.count
-            let startIdx = markdown.index(markdown.startIndex, offsetBy: min(pendingOffset, markdown.count))
+            let startIdx = markdown.index(markdown.startIndex, offsetBy: min(candidate.offset, markdown.count))
             let endIdx = markdown.index(markdown.startIndex, offsetBy: min(nextBoundaryOffset, markdown.count))
             let pendingContent = String(markdown[startIdx..<endIdx])
 
-            // Check for [^N]: definition patterns
-            if pendingContent.range(of: #"\[\^\d+\]:"#, options: .regularExpression) != nil {
-                // Confirmed as notes section — remove from boundaries and mark as managed
-                boundaries.remove(at: pendingIndex)
-                notesStartOffset = pendingOffset
-                inAutoNotes = true
-            }
+            // Check for [^N]: definition patterns, ANCHORED to line start (MUST-FIX 3) --
+            // every other footnote-definition regex in the codebase (MarkdownUtils.swift,
+            // FootnoteSyncService+Reconciliation.swift, BlockParser.swift,
+            // Database+BlocksInsert.swift, BlockParser+Splitting.swift) anchors with `^` (plus
+            // `.anchorsMatchLines` for a multi-line haystack like this one) rather than
+            // searching anywhere in the string. Unanchored, a section merely discussing
+            // footnote syntax inline -- e.g. prose containing "write it as [^1]: text" -- would
+            // false-positively read as real footnote-definition evidence. `String.range(of:
+            // options:)`'s `.regularExpression` compare option has no `.anchorsMatchLines`
+            // equivalent, so this needs `NSRegularExpression` directly, same as every other
+            // anchored example above.
+            let contentRange = NSRange(pendingContent.startIndex..., in: pendingContent)
+            let hasFootnoteEvidence = (try? NSRegularExpression(
+                pattern: #"^\[\^\d+\]:"#, options: [.anchorsMatchLines]
+            ))?.firstMatch(in: pendingContent, range: contentRange) != nil
+
+            guard hasFootnoteEvidence else { continue }
+
+            // Confirmed as notes section: flag the boundary IN PLACE (kept, never removed
+            // -- Part 2 / this task) so parseHeaders emits it and the reconciler can thread
+            // the isNotes verdict into a real Section row, mirroring how the bibliography
+            // pre-scan above emits a flagged boundary rather than dropping it. Reconstructs
+            // the element (rather than mutating a `var` field) since every other field is
+            // unchanged.
+            let pending = boundaries[candidate.boundaryIndex]
+            boundaries[candidate.boundaryIndex] = SectionBoundary(
+                startOffset: pending.startOffset,
+                level: pending.level,
+                title: pending.title,
+                isPseudoSection: pending.isPseudoSection,
+                isBibliography: pending.isBibliography,
+                isNotes: true
+            )
+            confirmedNotesOffsets.append(candidate.offset)
+            inAutoNotes = true
         }
 
         guard !boundaries.isEmpty else { return [] }
@@ -221,11 +312,12 @@ extension SectionSyncService {
             }
 
             // If this is the last section before bibliography/notes, end it at the managed section
-            // This prevents managed section content from being absorbed into the preceding section
-            if let notesStart = notesStartOffset {
-                if boundary.startOffset < notesStart && endOffset > notesStart {
-                    endOffset = notesStart
-                }
+            // This prevents managed section content from being absorbed into the preceding section.
+            // Loops over every confirmed offset (MUST-FIX 4 may confirm more than one candidate)
+            // rather than a single scalar; clamping to whichever qualifying offset is smallest is
+            // order-independent, since each pass can only shrink `endOffset` further.
+            for notesStart in confirmedNotesOffsets where boundary.startOffset < notesStart && endOffset > notesStart {
+                endOffset = notesStart
             }
             if let bibStart = bibliographyStartOffset {
                 if boundary.startOffset < bibStart && endOffset > bibStart {
@@ -256,7 +348,8 @@ extension SectionSyncService {
                 startOffset: boundary.startOffset,
                 markdownContent: sectionMarkdown,
                 wordCount: wordCount,
-                isBibliography: boundary.isBibliography
+                isBibliography: boundary.isBibliography,
+                isNotes: boundary.isNotes
             ))
         }
 
@@ -264,18 +357,32 @@ extension SectionSyncService {
     }
 
     /// Selects the character offset (matching `currentOffset` in the main loop above) of the
-    /// ONE line that opens the bibliography section, or `nil` if none does. Mirrors the main
-    /// loop's own code-fence and `inAutoNotes` gating (guards below), but — unlike an earlier
-    /// version of this comment claimed — that mirroring is no longer complete: the main loop
-    /// also skips every heading while it is inside the bibliography region (`inAutoBibliography`)
-    /// and closes that region at the terminator, and neither of those is modeled here. So the
-    /// candidate/terminator set found by this pre-scan can diverge from what the main loop would
-    /// actually reach. Concretely: a `notesHeaderName`-titled heading nested inside what the main
-    /// loop treats as the bibliography region (and correctly skips over) still latches this
-    /// function's `inAutoNotes` here, which can blind the pre-scan to the real terminator and
-    /// return `.none` where the main loop's own view of the document never hit that confusion.
-    /// This divergence is a known, deferred gap — not fixed here — so treat this function's
-    /// result as an approximation of the main loop's reachable set, not a guarantee of it.
+    /// ONE line that opens the bibliography section, or `nil` if none does. Mirrors SOME of the
+    /// main loop's own code-fence and `inAutoNotes` gating (guards below) — including, as of
+    /// this fix, a real closing condition for the `inAutoNotes` latch itself (item 3 below,
+    /// MUST-FIX 1) — but the two functions are NOT fully unified, and this fix does not attempt
+    /// to make them so. They differ in TWO ways that remain deliberately unreconciled:
+    ///   (a) the main loop also skips every heading while it is inside the bibliography region
+    ///       (`inAutoBibliography`) and closes that region at the terminator; neither mechanic
+    ///       is modeled here at all.
+    ///   (b) the main loop's OWN `inAutoNotes`-closing condition (its `existingNotesTitle !=
+    ///       nil` branch) is evidence-gated — it defers the decision to a multi-line
+    ///       footnote-pattern check against the section's actual content, closing only once
+    ///       that check runs after the whole document is seen. This pre-scan has no multi-line
+    ///       lookahead buffer (it only ever sees one line at a time), so item 3's fix below
+    ///       approximates evidence-gating with a level comparison against the next heading
+    ///       instead — a genuinely different closing mechanism, not a re-implementation of the
+    ///       same one.
+    /// Because (a) and (b) are different mechanisms answering the same question, they CAN
+    /// disagree on an edge case even after this fix — concretely, a bibliography heading nested
+    /// at a level below an unrelated `notesHeaderName`-titled heading (e.g. a level-2 "##
+    /// Bibliography" sitting under a level-1 "# Notes" that the main loop's evidence check would
+    /// reject for lack of real footnote content, but whose mere presence still closes nothing
+    /// here until a same-or-shallower-level heading is reached) can make this pre-scan return an
+    /// offset — or `.none` — that the main loop's own reachable set would not. This divergence is
+    /// real, known, and DELIBERATELY left deferred, not fixed by this change: treat this
+    /// function's result as an approximation of the main loop's reachable set, not a guarantee
+    /// of it.
     /// Tokenizes each line into a `BibliographyOpeningSelector.Unit` and delegates the actual
     /// decision to `BibliographyOpeningSelector.select` — see that type's doc comment for the full two-tier
     /// rule and why tier 3 ("last title match anywhere, no evidence required") was deleted
@@ -287,10 +394,18 @@ extension SectionSyncService {
     /// 2. **`isMarker`** — a line prefixed `<!-- ::auto-bibliography:: -->`, checked
     ///    unconditionally (not gated by code-fence/notes state) — exactly matching the main
     ///    loop's own unconditional marker check.
-    /// 3. **`inAutoNotes` latch** — mirrors the main loop's existing open-and-never-close Notes
-    ///    semantics exactly (set once true by a `notesHeaderName` title match, gated on
-    ///    `existingNotesTitle != nil`, and never cleared), so Notes-then-Bibliography behavior
-    ///    is unchanged. Also gates `isTerminator`/`isCandidate`/`isHeading`.
+    /// 3. **`inAutoNotes` latch** — set true by a `notesHeaderName` title match, gated on
+    ///    `existingNotesTitle != nil`, and CLOSED (MUST-FIX 1) at the next heading whose level
+    ///    is <= the level of the heading that opened it — a level-scoped mirror of the main
+    ///    `parseHeaders` loop's own evidence-gated fix to this same bug (see that function's
+    ///    doc comment on its `existingNotesTitle != nil` branch), chosen here instead because
+    ///    this function has no multi-line lookahead buffer to run a footnote-pattern evidence
+    ///    check against -- it only ever sees one line at a time. Before this fix, the latch was
+    ///    open-and-never-close: once a bare-title "Notes" match set it, every remaining line was
+    ///    invisible to `isTerminator`/`isCandidate`/`isHeading` below, which could blind this
+    ///    pre-scan to a REAL bibliography terminator/candidate sitting after it -- silently
+    ///    losing the bibliography flag for a document structured Notes-then-Bibliography. Also
+    ///    gates `isTerminator`/`isCandidate`/`isHeading`.
     /// 4. **`isTerminator`** — `BlockParser.bibliographyEndMarker`, matched by EXACT equality
     ///    on the trimmed line (never `.contains`).
     ///
@@ -317,6 +432,9 @@ extension SectionSyncService {
         var currentOffset = 0
         var inCodeBlock = false
         var inAutoNotes = false
+        // The level of the heading that opened `inAutoNotes` -- MUST-FIX 1's closing
+        // condition needs it to decide whether a later heading is "at or above" that level.
+        var notesHeadingLevel: Int?
 
         var offsets: [Int] = []
         var units: [BibliographyOpeningSelector.Unit] = []
@@ -334,6 +452,18 @@ extension SectionSyncService {
             // Unconditional, exactly like the main loop's own marker check.
             let isMarker = trimmed.hasPrefix(BlockParser.bibliographyStartMarker)
 
+            // MUST-FIX 1: close the inAutoNotes latch BEFORE gating on it below -- a heading
+            // whose level is <= the level of the heading that opened the latch ends the
+            // (unevidenced) notes region here. This has to inspect the line for a heading even
+            // while `inAutoNotes` is still open, since the gated branch below never runs at all
+            // while the latch is on.
+            if inAutoNotes, !inCodeBlock,
+               let closingHeader = parseHeaderLine(trimmed),
+               closingHeader.level <= (notesHeadingLevel ?? Int.max) {
+                inAutoNotes = false
+                notesHeadingLevel = nil
+            }
+
             var isTerminator = false
             var isCandidate = false
             var isHeading = false
@@ -348,6 +478,7 @@ extension SectionSyncService {
                         isCandidate = true
                     } else if header.title == notesHeaderName && existingNotesTitle != nil {
                         inAutoNotes = true
+                        notesHeadingLevel = header.level
                     }
                 }
             }

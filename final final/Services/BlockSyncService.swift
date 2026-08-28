@@ -9,27 +9,6 @@
 import Foundation
 import WebKit
 
-/// Resumes a `CheckedContinuation<Bool, Never>` at most once. Backs
-/// `BlockSyncService.awaitWithTimeout(seconds:operation:)`, where two
-/// independent `Task`s race to resume the same continuation (whichever
-/// finishes first) — without this guard, both sides resuming would be a
-/// runtime trap. `@MainActor`-isolated because both racing `Task`s run on
-/// MainActor, same as the rest of this file.
-@MainActor
-private final class DrainRaceBox {
-    private var continuation: CheckedContinuation<Bool, Never>?
-
-    init(_ continuation: CheckedContinuation<Bool, Never>) {
-        self.continuation = continuation
-    }
-
-    func resume(_ value: Bool) {
-        guard let continuation else { return }
-        self.continuation = nil
-        continuation.resume(returning: value)
-    }
-}
-
 /// Service to sync editor block changes with the database
 /// Uses poll-based pattern (similar to existing content polling) for change detection
 @MainActor
@@ -161,23 +140,7 @@ class BlockSyncService {
 
     // MARK: - Public API
 
-    /// Configure the service for a specific project. Called from a fresh WebView's
-    /// `onWebViewReady`, before `startPolling()` is (re)invoked for it.
-    ///
-    /// Does NOT drain (unlike `reconfigure(database:projectId:)` below) -- not
-    /// because no poll cycle can be in flight here (a WYSIWYG<->Source mode
-    /// toggle destroys and recreates the WebView WITHOUT calling `stopPolling()`
-    /// first, so this CAN in fact run while this same service instance's timer/
-    /// poll from the OLD WebView is still live -- out of scope for this fix, see
-    /// the block-sync-poll-races review), but because it's harmless regardless:
-    /// this reassigns `self.webView` to the fresh reference, and `doPollBlockChanges`
-    /// captures `webView` into a local at the top of each cycle (before any
-    /// `await`) -- so an old cycle already past that point holds its OWN local
-    /// reference to the PREVIOUS WebView and runs to completion against it,
-    /// unaffected by this reassignment. It writes to the same `database`/
-    /// `projectId` either way (those are unchanged across a mode toggle), so its
-    /// write still lands correctly; it just does so via a WebView reference this
-    /// function no longer points to.
+    /// Configure the service for a specific project
     func configure(database: ProjectDatabase, projectId: String, webView: WKWebView) {
         self.projectDatabase = database
         self.projectId = projectId
@@ -185,30 +148,8 @@ class BlockSyncService {
         self.confirmedTempIds.removeAll()
     }
 
-    /// Reconfigure database references for project switch (WebView stays the same).
-    ///
-    /// Race 1 fix: drains any in-flight poll cycle FIRST. Without this, a cycle
-    /// already running against the OLD project could still be mid-suspension
-    /// (inside `flushPendingJSChanges`'s `evaluateJavaScript` await, or any later
-    /// await in `doPollBlockChanges`) when this reassigns `projectDatabase`/
-    /// `projectId` out from under it — and because that cycle captured its
-    /// `database`/`projectId` locals BEFORE this call ever ran, while its
-    /// `generationAtPoll` snapshot is captured fresh after resuming from a
-    /// suspension, the two halves of its snapshot could straddle this very
-    /// reassignment: `generationAtPoll` reflecting the NEW (post-switch) state
-    /// while `database`/`projectId` still point at the OLD project. The mid-flight
-    /// generation guard (`checkGenerationGuard`) would then see no mismatch — it
-    /// compares live `editorState?.contentGeneration` against a snapshot that
-    /// already reflects the post-switch value — and the cycle could finish by
-    /// writing a stale OLD-project batch through locals that no longer describe
-    /// the currently-configured project.
-    ///
-    /// `database`/`projectId` are assigned immediately after the drain with no
-    /// suspension point between them and no suspension point before them either
-    /// (the whole type is @MainActor), so nothing can observe a half-switched
-    /// state once this returns.
-    func reconfigure(database: ProjectDatabase, projectId: String) async {
-        await drainInFlightPoll()
+    /// Reconfigure database references for project switch (WebView stays the same)
+    func reconfigure(database: ProjectDatabase, projectId: String) {
         self.projectDatabase = database
         self.projectId = projectId
         self.confirmedTempIds.removeAll()
@@ -225,28 +166,10 @@ class BlockSyncService {
         }
     }
 
-    /// Stop polling for block changes. Synchronous — does NOT drain an in-flight
-    /// cycle; a cycle already running keeps running to completion (or its own 5s
-    /// watchdog) after this returns. Also used internally by `startPolling()`
-    /// above, which must stay synchronous (it is not `async`, and re-polling right
-    /// after starting has never needed to wait on a prior cycle). Callers that need
-    /// a guarantee no poll cycle is still running afterward — e.g. before
-    /// synchronous flush work that itself writes to the database — must use
-    /// `stopPollingAndDrain()` instead.
+    /// Stop polling for block changes
     func stopPolling() {
         pollTimer?.invalidate()
         pollTimer = nil
-    }
-
-    /// `stopPolling()` followed by draining any in-flight poll cycle. Use this
-    /// (not bare `stopPolling()`) at any call site whose very next synchronous
-    /// step also writes to the database — e.g. `handleProjectOpened()`'s
-    /// `flushAllPendingContent()`, or `performProjectClose()`'s `flushAllSync()` —
-    /// so that cycle can't still be running (and about to write) underneath that
-    /// later write.
-    func stopPollingAndDrain() async {
-        stopPolling()
-        await drainInFlightPoll()
     }
 
     /// Cancel any pending sync operations
@@ -276,15 +199,6 @@ class BlockSyncService {
     /// ever reading the caller's just-made edit.
     private var inFlightPoll: Task<Void, Never>?
 
-    /// Whether `inFlightPoll` (when non-nil) is a *forced* cycle. Paired with
-    /// `inFlightPoll` and set in the same synchronous window as its assignment in
-    /// `pollBlockChanges(force:)` (no suspension point between them; the whole type
-    /// is @MainActor), so it's always consistent with whichever task the slot
-    /// currently holds. Read by `drainInFlightPoll()` to decide whether it may
-    /// cancel the in-flight cycle or must only wait for it — see that method's doc
-    /// comment (MUST-FIX 2 in the block-sync-poll-races plan).
-    private var inFlightPollIsForced = false
-
     #if DEBUG
     /// Test-only hook, awaited at the very top of every poll cycle
     /// (`runPollCycle`). Lets a test hold a cycle deterministically suspended
@@ -311,17 +225,6 @@ class BlockSyncService {
     /// deletion-check that removes the guard still reaches this hook — the guard's
     /// absence must change the test's OBSERVED OUTCOME, not silently deadlock its
     /// synchronization. No cost in release builds (property doesn't exist).
-    ///
-    /// Ordering note (block-sync-poll-races fix): this now fires BEFORE
-    /// `flushPendingJSChanges` runs, not after — the generation/database/projectId
-    /// snapshot moved earlier so it's captured in one suspension-free window (see
-    /// `doPollBlockChanges`'s doc comment). A test parked here is therefore
-    /// suspended strictly before that JS-side debounce flush, not after it. This
-    /// doesn't weaken what the hook can exercise: `checkGenerationGuard`'s callers
-    /// read `editorState?.contentGeneration` live at invocation time, not a value
-    /// cached at this hook, so a mid-flight rewrite injected while parked here is
-    /// still detected regardless of exactly when the JS flush call happens to run
-    /// relative to this point.
     var testAfterGenerationCaptureHook: (() async -> Void)?
 
     /// Test-only entry point to the otherwise-private poll, so tests can drive
@@ -383,119 +286,12 @@ class BlockSyncService {
             self?.inFlightPoll = nil
         }
         inFlightPoll = task
-        inFlightPollIsForced = force
         await task.value
-    }
-
-    /// Cancels and awaits any in-flight poll cycle, looping because a resumed
-    /// `await` can find a newer task already installed (same reasoning as the
-    /// drain loop in `pollBlockChanges(force:)` above — a concurrent caller may
-    /// install a fresh cycle during the very suspension this awaits through).
-    ///
-    /// Only cancels an in-flight *unforced* (periodic/background) cycle.
-    /// MUST-FIX 2 (block-sync-poll-races plan): a forced cycle — the one behind
-    /// `pollBlockChangesNow()` — is a completion guarantee its caller relies on
-    /// (footnote insertion, bibliography rebuild, notes rebuild all await it
-    /// expecting their own just-made edit to have reached the DB). If this
-    /// cancelled a forced cycle, `Task.checkCancellation()` firing inside
-    /// `doPollBlockChanges` would make it return early and silently —
-    /// indistinguishable, from the awaiting caller's point of view, from a real
-    /// completed flush — so that caller's edit could vanish without any error
-    /// surfacing. A forced cycle is instead awaited to completion without being
-    /// cancelled. Chosen over making the forced-poll cancellation outcome
-    /// observable to its caller (a `throws`/enum-returning
-    /// `pollBlockChangesNow()`) because that would touch every call site across
-    /// `ContentView+NotificationHandlers.swift` and every test that calls it —
-    /// this is the smaller, self-contained fix.
-    ///
-    /// Bounded by ITS OWN `drainTimeoutSeconds` timeout below — corrected
-    /// (block-sync-poll-races review round 2, MF1): an earlier version of this
-    /// comment claimed this "cannot hang indefinitely" because it's "bounded by
-    /// `runPollCycle`'s existing 5-second watchdog" — that was false.
-    /// `runPollCycle`'s `withThrowingTaskGroup` races the poll against that
-    /// watchdog, but a task group's exit contract still awaits every child task
-    /// before the group call itself returns, even one the watchdog already "won"
-    /// against — and `doPollBlockChanges` is frequently suspended inside a bare
-    /// `webView.evaluateJavaScript(...)` call, which does not observe Swift Task
-    /// cancellation. If WebKit's content process ever wedges mid-cycle,
-    /// `runPollCycle` — and therefore `task.value` below — can hang indefinitely,
-    /// with nothing to unblock it. Racing `task.value` the same way (another
-    /// `group.addTask` inside a `withTaskGroup`) would inherit that exact defect:
-    /// the group's exit would still block on the unfinished `task.value` child no
-    /// matter which side "wins." So this instead races two independent,
-    /// UNSTRUCTURED `Task`s via `awaitWithTimeout(seconds:operation:)` below: the
-    /// loser is simply abandoned (left running, never awaited) rather than
-    /// blocking this function's return. If the timeout wins, this logs and
-    /// returns without draining — the orphaned poll cycle is left to finish (or
-    /// not) on its own; there is no way to force-kill a suspended WebKit call.
-    /// Callers — `reconfigure(database:projectId:)` and `stopPollingAndDrain()`,
-    /// both awaited during ordinary project switch/close — get their own bound
-    /// back either way, so a wedged WebKit content process can no longer wedge
-    /// the whole switch/close operation forever.
-    private func drainInFlightPoll() async {
-        while let task = inFlightPoll {
-            if !inFlightPollIsForced {
-                task.cancel()
-            }
-            let finished = await Self.awaitWithTimeout(seconds: Self.drainTimeoutSeconds) {
-                await task.value
-            }
-            if !finished {
-                DebugLog.log(
-                    .sync,
-                    "[BlockSync] drainInFlightPoll: in-flight poll cycle did not finish within " +
-                    "\(Self.drainTimeoutSeconds)s (likely a wedged WebKit call) — giving up on the " +
-                    "drain; the orphaned cycle is left to finish on its own"
-                )
-                return
-            }
-        }
-    }
-
-    /// How long `drainInFlightPoll()` waits for a wedged poll cycle before giving
-    /// up — see that method's doc comment for why it needs its own bound.
-    private static let drainTimeoutSeconds: TimeInterval = 8.0
-
-    /// Races `operation` against a `seconds`-second timeout. Returns `true` if
-    /// `operation` finished first, `false` if the timeout did.
-    ///
-    /// Deliberately uses two independent, UNSTRUCTURED `Task`s rather than a
-    /// `withTaskGroup`/`withThrowingTaskGroup` race (the pattern used elsewhere in
-    /// this file, e.g. `runPollCycle`, `fetchContentFromWebView`) — see
-    /// `drainInFlightPoll()`'s doc comment for why that pattern can't actually
-    /// bound an `operation` that never completes: a task group's exit still
-    /// awaits every child, including the loser. Here, whichever `Task` loses the
-    /// race is simply never awaited by anything, so it can keep running in the
-    /// background (or never finish at all) without blocking this function's
-    /// return. `DrainRaceBox` guards against the continuation being resumed
-    /// twice — a runtime trap — when both sides fire close together.
-    private static func awaitWithTimeout(seconds: TimeInterval, operation: @escaping () async -> Void) async -> Bool {
-        await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
-            let box = DrainRaceBox(continuation)
-            Task { @MainActor in
-                await operation()
-                box.resume(true)
-            }
-            Task { @MainActor in
-                try? await Task.sleep(for: .seconds(seconds))
-                box.resume(false)
-            }
-        }
     }
 
     /// The poll cycle body: a 5-second watchdog racing the real poll work.
     /// Shared by both the forced and unforced paths in `pollBlockChanges(force:)`
     /// above — unchanged internals, just relocated so both can share it.
-    ///
-    /// `doPollBlockChanges` is `async throws`: it raises `CancellationError` at a
-    /// handful of `Task.checkCancellation()` checkpoints so a cancelled cycle (via
-    /// `drainInFlightPoll()`) unwinds promptly instead of running its full body
-    /// regardless. That error surfaces here exactly like a watchdog timeout —
-    /// caught by the same `do`/`catch` below and logged the same way — since both
-    /// are just "this cycle didn't finish normally," and callers of
-    /// `pollBlockChanges(force:)` never see a thrown error either way (see
-    /// `drainInFlightPoll()`'s doc comment for why a *forced* cycle is never the
-    /// one being cancelled here).
     private func runPollCycle(force: Bool) async {
         #if DEBUG
         await testPollCycleHook?()
@@ -504,7 +300,7 @@ class BlockSyncService {
             try await withThrowingTaskGroup(of: Void.self) { group in
                 group.addTask { [weak self] in
                     guard let self else { return }
-                    try await self.doPollBlockChanges(force: force)
+                    await self.doPollBlockChanges(force: force)
                 }
                 group.addTask {
                     try await Task.sleep(for: .seconds(5))
@@ -519,18 +315,7 @@ class BlockSyncService {
     }
 
     /// Inner poll body — contains the actual polling logic.
-    ///
-    /// `async throws`: raises `CancellationError` at each `Task.checkCancellation()`
-    /// checkpoint below. These checkpoints don't change what's lossless to abandon
-    /// (see the per-checkpoint reasoning at each call, and the "not after
-    /// `getBlockChanges()`" note there) — they exist so a cycle that
-    /// `drainInFlightPoll()` has cancelled unwinds promptly at the next checkpoint
-    /// instead of running its full body (including further `evaluateJavaScript`
-    /// round-trips) to completion regardless. `runPollCycle` catches and logs the
-    /// resulting error exactly like a watchdog timeout.
-    private func doPollBlockChanges(force: Bool = false) async throws {
-        try Task.checkCancellation()
-
+    private func doPollBlockChanges(force: Bool = false) async {
         if !force {
             guard editorState?.contentState == .idle else {
                 DebugLog.log(.blockPoll, "[SYNC-DIAG:BlockPoll] SKIPPED: contentState=\(String(describing: editorState?.contentState))")
@@ -540,16 +325,8 @@ class BlockSyncService {
 
         guard isConfigured, let webView, let database = projectDatabase, let projectId else { return }
 
-        // Captured here — BEFORE `flushPendingJSChanges`'s `await` below, in the same
-        // suspension-free window as the `database`/`projectId` locals just captured
-        // above — so the three form one consistent snapshot. Capturing generation
-        // AFTER that await (as this used to) let a project switch land inside the
-        // suspension: `database`/`projectId` would still be the OLD project (already
-        // captured), but `generationAtPoll` would end up reflecting the NEW,
-        // post-switch generation — the mid-flight guard below compares against a live
-        // value, so it would see no mismatch and let a stale OLD-project write
-        // through. See `reconfigure(database:projectId:)`'s doc comment for the
-        // matching half of this fix (draining before it reassigns).
+        await flushPendingJSChanges(webView: webView, force: force)
+
         let generationAtPoll = editorState?.contentGeneration ?? 0
         // Captured alongside generationAtPoll so the guard can tell "editorState was
         // never wired" (not staleness) apart from "editorState was wired here but has
@@ -561,15 +338,8 @@ class BlockSyncService {
         await testAfterGenerationCaptureHook?()
         #endif
 
-        await flushPendingJSChanges(webView: webView, force: force)
-
-        try Task.checkCancellation()
-
         // Check if there are pending changes
         let hasChanges = await checkForChanges(webView: webView)
-
-        try Task.checkCancellation()
-
         // DIAGNOSTIC (temporary, footnote-export-race investigation): log the raw
         // hasBlockChanges() result even on the early-return path, so a forced flush
         // that races the JS-side detection debounce is visible in the log instead of
@@ -586,15 +356,6 @@ class BlockSyncService {
         if checkGenerationGuard(generationAtPoll: generationAtPoll, wasWiredAtPoll: wasEditorStateWiredAtPoll, stage: "preFetch", force: force) {
             return
         }
-
-        // Deliberately no cancellation checkpoint after this line: by the time
-        // `getBlockChanges()` returns, the JS side has already cleared its pending
-        // update/insert/delete queues (see the "Unlike the preFetch check above..."
-        // comment below), so aborting between here and applying the result would
-        // silently discard a batch that will never be re-offered — real data loss,
-        // not a cheap-to-repeat skip. The checkpoint below, immediately BEFORE this
-        // call, is the last safe place to bail out lossless.
-        try Task.checkCancellation()
 
         // Get the changes
         guard let changes = await getBlockChanges(webView: webView) else { return }
@@ -1037,20 +798,6 @@ extension BlockSyncService {
     private func shouldRejectStaleSnapshot(_ changes: BlockChanges, database: ProjectDatabase, projectId: String) -> Bool {
         if !changes.deletes.isEmpty || !changes.inserts.isEmpty {
             do {
-                // Known latent race (tracked separately, deliberately not addressed here):
-                // this is a synchronous GRDB read running directly on MainActor, so it can
-                // block the MainActor for the duration of the read (e.g. while contending
-                // with the write lock a concurrent `applyChanges`'s `Task.detached` write is
-                // holding). The obvious fix — hop this read off MainActor the way
-                // `applyChanges` does for its write — would trade that blocking for a NEW
-                // correctness window: `changes`/`database`/`projectId` are all captured
-                // on-MainActor above, and re-suspending here to read `blockCount` would let a
-                // concurrent wholesale rewrite (project switch, mode toggle, etc.) land in
-                // that gap, exactly like the residual windows already documented on
-                // `applyChanges` above — except unguarded by any generation re-check on the
-                // way back in, since this function has no access to `checkGenerationGuard`'s
-                // state. Fixing the blocking without also closing that new window would be a
-                // net regression, not a fix; left for a follow-up that addresses both together.
                 let blockCount = try database.fetchBlockCount(projectId: projectId)
                 if let reason = Self.shouldRejectAsStale(changes: changes, blockCount: blockCount) {
                     DebugLog.always(

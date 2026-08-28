@@ -250,12 +250,14 @@ class SectionSyncService {
             // this instead (MUST-FIX: an orphaned non-heading bibliography block would be
             // invisible to fetchBibliographyHeadingTitle alone).
             let bibliographyExistsInBlocks = try db.hasBibliographyBlocks(projectId: pid)
+            let notesExistsInBlocks = try db.hasNotesBlocks(projectId: pid)
 
             let changes = reconciler.reconcile(
                 headers: headers,
                 dbSections: dbSections,
                 projectId: pid,
-                bibliographyExistsInBlocks: bibliographyExistsInBlocks
+                bibliographyExistsInBlocks: bibliographyExistsInBlocks,
+                notesExistsInBlocks: notesExistsInBlocks
             )
 
             if !changes.isEmpty {
@@ -367,9 +369,11 @@ class SectionSyncService {
                     // hasBibliographyBlocks' doc comment for why the immortal-row check
                     // needs this instead of fetchBibliographyHeadingTitle alone.
                     let bibliographyExistsInBlocks = try db.hasBibliographyBlocks(projectId: pid)
+                    let notesExistsInBlocks = try db.hasNotesBlocks(projectId: pid)
                     let changes = reconciler.reconcile(
                         headers: headers, dbSections: dbSections, projectId: pid,
-                        bibliographyExistsInBlocks: bibliographyExistsInBlocks
+                        bibliographyExistsInBlocks: bibliographyExistsInBlocks,
+                        notesExistsInBlocks: notesExistsInBlocks
                     )
                     if !changes.isEmpty {
                         try db.applySectionChanges(changes, for: pid)
@@ -441,8 +445,10 @@ class SectionSyncService {
                 // heading was never in that array before this change (it's excluded from
                 // `zoomedExisting`/`allSorted` matching entirely and reconciled separately by
                 // the non-zoomed path), so it must be filtered out here or every subsequent
-                // header would be paired against the wrong positional slot.
-                let bodyHeaders = headers.filter { !$0.isBibliography }
+                // header would be paired against the wrong positional slot. Same reasoning
+                // now applies to a flagged Notes header (`!$0.isNotes`) -- `zoomedExisting`
+                // below already excludes both isBibliography and isNotes rows.
+                let bodyHeaders = headers.filter { !$0.isBibliography && !$0.isNotes }
 
                 // If mini #Notes was edited while zoomed, sync definitions back to main Notes block
                 if let miniNotes = miniNotesContent {

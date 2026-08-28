@@ -447,15 +447,7 @@ class SectionViewModel: Identifiable {
     init(from block: Block) {
         self.id = block.id
         self.projectId = block.projectId
-        // block.sectionParentId, NOT block.parentId -- the latter is the unrelated
-        // structural (list-nesting) parent, always nil for the heading/pseudo-section rows
-        // this initializer sees. `applySectionsUpdate` immediately calls
-        // `EditorViewState.recalculateParentRelationships()` right after construction, which
-        // overwrites this with the freshly-derived in-memory value on the same tick -- see
-        // that method's doc comment. This assignment still matters for callers that construct
-        // a `SectionViewModel` directly from a freshly-fetched `Block` without going through
-        // that merge path.
-        self.parentId = block.sectionParentId
+        self.parentId = block.parentId
         self.sortOrder = block.sortOrder
         self.headerLevel = block.headingLevel ?? 1
         self.isPseudoSection = block.isPseudoSection
@@ -484,15 +476,12 @@ class SectionViewModel: Identifiable {
     /// keystroke, undermining the fix this method exists for) and would zero out counts whenever
     /// that batch fetch fails, instead of retaining the last-known value.
     ///
-    /// Also deliberately excludes `parentId`: NOT because the source value is always `nil`
-    /// (were this to assign it, it would read `block.sectionParentId`, matching `init(from:)`
-    /// above -- and that column is populated with the real computed parent for every section
-    /// below H1, unlike the unrelated structural `block.parentId`, which stays `nil` for these
-    /// rows). The actual reason is timing: `EditorViewState.recalculateParentRelationships()`
-    /// runs immediately after the merge on the same tick and sets the level-derived `parentId`
-    /// on every object regardless of what this method wrote. Writing it here would just be a
-    /// second guarded-but-still-firing `@Observable` write on every section below H1, every
-    /// tick, for no effect.
+    /// Also deliberately excludes `parentId`: `block.parentId` is always `nil` for the
+    /// heading/pseudo-section rows this observation path fetches, and
+    /// `EditorViewState.recalculateParentRelationships()` runs immediately after the merge on
+    /// the same tick and sets the level-derived `parentId` on every object regardless. Writing
+    /// it here would just be a second guarded-but-still-firing `@Observable` write on every
+    /// section below H1, every tick, for no effect.
     ///
     /// Every assignment is equality-guarded: `@Observable` fires on any write, including one
     /// that writes the same value back, so an unguarded assignment would defeat the fix just as

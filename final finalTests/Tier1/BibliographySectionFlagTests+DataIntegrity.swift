@@ -34,11 +34,12 @@ extension BibliographySectionFlagTests {
     // Issue 2: replaceBlocks' unconditional delete-and-replace permanently wiped the
     // bibliography during a section restore, since rebuildContentFromSections() excludes
     // isBibliography sections from the markdown that gets re-parsed into `blocks`. Fixed via
-    // an opt-in `preservingMachineManagedBlocks` parameter, scoped to bibliography ONLY.
-    // Notes gets no such protection because it needs none: Notes content is actually absent
-    // from that re-parsed markdown too (Section.isNotes has no production writer, so
-    // parseHeaders never emits a "Notes" section boundary), so there is nothing there to
-    // protect or duplicate.
+    // an opt-in `preservingMachineManagedBlocks` parameter. Notes now gets the exact same
+    // protection, on equal footing: Section.isNotes has a production writer as of this task
+    // (SectionReconciler's dedicated isNotes match path), rebuildContentFromSections() now
+    // also excludes isNotes sections from the re-parsed markdown (Part 3), and
+    // preservingMachineManagedBlocks now protects Notes rows the same way it protects
+    // bibliography rows -- see test 14 below.
     //
     // Issue 3: a Section row flagged isBibliography was permanently exempt from the delete
     // sweep, even after the real bibliography was completely gone. Fixed via
@@ -249,10 +250,19 @@ extension BibliographySectionFlagTests {
         )
     }
 
-    // MARK: - 14. Issue 2 MUST-FIX: Notes is never protected by preservingMachineManagedBlocks
+    // MARK: - 14. Issue 2 MUST-FIX (now fixed): Notes IS protected by preservingMachineManagedBlocks
+    //
+    // Section.isNotes now has a production writer (SectionReconciler's dedicated isNotes match
+    // path), so `rebuildContentFromSections` genuinely can exclude real footnote text from the
+    // markdown these two restore call sites re-parse into `blocks` -- see that function's doc
+    // comment. This test asserts the PRODUCTION shape: `blocks` carries NO Notes content at
+    // all (matching what rebuildContentFromSections actually produces after the Part 3 fix),
+    // and the real footnote text -- heading, labeled entry, AND the unlabeled continuation
+    // paragraph the label-matching merge alone could never dedupe -- survives untouched via
+    // the same preservation machinery bibliography already used.
 
-    @Test("Issue 2 MUST-FIX: preservingMachineManagedBlocks never protects Notes -- an unlabeled continuation body block is not duplicated")
-    func replaceBlocksPreservingBibliographyDoesNotDuplicateNotesContinuation() throws {
+    @Test("Issue 2 fixed: preservingMachineManagedBlocks preserves Notes intact when `blocks` carries no Notes content (production shape)")
+    func replaceBlocksPreservingBibliographyPreservesNotesIntact() throws {
         let db = try TestFixtureFactory.createTemporary(content: TestFixtureFactory.testContent)
         let pid = try TestFixtureFactory.getProjectId(from: db)
 
@@ -263,8 +273,8 @@ extension BibliographySectionFlagTests {
 
         // Seed a Notes section shaped like a labeled entry PLUS an unlabeled continuation
         // paragraph -- the shape handleMachineManagedBlock's label-matching merge cannot dedupe
-        // (it only prevents duplication when it can parse a "[^N]:" label from the incoming
-        // block).
+        // on its own (it only prevents duplication when it can parse a "[^N]:" label from the
+        // incoming block); preservation must protect it wholesale instead.
         let seedBlocks: [Block] = [
             Block(id: introHeadingId, projectId: pid, sortOrder: 0, blockType: .heading,
                   textContent: "Intro", markdownFragment: "# Intro", headingLevel: 1),
@@ -284,14 +294,97 @@ extension BibliographySectionFlagTests {
         let notesBlocksBefore = try db.fetchBlocks(projectId: pid).filter { $0.isNotes }
         #expect(notesBlocksBefore.count == 3, "Precondition: heading + labeled entry + unlabeled continuation")
 
-        // Simulate a section-restore's freshly re-parsed `blocks`: brand-new Block instances
-        // (fresh ids, as BlockParser.parse would produce) carrying the SAME Notes content.
-        // This is a hand-built stand-in, not today's real shape: the actual
-        // rebuildContentFromSections path never produces Notes content in `blocks` (Notes
-        // has no production writer for Section.isNotes, so parseHeaders never emits a
-        // "Notes" section boundary to re-parse). We construct it anyway to exercise the
-        // theoretical duplication hazard the preservation code guards against -- this test
-        // validates defense-in-depth, not a scenario that occurs in production yet.
+        // Production-shaped `blocks`: a fresh re-parse of rebuildContentFromSections' output,
+        // which now excludes isNotes sections (Part 3) exactly as it already excludes
+        // isBibliography ones -- so this array carries NO Notes content whatsoever, matching
+        // what a real single-section restore actually hands to replaceBlocks.
+        let newBlocks: [Block] = [
+            Block(projectId: pid, sortOrder: 0, blockType: .heading,
+                  textContent: "Intro", markdownFragment: "# Intro", headingLevel: 1),
+            Block(projectId: pid, sortOrder: 1, blockType: .paragraph,
+                  textContent: "Body text.", markdownFragment: "Body text.")
+        ]
+
+        try db.replaceBlocks(newBlocks, for: pid, preservingMachineManagedBlocks: true)
+
+        let notesBlocksAfter = try db.fetchBlocks(projectId: pid).filter { $0.isNotes }
+        #expect(
+            notesBlocksAfter.count == 3,
+            "Notes must be preserved wholesale -- heading + labeled entry + unlabeled continuation, none lost, none duplicated"
+        )
+
+        let notesHeadingAfter = try #require(notesBlocksAfter.first { $0.blockType == .heading })
+        #expect(notesHeadingAfter.id == notesHeadingId, "The Notes heading block id must be preserved, not recreated")
+
+        let labeledEntryAfter = try #require(notesBlocksAfter.first { $0.id == labeledEntryId })
+        #expect(labeledEntryAfter.textContent == "[^1]: Some footnote text.", "The real footnote TEXT must survive, not just an empty placeholder")
+
+        let continuationAfter = try #require(notesBlocksAfter.first { $0.id == continuationId })
+        #expect(
+            continuationAfter.textContent == "Continuation with no footnote label.",
+            "The unlabeled continuation paragraph -- the shape label-matching alone cannot dedupe -- must also survive"
+        )
+    }
+
+    // MARK: - 14b. MUST-FIX 1 regression guard: colliding incoming Notes content must MERGE,
+    // not duplicate, into the preserved row
+    //
+    // Test 14 above only proves the PRODUCTION shape (`blocks` carries zero Notes content, so
+    // there is nothing to collide with -- preservation alone is sufficient). It does NOT
+    // exercise `handleMachineManagedBlock`'s same-label MERGE branch at all, because nothing in
+    // its `newBlocks` is Notes-shaped. That merge branch depends on `notesRowByLabel` actually
+    // being populated via `buildNotesRowIndex(from: existingBlocks)` in `replaceBlocks`'
+    // preservation path -- exactly the line a prior round of this fix left as an unpopulated
+    // `[:]` literal, silently disabling the merge and duplicating every labeled Notes entry
+    // whose incoming markdown collided with a preserved row. This is the old (pre-Notes-
+    // production-writer) test's collision scenario, restored: `newBlocks` DOES contain
+    // Notes-shaped content -- a heading and a labeled entry, mirroring the old test's shape --
+    // that collides by title/label with an existing preserved row. An unconfirmed
+    // `SectionSyncService.parseHeaders` Notes candidate (or any other path) can let real Notes
+    // markdown flow back into `blocks` this way, so this collision is reachable in production,
+    // not merely theoretical.
+    //
+    // The unlabeled continuation paragraph is seeded (mirroring the old test's full shape) but
+    // deliberately NOT duplicated in `newBlocks`: `handleMachineManagedBlock` can only ever
+    // merge a Notes row it can parse a "[^N]:" label from (see test 14's own doc comment), so a
+    // colliding UNLABELED continuation is a separate, pre-existing, out-of-scope gap -- not
+    // something this fix touches. Preservation alone (no collision) already keeps it intact, as
+    // proven by test 14 above.
+
+    @Test("MUST-FIX 1 regression guard: a colliding incoming Notes heading + labeled entry merge into the preserved rows instead of duplicating them")
+    func replaceBlocksPreservingBibliographyMergesCollidingNotesEntryWithoutDuplication() throws {
+        let db = try TestFixtureFactory.createTemporary(content: TestFixtureFactory.testContent)
+        let pid = try TestFixtureFactory.getProjectId(from: db)
+
+        let introHeadingId = UUID().uuidString
+        let notesHeadingId = UUID().uuidString
+        let labeledEntryId = UUID().uuidString
+        let continuationId = UUID().uuidString
+
+        // Same seed shape as test 14: heading + labeled entry + unlabeled continuation.
+        let seedBlocks: [Block] = [
+            Block(id: introHeadingId, projectId: pid, sortOrder: 0, blockType: .heading,
+                  textContent: "Intro", markdownFragment: "# Intro", headingLevel: 1),
+            Block(projectId: pid, sortOrder: 1, blockType: .paragraph,
+                  textContent: "Body text.", markdownFragment: "Body text."),
+            Block(id: notesHeadingId, projectId: pid, sortOrder: 2, blockType: .heading,
+                  textContent: "Notes", markdownFragment: "# Notes", headingLevel: 1, isNotes: true),
+            Block(id: labeledEntryId, projectId: pid, sortOrder: 3, blockType: .paragraph,
+                  textContent: "[^1]: Some footnote text.", markdownFragment: "[^1]: Some footnote text.",
+                  isNotes: true),
+            Block(id: continuationId, projectId: pid, sortOrder: 4, blockType: .paragraph,
+                  textContent: "Continuation with no footnote label.",
+                  markdownFragment: "Continuation with no footnote label.", isNotes: true)
+        ]
+        try db.replaceBlocks(seedBlocks, for: pid)
+
+        let notesBlocksBefore = try db.fetchBlocks(projectId: pid).filter { $0.isNotes }
+        #expect(notesBlocksBefore.count == 3, "Precondition: heading + labeled entry + unlabeled continuation")
+
+        // Colliding `newBlocks`: brand-new Block instances (fresh ids, as a re-parse would
+        // produce) carrying a "# Notes" heading and a "[^1]:"-labeled entry that collide by
+        // title/label with the preserved rows above. Deliberately does NOT include a colliding
+        // continuation -- see this test's doc comment for why that's a separate, unaddressed gap.
         let newBlocks: [Block] = [
             Block(projectId: pid, sortOrder: 0, blockType: .heading,
                   textContent: "Intro", markdownFragment: "# Intro", headingLevel: 1),
@@ -300,11 +393,8 @@ extension BibliographySectionFlagTests {
             Block(projectId: pid, sortOrder: 2, blockType: .heading,
                   textContent: "Notes", markdownFragment: "# Notes", headingLevel: 1, isNotes: true),
             Block(projectId: pid, sortOrder: 3, blockType: .paragraph,
-                  textContent: "[^1]: Some footnote text.", markdownFragment: "[^1]: Some footnote text.",
-                  isNotes: true),
-            Block(projectId: pid, sortOrder: 4, blockType: .paragraph,
-                  textContent: "Continuation with no footnote label.",
-                  markdownFragment: "Continuation with no footnote label.", isNotes: true)
+                  textContent: "[^1]: Some footnote text -- edited.", markdownFragment: "[^1]: Some footnote text -- edited.",
+                  isNotes: true)
         ]
 
         try db.replaceBlocks(newBlocks, for: pid, preservingMachineManagedBlocks: true)
@@ -313,18 +403,28 @@ extension BibliographySectionFlagTests {
         #expect(
             notesBlocksAfter.count == 3,
             """
-            Notes must go through the normal delete-and-reinsert flow, not be preserved -- a count > 3 \
-            means the unlabeled continuation was preserved AND its freshly-parsed duplicate also inserted
+            The colliding heading and labeled entry must MERGE into their preserved rows, not \
+            duplicate alongside them -- a count > 3 means notesRowByLabel was empty (MUST-FIX 1's \
+            bug), so the incoming labeled entry fell through to a normal insert instead of merging
             """
         )
 
         let notesHeadingAfter = try #require(notesBlocksAfter.first { $0.blockType == .heading })
+        #expect(notesHeadingAfter.id == notesHeadingId, "The Notes heading block id must be preserved via the title-match queue, not recreated")
+
+        let labeledEntryAfter = try #require(notesBlocksAfter.first { $0.id == labeledEntryId })
         #expect(
-            notesHeadingAfter.id == notesHeadingId,
+            labeledEntryAfter.textContent == "[^1]: Some footnote text -- edited.",
             """
-            The Notes heading id is still preserved by the ordinary title-match queue -- \
-            protectingNotes:false only removes its immortality from the delete sweep, not its eligibility to be popped
+            The preserved row's content must be UPDATED by the merge, proving a real merge happened \
+            rather than the old content coincidentally surviving untouched
             """
+        )
+
+        let continuationAfter = try #require(notesBlocksAfter.first { $0.id == continuationId })
+        #expect(
+            continuationAfter.textContent == "Continuation with no footnote label.",
+            "The untouched, non-colliding continuation must still survive"
         )
     }
 

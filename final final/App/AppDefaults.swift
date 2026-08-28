@@ -56,16 +56,4 @@ enum AppDefaults {
     static var store: UserDefaults {
         TestMode.isTesting ? testStore : .standard
     }
-
-    /// Wipes the whole isolated test suite domain — every key, not just the nine
-    /// `TestMode.clearTestState()` knows about. UI-test launches only (see
-    /// `AppDelegate.applicationWillFinishLaunching`): each UI test gets its own app
-    /// process, so nothing in-process can be clobbered, and the suite's plist otherwise
-    /// persists state from one test's launch into the next. Unit tests must keep using
-    /// `clearTestState()`'s surgical key list instead — they share one process, and a
-    /// whole-domain wipe there could clobber state a concurrently-running test relies on.
-    static func wipeTestDomainForUITesting() {
-        guard TestMode.isUITesting else { return }
-        testStore.removePersistentDomain(forName: testSuiteName)
-    }
 }

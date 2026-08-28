@@ -21,12 +21,13 @@ struct ParsedHeader: Sendable {
     let markdownContent: String // Full markdown content of this section
     let wordCount: Int
     let isBibliography: Bool    // True for the machine-managed bibliography heading
+    let isNotes: Bool           // True for the machine-managed footnote Notes heading
 
-    // Explicit memberwise init: `isBibliography` is declared here with no inline default
-    // (`let isBibliography: Bool`), so Swift's synthesized memberwise init would require every
-    // caller to pass it explicitly. This explicit init supplies a `= false` default on the
-    // parameter instead, so it's written out here to keep every existing call site
-    // (including the 3 test factories in SectionReconcilerTests.swift,
+    // Explicit memberwise init: `isBibliography`/`isNotes` are declared here with no inline
+    // default (`let isBibliography: Bool`), so Swift's synthesized memberwise init would
+    // require every caller to pass them explicitly. This explicit init supplies a `= false`
+    // default on each parameter instead, so it's written out here to keep every existing call
+    // site (including the 3 test factories in SectionReconcilerTests.swift,
     // SectionReconcilerPseudoSectionTests.swift, and SectionSyncServiceZoomInsertionTests.swift)
     // compiling unchanged.
     init(
@@ -37,7 +38,8 @@ struct ParsedHeader: Sendable {
         startOffset: Int,
         markdownContent: String,
         wordCount: Int,
-        isBibliography: Bool = false
+        isBibliography: Bool = false,
+        isNotes: Bool = false
     ) {
         self.position = position
         self.title = title
@@ -47,6 +49,7 @@ struct ParsedHeader: Sendable {
         self.markdownContent = markdownContent
         self.wordCount = wordCount
         self.isBibliography = isBibliography
+        self.isNotes = isNotes
     }
 }
 
@@ -69,12 +72,19 @@ struct SectionReconciler: Sendable {
     ///     that has ACTUALLY run the broader `hasBibliographyBlocks`-style check (not the
     ///     heading-only `fetchBibliographyHeadingTitle`, which can't see an orphaned entry/
     ///     terminator block surviving after its heading is gone) should ever pass `false`.
+    ///   - notesExistsInBlocks: Whether ANY `isNotes`-flagged block currently survives at the
+    ///     `block` table level. Mirrors `bibliographyExistsInBlocks` exactly, including its
+    ///     default (`true`, preserving every existing call site's prior behavior unchanged --
+    ///     a flagged Notes `Section` row stays exempt from the delete sweep below regardless
+    ///     of what the parsed headers say). Only a caller that has ACTUALLY run the broader
+    ///     `hasNotesBlocks`-style check should ever pass `false`.
     /// - Returns: Array of changes to apply (insert/update/delete)
     func reconcile(
         headers: [ParsedHeader],
         dbSections: [Section],
         projectId: String,
-        bibliographyExistsInBlocks: Bool = true
+        bibliographyExistsInBlocks: Bool = true,
+        notesExistsInBlocks: Bool = true
     ) -> [SectionChange] {
         var changes: [SectionChange] = []
         var matchedDBIds: Set<String> = []
@@ -90,6 +100,14 @@ struct SectionReconciler: Sendable {
         // un-flagged row re-entering the title-matching pool would recreate MUST-FIX 1's
         // exact role-swap risk with bibliography-shaped content.
         let bibliographyGone = !bibliographyExistsInBlocks && !headers.contains { $0.isBibliography }
+
+        // Same two-signal AND as bibliographyGone above, mirrored exactly for Notes: gone only
+        // when neither signal claims it survives -- not `notesExistsInBlocks` (the block-level
+        // check) AND no parsed header in THIS pass is itself flagged `isNotes`. Without this,
+        // the first Notes Section row ever created becomes permanent: the delete-sweep loop
+        // below unconditionally excluded `!section.isNotes` before this fix, so a Notes row
+        // could never be swept even after every footnote was removed from the document.
+        let notesGone = !notesExistsInBlocks && !headers.contains { $0.isNotes }
 
         // Sort DB sections by position for matching
         let sortedDB = dbSections.sorted { $0.sortOrder < $1.sortOrder }
@@ -134,6 +152,43 @@ struct SectionReconciler: Sendable {
                 continue
             }
 
+            if header.isNotes {
+                // Dedicated match path for the machine-managed Notes heading -- mirrors
+                // findBibliographyMatch exactly (see findNotesMatch's doc comment for why this
+                // must not reuse findMatch unmodified).
+                if let match = findNotesMatch(header, in: sortedDB, excluding: matchedDBIds) {
+                    matchedDBIds.insert(match.id)
+
+                    // Mirrors the isBibliography branch's MUST-FIX 2: buildUpdates alone
+                    // returns nil on the steady-state case (title/level/content/position
+                    // already match) -- exactly the case the self-heal exists to repair, since
+                    // the ONLY thing that needs to change is the flag itself. Seed with an
+                    // empty SectionUpdates() so the flip is never silently dropped.
+                    var updates = buildUpdates(header: header, existing: match, newPosition: index)
+                    if !match.isNotes {
+                        if updates == nil { updates = SectionUpdates() }
+                        updates?.isNotes = true
+                    }
+                    if let updates {
+                        changes.append(.update(id: match.id, updates: updates))
+                    }
+                } else {
+                    let newSection = Section(
+                        projectId: projectId,
+                        sortOrder: index,
+                        headerLevel: header.level,
+                        isPseudoSection: header.isPseudoSection,
+                        isNotes: true,
+                        title: header.title,
+                        markdownContent: header.markdownContent,
+                        wordCount: header.wordCount,
+                        startOffset: header.startOffset
+                    )
+                    changes.append(.insert(newSection))
+                }
+                continue
+            }
+
             if let match = findMatch(header, in: sortedDB, excluding: matchedDBIds) {
                 matchedDBIds.insert(match.id)
 
@@ -160,11 +215,12 @@ struct SectionReconciler: Sendable {
 
         // Unmatched DB sections were deleted from markdown
         // EXCEPT bibliography/notes sections which are managed separately by their sync
-        // services -- UNLESS the bibliography is verifiably gone via BOTH signals
-        // (bibliographyGone above), in which case a stale flagged row must be swept away
-        // like any other unmatched row instead of staying immortal.
-        for section in sortedDB where !matchedDBIds.contains(section.id) && !section.isNotes {
+        // services -- UNLESS the bibliography/notes row is verifiably gone via BOTH signals
+        // (bibliographyGone/notesGone above), in which case a stale flagged row must be swept
+        // away like any other unmatched row instead of staying immortal.
+        for section in sortedDB where !matchedDBIds.contains(section.id) {
             if section.isBibliography && !bibliographyGone { continue }
+            if section.isNotes && !notesGone { continue }
             changes.append(.delete(id: section.id))
             // Deliberately excludes title: it's a literal excerpt of the user's
             // manuscript, and this line reaches the persistent DiagnosticLogFile
@@ -218,6 +274,44 @@ struct SectionReconciler: Sendable {
         let unmatched = sections.filter { !excluding.contains($0.id) }
 
         if let flagged = unmatched.first(where: { $0.isBibliography }) {
+            return flagged
+        }
+
+        let candidates = unmatched.filter { !$0.isBibliography && !$0.isNotes }
+
+        if let exact = candidates.first(where: { $0.sortOrder == header.position }),
+           passesMatchGate(header, exact) {
+            return exact
+        }
+
+        let inRange = candidates.filter { abs($0.sortOrder - header.position) <= 3 }
+        return inRange.first(where: { passesMatchGate(header, $0) })
+    }
+
+    /// Dedicated match for the machine-managed Notes heading. Mirrors `findBibliographyMatch`
+    /// exactly -- same three outcomes in the same order, same reasoning for why an unbounded
+    /// or pure-proximity fallback is deliberately absent:
+    ///
+    /// (a) If a row is already flagged `isNotes`, it IS the Notes row by definition -- match
+    /// it directly regardless of title/position drift.
+    ///
+    /// (b) Otherwise, self-heal onto an unflagged row, but ONLY through evidence-bearing
+    /// tiers -- exact position + `passesMatchGate`, then in-range (±3) + `passesMatchGate`.
+    /// No unbounded "same title anywhere" tier: "Notes" is an even more common, user-reusable
+    /// title than a bibliography header name, so an unbounded title match could permanently
+    /// convert a user's real, distant, same-titled section into the flagged Notes row.
+    ///
+    /// (c) No further fallback to `findMatch`'s pure-proximity behavior either -- same
+    /// role-swap risk through a different path. When no evidence-bearing candidate exists,
+    /// returning `nil` here routes the caller to insert a fresh row instead.
+    private func findNotesMatch(
+        _ header: ParsedHeader,
+        in sections: [Section],
+        excluding: Set<String>
+    ) -> Section? {
+        let unmatched = sections.filter { !excluding.contains($0.id) }
+
+        if let flagged = unmatched.first(where: { $0.isNotes }) {
             return flagged
         }
 
