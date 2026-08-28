@@ -75,6 +75,33 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var autosaveKeySweepScheduled = false
 
     func applicationWillFinishLaunching(_ notification: Notification) {
+        // Hermetic UI-test launches: wipe the ENTIRE persistent defaults domain, not a
+        // hand-maintained key list. `TestMode.clearTestState()` clears nine known keys in
+        // the isolated `AppDefaults.store` suite, but everything else the app persists —
+        // window frame and fullscreen state, spelling/grammar/smart-quotes toggles,
+        // proofing settings, @AppStorage keys — goes straight to `UserDefaults.standard`
+        // and survives from one UI test's launch to the next. That leftover state is the
+        // suite-order pollution class behind "fails in the full suite, passes solo"
+        // (three of the four quarantines in scripts/vmtest/known-flaky.txt cite it).
+        // Safe to wipe wholesale: test builds run under the separate
+        // `com.kerim.final-final.testhost` bundle identity (project.yml, DebugTest
+        // config), so this never touches the real app's domain, on the VM or a host.
+        // The suite domain is wiped too — clearTestState()'s nine-key list stays for
+        // in-process unit-test resets, where a whole-domain wipe could clobber state
+        // other concurrently-running unit tests rely on.
+        // (Read-before-write ordering is deliberate: the emptiness check avoids the
+        // write-then-read cfprefsd re-merge stall documented at
+        // AppDelegate+WindowFramePersistence.flushWindowFrame when nothing needs wiping.)
+        if TestMode.isUITesting, let bundleID = Bundle.main.bundleIdentifier {
+            let standardDomain = UserDefaults.standard.persistentDomain(forName: bundleID)
+            if let standardDomain, !standardDomain.isEmpty {
+                UserDefaults.standard.removePersistentDomain(forName: bundleID)
+                DebugLog.log(.lifecycle,
+                    "[AppDelegate] UI test mode: wiped \(standardDomain.count) persisted default(s) from \(bundleID)")
+            }
+            AppDefaults.wipeTestDomainForUITesting()
+        }
+
         // In test mode, clean saved application state from the CORRECT path.
         // The test runner can't do this because its NSHomeDirectory() is containerized
         // and points to the wrong location. The app's NSHomeDirectory() is the real user home.
