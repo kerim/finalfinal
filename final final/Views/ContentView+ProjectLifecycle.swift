@@ -366,19 +366,8 @@ extension ContentView {
 
         // Stop block polling FIRST — prevents poll timer from firing during
         // the await suspension points in flushAllPendingContent() and writing
-        // conflicting data to the database. `stopPollingAndDrain()` (not bare
-        // `stopPolling()`): a poll cycle that was already in flight when we get
-        // here could otherwise still be running — suspended inside its own
-        // `evaluateJavaScript` awaits — while `flushAllPendingContent()` below
-        // does its own reads/writes against the OLD project, racing that
-        // in-flight cycle's eventual write. This is the load-bearing half of the
-        // block-sync-poll-races fix (race 1): the drain inside
-        // `blockSyncService.reconfigure(...)` further down this function also
-        // matters, but by the time that call runs, `editorState.resetForProjectSwitch()`
-        // has already discarded the old project's in-memory state, so a stale
-        // write landing between here and there is the window that actually causes
-        // observable corruption.
-        await blockSyncService.stopPollingAndDrain()
+        // conflicting data to the database.
+        blockSyncService.stopPolling()
 
         // Flush all pending content to OLD project's database before switching.
         await flushAllPendingContent()
@@ -429,7 +418,7 @@ extension ContentView {
         if editorState.editorMode == .wysiwyg,
            let db = documentManager.projectDatabase,
            let pid = documentManager.projectId {
-            await blockSyncService.reconfigure(database: db, projectId: pid)
+            blockSyncService.reconfigure(database: db, projectId: pid)
             Task {
                 if let result = fetchBlocksWithIds() {
                     // Sync editorState.content to prevent polling from overwriting the atomic push
@@ -487,34 +476,18 @@ extension ContentView {
 
     /// Actually close the project and reset state
     func performProjectClose() async {
-        // Stop observation and drain any in-flight poll cycle FIRST, BEFORE the
-        // flush below -- mirrors `handleProjectOpened()`'s drain-then-flush order
-        // (MF2, block-sync-poll-races review round 2: this used to run the other
-        // way around). `stopPollingAndDrain()` (not bare `stopPolling()`): a poll
-        // cycle already in flight when the user clicks close could be suspended
-        // inside its own `evaluateJavaScript` awaits at this exact moment. Flushing
-        // BEFORE draining (the old order) left a window where that cycle could
-        // resume and land a stale write to the project's database AFTER the
-        // close-time flush had just landed the user's real, current content --
-        // silently reverting their last edit with no error surfaced anywhere.
-        // Draining first guarantees no poll cycle is still alive by the time the
-        // flush below runs, so nothing can write underneath it.
-        editorState.stopObserving()
-        await blockSyncService.stopPollingAndDrain()
-
         // Flush pending content synchronously before closing.
         // editorState.content is current (JS 50ms debounce has fired by button click time).
         await editorState.flushAllSync()
 
-        // Create auto-backup before closing if there are unsaved changes (not for
-        // Getting Started). Must stay AFTER the flush above -- `needsLiveFlush`
-        // defaults to false here because this caller already flushed upstream (see
-        // `AutoBackupService.createBackupIfNeeded`'s doc comment), so the backup
-        // would otherwise snapshot stale content.
+        // Create auto-backup before closing if there are unsaved changes (not for Getting Started)
         if !documentManager.isGettingStartedProject {
             await autoBackupService.projectWillClose()
         }
 
+        // Stop observation and services FIRST to prevent any further syncs
+        editorState.stopObserving()
+        blockSyncService.stopPolling()
         blockSyncService.cancelPendingSync()
         sectionSyncService.cancelPendingSync()
         annotationSyncService.cancelPendingSync()
