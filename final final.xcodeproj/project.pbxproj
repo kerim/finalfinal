@@ -216,6 +216,7 @@
 		7A7512A6633EB5C4AE56C249 /* AutoBackupServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 78926BF4B3C1DBA2A2E54E63 /* AutoBackupServiceTests.swift */; };
 		7A766FE31F56DB4FFCE73D8C /* VersionHistoryCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3BB70B8A6DD5904EC181116A /* VersionHistoryCoordinator.swift */; };
 		7ACE3361E6A474E6D99062E1 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02E925EEE027AE829C229AAA /* ContentView.swift */; };
+		7AFAC77BC78AE053CDD14485 /* ReferenceOdtStyleParityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4BC102D235DE4565B6B31042 /* ReferenceOdtStyleParityTests.swift */; };
 		7B043B707D6E83C7159BA2F9 /* SmokeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 355B348D7655EE1EA841872D /* SmokeTests.swift */; };
 		7C511DB47A7113E8833C262E /* ZoteroServiceConnectionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6704317B174DD3C1DB07E710 /* ZoteroServiceConnectionTests.swift */; };
 		7DFBEF78C3DD381D347A324C /* Database+BlocksObservation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8787EE28839E44DAAF698741 /* Database+BlocksObservation.swift */; };
@@ -553,6 +554,7 @@
 		4A8EFCD152C2A36B39ADE780 /* OutlineObservationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutlineObservationTests.swift; sourceTree = "<group>"; };
 		4B4047E7D3F51B03731AAA62 /* DocumentManager+RecentProjects.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "DocumentManager+RecentProjects.swift"; sourceTree = "<group>"; };
 		4B54AA9D6135435B52D39ECE /* MathBlockParserTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MathBlockParserTests.swift; sourceTree = "<group>"; };
+		4BC102D235DE4565B6B31042 /* ReferenceOdtStyleParityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReferenceOdtStyleParityTests.swift; sourceTree = "<group>"; };
 		4BE2C3C3ABC2BC1990C2AC24 /* BlockSyncService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockSyncService.swift; sourceTree = "<group>"; };
 		4C0F17548A3E883FD14975A0 /* AnnotationSyncService+Markdown.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AnnotationSyncService+Markdown.swift"; sourceTree = "<group>"; };
 		4DB38C1663B804694C7D3D31 /* EditorBridgeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorBridgeTests.swift; sourceTree = "<group>"; };
@@ -1267,6 +1269,7 @@
 				547942135791365F536F7DFA /* PasteAboveHeadingOrderBugTests.swift */,
 				6496027A3F7CD0097F05A189 /* ProjectLifecycleTests.swift */,
 				71A4323A1557FDB03B354C28 /* RecentProjectsTests.swift */,
+				4BC102D235DE4565B6B31042 /* ReferenceOdtStyleParityTests.swift */,
 				68F200750F8B56BA3448474F /* SectionMetadataTests.swift */,
 				47F10F7A8749647836727D2D /* SectionOperationsTests.swift */,
 				B72FBE42BBE7D37897363CD5 /* SectionSyncSuppressReconcileTests.swift */,
@@ -1800,6 +1803,7 @@
 				A882A9761FB7DBA60CE42F93 /* ProjectRepairServiceTests+AdvancedScenarios.swift in Sources */,
 				FF68398B6345837AE88A9AB1 /* ProjectRepairServiceTests.swift in Sources */,
 				880B34EE08B27AC4F8128AE0 /* RecentProjectsTests.swift in Sources */,
+				7AFAC77BC78AE053CDD14485 /* ReferenceOdtStyleParityTests.swift in Sources */,
 				15D2CBA9D93EFC0FF5F053B4 /* SectionBreakOutlineSyncTests.swift in Sources */,
 				405B95A004A870353F898EA6 /* SectionDeleteDuplicateOpsTests.swift in Sources */,
 				3A2937E444DC748F0C1DA94C /* SectionMetadataTests.swift in Sources */,

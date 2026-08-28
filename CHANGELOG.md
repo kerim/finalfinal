@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **ODT (OpenDocument) exports looked visually inconsistent with Word and PDF exports, using generic default styling instead of the app's own look** — fonts, heading sizes, and margins in ODT exports now match Word and PDF exports.
+
 ## [0.2.127] - 2026-08-26
 
 ### Added
