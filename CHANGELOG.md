@@ -6,9 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **A "Notes" card now appears in the outline sidebar** alongside "Bibliography" whenever your document has footnotes, so you can see and navigate to it like any other section.
+
 ### Fixed
 
 - **ODT (OpenDocument) exports looked visually inconsistent with Word and PDF exports, using generic default styling instead of the app's own look** — fonts, heading sizes, and margins in ODT exports now match Word and PDF exports.
+- **Opening a document from the Open command (or double-clicking a file) could show it blank or with missing formatting until you clicked into it** — fixed.
+- **Restoring a single section from Version History could silently delete your real footnote text**, leaving only an empty "Notes" heading behind with nothing under it — your footnotes are now protected during a restore, the same way your bibliography already was.
+- **Switching between projects right after typing could, in rare timing, write your edit to the wrong project's file, or lose it entirely if you closed a project right after editing** — both fixed.
+- **The outline sidebar could briefly flash an outdated heading or word count** after a fast edit — fixed.
+- **Nested heading relationships (which section sits under which) are now saved to disk instead of only recalculated on the fly** — hardens the outline against reverting to the wrong nesting after certain reorder-then-quit sequences.
 
 ## [0.2.127] - 2026-08-26
 
