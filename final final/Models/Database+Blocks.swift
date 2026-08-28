@@ -264,6 +264,11 @@ extension ProjectDatabase {
 
             // Process updates (after inserts so idMapping is available for temp-ID lookups)
             try processEditorUpdates(db: db, updates: changes.updates, idMapping: idMapping)
+
+            // An editor diff can change heading levels/text (which can shift which heading
+            // precedes which) and insert/delete headings outright -- re-persist
+            // sectionParentId to match. See Database+BlockParents.swift.
+            try Self.recomputeSectionParents(db: db, projectId: projectId)
         }
 
         return idMapping

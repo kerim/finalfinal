@@ -704,31 +704,25 @@ class EditorViewState {
     /// remains in use elsewhere on the drag path (e.g. `recalculateSortOrders`/
     /// `applyComputedOffsets`) for identity-replacing updates that are unaffected by this
     /// method's approach.
+    /// Delegates to `SectionHierarchy.parentIds(for:)` -- the single shared implementation of
+    /// "parent = nearest preceding entry with a LOWER header level" also used by
+    /// `Database+BlockParents.swift`'s `recomputeSectionParents` to persist the same answer.
+    /// `headerLevel` is already coalesced (`block.headingLevel ?? 1` in
+    /// `SectionViewModel.init(from:)`/`applyIdentity`), matching the coalescing contract
+    /// `SectionHierarchy.parentIds` requires of its callers.
+    ///
+    /// Computed ONCE for the whole `sections` array rather than per-index: this method runs on
+    /// every observation tick (which can fire every keystroke), and the old per-index helper it
+    /// replaced rebuilt `entries` and re-ran `SectionHierarchy.parentIds` from scratch for every
+    /// section just to return one answer -- O(N^2) work and N array allocations for a document
+    /// with N headings.
     func recalculateParentRelationships() {
-        for index in sections.indices {
+        let entries = sections.map { (id: $0.id, level: $0.headerLevel) }
+        let newParentIds = SectionHierarchy.parentIds(for: entries)
+        for (index, newParentId) in newParentIds.enumerated() {
             let vm = sections[index]
-            let newParentId = findParentByLevel(at: index)
             if vm.parentId != newParentId { vm.parentId = newParentId }
         }
-    }
-
-    /// Find the appropriate parent for a section at the given index
-    /// Parent = nearest preceding section with a LOWER header level
-    private func findParentByLevel(at index: Int) -> String? {
-        let section = sections[index]
-
-        // H1 sections have no parent
-        guard section.headerLevel > 1 else { return nil }
-
-        // Look backwards for a section with lower level
-        for i in stride(from: index - 1, through: 0, by: -1) {
-            let candidate = sections[i]
-            if candidate.headerLevel < section.headerLevel {
-                return candidate.id
-            }
-        }
-
-        return nil
     }
 
     // MARK: - Selection State
