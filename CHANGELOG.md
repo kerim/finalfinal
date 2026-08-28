@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.128] - 2026-08-28
+
 ### Added
 
 - **A "Notes" card now appears in the outline sidebar** alongside "Bibliography" whenever your document has footnotes, so you can see and navigate to it like any other section.
