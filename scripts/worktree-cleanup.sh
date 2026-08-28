@@ -144,6 +144,15 @@ if [ ! -d "$repo" ]; then
     exit 2
 fi
 
+# Resolve to an absolute path: git's own `worktree list --porcelain` always
+# reports absolute worktree paths, and the registered-worktree detection
+# below does an exact string comparison against them. A relative --repo
+# (e.g. ".") silently never matches, which falls through to guessing the
+# branch name by convention (autodev/<slug>) — misclassifying every
+# registered, correctly-named superdev/<slug> (or any other convention's)
+# worktree as an unregistered orphan instead of reading its real branch.
+repo="$(cd "$repo" && pwd)"
+
 WT="$repo/.claude/worktrees/$slug"
 NOTES="$repo/.claude/superdev/$slug"
 
