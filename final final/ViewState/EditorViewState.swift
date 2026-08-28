@@ -266,7 +266,7 @@ class EditorViewState {
 
     // MARK: - Sidebar State (Phase 1.6)
     var sections: [SectionViewModel] = [] {
-        didSet { invalidateOutlineCache() }
+        didSet { invalidateOutlineCache(); outlineGeneration &+= 1 }
     }
     var statusFilter: SectionStatus?
     var headerLevelFilter: Int?
@@ -489,6 +489,17 @@ class EditorViewState {
     @ObservationIgnored
     private var lastOutlineCounts: [String: ProjectDatabase.HeadingWordCounts] = [:]
 
+    /// Bumped on every write to `sections` (via its `didSet`) and, additionally, at the end of
+    /// `applySectionsUpdate` (to cover the counts-only path, which re-arms the equality cache
+    /// without writing `sections`). `refreshSectionsAwaiting()` snapshots this before its DB
+    /// fetch and re-checks it after; a mismatch means some other apply (the live observation
+    /// loop, a structural-undo sequence, hierarchy enforcement) landed while this fetch was
+    /// suspended, so the fetch's result is stale and must be dropped rather than merged in --
+    /// otherwise it can overwrite newer data and re-arm the cache with the stale set. See
+    /// `docs/architecture/unified-undo.md` and the class-level cache doc comment above.
+    @ObservationIgnored
+    private(set) var outlineGeneration: Int = 0
+
     /// Clear the outline equality-guard cache. Fires automatically from `sections`'s `didSet`;
     /// private so nothing outside this file can hand-manage it.
     private func invalidateOutlineCache() {
@@ -582,6 +593,7 @@ class EditorViewState {
             DebugLog.log(.outline, "[EditorViewState:refresh] BAIL: no db/pid")
             return
         }
+        let generationAtFetch = outlineGeneration
         do {
             let outlineBlocks = try await Task.detached(priority: .userInitiated) {
                 try db.fetchOutlineBlocks(projectId: pid)
@@ -594,6 +606,20 @@ class EditorViewState {
                 blockIds: blockIds,
                 needsAggregate: needsAggregate
             )
+
+            // MUST-FIX 1 (task plan): `sections` may have been reassigned by another writer
+            // (the live observation loop, a structural-undo sequence, hierarchy enforcement)
+            // while both awaits above were suspended. Applying this fetch's result now would
+            // merge stale outline blocks/counts back over that newer data and re-arm the
+            // equality cache with the stale set. Drop the result instead: still notify via
+            // `onSectionsUpdated?()` because `StructuralUndoController`'s sequences await this
+            // method specifically so hierarchy enforcement runs in-sequence afterward.
+            guard outlineGeneration == generationAtFetch else {
+                DebugLog.log(.outline, "[EditorViewState:refresh] Discarded stale result "
+                             + "(gen \(generationAtFetch) != \(outlineGeneration))")
+                onSectionsUpdated?()
+                return
+            }
 
             DebugLog.log(.outline, "[EditorViewState:refresh] \(outlineBlocks.count) sections (contentState=\(contentState))")
 
@@ -632,6 +658,12 @@ class EditorViewState {
         // Re-arm AFTER the assignment above: `sections`'s didSet would otherwise wipe it.
         lastOutlineBlocks = blocks
         lastOutlineCounts = counts
+        // Unconditional bump: the counts-only path (sectionsChanged == false) re-arms the
+        // cache above without writing `sections`, so it needs its own generation bump to
+        // invalidate any in-flight `refreshSectionsAwaiting()` fetch that's still suspended.
+        // A `didSet` bump firing again when `sectionsChanged` is true is harmless -- it
+        // happens after this method's own re-check, not before it.
+        outlineGeneration &+= 1
         return sectionsChanged
     }
 
@@ -704,31 +736,25 @@ class EditorViewState {
     /// remains in use elsewhere on the drag path (e.g. `recalculateSortOrders`/
     /// `applyComputedOffsets`) for identity-replacing updates that are unaffected by this
     /// method's approach.
+    /// Delegates to `SectionHierarchy.parentIds(for:)` -- the single shared implementation of
+    /// "parent = nearest preceding entry with a LOWER header level" also used by
+    /// `Database+BlockParents.swift`'s `recomputeSectionParents` to persist the same answer.
+    /// `headerLevel` is already coalesced (`block.headingLevel ?? 1` in
+    /// `SectionViewModel.init(from:)`/`applyIdentity`), matching the coalescing contract
+    /// `SectionHierarchy.parentIds` requires of its callers.
+    ///
+    /// Computed ONCE for the whole `sections` array rather than per-index: this method runs on
+    /// every observation tick (which can fire every keystroke), and the old per-index helper it
+    /// replaced rebuilt `entries` and re-ran `SectionHierarchy.parentIds` from scratch for every
+    /// section just to return one answer -- O(N^2) work and N array allocations for a document
+    /// with N headings.
     func recalculateParentRelationships() {
-        for index in sections.indices {
+        let entries = sections.map { (id: $0.id, level: $0.headerLevel) }
+        let newParentIds = SectionHierarchy.parentIds(for: entries)
+        for (index, newParentId) in newParentIds.enumerated() {
             let vm = sections[index]
-            let newParentId = findParentByLevel(at: index)
             if vm.parentId != newParentId { vm.parentId = newParentId }
         }
-    }
-
-    /// Find the appropriate parent for a section at the given index
-    /// Parent = nearest preceding section with a LOWER header level
-    private func findParentByLevel(at index: Int) -> String? {
-        let section = sections[index]
-
-        // H1 sections have no parent
-        guard section.headerLevel > 1 else { return nil }
-
-        // Look backwards for a section with lower level
-        for i in stride(from: index - 1, through: 0, by: -1) {
-            let candidate = sections[i]
-            if candidate.headerLevel < section.headerLevel {
-                return candidate.id
-            }
-        }
-
-        return nil
     }
 
     // MARK: - Selection State

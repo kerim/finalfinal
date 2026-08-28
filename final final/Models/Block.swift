@@ -63,6 +63,22 @@ struct Block: Codable, Identifiable, Equatable, Sendable, FetchableRecord, Mutab
     var parentId: String?           // For nested blocks (list items in lists)
     var sortOrder: Double           // Fractional for easy insertion between blocks
     var blockType: BlockType
+
+    /// Persisted section-hierarchy parent: the id of the nearest preceding outline block
+    /// (heading or pseudo-section) with a strictly lower heading level, or `nil` for a
+    /// level-1 heading -- the exact rule `SectionHierarchy.parentIds(for:)` implements and
+    /// `EditorViewState.recalculateParentRelationships()` derives in memory every observation
+    /// tick. Kept up to date by `ProjectDatabase.recomputeSectionParents(db:projectId:)`,
+    /// called at the end of every DB write that can change section structure or ordering
+    /// (reorder, replace, editor-diff apply, section delete/duplicate).
+    ///
+    /// NOT the same thing as `parentId` above: `parentId` is the structural (list-nesting)
+    /// parent and is unrelated to section hierarchy. Also distinct from the LEGACY `section`
+    /// table's own separately-maintained `parentId` column, which already has its own real DB
+    /// reader (`ProjectIntegrityChecker.checkSectionIntegrity`'s orphan check). This column,
+    /// `block.sectionParentId`, is the one that had NO reader at all until
+    /// `ProjectIntegrityChecker.checkSectionParentDrift` was added alongside it.
+    var sectionParentId: String?
     var textContent: String         // Plain text content (for search, word count)
     var markdownFragment: String    // Original markdown for this block
     var headingLevel: Int?          // 1-6 for headings, nil for other types
@@ -114,6 +130,7 @@ struct Block: Codable, Identifiable, Equatable, Sendable, FetchableRecord, Mutab
         parentId: String? = nil,
         sortOrder: Double,
         blockType: BlockType,
+        sectionParentId: String? = nil,
         textContent: String = "",
         markdownFragment: String = "",
         headingLevel: Int? = nil,
@@ -139,6 +156,7 @@ struct Block: Codable, Identifiable, Equatable, Sendable, FetchableRecord, Mutab
         self.parentId = parentId
         self.sortOrder = sortOrder
         self.blockType = blockType
+        self.sectionParentId = sectionParentId
         self.textContent = textContent
         self.markdownFragment = markdownFragment
         self.headingLevel = headingLevel
@@ -168,6 +186,7 @@ struct Block: Codable, Identifiable, Equatable, Sendable, FetchableRecord, Mutab
         case parentId
         case sortOrder
         case blockType
+        case sectionParentId
         case textContent
         case markdownFragment
         case headingLevel
@@ -197,6 +216,7 @@ struct Block: Codable, Identifiable, Equatable, Sendable, FetchableRecord, Mutab
         case parentId
         case sortOrder
         case blockType
+        case sectionParentId
         case textContent
         case markdownFragment
         case headingLevel
@@ -229,6 +249,7 @@ struct Block: Codable, Identifiable, Equatable, Sendable, FetchableRecord, Mutab
         let blockTypeString = try container.decode(String.self, forKey: .blockType)
         blockType = BlockType(rawValue: blockTypeString) ?? .paragraph
 
+        sectionParentId = try container.decodeIfPresent(String.self, forKey: .sectionParentId)
         textContent = try container.decode(String.self, forKey: .textContent)
         markdownFragment = try container.decode(String.self, forKey: .markdownFragment)
         headingLevel = try container.decodeIfPresent(Int.self, forKey: .headingLevel)
@@ -285,6 +306,7 @@ struct Block: Codable, Identifiable, Equatable, Sendable, FetchableRecord, Mutab
         try container.encodeIfPresent(parentId, forKey: .parentId)
         try container.encode(sortOrder, forKey: .sortOrder)
         try container.encode(blockType.rawValue, forKey: .blockType)
+        try container.encodeIfPresent(sectionParentId, forKey: .sectionParentId)
         try container.encode(textContent, forKey: .textContent)
         try container.encode(markdownFragment, forKey: .markdownFragment)
         try container.encodeIfPresent(headingLevel, forKey: .headingLevel)

@@ -144,6 +144,10 @@ extension ProjectDatabase {
 
             try Block.filter(keys: orderedIds).deleteAll(db)
 
+            // Deleting a section's subtree can change which heading precedes which --
+            // re-persist sectionParentId to match. See Database+BlockParents.swift.
+            try Self.recomputeSectionParents(db: db, projectId: projectId)
+
             return subtree.rootTitle
         }
     }
@@ -219,6 +223,10 @@ extension ProjectDatabase {
                 }
                 try copy.insert(db)
             }
+
+            // The duplicated subtree inserts new heading rows -- re-persist sectionParentId
+            // to match. See Database+BlockParents.swift.
+            try Self.recomputeSectionParents(db: db, projectId: projectId)
 
             return newTitle
         }

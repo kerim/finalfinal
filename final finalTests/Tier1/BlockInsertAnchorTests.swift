@@ -126,4 +126,56 @@ struct BlockInsertAnchorTests {
         #expect(newParagraphIndex == introIndex + 1,
                 "Insert anchored to a real permanent id should land immediately after it")
     }
+
+    @Test("Insert anchored to a since-deleted row is rejected, not appended at document end")
+    func staleAnchorInsertIsRejected() throws {
+        // t-3904c457: a background poll's diff can straddle a structural rewrite
+        // (the mode-toggle's `replaceBlocks` deletes and re-creates every row). The
+        // straddling insert then anchors to a row that no longer exists. Before the
+        // guard, it fell through to the shared counter and materialized a duplicate
+        // row with a brand-new id at document end — the flaky-suite corruption
+        // signature. It must be rejected outright instead.
+        let content = """
+        # Doc
+
+        Intro paragraph.
+
+        Closing paragraph.
+        """
+
+        let db = try TestFixtureFactory.createTemporary(content: content)
+        let pid = try TestFixtureFactory.getProjectId(from: db)
+        let blocksBefore = try TestFixtureFactory.fetchBlocks(from: db)
+        let introParagraph = blocksBefore.first { $0.textContent == "Intro paragraph." }!
+
+        // Simulate the structural rewrite landing first: the anchor row is deleted.
+        _ = try db.applyBlockChangesFromEditor(
+            BlockChanges(deletes: [introParagraph.id]), for: pid
+        )
+        let blocksAfterDelete = try TestFixtureFactory.fetchBlocks(from: db)
+
+        // Now the stale snapshot's insert arrives, anchored to the deleted row.
+        let mapping = try db.applyBlockChangesFromEditor(
+            BlockChanges(inserts: [
+                BlockInsert(
+                    tempId: "temp-stale",
+                    blockType: "paragraph",
+                    textContent: "Straddling paragraph.",
+                    markdownFragment: "Straddling paragraph.",
+                    headingLevel: nil,
+                    afterBlockId: introParagraph.id
+                )
+            ]),
+            for: pid
+        )
+
+        #expect(mapping["temp-stale"] == nil,
+                "A stale-anchored insert must not be assigned a permanent id")
+
+        let blocksFinal = try TestFixtureFactory.fetchBlocks(from: db)
+        #expect(blocksFinal.count == blocksAfterDelete.count,
+                "A stale-anchored insert must not add a row anywhere, least of all at document end")
+        #expect(!blocksFinal.contains { $0.textContent == "Straddling paragraph." },
+                "The stale fragment's content must not appear in the database")
+    }
 }
