@@ -26,15 +26,6 @@ VMTEST_GOLDEN_CANDIDATE="ff-golden-candidate"
 VMTEST_STATE_DIR="$HOME/.cache/vmtest"
 VMTEST_DEFAULT_OUT_SUBDIR=".claude/vmtest-runs"
 
-# Concurrent VM slots (engine clamps to 2 — the macOS licensing maximum, and
-# `vmtest watch`'s viewer clone counts against the same budget). Enabled
-# 2026-08-28 per user decision, paired with shrinking the golden image from
-# 10 GB to 6 GB per guest (`tart set ff-golden --memory 6144`) so two
-# concurrent guests take 12 GB of the host's 24 GB instead of 20. If guest
-# builds ever start failing or crawling under memory pressure, suspect the
-# 6 GB first: either restore 10 GB and drop back to 1 slot, or tune between.
-VMTEST_MAX_SLOTS=2
-
 VMTEST_TIMEOUT_FULLSUITE=1800
 VMTEST_TIMEOUT_SCOPED=600
 VMTEST_TIMEOUT_GUEST_AGENT=120

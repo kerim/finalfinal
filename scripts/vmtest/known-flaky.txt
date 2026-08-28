@@ -16,16 +16,6 @@
 # flush not paired with pushBlockIds), not a test-infrastructure bug. Keep
 # this quarantined until that root cause is fixed, or it will keep re-arming
 # the circuit breaker (see t-5f48547e).
-#
-# UPDATE 2026-08-28: t-3904c457's researched root cause (a straddling poll's
-# stale insert appended at document end with a brand-new id) is now guarded
-# against in Database+BlocksInsert.swift's processEditorInserts — a non-temp
-# insert anchor that no longer resolves in the DB rejects the insert instead
-# of falling through to append-at-end (unit-tested in
-# BlockInsertAnchorTests.staleAnchorInsertIsRejected). The task note left one
-# alternative open (typing-flakiness: the test file itself documents dropped
-# keystrokes), so keep this entry until a few full-suite runs come back with
-# no absorption recorded for it (`vmtest stats` shows the count), then remove.
 final finalUITests/ListNumberingE2ETests/testDeliberateNewListRestartsAtOne
 
 # Added 2026-08-07 after a full-suite wrap-up run (superdev batch:
