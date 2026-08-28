@@ -210,7 +210,6 @@ extension ProjectDatabase {
                 }
 
                 try renumberSortOrders(db: db, projectId: projectId, now: Date())
-                try Self.recomputeSectionParents(db: db, projectId: projectId)
                 return
             }
 
@@ -312,7 +311,6 @@ extension ProjectDatabase {
                 try block.insert(db)
             }
 
-            try Self.recomputeSectionParents(db: db, projectId: projectId)
         }
     }
 
@@ -469,8 +467,6 @@ extension ProjectDatabase {
             // Database+BlocksReorder.swift — see renumberSortOrders for why they must stay
             // separate (a single hoisted `now` here vs. a fresh Date() per row there).
             try renumberSortOrders(db: db, projectId: projectId, now: Date())
-
-            try Self.recomputeSectionParents(db: db, projectId: projectId)
         }
     }
 

@@ -32,15 +32,6 @@ enum IntegrityIssue: Equatable {
     case orphanedSections(count: Int)
     case contentSectionMismatch(contentLength: Int, sectionsTotal: Int)
     case staleBookmark
-    /// A `block.sectionParentId` row whose persisted value no longer matches what
-    /// `SectionHierarchy.parentIds(for:)` computes fresh from the current document structure --
-    /// i.e. `recomputeSectionParents` was skipped or failed on some write, and the column has
-    /// drifted from the truth. NOT the same check as `orphanedSections` above: that one reads
-    /// the LEGACY `section` table's own separately-maintained `parentId` column (a real,
-    /// pre-existing DB-level referential check); this one reads the `block` table's
-    /// `sectionParentId` column, added by this feature specifically because it previously had
-    /// no reader at all once written. See `checkSectionParentDrift`.
-    case driftedSectionParents(count: Int)
 
     var severity: IntegritySeverity {
         switch self {
@@ -48,8 +39,7 @@ enum IntegrityIssue: Equatable {
             return .critical
         case .missingContentTable, .missingContentRecord:
             return .error
-        case .missingSectionTable, .orphanedSections, .contentSectionMismatch, .staleBookmark,
-             .driftedSectionParents:
+        case .missingSectionTable, .orphanedSections, .contentSectionMismatch, .staleBookmark:
             return .warning
         }
     }
@@ -76,8 +66,6 @@ enum IntegrityIssue: Equatable {
             return "Content length (\(contentLength)) doesn't match sections total (\(sectionsTotal))"
         case .staleBookmark:
             return "Project bookmark is stale (file may have moved)"
-        case .driftedSectionParents(let count):
-            return "Found \(count) block(s) whose stored section parent doesn't match the current document structure"
         }
     }
 
@@ -94,8 +82,6 @@ enum IntegrityIssue: Equatable {
             return false  // Ambiguous - needs manual review
         case .staleBookmark:
             return false  // Requires user to re-open via File > Open to refresh bookmark
-        case .driftedSectionParents:
-            return true  // Can recompute deterministically from current document structure
         }
     }
 }
@@ -248,17 +234,6 @@ struct ProjectIntegrityChecker {
             }
         }
 
-        // Check 7: block.sectionParentId drift (if the block table exists -- a project on a
-        // pre-block-architecture schema, or one whose database was hand-built without it in a
-        // test, has nothing here to check).
-        do {
-            let driftIssues = try checkSectionParentDrift(db: dbQueue)
-            issues.append(contentsOf: driftIssues)
-        } catch {
-            // Drift check failure is non-critical, same treatment as Check 6 above.
-            DebugLog.log(.data, "[IntegrityChecker] Warning: Failed to check section parent drift: \(error.localizedDescription)")
-        }
-
         return IntegrityReport(issues: issues, packageURL: packageURL)
     }
 
@@ -368,65 +343,6 @@ struct ProjectIntegrityChecker {
 
             if orphanCount > 0 {
                 issues.append(.orphanedSections(count: orphanCount))
-            }
-        }
-
-        return issues
-    }
-
-    /// Reads every outline block's persisted `sectionParentId` (heading or pseudo-section
-    /// rows, the block table's exact equivalent of the LEGACY `section` table's own
-    /// `parentId` orphan check above) and flags rows where it has drifted from what
-    /// `SectionHierarchy.parentIds(for:)` computes fresh from the block table's current
-    /// structure -- i.e. `ProjectDatabase.recomputeSectionParents` was skipped or failed on
-    /// some write. This is a READ-ONLY validation pass: it independently RE-DERIVES the
-    /// expected value from the same shared rule rather than calling
-    /// `recomputeSectionParents` (which writes) or `fetchOutlineBlocks` (which wraps its own
-    /// `ProjectDatabase.read`, a different connection than this checker's raw `DatabaseQueue`).
-    /// The query mirrors `fetchOutlineBlocks`'s exact filter (heading OR pseudo-section) and
-    /// ordering (`isBibliography.asc, sortOrder.asc`) so "the current document structure" means
-    /// the same thing here as it does to every DB-write call site.
-    private func checkSectionParentDrift(db: DatabaseQueue) throws -> [IntegrityIssue] {
-        var issues: [IntegrityIssue] = []
-
-        try db.read { database in
-            guard try database.tableExists("block") else { return }
-
-            // This checker runs against a raw connection BEFORE ProjectDatabase's migrator has
-            // had a chance to run (see DocumentManager, which validates before constructing a
-            // ProjectDatabase) -- on a pre-v15 schema, `sectionParentId` doesn't exist yet.
-            // GRDB's `decodeIfPresent` silently reads a missing column as `nil`, which would
-            // otherwise compare a phantom `nil` against a real computed parent and report false
-            // drift on every project with any heading below level 1. Skip the check entirely
-            // when the column isn't there -- there is nothing to have drifted yet.
-            guard try database.columns(in: "block").contains(where: { $0.name == "sectionParentId" }) else {
-                return
-            }
-
-            guard let projectId = try String.fetchOne(database, sql: "SELECT id FROM project LIMIT 1") else {
-                return  // Already caught by the project-record check
-            }
-
-            let outlineBlocks = try Block
-                .filter(Block.Columns.projectId == projectId)
-                .filter(
-                    Block.Columns.blockType == BlockType.heading.rawValue ||
-                    Block.Columns.isPseudoSection == true
-                )
-                .order(Block.Columns.isBibliography.asc, Block.Columns.sortOrder.asc)
-                .fetchAll(database)
-
-            // `?? 1` coalescing matches SectionViewModel.headerLevel / recomputeSectionParents
-            // exactly -- see SectionHierarchy.parentIds' doc comment for why this must agree.
-            let entries = outlineBlocks.map { (id: $0.id, level: $0.headingLevel ?? 1) }
-            let expectedParentIds = SectionHierarchy.parentIds(for: entries)
-
-            let driftCount = zip(outlineBlocks, expectedParentIds)
-                .filter { block, expected in block.sectionParentId != expected }
-                .count
-
-            if driftCount > 0 {
-                issues.append(.driftedSectionParents(count: driftCount))
             }
         }
 

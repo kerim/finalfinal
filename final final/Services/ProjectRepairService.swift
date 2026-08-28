@@ -143,9 +143,6 @@ struct ProjectRepairService {
         case .orphanedSections:
             try deleteOrphanedSections(db: db)
 
-        case .driftedSectionParents:
-            try repairDriftedSectionParents(db: db)
-
         case .staleBookmark:
             // Bookmark repair is handled at the DocumentManager level
             // when re-opening the project after repair
@@ -282,30 +279,6 @@ struct ProjectRepairService {
                     """,
                 arguments: [projectId, projectId]
             )
-        }
-    }
-
-    /// Re-derives every outline block's `sectionParentId` from the current document structure
-    /// and re-persists it, via the same shared `SectionHierarchy.parentIds(for:)` rule every
-    /// DB-write call site uses (see `Database+BlockParents.swift`). Deterministic and
-    /// idempotent -- running it again on an already-consistent database is a no-op.
-    private func repairDriftedSectionParents(db: DatabaseQueue) throws {
-        try db.write { database in
-            // This raw DatabaseQueue never runs ProjectDatabase's migrator, so a pre-v15
-            // database won't have the `sectionParentId` column at all. Without this guard the
-            // raw UPDATE inside recomputeSectionParents throws "no such column", and because
-            // `repair()` treats ANY single failed issue as `result.success == false`, fixing a
-            // genuine CRITICAL issue on an old project would get reported to the user as
-            // "Repair failed" purely because of this unrelated column check. If the column
-            // doesn't exist, there is nothing to repair -- treat it as a no-op success.
-            guard try database.columns(in: "block").contains(where: { $0.name == "sectionParentId" }) else {
-                return
-            }
-
-            guard let projectId = try String.fetchOne(database, sql: "SELECT id FROM project LIMIT 1") else {
-                throw RepairError.noProjectId
-            }
-            try ProjectDatabase.recomputeSectionParents(db: database, projectId: projectId)
         }
     }
 }
