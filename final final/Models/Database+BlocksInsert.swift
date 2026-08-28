@@ -27,6 +27,25 @@ extension ProjectDatabase {
         var insertedImageSources: [String: String] = [:]  // imageSrc -> permanentId
 
         for insert in inserts {
+            // Stale-snapshot guard (t-3904c457): the JS differ always anchors an insert
+            // to the block immediately before it in the editor's CURRENT snapshot, so a
+            // non-temp anchor is a row the editor believes exists right now — and a batch
+            // can never delete its own anchor (a delete is a block absent from that same
+            // snapshot). If the anchor resolves to nothing in the DB, this diff was
+            // computed against rows a structural rewrite (e.g. the mode-toggle's
+            // `replaceBlocks`, which deletes and re-creates every row) has since replaced.
+            // Appending it at document end would materialize a duplicate row with a
+            // brand-new id — the exact corruption signature this task documented. Reject
+            // it like `processEditorDeletes` rejects stale deletes: the editor is
+            // re-seeded from the DB on remount (`setContentWithBlockIds`), so the stale
+            // fragment dies with the old view rather than landing in the wrong place.
+            if let rawAfterId = insert.afterBlockId {
+                let anchorId = idMapping[rawAfterId] ?? rawAfterId
+                if !anchorId.hasPrefix("temp-"), try Block.fetchOne(db, key: anchorId) == nil {
+                    DebugLog.log(.data, "[Blocks] Rejecting stale insert \(insert.tempId.prefix(13)): anchor \(anchorId.prefix(8)) no longer exists (snapshot predates a structural rewrite)")
+                    continue
+                }
+            }
             let placement = try resolveInsertPlacement(
                 db: db, insert: insert, projectId: projectId, idMapping: idMapping, nextSortOrder: &nextSortOrder
             )
