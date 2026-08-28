@@ -287,12 +287,17 @@ struct ZoomDataIntegrityTests {
         isBibliography: Bool = false,
         isNotes: Bool = false
     ) -> SectionViewModel {
+        // sectionParentId, NOT parentId -- the latter is the unrelated structural
+        // (list-nesting) parent. SectionViewModel(from:) reads block.sectionParentId
+        // (see that initializer's doc comment), so a fixture built with parentId here
+        // silently produces sections with parentId == nil, collapsing filterToSubtree's
+        // BFS to just the root.
         let block = Block(
             id: id,
             projectId: projectId,
-            parentId: parentId,
             sortOrder: sortOrder,
             blockType: .heading,
+            sectionParentId: parentId,
             textContent: title,
             markdownFragment: String(repeating: "#", count: level) + " " + title,
             headingLevel: level,

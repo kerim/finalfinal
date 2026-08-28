@@ -72,6 +72,10 @@ extension ProjectDatabase {
             for section in sections {
                 sortCounter = try reorderSection(section, context: context, startingAt: sortCounter, now: now, db: db)
             }
+
+            // Reordering can change which heading precedes which -- re-persist
+            // sectionParentId to match. See Database+BlockParents.swift.
+            try Self.recomputeSectionParents(db: db, projectId: projectId)
         }
     }
 
@@ -146,6 +150,13 @@ extension ProjectDatabase {
                     try block.update(db)
                 }
             }
+
+            // Renumbering here can change document order (this tie-break isn't guaranteed
+            // stable against whatever order duplicate sortOrders happened to arrive in), which
+            // is exactly the condition that can change a heading's section-hierarchy parent --
+            // see Database+BlockParents.swift's recomputeSectionParents doc comment for why
+            // every write that can reorder or restructure headings must end with this call.
+            try Self.recomputeSectionParents(db: db, projectId: projectId)
         }
     }
 
