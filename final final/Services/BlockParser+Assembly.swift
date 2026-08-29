@@ -180,7 +180,7 @@ extension BlockParser {
     /// against a single already-trimmed fragment, and `^` must anchor to the START of that
     /// fragment only -- a paragraph whose *second* line happens to start with this shape must
     /// not count as a footnote definition.
-    nonisolated(unsafe) private static let footnoteDefStartPattern: NSRegularExpression = {
+    private static let footnoteDefStartPattern: NSRegularExpression = {
         do {
             return try NSRegularExpression(pattern: #"^\[\^\d+\]:"#, options: [])
         } catch {
