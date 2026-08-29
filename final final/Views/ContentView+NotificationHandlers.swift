@@ -15,7 +15,7 @@ extension ContentView {
     func handleBibliographySectionChanged() {
         DebugLog.log(.bib, {
             let contentIsEmpty = editorState.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            return "[CV:bibNotif] contentState=\(editorState.contentState) suppress=\(suppressNextBibliographyRebuild) "
+            return "[CV:bibNotif] contentState=\(editorState.contentState) suppress=\(editorState.suppressBibliographyRebuildsDuringSwitch) "
                 + "pendingBib=\(pendingBibliographyRebuild) content.isEmpty=\(contentIsEmpty)"
         }())
         // Skip if zoomed into a section (bibliography update only affects full document view).
@@ -36,14 +36,19 @@ extension ContentView {
             pendingBibliographyRebuild = true
             return
         }
-        // Skip the first bibliography notification after a project switch
-        // (it fires from the old project's debounced citekey check)
         // Skip rebuild when editor content is empty - no citations exist,
         // so rebuilding from blocks would restore stale content
         guard !editorState.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        guard !suppressNextBibliographyRebuild else {
-            suppressNextBibliographyRebuild = false
-            DebugLog.log(.bib, "[ContentView] bibliographySectionChanged suppressed (post-project-switch)")
+        // Skip every bibliography notification for the duration of a project switch (it
+        // may fire from the old project's debounced citekey check, or from the explicit
+        // pending-flush call `handleProjectOpened()` makes). CHECKED, not consumed --
+        // round 4 (doc-open-blank-regression): a one-shot flag that resets itself here
+        // protects only the FIRST of possibly two mid-switch posts, leaving a second one
+        // free to run this handler's own Task below and reopen the blank-pane publish
+        // window. See `EditorViewState.suppressBibliographyRebuildsDuringSwitch`'s doc
+        // comment for the window's arm/clear points.
+        guard !editorState.suppressBibliographyRebuildsDuringSwitch else {
+            DebugLog.log(.bib, "[ContentView] bibliographySectionChanged suppressed (project switch in progress)")
             return
         }
 
@@ -184,7 +189,9 @@ extension ContentView {
         isReconciliationOnly: Bool = false
     ) async {
         if let flush = bibliographySyncService.flushLiveEditorContentToBlocks {
-            await flush(projectId)
+            // No project switch in progress here -- editorState.content is live, so no
+            // override is needed (see makeBibliographyFlushHandler's doc comment).
+            await flush(projectId, nil)
         }
 
         let outcome = BibliographyHeadingRenamer.rename(

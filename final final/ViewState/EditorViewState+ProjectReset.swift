@@ -23,6 +23,11 @@ extension EditorViewState {
         sourceContent = ""
         sourceAnchors = []
 
+        // The project switch this content belonged to is over -- content (about to be
+        // freshly loaded for the new project by configureForCurrentProject()) is
+        // trustworthy again. See switchInProgressContent's doc comment.
+        switchInProgressContent = nil
+
         // Reset sections and annotations
         sections = []  // fires didSet -> clears the outline cache
         annotations = []

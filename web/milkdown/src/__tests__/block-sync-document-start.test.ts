@@ -151,8 +151,20 @@ describe('setContentWithBlockIds zoomMode option — closes the zoom-entry atDoc
     // getEditorInstance() is a shared global, not per-test). Flushing here,
     // unconditionally, keeps every test in this file hermetic regardless of
     // how its body exits.
+    //
+    // Looped, not a single call: setContentWithBlockIds also schedules
+    // forceCompositorRepaint's nested rAF-inside-an-rAF chain. A single
+    // runOnlyPendingTimersAsync() call only drains timers that were ALREADY
+    // pending when it started — the inner rAF that the outer one schedules
+    // once it runs is registered mid-flush and survives to the next call.
+    // Left pending across the vi.useRealTimers() below, it carried into
+    // whichever test ran next and corrupted its own fake-timer flush
+    // (confirmed: the two zoomMode-race tests below failed only when run as
+    // part of the full suite, not in isolation). Loop until nothing is left.
     if (vi.isFakeTimers()) {
-      await vi.runOnlyPendingTimersAsync();
+      while (vi.getTimerCount() > 0) {
+        await vi.runOnlyPendingTimersAsync();
+      }
     }
     vi.useRealTimers();
     setEditorInstance(null);

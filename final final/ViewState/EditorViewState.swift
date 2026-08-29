@@ -153,6 +153,46 @@ class EditorViewState {
     /// Used during project switch to prevent old editor content from bleeding into new projects.
     var isResettingContent = false
 
+    /// Suppresses `.bibliographySectionChanged` handling for the duration of a project
+    /// switch -- a bounded WINDOW, not a one-shot consumed flag (round 4,
+    /// doc-open-blank-regression). Armed at the very top of `ContentView.handleProjectOpened()`
+    /// and CHECKED (never reset by the consumer) by `ContentView.handleBibliographySectionChanged()`.
+    ///
+    /// Round 4.1: moved here from a `@State Bool` on `ContentView` itself. That shape was
+    /// correct in production (a live SwiftUI view installs `@State`'s storage normally) but
+    /// made the mechanism untestable: a bare, directly-constructed `ContentView()` in a unit
+    /// test never gets installed into a view graph, so `@State`'s `nonmutating set` has no
+    /// backing location to write to and silently no-ops -- a write from test code was never
+    /// observed by a later method call reading the same property. Every other property this
+    /// window's fix needs to interact with (`isResettingContent`, `switchInProgressContent`)
+    /// already lives here as a plain stored property on this `@Observable` class, which is
+    /// exactly why THEIR mutations already worked reliably in tests while this one didn't.
+    ///
+    /// Why not one-shot: a mid-switch bibliography flush (`flushPendingSync`, called
+    /// explicitly from `handleProjectOpened()`) and the OLD project's own independent
+    /// debounce timer (`BibliographySyncService`'s 1s `debounceTask`) can BOTH post
+    /// `.bibliographySectionChanged` during the same switch. A one-shot flag that resets
+    /// itself on first consumption (round 3's shape) protects only whichever of the two
+    /// posts first, leaving the other free to run `handleBibliographySectionChanged`'s own
+    /// unstructured `Task` -- which sets `isResettingContent = true` then `false` on a
+    /// schedule `handleProjectOpened()` doesn't control -- reopening the blank-pane publish
+    /// window this mechanism exists to close.
+    ///
+    /// Cleared at the 3 points in `handleProjectOpened()` where ITS OWN switch machinery
+    /// declares `isResettingContent` settled again: the synchronous Source-mode branch, the
+    /// WYSIWYG branch's async content-push `Task`, and that Task's 3-second watchdog (a hard
+    /// backstop, so the window is bounded to at most ~3s even if the WYSIWYG content push
+    /// hangs) -- see each clear site's own comment in `ContentView+ProjectLifecycle.swift`.
+    /// `isResettingContent` is exactly the state this window protects, so ending the window
+    /// exactly when that function's own control over it ends is the natural boundary, not an
+    /// arbitrary timer.
+    ///
+    /// Deliberately NOT reset by `resetForProjectSwitch()` below: that call happens WHILE
+    /// this window is still meant to be armed (partway through `handleProjectOpened()`,
+    /// before any of the 3 clear points above), so clearing it there would reopen the window
+    /// early.
+    var suppressBibliographyRebuildsDuringSwitch = false
+
     /// IDs of sections included in the zoom (root + descendants)
     var zoomedSectionIds: Set<String>?
 
@@ -244,6 +284,26 @@ class EditorViewState {
 
     // MARK: - Content
     var content: String = ""
+
+    /// Authoritative stand-in for `content` during a project-switch flush, while `content`
+    /// itself is deliberately stale for the whole window (see
+    /// `ContentView.flushAllPendingContent()`'s doc comment for the full mechanism).
+    ///
+    /// Set there -- to the freshest content that function could obtain -- right after it
+    /// resolves what to flush, and cleared by `resetForProjectSwitch()` once the window
+    /// ends. `flushContentToDatabase(overrideContent:)` prefers this over `content` whenever
+    /// it is set and no explicit `overrideContent` was passed.
+    ///
+    /// This is the fix at the level of the INVARIANT ("no code path may parse-and-write
+    /// blocks from `content` while it is deliberately stale"), not a per-caller patch. Two
+    /// prior rounds each threaded an explicit `overrideContent` argument through one
+    /// specific call chain into `BibliographySyncService`'s flush hook and each missed the
+    /// other of the two known entry paths (the explicit `flushPendingSync` call vs. the
+    /// independent debounce timer firing on its own schedule mid-switch) -- because
+    /// `flushContentToDatabase` itself now consults this property, ANY caller that reaches
+    /// it with no override during the window is covered, including a caller not yet
+    /// discovered.
+    var switchInProgressContent: String?
 
     /// Content with section anchors injected (for source mode)
     /// This is separate from `content` to avoid anchor pollution in WYSIWYG mode

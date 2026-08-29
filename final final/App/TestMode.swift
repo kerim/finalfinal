@@ -93,14 +93,34 @@ enum TestMode {
         isUITesting && ProcessInfo.processInfo.environment["FF_UI_TESTING_ALLOW_SCRATCH_RECENT_PROJECTS"] == "1"
     }
 
+    /// Narrow, opt-in escape hatch that lets a UI test actually exercise
+    /// `DocumentManager.restoreLastProject()` — the "reopen the last project on a cold launch"
+    /// path (`FinalFinalApp.determineInitialState()`'s non-testing branch). Every ordinary UI
+    /// test bypasses that branch entirely: `isUITesting` alone always routes to either the
+    /// explicit `FF_TEST_FIXTURE_PATH` fixture or straight to the picker (see
+    /// `determineInitialState()`), so this path has never been exercised by the automated
+    /// suite. A second launch with this flag set (and no `FF_TEST_FIXTURE_PATH`) calls the real
+    /// `restoreLastProject()` instead, reading back whatever bookmark a prior launch in the same
+    /// test saved via `openProject()` -> `saveAsLastProject()`.
+    static var shouldExerciseRestoreLastProject: Bool {
+        isUITesting && ProcessInfo.processInfo.environment["FF_UI_TESTING_EXERCISE_RESTORE_LAST_PROJECT"] == "1"
+    }
+
     /// Clears UserDefaults keys that could interfere with test isolation.
     ///
     /// Operates on `AppDefaults.store` — an isolated suite while testing, never the real
     /// `.standard` domain — so this never wipes a real user's persisted state. See
     /// `AppDefaults.swift` for why that indirection is necessary.
-    static func clearTestState() {
+    ///
+    /// - Parameter preservingLastProjectBookmark: when true, skips wiping
+    ///   `lastProjectBookmark` — needed by `shouldExerciseRestoreLastProject`'s second launch,
+    ///   which must read back the bookmark a prior launch in the same test just saved. Every
+    ///   other caller wants the normal full wipe (default `false`).
+    static func clearTestState(preservingLastProjectBookmark: Bool = false) {
         let defaults = AppDefaults.store
-        defaults.removeObject(forKey: "com.kerim.final-final.lastProjectBookmark")
+        if !preservingLastProjectBookmark {
+            defaults.removeObject(forKey: "com.kerim.final-final.lastProjectBookmark")
+        }
         defaults.removeObject(forKey: "com.kerim.final-final.recentProjects")
         defaults.removeObject(forKey: "com.kerim.final-final.lastSeenVersion")
         defaults.removeObject(forKey: "focusModeEnabled")

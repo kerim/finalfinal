@@ -88,7 +88,13 @@ final class BibliographySyncService {
     /// (captured at schedule time) and must verify it still matches the live editor's
     /// current project before flushing -- protects against a project switch landing
     /// between scheduling and this update actually running. Bails (no-ops) on mismatch.
-    var flushLiveEditorContentToBlocks: ((_ scheduledForProjectId: String) async -> Void)?
+    ///
+    /// The second parameter, `overrideContent`, is threaded straight through from
+    /// `performBibliographyUpdate`'s own `overrideContent` parameter -- see that
+    /// function's doc comment for why a project-switch caller must pass a non-nil value
+    /// here rather than let the closure fall back to reading `editorState.content`
+    /// itself (review round 1 must-fix: the bibliography-flush clobber).
+    var flushLiveEditorContentToBlocks: ((_ scheduledForProjectId: String, _ overrideContent: String?) async -> Void)?
 
     // MARK: - Public Methods
 
@@ -155,7 +161,12 @@ final class BibliographySyncService {
     /// `syncGeneration` — this is what lets `performBibliographyUpdate`'s existing
     /// `scheduledGeneration == syncGeneration` guard correctly reject a snapshot that a
     /// newer `checkAndUpdateBibliography` call or `regenerateBibliography` has since superseded.
-    func flushPendingSync() async {
+    ///
+    /// `overrideContent` (default `nil`, preserving prior behavior for every existing
+    /// caller) is forwarded verbatim to `performBibliographyUpdate` -- see its doc comment.
+    /// `ContentView.handleProjectOpened()` is the one caller that passes a non-nil value,
+    /// via `EditorViewState.flushPendingBibliographyAndFootnoteSync(overrideContent:)`.
+    func flushPendingSync(overrideContent: String? = nil) async {
         if state == .syncing {
             let deadline = Date().addingTimeInterval(2.0)
             while state == .syncing, Date() < deadline {
@@ -169,7 +180,8 @@ final class BibliographySyncService {
         debounceTask = nil
         pendingUpdate = nil
         await performBibliographyUpdate(
-            citekeys: pending.citekeys, projectId: pending.projectId, scheduledGeneration: pending.generation
+            citekeys: pending.citekeys, projectId: pending.projectId, scheduledGeneration: pending.generation,
+            overrideContent: overrideContent
         )
     }
 
@@ -203,7 +215,18 @@ final class BibliographySyncService {
     // MARK: - Private Methods
 
     /// Internal (not private) so the race-condition guard can be unit-tested directly.
-    func performBibliographyUpdate(citekeys: [String], projectId: String, scheduledGeneration: Int) async {
+    ///
+    /// `overrideContent` (default `nil`): forwarded verbatim as the second argument to
+    /// `flushLiveEditorContentToBlocks` below. `nil` preserves the original behavior --
+    /// the flush hook falls back to reading `editorState.content` directly, which is
+    /// correct for every caller except a project switch in progress (see
+    /// `ContentView.flushAllPendingContent()`'s doc comment for why `editorState.content`
+    /// is deliberately stale during that specific window, and
+    /// `flushPendingSync(overrideContent:)`'s doc comment for how a non-nil value reaches
+    /// here).
+    func performBibliographyUpdate(
+        citekeys: [String], projectId: String, scheduledGeneration: Int, overrideContent: String? = nil
+    ) async {
         // Deduplicate citekeys early - a citation may appear multiple times in document
         var seen = Set<String>()
         let uniqueCitekeys = citekeys.filter { seen.insert($0).inserted }
@@ -238,7 +261,7 @@ final class BibliographySyncService {
         // closure itself (ContentView+ProjectLifecycle.swift), right before it calls
         // flushContentToDatabase() -- the one place that knows whether a flush is really occurring.
         if let flush = flushLiveEditorContentToBlocks {
-            await flush(projectId)
+            await flush(projectId, overrideContent)
         }
 
         // The flush is the first suspension point since the staleness guard above. Re-check

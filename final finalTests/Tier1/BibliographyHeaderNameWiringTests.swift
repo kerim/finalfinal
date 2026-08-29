@@ -132,8 +132,8 @@ struct BibliographyHeaderNameWiringTests {
         // Wire the SAME closure production wires via makeBibliographyFlushHandler -- a real
         // flush, not a stub.
         let capturedEditorState = view.editorState
-        view.bibliographySyncService.flushLiveEditorContentToBlocks = { _ in
-            capturedEditorState.flushContentToDatabase()
+        view.bibliographySyncService.flushLiveEditorContentToBlocks = { _, overrideContent in
+            capturedEditorState.flushContentToDatabase(overrideContent: overrideContent)
         }
 
         // Sanity: before the call under test, the DB does not yet contain the pending edit.

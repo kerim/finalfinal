@@ -183,7 +183,7 @@ struct FinalFinalApp: App {
 
         // UI test mode: skip normal flow, open fixture directly
         if TestMode.isUITesting {
-            TestMode.clearTestState()
+            TestMode.clearTestState(preservingLastProjectBookmark: TestMode.shouldExerciseRestoreLastProject)
             if let fixturePath = TestMode.testFixturePath {
                 let url = URL(fileURLWithPath: fixturePath)
                 do {
@@ -193,6 +193,18 @@ struct FinalFinalApp: App {
                     DebugLog.log(.lifecycle, "[TestMode] Failed to open fixture: \(error)")
                     appViewState = .picker
                 }
+            } else if TestMode.shouldExerciseRestoreLastProject {
+                // Exercises the real cold-launch restore path -- see
+                // TestMode.shouldExerciseRestoreLastProject's doc comment.
+                do {
+                    if try documentManager.restoreLastProject() {
+                        appViewState = .editor
+                        return
+                    }
+                } catch {
+                    DebugLog.log(.lifecycle, "[TestMode] Failed to restore last project during test: \(error)")
+                }
+                appViewState = .picker
             } else {
                 appViewState = .picker
             }

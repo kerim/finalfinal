@@ -2,7 +2,7 @@
 // Milkdown WYSIWYG Editor for final final
 // Uses window.FinalFinal API for Swift ↔ JS communication
 
-import { defaultValueCtx, Editor, editorViewCtx } from '@milkdown/kit/core';
+import { defaultValueCtx, Editor, editorViewCtx, rootCtx } from '@milkdown/kit/core';
 import { clipboard } from '@milkdown/kit/plugin/clipboard';
 import { history } from '@milkdown/kit/plugin/history';
 import { commonmark } from '@milkdown/kit/preset/commonmark';
@@ -224,6 +224,26 @@ async function initEditor() {
     const editorInstance = await Editor.make()
       .config((ctx) => {
         ctx.set(defaultValueCtx, '');
+        // Round 5 (doc-open-blank-regression, 2026-08-29): rootCtx defaults to
+        // document.body (@milkdown/core's editorView plugin: `ctx.inject(rootCtx,
+        // document.body)`) unless explicitly set. This app never set it, and instead
+        // manually reparented the freshly-created view's dom into #editor once, right
+        // after create() (see the old `root.appendChild(...)` this replaces) -- which
+        // only fixed the INITIAL placement. Milkdown's own built-in MILKDOWN_VIEW_CLEAR
+        // plugin (an internal ProseMirror plugin every Milkdown editor carries) rebuilds
+        // a fresh `.milkdown` wrapper under `ctx.get(rootCtx) || document.body` and
+        // moves the view's dom into it EVERY TIME ProseMirror recreates plugin views --
+        // which `clearEditorHistory()`'s `view.updateState()` (added to clear undo
+        // history on project switch) does on every switch. Since rootCtx still pointed
+        // at document.body, each such switch silently relocated the live editor dom
+        // from #editor to a new, empty-looking wrapper at the top of <body> -- #editor
+        // was left empty (blank pane) while the real content, still correct but no
+        // longer inside #editor, lost that element's centering/padding CSS (wrong
+        // margins) once anything (e.g. a user click causing a reflow) made it visible.
+        // Confirmed live via a body-skeleton DOM dump comparing the working vs. failing
+        // switch. Setting rootCtx here means every such internal re-mount targets
+        // #editor correctly, so the manual one-time reparent below is no longer needed.
+        ctx.set(rootCtx, root);
       })
       .config(configureSlash)
       // Plugin order matters:
@@ -290,7 +310,8 @@ async function initEditor() {
 
     setEditorInstance(editorInstance);
 
-    root.appendChild(editorInstance.ctx.get(editorViewCtx).dom);
+    // rootCtx is now set to `root` above, so Milkdown mounts (and re-mounts, on every
+    // internal plugin-view recreation) directly inside #editor -- no manual reparent needed.
 
     // Restore citation library from localStorage (survives editor toggle)
     restoreCitationLibrary();

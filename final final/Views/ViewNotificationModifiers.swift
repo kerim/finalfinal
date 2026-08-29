@@ -494,7 +494,7 @@ extension View {
             // Without this, recently-inserted nodes (e.g. images via editor-first
             // approach) may not be in the blocks table yet, causing wrong offsets
             // and anchor injection corruption.
-            editorState.flushContentToDatabase()
+            editorState.flushContentToDatabase(overrideContent: editorState.content)
             DebugLog.log(.editor, "[SWITCH→CM] After flush")
 
             // Compute offsets from blocks (same data that produced editorState.content)
@@ -561,7 +561,7 @@ extension View {
             // Switching FROM source mode TO WYSIWYG - set state BEFORE flush
             editorState.contentState = .editorTransition
             DebugLog.log(.editor, "[SWITCH→MW] Starting. sourceContent length=\(editorState.sourceContent.count)")
-            editorState.flushContentToDatabase()
+            editorState.flushContentToDatabase(overrideContent: editorState.content)
 
             // Extract anchors and strip bibliography marker
             let (cleaned, anchors) = sectionSyncService.extractSectionAnchors(

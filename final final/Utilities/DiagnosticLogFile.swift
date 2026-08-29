@@ -88,7 +88,15 @@ final class DiagnosticLogFile: @unchecked Sendable {
     /// `isEnabled` itself — that would deadlock this thread against itself. Not a bug today
     /// (verified: neither does), but an invariant a future change to either path must preserve.
     static var isEnabled: Bool {
-        enabledCache.withLock { cached in
+        // Investigative-only override for the doc-open-blank-regression task: lets a UI test
+        // force logging on without touching UserDefaults/AppDefaults.store at all, sidestepping
+        // TestMode.clearTestState()'s unconditional wipe of loggingEnabledDefaultsKey. Pure env
+        // read -- no lock interaction, so it can't touch this function's documented
+        // non-recursion invariant below.
+        if ProcessInfo.processInfo.environment["FF_UI_TESTING_FORCE_DIAGNOSTIC_LOGGING"] == "1" {
+            return true
+        }
+        return enabledCache.withLock { cached in
             if let cached { return cached }
             // The UserDefaults read MUST happen inside the lock, not before it: reading outside
             // and only storing the result inside would let a descheduled reader resume after a

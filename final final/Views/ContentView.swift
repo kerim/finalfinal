@@ -80,9 +80,13 @@ struct ContentView: View {
     /// Find bar state
     @State internal var findBarState = FindBarState()
 
-    /// Suppress the first bibliography notification after a project switch
-    /// (it fires from the old project's debounced citekey check and is redundant)
-    @State internal var suppressNextBibliographyRebuild = false
+    // suppressBibliographyRebuildsDuringSwitch moved to EditorViewState -- round 4.1
+    // (doc-open-blank-regression): a bare `@State Bool` here is correct for production (a
+    // live SwiftUI view installs @State's storage normally) but is untestable in a unit
+    // test that constructs ContentView() directly without a view graph -- @State's
+    // `nonmutating set` silently no-ops without an installed location, so a test's write was
+    // never observed by a later method call. See EditorViewState.swift's doc comment on the
+    // property for the full mechanism.
 
     /// Queue of footnote labels awaiting insertion while contentState != .idle.
     /// Drained one label per idle transition by drainNextPendingFootnoteIfPossible().

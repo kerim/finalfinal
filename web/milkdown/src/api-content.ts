@@ -144,6 +144,42 @@ export function clearEditorHistory(view: EditorView): void {
   view.updateState(finalState);
 }
 
+/**
+ * Force WKWebView to actually repaint after a block-level document replace.
+ *
+ * WKWebView's compositor can keep showing the previous frame after a large
+ * ProseMirror document replace even though the DOM/JS state is already
+ * correct -- confirmed live (doc-open-blank-regression, 2026-08-28): a
+ * project switch pushes the new project's content via
+ * setContentWithBlockIds with scrollToStart=false (the block table and JS
+ * doc are both correct within milliseconds), but the visible pane stayed
+ * blank for roughly a second before painting on its own with no user
+ * interaction. setContent()'s scrollToStart path already works around the
+ * identical WKWebView quirk with a double-RAF micro-scroll (see its own
+ * comment above); setContentWithBlockIds had no such nudge on ANY path,
+ * scrollToStart or not, which is why the gap surfaced there specifically.
+ * Called unconditionally (not gated on scrollToStart) because the
+ * confirmed repro needed it fixed even when scrollToStart is false.
+ *
+ * NOTE: this does not fix (and was never the cause of) the separate persistent-blank
+ * -after-repeated-switch bug also investigated under doc-open-blank-regression -- that
+ * one turned out to be Milkdown's own internal view-remount relocating the live editor
+ * dom out of #editor and into document.body (rootCtx was never configured), triggered
+ * by clearEditorHistory()'s view.updateState(). Fixed by setting rootCtx in main.ts's
+ * initEditor(), not by anything here.
+ */
+function forceCompositorRepaint(view: { dom: HTMLElement }): void {
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      const scrollParent = view.dom;
+      window.scrollTo({ top: 1, left: 0, behavior: 'instant' });
+      window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+      scrollParent.scrollTop = 1;
+      scrollParent.scrollTop = 0;
+    });
+  });
+}
+
 /** Re-snapshot in the next animation frame, then unpause sync.
  *  Ensures normalization transactions are absorbed before change detection resumes.
  *  When `detectPausedEdits` is true, edits made while sync was paused are queued
@@ -861,6 +897,7 @@ export function setContentWithBlockIds(
         const tr = view.state.tr.replaceWith(0, view.state.doc.content.size, emptyDoc.content);
         view.dispatch(tr.setMeta('addToHistory', false).setSelection(Selection.atStart(tr.doc)));
         clearBlockIds();
+        forceCompositorRepaint(view);
         if (options?.detectPausedEdits) {
           emptyPushBaseline = snapshotBlocks(view.state.doc);
         }
@@ -983,6 +1020,8 @@ export function setContentWithBlockIds(
       if (options?.detectPausedEdits) {
         pausedPushBaseline = snapshotBlocks(view.state.doc);
       }
+
+      forceCompositorRepaint(view);
     });
     if (parseSucceeded) {
       setCurrentContent(markdown);
