@@ -1634,6 +1634,48 @@ local state = {
 
 module.citekeys = {}
 
+-- ============================================================================
+-- LOCAL PATCH (zotero-group-libraries) -- START
+-- This block (and its companion in Meta(), further down in this file) is a local patch, not
+-- part of the upstream bbt-to-live-doc export. It must be reapplied by hand whenever this
+-- vendored file is refreshed from upstream: a refresh regenerates the whole file, and a plain
+-- textual diff/patch will not auto-reapply against different upstream line numbers. Search
+-- "LOCAL PATCH" in this file for every piece.
+--
+-- Group/shared-library display names to retry a still-unresolved citekey against, after the
+-- personal-library-only call below has already run. Populated by Meta() from the
+-- `zotero-group-libraries` pandoc metadata key (a JSON array of strings) -- nil/unset means
+-- "no group scope configured," which degrades silently to today's exact unscoped behavior.
+module.groupLibraryNames = nil
+
+-- Fetch one batch of citekeys from BBT via item.pandoc_filter, optionally scoped to
+-- `libraryID` (a bare library id, an array of library display names, or nil to use whatever
+-- module.request.params already has configured). Returns the decoded `{items=..., errors=...}`
+-- result table on success, or nil on any failure (network, malformed JSON, or a JSON-RPC error
+-- object) -- callers must never let a nil result clobber anything already resolved.
+local function fetch(citekeys, libraryID)
+  local request = utils.deepcopy(module.request)
+  request.params.citekeys = citekeys
+  if libraryID ~= nil then
+    request.params.libraryID = libraryID
+  end
+
+  local url = module.url .. utils.urlencode(json.encode(request))
+  local mt, body = pandoc.mediabag.fetch(url, '.')
+  local ok, response = pcall(json.decode, body)
+  if not ok then
+    print('could not fetch Zotero items: ' .. response .. '(' .. body .. ')')
+    return nil
+  end
+  if response.error ~= nil then
+    print('could not fetch Zotero items: ' .. response.error.message)
+    return nil
+  end
+  return response.result
+end
+-- LOCAL PATCH (zotero-group-libraries) -- END (continued below in load_items)
+-- ============================================================================
+
 local function load_items()
   if state.fetched ~= nil then
     return
@@ -1653,19 +1695,83 @@ local function load_items()
     return
   end
 
-  module.request.params.citekeys = citekeys
-  local url = module.url .. utils.urlencode(json.encode(module.request))
-  local mt, body = pandoc.mediabag.fetch(url, '.')
-  local ok, response = pcall(json.decode, body)
-  if not ok then
-    print('could not fetch Zotero items: ' .. response .. '(' .. body .. ')')
-    return
+  -- Phase 1: personal-library call, exactly as upstream -- module.request.params.libraryID is
+  -- whatever Meta() already set it to (or nil, the pre-existing unscoped default). Byte-for-
+  -- byte identical result to the old single-call load_items() when no group scope is
+  -- configured.
+  local result = fetch(citekeys, module.request.params.libraryID)
+  if result ~= nil then
+    state.fetched = result
   end
-  if response.error ~= nil then
-    print('could not fetch Zotero items: ' .. response.error.message)
-    return
+
+  -- LOCAL PATCH (zotero-group-libraries), phase 2 -- see the module.groupLibraryNames/fetch
+  -- comment above. Runs only when a group scope is configured AND at least one requested
+  -- citekey is still unresolved after phase 1. "Unresolved" here means it has ANY entry in
+  -- state.fetched.errors -- not-found (0) or ambiguous (non-zero) alike -- mirroring this
+  -- app's Swift-side ZoteroService+LibraryScope.swift two-phase policy (personal library
+  -- first, then group libraries for anything not already resolved).
+  if module.groupLibraryNames ~= nil then
+    local unresolved = {}
+    for _, k in ipairs(citekeys) do
+      -- Defensive `(state.fetched.errors or {})`: state.fetched was wholesale-assigned from
+      -- phase 1's raw `fetch()` result above, and a BBT response can in principle come back
+      -- with an `items` key but no `errors` key at all -- indexing state.fetched.errors
+      -- directly would then be a hard Lua runtime error right here, before phase 2 ever gets a
+      -- chance to run. Treating a missing `errors` table as "nothing unresolved" is the same
+      -- degrade-silently posture the rest of this patch uses elsewhere.
+      if (state.fetched.errors or {})[k] ~= nil then
+        table.insert(unresolved, k)
+      end
+    end
+
+    if utils.tablelength(unresolved) > 0 then
+      -- Merge key-by-key -- NEVER wholesale-reassign state.fetched -- so phase 1's already-
+      -- resolved items, and any citekey phase 2 still doesn't resolve, survive untouched.
+      -- By the time we get here, state.fetched.errors is already known to be a real table, not
+      -- nil -- reaching this branch required the unresolved-detection loop above to find at
+      -- least one citekey with a non-nil state.fetched.errors[k], which is only possible when
+      -- state.fetched.errors itself exists. The `(state.fetched.errors or {})` guard below is
+      -- therefore not independently load-bearing at this call site today; it's kept so this
+      -- closure stays safe on its own terms (matching the `groupResult.items or {}` guard used
+      -- just below it) even if the unresolved-detection logic above is ever changed to reach
+      -- here a different way.
+      local function mergeGroupResult(groupResult)
+        for k, item in pairs(groupResult.items or {}) do
+          -- module.get() below checks state.fetched.errors BEFORE state.fetched.items, so a
+          -- stale phase-1 error entry left in place here would make the citation still report
+          -- unresolved even though items now has it.
+          (state.fetched.errors or {})[k] = nil
+          state.fetched.items[k] = item
+        end
+      end
+
+      local ok, groupResult = pcall(fetch, unresolved, module.groupLibraryNames)
+      if ok and groupResult ~= nil then
+        mergeGroupResult(groupResult)
+      else
+        -- The batched call failed outright (pcall caught a Lua error, or fetch() itself
+        -- returned nil after a decode failure or an RPC error object). BBT's
+        -- item.pandoc_filter rejects the WHOLE array-scoped call if even ONE library name in
+        -- it is stale -- a group the user renamed or left since module.groupLibraryNames was
+        -- populated -- there is no partial-success response for a batched libraryID array.
+        -- Treating that as a total phase-2 failure would silently revert EVERY group citation
+        -- to plain text for the rest of the app session -- the exact bug this patch exists to
+        -- fix -- just because one name out of possibly many is bad. So retry name-by-name
+        -- instead: this means more RPC calls, but only in the failure case, and that failure
+        -- case is now rare (one bad name) rather than the common one. A name that still fails
+        -- on its own genuinely can't be searched right now and is simply skipped -- it doesn't
+        -- block the others from resolving.
+        for _, name in ipairs(module.groupLibraryNames) do
+          local singleOk, singleResult = pcall(fetch, unresolved, {name})
+          if singleOk and singleResult ~= nil then
+            mergeGroupResult(singleResult)
+          end
+          -- else: this name alone also failed -- leave state.fetched untouched for it and
+          -- move on to the next name.
+        end
+      end
+    end
   end
-  state.fetched = response.result
 end
 
 function module.get(citekey)
@@ -2019,6 +2125,31 @@ function Meta(meta)
   for k, v in pairs(meta.zotero) do
     meta.zotero[k] = pandoc.utils.stringify(v)
   end
+
+  -- ==========================================================================================
+  -- LOCAL PATCH (zotero-group-libraries) -- see the companion block/comment near
+  -- module.groupLibraryNames in the "zotero" module above for the full design. Must be
+  -- reapplied by hand whenever this vendored file is refreshed from upstream.
+  --
+  -- ExportService+PandocArguments.swift passes `--metadata zotero-group-libraries=<JSON array
+  -- of strings>`. Pandoc exposes that as the plain Lua string meta['zotero-group-libraries'];
+  -- the copy loop just above (`^zotero[-_](.*)`) has already folded it into
+  -- meta.zotero['group-libraries'], and the normalize loop immediately above this comment has
+  -- already run pandoc.utils.stringify over it -- both are read-order-dependent, so this block
+  -- must stay AFTER both, not before. Decoding must happen here, not before the normalize
+  -- loop, or it would be decoding a stringify()-untouched MetaValue instead of the plain
+  -- string this vendored file's own `json` (lunajson) decoder expects.
+  --
+  -- Malformed or absent metadata degrades silently to today's exact behavior (no group scope)
+  -- via pcall -- this must never fail or block an export.
+  if meta.zotero['group-libraries'] ~= nil then
+    local ok, decoded = pcall(json.decode, meta.zotero['group-libraries'])
+    if ok and type(decoded) == 'table' then
+      zotero.groupLibraryNames = decoded
+    end
+  end
+  -- LOCAL PATCH (zotero-group-libraries) -- END
+  -- ==========================================================================================
 
   config.scannable_cite = test_boolean('scannable-cite', meta.zotero['scannable-cite'])
   config.author_in_text = test_boolean('author-in-text', meta.zotero['author-in-text'])
