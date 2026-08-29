@@ -71,14 +71,6 @@ TinyTeX is a lightweight TeX Live distribution used for PDF export via xelatex/x
 
 `chicago-author-date.csl` carries 3 local modifications from upstream: the `<text variable="archive"/>` line was removed from the `source-archive-reference-institution-first`, `source-archive-reference-location-first-bib`, and `source-archive-reference-location-first-note` macros, so the `archive` field never renders (Zotero's Extra field leaks raw URLs into it — see each removal site's inline comment). Kept as a single source of truth at `final final/Resources/Export/chicago-author-date.csl`, read by Swift at runtime for PDF export and imported directly by Vite (`?raw`) for the in-editor citation preview (`web/milkdown/src/citeproc-engine.ts`). A future refresh from upstream must reapply these 3 edits or the URL leak returns.
 
-#### Pandoc Lua Filter Resources (bundled in app)
-
-| Resource | License | Author | URL |
-|----------|---------|--------|-----|
-| zotero.lua (bbt-to-live-doc) | MIT | © 2020 Emiliano Heyns | https://retorque.re/zotero-better-bibtex/exporting/ |
-
-`zotero.lua` carries a local patch (marked with `LOCAL PATCH (zotero-group-libraries)` comment banners in `final final/Resources/Export/zotero.lua`) adding a second, group/shared-library-scoped Better BibTeX lookup phase for any citekey the file's own unscoped personal-library-only call can't resolve — without it, a citekey that lives only in a group/shared library silently exported as plain text instead of a live field code. See `docs/architecture/export.md`'s "Group/Shared Library Scope" section for the full design. A future refresh from upstream must reapply this patch — search that vendored file for "LOCAL PATCH" to find every piece.
-
 ---
 
 ## Build Tools (Development Only, Not Bundled)

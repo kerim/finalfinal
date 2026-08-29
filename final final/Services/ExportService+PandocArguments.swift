@@ -175,22 +175,11 @@ extension ExportService {
     /// citekeys extracted — see `applyCitekeyCanonicalization`'s three-part guard, in
     /// `ExportService+Citations.swift`), in which case PDF appends nothing, exactly as before
     /// this function stopped fetching internally.
-    ///
-    /// `groupLibraryNames` -- DOCX/ODT only (PDF resolves citations itself via `--citeproc`,
-    /// never touches `zotero.lua`) -- is the user's group/shared library display names, passed
-    /// through as `--metadata zotero-group-libraries=<JSON array>` for `zotero.lua`'s own
-    /// phase-2 Better BibTeX lookup (see that file's LOCAL PATCH block): a citekey living only
-    /// in a group/shared library, not the personal one, otherwise fails `zotero.lua`'s
-    /// unscoped BBT call and exports as plain text instead of a live field code. Nested inside
-    /// the `luaScriptPath` binding below so it's never appended when there's no lua filter at
-    /// all, and skipped entirely when `groupLibraryNames` is empty -- an empty array is
-    /// "nothing to add," not "clear whatever zotero.lua would otherwise use."
     func citationArguments(
         format: ExportFormat,
         luaScriptPath: String?,
         pdfBibliography: PDFBibliographyRequest,
-        bibliography: BibliographyFetchResult?,
-        groupLibraryNames: [String]
+        bibliography: BibliographyFetchResult?
     ) -> CitationBuildResult {
         var args: [String] = []
         var tempBibURL: URL?
@@ -222,12 +211,6 @@ extension ExportService {
         } else {
             if let luaPath = luaScriptPath {
                 args.append(contentsOf: ["--lua-filter", luaPath])
-
-                if !groupLibraryNames.isEmpty,
-                   let data = try? JSONSerialization.data(withJSONObject: groupLibraryNames),
-                   let jsonString = String(data: data, encoding: .utf8) {
-                    args.append(contentsOf: ["--metadata", "zotero-group-libraries=\(jsonString)"])
-                }
             }
         }
 

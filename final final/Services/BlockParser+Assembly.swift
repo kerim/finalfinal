@@ -76,6 +76,12 @@ extension BlockParser {
     static func assembleMarkdownForExport(from blocks: [Block], bibliographyPlaceholder: Bool = false) -> String {
         let sorted = assemblySorted(blocks)
 
+        // Computed once, over the SORTED array (not the raw `blocks` parameter -- see
+        // `liftedNotesHeadingIDs`'s doc comment for why): the set of machine-managed "# Notes"
+        // heading ids that Pandoc's footnote lifting left stranded with nothing but footnote
+        // definitions underneath. Skipped in the loop below, after the isBibliography branch.
+        let qualifyingNotesHeadingIDs = liftedNotesHeadingIDs(in: sorted)
+
         // Scan the WHOLE bibliography run for a `.heading`-typed block -- do not just take the
         // first isBibliography block encountered. A persisted `<!-- ::auto-bibliography:: -->`
         // marker block is ITSELF flagged isBibliography = true and can sort ahead of the real
@@ -144,10 +150,121 @@ extension BlockParser {
                 continue
             }
 
+            // MUST run AFTER the isBibliography branch, not before it: a block can carry BOTH
+            // isBibliography and isNotes on a legacy document whose bibliography header was once
+            // literally named "Notes" (current validation in ExportSettings.swift, ~line 671,
+            // rejects that name going forward, but a grace-list path keeps old such documents
+            // working). The isBibliography branch above already `continue`s on every one of its
+            // paths, so placing this check after it means a dual-flagged heading is always
+            // handled as bibliography content and never reaches this check at all -- deliberate.
+            if qualifyingNotesHeadingIDs.contains(block.id) {
+                continue
+            }
+
             fragments.append(fragment)
         }
 
         return fragments.joined(separator: "\n\n")
+    }
+
+    /// Pre-compiled regex matching a machine-generated footnote-definition line's START:
+    /// `[^N]:` where N is one or more digits. Deliberately mirrors
+    /// `FootnoteSyncService+Reconciliation.swift`'s `footnoteDefPattern`
+    /// (`^\[\^(\d+)\]:\s*(.*)`) in restricting the label to digits only -- `FootnoteSyncService`
+    /// never generates a non-numeric label like `[^method-note]:`, so a non-numeric label is
+    /// actually evidence a block was hand-typed by the user, not evidence to loosen the pattern
+    /// for. A looser regex here would wrongly treat user-written content as machine-managed and
+    /// delete the user's own heading -- exactly the failure class this whole fix exists to avoid.
+    ///
+    /// Deliberately NOT `.anchorsMatchLines`, unlike the mirrored pattern: this is matched
+    /// against a single already-trimmed fragment, and `^` must anchor to the START of that
+    /// fragment only -- a paragraph whose *second* line happens to start with this shape must
+    /// not count as a footnote definition.
+    nonisolated(unsafe) private static let footnoteDefStartPattern: NSRegularExpression = {
+        do {
+            return try NSRegularExpression(pattern: #"^\[\^\d+\]:"#, options: [])
+        } catch {
+            fatalError("Invalid footnote def start regex pattern: \(error)")
+        }
+    }()
+
+    /// Whether `fragment`, once trimmed, starts with a machine-generated numeric footnote
+    /// definition marker (`[^N]:`). See `footnoteDefStartPattern`'s doc comment for why the
+    /// anchoring is numeric-only and start-of-fragment-only.
+    private static func isFootnoteDefinitionFragment(_ fragment: String) -> Bool {
+        let trimmed = fragment.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        let range = NSRange(trimmed.startIndex..., in: trimmed)
+        return footnoteDefStartPattern.firstMatch(in: trimmed, range: range) != nil
+    }
+
+    /// Returns the ids of every `isNotes && .heading` block in `sorted` whose entire run of
+    /// following isNotes content is homogeneous machine-managed footnote definitions -- safe to
+    /// drop from export because nothing but Pandoc's own lifted `[^N]: ...` blocks sits under it.
+    ///
+    /// MUST take the already-`assemblySorted` array, not the raw `blocks` parameter passed to
+    /// `assembleMarkdownForExport`: `assemblySorted` breaks ties at equal `sortOrder` by placing
+    /// headings before non-headings, and on a document where the Notes heading and its first
+    /// definition happen to share a `sortOrder` (a real shape this codebase's block-reconciliation
+    /// can produce), raw input order could place the heading after its own definitions, silently
+    /// producing an empty scanned run that fails toward (wrongly) keeping a heading that should
+    /// have been dropped -- or worse, misreading the run boundary entirely.
+    ///
+    /// Run boundary: walks forward from the heading collecting the run of immediately-following
+    /// blocks that are `isNotes && blockType != .heading`, stopping at the first block that is
+    /// either not `isNotes` or is any heading. This deliberately mirrors `BlockParser.swift`'s own
+    /// `sectionFlagCarriedForward` -- the actual producer of the `isNotes` flag, which re-opens it
+    /// at every `# notes` heading and carries it until the next heading OF ANY KIND -- and NOT
+    /// `FootnoteSyncService+Reconciliation.swift`'s `stripNotesSection`, which closes only on an
+    /// H1. Those two boundary rules diverge on a document with a non-H1 heading inside the Notes
+    /// run; picking the wrong one here would either scan past the flag's real extent or stop short
+    /// of it. Do not "harmonize" this with `stripNotesSection` -- they answer different questions
+    /// (what the flag actually covers, vs. what markdown text to strip) and only one is correct
+    /// here.
+    ///
+    /// A heading qualifies (its id is added to the result) only if its run has AT LEAST ONE
+    /// non-empty block, AND EVERY non-empty block in the run matches
+    /// `isFootnoteDefinitionFragment`. Empty fragments are ignored -- they count toward neither
+    /// "at least one" nor "every." An empty run (heading with nothing non-empty under it) does
+    /// NOT qualify -- fails toward keeping the heading. Multiple independent "# notes" headings
+    /// (possible since `sectionFlagCarriedForward` can re-open the flag more than once per
+    /// document) are each judged strictly on their own run's evidence.
+    private static func liftedNotesHeadingIDs(in sorted: [Block]) -> Set<String> {
+        var qualifying: Set<String> = []
+        var index = 0
+        while index < sorted.count {
+            let block = sorted[index]
+            guard block.isNotes, block.blockType == .heading else {
+                index += 1
+                continue
+            }
+
+            var runEnd = index + 1
+            var hasNonEmptyBlock = false
+            var allNonEmptyAreFootnoteDefs = true
+            while runEnd < sorted.count {
+                let candidate = sorted[runEnd]
+                guard candidate.isNotes, candidate.blockType != .heading else { break }
+                let candidateFragment = candidate.markdownForExport()
+                if !isEmptyFragment(candidateFragment) {
+                    hasNonEmptyBlock = true
+                    if !isFootnoteDefinitionFragment(candidateFragment) {
+                        allNonEmptyAreFootnoteDefs = false
+                    }
+                }
+                runEnd += 1
+            }
+
+            if hasNonEmptyBlock && allNonEmptyAreFootnoteDefs {
+                qualifying.insert(block.id)
+            }
+
+            // Resume scanning right after this run -- the block at `runEnd` (if any) was never
+            // part of it (that's exactly why the inner loop stopped there), so it gets its own
+            // independent evaluation on the next outer-loop iteration.
+            index = runEnd
+        }
+        return qualifying
     }
 
     /// Assemble blocks into standard markdown for export (no Pandoc attributes).
