@@ -418,9 +418,7 @@ Intro paragraph for section A.
     // MARK: - Fixture doctoring (always with the app terminated -- see file header)
 
     private static func replaceContentMarkdown(at fixturePath: String, markdown: String) throws {
-        let dbPath = fixturePath + "/content.sqlite"
-        let sql = "UPDATE content SET markdown = '\(sqlEscape(markdown))';"
-        try runSqliteWrite(dbPath: dbPath, sql: sql)
+        FixtureDatabase.seedMarkdown(fixturePath: fixturePath, markdown: markdown)
     }
 
     private static func setStatus(fixturePath: String, id: String, status: String) throws {

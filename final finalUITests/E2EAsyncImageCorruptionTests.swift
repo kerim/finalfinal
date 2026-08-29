@@ -323,23 +323,7 @@ final class E2EAsyncImageCorruptionTests: XCTestCase {
         try pngData.write(to: mediaDir.appendingPathComponent(midImageFilename))
         try pngData.write(to: mediaDir.appendingPathComponent(standaloneImageFilename))
 
-        let dbPath = fixturePath + "/content.sqlite"
-        let sql = "UPDATE content SET markdown = markdown || '\(sqlEscape(appendixMarkdown))';"
-
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/sqlite3")
-        process.arguments = [dbPath, sql]
-
-        let stderrPipe = Pipe()
-        process.standardError = stderrPipe
-        try process.run()
-        process.waitUntilExit()
-
-        if process.terminationStatus != 0 {
-            let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
-            let stderr = String(data: stderrData, encoding: .utf8) ?? ""
-            XCTFail("Failed to doctor fixture content.markdown via sqlite3 (status \(process.terminationStatus)): \(stderr)")
-        }
+        FixtureDatabase.seedMarkdown(fixturePath: fixturePath, markdown: appendixMarkdown, appending: true)
 
         print("[E2EAsyncImageCorruptionTests] Doctored fixture content.markdown + media/ at: \(fixturePath)")
     }

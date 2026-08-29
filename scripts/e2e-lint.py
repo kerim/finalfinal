@@ -143,6 +143,32 @@ PAIR = [
     ),
 ]
 
+# Negative co-occurrence rules: pattern A flagged unless its required
+# safety pattern B appears within NEG_WINDOW code lines either side. Unlike
+# PAIR above (which flags when two patterns land together), these flag a
+# pattern that shows up ALONE -- the shape of the block-table-seeding bug
+# fixed 2026-08-29 (see UITestHelpers.swift's `FixtureDatabase.seedMarkdown`
+# doc comment): 5 call sites wrote `content.markdown` directly without also
+# clearing `block`, and ContentView+ProjectLifecycle's loadInitialContent
+# silently discards a content-only seed whenever `block` rows already exist
+# (the committed fixture ships some), so the write was never read back.
+NEG_WINDOW = 2
+NEGATIVE_PAIR = [
+    (
+        "content-seed-missing-block-clear",
+        "error",
+        r"UPDATE\s+content\s+SET\s+markdown",
+        r"DELETE\s+FROM\s+block",
+        "Seeding content.markdown without also clearing `block` in the same "
+        "statement (or an adjacent line) is silently discarded: "
+        "ContentView+ProjectLifecycle.loadInitialContent assembles the "
+        "document from `block` rows whenever any exist and never reads "
+        "content.markdown in that case -- the committed fixture ships block "
+        "rows. Use FixtureDatabase.seedMarkdown(fixturePath:markdown:"
+        "appending:) from UITestHelpers.swift instead of raw SQL.",
+    ),
+]
+
 SUPPRESS_RE = re.compile(r"e2e-lint:\s*allow\s+([\w-]+)")
 
 
@@ -195,6 +221,18 @@ def lint_file(path):
                 findings.append(
                     (sev, anchor + 1, rule_id, msg, rule_id in sup)
                 )
+
+    # Same code-lines-only list as PAIR above, but inverted: flag pattern A
+    # unless pattern B shows up within NEG_WINDOW code lines either side.
+    for rule_id, sev, pat_a, pat_b, msg in NEGATIVE_PAIR:
+        for pos, (idx, ln) in enumerate(code):
+            if not re.search(pat_a, ln):
+                continue
+            nearby = code[max(0, pos - NEG_WINDOW) : pos + NEG_WINDOW + 1]
+            if any(re.search(pat_b, ln2) for _, ln2 in nearby):
+                continue
+            sup = suppressions_for(lines, idx)
+            findings.append((sev, idx + 1, rule_id, msg, rule_id in sup))
 
     return findings
 

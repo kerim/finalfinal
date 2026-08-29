@@ -439,6 +439,27 @@ enum FixtureDatabase {
         rawValue.replacingOccurrences(of: "'", with: "''")
     }
 
+    /// Seeds `content.markdown` AND clears `block` in the same statement. Clearing `block` is
+    /// mandatory: `ContentView+ProjectLifecycle.loadInitialContent` assembles the document from
+    /// `block` rows whenever any exist and never reads `content.markdown` in that case -- the
+    /// committed fixture ships block rows (`TestFixtureFactory.createFixture` populates them), so
+    /// a content-only seed is silently discarded and the app loads stale fixture content instead.
+    /// Pass `appending: true` to append to the existing `content.markdown` (fixture doctoring)
+    /// instead of replacing it outright. Caller must ensure the app is terminated first -- see
+    /// `write` above.
+    static func seedMarkdown(
+        fixturePath: String,
+        markdown: String,
+        appending: Bool = false,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        let assignment = appending
+            ? "markdown = markdown || '\(escape(markdown))'"
+            : "markdown = '\(escape(markdown))'"
+        write(fixturePath: fixturePath, sql: "DELETE FROM block; UPDATE content SET \(assignment);", file: file, line: line)
+    }
+
     @discardableResult
     private static func run(dbPath: String, sql: String, file: StaticString, line: UInt) -> String {
         let process = Process()

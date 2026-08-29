@@ -40,10 +40,7 @@ extension UnifiedUndoE2ETests {
     """
 
     func seedCanonicalDocument() {
-        FixtureDatabase.write(
-            fixturePath: TestFixtureHelper.fixturePath,
-            sql: "UPDATE content SET markdown = '\(FixtureDatabase.escape(Self.canonicalMarkdown))';"
-        )
+        FixtureDatabase.seedMarkdown(fixturePath: TestFixtureHelper.fixturePath, markdown: Self.canonicalMarkdown)
     }
 
     // MARK: - Launch / editor-ready

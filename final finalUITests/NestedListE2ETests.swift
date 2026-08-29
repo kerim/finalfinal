@@ -376,36 +376,13 @@ final class NestedListE2ETests: XCTestCase {
 
     // MARK: - Fixture doctoring
 
-    /// Appends `appendix` to the fixture copy's `content.markdown` via a raw
-    /// sqlite3 UPDATE. Must run BEFORE `app.launch()` -- mirrors
-    /// E2EAsyncImageCorruptionTests.swift's `doctorFixture()` exactly (same
-    /// ordering requirement, same unsandboxed-subprocess sqlite3 CLI pattern).
+    /// Appends `appendix` to the fixture copy's `content.markdown` via
+    /// `FixtureDatabase.seedMarkdown`. Must run BEFORE `app.launch()` --
+    /// mirrors E2EAsyncImageCorruptionTests.swift's `doctorFixture()` exactly
+    /// (same ordering requirement, same underlying helper).
     private static func doctorFixture(at fixturePath: String, appendix: String) throws {
-        let dbPath = fixturePath + "/content.sqlite"
-        let sql = "UPDATE content SET markdown = markdown || '\(sqlEscape(appendix))';"
-
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/sqlite3")
-        process.arguments = [dbPath, sql]
-
-        let stderrPipe = Pipe()
-        process.standardError = stderrPipe
-        try process.run()
-        process.waitUntilExit()
-
-        if process.terminationStatus != 0 {
-            let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
-            let stderr = String(data: stderrData, encoding: .utf8) ?? ""
-            XCTFail("Failed to doctor fixture content.markdown via sqlite3 (status \(process.terminationStatus)): \(stderr)")
-        }
-
+        FixtureDatabase.seedMarkdown(fixturePath: fixturePath, markdown: appendix, appending: true)
         print("[NestedListE2ETests] Doctored fixture content.markdown at: \(fixturePath)")
-    }
-
-    /// Escapes a string for embedding as a single-quoted SQLite string
-    /// literal (doubles any embedded single quotes).
-    private static func sqlEscape(_ value: String) -> String {
-        value.replacingOccurrences(of: "'", with: "''")
     }
 
     // MARK: - DB query helpers
