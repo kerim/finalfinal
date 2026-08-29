@@ -433,11 +433,38 @@ extension ExportService {
         // Citations
         var citationArgs: [String] = []
         if hasCitations {
+            // Group-library scope for zotero.lua's phase-2 BBT lookup (DOCX/ODT only -- PDF
+            // never invokes zotero.lua, it resolves citations itself via `--citeproc`).
+            // `fetchLibraries()` here is typically a session-cache hit (`cachedLibraries`),
+            // NOT a fresh fetch -- it only calls out to BBT the first time this session needs
+            // the library list. That's exactly why zotero.lua's own phase-2 retry (see the
+            // "LOCAL PATCH (zotero-group-libraries)" block's failure-handling comment) matters:
+            // a cached name can go stale mid-session (the user renames or leaves a group), and
+            // BBT rejects a whole batched item.pandoc_filter call over a single bad name, so
+            // the Lua side must be able to recover name-by-name rather than relying on this
+            // cache always being fresh. Degrades to an empty array (the exact unscoped behavior
+            // from before this fix) on any failure or timeout, and whenever this export
+            // wouldn't reach zotero.lua at all -- this can never fail or stall an export on its
+            // own.
+            //
+            // Gated on the STRICT `hasRealCitations` (not the loose `hasCitations` this whole
+            // block is nested under) and on `resourcePaths.luaScriptPath != nil`: a
+            // false-positive bracket shape like `[contact me@example.com]` has zero real
+            // citekeys and must never trigger this live Zotero network round-trip (see the
+            // `hasRealCitations`/`zoteroStatus` invariant comment above), and there is nothing
+            // for zotero.lua to scope if no lua filter is even configured for this export.
+            var groupLibraryNames: [String] = []
+            if format != .pdf, hasRealCitations, resourcePaths.luaScriptPath != nil, zoteroStatus == .running {
+                let libraries = (try? await ZoteroService.shared.fetchLibraries()) ?? []
+                groupLibraryNames = ZoteroService.groupLibraryNames(from: libraries)
+            }
+
             let citation = citationArguments(
                 format: format,
                 luaScriptPath: resourcePaths.luaScriptPath,
                 pdfBibliography: PDFBibliographyRequest(settings: settings, tempDir: tempDir),
-                bibliography: bibliographyForCitations
+                bibliography: bibliographyForCitations,
+                groupLibraryNames: groupLibraryNames
             )
             citationArgs = citation.arguments
             artifacts.tempBibURL = citation.tempBibURL
