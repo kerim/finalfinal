@@ -30,34 +30,10 @@ struct FocusModeSnapshot: Sendable {
     let annotationDisplayModes: [AnnotationType: AnnotationDisplayMode]? // nil if not modified
 }
 
-/// Mutable box a `.willResetEditorForProjectSwitch` observer flips to `true` to confirm it
-/// actually handled the notification. Must-fix #3 (mount-flash fix, review round 2): a plain
-/// `NotificationCenter.post` has no return value, so without this the poster has no way to
-/// tell "no coordinator's webView matched this notification's `object`" apart from "it was
-/// handled" -- and the former means `resetForProjectSwitch()` never ran at all (undo history/
-/// search state/block IDs silently leaking from the previous project into the new one), not
-/// just a missed cloak. Passed via `userInfo["handledMarker"]`; safe because delivery is
-/// synchronous (`queue: nil`, see subscribeToProjectResetNotifications' doc comment) --
-/// `post()` cannot return before every matching observer's closure has already run.
-final class NotificationHandledMarker {
-    var handled = false
-}
-
 // MARK: - Editor Toggle Notifications
 extension Notification.Name {
     /// Posted when editor mode toggle is requested - current editor should save cursor
     static let willToggleEditorMode = Notification.Name("willToggleEditorMode")
-    /// Posted immediately before `handleProjectOpened()` (ContentView+ProjectLifecycle.swift)
-    /// calls `window.FinalFinal.resetForProjectSwitch()` on the active WebView -- mount-flash
-    /// fix (doc-open-blank-regression follow-up). `object` is the specific `WKWebView` being
-    /// reset (NOT nil): a multi-window app must not let one window's project switch cloak
-    /// (hide) another window's unrelated, unaffected editor -- see
-    /// MilkdownCoordinator+NotificationObservers.swift's subscribeToProjectResetNotifications
-    /// doc comment. Milkdown's Coordinator observes this to mint its `.projectReset` cloak
-    /// token and issue the actual JS call itself (with the token embedded, so its own
-    /// `paintComplete` echo resolves unambiguously even under rapid A→B→A switching) -- see
-    /// beginProjectResetCloak's doc comment (MilkdownCoordinator+MessageHandlers.swift).
-    static let willResetEditorForProjectSwitch = Notification.Name("willResetEditorForProjectSwitch")
     /// Posted after cursor position is saved - toggle can proceed
     static let didSaveCursorPosition = Notification.Name("didSaveCursorPosition")
     /// Posted when sidebar requests scroll to a section

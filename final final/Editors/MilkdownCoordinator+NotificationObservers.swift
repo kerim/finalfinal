@@ -315,38 +315,6 @@ extension MilkdownEditor.Coordinator {
         }
     }
 
-    /// Mount-flash fix (doc-open-blank-regression follow-up): observes
-    /// `.willResetEditorForProjectSwitch`, posted by `ContentView+ProjectLifecycle.swift`'s
-    /// `handleProjectOpened()` right before it would otherwise call
-    /// `window.FinalFinal.resetForProjectSwitch()` directly.
-    ///
-    /// `queue: nil` (synchronous delivery, same reasoning as `subscribeToBlockSyncNotifications`'s
-    /// `blockSyncPushObserver` above): `beginCloak()` must run, and mint its token, before
-    /// `handleProjectOpened()` proceeds past the `post()` call -- a `.main`-queue observer
-    /// would defer this to a later runloop tick, breaking that ordering guarantee.
-    ///
-    /// `object`-filtered against `self.webView`, NOT a bare `object: nil` match: this is a
-    /// multi-window app (see `ProjectOpenErrorHost.swift`'s own `activeWebView` cross-window
-    /// guard for a parallel concern), and `NotificationCenter.default.post` is global --
-    /// without this filter, window A switching projects would also cloak (hide) window B's
-    /// completely unrelated, unaffected Milkdown editor whenever both happen to be showing
-    /// WYSIWYG mode at the same time.
-    func subscribeToProjectResetNotifications() {
-        projectResetObserver = NotificationCenter.default.addObserver(
-            forName: .willResetEditorForProjectSwitch,
-            object: nil,
-            queue: nil
-        ) { [weak self] notification in
-            guard let self, notification.object as? WKWebView === self.webView else { return }
-            // Must-fix #3 (review round 2): confirm receipt via the handled-marker BEFORE
-            // doing anything else, so the poster can detect a miss even if beginProjectResetCloak
-            // itself bails early (e.g. its own `guard let webView` -- see that method's doc
-            // comment) -- see NotificationHandledMarker's doc comment (EditorViewState+Types.swift).
-            (notification.userInfo?["handledMarker"] as? NotificationHandledMarker)?.handled = true
-            self.beginProjectResetCloak()
-        }
-    }
-
     /// `nonisolated` — safe to call from `deinit` (always nonisolated even on a
     /// `@MainActor` type) because it only touches its own parameter, never any
     /// actor-isolated stored property. The observer-token *properties* themselves

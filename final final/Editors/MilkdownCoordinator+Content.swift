@@ -22,17 +22,6 @@ extension MilkdownEditor.Coordinator {
         pollingTimer?.invalidate()
         pollingTimer = nil
 
-        // Cancel every outstanding cloak fallback (mount-flash fix, doc-open-blank-regression
-        // follow-up) -- cleanup() can run while this instance is still alive (unlike deinit),
-        // so a fallback left armed here would fire later and call back into a coordinator
-        // whose webView has already been torn down below.
-        for (_, workItem) in cloakFallbackWorkItems {
-            workItem.cancel()
-        }
-        cloakFallbackWorkItems.removeAll()
-        outstandingCloaks.removeAll()
-
-        clearObserver(&projectResetObserver)
         clearObserver(&toggleObserver)
         clearObserver(&insertBreakObserver)
         clearObserver(&annotationDisplayModesObserver)
@@ -385,13 +374,9 @@ extension MilkdownEditor.Coordinator {
 
         // Hide WKWebView at compositor level during zoom transitions
         // This prevents visible scroll animation by hiding at the CALayer level
-        // before any content changes, ensuring no intermediate frames are visible.
-        // Mount-flash fix (doc-open-blank-regression follow-up): migrated onto the
-        // token-based cloak system (beginCloak/endCloak, MilkdownCoordinator+
-        // MessageHandlers.swift) so a project reset landing mid-zoom can't have its own
-        // release prematurely reveal a WebView zoom is still relying on staying hidden.
+        // before any content changes, ensuring no intermediate frames are visible
         if shouldScrollToStart {
-            beginCloak(.zoom)
+            webView.alphaValue = 0
         }
 
         // Set content and then read it back to confirm (acknowledgement pattern)

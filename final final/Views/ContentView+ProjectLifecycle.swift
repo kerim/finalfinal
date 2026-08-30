@@ -471,40 +471,10 @@ extension ContentView {
 
         // REMOVED: isEditorPreloadReady = false — WebView stays alive to avoid blank screen
 
-        // Reset JS-side transient state (undo history, CAYW, search, block IDs). Milkdown's
-        // mount-flash cloak (beginCloak/endCloak, MilkdownCoordinator+MessageHandlers.swift)
-        // needs to mint its `.projectReset` token BEFORE the JS call reaches the WebView, so
-        // it can embed that token in the SAME call -- routing through a notification its
-        // Coordinator observes synchronously lets it own both steps atomically. See
-        // .willResetEditorForProjectSwitch's doc comment (EditorViewState+Types.swift).
-        // CodeMirror has no cloak (CodeMirrorCoordinator+MessageDispatch.swift's deliberate-
-        // divergence comment) and is unaffected either way, so Source mode keeps the direct,
-        // uncloaked call it always had.
-        if editorState.editorMode == .wysiwyg, let webView = findBarState.activeWebView {
-            let handledMarker = NotificationHandledMarker()
-            NotificationCenter.default.post(
-                name: .willResetEditorForProjectSwitch, object: webView,
-                userInfo: ["handledMarker": handledMarker]
-            )
-            // Must-fix #3 (review round 2): a plain post() has no return value -- if this
-            // webView doesn't match ANY live Coordinator's own webView (e.g. a stale
-            // findBarState.activeWebView left over from a torn-down editor), the notification
-            // is silently a no-op AND resetForProjectSwitch() never runs at all: no cloak, and
-            // the JS-side reset (undo history, search state, block IDs) never happens either,
-            // leaking the previous project's state into the new one with nothing to show for
-            // it. Detect the miss and fall back to the direct, uncloaked call so the reset
-            // itself still happens even though the mount-flash cloak is skipped this once.
-            if !handledMarker.handled {
-                DebugLog.log(.lifecycle,
-                    "[handleProjectOpened] WARNING: .willResetEditorForProjectSwitch had no matching Coordinator "
-                    + "observer -- falling back to direct resetForProjectSwitch() call, mount-flash cloak will be skipped this time")
-                webView.evaluateJavaScript("window.FinalFinal.resetForProjectSwitch()") { _, _ in }
-            }
-        } else {
-            findBarState.activeWebView?.evaluateJavaScript(
-                "window.FinalFinal.resetForProjectSwitch()"
-            ) { _, _ in }
-        }
+        // Reset JS-side transient state (undo history, CAYW, search, block IDs)
+        findBarState.activeWebView?.evaluateJavaScript(
+            "window.FinalFinal.resetForProjectSwitch()"
+        ) { _, _ in }
 
         // Reset all project-specific state (content, sourceContent, zoom, tasks, etc.)
         editorState.resetForProjectSwitch()
