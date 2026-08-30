@@ -485,6 +485,73 @@ class EditorViewState {
     private var observationTask: Task<Void, Never>?
     private var annotationObservationTask: Task<Void, Never>?
 
+    // MARK: - Refresh Chain (serializes refreshSectionsAwaiting() calls; see that method's doc
+    // comment for the full invariant this protects)
+    //
+    // `RefreshSignal` (not a `Task`) is deliberate: `refreshSectionsAwaiting()` runs the chain
+    // bookkeeping AND the actual refresh work inline, in the calling task's own execution --
+    // never wrapped in a freshly-spawned child `Task`. Wrapping the work in a child `Task`
+    // (an earlier version of this fix did exactly that) adds a real scheduling hop before that
+    // child ever gets to run, which measurably delays when `performSectionsRefresh` captures
+    // its `outlineGeneration` snapshot relative to the caller -- late enough, in one observed
+    // case, that a synchronous `applySectionsUpdate` call made by the *caller's own code*
+    // immediately after starting a refresh could land BEFORE the snapshot was taken instead of
+    // after, silently defeating the staleness guard this whole file depends on
+    // (`OutlineRefreshStalenessTests.staleRefreshDoesNotOverwriteNewerApply` catches exactly
+    // this). `RefreshSignal` is just a resumable wait-list: creating one and later calling
+    // `finish()` on it involves no task creation and so introduces no scheduling gap.
+    //
+    // `@MainActor` here is load-bearing, not decorative: a nested type does NOT inherit its
+    // enclosing type's global-actor isolation (only members do), so without this annotation
+    // `RefreshSignal` would be nonisolated. A nonisolated `async` `wait()` called from
+    // `@MainActor` code hops OFF the main actor (SE-0338), so `wait()`'s check-then-append and
+    // `finish()`'s read-then-clear (called from the `defer` below, which IS on the main actor)
+    // would run concurrently on different threads with no synchronization: a data race on
+    // `waiters`, and a lost-wakeup if `finish()` drains between `wait()`'s `isDone` check and
+    // its append (that continuation would be appended to an already-drained list and never
+    // resumed -- a permanent hang). `@MainActor` makes every call to `wait()`/`finish()`
+    // serialize on the main actor like every other method in this file, the same way
+    // `contentAckContinuation` (above; see its clear-before-resume in
+    // `EditorViewState+Zoom.swift`) relies on MainActor to make ITS check-then-clear atomic.
+    @MainActor
+    private final class RefreshSignal {
+        /// The project this refresh is (or was, for a completed/bailed one) scoped to --
+        /// carried alongside the signal so a caller considering whether to join a still-pending
+        /// entry (`refreshSectionsAwaiting()`'s coalescing branch) can tell whether that entry
+        /// is even for the right project before committing to wait on its result. See that
+        /// method's doc comment for the failure this prevents.
+        let expectedProjectId: String?
+        private var isDone = false
+        private var waiters: [CheckedContinuation<Void, Never>] = []
+
+        init(expectedProjectId: String?) {
+            self.expectedProjectId = expectedProjectId
+        }
+
+        func wait() async {
+            if isDone { return }
+            await withCheckedContinuation { waiters.append($0) }
+        }
+
+        func finish() {
+            isDone = true
+            let pending = waiters
+            waiters = []
+            for waiter in pending { waiter.resume() }
+        }
+    }
+
+    @ObservationIgnored
+    private var refreshChainTailSignal: RefreshSignal?
+    @ObservationIgnored
+    private var refreshChainTailToken: UUID?
+    @ObservationIgnored
+    private var pendingRefreshSignal: RefreshSignal?
+    @ObservationIgnored
+    private var pendingRefreshToken: UUID?
+    @ObservationIgnored
+    private(set) var staleRefreshDropCount: Int = 0
+
     /// Callback invoked after sections are updated from database observation
     /// Used by ContentView to enforce hierarchy constraints after slash command changes
     var onSectionsUpdated: (() -> Void)?
@@ -551,12 +618,19 @@ class EditorViewState {
 
     /// Bumped on every write to `sections` (via its `didSet`) and, additionally, at the end of
     /// `applySectionsUpdate` (to cover the counts-only path, which re-arms the equality cache
-    /// without writing `sections`). `refreshSectionsAwaiting()` snapshots this before its DB
-    /// fetch and re-checks it after; a mismatch means some other apply (the live observation
-    /// loop, a structural-undo sequence, hierarchy enforcement) landed while this fetch was
-    /// suspended, so the fetch's result is stale and must be dropped rather than merged in --
-    /// otherwise it can overwrite newer data and re-arm the cache with the stale set. See
-    /// `docs/architecture/unified-undo.md` and the class-level cache doc comment above.
+    /// without writing `sections`). `performSectionsRefresh` (the body of
+    /// `refreshSectionsAwaiting()`) snapshots this before its DB fetch and re-checks it after;
+    /// a mismatch means some other apply (the live observation loop, a structural-undo
+    /// sequence, hierarchy enforcement) landed while this fetch was suspended, so the fetch's
+    /// result is stale and must be dropped rather than merged in -- otherwise it can overwrite
+    /// newer data and re-arm the cache with the stale set. This guard correctly resolves one
+    /// direction of a refresh-vs-apply race (an apply that lands while a refresh's fetch is
+    /// suspended); it does NOT by itself resolve refresh-vs-refresh ordering (an earlier-started
+    /// refresh whose fetch resumes and applies *after* a later-started refresh already applied
+    /// fresher data) -- `refreshSectionsAwaiting()`'s serialized chain (see its doc comment)
+    /// fixes that by construction, ensuring only one refresh's DB fetch is ever in flight at a
+    /// time. See `docs/architecture/unified-undo.md` and the class-level cache doc comment
+    /// above.
     @ObservationIgnored
     private(set) var outlineGeneration: Int = 0
 
@@ -643,14 +717,111 @@ class EditorViewState {
     /// Awaited version of `refreshSections()` (MF-1, `StructuralUndoController`'s audited
     /// sequences -- see docs/architecture/unified-undo.md's audited-sequences and Barriers
     /// sections, Phase 4 review round): those sequences need to know the DB fetch has
-    /// actually landed in `sections` before
-    /// running hierarchy enforcement in-sequence, so they can't use the fire-and-forget
-    /// `refreshSections()` above. Same body as before, just awaited directly instead of
-    /// wrapped in its own untracked `Task`. Heavy DB work runs off the main actor; the section
-    /// assignment lands back on @MainActor.
+    /// actually landed in `sections` before running hierarchy enforcement in-sequence, so they
+    /// can't use the fire-and-forget `refreshSections()` above. Heavy DB work runs off the main
+    /// actor; the section assignment lands back on @MainActor.
+    ///
+    /// **Serialized chain.** Two concurrent refreshes used to be able to resolve their race by
+    /// first-to-land instead of freshest-snapshot: an earlier-started, later-landing call could
+    /// overwrite a fresher result and bump `outlineGeneration`, causing that fresher result to
+    /// be discarded as "stale" by `performSectionsRefresh`'s own generation guard when it was
+    /// actually newer. This method removes that race by construction: every call awaits the
+    /// previous call's completion (`refreshChainTailSignal`) before starting its own DB fetch,
+    /// so at most one fetch is ever in flight. A caller arriving while the tail entry hasn't
+    /// started its DB read yet joins that pending entry (`pendingRefreshSignal`) instead of
+    /// enqueueing a redundant one, rather than getting its own chained entry -- but ONLY when
+    /// that pending entry is scoped to the SAME project as this caller (see below); otherwise it
+    /// gets its own chained entry like any other caller.
+    ///
+    /// **Why the project check on the join.** A pending entry's `expectedProjectId` is fixed at
+    /// the moment it was enqueued. If the project has since changed, that entry is going to bail
+    /// without refreshing anything (see `performSectionsRefresh`'s own project guard) -- a
+    /// caller that blindly joined it would `await` its `wait()` and return having gotten NO
+    /// refresh at all, silently. Concretely: entry B enqueues for project P1; the user switches
+    /// to P2; caller C (now on P2) would join B purely because B hasn't started fetching yet; B
+    /// bails (P1 != P2) without fetching; C's await returns with nothing done. Checking
+    /// `pending.expectedProjectId == myProjectId` before joining closes this: a caller whose own
+    /// project doesn't match the pending entry's gets its own entry instead, chained behind
+    /// whatever's currently the tail (which includes that mismatched pending entry, so
+    /// ordering/serialization is still preserved) -- and that new entry captures ITS OWN
+    /// project id, so its own eventual `performSectionsRefresh` call is correctly scoped.
+    /// `StructuralUndoController.enforceHierarchyInSequence` depends on this method actually
+    /// performing a refresh for the caller's project, not silently no-op'ing.
+    ///
+    /// INVARIANT (load-bearing, must not be violated by future edits): everything from reading
+    /// `pendingRefreshSignal`/`refreshChainTailSignal` through calling `performSectionsRefresh`
+    /// runs INLINE in the calling task -- never inside a freshly-spawned child `Task`. Spawning
+    /// a child `Task` to do this work (an earlier version of this method did exactly that) adds
+    /// a real scheduling hop before that child ever runs, which delays exactly when
+    /// `performSectionsRefresh` captures its `outlineGeneration` snapshot relative to this
+    /// call's own caller -- late enough, in one observed regression, that a synchronous
+    /// `applySectionsUpdate` call made by the caller's own code immediately after starting a
+    /// refresh landed BEFORE the snapshot instead of after, silently defeating the staleness
+    /// guard (`OutlineRefreshStalenessTests.staleRefreshDoesNotOverwriteNewerApply` catches
+    /// this). Running inline preserves the same timing this method had before the chain existed:
+    /// with no prior entry to wait for, `generationAtFetch` is captured synchronously, with
+    /// zero suspension points, relative to the caller. This also protects
+    /// `StructuralUndoController.enforceHierarchyInSequence` (Services/StructuralUndoController.swift),
+    /// which awaits this method specifically so `hasHierarchyViolations` sees that operation's
+    /// own just-written DB mutation.
+    ///
+    /// Separately: the chain requires that no code reached from inside a chain entry awaits
+    /// `refreshSectionsAwaiting()` itself, or the chain deadlocks. Today this holds only because
+    /// `onSectionsUpdated` is a SYNCHRONOUS closure and `applySectionsUpdate`/
+    /// `recalculateParentRelationships` are both sync -- this is currently a load-bearing
+    /// accident, not an enforced invariant. If `onSectionsUpdated` is ever made async/awaiting,
+    /// re-audit this.
     func refreshSectionsAwaiting() async {
+        let myProjectId = currentProjectId
+
+        if let pending = pendingRefreshSignal, pending.expectedProjectId == myProjectId {
+            await pending.wait()
+            return
+        }
+
+        let previous = refreshChainTailSignal
+        let token = UUID()
+        let signal = RefreshSignal(expectedProjectId: myProjectId)
+
+        pendingRefreshSignal = signal
+        pendingRefreshToken = token
+        refreshChainTailSignal = signal
+        refreshChainTailToken = token
+
+        defer {
+            if refreshChainTailToken == token {
+                refreshChainTailSignal = nil
+                refreshChainTailToken = nil
+            }
+            signal.finish()
+        }
+
+        // No-op (and no suspension at all) when `previous` is nil -- i.e. when nothing is
+        // chained ahead of us, which is the common case. See the INVARIANT above: this is what
+        // keeps `performSectionsRefresh`'s generation snapshot exactly as immediate as it was
+        // before the chain existed.
+        await previous?.wait()
+
+        if pendingRefreshToken == token {
+            pendingRefreshToken = nil
+            pendingRefreshSignal = nil
+        }
+
+        await performSectionsRefresh(expectedProjectId: myProjectId)
+    }
+
+    /// The actual DB-fetch-and-apply body, run serially by `refreshSectionsAwaiting()`'s chain
+    /// -- see that method's doc comment for why serialization is needed and what it guarantees.
+    /// `expectedProjectId` is the project id captured at enqueue time; if the current project
+    /// has changed by the time this entry's turn comes up (queued behind other work while the
+    /// user switched documents), bail rather than applying a fetch for the wrong project.
+    private func performSectionsRefresh(expectedProjectId: String?) async {
         guard let db = projectDatabase, let pid = currentProjectId else {
             DebugLog.log(.outline, "[EditorViewState:refresh] BAIL: no db/pid")
+            return
+        }
+        guard expectedProjectId == nil || expectedProjectId == pid else {
+            DebugLog.log(.outline, "[EditorViewState:refresh] BAIL: project changed while queued (\(expectedProjectId ?? "nil") -> \(pid))")
             return
         }
         let generationAtFetch = outlineGeneration
@@ -677,6 +848,7 @@ class EditorViewState {
             guard outlineGeneration == generationAtFetch else {
                 DebugLog.log(.outline, "[EditorViewState:refresh] Discarded stale result "
                              + "(gen \(generationAtFetch) != \(outlineGeneration))")
+                staleRefreshDropCount += 1
                 onSectionsUpdated?()
                 return
             }

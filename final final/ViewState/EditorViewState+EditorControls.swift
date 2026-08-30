@@ -57,6 +57,7 @@ extension EditorViewState {
             break
         }
         lastToggleRequestTime = Date()  // Record at entry point to close the race window
+
         NotificationCenter.default.post(name: .willToggleEditorMode, object: nil)
     }
 
