@@ -13,6 +13,26 @@ enum SectionChange: Sendable {
     case insert(Section)
     case update(id: String, updates: SectionUpdates)
     case delete(id: String)
+
+    /// Sweeps a genuine DUPLICATE flagged (`isBibliography`/`isNotes`) row (`loserId`) that
+    /// lost this pass's match to a sibling row (`survivorId`), while preserving whatever real
+    /// user data the loser was carrying instead of silently discarding it as a side effect of
+    /// the delete:
+    ///   1. Any `annotation` rows pointed at `loserId` are reassigned to `survivorId` --
+    ///      without this, `annotation.sectionId`'s `onDelete: .setNull` FK trigger would fire
+    ///      first and simply null them out, disconnecting real user annotations from any
+    ///      section.
+    ///   2. `survivorUpdates` (built by `SectionReconciler.mergeSurvivorUpdates`) carries the
+    ///      loser's `status`/`tags`/`wordGoal` onto the survivor, but ONLY for fields where
+    ///      the survivor itself is still at its default -- a survivor's own real data is never
+    ///      clobbered by the loser's.
+    ///   3. The loser row is then deleted.
+    /// Plain `.delete` remains correct for the OTHER sweep case -- the flag is verifiably gone
+    /// (`bibliographyGone`/`notesGone`), meaning there is no winning sibling this pass to
+    /// migrate data onto. See `SectionReconciler`'s delete-sweep doc comment for the full
+    /// reasoning, and `isExemptFromDeleteSweep`/`duplicateSurvivor` for how the two cases are
+    /// told apart.
+    case deleteDuplicate(loserId: String, survivorId: String, survivorUpdates: SectionUpdates)
 }
 
 /// Updates to apply to an existing section (all fields optional)
@@ -27,6 +47,14 @@ struct SectionUpdates: Sendable {
     var parentId: String??  // Double-optional: nil = don't change, .some(nil) = set to nil
     var isBibliography: Bool?
     var isNotes: Bool?
+    /// Only ever populated by `SectionReconciler.mergeSurvivorUpdates` as part of a
+    /// `.deleteDuplicate` change's `survivorUpdates` -- `buildUpdates` (the ordinary path)
+    /// never sets these three. Single-optional like every field above except `parentId`:
+    /// nil means "don't change" (never used here to explicitly clear a survivor's own
+    /// status/tags/wordGoal back to default).
+    var status: SectionStatus?
+    var tags: [String]?
+    var wordGoal: Int?
 
     init(
         title: String? = nil,
@@ -38,7 +66,10 @@ struct SectionUpdates: Sendable {
         startOffset: Int? = nil,
         parentId: String?? = nil,
         isBibliography: Bool? = nil,
-        isNotes: Bool? = nil
+        isNotes: Bool? = nil,
+        status: SectionStatus? = nil,
+        tags: [String]? = nil,
+        wordGoal: Int? = nil
     ) {
         self.title = title
         self.headerLevel = headerLevel
@@ -50,6 +81,9 @@ struct SectionUpdates: Sendable {
         self.parentId = parentId
         self.isBibliography = isBibliography
         self.isNotes = isNotes
+        self.status = status
+        self.tags = tags
+        self.wordGoal = wordGoal
     }
 }
 
@@ -313,49 +347,89 @@ extension ProjectDatabase {
 
                 case .update(let id, let updates):
                     guard var section = try Section.fetchOne(db, key: id) else { continue }
-
-                    // Apply only the fields that are set
-                    if let title = updates.title {
-                        section.title = title
-                    }
-                    if let headerLevel = updates.headerLevel {
-                        section.headerLevel = headerLevel
-                    }
-                    if let isPseudoSection = updates.isPseudoSection {
-                        section.isPseudoSection = isPseudoSection
-                    }
-                    if let sortOrder = updates.sortOrder {
-                        section.sortOrder = sortOrder
-                    }
-                    if let markdownContent = updates.markdownContent {
-                        section.markdownContent = markdownContent
-                    }
-                    if let wordCount = updates.wordCount {
-                        section.wordCount = wordCount
-                    }
-                    if let startOffset = updates.startOffset {
-                        section.startOffset = startOffset
-                    }
-                    // Double-optional handling for parentId
-                    if let parentIdUpdate = updates.parentId {
-                        section.parentId = parentIdUpdate  // Can be nil or a value
-                    }
-                    if let isBibliography = updates.isBibliography {
-                        section.isBibliography = isBibliography
-                    }
-                    if let isNotes = updates.isNotes {
-                        section.isNotes = isNotes
-                    }
-
-                    section.updatedAt = Date()
+                    Self.applyFields(updates, to: &section)
                     try section.update(db)
 
                 case .delete(let id):
                     try Section
                         .filter(Section.Columns.id == id)
                         .deleteAll(db)
+
+                case .deleteDuplicate(let loserId, let survivorId, let survivorUpdates):
+                    // Reassign the loser's annotations onto the survivor BEFORE deleting the
+                    // loser -- annotation.sectionId's `onDelete: .setNull` FK trigger would
+                    // otherwise fire first and null them out, disconnecting real user
+                    // annotations from any section entirely.
+                    try db.execute(
+                        sql: "UPDATE annotation SET sectionId = ?, updatedAt = ? WHERE sectionId = ?",
+                        arguments: [survivorId, Date(), loserId]
+                    )
+
+                    if var survivor = try Section.fetchOne(db, key: survivorId) {
+                        Self.applyFields(survivorUpdates, to: &survivor)
+                        try survivor.update(db)
+                    }
+
+                    try Section
+                        .filter(Section.Columns.id == loserId)
+                        .deleteAll(db)
                 }
             }
+        }
+    }
+
+    /// Applies every set field of `updates` onto `section` in place, bumping `updatedAt`.
+    /// Shared by the `.update` and `.deleteDuplicate` cases above so both apply the exact
+    /// same field semantics (in particular the `parentId` double-optional handling).
+    private static func applyFields(_ updates: SectionUpdates, to section: inout Section) {
+        applyContentFields(updates, to: &section)
+        applyMetadataFields(updates, to: &section)
+        section.updatedAt = Date()
+    }
+
+    private static func applyContentFields(_ updates: SectionUpdates, to section: inout Section) {
+        if let title = updates.title {
+            section.title = title
+        }
+        if let headerLevel = updates.headerLevel {
+            section.headerLevel = headerLevel
+        }
+        if let isPseudoSection = updates.isPseudoSection {
+            section.isPseudoSection = isPseudoSection
+        }
+        if let sortOrder = updates.sortOrder {
+            section.sortOrder = sortOrder
+        }
+        if let markdownContent = updates.markdownContent {
+            section.markdownContent = markdownContent
+        }
+        if let wordCount = updates.wordCount {
+            section.wordCount = wordCount
+        }
+        if let startOffset = updates.startOffset {
+            section.startOffset = startOffset
+        }
+        // Double-optional handling for parentId
+        if let parentIdUpdate = updates.parentId {
+            section.parentId = parentIdUpdate  // Can be nil or a value
+        }
+    }
+
+    private static func applyMetadataFields(_ updates: SectionUpdates, to section: inout Section) {
+        if let isBibliography = updates.isBibliography {
+            section.isBibliography = isBibliography
+        }
+        if let isNotes = updates.isNotes {
+            section.isNotes = isNotes
+        }
+        if let status = updates.status {
+            section.status = status
+        }
+        if let tags = updates.tags {
+            section.tags = tags
+        }
+        if let wordGoal = updates.wordGoal {
+            section.wordGoal = wordGoal
         }
     }
 
