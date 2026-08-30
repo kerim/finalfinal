@@ -342,17 +342,67 @@ extension ProjectDatabase {
         return (headingsByTitle, protectedHeadingIds)
     }
 
+    // MARK: replaceBlocksInRange-only helpers
+
     /// Build a footnote-label -> existing-row lookup from existing isNotes blocks, used to
     /// merge a same-label incoming Notes row into its existing DB row instead of inserting a
-    /// duplicate (see `handleMachineManagedBlock`).
-    func buildNotesRowIndex(from existing: [Block]) -> [String: Block] {
+    /// duplicate (see `handleMachineManagedBlock`) -- plus a parallel label -> ORDERED
+    /// continuation-rows lookup for the paragraphs that continue a multi-paragraph footnote
+    /// definition. Deliberately `[String: [Block]]` for continuations, NOT one-to-one: a
+    /// three-paragraph footnote has TWO continuation rows under one label, and a one-to-one
+    /// index would collide/clobber -- silently keeping only the last continuation and
+    /// reproducing the exact duplication bug this index exists to close (see
+    /// `handleMachineManagedBlock`'s consumption of it).
+    ///
+    /// Continuation ownership is POSITIONAL, walking `existing` isNotes blocks (headings
+    /// included, for run-boundary detection -- see below) in `sortOrder` order: any
+    /// non-heading block that does NOT itself parse as a `[^N]:` definition is attributed to
+    /// the most recently seen definition's label. This is a second, independent
+    /// implementation of the same rule `FootnoteSyncService`'s own `notesOwnershipMap`
+    /// applies (different file, different call shape -- this one only needs the
+    /// continuation buckets, not the full heading/definition/userProse classification) --
+    /// keep the two in sync if the shared definition of "continuation" ever changes.
+    ///
+    /// RUN-BOUNDARY RESET: `currentOwnerLabel` resets to `nil` at every heading encountered
+    /// in the walk. `sectionFlagCarriedForward` can re-open the isNotes flag more than once
+    /// per document (two separate "# Notes" runs separated by ordinary body text); without
+    /// this reset, a second run's leading content (e.g. the user's own hand-typed prose
+    /// above their footnotes in THAT run) would silently inherit ownership from the FIRST
+    /// run's last footnote, just because non-Notes content sits between them and isn't part
+    /// of this filtered walk. Mirrors `FootnoteSyncService`'s `notesOwnershipMap` and
+    /// `BlockParser+Assembly.swift`'s `classifyNotesRuns` -- keep all three in sync.
+    ///
+    /// EXCLUDES isBibliography == true rows entirely: a legacy heading whose configured
+    /// bibliography-opening title collides with "Notes" can leave bibliography entries
+    /// flagged isNotes too (see docs/deferred/bibliography-heading-collision-ambiguity.md).
+    /// Those rows belong to BibliographySyncService, never to this index -- letting one
+    /// through here could make it either wrongly "own" real continuations that follow it,
+    /// or get wrongly consumed/claimed/deleted as if it were a continuation itself.
+    func buildNotesRowIndex(from existing: [Block]) -> (byLabel: [String: Block], continuationsByOwner: [String: [Block]]) {
         var notesRowByLabel: [String: Block] = [:]
-        for block in existing where block.isNotes {
+        var continuationsByOwner: [String: [Block]] = [:]
+        var currentOwnerLabel: String?
+
+        let notesRows = existing
+            .filter { $0.isNotes && !$0.isBibliography }
+            .sorted { a, b in
+                if a.sortOrder != b.sortOrder { return a.sortOrder < b.sortOrder }
+                return (a.blockType == .heading ? 0 : 1) < (b.blockType == .heading ? 0 : 1)
+            }
+
+        for block in notesRows {
+            if block.blockType == .heading {
+                currentOwnerLabel = nil
+                continue
+            }
             if let label = FootnoteSyncService.parseNotesLabel(from: block.markdownFragment)?.label {
                 notesRowByLabel[label] = block
+                currentOwnerLabel = label
+            } else if let owner = currentOwnerLabel {
+                continuationsByOwner[owner, default: []].append(block)
             }
         }
-        return notesRowByLabel
+        return (notesRowByLabel, continuationsByOwner)
     }
 
 }

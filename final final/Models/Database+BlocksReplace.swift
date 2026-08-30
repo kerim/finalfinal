@@ -183,8 +183,17 @@ extension ProjectDatabase {
                     protectingNotes: true
                 )
 
-                var notesRowByLabel = buildNotesRowIndex(from: existingBlocks)
+                let notesIndex = buildNotesRowIndex(from: existingBlocks)
+                var notesRowByLabel = notesIndex.byLabel
+                var notesContinuationsByOwner = notesIndex.continuationsByOwner
                 var claimedNotesLabels: Set<String> = []
+                var currentNotesOwnerLabel: String?
+                // Genuinely-NEW continuation paragraphs (a footnote that grew: more incoming
+                // labelless continuations than preserved rows existed for) -- collected here
+                // instead of inserted immediately, and given a real position adjacent to
+                // their owner only once the owner's FINAL (reanchored) position is known. See
+                // `insertDeferredContinuations`'s doc comment.
+                var deferredNotesContinuations: [String: [Block]] = [:]
 
                 for (index, var block) in blocks.enumerated() {
                     block.sortOrder = Double(index)
@@ -199,6 +208,9 @@ extension ProjectDatabase {
                         block: block,
                         notesRowByLabel: &notesRowByLabel,
                         claimedNotesLabels: &claimedNotesLabels,
+                        notesContinuationsByOwner: &notesContinuationsByOwner,
+                        currentNotesOwnerLabel: &currentNotesOwnerLabel,
+                        deferredNewContinuations: &deferredNotesContinuations,
                         handlingNotes: true
                     ) {
                         continue
@@ -209,6 +221,25 @@ extension ProjectDatabase {
                     try block.insert(db)
                 }
 
+                // Deliberately NO `deleteUnclaimedContinuations` call on this path -- unlike
+                // `replaceBlocksInRange`, see below. `blocks` here is guaranteed Notes-free at
+                // every real production call site (this function's own doc comment); any
+                // Notes-shaped content that DOES appear in it is an accidental/collision case
+                // to merge-if-possible (the labeled branch above), never an authoritative,
+                // exhaustive statement of "here is everything this footnote's continuations
+                // should be now." Treating an unclaimed continuation as "the user deleted it"
+                // here would be wrong precisely because this call was never attempting to
+                // represent that footnote's continuations at all -- confirmed by
+                // BibliographySectionFlagTests+DataIntegrity.swift's "Issue 2 fixed" and
+                // "MUST-FIX 1 regression guard" tests, both of which seed a continuation,
+                // pass `blocks` that omits it entirely (in the MUST-FIX-1 case, even while
+                // the SAME footnote's labeled definition IS present and correctly merges),
+                // and assert the continuation survives untouched. `replaceBlocksInRange`'s
+                // `newBlocks`, by contrast, is a reparse of a specific bounded range that ITS
+                // callers assert is exhaustive for that range -- see that function's own call
+                // to `deleteUnclaimedContinuations` and `MultiParagraphFootnoteReplaceTests`'
+                // shrink test.
+
                 // Re-anchor preserved bibliography/Notes rows immediately after all
                 // newly-inserted content -- see reanchorPreservedRows for why leaving them at
                 // a stale position risks a numeric collision with the freshly-sequenced new
@@ -216,6 +247,10 @@ extension ProjectDatabase {
                 if !preservedRowIds.isEmpty {
                     try reanchorPreservedRows(db: db, rowIds: preservedRowIds, anchorBase: Double(blocks.count))
                 }
+
+                // MUST run AFTER reanchorPreservedRows -- see insertDeferredContinuations'
+                // doc comment for why placement depends on the owner's FINAL position.
+                try insertDeferredContinuations(db: db, projectId: projectId, deferredByOwner: deferredNotesContinuations)
 
                 try renumberSortOrders(db: db, projectId: projectId, now: Date())
                 try Self.recomputeSectionParents(db: db, projectId: projectId)
@@ -363,7 +398,14 @@ extension ProjectDatabase {
             // from the delete query); if newBlocks legitimately contains a matching (same-label)
             // Notes row, it is merged into the preserved row in place instead of inserted as a
             // duplicate alongside it. See buildNotesRowIndex for the lookup this builds.
-            var notesRowByLabel = buildNotesRowIndex(from: existingBlocks)
+            let notesIndex = buildNotesRowIndex(from: existingBlocks)
+            var notesRowByLabel = notesIndex.byLabel
+            var notesContinuationsByOwner = notesIndex.continuationsByOwner
+            var currentNotesOwnerLabel: String?
+            // Genuinely-NEW continuation paragraphs (a footnote that grew) -- see
+            // `insertDeferredContinuations`'s doc comment; populated by
+            // handleMachineManagedBlock below, consumed after reanchorPreservedRows runs.
+            var deferredNotesContinuations: [String: [Block]] = [:]
 
             // The "# Notes"/"# Bibliography" HEADING itself needs a different rule than the
             // paragraph rows above: it normally survives via the delete-then-reinsert-by-title-
@@ -445,7 +487,10 @@ extension ProjectDatabase {
                     db: db,
                     block: block,
                     notesRowByLabel: &notesRowByLabel,
-                    claimedNotesLabels: &claimedNotesLabels
+                    claimedNotesLabels: &claimedNotesLabels,
+                    notesContinuationsByOwner: &notesContinuationsByOwner,
+                    currentNotesOwnerLabel: &currentNotesOwnerLabel,
+                    deferredNewContinuations: &deferredNotesContinuations
                 ) {
                     continue
                 }
@@ -460,6 +505,12 @@ extension ProjectDatabase {
                 try block.insert(db)
             }
 
+            // Any continuation row the incoming batch never claimed -- the user deleted that
+            // paragraph of the footnote -- must be deleted now, before the reanchor step
+            // below moves it to a fresh position and makes it look intentional. See
+            // `deleteUnclaimedContinuations`'s doc comment.
+            try deleteUnclaimedContinuations(db: db, notesContinuationsByOwner: notesContinuationsByOwner)
+
             // 3.5. Re-anchor preserved isNotes/isBibliography rows (and any protected heading,
             // see preservedRowIds above) immediately after all newly-inserted content — see
             // reanchorPreservedRows for why leaving them at a stale position can split a
@@ -471,6 +522,10 @@ extension ProjectDatabase {
                     anchorBase: preservedRowsAnchor
                 )
             }
+
+            // MUST run AFTER reanchorPreservedRows -- see insertDeferredContinuations's doc
+            // comment for why placement depends on the owner's FINAL position.
+            try insertDeferredContinuations(db: db, projectId: projectId, deferredByOwner: deferredNotesContinuations)
 
             // 6. Normalize sort orders inline (atomic with delete+insert above). Trap: do not
             // merge this with the public normalizeSortOrders(projectId:) in

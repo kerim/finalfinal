@@ -5,7 +5,7 @@
 //  Tier 1: Data Integrity
 //
 //  Tests for `BlockParser.assembleMarkdownForExport(from:bibliographyPlaceholder:)`'s
-//  `liftedNotesHeadingIDs` fix -- export used to leave a stray, empty "# Notes" heading
+//  `classifyNotesRuns` fix -- export used to leave a stray, empty "# Notes" heading
 //  behind whenever a document had footnotes: Pandoc lifts `[^N]: definition` blocks out of
 //  the flowing body and turns them into real footnotes, but the machine-managed `# Notes`
 //  heading itself (persisted as an `isNotes`-flagged block by `FootnoteSyncService`) was
@@ -13,12 +13,16 @@
 //
 //  FIX: `assembleMarkdownForExport` now scans, for every `isNotes && .heading` block in the
 //  sorted array, the run of immediately-following `isNotes` blocks up to (not including) the
-//  next heading of any kind. A heading is dropped from export ONLY when that run has at
-//  least one non-empty block AND every non-empty block in it matches the numeric
-//  machine-generated footnote-definition shape (`^\[\^\d+\]:`) -- the same digits-only
+//  next heading of any kind (see `BlockParser+Assembly.swift`'s `classifyNotesRuns`). A
+//  heading is dropped from export ONLY when that run has at least one non-empty block AND
+//  every non-empty block in it is EITHER a definition matching the numeric
+//  machine-generated footnote-definition shape (`^\[\^\d+\]:` -- the same digits-only
 //  anchoring `FootnoteSyncService` itself uses when generating labels, since a non-numeric
-//  label is evidence of hand-typed content, not evidence to loosen the pattern for. Any
-//  ambiguity (mixed content, no evidence at all) fails toward keeping the heading.
+//  label is evidence of hand-typed content, not evidence to loosen the pattern for) OR a
+//  CONTINUATION of one (a non-definition block that follows a definition in the same run --
+//  see MultiParagraphFootnoteExportTests for the multi-paragraph-footnote coverage). The one
+//  remaining ambiguous shape -- non-definition content BEFORE any definition in the run --
+//  still fails toward keeping the heading.
 //
 
 import XCTest
@@ -109,9 +113,21 @@ final class NotesHeadingExportTests: XCTestCase {
         XCTAssertTrue(output.contains("These are my own notes to self, unrelated to any footnote."))
     }
 
-    // MARK: - 3. Mixed run (one real definition + user prose) -> heading survives
+    // MARK: - 3. A definition followed by non-definition content -> that's a continuation, heading dropped
+    //
+    // NOTE: this scenario's expected outcome changed under the multi-paragraph-footnote fix
+    // (see MultiParagraphFootnoteExportTests). A non-definition block that FOLLOWS a "[^N]:"
+    // definition in the same run is now, unconditionally, that definition's CONTINUATION
+    // paragraph -- the same shape a real reparse produces for the second paragraph of a
+    // footnote (Milkdown round-trips a multi-paragraph definition as separate isNotes blocks).
+    // There is no signal in this data model to distinguish "genuine continuation" from
+    // "coincidental prose the user happened to type right after a footnote" -- both a real
+    // reparse and this classifier treat them identically, on purpose (see
+    // BlockParser+Assembly.swift's `classifyNotesRuns` doc comment for the shared ownership
+    // rule). The genuinely ambiguous/negative case -- prose BEFORE any definition -- is covered
+    // by test 2 above and by MultiParagraphFootnoteExportTests' pre-definition-prose case.
 
-    func testMixedNotesRun_RealDefinitionPlusUserProse_HeadingSurvives() {
+    func testDefinitionFollowedByContinuation_HeadingDroppedContinuationIndented() {
         let notesHeading = Block(
             projectId: "test", sortOrder: 1.0, blockType: .heading,
             textContent: "Notes", markdownFragment: "# Notes",
@@ -122,20 +138,22 @@ final class NotesHeadingExportTests: XCTestCase {
             textContent: "[^1]: A real footnote.", markdownFragment: "[^1]: A real footnote.",
             isNotes: true
         )
-        let userProse = Block(
+        let continuation = Block(
             projectId: "test", sortOrder: 3.0, blockType: .paragraph,
-            textContent: "By the way, thanks for reading this far.",
-            markdownFragment: "By the way, thanks for reading this far.",
+            textContent: "Its second paragraph.",
+            markdownFragment: "Its second paragraph.",
             isNotes: true
         )
 
-        let output = BlockParser.assembleMarkdownForExport(from: [notesHeading, def1, userProse])
+        let output = BlockParser.assembleMarkdownForExport(from: [notesHeading, def1, continuation])
 
-        XCTAssertTrue(output.contains("# Notes"),
-                     "Ambiguous evidence (one real definition, one user sentence in the same run) " +
-                     "must fail toward preservation. Output:\n\(output)")
+        XCTAssertFalse(output.contains("# Notes"),
+                       "A definition plus a following continuation paragraph is homogeneous " +
+                       "footnote content -- the heading must be dropped. Output:\n\(output)")
         XCTAssertTrue(output.contains("[^1]: A real footnote."))
-        XCTAssertTrue(output.contains("By the way, thanks for reading this far."))
+        XCTAssertTrue(output.contains("    Its second paragraph."),
+                     "The continuation must be 4-space indented, folded into its footnote. " +
+                     "Output:\n\(output)")
     }
 
     // MARK: - 4. Run-boundary: stops at the next heading, whatever follows is untouched
@@ -193,20 +211,26 @@ final class NotesHeadingExportTests: XCTestCase {
             textContent: "Notes", markdownFragment: "# Notes",
             isNotes: true
         )
-        let defB1 = Block(
-            projectId: "test", sortOrder: 5.0, blockType: .paragraph,
-            textContent: "[^2]: Second run's footnote.", markdownFragment: "[^2]: Second run's footnote.",
-            isNotes: true
-        )
+        // Ordered BEFORE its run's definition -- per the shared ownership rule (see
+        // `classifyNotesRuns`), pre-definition prose is the one shape that still
+        // disqualifies a run (a non-definition block AFTER a definition is now a
+        // continuation instead -- see NotesHeadingExportTests test 3 and
+        // MultiParagraphFootnoteExportTests). This keeps run B genuinely mixed/ambiguous,
+        // which is the actual thing this test wants to exercise.
         let userProseB = Block(
-            projectId: "test", sortOrder: 6.0, blockType: .paragraph,
+            projectId: "test", sortOrder: 5.0, blockType: .paragraph,
             textContent: "This second Notes section also has my own thought.",
             markdownFragment: "This second Notes section also has my own thought.",
             isNotes: true
         )
+        let defB1 = Block(
+            projectId: "test", sortOrder: 6.0, blockType: .paragraph,
+            textContent: "[^2]: Second run's footnote.", markdownFragment: "[^2]: Second run's footnote.",
+            isNotes: true
+        )
 
         let output = BlockParser.assembleMarkdownForExport(
-            from: [notesHeadingA, defA1, middleHeading, notesHeadingB, defB1, userProseB]
+            from: [notesHeadingA, defA1, middleHeading, notesHeadingB, userProseB, defB1]
         )
 
         XCTAssertTrue(output.contains("# Middle"))
@@ -214,8 +238,9 @@ final class NotesHeadingExportTests: XCTestCase {
         XCTAssertTrue(output.contains("[^2]: Second run's footnote."))
         XCTAssertTrue(output.contains("This second Notes section also has my own thought."))
 
-        // Run A is homogeneous (must be dropped); run B is mixed (must survive) -- exactly one
-        // "# Notes" heading should remain, independent of the other run's outcome.
+        // Run A is homogeneous (must be dropped); run B has pre-definition user prose (must
+        // survive) -- exactly one "# Notes" heading should remain, independent of the other
+        // run's outcome.
         let notesHeadingOccurrences = output.components(separatedBy: "# Notes").count - 1
         XCTAssertEqual(notesHeadingOccurrences, 1,
                        "Run A (homogeneous) must be dropped and run B (mixed) must survive -- " +
