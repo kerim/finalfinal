@@ -9,28 +9,6 @@ import Foundation
 
 extension SectionSyncService {
 
-    // Track section boundaries. Extension-scope (not nested in `parseHeaders`) so it can appear
-    // in the signatures of `confirmNotesCandidates`/`buildParsedHeaders` below, which extract two
-    // self-contained POST-LOOP passes out of `parseHeaders`. No behavior change: same fields,
-    // same call sites, just visible to more than one function now.
-    private struct SectionBoundary {
-        let startOffset: Int
-        let level: Int
-        let title: String
-        let isPseudoSection: Bool
-        let isBibliography: Bool
-        let isNotes: Bool
-    }
-
-    // A single Notes-titled heading found during the main loop, not yet confirmed as a real
-    // machine-managed Notes section. See `parseHeaders`' inline doc comment (where this struct
-    // used to be declared) for why this is a collection, not two overwritten scalars. Moved to
-    // extension scope for the same reason as `SectionBoundary` above.
-    private struct PendingNotesCandidate {
-        let offset: Int
-        let boundaryIndex: Int
-    }
-
     /// Parse markdown content into ParsedHeader structs for reconciliation
     /// - Parameters:
     ///   - markdown: The markdown content to parse
@@ -44,12 +22,22 @@ extension SectionSyncService {
         fallbackBibTitle: String = "Bibliography"
     ) -> [ParsedHeader] {
 
+        var headers: [ParsedHeader] = []
         var currentOffset = 0
         var inCodeBlock = false
         var inAutoBibliography = false  // Track auto-bibliography section (managed by BibliographySyncService)
         var inAutoNotes = false  // Track auto-notes section (managed by FootnoteSyncService)
 
-        // Track section boundaries. See `SectionBoundary`'s doc comment at extension scope above.
+        // Track section boundaries
+        struct SectionBoundary {
+            let startOffset: Int
+            let level: Int
+            let title: String
+            let isPseudoSection: Bool
+            let isBibliography: Bool
+            let isNotes: Bool
+        }
+
         var boundaries: [SectionBoundary] = []
         var lastActualHeaderLevel: Int = 1  // Default to H1 for pseudo-sections at document start
 
@@ -74,8 +62,11 @@ extension SectionSyncService {
         // heading got flagged -- the real, evidenced Notes section earlier in the document
         // silently lost its isNotes flag purely because of what came after it. Each candidate
         // below is evaluated against its own content span independently, so an unconfirmed
-        // heading can never blind out a confirmed one. See `PendingNotesCandidate`'s doc comment
-        // at extension scope above.
+        // heading can never blind out a confirmed one.
+        struct PendingNotesCandidate {
+            let offset: Int
+            let boundaryIndex: Int
+        }
         var pendingNotesCandidates: [PendingNotesCandidate] = []
 
         // Bibliography detection: use existing title if provided, otherwise fall back to configured name
@@ -248,55 +239,19 @@ extension SectionSyncService {
 
         // Evidence check, shared by BOTH the "existingNotesTitle != nil" (MUST-FIX 1) and the
         // "existingNotesTitle == nil" (import auto-detection) tentative-heading branches above.
-        // Extracted below (`confirmNotesCandidates`) as a self-contained POST-LOOP pass -- it
-        // reads only `boundaries`/`markdown`/offset lists and touches no latch, so it's safe to
-        // pull out even though the main loop above it is off limits. `inAutoNotes` is otherwise
-        // unread for the rest of this function (a DEAD WRITE -- deliberately kept, not this
-        // task's call to make) so the helper reports back whether anything was confirmed and the
-        // assignment stays here, faithfully.
-        let anyNotesConfirmed = confirmNotesCandidates(
-            pendingNotesCandidates,
-            boundaries: &boundaries,
-            confirmedNotesOffsets: &confirmedNotesOffsets,
-            markdown: markdown
-        )
-        if anyNotesConfirmed {
-            inAutoNotes = true
-        }
-
-        return buildParsedHeaders(
-            markdown: markdown,
-            boundaries: boundaries,
-            confirmedNotesOffsets: confirmedNotesOffsets,
-            bibliographyStartOffset: bibliographyStartOffset
-        )
-    }
-
-    /// Shared evidence check for BOTH the "existingNotesTitle != nil" (MUST-FIX 1) and the
-    /// "existingNotesTitle == nil" (import auto-detection) tentative-heading branches in the main
-    /// loop above. The real invariant (MUST-FIX 4): ACROSS the two branches, exactly one can ever
-    /// fire for a single `parseHeaders` call, since `existingNotesTitle` is a single constant for
-    /// the whole call -- that part of the old comment was correct. But WITHIN a single branch,
-    /// the SAME branch can fire once per matching heading, so a document with two headings
-    /// sharing the notes title produces two entries in `pendingNotesCandidates`, not one --
-    /// sharing pending state between the branches was never actually the risk; overwriting one
-    /// candidate's state with another's, within a single branch, was. Each candidate is therefore
-    /// evaluated independently here, against its OWN content span, so a later same-titled heading
-    /// with no real evidence can never suppress an earlier one that has it (see
-    /// `pendingNotesCandidates`'s doc comment for the concrete data-loss scenario this avoids).
-    /// Checks whether each candidate's own content contains [^N]: footnote-definition patterns to
-    /// avoid false positives on a heading that merely shares the notes title/name with no real
-    /// footnote content beneath it. Flags confirmed boundaries in place and appends to
-    /// `confirmedNotesOffsets`; returns whether any candidate was confirmed, so the caller can
-    /// faithfully preserve the original's `inAutoNotes = true` dead write.
-    private nonisolated static func confirmNotesCandidates(
-        _ pendingNotesCandidates: [PendingNotesCandidate],
-        boundaries: inout [SectionBoundary],
-        confirmedNotesOffsets: inout [Int],
-        markdown: String
-    ) -> Bool {
-        var anyConfirmed = false
-
+        // The real invariant (MUST-FIX 4): ACROSS the two branches, exactly one can ever fire
+        // for a single parseHeaders call, since existingNotesTitle is a single constant for the
+        // whole call -- that part of the old comment was correct. But WITHIN a single branch,
+        // the SAME branch can fire once per matching heading, so a document with two headings
+        // sharing the notes title produces two entries in `pendingNotesCandidates`, not one --
+        // sharing pending state between the branches was never actually the risk; overwriting
+        // one candidate's state with another's, within a single branch, was. Each candidate is
+        // therefore evaluated independently right here, against its OWN content span, so a
+        // later same-titled heading with no real evidence can never suppress an earlier one
+        // that has it (see `pendingNotesCandidates`'s doc comment above for the concrete
+        // data-loss scenario this avoids). Check whether each candidate's own content contains
+        // [^N]: footnote-definition patterns to avoid false positives on a heading that merely
+        // shares the notes title/name with no real footnote content beneath it.
         for candidate in pendingNotesCandidates {
             // Extract the content of this candidate's own section
             let nextBoundaryOffset = candidate.boundaryIndex + 1 < boundaries.count
@@ -340,26 +295,12 @@ extension SectionSyncService {
                 isNotes: true
             )
             confirmedNotesOffsets.append(candidate.offset)
-            anyConfirmed = true
+            inAutoNotes = true
         }
 
-        return anyConfirmed
-    }
-
-    /// Second pass: builds the final `[ParsedHeader]` list from the boundaries the main loop
-    /// found, clamping each section's end offset at the next boundary (or at whichever managed
-    /// bibliography/notes section starts within it). Reads only `boundaries`/`markdown`/offset
-    /// lists and touches no latch, so -- like `confirmNotesCandidates` above -- it's safe to pull
-    /// out as a self-contained POST-LOOP pass even though the main loop is off limits.
-    private nonisolated static func buildParsedHeaders(
-        markdown: String,
-        boundaries: [SectionBoundary],
-        confirmedNotesOffsets: [Int],
-        bibliographyStartOffset: Int?
-    ) -> [ParsedHeader] {
         guard !boundaries.isEmpty else { return [] }
 
-        var headers: [ParsedHeader] = []
+        // Second pass: calculate content for each section
         let contentLength = markdown.count
 
         for (index, boundary) in boundaries.enumerated() {

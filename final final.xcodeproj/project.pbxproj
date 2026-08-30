@@ -60,11 +60,11 @@
 		1510FC9047A1026B1B1F305A /* AppDefaults.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0EE3769D9C9DE950D573F3B9 /* AppDefaults.swift */; };
 		15D2CBA9D93EFC0FF5F053B4 /* SectionBreakOutlineSyncTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3755886A71862D978F306AE /* SectionBreakOutlineSyncTests.swift */; };
 		15E9D15B0AF02828BFF55BCF /* LanguageToolProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A530A55D9265E47C5CF4EB3 /* LanguageToolProvider.swift */; };
+		1694762B623703839A39A7E6 /* SectionReorderPlannerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1F617F6961C3134A2EE74F8 /* SectionReorderPlannerTests.swift */; };
 		16E871620530D5BA311F6DD7 /* URLWrapExportTestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3CA866CCE344CDAB2099CE77 /* URLWrapExportTestSupport.swift */; };
 		175134B0E1A82073C2CB4D0F /* GoalPreferencesPane.swift in Sources */ = {isa = PBXBuildFile; fileRef = B09119DC4E9BBDC1E741006B /* GoalPreferencesPane.swift */; };
 		1784E7C8015865BB9C8F2BFE /* BatchWordCountsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02A0D16851E9898C0E58C16F /* BatchWordCountsTests.swift */; };
 		18C0E9CAB3F73CAC8E6FE93E /* BibliographyHeadingRenamerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0C581824FC747D4FDF8D1765 /* BibliographyHeadingRenamerTests.swift */; };
-		19CC4AF5EFC8BCF449A95A7F /* SectionReconciler+DeleteSweep.swift in Sources */ = {isa = PBXBuildFile; fileRef = 109CBEFDB3EFDA13C5639BAB /* SectionReconciler+DeleteSweep.swift */; };
 		1B4016EE846284CD234D7453 /* BibliographyRegenerationAnchorHijackTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 489D81C798F92573EB2BF785 /* BibliographyRegenerationAnchorHijackTests.swift */; };
 		1BEA272BD36333760DE55EC2 /* ExportDiagnosticCaptureGatingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5CA20F98EFC97B6FDEE93DFA /* ExportDiagnosticCaptureGatingTests.swift */; };
 		1CB5D59D6B0C2C767547192A /* Database+BlocksWordCount.swift in Sources */ = {isa = PBXBuildFile; fileRef = DDC88DC217831BA18037CB1B /* Database+BlocksWordCount.swift */; };
@@ -143,6 +143,7 @@
 		51B8B9C54EC8B405167BB9AD /* Block.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E15DA17E982BE8595CD07FE /* Block.swift */; };
 		51CF68A0E7897693CD345C23 /* ExportService+MarkdownExport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F7FD6062931497B7C3F148B /* ExportService+MarkdownExport.swift */; };
 		51D43A91B1BFB2A3C21C5744 /* ContentStateMachineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2E812DDA3AFC1F86DC9E06B /* ContentStateMachineTests.swift */; };
+		52012F692CA1A4A83F286DDE /* SectionReorderPlanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1432175567562D10B9B5B397 /* SectionReorderPlanner.swift */; };
 		524B56AAF5FE11613FA7D581 /* BibliographySectionFlagTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E47F146D3408C4B602CB6D3 /* BibliographySectionFlagTests.swift */; };
 		5264BEBC43EC7D90374BF0D6 /* ProofingPreferencesPane.swift in Sources */ = {isa = PBXBuildFile; fileRef = 45FDCE8CF47C69A854217FB7 /* ProofingPreferencesPane.swift */; };
 		5268914A66CD0A5E83A4D09F /* UndoRedoCommands.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01F55BCF0C063C1E393005E3 /* UndoRedoCommands.swift */; };
@@ -496,11 +497,11 @@
 		0F569F356EFDD50A2160DD63 /* StructuralUndoControllerSectionConvergenceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StructuralUndoControllerSectionConvergenceTests.swift; sourceTree = "<group>"; };
 		0F7FD6062931497B7C3F148B /* ExportService+MarkdownExport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ExportService+MarkdownExport.swift"; sourceTree = "<group>"; };
 		108D9F5A37652EF3B6FFD5EE /* FootnoteExportRaceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FootnoteExportRaceTests.swift; sourceTree = "<group>"; };
-		109CBEFDB3EFDA13C5639BAB /* SectionReconciler+DeleteSweep.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SectionReconciler+DeleteSweep.swift"; sourceTree = "<group>"; };
 		109DDCE3DD312B1666618AD5 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		10BA92FC730511D06959AEDB /* StringExtensions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StringExtensions.swift; sourceTree = "<group>"; };
 		12384ACE798C45A76950060A /* MarkdownOnlyExportFilenameTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownOnlyExportFilenameTests.swift; sourceTree = "<group>"; };
 		13133CB5518EA086A3120EDE /* Database+CRUD.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Database+CRUD.swift"; sourceTree = "<group>"; };
+		1432175567562D10B9B5B397 /* SectionReorderPlanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SectionReorderPlanner.swift; sourceTree = "<group>"; };
 		167FD2308E782B72B4B34566 /* SectionReconcilerDeleteSweepTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SectionReconcilerDeleteSweepTests.swift; sourceTree = "<group>"; };
 		16D654EA23E3A5795647A363 /* BlockSyncProjectSwitchDrainTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockSyncProjectSwitchDrainTests.swift; sourceTree = "<group>"; };
 		18247CD049B78F944DCB3676 /* AnnotationFilterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnnotationFilterTests.swift; sourceTree = "<group>"; };
@@ -795,6 +796,7 @@
 		D13FB43B2F62A510AF2CC646 /* BibliographySyncService+EntryFormatting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "BibliographySyncService+EntryFormatting.swift"; sourceTree = "<group>"; };
 		D14A9CC69590FE1E89B7ED89 /* FindBarStateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FindBarStateTests.swift; sourceTree = "<group>"; };
 		D1B7232CDFF24DE492DF1F2E /* ExportCitationExtractionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportCitationExtractionTests.swift; sourceTree = "<group>"; };
+		D1F617F6961C3134A2EE74F8 /* SectionReorderPlannerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SectionReorderPlannerTests.swift; sourceTree = "<group>"; };
 		D3755886A71862D978F306AE /* SectionBreakOutlineSyncTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SectionBreakOutlineSyncTests.swift; sourceTree = "<group>"; };
 		D4374F299CFAEF4BB30A12F3 /* FocusPreferencesPane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FocusPreferencesPane.swift; sourceTree = "<group>"; };
 		D4E315692BC7EF9B329A28A9 /* AppDefaultsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDefaultsTests.swift; sourceTree = "<group>"; };
@@ -1151,7 +1153,7 @@
 				D567C1445BFF0160D8410001 /* ProjectStore.swift */,
 				AB67FDEBDA369B54F8FED127 /* ProofingProvider.swift */,
 				61DE6BB00F5D1EF8A75439EB /* SectionReconciler.swift */,
-				109CBEFDB3EFDA13C5639BAB /* SectionReconciler+DeleteSweep.swift */,
+				1432175567562D10B9B5B397 /* SectionReorderPlanner.swift */,
 				EA5B65E36E0BB3661A7CE09A /* SectionSyncService.swift */,
 				5F9E113796E1D22FF7D8AB97 /* SectionSyncService+Anchors.swift */,
 				5D55F9499B5A6E22C50A7D48 /* SectionSyncService+MiniNotes.swift */,
@@ -1448,6 +1450,7 @@
 				167FD2308E782B72B4B34566 /* SectionReconcilerDeleteSweepTests.swift */,
 				1C3F35649A1295E3E3636E9B /* SectionReconcilerPseudoSectionTests.swift */,
 				A68A93212735EBAA064098B5 /* SectionReconcilerTests.swift */,
+				D1F617F6961C3134A2EE74F8 /* SectionReorderPlannerTests.swift */,
 				42C07541D6D5974A38915EB5 /* SectionSyncServiceZoomInsertionTests.swift */,
 				A85601DB766C7F746FEE509A /* SnapshotBackupFlushTests.swift */,
 				916BB1234222DEF766A67358 /* StructuralUndoBarrierTests.swift */,
@@ -1895,6 +1898,7 @@
 				0168B62910B5D94E62A84F21 /* SectionReconcilerDeleteSweepTests.swift in Sources */,
 				E443BC85E2B4EF03816FCCAE /* SectionReconcilerPseudoSectionTests.swift in Sources */,
 				8EEE15BB190DEF63CE7020F5 /* SectionReconcilerTests.swift in Sources */,
+				1694762B623703839A39A7E6 /* SectionReorderPlannerTests.swift in Sources */,
 				F0C25B6323F7E9961F71DFFB /* SectionSyncServiceZoomInsertionTests.swift in Sources */,
 				FF6B18DAACB2792BDB903F33 /* SectionSyncSuppressReconcileTests.swift in Sources */,
 				6FED2130C6DF83776C6BE50B /* SnapshotBackupFlushTests.swift in Sources */,
@@ -2121,8 +2125,8 @@
 				0ED46619B703DCB8610330F3 /* Section.swift in Sources */,
 				D0208FE27BA4FBD4AADFD905 /* SectionCardView.swift in Sources */,
 				BFA5CE12F838AA2D8D79851F /* SectionHierarchy.swift in Sources */,
-				19CC4AF5EFC8BCF449A95A7F /* SectionReconciler+DeleteSweep.swift in Sources */,
 				AC1816323A52499CA6DCFD2A /* SectionReconciler.swift in Sources */,
+				52012F692CA1A4A83F286DDE /* SectionReorderPlanner.swift in Sources */,
 				4C928D3A6E337665ED5BB7C1 /* SectionSyncService+Anchors.swift in Sources */,
 				210B939C3983522A395FC025 /* SectionSyncService+MiniNotes.swift in Sources */,
 				935EE522B76AA7CB3B141E6B /* SectionSyncService+Parsing.swift in Sources */,

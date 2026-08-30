@@ -168,21 +168,6 @@ struct ProjectIntegrityChecker {
         packageURL.appendingPathComponent("content.sqlite")
     }
 
-    /// Whether a check helper wants `validate()` to return the report immediately, or continue
-    /// on to the next check. Threaded through explicitly so extracting the checklist below into
-    /// helpers keeps each one's early-return decision visible as a return value instead of
-    /// buried in ad hoc control flow. This is NOT compiler-enforced: nothing stops a future
-    /// `validate()` call site from ignoring a helper's returned `CheckFlow` beyond Swift's
-    /// ordinary "result of call is unused" warning (`CheckFlow` isn't `@discardableResult`),
-    /// and even a call site that does read the value still has to spell out `== .stop`
-    /// correctly by hand, exactly as `validate()` does at each of its call sites above -- the
-    /// only things actually preventing a dropped or reordered early return are that warning
-    /// plus those manual comparisons.
-    private enum CheckFlow {
-        case proceed
-        case stop
-    }
-
     /// Perform all integrity checks on the project
     /// - Returns: IntegrityReport with any issues found
     func validate() throws -> IntegrityReport {
@@ -195,86 +180,45 @@ struct ProjectIntegrityChecker {
         }
 
         // Open database for remaining checks
-        guard let dbQueue = openDatabase(issues: &issues) else {
+        let dbQueue: DatabaseQueue
+        do {
+            dbQueue = try DatabaseQueue(path: databaseURL.path)
+        } catch {
+            issues.append(.sqliteCorruption(message: error.localizedDescription))
             return IntegrityReport(issues: issues, packageURL: packageURL)
         }
 
         // Check 2: SQLite integrity
-        if runSQLiteIntegrityCheck(db: dbQueue, issues: &issues) == .stop {
-            return IntegrityReport(issues: issues, packageURL: packageURL)
-        }
-
-        // Check 3: Required tables exist; stops here on critical table issues
-        if runTableChecks(db: dbQueue, issues: &issues) == .stop {
-            return IntegrityReport(issues: issues, packageURL: packageURL)
-        }
-
-        // Checks 4-5: project record, then (if a project was found) content record
-        if runRecordChecks(db: dbQueue, issues: &issues) == .stop {
-            return IntegrityReport(issues: issues, packageURL: packageURL)
-        }
-
-        // Checks 6-7: section integrity + section-parent drift; never abort early
-        runStructuralChecks(db: dbQueue, issues: &issues)
-
-        return IntegrityReport(issues: issues, packageURL: packageURL)
-    }
-
-    /// Check 1.5: open the database, appending `.sqliteCorruption` and returning `nil` on failure
-    /// (mirroring `validate()`'s original catch-then-return for this step).
-    private func openDatabase(issues: inout [IntegrityIssue]) -> DatabaseQueue? {
         do {
-            return try DatabaseQueue(path: databaseURL.path)
-        } catch {
-            issues.append(.sqliteCorruption(message: error.localizedDescription))
-            return nil
-        }
-    }
-
-    /// Check 2: SQLite integrity. Stops on either a non-"ok" result or a thrown error.
-    private func runSQLiteIntegrityCheck(db: DatabaseQueue, issues: inout [IntegrityIssue]) -> CheckFlow {
-        do {
-            let integrityResult = try db.read { database -> String in
-                try String.fetchOne(database, sql: "PRAGMA integrity_check") ?? "error"
+            let integrityResult = try dbQueue.read { db -> String in
+                try String.fetchOne(db, sql: "PRAGMA integrity_check") ?? "error"
             }
             if integrityResult != "ok" {
                 issues.append(.sqliteCorruption(message: integrityResult))
-                return .stop
+                return IntegrityReport(issues: issues, packageURL: packageURL)
             }
         } catch {
             issues.append(.sqliteCorruption(message: error.localizedDescription))
-            return .stop
+            return IntegrityReport(issues: issues, packageURL: packageURL)
         }
-        return .proceed
-    }
 
-    /// Check 3: required tables exist. Stops on a thrown error, or when the accumulated issues
-    /// (including any appended just now) contain a critical one.
-    private func runTableChecks(db: DatabaseQueue, issues: inout [IntegrityIssue]) -> CheckFlow {
+        // Check 3: Required tables exist
         do {
-            let tableIssues = try checkRequiredTables(db: db)
+            let tableIssues = try checkRequiredTables(db: dbQueue)
             issues.append(contentsOf: tableIssues)
         } catch {
             issues.append(.sqliteCorruption(message: "Failed to check tables: \(error.localizedDescription)"))
-            return .stop
+            return IntegrityReport(issues: issues, packageURL: packageURL)
         }
 
         // If critical table issues, stop here
         if issues.contains(where: { $0.severity == .critical }) {
-            return .stop
+            return IntegrityReport(issues: issues, packageURL: packageURL)
         }
-        return .proceed
-    }
 
-    /// Checks 4-5: project record then content record. These two are NOT symmetric: Check 4's
-    /// catch does not itself stop (it only appends `.sqliteCorruption` and falls through to the
-    /// missing-project-record gate below, same as the failure path); the gate immediately after
-    /// Check 4 is the only early return in this pair. Check 5 never stops -- its catch just
-    /// appends and control returns to `validate()` as `.proceed` regardless of outcome.
-    private func runRecordChecks(db: DatabaseQueue, issues: inout [IntegrityIssue]) -> CheckFlow {
         // Check 4: Project record exists
         do {
-            let projectIssues = try checkProjectRecord(db: db)
+            let projectIssues = try checkProjectRecord(db: dbQueue)
             issues.append(contentsOf: projectIssues)
         } catch {
             issues.append(.sqliteCorruption(message: "Failed to check project: \(error.localizedDescription)"))
@@ -282,28 +226,21 @@ struct ProjectIntegrityChecker {
 
         // If no project, can't check content
         if issues.contains(where: { if case .missingProjectRecord = $0 { return true }; return false }) {
-            return .stop
+            return IntegrityReport(issues: issues, packageURL: packageURL)
         }
 
         // Check 5: Content record exists
         do {
-            let contentIssues = try checkContentRecord(db: db)
+            let contentIssues = try checkContentRecord(db: dbQueue)
             issues.append(contentsOf: contentIssues)
         } catch {
             issues.append(.sqliteCorruption(message: "Failed to check content: \(error.localizedDescription)"))
         }
 
-        return .proceed
-    }
-
-    /// Checks 6-7: section integrity, then block.sectionParentId drift. Neither ever stops --
-    /// both treat a thrown error as non-critical and just log it, matching the original inline
-    /// checks exactly.
-    private func runStructuralChecks(db: DatabaseQueue, issues: inout [IntegrityIssue]) {
         // Check 6: Section integrity (if section table exists)
         if !issues.contains(where: { if case .missingSectionTable = $0 { return true }; return false }) {
             do {
-                let sectionIssues = try checkSectionIntegrity(db: db)
+                let sectionIssues = try checkSectionIntegrity(db: dbQueue)
                 issues.append(contentsOf: sectionIssues)
             } catch {
                 // Section check failure is non-critical
@@ -315,12 +252,14 @@ struct ProjectIntegrityChecker {
         // pre-block-architecture schema, or one whose database was hand-built without it in a
         // test, has nothing here to check).
         do {
-            let driftIssues = try checkSectionParentDrift(db: db)
+            let driftIssues = try checkSectionParentDrift(db: dbQueue)
             issues.append(contentsOf: driftIssues)
         } catch {
             // Drift check failure is non-critical, same treatment as Check 6 above.
             DebugLog.log(.data, "[IntegrityChecker] Warning: Failed to check section parent drift: \(error.localizedDescription)")
         }
+
+        return IntegrityReport(issues: issues, packageURL: packageURL)
     }
 
     /// Validate bookmark data for staleness
