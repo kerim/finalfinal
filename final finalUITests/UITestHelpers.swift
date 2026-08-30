@@ -311,6 +311,126 @@ extension XCUIApplication {
         }
         button.click()
     }
+
+    /// True if `text` appears in full anywhere inside editor-area. Scans EVERY
+    /// element and skips ones the tree has invalidated -- never indexes a single
+    /// position. Fresh fetch per poll. Substring, not equality: a leaf run can
+    /// carry a leading/trailing space and a heading container concatenates its
+    /// children (see editorStaticText's doc comment).
+    func editorContainsText(_ text: String, timeout: TimeInterval = 5) -> Bool {
+        let deadline = Date(timeIntervalSinceNow: timeout)
+        repeat {
+            for element in editorArea.staticTexts.allElementsBoundByIndex {
+                guard element.exists else { continue }
+                if let value = element.value as? String, value.contains(text) { return true }
+                if element.label.contains(text) { return true }
+            }
+            RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.25))
+        } while Date() < deadline
+        return false
+    }
+
+    /// Types `text` at the current caret position -- assumed to land on its own,
+    /// otherwise-empty line (true immediately after a fresh `Return`) -- then verifies via the
+    /// editor's own accessibility tree that it landed byte-for-byte, retyping on a mismatch
+    /// rather than trusting `typeText` blindly.
+    ///
+    /// Guards against a known XCUITest flakiness class: `typeText` occasionally drops
+    /// characters mid-string while synthesizing keystrokes, especially under VM load. CONFIRMED
+    /// via a real vmtest run (E2EScratchTests.swift, swiftlint-param-refactor task, 2026-08-30):
+    /// a typed paragraph was found in the block table as "Newly typed paragra Alpha while
+    /// zoomed." -- "ph" silently dropped from "paragraph" -- with every other assertion in that
+    /// run passing, i.e. the flakiness is in `typeText` itself, not whatever code the test was
+    /// exercising.
+    ///
+    /// Verification is scan-based via `editorContainsText`, never positional: an earlier
+    /// version trusted `editorArea.staticTexts.allElementsBoundByIndex.last` as "the editor is
+    /// empty" when that one index's `.exists` read false -- but a WKWebView mid-repaint can fail
+    /// ONE positional index while the tree still holds several live elements, so that read a
+    /// populated tree as empty (diagnosed live: "Checking existence of Element at index 6" was
+    /// logged 3 times, impossible if the array were actually empty, since a nil `.last` would
+    /// short-circuit before `.exists` is ever called). `editorContainsText` scans every element
+    /// and only trusts the ones still present, so a single stale index can never masquerade as
+    /// "nothing here."
+    ///
+    /// On a mismatch, this looks for a PARTIAL/corrupted landing of `text` -- an element whose
+    /// value or label shares `text`'s first 8+ characters -- rather than assuming the editor is
+    /// empty. If found, it clears exactly what actually landed (the READ-BACK length, not
+    /// `text.count`): those two can differ precisely because of the drop this method exists to
+    /// catch, so backspacing the intended length risks eating past this line's own content into
+    /// whatever preceded it. If nothing resembling `text` is found at all -- no exact match, no
+    /// partial-prefix match -- this does NOT blind-retype (that would compound garbage on top of
+    /// garbage against who-knows-what state); it fails immediately with every surviving
+    /// element's value/label dumped, so the failure is legible instead of misleadingly claiming
+    /// "empty" against a tree that may still hold plenty of content.
+    func typeTextVerifyingLanded(
+        _ text: String, maxAttempts: Int = 3,
+        file: StaticString = #filePath, line: UInt = #line
+    ) {
+        for attempt in 1...maxAttempts {
+            activateAndWaitForForeground()
+            typeText(text)
+            Thread.sleep(forTimeInterval: 1.0)
+
+            if editorContainsText(text) {
+                return
+            }
+
+            // Not an exact landing -- look for a partial/corrupted version of what we just
+            // typed (shares a meaningful prefix) so we can clean it up before retrying.
+            let prefixLen = min(8, text.count)
+            let expectedPrefix = String(text.prefix(prefixLen))
+            var partialElement: XCUIElement?
+            var partialLanded = ""
+            for element in editorArea.staticTexts.allElementsBoundByIndex {
+                guard element.exists else { continue }
+                let candidate = (element.value as? String) ?? element.label
+                if candidate.hasPrefix(expectedPrefix) {
+                    partialElement = element
+                    partialLanded = candidate
+                    break
+                }
+            }
+
+            guard partialElement != nil else {
+                // Nothing recognizable at all: not "empty" (that misreading is exactly the bug
+                // this method used to have), but nothing resembling `text` either. Fail loud
+                // with a full dump instead of guessing by blind-retyping.
+                let elements = editorArea.staticTexts.allElementsBoundByIndex
+                var dump: [String] = []
+                for (idx, element) in elements.enumerated() {
+                    guard element.exists else {
+                        dump.append("  [\(idx)]: <stale, skipped>")
+                        continue
+                    }
+                    let value = (element.value as? String) ?? "<non-string value>"
+                    dump.append("  [\(idx)]: value=\"\(value)\" label=\"\(element.label)\"")
+                }
+                XCTFail(
+                    "typeTextVerifyingLanded: expected \"\(text)\" but found no exact or "
+                        + "partial-prefix match among \(elements.count) editor static text(s) "
+                        + "after attempt \(attempt) of \(maxAttempts):\n"
+                        + dump.joined(separator: "\n"), file: file, line: line
+                )
+                return
+            }
+
+            if attempt == maxAttempts {
+                XCTFail(
+                    "Typed text never landed correctly after \(maxAttempts) attempts -- known "
+                        + "XCUITest typeText character-drop flakiness (see this method's doc "
+                        + "comment). Expected \"\(text)\", last landed value: \"\(partialLanded)\"",
+                    file: file, line: line
+                )
+                return
+            }
+
+            for _ in 0..<partialLanded.count {
+                typeKey(.delete, modifierFlags: [])
+            }
+            Thread.sleep(forTimeInterval: 0.3)
+        }
+    }
 }
 
 extension XCUIElement {
