@@ -206,6 +206,7 @@ struct BibliographyGluedHeadingReconcileTests {
             switch change {
             case .delete(let id): return id == sections.bib.id
             case .update(let id, _): return id == sections.bib.id
+            case .deleteDuplicate(let loserId, let survivorId, _): return loserId == sections.bib.id || survivorId == sections.bib.id
             case .insert: return false
             }
         }
