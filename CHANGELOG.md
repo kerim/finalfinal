@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Switching back to a project you'd already had open in this session could show a blank editor, or one with the wrong margins** — fixed.
+- **Citations from a shared/group Zotero library could export as plain, inert text in Word and ODT exports instead of real citations**, even though they worked correctly everywhere else in the app — fixed.
+- **Exporting a document with footnotes (Word, ODT, PDF, or Print > Print Formatted) could leave an empty "Notes" heading behind with nothing under it**, since your footnotes get moved to the bottom of the export automatically — fixed; the heading is now only removed when it's genuinely empty except for machine-managed footnote content, never when you've added content of your own under it.
+- **A footnote's second paragraph could get separated from the footnote and left behind as ordinary body text**, most noticeable on export — fixed.
+- **A duplicate Bibliography or Notes card could linger in the outline sidebar indefinitely** once a different card had already taken over as the real one, instead of being cleaned up — fixed; any of your own data on the leftover card (status, tags, word-count goal) now carries over to the card that stays before the duplicate is removed.
+- **Switching projects, or opening the app for the first time, could briefly flash unstyled, raw-looking text before the editor's normal formatting appeared** — fixed.
+- **The outline sidebar could occasionally show outdated section information after a fast edit**, if an older background refresh landed after a newer one had already finished — fixed.
+
 ## [0.2.128] - 2026-08-28
 
 ### Added
