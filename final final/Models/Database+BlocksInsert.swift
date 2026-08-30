@@ -3,9 +3,9 @@
 //  final final
 //
 //  Editor-diff insert-path helpers for applyBlockChangesFromEditor(): sort-order
-//  placement (including the bibliography-section containment rule) and Block
-//  construction for editor-created rows. Split out of Database+Blocks.swift to keep
-//  that file under the project's file-length limit (see .swiftlint.yml).
+//  placement (including the bibliography- and Notes-section containment rules) and
+//  Block construction for editor-created rows. Split out of Database+Blocks.swift to
+//  keep that file under the project's file-length limit (see .swiftlint.yml).
 //
 
 import Foundation
@@ -42,7 +42,8 @@ extension ProjectDatabase {
             if let rawAfterId = insert.afterBlockId {
                 let anchorId = idMapping[rawAfterId] ?? rawAfterId
                 if !anchorId.hasPrefix("temp-"), try Block.fetchOne(db, key: anchorId) == nil {
-                    DebugLog.log(.data, "[Blocks] Rejecting stale insert \(insert.tempId.prefix(13)): anchor \(anchorId.prefix(8)) no longer exists (snapshot predates a structural rewrite)")
+                    DebugLog.log(.data, "[Blocks] Rejecting stale insert \(insert.tempId.prefix(13)): anchor "
+                        + "\(anchorId.prefix(8)) no longer exists (snapshot predates a structural rewrite)")
                     continue
                 }
             }
@@ -51,7 +52,8 @@ extension ProjectDatabase {
             )
             var block = buildInsertedBlock(
                 insert: insert, projectId: projectId, sortOrder: placement.sortOrder,
-                isBibliographyContainment: placement.isBibliography
+                isBibliographyContainment: placement.isBibliography,
+                isNotesContainment: placement.isNotes
             )
             let permanentId = block.id
 
@@ -78,40 +80,49 @@ extension ProjectDatabase {
         }
     }
 
-    /// Sort order plus bibliography-containment for a resolved insert placement — both are
-    /// derived from the same anchor/next-block lookup, so `resolveInsertPlacement` computes
-    /// them together instead of fetching the same rows twice.
+    /// Sort order plus bibliography- and Notes-containment for a resolved insert placement —
+    /// all three are derived from the same anchor/next-block lookup, so `resolveInsertPlacement`
+    /// computes them together instead of fetching the same rows twice.
     struct InsertPlacement {
         let sortOrder: Double
         /// Whether this insert lands "inside" the bibliography section (see
         /// `resolveInsertPlacement`'s doc comment for the exact containment rule).
         let isBibliography: Bool
+        /// Whether this insert lands "inside" the Notes (footnotes) section (see
+        /// `resolveInsertPlacement`'s doc comment for the exact containment rule).
+        let isNotes: Bool
     }
 
     /// Resolves sort order (midpoint after `afterBlockId`, anchored before the first block for
     /// a literal doc-start insert, or the shared running counter when neither applies) AND
-    /// whether the insert lands inside the bibliography section.
+    /// whether the insert lands inside the bibliography section AND whether it lands inside
+    /// the Notes (footnotes) section.
     ///
-    /// Containment, not inheritance: an insert counts as "inside" the bibliography section iff
-    /// its anchor block is flagged `isBibliography` AND the block immediately following the
-    /// anchor (by sortOrder) is ALSO flagged `isBibliography`. An insert anchored after the
-    /// LAST bibliography block (anchor flagged, but no next block, or next block unflagged)
-    /// always resolves `false` — regardless of where in the document the bibliography section
-    /// currently sits, `BibliographySyncService.updateBibliographyBlock` always packs its
-    /// regenerated fragments strictly between the section's anchor position and whatever block
-    /// already followed it there (or to the end of the document, if nothing did), so the block
-    /// immediately after the LAST bibliography entry is never itself bibliography content —
-    /// "user types a new trailing paragraph below the references" is the ordinary case, not an
-    /// edge case, whether the section is at the document's end or was reinserted back at its
-    /// prior mid-document position. Naive inheritance from the anchor alone would flag that
-    /// trailing paragraph `isBibliography = true`, which is worse than doing nothing: `exportBlocks()` would
+    /// Bibliography containment, not inheritance: an insert counts as "inside" the
+    /// bibliography section iff its anchor block is flagged `isBibliography` AND the block
+    /// immediately following the anchor (by sortOrder) is ALSO flagged `isBibliography`. An
+    /// insert anchored after the LAST bibliography block (anchor flagged, but no next block,
+    /// or next block unflagged) always resolves `false` — regardless of where in the document
+    /// the bibliography section currently sits, `BibliographySyncService.updateBibliographyBlock`
+    /// always packs its regenerated fragments strictly between the section's anchor position
+    /// and whatever block already followed it there (or to the end of the document, if
+    /// nothing did), so the block immediately after the LAST bibliography entry is never
+    /// itself bibliography content — "user types a new trailing paragraph below the
+    /// references" is the ordinary case, not an edge case, whether the section is at the
+    /// document's end or was reinserted back at its prior mid-document position. Naive
+    /// inheritance from the anchor alone would flag that trailing paragraph
+    /// `isBibliography = true`, which is worse than doing nothing: `exportBlocks()` would
     /// silently drop it from every export, and the editor-diff delete safety net in
-    /// `processEditorDeletes` would refuse to let the user delete it.
+    /// `processEditorDeletes` would refuse to let the user delete it. This next-block
+    /// requirement exists because bibliography genuinely needs it: the text immediately after
+    /// the last reference is a normal, legitimate place for the user to start something new
+    /// and unrelated — there is no editing action that reliably tells "one more reference" and
+    /// "an unrelated new section" apart from the anchor alone.
     ///
-    /// Containment is also suppressed — forced `false` regardless of anchor/next-block
-    /// flags — when the INSERTED fragment is itself a heading that does NOT carry the
-    /// bibliography-opening marker. Without this, pasting e.g. "## Discussion" between two
-    /// flagged bibliography entries would inherit `isBibliography = true` from its
+    /// Bibliography containment is also suppressed — forced `false` regardless of
+    /// anchor/next-block flags — when the INSERTED fragment is itself a heading that does NOT
+    /// carry the bibliography-opening marker. Without this, pasting e.g. "## Discussion"
+    /// between two flagged bibliography entries would inherit `isBibliography = true` from its
     /// surroundings, contradicting `BlockParser.sectionFlagCarriedForward`'s rule that ANY
     /// non-matching heading ends the section on a full reparse — and with real teeth here:
     /// `processEditorDeletes`'s safety net would refuse to let the user delete that heading,
@@ -127,7 +138,33 @@ extension ProjectDatabase {
     /// `buildInsertedBlock`'s own `hasBibliographyMarker` check, OR'd in below.
     ///
     /// Both no-anchor branches (doc-start insert, shared-counter fallback) always resolve
-    /// `false` — a block with no bibliography anchor on either side can never be "inside" the
+    /// bibliography containment `false` — a block with no bibliography anchor on either side
+    /// can never be "inside" the section by this rule.
+    ///
+    /// Notes containment is a SIMPLER rule than bibliography's, deliberately: an insert counts
+    /// as "inside" Notes iff its anchor block is flagged `isNotes` and is not itself a
+    /// heading — full stop, with no next-block requirement. That asymmetry with bibliography
+    /// is correct, not an oversight: bibliography needs the next-block check because trailing
+    /// text after the last reference is a normal place for the user to start something new,
+    /// but there is no equivalent legitimate case for Notes. Footnote content can only ever be
+    /// EXTENDED by typing into it — placing the cursor inside an existing footnote definition
+    /// (including at the end of its last paragraph) and continuing to type is, definitionally,
+    /// editing that footnote. A NEW footnote is never created this way: it is always created by
+    /// an explicit insert-footnote command acting on body text elsewhere in the document, which
+    /// inserts its own labelled `[^N]:` definition (handled independently below, and flagged on
+    /// sight regardless of anchor) rather than appending unlabelled text after an existing one.
+    /// So there is no legitimate editing action that produces non-footnote content anchored on
+    /// an existing, non-heading Notes block — anchor-alone is sufficient evidence, and asking
+    /// for a next-block signal the way bibliography does would just leave a genuine
+    /// continuation unflagged for no safety benefit.
+    ///
+    /// Notes containment is suppressed the same way bibliography's is — forced `false` when
+    /// the INSERTED fragment is itself a heading — so that a heading pasted or typed right
+    /// after the last footnote (e.g. starting a new document section) never inherits
+    /// `isNotes = true` from its anchor.
+    ///
+    /// Both no-anchor branches (doc-start insert, shared-counter fallback) always resolve
+    /// Notes containment `false` too — a block with no Notes anchor can never be "inside" the
     /// section by this rule.
     func resolveInsertPlacement(
         db: Database,
@@ -137,9 +174,8 @@ extension ProjectDatabase {
         nextSortOrder: inout Double
     ) throws -> InsertPlacement {
         let insertTrimmed = insert.markdownFragment.trimmingCharacters(in: .whitespacesAndNewlines)
-        let isNonBibliographyHeadingInsert =
-            insertTrimmed.range(of: "^(#{1,6})\\s+", options: .regularExpression) != nil
-            && !BlockParser.hasBibliographyMarker(insertTrimmed)
+        let isHeadingInsert = insertTrimmed.range(of: "^(#{1,6})\\s+", options: .regularExpression) != nil
+        let isNonBibliographyHeadingInsert = isHeadingInsert && !BlockParser.hasBibliographyMarker(insertTrimmed)
 
         let resolvedAfterId = insert.afterBlockId.map { idMapping[$0] ?? $0 }
         if let afterId = resolvedAfterId,
@@ -157,9 +193,13 @@ extension ProjectDatabase {
             } else {
                 sortOrder = afterBlock.sortOrder + 1.0
             }
-            let containment = afterBlock.isBibliography && (nextBlock?.isBibliography ?? false)
-            let isBibliography = isNonBibliographyHeadingInsert ? false : containment
-            return InsertPlacement(sortOrder: sortOrder, isBibliography: isBibliography)
+            let bibliographyContainment = afterBlock.isBibliography && (nextBlock?.isBibliography ?? false)
+            let isBibliography = isNonBibliographyHeadingInsert ? false : bibliographyContainment
+            // No next-block requirement here — see this function's doc comment for why the
+            // anchor alone is sufficient evidence for Notes, unlike bibliography.
+            let notesContainment = afterBlock.isNotes && afterBlock.blockType != .heading
+            let isNotes = isHeadingInsert ? false : notesContainment
+            return InsertPlacement(sortOrder: sortOrder, isBibliography: isBibliography, isNotes: isNotes)
         } else if resolvedAfterId == nil, insert.atDocumentStart == true {
             // Block is literal ProseMirror doc position 0 — anchor it before the
             // current first block instead of falling through to append-at-end.
@@ -168,22 +208,24 @@ extension ProjectDatabase {
                 .order(Block.Columns.sortOrder)
                 .fetchOne(db)
             let sortOrder = firstBlock.map { $0.sortOrder / 2.0 } ?? 1.0
-            return InsertPlacement(sortOrder: sortOrder, isBibliography: false)
+            return InsertPlacement(sortOrder: sortOrder, isBibliography: false, isNotes: false)
         } else {
             // No afterBlockId (and not atDocumentStart), or afterBlockId present but
             // unresolvable — use the shared running counter
             let sortOrder = nextSortOrder
             nextSortOrder += 1.0
-            return InsertPlacement(sortOrder: sortOrder, isBibliography: false)
+            return InsertPlacement(sortOrder: sortOrder, isBibliography: false, isNotes: false)
         }
     }
 
     /// Builds the Block row for an editor insert: detects heading syntax (belt-and-suspenders
     /// with JS detection), marks footnote-definition/image blocks, resolves the
-    /// `isBibliography` flag (see `resolveInsertPlacement`'s doc comment for the containment
-    /// rule `isBibliographyContainment` encodes), and recalculates word count.
+    /// `isBibliography` and `isNotes` flags (see `resolveInsertPlacement`'s doc comment for the
+    /// containment rules `isBibliographyContainment`/`isNotesContainment` encode), and
+    /// recalculates word count.
     func buildInsertedBlock(
-        insert: BlockInsert, projectId: String, sortOrder: Double, isBibliographyContainment: Bool
+        insert: BlockInsert, projectId: String, sortOrder: Double,
+        isBibliographyContainment: Bool, isNotesContainment: Bool
     ) -> Block {
         // Detect heading from markdown content (belt-and-suspenders with JS detection)
         let blockType: BlockType
@@ -229,8 +271,14 @@ extension ProjectDatabase {
         block.isBibliography = isBibliographyContainment
             || (blockType == .heading && BlockParser.hasBibliographyMarker(insertTrimmed))
 
-        // Mark footnote definitions as isNotes (safety net for editor-created blocks)
-        if insertTrimmed.range(of: #"^\[\^\d+\]:\s*"#, options: .regularExpression) != nil {
+        // isNotes: containment resolved by the caller (resolveInsertPlacement) — anchored on
+        // an existing, non-heading Notes block, which is sufficient evidence on its own (see
+        // `resolveInsertPlacement`'s doc comment for why Notes doesn't need bibliography's
+        // next-block check) — OR'd with the independent case of the inserted fragment itself
+        // being a literal `[^N]:` definition line (e.g. typed or pasted directly, with no
+        // existing Notes anchor to inherit from, such as the very first footnote in a fresh
+        // Notes section).
+        if isNotesContainment || insertTrimmed.range(of: #"^\[\^\d+\]:\s*"#, options: .regularExpression) != nil {
             block.isNotes = true
         }
 
