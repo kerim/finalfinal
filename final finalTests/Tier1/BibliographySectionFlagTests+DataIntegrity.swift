@@ -482,19 +482,39 @@ extension BibliographySectionFlagTests {
         )
     }
 
-    // MARK: - 17. Issue 3: two-signal AND -- a parsed header still claiming the flag protects an orphan too
+    // MARK: - 17. Issue 3, superseded by the delete-sweep duplicate-row fix
+    //
+    // This test originally asserted that a parsed header still claiming isBibliography kept
+    // BOTH of two same-flagged rows immortal (deletedOrphan == false), using "two rows sharing
+    // the flag" purely as scaffolding to exercise the bibliographyGone two-signal AND in
+    // isolation -- see the ORIGINAL comment preserved a few lines below. That scaffolding relied
+    // on the pre-fix delete-sweep's blanket exemption: ANY unmatched isBibliography row stayed
+    // immortal whenever the flag survived ANYWHERE in the document, without checking whether
+    // THIS row was the one that actually matched. Introducing a second, genuine duplicate
+    // flagged row (exactly what this test does) is precisely the sidebar-duplicate-card bug the
+    // SectionReconciler delete-sweep fix closes: the row that findBibliographyMatch's
+    // bestFlaggedCandidate did NOT choose must now be swept, regardless of whether the
+    // surviving flag is protected by the header signal, the block-level signal, or both --
+    // bibliographyGone only controls whether a row is exempted when NO flagged row was matched
+    // at all this pass (see reconcileKeepsFlaggedRowWhenOrphanedBlockStillExists above, and
+    // orphanedDuplicateBibliographyRowIsSwept in SectionReconcilerTests.swift, for that
+    // still-current, unaffected case). The two-signal AND itself is untouched and still covered
+    // by tests 15-16 above, neither of which involves a duplicate row. The assertion below is
+    // updated to match the corrected, intended behavior.
 
     @Test(
         """
-        Issue 3: two-signal AND -- a flagged row survives when a parsed header still carries the flag \
-        even if the block-level check alone would say gone
+        Issue 3, superseded: a genuine duplicate flagged row is swept even when a parsed header \
+        still carries the flag -- the header signal only protects a row that matched nothing at all
         """
     )
-    func reconcileKeepsOrphanedFlaggedRowWhenHeaderStillClaimsFlag() {
+    func reconcileSweepsOrphanedDuplicateEvenWhenHeaderStillClaimsFlag() {
         // Two Section rows both flagged isBibliography (a contrived duplicate-row scenario,
-        // used purely to isolate the boolean logic): the real one at sortOrder 0 will be
-        // claimed by findBibliographyMatch's tier (a) (already-flagged match), leaving the
-        // orphan at sortOrder 5 unmatched and reaching the delete-sweep check.
+        // ORIGINALLY used purely to isolate the two-signal-AND boolean logic -- see the MARK
+        // comment above for why the expected outcome changed): the real one at sortOrder 0 is
+        // claimed by findBibliographyMatch's bestFlaggedCandidate (already-flagged match --
+        // closer to the header's position AND title-matched), leaving the orphan at sortOrder 5
+        // unmatched and reaching the delete-sweep check.
         let realId = UUID().uuidString
         let realRow = Section(
             id: realId, projectId: projectId, sortOrder: 0, headerLevel: 1,
@@ -513,19 +533,25 @@ extension BibliographySectionFlagTests {
             markdownContent: "# References\n\nCurrent entry.", wordCount: 5, isBibliography: true
         )
 
-        // bibliographyExistsInBlocks: false -- the block-level signal ALONE would say "gone"
-        // (e.g. a stale/racy read) -- but a parsed header in THIS pass still carries the flag,
-        // so the two-signal AND must keep bibliographyGone false.
+        // bibliographyExistsInBlocks: false -- the block-level signal ALONE would say "gone" --
+        // but a parsed header in THIS pass still carries the flag, so bibliographyGone is false.
+        // That no longer protects the ORPHAN specifically: it is a genuine duplicate that lost
+        // the match, and the delete-sweep fix sweeps it -- via `.deleteDuplicate`, since a
+        // survivor exists for its data to migrate onto -- regardless of bibliographyGone once a
+        // different row has genuinely won the match.
         let changes = reconciler.reconcile(
             headers: [header], dbSections: [realRow, orphanedFlaggedRow], projectId: projectId,
             bibliographyExistsInBlocks: false
         )
 
-        let deletedOrphan = changes.contains { if case .delete(let id) = $0 { return id == orphanedId }; return false }
+        let deleteDuplicate = changes.first { if case .deleteDuplicate(let loserId, _, _) = $0 { return loserId == orphanedId }; return false }
         #expect(
-            !deletedOrphan,
-            "A parsed header still claiming isBibliography must protect the orphan even when the block-level check alone would say gone"
+            deleteDuplicate != nil,
+            "The unmatched duplicate must be swept via .deleteDuplicate once a different row has genuinely claimed the bibliography match"
         )
+        if case .deleteDuplicate(_, let survivorId, _) = deleteDuplicate {
+            #expect(survivorId == realId, "The orphan's data should migrate onto the row that actually won the match")
+        }
     }
 
     // MARK: - 18. buildUpdates refreshes a stale flagged row's title/markdownContent/wordCount

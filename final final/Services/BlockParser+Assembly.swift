@@ -77,10 +77,12 @@ extension BlockParser {
         let sorted = assemblySorted(blocks)
 
         // Computed once, over the SORTED array (not the raw `blocks` parameter -- see
-        // `liftedNotesHeadingIDs`'s doc comment for why): the set of machine-managed "# Notes"
-        // heading ids that Pandoc's footnote lifting left stranded with nothing but footnote
-        // definitions underneath. Skipped in the loop below, after the isBibliography branch.
-        let qualifyingNotesHeadingIDs = liftedNotesHeadingIDs(in: sorted)
+        // `classifyNotesRuns`'s doc comment for why): which machine-managed "# Notes" heading
+        // ids Pandoc's footnote lifting left stranded with nothing but footnote definitions
+        // (and their continuations) underneath, plus which non-heading blocks in every run are
+        // continuation paragraphs of a multi-paragraph footnote definition. Skipped/indented in
+        // the loop below, after the isBibliography branch.
+        let notesClassification = classifyNotesRuns(in: sorted)
 
         // Scan the WHOLE bibliography run for a `.heading`-typed block -- do not just take the
         // first isBibliography block encountered. A persisted `<!-- ::auto-bibliography:: -->`
@@ -157,7 +159,16 @@ extension BlockParser {
             // working). The isBibliography branch above already `continue`s on every one of its
             // paths, so placing this check after it means a dual-flagged heading is always
             // handled as bibliography content and never reaches this check at all -- deliberate.
-            if qualifyingNotesHeadingIDs.contains(block.id) {
+            if notesClassification.qualifyingHeadingIDs.contains(block.id) {
+                continue
+            }
+
+            // A multi-paragraph footnote's continuation paragraph: indent every line 4
+            // spaces so it parses as PART OF the preceding "[^N]: ..." definition (Pandoc
+            // footnote-continuation syntax) instead of spilling out as an ordinary
+            // top-level paragraph — see `indentedContinuation`'s doc comment.
+            if notesClassification.continuationIDs.contains(block.id) {
+                fragments.append(indentedContinuation(fragment))
                 continue
             }
 
@@ -198,9 +209,38 @@ extension BlockParser {
         return footnoteDefStartPattern.firstMatch(in: trimmed, range: range) != nil
     }
 
-    /// Returns the ids of every `isNotes && .heading` block in `sorted` whose entire run of
-    /// following isNotes content is homogeneous machine-managed footnote definitions -- safe to
-    /// drop from export because nothing but Pandoc's own lifted `[^N]: ...` blocks sits under it.
+    /// Prefixes EVERY line of `fragment` with 4 spaces -- the Pandoc-markdown indent a footnote
+    /// definition's continuation paragraph(s) require to parse as part of that footnote rather
+    /// than as an ordinary top-level paragraph. Splits on `"\n"` (not a regex) so this behaves
+    /// identically whether `fragment` is a single line or carries embedded newlines (e.g. a
+    /// continuation paragraph typed with a manual line break) -- every line gets the indent, not
+    /// just the first. Deliberately does NOT indent an already-blank line: `"    " + ""` would
+    /// leave trailing whitespace on what must stay an empty separator line between paragraphs.
+    static func indentedContinuation(_ fragment: String) -> String {
+        fragment
+            .components(separatedBy: "\n")
+            .map { $0.isEmpty ? $0 : "    " + $0 }
+            .joined(separator: "\n")
+    }
+
+    /// Per-Notes-run classification, computed once over the whole document for export.
+    struct NotesRunClassification {
+        /// Every `isNotes && .heading` block whose entire run of following isNotes content is
+        /// homogeneous machine-managed footnote content (definitions and/or their
+        /// continuations, zero pre-definition user prose) -- safe to drop from export because
+        /// nothing but Pandoc's own lifted `[^N]: ...` blocks sits under it.
+        var qualifyingHeadingIDs: Set<String> = []
+        /// Every non-heading block, in ANY run (qualifying or not), that is a continuation
+        /// paragraph of a multi-paragraph footnote definition -- see the shared ownership
+        /// definition in this function's doc comment. Must be 4-space indented on export via
+        /// `indentedContinuation`, never dropped.
+        var continuationIDs: Set<String> = []
+    }
+
+    /// Classifies every "# Notes" run in `sorted` for export: which headings qualify to be
+    /// DROPPED, and which non-heading blocks (in every run, regardless of whether that run's own
+    /// heading qualifies) are CONTINUATION paragraphs that must be indented rather than emitted
+    /// as plain top-level text.
     ///
     /// MUST take the already-`assemblySorted` array, not the raw `blocks` parameter passed to
     /// `assembleMarkdownForExport`: `assemblySorted` breaks ties at equal `sortOrder` by placing
@@ -222,15 +262,29 @@ extension BlockParser {
     /// (what the flag actually covers, vs. what markdown text to strip) and only one is correct
     /// here.
     ///
-    /// A heading qualifies (its id is added to the result) only if its run has AT LEAST ONE
-    /// non-empty block, AND EVERY non-empty block in the run matches
-    /// `isFootnoteDefinitionFragment`. Empty fragments are ignored -- they count toward neither
-    /// "at least one" nor "every." An empty run (heading with nothing non-empty under it) does
-    /// NOT qualify -- fails toward keeping the heading. Multiple independent "# notes" headings
-    /// (possible since `sectionFlagCarriedForward` can re-open the flag more than once per
-    /// document) are each judged strictly on their own run's evidence.
-    private static func liftedNotesHeadingIDs(in sorted: [Block]) -> Set<String> {
-        var qualifying: Set<String> = []
+    /// Shared ownership definition (matches `FootnoteSyncService+Reconciliation.swift`'s
+    /// reconciliation logic -- keep both in sync if this rule ever changes): walking a run in
+    /// order, a non-heading block that is itself a `[^N]:` definition (per
+    /// `isFootnoteDefinitionFragment`) opens/re-opens an owner; any LATER non-heading,
+    /// non-definition block in the SAME run is a continuation of the most recently opened owner;
+    /// a non-heading, non-definition block BEFORE any definition in the run is the user's own
+    /// hand-typed prose -- it owns nothing, is never indented, and disqualifies the heading.
+    ///
+    /// A heading qualifies (added to `qualifyingHeadingIDs`) only if its run has AT LEAST ONE
+    /// non-empty block, AND every non-empty block in the run is EITHER a definition OR a
+    /// continuation -- i.e. zero pre-definition user prose anywhere in the run. Empty fragments
+    /// count toward neither "at least one" nor "every." An empty run (heading with nothing
+    /// non-empty under it) does NOT qualify -- fails toward keeping the heading.
+    ///
+    /// Continuation collection is INDEPENDENT of heading qualification: a continuation is
+    /// collected (and indented on export) even in a run whose heading does NOT qualify for
+    /// dropping, because the indent is a Pandoc-syntax requirement for the continuation to parse
+    /// as part of its footnote at all -- unrelated to what export ultimately does with the
+    /// heading above it. Multiple independent "# notes" headings (possible since
+    /// `sectionFlagCarriedForward` can re-open the flag more than once per document) are each
+    /// judged strictly on their own run's evidence.
+    private static func classifyNotesRuns(in sorted: [Block]) -> NotesRunClassification {
+        var result = NotesRunClassification()
         var index = 0
         while index < sorted.count {
             let block = sorted[index]
@@ -241,22 +295,31 @@ extension BlockParser {
 
             var runEnd = index + 1
             var hasNonEmptyBlock = false
-            var allNonEmptyAreFootnoteDefs = true
+            var allNonEmptyQualify = true
+            var sawDefinition = false
             while runEnd < sorted.count {
                 let candidate = sorted[runEnd]
                 guard candidate.isNotes, candidate.blockType != .heading else { break }
                 let candidateFragment = candidate.markdownForExport()
                 if !isEmptyFragment(candidateFragment) {
                     hasNonEmptyBlock = true
-                    if !isFootnoteDefinitionFragment(candidateFragment) {
-                        allNonEmptyAreFootnoteDefs = false
+                    if isFootnoteDefinitionFragment(candidateFragment) {
+                        sawDefinition = true
+                    } else if sawDefinition {
+                        // Continuation of the most recently seen definition -- doesn't
+                        // disqualify the run, but must still be indented on export.
+                        result.continuationIDs.insert(candidate.id)
+                    } else {
+                        // Pre-definition content: the user's own hand-typed Notes prose.
+                        // Owns nothing, disqualifies the heading, never indented.
+                        allNonEmptyQualify = false
                     }
                 }
                 runEnd += 1
             }
 
-            if hasNonEmptyBlock && allNonEmptyAreFootnoteDefs {
-                qualifying.insert(block.id)
+            if hasNonEmptyBlock && allNonEmptyQualify {
+                result.qualifyingHeadingIDs.insert(block.id)
             }
 
             // Resume scanning right after this run -- the block at `runEnd` (if any) was never
@@ -264,15 +327,29 @@ extension BlockParser {
             // independent evaluation on the next outer-loop iteration.
             index = runEnd
         }
-        return qualifying
+        return result
     }
 
     /// Assemble blocks into standard markdown for export (no Pandoc attributes).
     /// Uses `markdownForStandardExport()` which outputs plain markdown with captions as italic text.
+    ///
+    /// Unlike `assembleMarkdownForExport`, this path deliberately KEEPS every "# Notes"
+    /// heading -- correct for a plain .md export, which has no Pandoc pass to lift footnote
+    /// definitions elsewhere, so the heading is genuine document structure the user should see.
+    /// It still runs continuation paragraphs through `indentedContinuation` (via the same
+    /// `classifyNotesRuns` scan `assembleMarkdownForExport` uses) so a multi-paragraph footnote
+    /// round-trips as valid Pandoc-flavored markdown here too, instead of its second paragraph
+    /// spilling out as an unindented, un-owned top-level paragraph.
     static func assembleStandardMarkdownForExport(from blocks: [Block]) -> String {
         // MUST stay in sync with BlockParser.assembleMarkdown filtering
-        assemblySorted(blocks)
-            .map { $0.markdownForStandardExport() }
+        let sorted = assemblySorted(blocks)
+        let notesClassification = classifyNotesRuns(in: sorted)
+        return sorted
+            .map { block -> String in
+                let fragment = block.markdownForStandardExport()
+                guard notesClassification.continuationIDs.contains(block.id) else { return fragment }
+                return indentedContinuation(fragment)
+            }
             .filter { !isEmptyFragment($0) }
             .joined(separator: "\n\n")
     }

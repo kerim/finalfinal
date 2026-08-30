@@ -186,6 +186,15 @@ extension CodeMirrorEditor.Coordinator {
     nonisolated func handleNavigationMessage(_ message: WKScriptMessage) -> Bool {
         switch message.name {
         case "paintComplete":
+            // Mount-flash fix (doc-open-blank-regression follow-up): CodeMirror deliberately
+            // does NOT get the token-based cloak system MilkdownEditor.Coordinator gained
+            // (beginCloak/endCloak, MilkdownCoordinator+MessageHandlers.swift) -- the flash
+            // this closes is specific to Milkdown's internal container-swap teardown/rebuild
+            // dance during EditorView construction, which CodeMirror has no equivalent of.
+            // CodeMirror's own zoom cloak stays on its existing bare `webView?.alphaValue`
+            // pattern (CodeMirrorCoordinator+Handlers.swift), and no sender in
+            // codemirror/src/api.ts posts a `reason`/`token` field, so this signature stays
+            // unchanged -- do not add a `reason` parameter here to mirror Milkdown's dispatch.
             Task { @MainActor in
                 self.handlePaintComplete()
             }

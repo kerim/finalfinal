@@ -74,6 +74,17 @@ private func registerMilkdownMessageHandlers(on controller: WKUserContentControl
 }
 
 struct MilkdownEditor: NSViewRepresentable {
+    // Reasons a cloak (webView.alphaValue = 0, hiding the WebView) can be outstanding.
+    // Declared here (one level of nesting inside MilkdownEditor) rather than inside
+    // Coordinator, since SwiftLint caps nested types at one level deep; Coordinator's own
+    // methods still resolve `CloakReason` unqualified since it's nested inside their
+    // enclosing type.
+    enum CloakReason {
+        case zoom
+        case mount
+        case projectReset
+    }
+
     @Binding var content: String
     @Binding var focusModeEnabled: Bool
     @Binding var cursorPositionToRestore: CursorPosition?
@@ -132,6 +143,21 @@ struct MilkdownEditor: NSViewRepresentable {
             preloaded.navigationDelegate = context.coordinator
             context.coordinator.webView = preloaded
 
+            // Mount-flash fix (redesign after review round): a claimed preloaded view's
+            // page load finished during preload, but that says nothing about whether
+            // main.ts's async initEditor() -> Editor.make().create() -- and the internal
+            // container-swap teardown/rebuild dance inside it -- has ALSO finished (see
+            // notifyWebViewReadyWhenEditorReady's doc comment two files over for why those
+            // are two different moments). That dance may already be done (harmless, it ran
+            // off-screen) or may still be in flight, in which case it would otherwise finish
+            // visibly right here, the instant this view attaches. Cloak unconditionally and
+            // let pollMountCloakReleaseForClaimedView's isEditorReady() poll release it the
+            // moment mount is actually confirmed -- see that method's doc comment
+            // (MilkdownCoordinator+MessageHandlers.swift) for why paintComplete's own
+            // auto-fire (fresh-WebView branch, below) cannot be relied on for this branch.
+            let mountCloakToken = context.coordinator.beginCloak(.mount)
+            context.coordinator.pollMountCloakReleaseForClaimedView(token: mountCloakToken)
+
             // Handle the preloaded view (navigation already finished)
             context.coordinator.handlePreloadedView()
 
@@ -162,11 +188,24 @@ struct MilkdownEditor: NSViewRepresentable {
         webView.isInspectable = true
         #endif
 
+        context.coordinator.webView = webView
+
+        // Mount-flash fix (doc-open-blank-regression follow-up): hide the WebView until
+        // main.ts's initEditor() signals paint-complete after Milkdown's own internal
+        // container-swap teardown/rebuild dance has settled -- see beginCloak/endCloak's
+        // doc comments (MilkdownCoordinator+MessageHandlers.swift). This branch's release
+        // signal is initEditor()'s own one-shot paintComplete post: registerMilkdownMessageHandlers
+        // above (which wires up "paintComplete") always runs before webView.load() below, so
+        // that handler is guaranteed to exist by the time initEditor() ever gets a chance to
+        // post to it -- unlike the claimed-preloaded branch above, which needs the separate
+        // isEditorReady()-poll release mechanism (see that branch's own comment) because its
+        // mount work runs during preload, before ANY handler -- or coordinator -- exists yet.
+        context.coordinator.beginCloak(.mount)
+
         if let url = URL(string: "editor://milkdown/milkdown.html") {
             webView.load(URLRequest(url: url))
         }
 
-        context.coordinator.webView = webView
         return webView
     }
 
@@ -421,6 +460,41 @@ struct MilkdownEditor: NSViewRepresentable {
         /// Tracks previous isResettingContent state to detect reset→idle transition
         var wasResettingContent = false
 
+        // MARK: - Cloak ownership (mount-flash fix, doc-open-blank-regression follow-up)
+        //
+        // See beginCloak/endCloak's doc comments (MilkdownCoordinator+MessageHandlers.swift)
+        // for the full token-ownership design this closes: reset-release clearing a live zoom
+        // cloak, and zoom-release/fallback clearing a live reset cloak. `CloakReason` itself is
+        // declared at the MilkdownEditor level (not nested here), to stay within SwiftLint's
+        // one-level nesting limit -- still resolves unqualified from Coordinator's own scope.
+
+        /// Monotonic token source for beginCloak()/endCloak(). Never reused within this
+        /// Coordinator's lifetime -- each beginCloak() call mints a fresh value.
+        var nextCloakToken = 0
+
+        /// Tokens minted by beginCloak() that have not yet been released by endCloak() (via
+        /// an explicit release or its own fallback firing). alphaValue is restored to 1 only
+        /// once this is EMPTY -- a Set, not a single flag, because multiple reasons (e.g. a
+        /// project reset landing mid-zoom) can hold the WebView hidden concurrently.
+        var outstandingCloaks: Set<Int> = []
+
+        /// Per-token fallback work items (DispatchQueue.main.asyncAfter -- see beginCloak's
+        /// doc comment for why a plain Timer would be unsafe here). Cancelled and removed by
+        /// endCloak() on a normal release, or run out and self-remove on timeout.
+        var cloakFallbackWorkItems: [Int: DispatchWorkItem] = [:]
+
+        /// Latest token minted for a given reason -- used to resolve a `paintComplete`
+        /// message that has no explicit `token` field in its body (zoom's two legacy
+        /// senders, and `.mount`, which can have at most one outstanding cloak per
+        /// Coordinator instance -- see resolveCloakToken's doc comment).
+        var latestCloakTokenForReason: [CloakReason: Int] = [:]
+
+        /// Observes `.willResetEditorForProjectSwitch` (posted by ContentView+
+        /// ProjectLifecycle.swift's handleProjectOpened(), filtered to THIS Coordinator's own
+        /// webView -- see subscribeToProjectResetNotifications' doc comment for why a global
+        /// notification needs that filter in a multi-window app).
+        var projectResetObserver: NSObjectProtocol?
+
         init(
             content: Binding<String>,
             cursorPositionToRestore: Binding<CursorPosition?>,
@@ -460,10 +534,18 @@ struct MilkdownEditor: NSViewRepresentable {
             subscribeToBlockSyncNotifications()
             subscribeToFormattingCommandNotifications()
             subscribeToMediaNotifications()
+            subscribeToProjectResetNotifications()
         }
 
         deinit {
             pollingTimer?.invalidate()
+
+            // Cancel every outstanding cloak fallback (mount-flash fix) -- a torn-down
+            // Coordinator must not have a stale DispatchWorkItem fire later and touch
+            // properties on an instance nothing else references anymore.
+            for (_, workItem) in cloakFallbackWorkItems {
+                workItem.cancel()
+            }
 
             // Observer removal must happen directly inside deinit, not via a called-out
             // method: deinit is always nonisolated even on this @MainActor type, and
@@ -471,6 +553,7 @@ struct MilkdownEditor: NSViewRepresentable {
             // to deinit's own body, not to a same-type method deinit merely calls.
             // removeObserverIfPresent (MilkdownCoordinator+NotificationObservers.swift)
             // is safe to call here because it only touches its own parameter.
+            removeObserverIfPresent(projectResetObserver)
             removeObserverIfPresent(toggleObserver)
             removeObserverIfPresent(insertBreakObserver)
             removeObserverIfPresent(annotationDisplayModesObserver)
