@@ -72,25 +72,6 @@ struct PreservedRowReservation {
     let count: Int
 }
 
-/// The Notes-merge bookkeeping `handleMachineManagedBlock` threads through both call sites'
-/// insert loops, bundled into one `inout` value so the function stays under
-/// swiftlint's function_parameter_count limit. Field names are identical to the parameter
-/// names this replaces, so every existing doc comment that quotes one of those spellings by
-/// name stays literally true.
-struct NotesMergeState {
-    var notesRowByLabel: [String: Block]
-    /// Track footnote labels already claimed within this batch — whether by merging into
-    /// a preserved row or by falling through to a normal insert below — so a second
-    /// newBlocks entry with the same label (e.g. two "[^1]:" paragraphs from a
-    /// copy-paste slip or an interrupted renumbering) never produces a second DB row for
-    /// that label. First-occurrence-wins, matching the imageMetaBySrc dedup convention
-    /// used elsewhere in this file.
-    var claimedNotesLabels: Set<String> = []
-    var notesContinuationsByOwner: [String: [Block]]
-    var currentNotesOwnerLabel: String?
-    var deferredNewContinuations: [String: [Block]] = [:]
-}
-
 // MARK: - ProjectDatabase Block Replace
 
 extension ProjectDatabase {
@@ -203,15 +184,16 @@ extension ProjectDatabase {
                 )
 
                 let notesIndex = buildNotesRowIndex(from: existingBlocks)
+                var notesRowByLabel = notesIndex.byLabel
+                var notesContinuationsByOwner = notesIndex.continuationsByOwner
+                var claimedNotesLabels: Set<String> = []
+                var currentNotesOwnerLabel: String?
                 // Genuinely-NEW continuation paragraphs (a footnote that grew: more incoming
                 // labelless continuations than preserved rows existed for) -- collected here
                 // instead of inserted immediately, and given a real position adjacent to
                 // their owner only once the owner's FINAL (reanchored) position is known. See
                 // `insertDeferredContinuations`'s doc comment.
-                var notesState = NotesMergeState(
-                    notesRowByLabel: notesIndex.byLabel,
-                    notesContinuationsByOwner: notesIndex.continuationsByOwner
-                )
+                var deferredNotesContinuations: [String: [Block]] = [:]
 
                 for (index, var block) in blocks.enumerated() {
                     block.sortOrder = Double(index)
@@ -224,7 +206,11 @@ extension ProjectDatabase {
                     if try handleMachineManagedBlock(
                         db: db,
                         block: block,
-                        notesState: &notesState,
+                        notesRowByLabel: &notesRowByLabel,
+                        claimedNotesLabels: &claimedNotesLabels,
+                        notesContinuationsByOwner: &notesContinuationsByOwner,
+                        currentNotesOwnerLabel: &currentNotesOwnerLabel,
+                        deferredNewContinuations: &deferredNotesContinuations,
                         handlingNotes: true
                     ) {
                         continue
@@ -264,7 +250,7 @@ extension ProjectDatabase {
 
                 // MUST run AFTER reanchorPreservedRows -- see insertDeferredContinuations'
                 // doc comment for why placement depends on the owner's FINAL position.
-                try insertDeferredContinuations(db: db, projectId: projectId, deferredByOwner: notesState.deferredNewContinuations)
+                try insertDeferredContinuations(db: db, projectId: projectId, deferredByOwner: deferredNotesContinuations)
 
                 try renumberSortOrders(db: db, projectId: projectId, now: Date())
                 try Self.recomputeSectionParents(db: db, projectId: projectId)
@@ -413,13 +399,13 @@ extension ProjectDatabase {
             // Notes row, it is merged into the preserved row in place instead of inserted as a
             // duplicate alongside it. See buildNotesRowIndex for the lookup this builds.
             let notesIndex = buildNotesRowIndex(from: existingBlocks)
+            var notesRowByLabel = notesIndex.byLabel
+            var notesContinuationsByOwner = notesIndex.continuationsByOwner
+            var currentNotesOwnerLabel: String?
             // Genuinely-NEW continuation paragraphs (a footnote that grew) -- see
             // `insertDeferredContinuations`'s doc comment; populated by
             // handleMachineManagedBlock below, consumed after reanchorPreservedRows runs.
-            var notesState = NotesMergeState(
-                notesRowByLabel: notesIndex.byLabel,
-                notesContinuationsByOwner: notesIndex.continuationsByOwner
-            )
+            var deferredNotesContinuations: [String: [Block]] = [:]
 
             // The "# Notes"/"# Bibliography" HEADING itself needs a different rule than the
             // paragraph rows above: it normally survives via the delete-then-reinsert-by-title-
@@ -482,6 +468,14 @@ extension ProjectDatabase {
                 )
             )
 
+            // Track footnote labels already claimed within this batch — whether by merging into
+            // a preserved row or by falling through to a normal insert below — so a second
+            // newBlocks entry with the same label (e.g. two "[^1]:" paragraphs from a
+            // copy-paste slip or an interrupted renumbering) never produces a second DB row for
+            // that label. First-occurrence-wins, matching the imageMetaBySrc dedup convention
+            // used elsewhere in this file.
+            var claimedNotesLabels: Set<String> = []
+
             // 3. Insert new blocks with sort orders starting at startSortOrder
             for (index, var block) in newBlocks.enumerated() {
                 block.sortOrder = startSortOrder + Double(index)
@@ -492,7 +486,11 @@ extension ProjectDatabase {
                 if try handleMachineManagedBlock(
                     db: db,
                     block: block,
-                    notesState: &notesState
+                    notesRowByLabel: &notesRowByLabel,
+                    claimedNotesLabels: &claimedNotesLabels,
+                    notesContinuationsByOwner: &notesContinuationsByOwner,
+                    currentNotesOwnerLabel: &currentNotesOwnerLabel,
+                    deferredNewContinuations: &deferredNotesContinuations
                 ) {
                     continue
                 }
@@ -511,7 +509,7 @@ extension ProjectDatabase {
             // paragraph of the footnote -- must be deleted now, before the reanchor step
             // below moves it to a fresh position and makes it look intentional. See
             // `deleteUnclaimedContinuations`'s doc comment.
-            try deleteUnclaimedContinuations(db: db, notesContinuationsByOwner: notesState.notesContinuationsByOwner)
+            try deleteUnclaimedContinuations(db: db, notesContinuationsByOwner: notesContinuationsByOwner)
 
             // 3.5. Re-anchor preserved isNotes/isBibliography rows (and any protected heading,
             // see preservedRowIds above) immediately after all newly-inserted content — see
@@ -527,7 +525,7 @@ extension ProjectDatabase {
 
             // MUST run AFTER reanchorPreservedRows -- see insertDeferredContinuations's doc
             // comment for why placement depends on the owner's FINAL position.
-            try insertDeferredContinuations(db: db, projectId: projectId, deferredByOwner: notesState.deferredNewContinuations)
+            try insertDeferredContinuations(db: db, projectId: projectId, deferredByOwner: deferredNotesContinuations)
 
             // 6. Normalize sort orders inline (atomic with delete+insert above). Trap: do not
             // merge this with the public normalizeSortOrders(projectId:) in

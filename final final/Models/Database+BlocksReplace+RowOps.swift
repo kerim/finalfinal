@@ -261,10 +261,6 @@ extension ProjectDatabase {
     ///    comment for why its real position can only be resolved after the caller reanchors
     ///    preserved rows.
     ///
-    /// - Parameter notesState: The Notes-merge bookkeeping (claimed labels, per-owner
-    ///   continuation queues, current owner label, deferred new continuations) this function
-    ///   reads and mutates in place for outcomes 2/3/4 above. See `NotesMergeState`'s doc
-    ///   comment for why this is bundled into one `inout` value.
     /// - Parameter handlingNotes: Whether outcomes 2/3/4 (Notes-shaped merge-or-dedup) are
     ///   active at all. Defaults to `true`. Both `replaceBlocksInRange`'s call site and
     ///   `replaceBlocks`' bibliography+Notes preservation path pass `true` -- a Notes-shaped
@@ -273,7 +269,11 @@ extension ProjectDatabase {
     func handleMachineManagedBlock(
         db: Database,
         block: Block,
-        notesState: inout NotesMergeState,
+        notesRowByLabel: inout [String: Block],
+        claimedNotesLabels: inout Set<String>,
+        notesContinuationsByOwner: inout [String: [Block]],
+        currentNotesOwnerLabel: inout String?,
+        deferredNewContinuations: inout [String: [Block]],
         handlingNotes: Bool = true
     ) throws -> Bool {
         if block.isBibliography && block.blockType != .heading {
@@ -286,9 +286,9 @@ extension ProjectDatabase {
         }
 
         if let label = FootnoteSyncService.parseNotesLabel(from: block.markdownFragment)?.label {
-            notesState.currentNotesOwnerLabel = label
+            currentNotesOwnerLabel = label
 
-            if notesState.claimedNotesLabels.contains(label) {
+            if claimedNotesLabels.contains(label) {
                 // Duplicate label within this same batch (e.g. two "[^1]:" paragraphs from a
                 // copy-paste slip) — the first occurrence above already claimed this label
                 // (merged or inserted); drop this one rather than producing a second DB row
@@ -296,15 +296,15 @@ extension ProjectDatabase {
                 DebugLog.log(.data, "[replaceBlocksInRange] Skipping duplicate notes label in batch: \(label)")
                 return true
             }
-            notesState.claimedNotesLabels.insert(label)
+            claimedNotesLabels.insert(label)
 
-            if var existingNotesRow = notesState.notesRowByLabel[label] {
+            if var existingNotesRow = notesRowByLabel[label] {
                 existingNotesRow.markdownFragment = block.markdownFragment
                 existingNotesRow.textContent = block.textContent
                 existingNotesRow.recalculateWordCount()
                 existingNotesRow.updatedAt = Date()
                 try existingNotesRow.update(db)
-                notesState.notesRowByLabel.removeValue(forKey: label)
+                notesRowByLabel.removeValue(forKey: label)
                 return true
             }
             return false
@@ -314,22 +314,22 @@ extension ProjectDatabase {
         // owner. Consume the next UNCLAIMED existing continuation row for that owner, in
         // original order, so a three-paragraph footnote's two continuations each land on
         // their own preserved row instead of clobbering the same one.
-        guard let owner = notesState.currentNotesOwnerLabel else {
+        guard let owner = currentNotesOwnerLabel else {
             // No running owner established yet in this batch at all -- genuinely
             // unattachable content; fall through to a normal insert (no better option).
             return false
         }
-        guard var remaining = notesState.notesContinuationsByOwner[owner], !remaining.isEmpty else {
+        guard var remaining = notesContinuationsByOwner[owner], !remaining.isEmpty else {
             // Owner is known, but no preserved continuation row is left for it -- the
             // footnote grew a paragraph. Defer rather than fall through to a normal insert:
             // a normal insert would place it at this batch's index-based sortOrder, inside
             // the body-content region, sorting AHEAD of its own not-yet-reanchored owner.
             // See insertDeferredContinuations.
-            notesState.deferredNewContinuations[owner, default: []].append(block)
+            deferredNewContinuations[owner, default: []].append(block)
             return true
         }
         var existingContinuation = remaining.removeFirst()
-        notesState.notesContinuationsByOwner[owner] = remaining
+        notesContinuationsByOwner[owner] = remaining
         existingContinuation.markdownFragment = block.markdownFragment
         existingContinuation.textContent = block.textContent
         existingContinuation.recalculateWordCount()

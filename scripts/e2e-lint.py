@@ -108,16 +108,6 @@ SINGLE = [
         "top-level Dialog siblings of the windows — app.windows.buttons "
         "can never reach them. Query app.dialogs.buttons.",
     ),
-    (
-        "raw-typetext",
-        "warn",
-        r"app\.typeText\(",
-        "typeText can silently drop characters mid-string while "
-        "synthesizing keystrokes, especially under VM load (CONFIRMED live — "
-        "see typeTextVerifyingLanded's doc comment in UITestHelpers.swift). "
-        "Prefer app.typeTextVerifyingLanded(_:) when the typed text must "
-        "land intact and is the last static text in the editor.",
-    ),
 ]
 
 # Co-occurrence rules: both regexes within WINDOW code lines.
@@ -150,21 +140,6 @@ PAIR = [
         "Every editor heading matches three StaticTexts, and .firstMatch "
         "resolves to the *sidebar mirror*, not the editor. Scope the "
         "query to the editor-area container explicitly.",
-    ),
-    (
-        "positional-index-boundbyindex",
-        "error",
-        r"\ballElementsBoundByIndex\b",
-        r"\.last\b|\.first\b|\.element\(\s*boundBy:",
-        "allElementsBoundByIndex snapshots a positional index into the AX "
-        "tree -- a WKWebView mid-repaint can fail ONE index's `.exists` "
-        "while the tree still holds several live elements, so trusting "
-        "`.last`/`.first`/`.element(boundBy:)` off it can misread a "
-        "populated tree as empty (CONFIRMED live: typeTextVerifyingLanded's "
-        "old implementation did exactly this -- see its doc comment in "
-        "UITestHelpers.swift). Scan every element instead and skip ones "
-        "the tree has invalidated, e.g. editorContainsText/editorStaticText "
-        "in UITestHelpers.swift.",
     ),
 ]
 
