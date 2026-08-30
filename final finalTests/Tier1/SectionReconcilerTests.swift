@@ -32,9 +32,7 @@ struct SectionReconcilerTests {
         isPseudoSection: Bool = false,
         startOffset: Int = 0,
         markdownContent: String = "",
-        wordCount: Int = 10,
-        isBibliography: Bool = false,
-        isNotes: Bool = false
+        wordCount: Int = 10
     ) -> ParsedHeader {
         ParsedHeader(
             position: position,
@@ -43,9 +41,7 @@ struct SectionReconcilerTests {
             isPseudoSection: isPseudoSection,
             startOffset: startOffset,
             markdownContent: markdownContent,
-            wordCount: wordCount,
-            isBibliography: isBibliography,
-            isNotes: isNotes
+            wordCount: wordCount
         )
     }
 

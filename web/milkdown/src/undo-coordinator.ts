@@ -160,16 +160,7 @@ export function clearStructuralUndoRegistry(): void {
  * refreshes it to the current top-of-stack pointers regardless. Bridge target for
  * `window.FinalFinal.clearStructuralUndoState`, called by Swift from
  * `UnifiedUndoService.record()`'s eviction path via `ContentView`'s `clearEditorHistories`
- * closure.
- *
- * Mount-flash fix (doc-open-blank-regression follow-up): deliberately does NOT begin/end a
- * native cloak (webView.alphaValue hide/show, MilkdownCoordinator+MessageHandlers.swift's
- * beginCloak/endCloak) even though it calls `clearEditorHistory()`, the same function
- * `resetForProjectSwitch()` uses (which DOES cloak, at ITS OWN Swift call site). This path
- * fires on ordinary undo-stack eviction during normal editing (op #51+, ring-buffer capacity)
- * -- a routine, frequent event, not a structural document rebuild -- and must have zero
- * flicker. See `clearEditorHistory()`'s own doc comment (api-content.ts) for the matching
- * note on its side. */
+ * closure. */
 export function clearStructuralUndoState(opId: string): void {
   const editorInstance = getEditorInstance();
   if (editorInstance) {

@@ -213,228 +213,31 @@ struct SectionReconciler: Sendable {
             }
         }
 
-        // Matched flagged rows THIS PASS, per type -- i.e. whichever row(s)
-        // findBibliographyMatch/findNotesMatch actually chose as the winner. Non-empty is
-        // exactly the "bibliographyRowMatched"/"notesRowMatched" condition
-        // isExemptFromDeleteSweep checks (see its doc comment for why this row-specific
-        // evidence, rather than "some flagged row exists somewhere", is what makes it safe to
-        // stop exempting an unmatched DUPLICATE flagged row) -- kept as the full row list
-        // rather than a bare Bool because duplicateSurvivor below also needs to know WHICH
-        // row a loser's data should migrate onto, not just whether one exists.
-        let matchedBibliographyRows = sortedDB.filter { $0.isBibliography && matchedDBIds.contains($0.id) }
-        let matchedNotesRows = sortedDB.filter { $0.isNotes && matchedDBIds.contains($0.id) }
-        let bibliographyRowMatched = !matchedBibliographyRows.isEmpty
-        let notesRowMatched = !matchedNotesRows.isEmpty
-
-        // Unmatched DB sections were deleted from markdown, EXCEPT bibliography/notes
-        // sections which are managed separately by their sync services (see
-        // isExemptFromDeleteSweep) -- UNLESS a stale flagged row must be swept because
-        // either (a) the flag is verifiably gone via BOTH signals (bibliographyGone/
-        // notesGone), an ordinary `.delete` exactly like any other unmatched row since
-        // there's no winning sibling this pass to migrate onto, or (b) it's a genuine
-        // DUPLICATE that lost this pass's match to a sibling row (duplicateSurvivor below
-        // finds that sibling), swept via `.deleteDuplicate` instead -- which migrates the
-        // loser's real status/tags/wordGoal onto the survivor and reassigns its
-        // annotations rather than silently discarding them along with the row (see
-        // `SectionChange.deleteDuplicate`'s doc comment).
+        // Unmatched DB sections were deleted from markdown
+        // EXCEPT bibliography/notes sections which are managed separately by their sync
+        // services -- UNLESS the bibliography/notes row is verifiably gone via BOTH signals
+        // (bibliographyGone/notesGone above), in which case a stale flagged row must be swept
+        // away like any other unmatched row instead of staying immortal.
         for section in sortedDB where !matchedDBIds.contains(section.id) {
-            if isExemptFromDeleteSweep(
-                section,
-                bibliographyGone: bibliographyGone,
-                notesGone: notesGone,
-                bibliographyRowMatched: bibliographyRowMatched,
-                notesRowMatched: notesRowMatched
-            ) { continue }
-
-            if let survivor = duplicateSurvivor(
-                for: section,
-                matchedBibliographyRows: matchedBibliographyRows,
-                matchedNotesRows: matchedNotesRows
-            ) {
-                changes.append(.deleteDuplicate(
-                    loserId: section.id,
-                    survivorId: survivor.id,
-                    survivorUpdates: mergeSurvivorUpdates(loser: section, survivor: survivor)
-                ))
-                // Distinguishes a duplicate-sweep delete from an ordinary one below, so a
-                // future "my section's tags/status/word-goal vanished" report is
-                // diagnosable from the persistent DiagnosticLogFile sink alone -- title
-                // itself stays excluded for the same reason as the ordinary case.
-                DebugLog.log(.sync, "[SectionReconciler] Deleted duplicate id=\(section.id.prefix(8)) " +
-                    "order=\(section.sortOrder) survivor=\(survivor.id.prefix(8)) status=\(section.status)")
-            } else {
-                changes.append(.delete(id: section.id))
-                // Deliberately excludes title: it's a literal excerpt of the user's
-                // manuscript, and this line reaches the persistent DiagnosticLogFile
-                // sink (Release builds included) whenever the user's Diagnostics
-                // toggle is on. id+sortOrder+pseudo+status is enough to correlate
-                // against a read-only DB inspection (see CLAUDE.md) if a mis-steal
-                // needs investigating; it can't distinguish that from an ordinary
-                // user-initiated deletion on its own, but this is a correlation key,
-                // not a verdict.
-                DebugLog.log(.sync, "[SectionReconciler] Deleted id=\(section.id.prefix(8)) " +
-                    "order=\(section.sortOrder) pseudo=\(section.isPseudoSection) status=\(section.status)")
-            }
+            if section.isBibliography && !bibliographyGone { continue }
+            if section.isNotes && !notesGone { continue }
+            changes.append(.delete(id: section.id))
+            // Deliberately excludes title: it's a literal excerpt of the user's
+            // manuscript, and this line reaches the persistent DiagnosticLogFile
+            // sink (Release builds included) whenever the user's Diagnostics
+            // toggle is on. id+sortOrder+pseudo+status is enough to correlate
+            // against a read-only DB inspection (see CLAUDE.md) if a mis-steal
+            // needs investigating; it can't distinguish that from an ordinary
+            // user-initiated deletion on its own, but this is a correlation key,
+            // not a verdict.
+            DebugLog.log(.sync, "[SectionReconciler] Deleted id=\(section.id.prefix(8)) " +
+                "order=\(section.sortOrder) pseudo=\(section.isPseudoSection) status=\(section.status)")
         }
 
         return changes
     }
 
-    // MARK: - Private Delete-Sweep Logic
-
-    /// Whether an unmatched `section` must be exempted from the delete sweep rather than
-    /// hard-deleted like an ordinary orphaned row.
-    ///
-    /// (a) Safety of the new, row-specific check: before this fix, EITHER inline check in
-    /// the sweep loop was `section.isBibliography && !bibliographyGone` / `section.isNotes
-    /// && !notesGone` alone -- exempting an unmatched flagged row whenever the flag survived
-    /// ANYWHERE in the document, not just on this particular row. That was fine when at most
-    /// one row could ever carry the flag, because "the flag survives" and "this row is the
-    /// surviving one" were the same fact. It stops being fine the moment a SECOND flagged row
-    /// exists (a duplicate created by some other, out-of-scope bug): the old check exempted
-    /// BOTH rows forever, so an orphaned duplicate that never matches any header became a
-    /// permanent duplicate sidebar card. Tightening the exemption to also require
-    /// `!bibliographyRowMatched` / `!notesRowMatched` (computed by the caller from
-    /// `matchedDBIds`) only works because Step 1's `bestFlaggedCandidate` makes "the matched
-    /// row" an evidence-based pick (passesMatchGate, then proximity to `header.position`) —
-    /// before that fix, the matched row was chosen by an arbitrary `sortOrder`-order
-    /// `.first(where:)`, and destroying the loser's row (rather than merely exempting it, as
-    /// today) would risk silently discarding a real row's `status`/`tags`/`wordGoal`, none of
-    /// which `buildUpdates` ever copies onto the survivor.
-    ///
-    /// (b) The zero-matched case is deliberately UNCHANGED: when no flagged row matched
-    /// anything this pass (`bibliographyRowMatched`/`notesRowMatched` both false) but the
-    /// flag hasn't been proven gone (`bibliographyGone`/`notesGone` both false) -- e.g. the
-    /// very first sync pass after the row was created, before its heading has been parsed
-    /// yet, or a pass where the owning sync service (BibliographySyncService/
-    /// NotesSyncService) hasn't run -- this still returns `true` (exempt), exactly like the
-    /// pre-fix behavior. "The sync service owns this row and the header just hasn't been
-    /// parsed yet" must not be swept, and nothing here narrows that case: it only narrows the
-    /// case where a DIFFERENT row of the same flag already claimed the match.
-    private func isExemptFromDeleteSweep(
-        _ section: Section,
-        bibliographyGone: Bool,
-        notesGone: Bool,
-        bibliographyRowMatched: Bool,
-        notesRowMatched: Bool
-    ) -> Bool {
-        if section.isBibliography && !bibliographyGone && !bibliographyRowMatched { return true }
-        if section.isNotes && !notesGone && !notesRowMatched { return true }
-        return false
-    }
-
-    /// If `section` is being swept specifically because a SIBLING flagged row already won
-    /// this pass's match (the `.deleteDuplicate` case), returns that sibling -- the survivor
-    /// `section`'s real data should migrate onto before `section` is deleted. Returns `nil`
-    /// for an ordinary sweep with no survivor to migrate onto: either `section` isn't
-    /// flagged at all, or its flag is verifiably gone (bibliographyGone/notesGone) and there
-    /// was no winner this pass for anything to migrate onto.
-    ///
-    /// `matchedBibliographyRows`/`matchedNotesRows` being non-empty already IS the
-    /// "bibliographyRowMatched"/"notesRowMatched" condition `isExemptFromDeleteSweep` checked
-    /// to let `section` reach here at all -- so whenever `section.isBibliography` is true and
-    /// this function is reached, `matchedBibliographyRows` is guaranteed non-empty (mirrored
-    /// for isNotes). When more than one sibling matched this pass (a rare multi-header edge
-    /// case -- SectionSyncService+Parsing.swift's `pendingNotesCandidates` documents that a
-    /// single pass CAN evidence-confirm more than one isNotes-flagged heading), the nearest
-    /// one by sortOrder distance is preferred, `id` as a final deterministic tiebreak --
-    /// mirroring `bestFlaggedCandidate`'s own tiebreak style below.
-    ///
-    /// Uses `if`/`else if`, not two independent checks, so a row somehow flagged BOTH
-    /// isBibliography and isNotes would only ever be evaluated against the bibliography
-    /// candidates. Confirmed latent, not reachable from any current production code path (both
-    /// notes-candidate branches in SectionSyncService+Parsing.swift hard-code
-    /// `isBibliography: false`) -- not guarded against further here, per this task's scope.
-    private func duplicateSurvivor(
-        for section: Section,
-        matchedBibliographyRows: [Section],
-        matchedNotesRows: [Section]
-    ) -> Section? {
-        let candidates: [Section]
-        if section.isBibliography {
-            candidates = matchedBibliographyRows
-        } else if section.isNotes {
-            candidates = matchedNotesRows
-        } else {
-            return nil
-        }
-        return candidates.min { lhs, rhs in
-            let lhsDistance = abs(lhs.sortOrder - section.sortOrder)
-            let rhsDistance = abs(rhs.sortOrder - section.sortOrder)
-            if lhsDistance != rhsDistance { return lhsDistance < rhsDistance }
-            return lhs.id < rhs.id
-        }
-    }
-
-    /// Builds the `SectionUpdates` a `.deleteDuplicate` change carries to migrate a loser's
-    /// real user data onto its survivor -- status/tags/wordGoal, independently, and ONLY for
-    /// a field where the survivor is still at its own default (`.next`/`[]`/`nil`
-    /// respectively). A survivor's own real data is never clobbered by the loser's: if both
-    /// rows carry real, DIFFERENT values for the same field, the survivor's own value
-    /// silently wins (no update emitted for that field) -- there's no way to know which is
-    /// "more real" from Section data alone, and the survivor is definitionally the row
-    /// findBibliographyMatch/findNotesMatch actually chose as this pass's live row. Annotation
-    /// reassignment is handled separately by the caller (`SectionChange.deleteDuplicate`
-    /// itself, applied in `applySectionChanges`), independent of whether there's anything to
-    /// merge here.
-    ///
-    /// Undocumented-until-now coupling worth pinning: `survivor` here is the PRE-update
-    /// snapshot from `sortedDB` (this pass's matched row), not whatever `buildUpdates` may
-    /// have already queued an `.update` for earlier in this same `reconcile()` call -- reading
-    /// "is the survivor still at its default" from that snapshot is only safe because
-    /// `buildUpdates` never sets `status`/`tags`/`wordGoal` on the survivor's own `.update`
-    /// change (see that function above), so the snapshot and the field values the survivor
-    /// will actually end up with post-`applySectionChanges` never diverge for these three
-    /// fields specifically. If `buildUpdates` is ever extended to touch any of them, this
-    /// function's default-check would need to account for that pending update too.
-    private func mergeSurvivorUpdates(loser: Section, survivor: Section) -> SectionUpdates {
-        var updates = SectionUpdates()
-        if survivor.status == .next && loser.status != .next {
-            updates.status = loser.status
-        }
-        if survivor.tags.isEmpty && !loser.tags.isEmpty {
-            updates.tags = loser.tags
-        }
-        if survivor.wordGoal == nil && loser.wordGoal != nil {
-            updates.wordGoal = loser.wordGoal
-        }
-        return updates
-    }
-
     // MARK: - Private Matching Logic
-
-    /// Picks the best-evidenced already-flagged (`isBibliography`/`isNotes`) row to treat
-    /// as THIS header's row, when more than one flagged row exists. Shared by
-    /// `findBibliographyMatch` and `findNotesMatch`'s "already flagged" branch.
-    ///
-    /// This is a PREFERENCE among flagged candidates, never an admission gate — it mirrors
-    /// `findMatch`'s Tier 3 tiebreak design (title/evidence as a `.min` tiebreak, never a
-    /// filter that can reject every candidate and return nil). With exactly one flagged
-    /// candidate — the overwhelmingly common case, and every existing call site before this
-    /// function existed — `min` over a single-element array returns that element
-    /// unconditionally, regardless of whether it clears `passesMatchGate`. Behavior for that
-    /// case is therefore byte-for-byte unchanged from the old `unmatched.first(where:)`.
-    ///
-    /// Only matters once TWO OR MORE rows share the flag — a duplicate created by some other
-    /// bug (out of scope for this fix; see the delete-sweep doc comment below for why picking
-    /// wrong here now has real consequences). Among duplicates, prefer one `passesMatchGate`
-    /// evidence over none, then prefer the row whose `sortOrder` sits closest to the header's
-    /// parsed `position`, and only then fall back to `id` (not `sortOrder`) to keep the
-    /// result deterministic when even distance ties: two rows CAN share a `sortOrder` (it's
-    /// not a unique key), and `id` is the only field guaranteed to be a total order across
-    /// them -- `sortOrder` alone would be incomparable for such a pair, leaving the winner
-    /// dependent on `dbSections`' incoming order, which the caller doesn't guarantee.
-    private func bestFlaggedCandidate(_ header: ParsedHeader, among flagged: [Section]) -> Section? {
-        flagged.min { lhs, rhs in
-            let lhsRelated = passesMatchGate(header, lhs)
-            let rhsRelated = passesMatchGate(header, rhs)
-            if lhsRelated != rhsRelated { return lhsRelated }
-            let lhsDistance = abs(lhs.sortOrder - header.position)
-            let rhsDistance = abs(rhs.sortOrder - header.position)
-            if lhsDistance != rhsDistance { return lhsDistance < rhsDistance }
-            return lhs.id < rhs.id
-        }
-    }
 
     /// Dedicated match for the machine-managed bibliography heading.
     ///
@@ -470,7 +273,7 @@ struct SectionReconciler: Sendable {
     ) -> Section? {
         let unmatched = sections.filter { !excluding.contains($0.id) }
 
-        if let flagged = bestFlaggedCandidate(header, among: unmatched.filter { $0.isBibliography }) {
+        if let flagged = unmatched.first(where: { $0.isBibliography }) {
             return flagged
         }
 
@@ -508,7 +311,7 @@ struct SectionReconciler: Sendable {
     ) -> Section? {
         let unmatched = sections.filter { !excluding.contains($0.id) }
 
-        if let flagged = bestFlaggedCandidate(header, among: unmatched.filter { $0.isNotes }) {
+        if let flagged = unmatched.first(where: { $0.isNotes }) {
             return flagged
         }
 

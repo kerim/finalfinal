@@ -47,9 +47,6 @@ import {
   scrollToBlock,
   setContent,
   setContentWithBlockIds,
-  signalMountPaintComplete,
-  signalPaintComplete,
-  signalPaintCompleteDirect,
   syncBlockIds,
   updateHeadingLevels,
 } from './api-content';
@@ -333,13 +330,6 @@ async function initEditor() {
         `content lost: pending block content (len=${pending.markdown.length}, blocks=${pending.blockIds.length}) discarded after Editor.make().create() failure`
       );
     }
-    // Mount-flash fix: a failed Editor.make().create() must not leave Swift's `.mount` cloak
-    // (beginCloak, armed before this WebView started loading) permanently hiding the WebView
-    // -- there is no `view.dom` to force-repaint here (the editor never mounted), so post
-    // directly rather than via signalPaintComplete's double-RAF wrapper (same shape
-    // resetForProjectSwitch()'s own failure paths use, api-content.ts). Swift's per-token
-    // fallback timer is the real backstop if even this direct post is somehow lost.
-    signalPaintCompleteDirect({ reason: 'mount' });
     throw e;
   }
 
@@ -446,18 +436,6 @@ async function initEditor() {
   // above existed).
   setEditorMounted(true);
   replayPendingPreMountContent();
-
-  // Mount-flash fix (doc-open-blank-regression follow-up): now that rootCtx correctly
-  // targets #editor (see the ctx.set(rootCtx, root) comment above), Milkdown's internal
-  // container-swap teardown/rebuild during EditorView construction is visible against the
-  // real editor pane, not document.body. Swift's `beginCloak(.mount)`
-  // (MilkdownCoordinator+MessageHandlers.swift), armed before this WebView started loading
-  // (MilkdownEditor.swift's makeNSView fresh-view branch), stays in effect until this signal
-  // arrives -- forcing a real repaint first so the un-hide doesn't just reveal ANOTHER stale
-  // frame. No token threaded through here (unlike resetForProjectSwitch()): a fresh WKWebView
-  // only ever runs initEditor() once per Coordinator instance, so at most one `.mount` cloak
-  // can ever be outstanding on a given Coordinator -- reason-based resolution is unambiguous.
-  signalPaintComplete(view.dom, { reason: 'mount' });
 
   // Handle auto-correct: intercept replacement text input to prevent heading corruption
   // macOS auto-correct uses DOM manipulation that can confuse ProseMirror's node structure,
@@ -651,11 +629,6 @@ window.FinalFinal = {
   // Cleanup API
   resetEditorState,
   resetForProjectSwitch,
-  // Mount-flash fix (redesign after review round): on-demand release signal for the
-  // claimed-preloaded-WebView path -- see signalMountPaintComplete's doc comment
-  // (api-content.ts) and pollMountCloakReleaseForClaimedView's (Swift-side caller,
-  // MilkdownCoordinator+MessageHandlers.swift).
-  signalMountPaintComplete,
   // Spellcheck API
   setSpellcheckResults: setSpellcheckResultsImpl,
   enableSpellcheck: enableSpellcheckImpl,

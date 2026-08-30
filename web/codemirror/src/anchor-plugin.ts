@@ -23,8 +23,8 @@
  *     Milkdown side's atom-delete fallback, same user-visible result — see that keymap's own
  *     doc comment for the full mechanism, the exact reachable key set, and two explicit
  *     non-goals).
- *   - Line-relocation protection — see `bibliographyEndLineRelocationKeymap` below (the
- *     Alt-Arrow / Shift-Alt-Arrow move-line/copy-line family). CodeMirror's
+ *   - Line-relocation/whole-line-delete protection — see `bibliographyEndLineRelocationKeymap`
+ *     and the `Shift-Mod-k` binding inside `bibliographyEndDeleteKeymap` below. CodeMirror's
  *     move-line/copy-line/delete-line commands bypass the atomic-range mechanism entirely
  *     (they act on whole document lines, with no `skipAtomic` involved at all), so they can
  *     silently relocate or duplicate the invisible terminator onto the wrong line — worse than
@@ -39,12 +39,8 @@
  *   terminator instead of before it
  * - Delete/Backspace immediately adjacent to the bibliography terminator is a no-op instead
  *   of silently destroying it
- * - Moving or duplicating the terminator's own line (Alt-Arrow / Shift-Alt-Arrow) is a no-op
- *   instead of silently relocating or duplicating it. (Cmd-Shift-K/`deleteLine` was guarded here
- *   too until 2026-08-22, when it was dropped along with `Shift-Mod-k` from main.ts's
- *   `defaultKeymap` registration entirely — that chord is this app's native "Insert Citation"
- *   menu shortcut, which CodeMirror's own binding was silently winning the race against; see the
- *   "REMOVED" comment above `bibliographyEndLineRelocationKeymap` below.)
+ * - Moving, duplicating, or deleting the terminator's own line (Alt-Arrow / Shift-Alt-Arrow /
+ *   Cmd-Shift-K) is a no-op instead of silently relocating, duplicating, or deleting it
  */
 
 import { type EditorState, type Extension, Prec, RangeSetBuilder } from '@codemirror/state';
@@ -421,11 +417,15 @@ export function isBibliographyEndMarkerAdjacent(state: EditorState, direction: '
 // land the cursor on the terminator's line with no visual warning at all, since the line looks
 // empty (the marker is hidden) rather than looking like something worth avoiding.
 //
-// `deleteLine`/`Shift-Mod-k` was guarded here too, using this same line-based predicate, until
-// 2026-08-22 — see the "REMOVED" comment above `bibliographyEndLineRelocationKeymap` below for
-// why it was dropped (that chord is this app's native "Insert Citation" menu shortcut, and
-// `main.ts` now filters `Shift-Mod-k` out of `defaultKeymap` entirely, so there's no more
-// `deleteLine` danger on that key left to guard against here).
+// One more asymmetry worth naming plainly, per this section's own "count things honestly"
+// standard above: `Shift-Mod-k` is bound below using the SAME line-based predicate as the
+// Alt-Arrow family (`isBibliographyEndMarkerLine`), not the edge-based
+// `isBibliographyEndMarkerAdjacent` used everywhere else in `bibliographyEndDeleteKeymap`. That's
+// deliberate, not an inconsistency: `deleteLine` deletes whatever line the cursor is ON,
+// regardless of where in that line the cursor sits — an edge-adjacency check would miss a cursor
+// sitting in the MIDDLE of the marker's line (impossible today since the atomic range makes the
+// cursor skip over the marker's interior, but this predicate doesn't rely on that holding, and
+// it's the structurally correct check for what `deleteLine` actually does either way).
 
 /**
  * Whether the cursor's current line is a bibliography-end terminator's line — i.e. the line
@@ -462,7 +462,8 @@ export function isBibliographyEndMarkerLine(state: EditorState): boolean {
  * Backspace/Delete/etc. bindings on plain array order.
  *
  * Each binding returns `true` WITHOUT dispatching a transaction exactly when the keystroke would
- * otherwise reach the atomic-range-snap danger described above — a deliberate no-op — and
+ * otherwise reach the atomic-range-snap danger described above (or, for `Shift-Mod-k` alone, the
+ * whole-line `deleteLine` danger described in the section above) — a deliberate no-op — and
  * `false` everywhere else, falling through to normal editing (and to defaultKeymap's own
  * binding) untouched.
  */
