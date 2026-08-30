@@ -174,13 +174,8 @@ extension MilkdownEditor.Coordinator {
     nonisolated func handleNavigationMessage(_ message: WKScriptMessage) -> Bool {
         switch message.name {
         case "paintComplete":
-            // Mount-flash fix (doc-open-blank-regression follow-up): the body now carries an
-            // optional `reason`/`token` pair the cloak-ownership system uses to resolve which
-            // outstanding cloak this release is for -- see handlePaintComplete's doc comment
-            // (MilkdownCoordinator+MessageHandlers.swift).
-            let body = message.body as? [String: Any]
             Task { @MainActor in
-                self.handlePaintComplete(body: body)
+                self.handlePaintComplete()
             }
             return true
 

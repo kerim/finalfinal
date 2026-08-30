@@ -60,7 +60,7 @@ extension BlockParser {
     /// is the caption and the attribute is the alt. Its absence signals a pre-fix document,
     /// where bracket text is (as before) the alt — any caption for that case lives in the
     /// legacy `<!-- caption: ... -->` comment, recovered separately by
-    /// `Database+BlocksReplace.swift`'s gap-fill (not here).
+    /// `Database+BlocksReplace+Preservation.swift`'s gap-fill (not here).
     static func parseImageFragmentMeta(from fragment: String) -> ImageFragmentMeta {
         // Bracket text uses an escape-aware character class (`(?:[^\]\\]|\\.)*`, not a bare
         // `[^\]]*`) so a caption containing an escaped bracket (`\]`) doesn't prematurely end

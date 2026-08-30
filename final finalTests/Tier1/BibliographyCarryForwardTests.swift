@@ -211,7 +211,7 @@ struct BibliographyCarryForwardTests {
         #expect(after.count == 3)
         // t-341706cb round 8: `applyPreservedHeading`'s restore gate now ALSO requires a
         // genuine, non-empty, terminator-bounded run beneath the heading (see
-        // `hasGenuineBibliographyRun`'s doc comment on `Database+BlocksReplace.swift`) — not
+        // `hasGenuineBibliographyRun`'s doc comment on `Database+BlocksReplace+Preservation.swift`) — not
         // just `!parseFoundBibliographyHeading` alone, as before. In this exact damaged shape
         // (heading flagged, entries not), `assembleMarkdownForEditor` never even emits a
         // terminator at all (the LAST block, "Entry two.", isn't flagged, so there is nothing

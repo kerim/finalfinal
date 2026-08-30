@@ -54,7 +54,7 @@ import Foundation
 ///      section, so the terminator bounds a LATER section and is not evidence for this
 ///      candidate at all. Select nothing. Do NOT truncate-and-retry, and do NOT fall through to
 ///      an earlier candidate: this is stricter than `carryBibliographyFlagForward`, which merely
-///      truncates its flagging at a heading, and stricter than `Database+BlocksReplace.swift`'s
+///      truncates its flagging at a heading, and stricter than `Database+BlocksReplace+Preservation.swift`'s
 ///      `hasGenuineBibliographyRun`, which mirrors this same rule at the `[Block]` level.
 ///      Deliberate: those two decide how far an ALREADY-restored flag travels; this decides
 ///      whether a heading may be flagged AT ALL, and over-flagging a user's own heading is the
@@ -65,7 +65,7 @@ import Foundation
 ///      fall through to an earlier candidate.
 ///    - Otherwise -> select the candidate.
 ///
-/// WHY SUPPRESSION, NOT FALLBACK: `Database+BlocksReplace.swift`'s own KNOWN LIMITATION comment
+/// WHY SUPPRESSION, NOT FALLBACK: `Database+BlocksReplace+Preservation.swift`'s own KNOWN LIMITATION comment
 /// (on `carryBibliographyFlagForward`) documents the empty-run shape as a REAL, app-produced
 /// state: on a document already in the damaged state (heading flagged, entries not), the
 /// assembler places the terminator directly after the heading — exactly "last candidate has an
@@ -91,7 +91,7 @@ import Foundation
 ///    select on, so skipping that coupled fix silently loses its bibliography flag entirely.
 /// 2. A document already in the damaged state (heading flagged, entries not) BEFORE this fix
 ///    ever ran does NOT stay "exactly as damaged as before" — it changes shape. On its next
-///    full reparse, `Database+BlocksReplace.swift`'s restore gate (`applyPreservedHeading`'s
+///    full reparse, `Database+BlocksReplace+Preservation.swift`'s restore gate (`applyPreservedHeading`'s
 ///    `restoringBibliography` parameter, gated by `hasGenuineBibliographyRun`) requires the
 ///    SAME evidence this selector requires: a genuine, non-empty, terminator-bounded run with
 ///    no interior heading. A document in this damaged shape has none — `assembleMarkdownForEditor`

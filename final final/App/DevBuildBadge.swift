@@ -65,17 +65,8 @@
         /// of window that has a titlebar and hasn't been decorated already.
         /// Idempotency is checked against the window's own accessory list rather
         /// than a static set, so closed windows need no bookkeeping.
-        ///
-        /// Excludes `NSPanel` (and its subclasses `NSSavePanel`/`NSOpenPanel`,
-        /// plus the print panel) so system panel titles are never rewritten —
-        /// an e2e test that scopes an accessibility query to an exact system
-        /// panel title would otherwise start failing the moment the badge
-        /// appends its suffix shortly after the panel becomes main. None of
-        /// the app's own windows are `NSPanel` subclasses, so this only
-        /// excludes system panels, not app UI.
         private static func decorate(_ window: NSWindow) {
             guard window.styleMask.contains(.titled), window.canBecomeMain else { return }
-            guard !(window is NSPanel) else { return }
             guard !window.titlebarAccessoryViewControllers.contains(where: { $0.view is PillView }) else { return }
 
             window.subtitle = GitInfo.devLabel

@@ -104,15 +104,6 @@ import type { Block, ExpectedBlockMeta, ImageBlockMeta } from './types';
  * exactly one plugin under that key regardless of how Milkdown's `history` ctx wrapper
  * constructed it -- no assumption about array position, only about there being one plugin
  * registered under that name.
- *
- * Mount-flash fix (doc-open-blank-regression follow-up): this function itself does NOT
- * begin/end a native cloak, even though `resetForProjectSwitch()` below (its structural-
- * rebuild caller) does. The cloak lives at `resetForProjectSwitch()`'s OWN call site
- * (ContentView+ProjectLifecycle.swift's `handleProjectOpened()`) instead, because this
- * function has a SECOND caller -- `clearStructuralUndoState()` in undo-coordinator.ts --
- * that fires on ordinary undo-stack eviction during normal editing (op #51+, ring-buffer
- * capacity) and must NOT gain a new flicker. See that function's own doc comment for the
- * matching note on its side.
  */
 export function clearEditorHistory(view: EditorView): void {
   const pluginsByKey = (view.state as unknown as { config: { pluginsByKey?: Record<string, Plugin> } }).config
@@ -187,77 +178,6 @@ function forceCompositorRepaint(view: { dom: HTMLElement }): void {
       scrollParent.scrollTop = 0;
     });
   });
-}
-
-/**
- * Double-RAF + micro-scroll force-repaint, THEN signal Swift via the `paintComplete`
- * postMessage channel once that repaint has actually happened. Same technique as
- * `forceCompositorRepaint` above (WKWebView's compositor can keep showing a stale frame for
- * roughly a second after a large document replace -- see that function's doc comment), but
- * this variant additionally posts the signal Swift's cloak-ownership system
- * (`beginCloak`/`endCloak` in MilkdownCoordinator+MessageHandlers.swift) is listening for
- * before it un-hides the WKWebView.
- *
- * Extracted so the double-RAF + micro-scroll + `paintComplete`-post sequence exists in
- * exactly one place instead of being hand-copied a third time: `setContent()`'s zoom branch
- * below used to inline this directly, and `resetForProjectSwitch()` needed the identical
- * sequence added for the first-open/project-switch mount flash fix.
- *
- * `extra` is merged into the postMessage body. Zoom's two callers pass nothing (`{}`) --
- * their body must stay exactly `{scrollHeight, timestamp}` with NO `reason` key, because
- * Swift's `resolveCloakToken` treats a missing/unrecognized `reason` as the legacy `.zoom`
- * case (that behavior predates this cloak-token system and must not change). Newer,
- * non-zoom callers pass `{ reason: 'projectReset', token }` etc.
- */
-export function signalPaintComplete(dom: HTMLElement, extra: Record<string, unknown> = {}): void {
-  requestAnimationFrame(() => {
-    requestAnimationFrame(() => {
-      // CRITICAL: Force compositor refresh with micro-scroll
-      // WKWebView's compositor caches the previous content.
-      // A scroll triggers compositor refresh, showing the new content.
-      window.scrollTo({ top: 1, left: 0, behavior: 'instant' });
-      window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
-      dom.scrollTop = 0;
-
-      if (typeof (window as any).webkit?.messageHandlers?.paintComplete?.postMessage === 'function') {
-        (window as any).webkit.messageHandlers.paintComplete.postMessage({
-          scrollHeight: dom.scrollHeight,
-          timestamp: Date.now(),
-          ...extra,
-        });
-      }
-    });
-  });
-}
-
-/**
- * Direct (no RAF, no scroll) `paintComplete` post -- for failure paths where there may be no
- * live `view.dom` to reliably force-repaint at all (must-fix #4, review round 2). Used by
- * `resetForProjectSwitch()`'s own failure paths below, and by `main.ts`'s `initEditor()`
- * catch block for the equivalent mount-failure case -- a failed mount/reset must not leave
- * Swift's cloak waiting out its full ~2.5s fallback when there's nothing to actually repaint.
- */
-export function signalPaintCompleteDirect(extra: Record<string, unknown> = {}): void {
-  if (typeof (window as any).webkit?.messageHandlers?.paintComplete?.postMessage === 'function') {
-    (window as any).webkit.messageHandlers.paintComplete.postMessage({ timestamp: Date.now(), ...extra });
-  }
-}
-
-/**
- * On-demand mount-paint signal for Swift's claimed-preloaded-WebView path (mount-flash fix,
- * redesign after review round) -- see `pollMountCloakReleaseForClaimedView`'s doc comment
- * (MilkdownCoordinator+MessageHandlers.swift) for why `initEditor()`'s own one-shot post
- * (main.ts) cannot be relied on for a view that was preloaded rather than freshly created:
- * that post may already have fired (or silently no-opped -- no `paintComplete` handler
- * registered yet during preload) well before any Swift-side cloak or handler existed. Swift
- * calls this explicitly, exactly once, only after confirming `isEditorReady()` itself, so
- * `getEditorInstance()` below is expected to be non-null; the guard is defensive only.
- */
-export function signalMountPaintComplete(): void {
-  const editorInstance = getEditorInstance();
-  if (!editorInstance) return;
-  const view = editorInstance.ctx.get(editorViewCtx);
-  signalPaintComplete(view.dom, { reason: 'mount' });
 }
 
 /** Re-snapshot in the next animation frame, then unpause sync.
@@ -439,11 +359,28 @@ export function setContent(markdown: string, options?: { scrollToStart?: boolean
         void view.dom.offsetHeight;
         void document.body.offsetHeight;
 
-        // Wait for actual paint to complete using double RAF, then signal Swift -- see
-        // signalPaintComplete's doc comment for the shared double-RAF + micro-scroll +
-        // paintComplete-post sequence (also used by resetForProjectSwitch() and
-        // initEditor()'s post-mount settle, main.ts).
-        signalPaintComplete(view.dom);
+        // Wait for actual paint to complete using double RAF
+        // First RAF: queued after current frame
+        // Second RAF: queued after the paint of the first frame
+        // This ensures the browser has actually rendered the content
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            // CRITICAL: Force compositor refresh with micro-scroll
+            // WKWebView's compositor caches the previous content.
+            // A scroll triggers compositor refresh, showing the new content.
+            window.scrollTo({ top: 1, left: 0, behavior: 'instant' });
+            window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+            view.dom.scrollTop = 0;
+
+            // Signal Swift that paint is complete
+            if (typeof (window as any).webkit?.messageHandlers?.paintComplete?.postMessage === 'function') {
+              (window as any).webkit.messageHandlers.paintComplete.postMessage({
+                scrollHeight: view.dom.scrollHeight,
+                timestamp: Date.now(),
+              });
+            }
+          });
+        });
       }
     });
     setCurrentContent(markdown);
@@ -511,16 +448,7 @@ export function resetEditorState(): void {
   resetForProjectSwitch();
 }
 
-/**
- * @param cloakToken Optional cloak token minted by Swift's `beginCloak(.projectReset)`
- *   (MilkdownCoordinator+MessageHandlers.swift), echoed back verbatim in this call's
- *   `paintComplete` post so Swift can resolve the release to the EXACT cloak this call is
- *   settling -- not just "the .projectReset reason" (which would be ambiguous if a second
- *   project switch/open starts before the first one's mount flash has finished cloaking,
- *   e.g. rapid A→B→A switching). Absent for `resetEditorState()`'s project-CLOSE caller
- *   below, which has no Swift-side cloak to release.
- */
-export function resetForProjectSwitch(cloakToken?: number): void {
+export function resetForProjectSwitch(): void {
   clearContentPushTimer(); // Defense in depth — prevent stale timer from old project
   const editorInstance = getEditorInstance();
 
@@ -542,10 +470,6 @@ export function resetForProjectSwitch(cloakToken?: number): void {
 
   // Clear CAYW and citation state
   resetCAYWState();
-
-  // Merged into whichever paintComplete post actually fires below -- success (RAF'd, via
-  // signalPaintComplete) or either failure path (direct, via signalPaintCompleteDirect).
-  const resetExtra = cloakToken != null ? { reason: 'projectReset', token: cloakToken } : { reason: 'projectReset' };
 
   // Clear document via normal transaction (preserves ProseMirror's internal layout caches,
   // unlike updateState() which destroys them and causes rendering issues on project switch)
@@ -582,30 +506,11 @@ export function resetForProjectSwitch(cloakToken?: number): void {
       tr.setMeta('addToHistory', false);
       view.dispatch(tr);
       view.dom.scrollTop = 0;
-
-      // Mount-flash fix (doc-open-blank-regression follow-up): force a real WKWebView
-      // repaint and tell Swift once it's happened, so `beginCloak(.projectReset)`'s
-      // native cloak (webView.alphaValue = 0, armed before this call) can release --
-      // see signalPaintComplete's doc comment. Reason key always present so Swift's
-      // reason-fallback resolution works even if `cloakToken` wasn't threaded through
-      // (e.g. `resetEditorState()`'s project-CLOSE caller below).
-      signalPaintComplete(view.dom, resetExtra);
     } catch (e) {
       // State reset failed -- log it (this exact silent swallow is why the pre-existing
       // selection bug above went unnoticed for as long as it did; don't repeat that).
       syncLog('API:resetForProjectSwitch', `state reset failed: ${e instanceof Error ? e.message : e}`);
-      // Must-fix #4 (review round 2): post directly (no RAF/scroll -- there's no reliable
-      // live `view.dom` to force-repaint here; the throw may have happened before `view` was
-      // even bound), mirroring main.ts's initEditor() catch block. Without this, a failed
-      // reset left the cloak waiting out its full ~2.5s fallback for no reason -- there was
-      // never going to be a real repaint to wait for on this path.
-      signalPaintCompleteDirect(resetExtra);
     }
-  } else {
-    // Must-fix #4 (review round 2): no editor instance at all (reset arriving before mount,
-    // or after teardown) -- same direct-post treatment as the catch block above: there is no
-    // `view.dom` on this path either, ever, so there's nothing to wait for a real repaint on.
-    signalPaintCompleteDirect(resetExtra);
   }
 
   // Reset scroll position to top (prevents previous project's scroll persisting)

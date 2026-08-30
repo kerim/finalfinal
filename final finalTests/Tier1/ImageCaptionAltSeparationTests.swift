@@ -104,7 +104,7 @@ struct ImageCaptionAltSeparationTests {
     func parseOldFormatCaptionCommentFragment() {
         // BlockParser.parse() intentionally leaves imageCaption nil here — the
         // <!-- caption: ... --> comment is recovered by
-        // Database+BlocksReplace.swift's gap-fill during replaceBlocks/
+        // Database+BlocksReplace+Preservation.swift's gap-fill during replaceBlocks/
         // replaceBlocksInRange, not by BlockParser itself. This fragment shape
         // must still classify as .image (not .paragraph) and extract alt/src.
         let markdown = """
@@ -134,7 +134,7 @@ struct ImageCaptionAltSeparationTests {
         #expect(blocks2[0].imageWidth == 40)
     }
 
-    // MARK: - Database+BlocksReplace.swift gap-fill: unaffected, still old-format-only
+    // MARK: - Database+BlocksReplace+Preservation.swift gap-fill: unaffected, still old-format-only
 
     @Test("replaceBlocks gap-fill still recovers imageCaption from the legacy comment for old-format documents")
     func replaceBlocksGapFillStillWorksForOldFormat() throws {

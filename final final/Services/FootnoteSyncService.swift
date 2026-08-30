@@ -381,7 +381,7 @@ final class FootnoteSyncService {
         }
     }
 
-    // Notes-block reconciliation (`reconcileNotesBlocks`, `notesOwnershipMap`,
+    // Notes-block reconciliation (`reconcileNotesBlocks`, `notesGroupSortKey`,
     // `orphanedDefPattern`, `deleteOrphanedFootnoteDefinitions`) lives in
     // FootnoteSyncService+Reconciliation.swift.
 

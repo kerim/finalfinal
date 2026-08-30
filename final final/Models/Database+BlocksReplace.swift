@@ -2,8 +2,11 @@
 //  Database+BlocksReplace.swift
 //  final final
 //
-//  Block replace operations: full-document and range replacement, with heading/image
-//  metadata preservation.
+//  Block replace operations: full-document and range replacement. The two main entry
+//  points, plus the shared support types they and their helpers use. The actual helper
+//  functions live in the sibling files Database+BlocksReplace+Preservation.swift (heading/
+//  image metadata preservation) and Database+BlocksReplace+RowOps.swift (live-db row
+//  mutation: delete, shift, merge, re-anchor, renumber).
 //
 
 import Foundation
@@ -12,7 +15,7 @@ import GRDB
 // MARK: - Block Heading Metadata
 
 /// Preserved heading metadata during block replacement (avoids large tuple)
-private struct HeadingMetadata {
+struct HeadingMetadata {
     let status: SectionStatus?
     let tags: [String]?
     let wordGoal: Int?
@@ -24,7 +27,7 @@ private struct HeadingMetadata {
 }
 
 /// Preserved image metadata during block replacement
-private struct ImageMeta {
+struct ImageMeta {
     let imageCaption: String?
     let imageWidth: Int?
 }
@@ -34,12 +37,12 @@ private struct ImageMeta {
 /// instead of every same-titled heading colliding on one scalar slot. See the FIFO-queue
 /// usage below for why: absolute position would churn every downstream id when a paragraph
 /// is inserted above a heading, so occurrence-within-title is the stable key instead.
-private struct PreservedHeading {
+struct PreservedHeading {
     let id: String
     let metadata: HeadingMetadata
 }
 
-private extension PreservedHeading {
+extension PreservedHeading {
     /// Build a `PreservedHeading` snapshot from an existing `Block`. Shared by every site
     /// that queues an existing heading by title, so the id + metadata always come from the
     /// same source occurrence.
@@ -64,7 +67,7 @@ private extension PreservedHeading {
 /// will place immediately after the newly-inserted content: `count` rows starting at `anchor`.
 /// Bundled so `shiftBlocksAfterRange` can check its reservation invariant while staying
 /// under the function_parameter_count limit.
-private struct PreservedRowReservation {
+struct PreservedRowReservation {
     let anchor: Double
     let count: Int
 }
@@ -180,17 +183,8 @@ extension ProjectDatabase {
                     protectingNotes: true
                 )
 
-                let notesIndex = buildNotesRowIndex(from: existingBlocks)
-                var notesRowByLabel = notesIndex.byLabel
-                var notesContinuationsByOwner = notesIndex.continuationsByOwner
+                var notesRowByLabel = buildNotesRowIndex(from: existingBlocks)
                 var claimedNotesLabels: Set<String> = []
-                var currentNotesOwnerLabel: String?
-                // Genuinely-NEW continuation paragraphs (a footnote that grew: more incoming
-                // labelless continuations than preserved rows existed for) -- collected here
-                // instead of inserted immediately, and given a real position adjacent to
-                // their owner only once the owner's FINAL (reanchored) position is known. See
-                // `insertDeferredContinuations`'s doc comment.
-                var deferredNotesContinuations: [String: [Block]] = [:]
 
                 for (index, var block) in blocks.enumerated() {
                     block.sortOrder = Double(index)
@@ -205,9 +199,6 @@ extension ProjectDatabase {
                         block: block,
                         notesRowByLabel: &notesRowByLabel,
                         claimedNotesLabels: &claimedNotesLabels,
-                        notesContinuationsByOwner: &notesContinuationsByOwner,
-                        currentNotesOwnerLabel: &currentNotesOwnerLabel,
-                        deferredNewContinuations: &deferredNotesContinuations,
                         handlingNotes: true
                     ) {
                         continue
@@ -218,25 +209,6 @@ extension ProjectDatabase {
                     try block.insert(db)
                 }
 
-                // Deliberately NO `deleteUnclaimedContinuations` call on this path -- unlike
-                // `replaceBlocksInRange`, see below. `blocks` here is guaranteed Notes-free at
-                // every real production call site (this function's own doc comment); any
-                // Notes-shaped content that DOES appear in it is an accidental/collision case
-                // to merge-if-possible (the labeled branch above), never an authoritative,
-                // exhaustive statement of "here is everything this footnote's continuations
-                // should be now." Treating an unclaimed continuation as "the user deleted it"
-                // here would be wrong precisely because this call was never attempting to
-                // represent that footnote's continuations at all -- confirmed by
-                // BibliographySectionFlagTests+DataIntegrity.swift's "Issue 2 fixed" and
-                // "MUST-FIX 1 regression guard" tests, both of which seed a continuation,
-                // pass `blocks` that omits it entirely (in the MUST-FIX-1 case, even while
-                // the SAME footnote's labeled definition IS present and correctly merges),
-                // and assert the continuation survives untouched. `replaceBlocksInRange`'s
-                // `newBlocks`, by contrast, is a reparse of a specific bounded range that ITS
-                // callers assert is exhaustive for that range -- see that function's own call
-                // to `deleteUnclaimedContinuations` and `MultiParagraphFootnoteReplaceTests`'
-                // shrink test.
-
                 // Re-anchor preserved bibliography/Notes rows immediately after all
                 // newly-inserted content -- see reanchorPreservedRows for why leaving them at
                 // a stale position risks a numeric collision with the freshly-sequenced new
@@ -244,10 +216,6 @@ extension ProjectDatabase {
                 if !preservedRowIds.isEmpty {
                     try reanchorPreservedRows(db: db, rowIds: preservedRowIds, anchorBase: Double(blocks.count))
                 }
-
-                // MUST run AFTER reanchorPreservedRows -- see insertDeferredContinuations'
-                // doc comment for why placement depends on the owner's FINAL position.
-                try insertDeferredContinuations(db: db, projectId: projectId, deferredByOwner: deferredNotesContinuations)
 
                 try renumberSortOrders(db: db, projectId: projectId, now: Date())
                 try Self.recomputeSectionParents(db: db, projectId: projectId)
@@ -395,14 +363,7 @@ extension ProjectDatabase {
             // from the delete query); if newBlocks legitimately contains a matching (same-label)
             // Notes row, it is merged into the preserved row in place instead of inserted as a
             // duplicate alongside it. See buildNotesRowIndex for the lookup this builds.
-            let notesIndex = buildNotesRowIndex(from: existingBlocks)
-            var notesRowByLabel = notesIndex.byLabel
-            var notesContinuationsByOwner = notesIndex.continuationsByOwner
-            var currentNotesOwnerLabel: String?
-            // Genuinely-NEW continuation paragraphs (a footnote that grew) -- see
-            // `insertDeferredContinuations`'s doc comment; populated by
-            // handleMachineManagedBlock below, consumed after reanchorPreservedRows runs.
-            var deferredNotesContinuations: [String: [Block]] = [:]
+            var notesRowByLabel = buildNotesRowIndex(from: existingBlocks)
 
             // The "# Notes"/"# Bibliography" HEADING itself needs a different rule than the
             // paragraph rows above: it normally survives via the delete-then-reinsert-by-title-
@@ -484,10 +445,7 @@ extension ProjectDatabase {
                     db: db,
                     block: block,
                     notesRowByLabel: &notesRowByLabel,
-                    claimedNotesLabels: &claimedNotesLabels,
-                    notesContinuationsByOwner: &notesContinuationsByOwner,
-                    currentNotesOwnerLabel: &currentNotesOwnerLabel,
-                    deferredNewContinuations: &deferredNotesContinuations
+                    claimedNotesLabels: &claimedNotesLabels
                 ) {
                     continue
                 }
@@ -502,12 +460,6 @@ extension ProjectDatabase {
                 try block.insert(db)
             }
 
-            // Any continuation row the incoming batch never claimed -- the user deleted that
-            // paragraph of the footnote -- must be deleted now, before the reanchor step
-            // below moves it to a fresh position and makes it look intentional. See
-            // `deleteUnclaimedContinuations`'s doc comment.
-            try deleteUnclaimedContinuations(db: db, notesContinuationsByOwner: notesContinuationsByOwner)
-
             // 3.5. Re-anchor preserved isNotes/isBibliography rows (and any protected heading,
             // see preservedRowIds above) immediately after all newly-inserted content — see
             // reanchorPreservedRows for why leaving them at a stale position can split a
@@ -520,10 +472,6 @@ extension ProjectDatabase {
                 )
             }
 
-            // MUST run AFTER reanchorPreservedRows -- see insertDeferredContinuations's doc
-            // comment for why placement depends on the owner's FINAL position.
-            try insertDeferredContinuations(db: db, projectId: projectId, deferredByOwner: deferredNotesContinuations)
-
             // 6. Normalize sort orders inline (atomic with delete+insert above). Trap: do not
             // merge this with the public normalizeSortOrders(projectId:) in
             // Database+BlocksReorder.swift — see renumberSortOrders for why they must stay
@@ -531,759 +479,6 @@ extension ProjectDatabase {
             try renumberSortOrders(db: db, projectId: projectId, now: Date())
 
             try Self.recomputeSectionParents(db: db, projectId: projectId)
-        }
-    }
-
-}
-
-// MARK: - Replace Helpers
-
-/// Mechanical extractions from `replaceBlocks` and `replaceBlocksInRange` — no behavior change
-/// from the originals.
-private extension ProjectDatabase {
-
-    // MARK: Image metadata
-
-    /// Build a src -> preserved-metadata lookup from existing image blocks (used for the
-    /// imageWidth/imageCaption gap-fill during block replacement).
-    func buildImageMetadataIndex(from existingBlocks: [Block]) -> [String: ImageMeta] {
-        var imageMetaBySrc: [String: ImageMeta] = [:]
-        for block in existingBlocks where block.blockType == .image {
-            if let src = block.imageSrc, !src.isEmpty {
-                imageMetaBySrc[src] = ImageMeta(
-                    imageCaption: block.imageCaption,
-                    imageWidth: block.imageWidth
-                )
-            }
-        }
-        return imageMetaBySrc
-    }
-
-    /// Extract a caption from a leading `<!-- caption: ... -->` comment line in a markdown
-    /// fragment (legacy pre-`BlockParser.parseImageFragmentMeta` format). Anchored (`^`) so
-    /// this can only match a comment immediately preceding the image, not one appearing
-    /// anywhere else in the fragment. Returns nil if no such comment is present.
-    func extractLegacyImageCaption(from fragment: String) -> String? {
-        let frag = fragment.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let captionRange = frag.range(
-            of: #"^<!--\s*caption:\s*(.*?)\s*-->"#, options: .regularExpression
-        ) else {
-            return nil
-        }
-        let fullMatch = String(frag[captionRange])
-        guard let textRange = fullMatch.range(
-            of: #"(?<=caption:\s).*?(?=\s*-->)"#, options: .regularExpression
-        ) else {
-            return nil
-        }
-        return String(fullMatch[textRange])
-    }
-
-    /// Preserve image metadata by imageSrc match: legacy-caption gap-fill, then
-    /// imageWidth/imageCaption gap-fill from the existing-blocks index (first-match-wins).
-    /// Returns whether `block` was an image block with a usable src — i.e. whether the
-    /// gap-fill logic actually ran — so a caller that only logs for real image blocks
-    /// (`replaceBlocks`) knows when to log. `replaceBlocksInRange` has no such log and
-    /// simply discards the result.
-    @discardableResult
-    func applyPreservedImageMetadata(to block: inout Block, index: inout [String: ImageMeta]) -> Bool {
-        guard block.blockType == .image, let src = block.imageSrc, !src.isEmpty else { return false }
-
-        // Legacy migration only: recover a caption from a leading
-        // <!-- caption: ... --> comment line, same guard as the gap-fill block
-        // below (only if the parser hasn't already set imageCaption — new-format
-        // fragments set it, even to "", via BlockParser.parseImageFragmentMeta) and
-        // anchored (`^`) so this can only match a comment immediately preceding the
-        // image, not one appearing anywhere else in the fragment.
-        if block.imageCaption == nil, let legacyCaption = extractLegacyImageCaption(from: block.markdownFragment) {
-            block.imageCaption = legacyCaption
-        }
-
-        // Gap-fill only: don't overwrite parser-extracted values with stale DB cache
-        if let meta = index[src] {
-            if block.imageWidth == nil, let width = meta.imageWidth {
-                block.imageWidth = width
-            }
-            if block.imageCaption == nil, let caption = meta.imageCaption {
-                block.imageCaption = caption
-            }
-            index.removeValue(forKey: src)  // first-match-wins
-        }
-
-        return true
-    }
-
-    // MARK: Heading pop-queue
-
-    /// Preserve heading ID and metadata by occurrence-indexed title match: pop the front of
-    /// this title's queue and apply id + metadata from that SAME popped entry in one branch
-    /// (not two separate lookups), so they can never come from two different existing
-    /// occurrences of the same title. A unique title has a one-element queue, which behaves
-    /// exactly like the old first-match-wins.
-    /// - Parameter restoringBibliography: Whether a preserved `isBibliography` flag is OR'd
-    ///   back onto `block` by this call. Defaults to `true`, matching every pre-existing call
-    ///   site's behavior unchanged (`replaceBlocksInRange`, and `replaceBlocks`'
-    ///   `preservingMachineManagedBlocks == true` path). `replaceBlocks`' default
-    ///   (`preservingMachineManagedBlocks == false`) path passes
-    ///   `!parseFoundBibliographyHeading && hasGenuineBibliographyRun(...)` instead — TWO
-    ///   conditions, both required: the fresh parse recognised NO bibliography heading at all
-    ///   anywhere in the document, AND this specific heading has a genuine, non-empty,
-    ///   terminator-bounded run beneath it with no interior heading anywhere in that run (see
-    ///   `hasGenuineBibliographyRun`'s doc comment — this second condition mirrors
-    ///   `BibliographyOpeningSelector`'s own tier-2 rule in full, both its empty-run suppression
-    ///   AND its interior-heading invalidation, so a document already in the KNOWN-LIMITATION
-    ///   damaged state can't have its stale flag resurrected onto a heading with nothing real
-    ///   beneath it, or with a real, unrelated heading sitting inside the same run). When
-    ///   both hold, this is `true` and behaves exactly as before (needed for
-    ///   `carryBibliographyFlagForward`'s detection-mismatch case). When the fresh parse DID
-    ///   recognise a (correctly selected, per `BlockParser.parse`'s pre-scan) bibliography
-    ///   heading, OR this heading's own run is empty, this is `false` for that heading —
-    ///   otherwise an already-wrongly-flagged heading still sitting in the DB (e.g. a
-    ///   bare-title user heading a stale parse once mistook for the real one) would have its
-    ///   stale flag OR'd back in by this title match, making the false positive permanent
-    ///   instead of letting the corrected fresh parse win.
-    func applyPreservedHeading(
-        to block: inout Block,
-        queues: inout [String: [PreservedHeading]],
-        restoringBibliography: Bool = true
-    ) {
-        if block.blockType == .heading,
-           var queue = queues[block.textContent], !queue.isEmpty {
-            let preserved = queue.removeFirst()
-            queues[block.textContent] = queue
-            block.id = preserved.id
-            block.status = preserved.metadata.status
-            block.tags = preserved.metadata.tags
-            block.wordGoal = preserved.metadata.wordGoal
-            block.goalType = preserved.metadata.goalType
-            block.aggregateGoal = preserved.metadata.aggregateGoal
-            block.aggregateGoalType = preserved.metadata.aggregateGoalType
-            if restoringBibliography, preserved.metadata.isBibliography { block.isBibliography = true }
-            if preserved.metadata.isNotes { block.isNotes = true }
-        }
-    }
-
-    /// Restore `isBibliography` onto the entry rows beneath a heading that
-    /// `applyPreservedHeading` just re-flagged from preserved metadata BECAUSE the fresh
-    /// parse itself failed to recognise the heading (a detection mismatch) — never for a
-    /// heading the parse recognised on its own. `mismatchedHeadingIndices` (built by the
-    /// caller's prep loop, by comparing each heading's parser-derived `isBibliography` before
-    /// `applyPreservedHeading` runs against its restored value after) is exactly that set: a
-    /// healthy, parser-recognised heading's entries are already correctly flagged and need no
-    /// help, and must never spend the `budget` below.
-    ///
-    /// WHY THIS EXISTS: `applyPreservedHeading` restores the flag onto the HEADING only.
-    /// When `BlockParser.parse()` didn't recognise that heading (a custom header name since
-    /// changed, a demoted heading level), every entry below it comes back unflagged. The next
-    /// bibliography regeneration then deletes only the flagged heading and regenerates,
-    /// leaving the old entries behind as duplicate body text in the document and in every
-    /// export.
-    ///
-    /// TWO BOUNDS, WHICHEVER COMES FIRST — the terminator bound is ADDITIVE, it does NOT
-    /// replace the next-heading rule:
-    ///  - a heading stops the run, exactly as `BlockParser.sectionFlagCarriedForward` does;
-    ///  - the first block after the arming heading carrying `endsBibliographyRun` stops it
-    ///    too, inclusively, and can stop it EARLIER than a heading would.
-    /// Reading the terminator as replacing the heading rule would let a run cross an
-    /// intervening chapter heading and flag it — never do that.
-    ///
-    /// The terminator search MUST start strictly after the arming heading, and MUST take the
-    /// FIRST match, not the last. A `lastIndex` search over the whole array lets a duplicate
-    /// or stale terminator anywhere downstream extend the run over real user prose — flagged
-    /// prose is dropped from every export and then deleted outright by the next regeneration.
-    /// No terminator after the heading => carry NOTHING: an unbounded run is worse than an
-    /// unrestored one.
-    ///
-    /// `assembleMarkdownForEditor` emits exactly ONE terminator per document — after the last
-    /// flagged row anywhere, not one per section — so in a document with more than one
-    /// bibliography-titled heading only the LAST such section is genuinely terminator-bounded.
-    /// Before the bib-heading-false-positive follow-up fix to `hasGenuineBibliographyRun` (see
-    /// that function's doc comment), an earlier mismatched section's forward search would find
-    /// that later terminator (past its own section) and this function would fall back to
-    /// bounding the carry at the next heading instead — safe, but strictly less precise than the
-    /// single-section case. `hasGenuineBibliographyRun` now scans its own full candidate range
-    /// for an interior heading too, so it refuses to arm a heading whose apparent run spans a
-    /// LATER heading in the first place: `mismatchedHeadingIndices` never includes that earlier
-    /// heading, and this function is simply never entered for it. Only the true last section —
-    /// the one whose own scanned range contains no interior heading — is ever armed here in
-    /// practice. This function's own next-heading/budget bounds remain necessary regardless, as
-    /// defense in depth against any future caller that arms `mismatchedHeadingIndices` directly.
-    ///
-    /// `budget` is the second, independent bound: never flag more non-heading blocks in one
-    /// call than the project currently HAS non-heading `isBibliography` rows. A pure count —
-    /// no content matching against existing rows, deliberately. This caps the blast radius
-    /// even if the predicate above is later changed and gets it wrong.
-    ///
-    /// KNOWN LIMITATION, by design: on a document ALREADY in the damaged state (heading
-    /// flagged, entries not), the assembler places the terminator directly after the heading,
-    /// so this arms and disarms in the same step and restores nothing. This prevents
-    /// recurrence on a healthy document; it does not heal an already-broken one.
-    func carryBibliographyFlagForward(
-        _ blocks: inout [Block],
-        mismatchedHeadingIndices: Set<Int>,
-        budget: Int
-    ) {
-        guard budget > 0 else { return }
-        var remaining = budget
-        var index = blocks.startIndex
-        while index < blocks.endIndex {
-            guard blocks[index].blockType == .heading, blocks[index].isBibliography,
-                  mismatchedHeadingIndices.contains(index) else {
-                index += 1
-                continue
-            }
-            guard let end = bibliographyRunEnd(in: blocks, after: index) else {
-                index += 1
-                continue
-            }
-            var cursor = blocks.index(after: index)
-            while cursor <= end {
-                if blocks[cursor].blockType == .heading { break }
-                if remaining == 0 { break }
-                blocks[cursor].isBibliography = true
-                remaining -= 1
-                cursor = blocks.index(after: cursor)
-            }
-            index = cursor
-        }
-    }
-
-    /// Returns the index of the first block after `headingIndex` carrying `endsBibliographyRun`
-    /// — the transient marker `BlockParser.parse()` sets on the block immediately preceding a
-    /// `BlockParser.bibliographyEndMarker` line — or `nil` if no such block exists (no
-    /// terminator anywhere after this heading). Shared by `carryBibliographyFlagForward`
-    /// (which carries the flag FORWARD onto entries beneath a restored heading) and
-    /// `replaceBlocks`' restore gate, via `hasGenuineBibliographyRun` below (which decides
-    /// WHETHER to restore the heading's flag at all), so the two questions — "where does this
-    /// run end" and "should I restore this heading" — can never disagree about where the run
-    /// ends.
-    func bibliographyRunEnd(in blocks: [Block], after headingIndex: Int) -> Int? {
-        guard headingIndex < blocks.index(before: blocks.endIndex) else { return nil }
-        return blocks[blocks.index(after: headingIndex)...].firstIndex(where: { $0.endsBibliographyRun })
-    }
-
-    /// Whether the heading at `headingIndex` has a genuine, non-empty, terminator-bounded run
-    /// beneath it in `blocks`: a terminator exists after it (`bibliographyRunEnd` is non-nil)
-    /// AND no block anywhere in `(headingIndex, end]` — not just the block immediately after
-    /// the heading — is itself a heading. Mirrors `carryBibliographyFlagForward`'s own loop
-    /// exactly — that loop starts flagging at `index + 1` and `break`s the moment it hits a
-    /// heading, wherever in the range that heading falls — so "genuine" here means precisely
-    /// "carry-forward would flag at least one block", and mirrors `BibliographyOpeningSelector`'s
-    /// own tier-2 interior-heading rule (the SAME rule — ANY heading strictly between the
-    /// candidate and where the run ends invalidates it — applied to the `[Block]` shape here,
-    /// rather than to raw text there) so the restore gate and a fresh parse's own selection can
-    /// never disagree about whether a shape counts as evidence: a heading two blocks down the
-    /// run is just as disqualifying as a heading immediately after it. Deliberately NOT folded
-    /// into `BibliographyOpeningSelector` itself: different question (where does a run end,
-    /// given `[Block]` with no text form) over an incompatible data shape (no terminator-carrying
-    /// line/block exists here — only a transient flag on the preceding content block).
-    func hasGenuineBibliographyRun(in blocks: [Block], after headingIndex: Int) -> Bool {
-        guard let end = bibliographyRunEnd(in: blocks, after: headingIndex) else { return false }
-        let cursor = blocks.index(after: headingIndex)
-        guard cursor <= end else { return false }
-        // Scan the WHOLE run (cursor...end), not just the immediately-next block: a heading
-        // ANYWHERE in that range — not only as the very first block — ends the candidate's
-        // section, exactly as BibliographyOpeningSelector's tier 2 now requires (see that file's
-        // doc comment). Checking only blocks[cursor] let a heading later in the same range (e.g.
-        // an unrelated real "# Notes" heading two blocks down) go undetected, which could
-        // resurrect a stale isBibliography flag onto a heading whose run this selector-level rule
-        // would refuse to select on a fresh parse.
-        return !blocks[cursor...end].contains { $0.blockType == .heading }
-    }
-
-    /// Build the pop-queue of existing headings by title (consumed occurrence-by-occurrence
-    /// as `newBlocks` is walked in `replaceBlocksInRange`) plus the set of existing heading
-    /// ids that must never be deleted or popped.
-    ///
-    /// Count how many NEW headings share each title — this is how many old occurrences of
-    /// that title the pop queue below will actually reach (the 1st new heading titled T
-    /// claims the 1st old occurrence titled T, the 2nd new claims the 2nd old, ...). Used to
-    /// decide, per OLD occurrence, whether its own slot will ever be popped.
-    ///
-    /// Group existing headings by title, in existing-range order (preserves zoomedSectionId
-    /// across re-parses), then split each title's occurrences into `protectedIds` (never
-    /// deleted, never eligible to be popped) vs. `queues` (the pop queue consumed by
-    /// `applyPreservedHeading`). A duplicate title gets a queue of length > 1; consuming the
-    /// new parse in order pops the front of the matching title's queue, so the nth heading
-    /// titled T in the new parse inherits id+metadata from the nth QUEUED heading titled T in
-    /// the old rows — occurrence-index matching, not absolute position (position would churn
-    /// every downstream id when a paragraph is inserted above a heading).
-    ///
-    /// Real invariant this provides: a machine-managed (isNotes/isBibliography) old heading
-    /// is protected specifically when ITS OWN occurrence slot — its position among old
-    /// headings sharing its title — falls at or beyond the new-heading count for that title,
-    /// i.e. no new heading will ever reach it to pop it. A title wholly absent from newBlocks
-    /// has zero consumable slots, so every occurrence of it is protected — the common case,
-    /// unchanged from before. The fix only changes behavior on a COUNT MISMATCH: e.g. a plain
-    /// user heading that collides in title with the machine "Notes" heading used to strip
-    /// protection from every "Notes"-titled occurrence (title-only check), including the
-    /// machine one, even when the machine heading's own queue slot was never going to be
-    /// reached by the single colliding new heading — silently deleting the machine section
-    /// with nothing to bring it back. Because protected occurrences are excluded from the
-    /// queue entirely, they are never candidates to be popped in the first place; a
-    /// still-protected heading's queue slot can never be popped, but that was never the
-    /// actual bug — the bug was protection LAPSING (a title leaving the protected set)
-    /// despite the specific machine occurrence's slot remaining unreachable. See
-    /// `ZoomDataIntegrityTests`'s title-collision-with-protected-heading tests for the exact
-    /// scenario this guards.
-    /// - Parameter protectingNotes: Whether an isNotes heading occurrence beyond the
-    ///   consumable count is ALSO protected, alongside isBibliography (always protected
-    ///   regardless of this flag). Defaults to `true`. Both of `replaceBlocksInRange`'s call
-    ///   site and `replaceBlocks`' bibliography+Notes preservation path pass `true` -- Notes
-    ///   gets the same protection bibliography does, for the same reason (see `replaceBlocks`'
-    ///   doc comment): its incoming `blocks` is guaranteed Notes-free at those call sites, so
-    ///   there is nothing there for a preserved row to collide with.
-    func buildHeadingQueues(
-        existing: [Block],
-        newBlocks: [Block],
-        protectingNotes: Bool = true
-    ) -> (queues: [String: [PreservedHeading]], protectedIds: Set<String>) {
-        var newHeadingCountByTitle: [String: Int] = [:]
-        for block in newBlocks where block.blockType == .heading {
-            newHeadingCountByTitle[block.textContent, default: 0] += 1
-        }
-
-        var existingHeadingsByTitle: [String: [Block]] = [:]
-        for block in existing where block.blockType == .heading {
-            existingHeadingsByTitle[block.textContent, default: []].append(block)
-        }
-        var protectedHeadingIds: Set<String> = []
-        var headingsByTitle: [String: [PreservedHeading]] = [:]
-        for (title, occurrences) in existingHeadingsByTitle {
-            let consumable = newHeadingCountByTitle[title, default: 0]
-            for (index, block) in occurrences.enumerated() {
-                if ((protectingNotes && block.isNotes) || block.isBibliography) && index >= consumable {
-                    protectedHeadingIds.insert(block.id)
-                    continue
-                }
-                headingsByTitle[title, default: []].append(PreservedHeading(from: block))
-            }
-        }
-        return (headingsByTitle, protectedHeadingIds)
-    }
-
-    // MARK: replaceBlocksInRange-only helpers
-
-    /// Build a footnote-label -> existing-row lookup from existing isNotes blocks, used to
-    /// merge a same-label incoming Notes row into its existing DB row instead of inserting a
-    /// duplicate (see `handleMachineManagedBlock`) -- plus a parallel label -> ORDERED
-    /// continuation-rows lookup for the paragraphs that continue a multi-paragraph footnote
-    /// definition. Deliberately `[String: [Block]]` for continuations, NOT one-to-one: a
-    /// three-paragraph footnote has TWO continuation rows under one label, and a one-to-one
-    /// index would collide/clobber -- silently keeping only the last continuation and
-    /// reproducing the exact duplication bug this index exists to close (see
-    /// `handleMachineManagedBlock`'s consumption of it).
-    ///
-    /// Continuation ownership is POSITIONAL, walking `existing` isNotes blocks (headings
-    /// included, for run-boundary detection -- see below) in `sortOrder` order: any
-    /// non-heading block that does NOT itself parse as a `[^N]:` definition is attributed to
-    /// the most recently seen definition's label. This is a second, independent
-    /// implementation of the same rule `FootnoteSyncService`'s own `notesOwnershipMap`
-    /// applies (different file, different call shape -- this one only needs the
-    /// continuation buckets, not the full heading/definition/userProse classification) --
-    /// keep the two in sync if the shared definition of "continuation" ever changes.
-    ///
-    /// RUN-BOUNDARY RESET: `currentOwnerLabel` resets to `nil` at every heading encountered
-    /// in the walk. `sectionFlagCarriedForward` can re-open the isNotes flag more than once
-    /// per document (two separate "# Notes" runs separated by ordinary body text); without
-    /// this reset, a second run's leading content (e.g. the user's own hand-typed prose
-    /// above their footnotes in THAT run) would silently inherit ownership from the FIRST
-    /// run's last footnote, just because non-Notes content sits between them and isn't part
-    /// of this filtered walk. Mirrors `FootnoteSyncService`'s `notesOwnershipMap` and
-    /// `BlockParser+Assembly.swift`'s `classifyNotesRuns` -- keep all three in sync.
-    ///
-    /// EXCLUDES isBibliography == true rows entirely: a legacy heading whose configured
-    /// bibliography-opening title collides with "Notes" can leave bibliography entries
-    /// flagged isNotes too (see docs/deferred/bibliography-heading-collision-ambiguity.md).
-    /// Those rows belong to BibliographySyncService, never to this index -- letting one
-    /// through here could make it either wrongly "own" real continuations that follow it,
-    /// or get wrongly consumed/claimed/deleted as if it were a continuation itself.
-    func buildNotesRowIndex(from existing: [Block]) -> (byLabel: [String: Block], continuationsByOwner: [String: [Block]]) {
-        var notesRowByLabel: [String: Block] = [:]
-        var continuationsByOwner: [String: [Block]] = [:]
-        var currentOwnerLabel: String?
-
-        let notesRows = existing
-            .filter { $0.isNotes && !$0.isBibliography }
-            .sorted { a, b in
-                if a.sortOrder != b.sortOrder { return a.sortOrder < b.sortOrder }
-                return (a.blockType == .heading ? 0 : 1) < (b.blockType == .heading ? 0 : 1)
-            }
-
-        for block in notesRows {
-            if block.blockType == .heading {
-                currentOwnerLabel = nil
-                continue
-            }
-            if let label = FootnoteSyncService.parseNotesLabel(from: block.markdownFragment)?.label {
-                notesRowByLabel[label] = block
-                currentOwnerLabel = label
-            } else if let owner = currentOwnerLabel {
-                continuationsByOwner[owner, default: []].append(block)
-            }
-        }
-        return (notesRowByLabel, continuationsByOwner)
-    }
-
-    /// Delete continuation rows left unclaimed after `handleMachineManagedBlock`'s main
-    /// insert/merge loop finishes -- i.e. a preserved continuation whose paragraph the
-    /// incoming batch no longer contains (the user deleted the second paragraph of a
-    /// footnote, say). Without this, a SHRINKING multi-paragraph footnote resurrects its
-    /// deleted paragraph: the labelless-continuation branch only ever claims rows
-    /// positionally as incoming blocks consume them (mirroring `claimedNotesLabels`), so a
-    /// row nobody claimed would otherwise sit untouched in the DB, then get silently
-    /// re-anchored (by `reanchorPreservedRows`, since it's still in `preservedRowIds`) right
-    /// back into the document as if nothing had changed.
-    ///
-    /// CALLED ONLY FROM `replaceBlocksInRange`, DELIBERATELY NOT from `replaceBlocks`'
-    /// preservation path -- see the call site in `replaceBlocks` for the full reasoning.
-    /// Short version: `replaceBlocksInRange`'s `newBlocks` is a reparse of a specific
-    /// bounded range that its callers assert is EXHAUSTIVE for that range, so an unclaimed
-    /// continuation there really does mean "deleted." `replaceBlocks`' preservation-path
-    /// `blocks` is never exhaustive for Notes content by contract (guaranteed Notes-free at
-    /// its real call sites) -- an unclaimed continuation there just means this call was
-    /// never attempting to represent that footnote's continuations, and must survive
-    /// untouched. Conflating the two here caused a real regression: two pre-existing tests
-    /// (`BibliographySectionFlagTests+DataIntegrity.swift`'s "Issue 2 fixed" and "MUST-FIX 1
-    /// regression guard") each seed a continuation, pass `blocks` that never reproduces it
-    /// (one of them even while the SAME footnote's labeled definition IS present and
-    /// correctly merges), and assert it survives -- calling this function from that path
-    /// deleted it instead.
-    func deleteUnclaimedContinuations(db: Database, notesContinuationsByOwner: [String: [Block]]) throws {
-        for rows in notesContinuationsByOwner.values {
-            for row in rows {
-                try Block.deleteOne(db, key: row.id)
-            }
-        }
-    }
-
-    /// Insert genuinely-NEW continuation paragraphs -- a multi-paragraph footnote that GREW
-    /// (more incoming labelless continuations than preserved rows existed for) -- deferred
-    /// from `handleMachineManagedBlock`'s main loop and given a real position only now,
-    /// immediately after their owning definition's FINAL position.
-    ///
-    /// MUST run AFTER `reanchorPreservedRows`, never before: the main insert loop assigns
-    /// every genuinely-new block an index-based sortOrder inside the "new content" region
-    /// (`[0, blocks.count)` / `[startSortOrder, startSortOrder + newBlocks.count)`), while
-    /// `reanchorPreservedRows` moves the owning definition (and any of its surviving
-    /// preserved continuations) to AFTER that entire region. A new continuation inserted at
-    /// its batch index, before the owner is reanchored, would therefore sort AHEAD of its
-    /// own definition -- `notesOwnershipMap`/`buildNotesRowIndex`'s walk would then see no
-    /// preceding definition for it and misclassify it as pre-definition user prose (sorting
-    /// it to the very end of the ENTIRE Notes group, owned by whatever footnote happens to
-    /// be last) instead of its actual owner. "Add a third paragraph to footnote 1" must
-    /// never end up folded into footnote 3's export.
-    ///
-    /// Placement: fractionally, just after the owner's last known row (its definition, or
-    /// its last surviving continuation) in a FRESH post-reanchor fetch -- reanchored rows
-    /// are integer-spaced (`anchorBase + Double(offset)`), so a `+0.01`-per-row fractional
-    /// offset lands safely between the owner's row and whatever reanchored row comes next,
-    /// without colliding. `renumberSortOrders`, which always runs after this, converts
-    /// everything to clean sequential integers regardless.
-    func insertDeferredContinuations(
-        db: Database, projectId: String, deferredByOwner: [String: [Block]]
-    ) throws {
-        guard !deferredByOwner.isEmpty else { return }
-
-        let notesRows = try Block
-            .filter(Block.Columns.projectId == projectId)
-            .filter(Block.Columns.isNotes == true)
-            .filter(Block.Columns.isBibliography == false)
-            .order(Block.Columns.sortOrder)
-            .fetchAll(db)
-
-        var lastOwnedSortOrder: [String: Double] = [:]
-        var currentOwnerLabel: String?
-        for row in notesRows {
-            if row.blockType == .heading {
-                currentOwnerLabel = nil
-                continue
-            }
-            if let label = FootnoteSyncService.parseNotesLabel(from: row.markdownFragment)?.label {
-                currentOwnerLabel = label
-            }
-            if let owner = currentOwnerLabel {
-                lastOwnedSortOrder[owner] = row.sortOrder
-            }
-        }
-
-        for (owner, newBlocks) in deferredByOwner {
-            guard let baseSortOrder = lastOwnedSortOrder[owner] else {
-                // Owner's definition isn't present in this fresh fetch -- shouldn't happen
-                // (a continuation is only ever deferred once currentNotesOwnerLabel has
-                // already been established from a labeled block earlier in this same
-                // batch), but fail safe rather than crash: log so this is visible if it's
-                // ever actually reached, and drop the positional placement for these rows.
-                DebugLog.log(.data, "[Database+BlocksReplace] Deferred continuation(s) for owner \(owner) could not be placed: owner definition not found after reanchor")
-                continue
-            }
-            for (index, var block) in newBlocks.enumerated() {
-                block.sortOrder = baseSortOrder + Double(index + 1) * 0.01
-                try block.insert(db)
-            }
-        }
-    }
-
-    /// Delete blocks in `[startSortOrder, endSortOrder)` (or the whole project, when
-    /// `startSortOrder` is `nil` -- used by `replaceBlocks`' preservation path, which has no
-    /// range to speak of) — never delete a non-heading isBibliography row (machine-managed,
-    /// see the safety-net comment in `replaceBlocksInRange`), and never delete a
-    /// protectedHeadingIds heading. Any other heading — including one of these when
-    /// newBlocks DOES contain a same-titled replacement — is deleted here and recreated
-    /// through the delete-then-reinsert-by-title-match flow.
-    ///
-    /// - Parameter protectingNotes: Whether a non-heading isNotes row is ALSO exempt from
-    ///   deletion, alongside isBibliography (always exempt regardless of this flag).
-    ///   Defaults to `true`. Both `replaceBlocksInRange`'s call site and `replaceBlocks`'
-    ///   bibliography+Notes preservation path pass `true` -- see `replaceBlocks`' doc comment
-    ///   for why Notes is protected on equal footing with bibliography there now.
-    func deleteBlocksInRange(
-        db: Database,
-        projectId: String,
-        startSortOrder: Double?,
-        endSortOrder: Double?,
-        protectedHeadingIds: Set<String>,
-        protectingNotes: Bool = true
-    ) throws {
-        var deleteQuery = Block.filter(Block.Columns.projectId == projectId)
-        if let start = startSortOrder {
-            deleteQuery = deleteQuery.filter(Block.Columns.sortOrder >= start)
-        }
-        if protectingNotes {
-            deleteQuery = deleteQuery.filter(
-                Block.Columns.blockType == BlockType.heading.rawValue ||
-                (Block.Columns.isNotes == false && Block.Columns.isBibliography == false)
-            )
-        } else {
-            deleteQuery = deleteQuery.filter(
-                Block.Columns.blockType == BlockType.heading.rawValue ||
-                Block.Columns.isBibliography == false
-            )
-        }
-        if !protectedHeadingIds.isEmpty {
-            deleteQuery = deleteQuery.filter(!protectedHeadingIds.contains(Block.Columns.id))
-        }
-        if let end = endSortOrder {
-            deleteQuery = deleteQuery.filter(Block.Columns.sortOrder < end)
-        }
-        try deleteQuery.deleteAll(db)
-    }
-
-    /// Shift blocks after the range forward to prevent sort order collisions when the
-    /// inserted blocks — plus any preserved rows re-anchored by `reanchorPreservedRows` —
-    /// overflow the original `[startSortOrder, endSortOrder)` range. The caller computes
-    /// `insertEnd` as `startSortOrder + newBlocks.count + preservedRowIds.count` — the
-    /// `preservedRowIds.count` term (not just `newBlocks.count`) must be included, or
-    /// `reanchorPreservedRows`' positions can themselves collide with whatever comes after
-    /// the range.
-    ///
-    /// `reservation.anchor` and `reservation.count` exist to make that invariant checkable at
-    /// runtime for FUTURE, independent callers — ones that compute `insertEnd` themselves from
-    /// scratch rather than reusing `reservation.anchor`. Dropping the reservation term
-    /// type-checks and compiles fine, but silently corrupts sortOrder once
-    /// `reanchorPreservedRows` runs; the precondition below is what would catch that. For the
-    /// CURRENT (and only) caller, this is documentation of the invariant rather than live
-    /// enforcement: it passes `insertEnd: preservedRowsAnchor + Double(preservedRowIds.count)`
-    /// and builds `reservation` from those same two values (`anchor: preservedRowsAnchor,
-    /// count: preservedRowIds.count`), so `insertEnd` and `reservation.anchor +
-    /// Double(reservation.count)` are the same IEEE 754 expression over the same operands — an
-    /// arithmetic identity — and the precondition can never fire there, in either the growing
-    /// or shrinking case. Checking against `insertEnd` alone (or against
-    /// `endSortOrder`) can't tell a genuine under-reservation from a legitimate call where
-    /// `newBlocks.count` shrinks the range enough that no shift is needed at all — only
-    /// comparing against `reservation.anchor` (independent of how `insertEnd` was computed)
-    /// can, which is why this guard is worth keeping for a future caller even though it's inert
-    /// for today's. Any new caller must build `insertEnd` using the same grouping/expression
-    /// shape (reservation anchor + reservation count) it passes as
-    /// `reservation.anchor`/`reservation.count` — a differently-grouped but mathematically
-    /// equivalent expression can round to a different `Double` and land a hair below the
-    /// threshold, turning this data-integrity guard into an unexpected crash. This is a
-    /// `precondition` (not `assert`), so it's live — and can trap — in Release builds too.
-    func shiftBlocksAfterRange(
-        db: Database,
-        projectId: String,
-        endSortOrder: Double?,
-        insertEnd: Double,
-        reservation: PreservedRowReservation
-    ) throws {
-        precondition(
-            insertEnd >= reservation.anchor + Double(reservation.count),
-            "shiftBlocksAfterRange: insertEnd (\(insertEnd)) doesn't reserve room for " +
-            "\(reservation.count) preserved row(s) anchored at \(reservation.anchor) — needs " +
-            "to be >= \(reservation.anchor + Double(reservation.count)). Did a caller drop the " +
-            "preservedRowIds.count term when computing insertEnd?"
-        )
-        if let end = endSortOrder {
-            if insertEnd > end {
-                let shift = insertEnd - end
-                try db.execute(
-                    sql: """
-                        UPDATE block SET sortOrder = sortOrder + ?, updatedAt = ?
-                        WHERE projectId = ? AND sortOrder >= ?
-                        """,
-                    arguments: [shift, Date(), projectId, end]
-                )
-            }
-        }
-    }
-
-    /// Handle a `newBlocks` entry that may be machine-managed before it reaches the normal
-    /// heading/image preserve-and-insert flow. Returns `true` when the block was fully
-    /// handled here and the caller must `continue` (skip the normal insert); `false` when it
-    /// should fall through.
-    ///
-    /// Four-way outcome, in order:
-    /// 1. Bibliography-shaped, non-heading: skipped outright — Bibliography rows are 100%
-    ///    machine-generated (BibliographySyncService is the sole writer); the existing
-    ///    (preserved, undeleted) row above remains authoritative. The "# Bibliography"
-    ///    heading itself is excluded here (it goes through the normal
-    ///    delete-then-reinsert-by-title-match flow, which already handles it).
-    /// 2. Notes-shaped, non-heading, with a footnote label already claimed in this batch:
-    ///    dropped — a duplicate label within the same batch (e.g. two "[^1]:" paragraphs from
-    ///    a copy-paste slip) must not produce a second DB row for that label.
-    /// 3. Notes-shaped, non-heading, with a label matching a preserved existing row: merged
-    ///    into that row in place (content + word count + updatedAt) instead of inserted as a
-    ///    duplicate — same rule as the `applyBlockChangesFromEditor` guard. A stale/mismatched
-    ///    label falls through to a normal insert rather than being silently dropped. (The
-    ///    "# Notes" heading itself never matches `parseNotesLabel`'s "[^N]:" pattern, so it
-    ///    always falls through to the title-match flow, same as any other heading.)
-    /// 4. Notes-shaped, non-heading, with NO parsed label at all: a continuation paragraph of
-    ///    the current running owner (`currentNotesOwnerLabel`, updated by outcome 2/3 above
-    ///    whenever a labeled block is seen). Consumes the next UNCLAIMED existing continuation
-    ///    row for that owner, positionally, from `notesContinuationsByOwner` (mirrors how
-    ///    `claimedNotesLabels` prevents double-claiming a definition), and updates it in place
-    ///    (same id) — same merge shape as outcome 3. If no owner is established yet at all
-    ///    (this batch's very first Notes-shaped block, no preceding label seen), this is
-    ///    genuinely unattachable content and falls through to a normal insert (`false`) --
-    ///    the caller has no better option. If an owner IS known but no preserved row remains
-    ///    for it (the footnote grew a paragraph), the block is queued into
-    ///    `deferredNewContinuations[owner]` instead of inserted immediately (`true` — the
-    ///    caller must NOT do a normal insert) — see `insertDeferredContinuations`'s doc
-    ///    comment for why its real position can only be resolved after the caller reanchors
-    ///    preserved rows.
-    ///
-    /// - Parameter handlingNotes: Whether outcomes 2/3/4 (Notes-shaped merge-or-dedup) are
-    ///   active at all. Defaults to `true`. Both `replaceBlocksInRange`'s call site and
-    ///   `replaceBlocks`' bibliography+Notes preservation path pass `true` -- a Notes-shaped
-    ///   incoming block is merged into its preserved row there too now, on equal footing with
-    ///   `replaceBlocksInRange` -- see `replaceBlocks`' doc comment.
-    func handleMachineManagedBlock(
-        db: Database,
-        block: Block,
-        notesRowByLabel: inout [String: Block],
-        claimedNotesLabels: inout Set<String>,
-        notesContinuationsByOwner: inout [String: [Block]],
-        currentNotesOwnerLabel: inout String?,
-        deferredNewContinuations: inout [String: [Block]],
-        handlingNotes: Bool = true
-    ) throws -> Bool {
-        if block.isBibliography && block.blockType != .heading {
-            DebugLog.log(.data, "[replaceBlocksInRange] Skipping insert of bibliography-shaped block (machine-managed)")
-            return true
-        }
-
-        guard handlingNotes, block.isNotes, block.blockType != .heading else {
-            return false
-        }
-
-        if let label = FootnoteSyncService.parseNotesLabel(from: block.markdownFragment)?.label {
-            currentNotesOwnerLabel = label
-
-            if claimedNotesLabels.contains(label) {
-                // Duplicate label within this same batch (e.g. two "[^1]:" paragraphs from a
-                // copy-paste slip) — the first occurrence above already claimed this label
-                // (merged or inserted); drop this one rather than producing a second DB row
-                // with the same footnote label.
-                DebugLog.log(.data, "[replaceBlocksInRange] Skipping duplicate notes label in batch: \(label)")
-                return true
-            }
-            claimedNotesLabels.insert(label)
-
-            if var existingNotesRow = notesRowByLabel[label] {
-                existingNotesRow.markdownFragment = block.markdownFragment
-                existingNotesRow.textContent = block.textContent
-                existingNotesRow.recalculateWordCount()
-                existingNotesRow.updatedAt = Date()
-                try existingNotesRow.update(db)
-                notesRowByLabel.removeValue(forKey: label)
-                return true
-            }
-            return false
-        }
-
-        // Labelless Notes-shaped block: a continuation paragraph of the current running
-        // owner. Consume the next UNCLAIMED existing continuation row for that owner, in
-        // original order, so a three-paragraph footnote's two continuations each land on
-        // their own preserved row instead of clobbering the same one.
-        guard let owner = currentNotesOwnerLabel else {
-            // No running owner established yet in this batch at all -- genuinely
-            // unattachable content; fall through to a normal insert (no better option).
-            return false
-        }
-        guard var remaining = notesContinuationsByOwner[owner], !remaining.isEmpty else {
-            // Owner is known, but no preserved continuation row is left for it -- the
-            // footnote grew a paragraph. Defer rather than fall through to a normal insert:
-            // a normal insert would place it at this batch's index-based sortOrder, inside
-            // the body-content region, sorting AHEAD of its own not-yet-reanchored owner.
-            // See insertDeferredContinuations.
-            deferredNewContinuations[owner, default: []].append(block)
-            return true
-        }
-        var existingContinuation = remaining.removeFirst()
-        notesContinuationsByOwner[owner] = remaining
-        existingContinuation.markdownFragment = block.markdownFragment
-        existingContinuation.textContent = block.textContent
-        existingContinuation.recalculateWordCount()
-        existingContinuation.updatedAt = Date()
-        try existingContinuation.update(db)
-        return true
-    }
-
-    /// Re-anchor preserved isNotes/isBibliography rows (and any protected heading) immediately
-    /// after all newly-inserted content, in their original relative order. They keep their
-    /// stale original sortOrder through the merge/skip logic above, which can numerically fall
-    /// inside the range the new blocks now occupy — most commonly when endSortOrder is nil
-    /// (zooming a document's last section, which sits right before its own trailing
-    /// footnotes). Re-fetches each row fresh by id (rather than reusing the pre-loop
-    /// existingBlocks snapshot) so a content update already applied by the merge logic above
-    /// isn't clobbered by a stale copy.
-    func reanchorPreservedRows(db: Database, rowIds: [String], anchorBase: Double) throws {
-        let now = Date()
-        for (offset, rowId) in rowIds.enumerated() {
-            guard var row = try Block.fetchOne(db, key: rowId) else { continue }
-            let newSortOrder = anchorBase + Double(offset)
-            if row.sortOrder != newSortOrder {
-                row.sortOrder = newSortOrder
-                row.updatedAt = now
-                try row.update(db)
-            }
-        }
-    }
-
-    /// Normalize sort orders to sequential integers, atomically with the delete+insert above
-    /// (tie-breaking: headings before non-headings at the same sortOrder). Trap: do not merge
-    /// this with the public `normalizeSortOrders(projectId:)` in Database+BlocksReorder.swift —
-    /// they look identical but this one takes a single hoisted `now` (one timestamp for the
-    /// whole batch) while the public one calls `Date()` fresh inside its loop (a distinct
-    /// timestamp per row); unifying them would change the timestamp granularity of a normalize
-    /// pass, not which rows get touched.
-    func renumberSortOrders(db: Database, projectId: String, now: Date) throws {
-        let allProjectBlocks = try Block
-            .filter(Block.Columns.projectId == projectId)
-            .order(Block.Columns.sortOrder)
-            .fetchAll(db)
-        let sorted = allProjectBlocks.sorted { a, b in
-            let aKey = (a.sortOrder, a.blockType == .heading ? 0 : 1)
-            let bKey = (b.sortOrder, b.blockType == .heading ? 0 : 1)
-            return aKey < bKey
-        }
-        for (index, var block) in sorted.enumerated() {
-            let newSortOrder = Double(index + 1)
-            if block.sortOrder != newSortOrder {
-                block.sortOrder = newSortOrder
-                block.updatedAt = now
-                try block.update(db)
-            }
         }
     }
 

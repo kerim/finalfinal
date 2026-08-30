@@ -7,7 +7,7 @@
 //  `BibliographyCarryForwardRegressionTests.swift` (idempotency, isolation from other
 //  replaceBlocks paths, and the multi-section case).
 //
-//  `Database+BlocksReplace.swift`'s applyPreservedHeading restores isBibliography onto a
+//  `Database+BlocksReplace+Preservation.swift`'s applyPreservedHeading restores isBibliography onto a
 //  HEADING by title match, but never onto the entry rows below it. When BlockParser.parse()
 //  fails to recognise that heading (custom header name since changed, heading level demoted
 //  past isBibliographyHeading's exact `# X`/`## X` forms), the entries come back unflagged

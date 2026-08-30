@@ -375,12 +375,12 @@ struct StructuralUndoControllerTests {
         // bibliography refusal ever runs, making this test fail for the wrong reason (the row is
         // just gone, not "refused and left alone"). Mirror the block into editorState.content so
         // the reparse re-derives a "Bibliography" heading, which `replaceBlocks`' title-match
-        // preservation (Database+BlocksReplace.swift's `applyPreservedHeading`) then re-attaches
+        // preservation (Database+BlocksReplace+Preservation.swift's `applyPreservedHeading`) then re-attaches
         // to this same bibId with isBibliography carried over.
         //
         // t-341706cb round 8: a bare "# Bibliography" heading with nothing beneath it is no
         // longer enough -- tier 3 is deleted, and `hasGenuineBibliographyRun`'s restore gate
-        // (Database+BlocksReplace.swift) requires a real, terminator-bounded run before it will
+        // (Database+BlocksReplace+Preservation.swift) requires a real, terminator-bounded run before it will
         // OR a stale flag back onto a heading the fresh parse didn't recognise on its own. An
         // entry line + terminator gives the fresh parse genuine evidence to recognise
         // "Bibliography" directly, which reattaches to this same bibId via the title-match
