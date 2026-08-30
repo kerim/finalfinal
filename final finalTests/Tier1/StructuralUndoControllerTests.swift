@@ -448,8 +448,7 @@ struct StructuralUndoControllerTests {
     /// Swaps the array POSITIONS of two same-level sibling sections by title, leaving header
     /// levels/content untouched -- a minimal, hierarchy-preserving reorder (no enforcement
     /// pass needed) so the tests below can assert purely on order, mirroring exactly what
-    /// `SectionReorderPlanner.planSingleSection` builds today before dispatching into the
-    /// controller.
+    /// `reorderSingleSection` builds today before dispatching into the controller.
     private func swapSections(_ sections: [SectionViewModel], _ titleA: String, _ titleB: String) throws -> [SectionViewModel] {
         var result = sections
         let indexA = try #require(result.firstIndex { $0.title == titleA })

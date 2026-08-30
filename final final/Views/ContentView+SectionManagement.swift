@@ -143,24 +143,168 @@ extension ContentView {
     func reorderSection(_ request: SectionReorderRequest) {
         sectionSyncService.cancelPendingSync()
 
-        // The 3 validation guards (newParentId == sectionId; section not found;
-        // targetSectionId == sectionId) live in SectionReorderPlanner.plan, which returns nil
-        // for each -- matching every one of those early returns here doing nothing else (in
-        // particular, NOT clearing editorState.sectionDropInFlight; see
-        // dispatchSectionReorder's doc comment on that ownership transfer). A 4th early
-        // return, planSingleSection's own internal re-find-after-promotion guard, lives inside
-        // planSingleSection itself rather than in plan(), but returns nil the same way.
-        guard let sections = SectionReorderPlanner.plan(
-            request: request, in: editorState.sections, syncService: sectionSyncService
-        ) else {
+        // Validate
+        if request.newParentId == request.sectionId {
+            return
+        }
+        guard let fromIndex = editorState.sections.firstIndex(where: { $0.id == request.sectionId }) else {
             return
         }
 
-        // Dispatch into the audited structural-op sequence (Phase 7, plan §7) instead of
+        // Use the target section ID passed from OutlineSidebar (stable across zoom/filtering)
+        let targetSectionId = request.targetSectionId
+
+        // Early return for self-drop at same position (no-op)
+        if targetSectionId == request.sectionId {
+            return
+        }
+
+        let sectionToMove = editorState.sections[fromIndex]
+        let oldLevel = sectionToMove.headerLevel
+
+        // Branch: Subtree drag vs single-card drag
+        if request.isSubtreeDrag && !request.childIds.isEmpty {
+            reorderSubtree(request: request, fromIndex: fromIndex, oldLevel: oldLevel)
+        } else {
+            reorderSingleSection(request: request, fromIndex: fromIndex, oldLevel: oldLevel)
+        }
+    }
+
+    /// Reorder a single section (original behavior, promotes orphaned children)
+    func reorderSingleSection(request: SectionReorderRequest, fromIndex: Int, oldLevel: Int) {
+        let targetSectionId = request.targetSectionId
+
+        // Work with a local copy to batch all SwiftUI updates
+        var sections = editorState.sections
+
+        // 1. Promote orphaned children (on local copy)
+        promoteOrphanedChildrenInPlace(
+            sections: &sections,
+            movedSectionId: request.sectionId,
+            targetSectionId: targetSectionId,
+            oldLevel: oldLevel
+        )
+
+        // 2. Re-find section after promotions
+        guard let currentFromIndex = sections.firstIndex(where: { $0.id == request.sectionId }) else {
+            return
+        }
+
+        // 3. Remove the section
+        var removed = sections.remove(at: currentFromIndex)
+
+        // 4. Find insertion point
+        var finalIndex: Int
+        if let targetId = targetSectionId,
+           let targetIdx = sections.firstIndex(where: { $0.id == targetId }) {
+            finalIndex = targetIdx + 1
+        } else {
+            finalIndex = 0
+        }
+        finalIndex = min(max(0, finalIndex), sections.count)
+
+        // 5. Update section properties
+        if removed.headerLevel != request.newLevel && request.newLevel > 0 {
+            let newMarkdown = sectionSyncService.updateHeaderLevel(
+                in: removed.markdownContent,
+                to: request.newLevel
+            )
+            removed = removed.withUpdates(
+                parentId: request.newParentId,
+                headerLevel: request.newLevel,
+                markdownContent: newMarkdown
+            )
+        } else {
+            removed = removed.withUpdates(parentId: request.newParentId)
+        }
+
+        // 6. Insert at calculated position
+        sections.insert(removed, at: finalIndex)
+
+        // 7. Dispatch into the audited structural-op sequence (Phase 7, plan §7) instead of
         // the old synchronous finalizeSectionReorder, which unconditionally invalidated the
         // whole unified-undo timeline. StructuralUndoController.performSectionReorder now
         // owns everything downstream: sort-order/offset recompute, hierarchy fixup, and the
         // single DB write, all inside the same audited sequence the other five op kinds use.
+        dispatchSectionReorder(sections: sections, request: request)
+    }
+
+    /// Reorder a subtree (parent + all children move together, levels adjusted relatively)
+    func reorderSubtree(request: SectionReorderRequest, fromIndex: Int, oldLevel: Int) {
+        let targetSectionId = request.targetSectionId
+        let levelDelta = request.newLevel - oldLevel  // How much to shift all levels
+
+        // Work with a local copy
+        var sections = editorState.sections
+
+        // 1. Collect all sections to move (parent + children) in order
+        let allIdsToMove = [request.sectionId] + request.childIds
+        var sectionsToMove: [SectionViewModel] = []
+
+        for id in allIdsToMove {
+            if let section = sections.first(where: { $0.id == id }) {
+                sectionsToMove.append(section)
+            }
+        }
+
+        // 2. Remove all sections being moved (in reverse order to maintain indices)
+        let indicesToRemove = allIdsToMove.compactMap { id in
+            sections.firstIndex(where: { $0.id == id })
+        }.sorted().reversed()
+
+        for idx in indicesToRemove {
+            sections.remove(at: idx)
+        }
+
+        // 3. Find insertion point
+        var insertionIndex: Int
+        if let targetId = targetSectionId,
+           let targetIdx = sections.firstIndex(where: { $0.id == targetId }) {
+            insertionIndex = targetIdx + 1
+        } else {
+            insertionIndex = 0
+        }
+        insertionIndex = min(max(0, insertionIndex), sections.count)
+
+        // 4. Apply level delta to all sections being moved
+        var adjustedSections: [SectionViewModel] = []
+        for (idx, section) in sectionsToMove.enumerated() {
+            let newSectionLevel = section.headerLevel + levelDelta
+            // Note: H7+ are allowed in data model (no clamping to 6)
+
+            if idx == 0 {
+                // Parent section - use the new parent from request
+                let newMarkdown = sectionSyncService.updateHeaderLevel(
+                    in: section.markdownContent,
+                    to: newSectionLevel
+                )
+                let adjusted = section.withUpdates(
+                    parentId: request.newParentId,
+                    headerLevel: newSectionLevel,
+                    markdownContent: newMarkdown
+                )
+                adjustedSections.append(adjusted)
+            } else {
+                // Child section - apply delta but parent will be recalculated later
+                let newMarkdown = sectionSyncService.updateHeaderLevel(
+                    in: section.markdownContent,
+                    to: newSectionLevel
+                )
+                let adjusted = section.withUpdates(
+                    headerLevel: newSectionLevel,
+                    markdownContent: newMarkdown
+                )
+                adjustedSections.append(adjusted)
+            }
+        }
+
+        // 5. Insert all sections at the insertion point
+        for (offset, section) in adjustedSections.enumerated() {
+            sections.insert(section, at: insertionIndex + offset)
+        }
+
+        // 6. Dispatch into the audited structural-op sequence (Phase 7, plan §7) -- see
+        // reorderSingleSection's matching comment.
         dispatchSectionReorder(sections: sections, request: request)
     }
 
@@ -208,8 +352,7 @@ extension ContentView {
                 // (ContentView.swift's onDragEnded doc comment): there's no new AppKit drag
                 // session backing this retry, but a later UNRELATED drag's own Path A could
                 // still race it the same way MF-2 closed for the original drop otherwise.
-                // `reorderSection` (not SectionReorderPlanner.planSingleSection/planSubtree
-                // directly) re-runs
+                // `reorderSection` (not reorderSingleSection/reorderSubtree directly) re-runs
                 // the self-drop/same-position guards too, not just the recompute -- the same
                 // safety checks a genuine drop gets. The stash itself lives on `editorState`
                 // (a class), not a `ContentView` `@State` property -- see
@@ -295,4 +438,50 @@ extension ContentView {
         }
     }
 
+    /// Promote orphaned children in-place on a local array (avoids multiple SwiftUI updates)
+    /// Uses target section ID for stable position comparison
+    func promoteOrphanedChildrenInPlace(
+        sections: inout [SectionViewModel],
+        movedSectionId: String,
+        targetSectionId: String?,  // ID of section that will be BEFORE the moved section
+        oldLevel: Int
+    ) {
+        guard let movedFromIndex = sections.firstIndex(where: { $0.id == movedSectionId }) else { return }
+
+        // Find direct children of the section being moved
+        let childIndices = sections.enumerated()
+            .filter { $0.element.parentId == movedSectionId }
+            .map { $0.offset }
+
+        for childIndex in childIndices {
+            let child = sections[childIndex]
+
+            // After parent removal, where will the child be?
+            let childFinalIndex = childIndex > movedFromIndex ? childIndex - 1 : childIndex
+
+            // After parent removal, where will the target be? Parent inserts AFTER target.
+            let parentFinalIndex: Int
+            if let targetId = targetSectionId,
+               let targetIdx = sections.firstIndex(where: { $0.id == targetId }) {
+                // Target shifts down if it was after the removed section
+                let targetFinalIndex = targetIdx > movedFromIndex ? targetIdx - 1 : targetIdx
+                parentFinalIndex = targetFinalIndex + 1  // Parent goes AFTER target
+            } else {
+                parentFinalIndex = 0  // No target = insert at beginning
+            }
+
+            // Child is orphaned if it ends up BEFORE the parent in document order
+            if childFinalIndex < parentFinalIndex {
+                let newLevel = oldLevel
+                let newMarkdown = sectionSyncService.updateHeaderLevel(
+                    in: child.markdownContent,
+                    to: newLevel
+                )
+                sections[childIndex] = child.withUpdates(
+                    headerLevel: newLevel,
+                    markdownContent: newMarkdown
+                )
+            }
+        }
+    }
 }

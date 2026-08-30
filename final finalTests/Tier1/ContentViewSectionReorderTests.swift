@@ -11,8 +11,7 @@
 //  proven constructible standalone by its own `#Preview { ContentView() ... }` at the bottom
 //  of ContentView.swift) whose `@State` properties are `internal`, so a bare instance can be
 //  configured and driven directly here, as long as nothing touched requires `@Environment`
-//  (`dispatchSectionReorder`/`reorderSection` don't -- nor does the `SectionReorderPlanner`
-//  they call into).
+//  (`dispatchSectionReorder`/`reorderSection`/`reorderSingleSection`/`reorderSubtree` don't).
 //
 
 import Testing
