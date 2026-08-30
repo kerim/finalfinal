@@ -709,16 +709,18 @@ final class StructuralUndoController {
     /// synchronous call that unconditionally invalidated the whole unified-undo timeline) into
     /// a sixth tracked `StructuralEntry.Kind`, sharing the same audited `performStructuralOp`
     /// sequence as the other five. Called directly from `ContentView`'s own
-    /// `reorderSingleSection`/`reorderSubtree` (same window/project as `editorState`), so --
+    /// `dispatchSectionReorder` (invoked by `reorderSection` after `SectionReorderPlanner.plan`
+    /// computes the target array; same window/project as `editorState`), so --
     /// like `performSectionDelete`/`performSectionDuplicate` -- there's no separate-window
     /// `requestingProjectId` to check. Refuses outright while zoomed (`.refuseIfZoomed`),
     /// matching the existing rule for delete/duplicate: the zoom range is itself a DB
     /// structural concept, and reconciling it against a concurrent reorder is out of scope.
     ///
-    /// `sections` is the ALREADY-COMPUTED target order that `reorderSingleSection`/
-    /// `reorderSubtree` build today (array splice + orphaned-child promotion, unchanged by
-    /// this phase) -- this op absorbs everything downstream of that (sort-order/offset
-    /// recompute, the in-memory hierarchy fixup, and the single DB write) that
+    /// `sections` is the ALREADY-COMPUTED target order that `SectionReorderPlanner.plan`
+    /// builds today (array splice + orphaned-child promotion via `planSingleSection`/
+    /// `planSubtree`, unchanged by this phase) -- this op absorbs everything downstream of
+    /// that (sort-order/offset recompute, the in-memory hierarchy fixup, and the single DB
+    /// write) that
     /// `finalizeSectionReorder` used to do synchronously and outside any audited sequence. The
     /// existing forced-snapshot + `restoreEntireProject`-on-undo mechanism already round-trips
     /// section order faithfully (`Section` rows carry `sortOrder`) -- no new inverse logic is
