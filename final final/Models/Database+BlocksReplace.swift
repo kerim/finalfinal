@@ -180,17 +180,8 @@ extension ProjectDatabase {
                     protectingNotes: true
                 )
 
-                let notesIndex = buildNotesRowIndex(from: existingBlocks)
-                var notesRowByLabel = notesIndex.byLabel
-                var notesContinuationsByOwner = notesIndex.continuationsByOwner
+                var notesRowByLabel = buildNotesRowIndex(from: existingBlocks)
                 var claimedNotesLabels: Set<String> = []
-                var currentNotesOwnerLabel: String?
-                // Genuinely-NEW continuation paragraphs (a footnote that grew: more incoming
-                // labelless continuations than preserved rows existed for) -- collected here
-                // instead of inserted immediately, and given a real position adjacent to
-                // their owner only once the owner's FINAL (reanchored) position is known. See
-                // `insertDeferredContinuations`'s doc comment.
-                var deferredNotesContinuations: [String: [Block]] = [:]
 
                 for (index, var block) in blocks.enumerated() {
                     block.sortOrder = Double(index)
@@ -205,9 +196,6 @@ extension ProjectDatabase {
                         block: block,
                         notesRowByLabel: &notesRowByLabel,
                         claimedNotesLabels: &claimedNotesLabels,
-                        notesContinuationsByOwner: &notesContinuationsByOwner,
-                        currentNotesOwnerLabel: &currentNotesOwnerLabel,
-                        deferredNewContinuations: &deferredNotesContinuations,
                         handlingNotes: true
                     ) {
                         continue
@@ -218,25 +206,6 @@ extension ProjectDatabase {
                     try block.insert(db)
                 }
 
-                // Deliberately NO `deleteUnclaimedContinuations` call on this path -- unlike
-                // `replaceBlocksInRange`, see below. `blocks` here is guaranteed Notes-free at
-                // every real production call site (this function's own doc comment); any
-                // Notes-shaped content that DOES appear in it is an accidental/collision case
-                // to merge-if-possible (the labeled branch above), never an authoritative,
-                // exhaustive statement of "here is everything this footnote's continuations
-                // should be now." Treating an unclaimed continuation as "the user deleted it"
-                // here would be wrong precisely because this call was never attempting to
-                // represent that footnote's continuations at all -- confirmed by
-                // BibliographySectionFlagTests+DataIntegrity.swift's "Issue 2 fixed" and
-                // "MUST-FIX 1 regression guard" tests, both of which seed a continuation,
-                // pass `blocks` that omits it entirely (in the MUST-FIX-1 case, even while
-                // the SAME footnote's labeled definition IS present and correctly merges),
-                // and assert the continuation survives untouched. `replaceBlocksInRange`'s
-                // `newBlocks`, by contrast, is a reparse of a specific bounded range that ITS
-                // callers assert is exhaustive for that range -- see that function's own call
-                // to `deleteUnclaimedContinuations` and `MultiParagraphFootnoteReplaceTests`'
-                // shrink test.
-
                 // Re-anchor preserved bibliography/Notes rows immediately after all
                 // newly-inserted content -- see reanchorPreservedRows for why leaving them at
                 // a stale position risks a numeric collision with the freshly-sequenced new
@@ -244,10 +213,6 @@ extension ProjectDatabase {
                 if !preservedRowIds.isEmpty {
                     try reanchorPreservedRows(db: db, rowIds: preservedRowIds, anchorBase: Double(blocks.count))
                 }
-
-                // MUST run AFTER reanchorPreservedRows -- see insertDeferredContinuations'
-                // doc comment for why placement depends on the owner's FINAL position.
-                try insertDeferredContinuations(db: db, projectId: projectId, deferredByOwner: deferredNotesContinuations)
 
                 try renumberSortOrders(db: db, projectId: projectId, now: Date())
                 try Self.recomputeSectionParents(db: db, projectId: projectId)
@@ -395,14 +360,7 @@ extension ProjectDatabase {
             // from the delete query); if newBlocks legitimately contains a matching (same-label)
             // Notes row, it is merged into the preserved row in place instead of inserted as a
             // duplicate alongside it. See buildNotesRowIndex for the lookup this builds.
-            let notesIndex = buildNotesRowIndex(from: existingBlocks)
-            var notesRowByLabel = notesIndex.byLabel
-            var notesContinuationsByOwner = notesIndex.continuationsByOwner
-            var currentNotesOwnerLabel: String?
-            // Genuinely-NEW continuation paragraphs (a footnote that grew) -- see
-            // `insertDeferredContinuations`'s doc comment; populated by
-            // handleMachineManagedBlock below, consumed after reanchorPreservedRows runs.
-            var deferredNotesContinuations: [String: [Block]] = [:]
+            var notesRowByLabel = buildNotesRowIndex(from: existingBlocks)
 
             // The "# Notes"/"# Bibliography" HEADING itself needs a different rule than the
             // paragraph rows above: it normally survives via the delete-then-reinsert-by-title-
@@ -484,10 +442,7 @@ extension ProjectDatabase {
                     db: db,
                     block: block,
                     notesRowByLabel: &notesRowByLabel,
-                    claimedNotesLabels: &claimedNotesLabels,
-                    notesContinuationsByOwner: &notesContinuationsByOwner,
-                    currentNotesOwnerLabel: &currentNotesOwnerLabel,
-                    deferredNewContinuations: &deferredNotesContinuations
+                    claimedNotesLabels: &claimedNotesLabels
                 ) {
                     continue
                 }
@@ -502,12 +457,6 @@ extension ProjectDatabase {
                 try block.insert(db)
             }
 
-            // Any continuation row the incoming batch never claimed -- the user deleted that
-            // paragraph of the footnote -- must be deleted now, before the reanchor step
-            // below moves it to a fresh position and makes it look intentional. See
-            // `deleteUnclaimedContinuations`'s doc comment.
-            try deleteUnclaimedContinuations(db: db, notesContinuationsByOwner: notesContinuationsByOwner)
-
             // 3.5. Re-anchor preserved isNotes/isBibliography rows (and any protected heading,
             // see preservedRowIds above) immediately after all newly-inserted content — see
             // reanchorPreservedRows for why leaving them at a stale position can split a
@@ -519,10 +468,6 @@ extension ProjectDatabase {
                     anchorBase: preservedRowsAnchor
                 )
             }
-
-            // MUST run AFTER reanchorPreservedRows -- see insertDeferredContinuations's doc
-            // comment for why placement depends on the owner's FINAL position.
-            try insertDeferredContinuations(db: db, projectId: projectId, deferredByOwner: deferredNotesContinuations)
 
             // 6. Normalize sort orders inline (atomic with delete+insert above). Trap: do not
             // merge this with the public normalizeSortOrders(projectId:) in
@@ -866,162 +811,15 @@ private extension ProjectDatabase {
 
     /// Build a footnote-label -> existing-row lookup from existing isNotes blocks, used to
     /// merge a same-label incoming Notes row into its existing DB row instead of inserting a
-    /// duplicate (see `handleMachineManagedBlock`) -- plus a parallel label -> ORDERED
-    /// continuation-rows lookup for the paragraphs that continue a multi-paragraph footnote
-    /// definition. Deliberately `[String: [Block]]` for continuations, NOT one-to-one: a
-    /// three-paragraph footnote has TWO continuation rows under one label, and a one-to-one
-    /// index would collide/clobber -- silently keeping only the last continuation and
-    /// reproducing the exact duplication bug this index exists to close (see
-    /// `handleMachineManagedBlock`'s consumption of it).
-    ///
-    /// Continuation ownership is POSITIONAL, walking `existing` isNotes blocks (headings
-    /// included, for run-boundary detection -- see below) in `sortOrder` order: any
-    /// non-heading block that does NOT itself parse as a `[^N]:` definition is attributed to
-    /// the most recently seen definition's label. This is a second, independent
-    /// implementation of the same rule `FootnoteSyncService`'s own `notesOwnershipMap`
-    /// applies (different file, different call shape -- this one only needs the
-    /// continuation buckets, not the full heading/definition/userProse classification) --
-    /// keep the two in sync if the shared definition of "continuation" ever changes.
-    ///
-    /// RUN-BOUNDARY RESET: `currentOwnerLabel` resets to `nil` at every heading encountered
-    /// in the walk. `sectionFlagCarriedForward` can re-open the isNotes flag more than once
-    /// per document (two separate "# Notes" runs separated by ordinary body text); without
-    /// this reset, a second run's leading content (e.g. the user's own hand-typed prose
-    /// above their footnotes in THAT run) would silently inherit ownership from the FIRST
-    /// run's last footnote, just because non-Notes content sits between them and isn't part
-    /// of this filtered walk. Mirrors `FootnoteSyncService`'s `notesOwnershipMap` and
-    /// `BlockParser+Assembly.swift`'s `classifyNotesRuns` -- keep all three in sync.
-    ///
-    /// EXCLUDES isBibliography == true rows entirely: a legacy heading whose configured
-    /// bibliography-opening title collides with "Notes" can leave bibliography entries
-    /// flagged isNotes too (see docs/deferred/bibliography-heading-collision-ambiguity.md).
-    /// Those rows belong to BibliographySyncService, never to this index -- letting one
-    /// through here could make it either wrongly "own" real continuations that follow it,
-    /// or get wrongly consumed/claimed/deleted as if it were a continuation itself.
-    func buildNotesRowIndex(from existing: [Block]) -> (byLabel: [String: Block], continuationsByOwner: [String: [Block]]) {
+    /// duplicate (see `handleMachineManagedBlock`).
+    func buildNotesRowIndex(from existing: [Block]) -> [String: Block] {
         var notesRowByLabel: [String: Block] = [:]
-        var continuationsByOwner: [String: [Block]] = [:]
-        var currentOwnerLabel: String?
-
-        let notesRows = existing
-            .filter { $0.isNotes && !$0.isBibliography }
-            .sorted { a, b in
-                if a.sortOrder != b.sortOrder { return a.sortOrder < b.sortOrder }
-                return (a.blockType == .heading ? 0 : 1) < (b.blockType == .heading ? 0 : 1)
-            }
-
-        for block in notesRows {
-            if block.blockType == .heading {
-                currentOwnerLabel = nil
-                continue
-            }
+        for block in existing where block.isNotes {
             if let label = FootnoteSyncService.parseNotesLabel(from: block.markdownFragment)?.label {
                 notesRowByLabel[label] = block
-                currentOwnerLabel = label
-            } else if let owner = currentOwnerLabel {
-                continuationsByOwner[owner, default: []].append(block)
             }
         }
-        return (notesRowByLabel, continuationsByOwner)
-    }
-
-    /// Delete continuation rows left unclaimed after `handleMachineManagedBlock`'s main
-    /// insert/merge loop finishes -- i.e. a preserved continuation whose paragraph the
-    /// incoming batch no longer contains (the user deleted the second paragraph of a
-    /// footnote, say). Without this, a SHRINKING multi-paragraph footnote resurrects its
-    /// deleted paragraph: the labelless-continuation branch only ever claims rows
-    /// positionally as incoming blocks consume them (mirroring `claimedNotesLabels`), so a
-    /// row nobody claimed would otherwise sit untouched in the DB, then get silently
-    /// re-anchored (by `reanchorPreservedRows`, since it's still in `preservedRowIds`) right
-    /// back into the document as if nothing had changed.
-    ///
-    /// CALLED ONLY FROM `replaceBlocksInRange`, DELIBERATELY NOT from `replaceBlocks`'
-    /// preservation path -- see the call site in `replaceBlocks` for the full reasoning.
-    /// Short version: `replaceBlocksInRange`'s `newBlocks` is a reparse of a specific
-    /// bounded range that its callers assert is EXHAUSTIVE for that range, so an unclaimed
-    /// continuation there really does mean "deleted." `replaceBlocks`' preservation-path
-    /// `blocks` is never exhaustive for Notes content by contract (guaranteed Notes-free at
-    /// its real call sites) -- an unclaimed continuation there just means this call was
-    /// never attempting to represent that footnote's continuations, and must survive
-    /// untouched. Conflating the two here caused a real regression: two pre-existing tests
-    /// (`BibliographySectionFlagTests+DataIntegrity.swift`'s "Issue 2 fixed" and "MUST-FIX 1
-    /// regression guard") each seed a continuation, pass `blocks` that never reproduces it
-    /// (one of them even while the SAME footnote's labeled definition IS present and
-    /// correctly merges), and assert it survives -- calling this function from that path
-    /// deleted it instead.
-    func deleteUnclaimedContinuations(db: Database, notesContinuationsByOwner: [String: [Block]]) throws {
-        for rows in notesContinuationsByOwner.values {
-            for row in rows {
-                try Block.deleteOne(db, key: row.id)
-            }
-        }
-    }
-
-    /// Insert genuinely-NEW continuation paragraphs -- a multi-paragraph footnote that GREW
-    /// (more incoming labelless continuations than preserved rows existed for) -- deferred
-    /// from `handleMachineManagedBlock`'s main loop and given a real position only now,
-    /// immediately after their owning definition's FINAL position.
-    ///
-    /// MUST run AFTER `reanchorPreservedRows`, never before: the main insert loop assigns
-    /// every genuinely-new block an index-based sortOrder inside the "new content" region
-    /// (`[0, blocks.count)` / `[startSortOrder, startSortOrder + newBlocks.count)`), while
-    /// `reanchorPreservedRows` moves the owning definition (and any of its surviving
-    /// preserved continuations) to AFTER that entire region. A new continuation inserted at
-    /// its batch index, before the owner is reanchored, would therefore sort AHEAD of its
-    /// own definition -- `notesOwnershipMap`/`buildNotesRowIndex`'s walk would then see no
-    /// preceding definition for it and misclassify it as pre-definition user prose (sorting
-    /// it to the very end of the ENTIRE Notes group, owned by whatever footnote happens to
-    /// be last) instead of its actual owner. "Add a third paragraph to footnote 1" must
-    /// never end up folded into footnote 3's export.
-    ///
-    /// Placement: fractionally, just after the owner's last known row (its definition, or
-    /// its last surviving continuation) in a FRESH post-reanchor fetch -- reanchored rows
-    /// are integer-spaced (`anchorBase + Double(offset)`), so a `+0.01`-per-row fractional
-    /// offset lands safely between the owner's row and whatever reanchored row comes next,
-    /// without colliding. `renumberSortOrders`, which always runs after this, converts
-    /// everything to clean sequential integers regardless.
-    func insertDeferredContinuations(
-        db: Database, projectId: String, deferredByOwner: [String: [Block]]
-    ) throws {
-        guard !deferredByOwner.isEmpty else { return }
-
-        let notesRows = try Block
-            .filter(Block.Columns.projectId == projectId)
-            .filter(Block.Columns.isNotes == true)
-            .filter(Block.Columns.isBibliography == false)
-            .order(Block.Columns.sortOrder)
-            .fetchAll(db)
-
-        var lastOwnedSortOrder: [String: Double] = [:]
-        var currentOwnerLabel: String?
-        for row in notesRows {
-            if row.blockType == .heading {
-                currentOwnerLabel = nil
-                continue
-            }
-            if let label = FootnoteSyncService.parseNotesLabel(from: row.markdownFragment)?.label {
-                currentOwnerLabel = label
-            }
-            if let owner = currentOwnerLabel {
-                lastOwnedSortOrder[owner] = row.sortOrder
-            }
-        }
-
-        for (owner, newBlocks) in deferredByOwner {
-            guard let baseSortOrder = lastOwnedSortOrder[owner] else {
-                // Owner's definition isn't present in this fresh fetch -- shouldn't happen
-                // (a continuation is only ever deferred once currentNotesOwnerLabel has
-                // already been established from a labeled block earlier in this same
-                // batch), but fail safe rather than crash: log so this is visible if it's
-                // ever actually reached, and drop the positional placement for these rows.
-                DebugLog.log(.data, "[Database+BlocksReplace] Deferred continuation(s) for owner \(owner) could not be placed: owner definition not found after reanchor")
-                continue
-            }
-            for (index, var block) in newBlocks.enumerated() {
-                block.sortOrder = baseSortOrder + Double(index + 1) * 0.01
-                try block.insert(db)
-            }
-        }
+        return notesRowByLabel
     }
 
     /// Delete blocks in `[startSortOrder, endSortOrder)` (or the whole project, when
@@ -1132,7 +930,7 @@ private extension ProjectDatabase {
     /// handled here and the caller must `continue` (skip the normal insert); `false` when it
     /// should fall through.
     ///
-    /// Four-way outcome, in order:
+    /// Three-way outcome, in order:
     /// 1. Bibliography-shaped, non-heading: skipped outright — Bibliography rows are 100%
     ///    machine-generated (BibliographySyncService is the sole writer); the existing
     ///    (preserved, undeleted) row above remains authoritative. The "# Bibliography"
@@ -1147,23 +945,9 @@ private extension ProjectDatabase {
     ///    label falls through to a normal insert rather than being silently dropped. (The
     ///    "# Notes" heading itself never matches `parseNotesLabel`'s "[^N]:" pattern, so it
     ///    always falls through to the title-match flow, same as any other heading.)
-    /// 4. Notes-shaped, non-heading, with NO parsed label at all: a continuation paragraph of
-    ///    the current running owner (`currentNotesOwnerLabel`, updated by outcome 2/3 above
-    ///    whenever a labeled block is seen). Consumes the next UNCLAIMED existing continuation
-    ///    row for that owner, positionally, from `notesContinuationsByOwner` (mirrors how
-    ///    `claimedNotesLabels` prevents double-claiming a definition), and updates it in place
-    ///    (same id) — same merge shape as outcome 3. If no owner is established yet at all
-    ///    (this batch's very first Notes-shaped block, no preceding label seen), this is
-    ///    genuinely unattachable content and falls through to a normal insert (`false`) --
-    ///    the caller has no better option. If an owner IS known but no preserved row remains
-    ///    for it (the footnote grew a paragraph), the block is queued into
-    ///    `deferredNewContinuations[owner]` instead of inserted immediately (`true` — the
-    ///    caller must NOT do a normal insert) — see `insertDeferredContinuations`'s doc
-    ///    comment for why its real position can only be resolved after the caller reanchors
-    ///    preserved rows.
     ///
-    /// - Parameter handlingNotes: Whether outcomes 2/3/4 (Notes-shaped merge-or-dedup) are
-    ///   active at all. Defaults to `true`. Both `replaceBlocksInRange`'s call site and
+    /// - Parameter handlingNotes: Whether outcome 2/3 (Notes-shaped merge-or-dedup) is active
+    ///   at all. Defaults to `true`. Both `replaceBlocksInRange`'s call site and
     ///   `replaceBlocks`' bibliography+Notes preservation path pass `true` -- a Notes-shaped
     ///   incoming block is merged into its preserved row there too now, on equal footing with
     ///   `replaceBlocksInRange` -- see `replaceBlocks`' doc comment.
@@ -1172,9 +956,6 @@ private extension ProjectDatabase {
         block: Block,
         notesRowByLabel: inout [String: Block],
         claimedNotesLabels: inout Set<String>,
-        notesContinuationsByOwner: inout [String: [Block]],
-        currentNotesOwnerLabel: inout String?,
-        deferredNewContinuations: inout [String: [Block]],
         handlingNotes: Bool = true
     ) throws -> Bool {
         if block.isBibliography && block.blockType != .heading {
@@ -1182,13 +963,8 @@ private extension ProjectDatabase {
             return true
         }
 
-        guard handlingNotes, block.isNotes, block.blockType != .heading else {
-            return false
-        }
-
-        if let label = FootnoteSyncService.parseNotesLabel(from: block.markdownFragment)?.label {
-            currentNotesOwnerLabel = label
-
+        if handlingNotes, block.isNotes && block.blockType != .heading,
+           let label = FootnoteSyncService.parseNotesLabel(from: block.markdownFragment)?.label {
             if claimedNotesLabels.contains(label) {
                 // Duplicate label within this same batch (e.g. two "[^1]:" paragraphs from a
                 // copy-paste slip) — the first occurrence above already claimed this label
@@ -1208,35 +984,9 @@ private extension ProjectDatabase {
                 notesRowByLabel.removeValue(forKey: label)
                 return true
             }
-            return false
         }
 
-        // Labelless Notes-shaped block: a continuation paragraph of the current running
-        // owner. Consume the next UNCLAIMED existing continuation row for that owner, in
-        // original order, so a three-paragraph footnote's two continuations each land on
-        // their own preserved row instead of clobbering the same one.
-        guard let owner = currentNotesOwnerLabel else {
-            // No running owner established yet in this batch at all -- genuinely
-            // unattachable content; fall through to a normal insert (no better option).
-            return false
-        }
-        guard var remaining = notesContinuationsByOwner[owner], !remaining.isEmpty else {
-            // Owner is known, but no preserved continuation row is left for it -- the
-            // footnote grew a paragraph. Defer rather than fall through to a normal insert:
-            // a normal insert would place it at this batch's index-based sortOrder, inside
-            // the body-content region, sorting AHEAD of its own not-yet-reanchored owner.
-            // See insertDeferredContinuations.
-            deferredNewContinuations[owner, default: []].append(block)
-            return true
-        }
-        var existingContinuation = remaining.removeFirst()
-        notesContinuationsByOwner[owner] = remaining
-        existingContinuation.markdownFragment = block.markdownFragment
-        existingContinuation.textContent = block.textContent
-        existingContinuation.recalculateWordCount()
-        existingContinuation.updatedAt = Date()
-        try existingContinuation.update(db)
-        return true
+        return false
     }
 
     /// Re-anchor preserved isNotes/isBibliography rows (and any protected heading) immediately

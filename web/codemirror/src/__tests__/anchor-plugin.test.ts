@@ -461,8 +461,11 @@ describe('bibliography-end terminator Delete/Backspace protection', () => {
 });
 
 // Regression tests for the bibliography-end terminator's line-relocation / whole-line-delete
-// protection (`bibliographyEndLineRelocationKeymap` / the `Shift-Mod-k` binding inside
-// `bibliographyEndDeleteKeymap` / `isBibliographyEndMarkerLine`). See anchor-plugin.ts's own
+// protection (`bibliographyEndLineRelocationKeymap` / `isBibliographyEndMarkerLine`). The
+// `deleteLine`/`Shift-Mod-k` guard that used to live alongside these in
+// `bibliographyEndDeleteKeymap` was removed 2026-08-22 — see anchor-plugin.ts's "REMOVED"
+// comment above `bibliographyEndLineRelocationKeymap` for why, and the "guarded dispatch
+// (fixed)" describe block below for the coverage of that removal. See anchor-plugin.ts's own
 // "Whole-line danger" section comment for the underlying mechanism: `deleteLine`, `moveLineUp`/
 // `moveLineDown`, and `copyLineUp`/`copyLineDown` all build their changes straight from
 // `selectedLineBlocks(state)` — the document line(s) under the selection — with no
@@ -625,7 +628,7 @@ describe('bibliography-end terminator line-relocation / whole-line-delete protec
     });
   });
 
-  // ---- Fixed: bibliographyEndLineRelocationKeymap + the Shift-Mod-k binding, via anchorPlugin() ----
+  // ---- Fixed: bibliographyEndLineRelocationKeymap, via anchorPlugin() ----
 
   describe('guarded dispatch (fixed)', () => {
     let view: EditorView | null = null;
@@ -653,13 +656,24 @@ describe('bibliography-end terminator line-relocation / whole-line-delete protec
       return runScopeHandlers(v, event, 'editor');
     }
 
-    it('Shift-Mod-k at the terminator line is swallowed — document unchanged', () => {
+    it('Shift-Mod-k at the terminator line is NOT intercepted — that guard was removed once deleteLine stopped owning the chord', () => {
+      // As of 2026-08-22, anchorPlugin() no longer binds Shift-Mod-k at all (see the "REMOVED"
+      // comment above bibliographyEndLineRelocationKeymap in anchor-plugin.ts): main.ts now
+      // filters `Shift-Mod-k` out of `defaultKeymap` entirely, because that chord is this app's
+      // native "Insert Citation" menu shortcut, and CodeMirror's own `deleteLine` binding was
+      // silently winning the race against it. With `deleteLine` unreachable on this key, there is
+      // no more whole-line danger left for this plugin to guard against — and swallowing the
+      // keystroke anyway (the old behavior this test used to assert) would silently block Insert
+      // Citation whenever the cursor happened to sit on the terminator's own line, reproducing
+      // the exact bug that removal fixed. The document staying unchanged below reflects that
+      // *nothing* in this isolated extension set has a handler for the chord anymore, not a
+      // deliberate no-op swallow.
       const v = makeEditor(DOC);
       v.dispatch({ selection: { anchor: TERM_TO } });
 
       const handled = pressKey(v, 'k', { ctrlKey: true, shiftKey: true });
 
-      expect(handled).toBe(true);
+      expect(handled).toBe(false);
       expect(v.state.doc.toString()).toBe(DOC);
     });
 
