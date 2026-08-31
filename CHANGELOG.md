@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **If two of your Zotero group libraries have the same name, citations from one of them could come up "not found"** even though the reference was right there — fixed; each library is now looked up separately. If the same citation key genuinely exists in two libraries, you're told it's ambiguous instead of getting a silently-picked one.
+
 ## [0.2.129] - 2026-08-30
 
 ### Fixed

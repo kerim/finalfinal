@@ -165,15 +165,20 @@ struct ZoteroLibraryScopeTests {
         )
     }
 
-    @Test("groupLibraryNames excludes the personal library (id 1) from a full user.groups list, returning names")
-    func groupLibraryNamesExcludesPersonal() {
+    @Test("groupLibraryScopes excludes the personal library (id 1) from a full user.groups list, batching the rest by name")
+    func groupLibraryScopesExcludesPersonal() {
         var libraries = [ZoteroLibrary(id: 1, name: "My Library")]
         for id in 2...19 {
             libraries.append(ZoteroLibrary(id: id, name: "Group \(id)"))
         }
 
-        let names = ZoteroService.groupLibraryNames(from: libraries)
+        let plans = ZoteroService.groupLibraryScopes(from: libraries)
 
+        #expect(plans.count == 1, "19 uniquely-named group libraries batch into one .libraryNames plan")
+        guard case .libraryNames(let names) = plans.first?.scope else {
+            Issue.record("Expected a single .libraryNames plan")
+            return
+        }
         #expect(!names.contains("My Library"))
         #expect(names == (2...19).map { "Group \($0)" })
     }

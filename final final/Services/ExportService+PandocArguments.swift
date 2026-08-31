@@ -158,6 +158,18 @@ extension ExportService {
         let tempDir: URL
     }
 
+    /// The two wire shapes `ZoteroService.groupLibraryMetadata(from:)` flattens the user's
+    /// group/shared libraries into -- bundled together (not two separate array parameters) to
+    /// keep `citationArguments` under SwiftLint's `function_parameter_count` limit, same
+    /// parameter-object pattern as `PDFBibliographyRequest` above. They always travel together
+    /// (one call site, one producer), but are still read INDEPENDENTLY inside
+    /// `citationArguments` -- see that function's doc comment for why neither array's emptiness
+    /// may gate the other's emission.
+    struct GroupLibraryScope {
+        let names: [String]
+        let ids: [Int]
+    }
+
     /// Build citation-related Pandoc arguments from an already-fetched bibliography.
     ///
     /// Takes `luaScriptPath` as its own parameter (rather than recomputing it from
@@ -176,21 +188,36 @@ extension ExportService {
     /// `ExportService+Citations.swift`), in which case PDF appends nothing, exactly as before
     /// this function stopped fetching internally.
     ///
-    /// `groupLibraryNames` -- DOCX/ODT only (PDF resolves citations itself via `--citeproc`,
-    /// never touches `zotero.lua`) -- is the user's group/shared library display names, passed
-    /// through as `--metadata zotero-group-libraries=<JSON array>` for `zotero.lua`'s own
-    /// phase-2 Better BibTeX lookup (see that file's LOCAL PATCH block): a citekey living only
-    /// in a group/shared library, not the personal one, otherwise fails `zotero.lua`'s
-    /// unscoped BBT call and exports as plain text instead of a live field code. Nested inside
-    /// the `luaScriptPath` binding below so it's never appended when there's no lua filter at
-    /// all, and skipped entirely when `groupLibraryNames` is empty -- an empty array is
-    /// "nothing to add," not "clear whatever zotero.lua would otherwise use."
+    /// `groupLibraryScope.names`/`.ids` -- DOCX/ODT only (PDF resolves citations itself via
+    /// `--citeproc`, never touches `zotero.lua`) -- are the two wire shapes `ZoteroService.
+    /// groupLibraryMetadata(from:)` flattens the user's group/shared libraries into, for
+    /// `zotero.lua`'s own phase-2 Better BibTeX lookup (see that file's LOCAL PATCH block): a
+    /// citekey living only in a group/shared library, not the personal one, otherwise fails
+    /// `zotero.lua`'s unscoped BBT call and exports as plain text instead of a live field code.
+    ///
+    /// The two travel as SEPARATE metadata keys because they hit a real batching constraint in
+    /// BBT's own `item.pandoc_filter` RPC schema (`oneOf: [string, number, string[]]`): several
+    /// library NAMES can batch into one `--metadata zotero-group-libraries=<JSON array>` call,
+    /// but there is no array-of-numbers form, so every colliding-or-nameless library (which can
+    /// only be scoped by its numeric BBT-local id, never by its ambiguous/missing display name --
+    /// see `ZoteroService.groupLibraryScopes`'s doc comment) has to travel one id per
+    /// `--metadata zotero-group-library-ids=<JSON array>` call instead of batching. Both keys are
+    /// nested inside the `luaScriptPath` binding below so neither is ever appended when there's
+    /// no lua filter at all, and each is emitted independently of the other's emptiness -- an
+    /// empty array on either side is "nothing to add on this side," not "clear whatever
+    /// zotero.lua would otherwise use," and NEITHER emission may be gated on the other array's
+    /// non-emptiness: "every group library collides" is a real, common shape where
+    /// `groupLibraryScope.names` is empty and `.ids` is not, and that is exactly the scenario
+    /// this whole fix exists to carry correctly. (`names`/`ids` are bundled into one
+    /// `GroupLibraryScope` value below -- see that struct's doc comment -- purely to keep this
+    /// function's parameter count under SwiftLint's limit; they are still read and emitted
+    /// completely independently of each other in the body below.)
     func citationArguments(
         format: ExportFormat,
         luaScriptPath: String?,
         pdfBibliography: PDFBibliographyRequest,
         bibliography: BibliographyFetchResult?,
-        groupLibraryNames: [String]
+        groupLibraryScope: GroupLibraryScope
     ) -> CitationBuildResult {
         var args: [String] = []
         var tempBibURL: URL?
@@ -223,10 +250,21 @@ extension ExportService {
             if let luaPath = luaScriptPath {
                 args.append(contentsOf: ["--lua-filter", luaPath])
 
-                if !groupLibraryNames.isEmpty,
-                   let data = try? JSONSerialization.data(withJSONObject: groupLibraryNames),
+                // These two emissions MUST stay independent sibling `if` blocks -- never one
+                // nested inside the other's non-empty check. "Every group library collides"
+                // (empty `groupLibraryScope.names`, non-empty `groupLibraryScope.ids`) is the
+                // headline scenario this fix exists for; gating the ids emission on names being
+                // non-empty would silently kill the fix in exactly that case.
+                if !groupLibraryScope.names.isEmpty,
+                   let data = try? JSONSerialization.data(withJSONObject: groupLibraryScope.names),
                    let jsonString = String(data: data, encoding: .utf8) {
                     args.append(contentsOf: ["--metadata", "zotero-group-libraries=\(jsonString)"])
+                }
+
+                if !groupLibraryScope.ids.isEmpty,
+                   let data = try? JSONSerialization.data(withJSONObject: groupLibraryScope.ids),
+                   let jsonString = String(data: data, encoding: .utf8) {
+                    args.append(contentsOf: ["--metadata", "zotero-group-library-ids=\(jsonString)"])
                 }
             }
         }

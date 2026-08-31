@@ -442,10 +442,19 @@ extension ExportService {
             // a cached name can go stale mid-session (the user renames or leaves a group), and
             // BBT rejects a whole batched item.pandoc_filter call over a single bad name, so
             // the Lua side must be able to recover name-by-name rather than relying on this
-            // cache always being fresh. Degrades to an empty array (the exact unscoped behavior
-            // from before this fix) on any failure or timeout, and whenever this export
-            // wouldn't reach zotero.lua at all -- this can never fail or stall an export on its
-            // own.
+            // cache always being fresh. Degrades to two empty arrays (the exact unscoped
+            // behavior from before this fix) on any failure or timeout, and whenever this
+            // export wouldn't reach zotero.lua at all -- this can never fail or stall an export
+            // on its own.
+            //
+            // `ZoteroService.groupLibraryMetadata(from:)` -- not the old exact-string
+            // `groupLibraryNames(from:)` dedupe (deleted; it IS the duplicate-group-library-name
+            // bug shape) -- partitions the fetched libraries the same collision-safe way the
+            // citekey-resolution path already does: every uniquely-named group library batches
+            // into `groupLibraryNames`, while a library whose display name collides with
+            // another's -- or has no usable name at all -- travels as a bare numeric id in
+            // `groupLibraryIDs` instead, each in its own zotero.lua call, so a stale/shadowed
+            // name can no longer hide it from being searched at all.
             //
             // Gated on the STRICT `hasRealCitations` (not the loose `hasCitations` this whole
             // block is nested under) and on `resourcePaths.luaScriptPath != nil`: a
@@ -453,10 +462,11 @@ extension ExportService {
             // citekeys and must never trigger this live Zotero network round-trip (see the
             // `hasRealCitations`/`zoteroStatus` invariant comment above), and there is nothing
             // for zotero.lua to scope if no lua filter is even configured for this export.
-            var groupLibraryNames: [String] = []
+            var groupLibraryScope = GroupLibraryScope(names: [], ids: [])
             if format != .pdf, hasRealCitations, resourcePaths.luaScriptPath != nil, zoteroStatus == .running {
                 let libraries = (try? await ZoteroService.shared.fetchLibraries()) ?? []
-                groupLibraryNames = ZoteroService.groupLibraryNames(from: libraries)
+                let metadata = ZoteroService.groupLibraryMetadata(from: libraries)
+                groupLibraryScope = GroupLibraryScope(names: metadata.names, ids: metadata.ids)
             }
 
             let citation = citationArguments(
@@ -464,7 +474,7 @@ extension ExportService {
                 luaScriptPath: resourcePaths.luaScriptPath,
                 pdfBibliography: PDFBibliographyRequest(settings: settings, tempDir: tempDir),
                 bibliography: bibliographyForCitations,
-                groupLibraryNames: groupLibraryNames
+                groupLibraryScope: groupLibraryScope
             )
             citationArgs = citation.arguments
             artifacts.tempBibURL = citation.tempBibURL

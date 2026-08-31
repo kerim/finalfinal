@@ -1642,17 +1642,33 @@ module.citekeys = {}
 -- textual diff/patch will not auto-reapply against different upstream line numbers. Search
 -- "LOCAL PATCH" in this file for every piece.
 --
+-- Two companion pandoc metadata keys feed this patch: `zotero-group-libraries` (a JSON array of
+-- library display name strings -- module.groupLibraryNames below) and `zotero-group-library-ids`
+-- (a JSON array of bare BBT-local numeric ids -- module.groupLibraryIDs below), for group
+-- libraries whose display name collides with another's or has no usable name at all and so
+-- cannot be scoped by name. See ZoteroService+GroupLibraryScopes.swift's `groupLibraryMetadata`
+-- (the Swift-side source of this partition) for why both exist.
+--
 -- Group/shared-library display names to retry a still-unresolved citekey against, after the
 -- personal-library-only call below has already run. Populated by Meta() from the
 -- `zotero-group-libraries` pandoc metadata key (a JSON array of strings) -- nil/unset means
 -- "no group scope configured," which degrades silently to today's exact unscoped behavior.
 module.groupLibraryNames = nil
+-- Companion to groupLibraryNames: BBT-local numeric ids of group libraries that CANNOT be
+-- scoped by name -- their display name collides with another group library's, or they have no
+-- usable name at all. BBT's item.pandoc_filter scope parameter is `oneOf: [string, number,
+-- string[]]`: several NAMES batch into one call, but there is no number[] variant, so each id
+-- needs its own call. Populated by Meta() from `zotero-group-library-ids`; nil/unset means
+-- "no colliding libraries", the common case, which costs zero extra RPCs.
+module.groupLibraryIDs = nil
 
 -- Fetch one batch of citekeys from BBT via item.pandoc_filter, optionally scoped to
--- `libraryID` (a bare library id, an array of library display names, or nil to use whatever
--- module.request.params already has configured). Returns the decoded `{items=..., errors=...}`
--- result table on success, or nil on any failure (network, malformed JSON, or a JSON-RPC error
--- object) -- callers must never let a nil result clobber anything already resolved.
+-- `libraryID` (a bare numeric library id -- personal OR a single group library, per
+-- module.groupLibraryIDs -- an array of library display names, per module.groupLibraryNames,
+-- or nil to use whatever module.request.params already has configured). Returns the decoded
+-- `{items=..., errors=...}` result table on success, or nil on any failure (network, malformed
+-- JSON, or a JSON-RPC error object) -- callers must never let a nil result clobber anything
+-- already resolved.
 local function fetch(citekeys, libraryID)
   local request = utils.deepcopy(module.request)
   request.params.citekeys = citekeys
@@ -1704,13 +1720,14 @@ local function load_items()
     state.fetched = result
   end
 
-  -- LOCAL PATCH (zotero-group-libraries), phase 2 -- see the module.groupLibraryNames/fetch
-  -- comment above. Runs only when a group scope is configured AND at least one requested
-  -- citekey is still unresolved after phase 1. "Unresolved" here means it has ANY entry in
-  -- state.fetched.errors -- not-found (0) or ambiguous (non-zero) alike -- mirroring this
-  -- app's Swift-side ZoteroService+LibraryScope.swift two-phase policy (personal library
-  -- first, then group libraries for anything not already resolved).
-  if module.groupLibraryNames ~= nil then
+  -- LOCAL PATCH (zotero-group-libraries), phase 2 -- see the module.groupLibraryNames/
+  -- module.groupLibraryIDs/fetch comments above. Runs only when a group scope is configured
+  -- (either key) AND at least one requested citekey is still unresolved after phase 1.
+  -- "Unresolved" here means it has ANY entry in state.fetched.errors -- not-found (0) or
+  -- ambiguous (non-zero) alike -- mirroring this app's Swift-side
+  -- ZoteroService+LibraryScope.swift two-phase policy (personal library first, then group
+  -- libraries for anything not already resolved).
+  if module.groupLibraryNames ~= nil or module.groupLibraryIDs ~= nil then
     local unresolved = {}
     for _, k in ipairs(citekeys) do
       -- Defensive `(state.fetched.errors or {})`: state.fetched was wholesale-assigned from
@@ -1725,50 +1742,110 @@ local function load_items()
     end
 
     if utils.tablelength(unresolved) > 0 then
-      -- Merge key-by-key -- NEVER wholesale-reassign state.fetched -- so phase 1's already-
-      -- resolved items, and any citekey phase 2 still doesn't resolve, survive untouched.
-      -- By the time we get here, state.fetched.errors is already known to be a real table, not
-      -- nil -- reaching this branch required the unresolved-detection loop above to find at
-      -- least one citekey with a non-nil state.fetched.errors[k], which is only possible when
-      -- state.fetched.errors itself exists. The `(state.fetched.errors or {})` guard below is
-      -- therefore not independently load-bearing at this call site today; it's kept so this
-      -- closure stays safe on its own terms (matching the `groupResult.items or {}` guard used
-      -- just below it) even if the unresolved-detection logic above is ever changed to reach
-      -- here a different way.
-      local function mergeGroupResult(groupResult)
+      -- Phase 2 can now issue SEVERAL calls (one batched name-scoped call plus one per
+      -- colliding/nameless library id), so results are accumulated locally FIRST and applied to
+      -- state.fetched once, at the end. That ordering is what makes cross-scope duplicate
+      -- detection possible: two same-named group libraries can each hold a real item for the
+      -- same citekey, and merging call-by-call would silently keep whichever call happened to
+      -- run first.
+      --
+      -- Detection operates on LOWERCASED citekeys, exactly like the Swift-side
+      -- mergeGroupOutcomes (ZoteroService+GroupLibraryScopes.swift), and for the same reason:
+      -- BBT's "case-insensitive citekeys" preference can return an item whose own citation-key
+      -- differs in case from what was actually requested. `groupItems` and `withheld` are keyed
+      -- by the LOWERCASED identity, so a group response spelled `roy2022` still matches a
+      -- request for `Roy2022`. Reconciliation below (the "apply results" step, after all calls
+      -- have returned) is anchored to `unresolved` ITSELF -- the exact spellings phase 2 ran
+      -- against, which is exactly what module.citekeys (and so module.get()) will look up by --
+      -- rather than to whichever spellings happened to appear in a response. That anchoring is
+      -- load-bearing, not cosmetic: BBT's casing choice is independent of what was requested, so
+      -- projecting outcomes onto response spellings instead can miss the requested spelling
+      -- entirely (leaving it at its stale phase-1 value) or land on an unrelated, already-
+      -- resolved citekey's entry that was never part of this phase-2 request at all.
+      local groupItems = {}  -- lowercased identity -> the surviving item (before withholding)
+      local withheld = {}    -- lowercased identity -> true
+
+      local function collect(groupResult)
+        for k, count in pairs(groupResult.errors or {}) do
+          if type(count) == 'number' and count >= 2 then
+            withheld[string.lower(k)] = true
+          end
+        end
         for k, item in pairs(groupResult.items or {}) do
-          -- module.get() below checks state.fetched.errors BEFORE state.fetched.items, so a
-          -- stale phase-1 error entry left in place here would make the citation still report
-          -- unresolved even though items now has it.
-          (state.fetched.errors or {})[k] = nil
-          state.fetched.items[k] = item
+          local lower = string.lower(k)
+          if groupItems[lower] ~= nil then
+            withheld[lower] = true
+          else
+            groupItems[lower] = item
+          end
         end
       end
 
-      local ok, groupResult = pcall(fetch, unresolved, module.groupLibraryNames)
-      if ok and groupResult ~= nil then
-        mergeGroupResult(groupResult)
-      else
-        -- The batched call failed outright (pcall caught a Lua error, or fetch() itself
-        -- returned nil after a decode failure or an RPC error object). BBT's
-        -- item.pandoc_filter rejects the WHOLE array-scoped call if even ONE library name in
-        -- it is stale -- a group the user renamed or left since module.groupLibraryNames was
-        -- populated -- there is no partial-success response for a batched libraryID array.
-        -- Treating that as a total phase-2 failure would silently revert EVERY group citation
-        -- to plain text for the rest of the app session -- the exact bug this patch exists to
-        -- fix -- just because one name out of possibly many is bad. So retry name-by-name
-        -- instead: this means more RPC calls, but only in the failure case, and that failure
-        -- case is now rare (one bad name) rather than the common one. A name that still fails
-        -- on its own genuinely can't be searched right now and is simply skipped -- it doesn't
-        -- block the others from resolving.
-        for _, name in ipairs(module.groupLibraryNames) do
-          local singleOk, singleResult = pcall(fetch, unresolved, {name})
-          if singleOk and singleResult ~= nil then
-            mergeGroupResult(singleResult)
+      if module.groupLibraryNames ~= nil and #module.groupLibraryNames > 0 then
+        local ok, groupResult = pcall(fetch, unresolved, module.groupLibraryNames)
+        if ok and groupResult ~= nil then
+          collect(groupResult)
+        else
+          -- The batched call failed outright (pcall caught a Lua error, or fetch() itself
+          -- returned nil after a decode failure or an RPC error object). BBT's
+          -- item.pandoc_filter rejects the WHOLE array-scoped call if even ONE library name in
+          -- it is stale -- a group the user renamed or left since module.groupLibraryNames was
+          -- populated -- there is no partial-success response for a batched name array.
+          -- Retry name-by-name instead: more RPC calls, but only in the failure case. A name
+          -- that still fails on its own genuinely can't be searched right now and is simply
+          -- skipped -- it doesn't block the others from resolving.
+          for _, name in ipairs(module.groupLibraryNames) do
+            local singleOk, singleResult = pcall(fetch, unresolved, {name})
+            if singleOk and singleResult ~= nil then
+              collect(singleResult)
+            end
           end
-          -- else: this name alone also failed -- leave state.fetched untouched for it and
-          -- move on to the next name.
         end
+      end
+
+      -- One call per id. No batch to fall back FROM here (BBT has no number[] scope), and no
+      -- per-id retry to add: a single-id call that fails has already failed alone. `fetch()`
+      -- itself already prints on a decode failure or RPC error, so this is not a silent skip.
+      for _, id in ipairs(module.groupLibraryIDs or {}) do
+        local idOk, idResult = pcall(fetch, unresolved, id)
+        if idOk and idResult ~= nil then
+          collect(idResult)
+        end
+      end
+
+      if state.fetched.errors == nil then
+        state.fetched.errors = {}
+      end
+      if state.fetched.items == nil then
+        state.fetched.items = {}
+      end
+      local errors = state.fetched.errors
+      -- Apply results by walking `unresolved` itself, never a response spelling, so every write
+      -- below lands on a citekey that was actually part of this phase-2 request. A citekey
+      -- outside `unresolved` -- already resolved in phase 1, or never requested at all -- is
+      -- never touched here, even if some group response happened to use its exact casing for a
+      -- different lowercased identity.
+      for _, k in ipairs(unresolved) do
+        local lower = string.lower(k)
+        if withheld[lower] then
+          -- This requested spelling's lowercased identity resolved in more than one scope, or
+          -- was reported ambiguous within a single scope (BBT's own `errors[key] >= 2`). Report
+          -- it as a duplicate (get() prints "duplicates found" for a non-zero error count)
+          -- rather than resolving to an arbitrary winner. `2` is BBT's own spelling for "this
+          -- many matches"; the exact count across scopes isn't knowable here, and get() only
+          -- tests zero vs. non-zero.
+          state.fetched.items[k] = nil
+          errors[k] = 2
+        elseif groupItems[lower] ~= nil then
+          -- Exactly one scope produced an item for this requested spelling's lowercased
+          -- identity. module.get() below checks state.fetched.errors BEFORE state.fetched.items,
+          -- so a stale phase-1 error entry left in place here would make the citation still
+          -- report unresolved even though items now has it.
+          errors[k] = nil
+          state.fetched.items[k] = groupItems[lower]
+        end
+        -- else: no phase-2 call returned anything for this lowercased identity -- leave `k`'s
+        -- phase-1 errors/items entry exactly as it was. It's still genuinely not-found.
       end
     end
   end
@@ -2128,15 +2205,17 @@ function Meta(meta)
 
   -- ==========================================================================================
   -- LOCAL PATCH (zotero-group-libraries) -- see the companion block/comment near
-  -- module.groupLibraryNames in the "zotero" module above for the full design. Must be
-  -- reapplied by hand whenever this vendored file is refreshed from upstream.
+  -- module.groupLibraryNames/module.groupLibraryIDs in the "zotero" module above for the full
+  -- design. Must be reapplied by hand whenever this vendored file is refreshed from upstream.
   --
   -- ExportService+PandocArguments.swift passes `--metadata zotero-group-libraries=<JSON array
-  -- of strings>`. Pandoc exposes that as the plain Lua string meta['zotero-group-libraries'];
-  -- the copy loop just above (`^zotero[-_](.*)`) has already folded it into
-  -- meta.zotero['group-libraries'], and the normalize loop immediately above this comment has
-  -- already run pandoc.utils.stringify over it -- both are read-order-dependent, so this block
-  -- must stay AFTER both, not before. Decoding must happen here, not before the normalize
+  -- of strings>` and, separately, `--metadata zotero-group-library-ids=<JSON array of bare
+  -- integers>` for group libraries that can't be scoped by name. Pandoc exposes each as a plain
+  -- Lua string (meta['zotero-group-libraries'], meta['zotero-group-library-ids']); the copy loop
+  -- just above (`^zotero[-_](.*)`) has already folded both into meta.zotero['group-libraries']
+  -- and meta.zotero['group-library-ids'], and the normalize loop immediately above this comment
+  -- has already run pandoc.utils.stringify over each -- both are read-order-dependent, so this
+  -- block must stay AFTER both, not before. Decoding must happen here, not before the normalize
   -- loop, or it would be decoding a stringify()-untouched MetaValue instead of the plain
   -- string this vendored file's own `json` (lunajson) decoder expects.
   --
@@ -2146,6 +2225,25 @@ function Meta(meta)
     local ok, decoded = pcall(json.decode, meta.zotero['group-libraries'])
     if ok and type(decoded) == 'table' then
       zotero.groupLibraryNames = decoded
+    end
+  end
+
+  -- Companion key to `zotero-group-libraries`: a JSON array of bare BBT-local library ids for
+  -- group libraries that can't be scoped by name (colliding or nameless). Same read-order
+  -- constraints and same silent-degrade posture as the block above.
+  if meta.zotero['group-library-ids'] ~= nil then
+    local okIDs, decodedIDs = pcall(json.decode, meta.zotero['group-library-ids'])
+    if okIDs and type(decodedIDs) == 'table' then
+      local ids = {}
+      for _, id in ipairs(decodedIDs) do
+        local n = (type(id) == 'number') and math.tointeger(id) or nil
+        if n ~= nil then
+          table.insert(ids, n)
+        end
+      end
+      if #ids > 0 then
+        zotero.groupLibraryIDs = ids
+      end
     end
   end
   -- LOCAL PATCH (zotero-group-libraries) -- END

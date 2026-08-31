@@ -16,116 +16,9 @@
 
 import Foundation
 
-// MARK: - BBT response shapes
-
-/// A Zotero library as reported by BBT's `user.groups` JSON-RPC method.
-///
-/// `id` is required; `name` is decoded leniently. A missing, null, OR wrong-typed `name`
-/// (e.g. a JSON number) degrades to `nil` for that one entry instead of throwing — a single
-/// malformed library must not fail the whole `user.groups` decode and silently drop the
-/// group phase back to the unscoped fallback. Preserves the tolerance of the `BBTLibrary`
-/// struct this replaces, which sidestepped the problem by not modeling `name` at all.
-struct ZoteroLibrary: Equatable, Sendable {
-    let id: Int
-    let name: String?
-}
-
-extension ZoteroLibrary: Decodable {
-    private enum CodingKeys: String, CodingKey { case id, name }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        id = try container.decode(Int.self, forKey: .id)
-        name = try? container.decode(String.self, forKey: .name)
-    }
-}
-
-/// `result` decodes with genuine PER-ENTRY isolation: a single malformed library entry (e.g. a
-/// missing or non-numeric `id` — the one field `ZoteroLibrary.init(from:)` still lets throw) is
-/// logged and skipped, rather than failing the whole array decode the way the compiler-
-/// synthesized `Array<ZoteroLibrary>: Decodable` conformance would. Losing the entire array to
-/// one bad entry would disable ALL group libraries for that resolution, not just the bad one —
-/// see `performGroupPhase`'s doc comment for why that matters.
-///
-/// `result` is `nil` when the key is absent or explicitly `null` (a malformed/protocol-violating
-/// envelope — `parseLibraries` throws on this) and `[]` when the key is present with a valid,
-/// possibly-empty array (a user with zero libraries is not realistic for a real Zotero install,
-/// but is a valid JSON shape and must not be conflated with the malformed case above).
-private struct GroupsRPCResponse: Decodable {
-    let jsonrpc: String?
-    let result: [ZoteroLibrary]?
-    let error: JSONRPCError?
-
-    private enum CodingKeys: String, CodingKey { case jsonrpc, result, error }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        jsonrpc = try container.decodeIfPresent(String.self, forKey: .jsonrpc)
-        error = try container.decodeIfPresent(JSONRPCError.self, forKey: .error)
-
-        // Key absent, or present but null, both mean "no result" — `decodeNil` only throws
-        // `keyNotFound` when the key is missing, so `contains` must be checked first to keep
-        // that call safe; comma-separated `guard` conditions short-circuit like `&&`, so
-        // `decodeNil` is never reached when `contains` is false.
-        guard container.contains(.result), try !container.decodeNil(forKey: .result) else {
-            result = nil
-            return
-        }
-
-        // Decode element-by-element via `superDecoder()` rather than
-        // `nestedUnkeyedContainer(forKey:).decode(ZoteroLibrary.self)` in a loop: this project's
-        // JSONDecoder does NOT advance an unkeyed container's index when `decode(_:)` itself
-        // throws (verified empirically — a naive do/catch loop around `decode(_:)` spins forever
-        // re-decoding the same malformed element). `superDecoder()` captures the element and
-        // advances the index unconditionally, before we attempt to decode it, so a throwing
-        // element is safely skipped without looping.
-        var unkeyed = try container.nestedUnkeyedContainer(forKey: .result)
-        var libraries: [ZoteroLibrary] = []
-        while !unkeyed.isAtEnd {
-            let elementDecoder = try unkeyed.superDecoder()
-            do {
-                libraries.append(try ZoteroLibrary(from: elementDecoder))
-            } catch {
-                DebugLog.log(
-                    .zotero,
-                    "[ZoteroService] Skipping malformed library entry in user.groups response (\(error)) — " +
-                    "the rest of the user.groups list still decodes; this one library's citekeys will be " +
-                    "reported not-found rather than disabling the whole group-library phase"
-                )
-            }
-        }
-        result = libraries
-    }
-}
-
-/// Raw (undecoded) outcome of a single `item.pandoc_filter` call.
-///
-/// `items` is keyed by each resolved item's own CSL `id` field (re-keyed from BBT's raw
-/// response by `parsePandocFilterResponseRaw` — see that function's doc comment for why: BBT's
-/// own dict key is the item's `citation-key`, not the `id` it actually matched the request
-/// against). This canonical key can differ in case from the originally-requested citekey when
-/// BBT's "case-insensitive citekeys" preference is on. `notFoundKeys`/`ambiguousKeys` are keyed
-/// by the exact citekey strings that were requested: BBT always echoes the literal request
-/// string in `errors` (`result.errors[citationKey] = found.length` in BBT's own `json-rpc.ts`),
-/// never a canonical form, so those two sets need no case reconciliation.
-struct PandocFilterRawOutcome {
-    var items: [String: [String: Any]]
-    /// Citekeys with zero matches in the libraries this call queried.
-    var notFoundKeys: Set<String>
-    /// Citekeys with 2+ matches in the libraries this call queried — exists identically in
-    /// more than one library, so which one the user meant can't be determined.
-    var ambiguousKeys: Set<String>
-    /// Same source as `ambiguousKeys` (BBT `errors` entries with count >= 2) at the point
-    /// `parsePandocFilterResponseRaw` populates both, but tracked SEPARATELY from there on:
-    /// `mergeRawOutcomes` intersects `ambiguousKeys` against the still-unresolved key set (so
-    /// a spurious per-spelling miss can be cleared once some other casing of the same citekey
-    /// resolves — see that function's doc comment), while `rawAmbiguousKeys` is only ever
-    /// UNIONED, never intersected or cleared. This gives `ExportService.canonicalCitekeyMap`
-    /// an ambiguity signal that survives the clearing `ambiguousKeys` is deliberately subject
-    /// to, so it never proposes a citekey-case rewrite off an arbitrary winner among 2+ real
-    /// BBT matches for the exact spelling requested.
-    var rawAmbiguousKeys: Set<String> = []
-}
+// BBT response shapes (`ZoteroLibrary`, `GroupsRPCResponse`, `PandocFilterRawOutcome`) and
+// `parseLibraries` now live in ZoteroService+GroupLibraryScopes.swift — moved out solely to
+// keep this file under SwiftLint's 800-line file_length warning; see that file's header for why.
 
 extension ZoteroService {
 
@@ -203,13 +96,16 @@ extension ZoteroService {
     // MARK: - Request building
 
     /// How a single `item.pandoc_filter` call is scoped, and how that scope serializes into the
-    /// 3rd positional parameter. The two cases serialize to DIFFERENT JSON types on purpose —
-    /// see `pandocFilterRequestBody`'s doc comment.
-    enum PandocFilterScope {
+    /// 3rd positional parameter. The cases serialize to DIFFERENT JSON types on purpose — see
+    /// `pandocFilterRequestBody`'s doc comment.
+    enum PandocFilterScope: Equatable {
         /// The personal library, by its stable numeric id. Serializes to a bare JSON number.
         case personal
         /// Group/shared libraries, by display name. Serializes to a JSON array of strings.
         case libraryNames([String])
+        /// Any single library — group libraries included — by its stable BBT-local numeric id.
+        /// Serializes to a bare JSON number, exactly like `.personal`.
+        case libraryID(Int)
     }
 
     /// Build the JSON-RPC request body for BBT's `item.pandoc_filter` method.
@@ -219,8 +115,11 @@ extension ZoteroService {
     /// developer's own running install (Zotero 10.0, Better BibTeX 9.0.57) by issuing
     /// `item.pandoc_filter` calls directly at `http://127.0.0.1:23119/better-bibtex/json-rpc`:
     ///
-    /// - A bare JSON NUMBER (e.g. `1`) resolves the personal library correctly. That is the only
-    ///   form this code uses a number for; `.personal` is the sole case that produces one.
+    /// - A bare JSON NUMBER (e.g. `1`) resolves the personal library correctly. A bare number
+    ///   also resolves ANY single group library, by its BBT-local numeric id — live-verified
+    ///   2026-08-31 against this developer's own install: citekey `roy2022` scoped to `19`, `2`,
+    ///   and `1` returned three genuinely different outcomes. `.libraryID` is the case that
+    ///   produces this second form; `.personal` produces the first.
     /// - An array of library-NAME STRINGS (e.g. `["Sifo-Futing"]`) resolves group/shared libraries
     ///   correctly, and a batched array resolves several in one call.
     /// - Stringified numeric IDs — bare `"1"` or an array such as `["19"]`, `["6623119"]` — FAIL
@@ -240,6 +139,8 @@ extension ZoteroService {
             scopeValue = personalLibraryID
         case .libraryNames(let names):
             scopeValue = names
+        case .libraryID(let id):
+            scopeValue = id
         }
         return [
             "jsonrpc": "2.0",
@@ -308,77 +209,19 @@ extension ZoteroService {
         )
     }
 
-    /// Parse a raw `user.groups` JSON-RPC response body into the list of libraries it reports.
-    ///
-    /// Throws when `result` is missing or `null` — a malformed/protocol-violating envelope that
-    /// should never happen for a valid Zotero install (every install has at least a personal
-    /// library). Silently treating that shape as "zero libraries" would get cached and never
-    /// self-heal, since the stale-library retry in `performGroupPhase` only fires on a
-    /// `"JSON-RPC error:"`-prefixed message. A genuinely empty array (`"result":[]` — not
-    /// realistic for Zotero, but a valid JSON shape) is NOT this case and still returns `[]`
-    /// successfully, same as `parsePandocFilterResponseRaw`'s analogous guard on `result`.
-    nonisolated static func parseLibraries(from data: Data) throws -> [ZoteroLibrary] {
-        let decoded = try JSONDecoder().decode(GroupsRPCResponse.self, from: data)
-        if let rpcError = decoded.error {
-            throw ZoteroError.invalidResponse("JSON-RPC error: \(rpcError.message)")
-        }
-        guard let result = decoded.result else {
-            throw ZoteroError.invalidResponse("Missing result in user.groups response")
-        }
-        return result
-    }
-
-    /// Group-library display names for the group phase, in input order.
-    ///
-    /// Excludes the personal library by its stable `personalLibraryID` — never by display
-    /// name, per this file's invariant. Then drops entries whose `name` is nil or
-    /// whitespace-only (logged — a library that silently becomes unsearchable is the failure
-    /// mode this whole file exists to eliminate), and de-duplicates by exact string while
-    /// preserving order.
-    ///
-    /// Names are returned UNTRIMMED and deduped as exact strings: they are matched against
-    /// Zotero's own stored library name, so trimming here risks breaking a legitimate match on
-    /// a library whose real name has leading/trailing whitespace. Trimming is used only to
-    /// *test* emptiness, never to rewrite the value.
-    ///
-    /// Known, accepted limitation: two DIFFERENT group libraries that happen to share the exact
-    /// same display name collapse to a single entry in the returned list (the dedupe above is
-    /// by exact string, with no notion of "these are actually two libraries"). A citekey that
-    /// exists only in the "shadowed" library — the one whose name lost the dedupe — is then
-    /// reported not-found, even though it does exist in one of the user's libraries. This is not
-    /// detected or warned about here: BBT's `item.pandoc_filter` scope parameter gives this code
-    /// no other handle for batching multiple group libraries into one call than their display
-    /// names, so there is no id-based (or otherwise disambiguating) alternative available at
-    /// this layer. Detecting/warning about duplicate names is tracked as a separate follow-up,
-    /// not attempted here.
-    nonisolated static func groupLibraryNames(from libraries: [ZoteroLibrary]) -> [String] {
-        var seen = Set<String>()
-        var names: [String] = []
-        for library in libraries where library.id != personalLibraryID {
-            guard let name = library.name,
-                  !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                DebugLog.log(
-                    .zotero,
-                    "[ZoteroService] Group library id \(library.id) has no usable name in the " +
-                    "user.groups response — dropping it from the group-library phase; citekeys " +
-                    "that exist only in it will be reported not-found"
-                )
-                continue
-            }
-            if seen.insert(name).inserted { names.append(name) }
-        }
-        return names
-    }
-
     /// Heuristic for "the group-library phase failed because BBT rejected a group library NAME
     /// we had cached" (e.g. a group was left/deleted, or renamed, mid-session, so a cached name
-    /// is now stale). Group libraries are identified by display name, not by id — see
-    /// `groupLibraryNames` — so this is about a stale/renamed NAME, never a stale id; the
-    /// personal-library path never hits this retry, since it's still id-based and BBT's
-    /// personal-library id doesn't get "renamed." True for a JSON-RPC-level error object *from
-    /// BBT itself* (as opposed to a network/transport failure) — the closest identifiable signal
-    /// available, since BBT doesn't document a dedicated "unknown library" error code separate
-    /// from its generic invalid-parameters error.
+    /// is now stale). Group libraries are now scoped by display name OR by numeric id (see
+    /// `groupLibraryScopes`); this heuristic still only fires usefully for a stale/renamed NAME —
+    /// a library id BBT no longer knows about (the group was left/deleted) produces this exact
+    /// same generic JSON-RPC error shape, but there is nothing to refresh in that case: that one
+    /// scope simply fails permanently, and pass 2's forced `fetchLibraries(forceRefresh: true)`
+    /// cannot repair an id that genuinely no longer exists. The personal-library path still never
+    /// hits this retry, since it's still id-based and BBT's personal-library id doesn't get
+    /// "renamed." True for a JSON-RPC-level error object *from BBT itself* (as opposed to a
+    /// network/transport failure) — the closest identifiable signal available, since BBT doesn't
+    /// document a dedicated "unknown library" error code separate from its generic
+    /// invalid-parameters error.
     private nonisolated static func looksLikeStaleLibraryError(_ error: Error) -> Bool {
         guard case let ZoteroError.invalidResponse(message) = error else { return false }
         return message.hasPrefix("JSON-RPC error:")
@@ -439,7 +282,10 @@ extension ZoteroService {
             // rewrite still veto off a genuine 2+-match ambiguity even on the branch where
             // `ambiguousKeys` itself gets cleared (e.g. `resolveRawViaPandocFilter`'s
             // fully-resolved-after-phase-1 early return, which calls this with `unresolved`
-            // empty).
+            // empty). Since the group-phase merge, this also carries cross-scope duplicates
+            // synthesized by `mergeGroupOutcomes` — a citekey two differently-scoped group calls
+            // both matched. Those arrive already keyed by the requested spelling, so they need no
+            // reconciliation here; they simply pass through the union untouched.
             rawAmbiguousKeys: rawAmbiguousKeys
         )
     }
@@ -505,34 +351,114 @@ extension ZoteroService {
         return libraries
     }
 
-    /// Attempt phase 2 (group libraries) for `unresolved` citekeys. Returns `nil` if there are
-    /// no group libraries to search.
+    /// Runs one pass of `plans` sequentially against BBT (a plain `for` loop, one `await` per
+    /// scope, never a `TaskGroup` — see `performGroupPhase`'s doc comment for why), appending
+    /// every success to `outcomes` and every covered library id to `coveredLibraryIDs`. A single
+    /// scope's failure loses only that scope's libraries; every other scope's outcome is kept.
+    /// `isRetry` only changes the failure log line's wording (pass 1 vs. pass 2's own retry).
+    /// Returns whether any failure looked stale-name-shaped (only meaningful for pass 1) and the
+    /// last error seen, if any.
+    private func runGroupScopePass(
+        _ plans: [GroupLibraryScopePlan],
+        unresolved: [String],
+        outcomes: inout [PandocFilterRawOutcome],
+        coveredLibraryIDs: inout Set<Int>,
+        isRetry: Bool
+    ) async throws -> (sawStaleShapedFailure: Bool, lastError: Error?) {
+        var sawStaleShapedFailure = false
+        var lastError: Error?
+        for plan in plans {
+            do {
+                outcomes.append(try await performPandocFilterRequestRaw(citekeys: unresolved, scope: plan.scope))
+                coveredLibraryIDs.formUnion(plan.libraryIDs)
+            } catch {
+                if Self.isCancellation(error) { throw error }
+                lastError = error
+                if isRetry {
+                    DebugLog.log(
+                        .zotero,
+                        "[ZoteroService] Group scope \(plan.scope) failed again after a library-list refresh " +
+                        "(\(error)) — giving up on it"
+                    )
+                } else {
+                    if Self.looksLikeStaleLibraryError(error) { sawStaleShapedFailure = true }
+                    DebugLog.log(
+                        .zotero,
+                        "[ZoteroService] Group scope \(plan.scope) failed (\(error)) — other scopes' results are " +
+                        "kept; citekeys living only in libraries \(plan.libraryIDs) will read as not-found"
+                    )
+                }
+            }
+        }
+        return (sawStaleShapedFailure, lastError)
+    }
+
+    /// Attempt phase 2 (group libraries) for `unresolved` citekeys, in up to two passes via
+    /// `runGroupScopePass`. Returns `nil` if there are no group libraries to search at all.
     ///
-    /// If the request fails in a way that looks like a stale cached group NAME (see
-    /// `looksLikeStaleLibraryError`), invalidates the cached library list and retries once with
-    /// a forced refresh before giving up — a group could have been left, deleted, or renamed
-    /// mid-session, in which case a cached name BBT no longer recognizes would otherwise
-    /// silently reinstate the original unscoped-lookup bug for the rest of the session.
-    /// `forceRefresh`'s only caller is this retry.
+    /// Pass 1 partitions group libraries via `groupLibraryScopes` (batched names plus per-id
+    /// scopes — see that function's doc comment) and tries every scope sequentially.
+    ///
+    /// Pass 2 runs only if some pass-1 failure looked stale-name-shaped (see
+    /// `looksLikeStaleLibraryError`) — a group could have been left, deleted, or renamed
+    /// mid-session, so a cached name BBT no longer recognizes would otherwise silently reinstate
+    /// the original unscoped-lookup bug for the rest of the session. It forces exactly one
+    /// `fetchLibraries(forceRefresh: true)` (`forceRefresh`'s only caller) and recomputes scopes
+    /// against the refreshed list, EXCLUDING every library pass 1 already covered successfully —
+    /// by library id (`groupLibraryScopes(excludingLibraryIDs:)`), never by scope-object
+    /// equality. Scope equality can't see that a rename moved a library between a `.libraryNames`
+    /// batch and a `.libraryID` scope across the two passes, so skipping by scope equality would
+    /// let pass 2 re-search a library pass 1 already resolved successfully — and a citekey living
+    /// in only that one library would then look like it resolved from two different scopes,
+    /// tripping `mergeGroupOutcomes`'s cross-scope withhold-as-ambiguous rule for a key that was
+    /// never actually ambiguous.
+    ///
+    /// Every outcome from both passes is merged by `mergeGroupOutcomes`, which is also what
+    /// detects and withholds a citekey that two DIFFERENT scopes both resolved.
+    ///
+    /// Throws only when every scope across both passes failed and nothing resolved at all
+    /// (preserves the pre-existing throw-on-total-failure behavior) — this INCLUDES pass 2's own
+    /// `fetchLibraries(forceRefresh: true)` call failing (a transient network blip, say): that
+    /// failure is caught and logged below, pass 2 is skipped entirely, and whatever pass 1
+    /// already produced is still merged and returned. A partial success — some scopes (or all of
+    /// pass 2) failing, others succeeding — returns the merged outcome instead, same as before.
     fileprivate func performGroupPhase(unresolved: [String]) async throws -> PandocFilterRawOutcome? {
         let libraries = try await fetchLibraries()
-        let groupNames = Self.groupLibraryNames(from: libraries)
-        guard !groupNames.isEmpty else { return nil }
+        let plans = Self.groupLibraryScopes(from: libraries)
+        guard !plans.isEmpty else { return nil }
 
-        do {
-            return try await performPandocFilterRequestRaw(citekeys: unresolved, scope: .libraryNames(groupNames))
-        } catch {
-            guard !Self.isCancellation(error), Self.looksLikeStaleLibraryError(error) else { throw error }
-            DebugLog.log(
-                .zotero,
-                "[ZoteroService] Group-library item.pandoc_filter call failed (\(error)) — " +
-                "looks like a stale cached group library name; invalidating cache and retrying once"
-            )
-            let freshLibraries = try await fetchLibraries(forceRefresh: true)
-            let freshGroupNames = Self.groupLibraryNames(from: freshLibraries)
-            guard !freshGroupNames.isEmpty else { return nil }
-            return try await performPandocFilterRequestRaw(citekeys: unresolved, scope: .libraryNames(freshGroupNames))
+        var outcomes: [PandocFilterRawOutcome] = []
+        var coveredLibraryIDs: Set<Int> = []
+        let pass1 = try await runGroupScopePass(
+            plans, unresolved: unresolved, outcomes: &outcomes, coveredLibraryIDs: &coveredLibraryIDs, isRetry: false
+        )
+        var lastError = pass1.lastError
+
+        if pass1.sawStaleShapedFailure {
+            do {
+                let fresh = try await fetchLibraries(forceRefresh: true)
+                let pass2Plans = Self.groupLibraryScopes(from: fresh, excludingLibraryIDs: coveredLibraryIDs)
+                let pass2 = try await runGroupScopePass(
+                    pass2Plans, unresolved: unresolved, outcomes: &outcomes, coveredLibraryIDs: &coveredLibraryIDs,
+                    isRetry: true
+                )
+                if let pass2Error = pass2.lastError { lastError = pass2Error }
+            } catch {
+                if Self.isCancellation(error) { throw error }
+                lastError = error
+                DebugLog.log(
+                    .zotero,
+                    "[ZoteroService] Pass-2 library-list refresh failed (\(error)) — skipping pass 2 entirely and " +
+                    "merging whatever pass 1 already produced, rather than discarding pass 1's successful outcomes"
+                )
+            }
         }
+
+        guard !outcomes.isEmpty else {
+            if let lastError { throw lastError }
+            return nil
+        }
+        return Self.mergeGroupOutcomes(requested: unresolved, outcomes: outcomes)
     }
 
     /// Two-phase `item.pandoc_filter` resolution: personal library first, then (for anything

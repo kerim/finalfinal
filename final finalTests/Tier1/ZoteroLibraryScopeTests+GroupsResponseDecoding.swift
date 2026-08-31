@@ -7,7 +7,8 @@
 //  comment in ZoteroLibraryScopeTests.swift for the full regression background (the
 //  shared/group-library citekey resolve bug, live-captured vs. synthesized fixtures, and the
 //  ZoteroNetworkTestLock cross-suite mutex). These tests cover `user.groups` response decoding
-//  (ZoteroService.parseLibraries / groupLibraryNames) in isolation, with no mocked HTTP involved.
+//  (ZoteroService.parseLibraries / groupLibraryMetadata) in isolation, with no mocked HTTP
+//  involved.
 //
 
 import Testing
@@ -35,22 +36,25 @@ extension ZoteroLibraryScopeTests {
         #expect(libraries.count == 19)
         #expect(Set(libraries.map(\.id)) == Set(1...19))
         let expectedGroupNames = ["Kerim's Bibliographies"] + (3...18).map { "Group \($0)" } + ["Sifo-Futing"]
+        let metadata = ZoteroService.groupLibraryMetadata(from: libraries)
         #expect(
-            ZoteroService.groupLibraryNames(from: libraries) == expectedGroupNames,
+            metadata.names == expectedGroupNames,
             """
             Must be the exact 18 group names (id 2, 3-18, 19), not just a matching count -- a \
             regression that included "My Library" while dropping a different group would \
             still total 18 under a bare count check
             """
         )
+        #expect(metadata.ids.isEmpty, "No collisions and no nameless libraries here -- nothing should fall back to an id scope")
     }
 
     @Test(
         """
         user.groups entries with a missing name field, OR a wrong-typed name field, still parse \
         -- the whole decode succeeds and both malformed entries end up with name == nil, while \
-        properly-named entries decode correctly; groupLibraryNames then drops both malformed \
-        entries while keeping the properly-named one
+        properly-named entries decode correctly; groupLibraryMetadata then routes both nameless \
+        entries to `ids` (scoped by numeric id, per groupLibraryScopes) rather than dropping them \
+        the way the old groupLibraryNames(from:) dedupe did
         """
     )
     func parseLibrariesToleratesMissingOrWrongTypedName() throws {
@@ -62,8 +66,12 @@ extension ZoteroLibraryScopeTests {
         #expect(libraries.first { $0.id == 19 }?.name == nil, "Missing name key must decode to nil, not throw")
         #expect(libraries.first { $0.id == 20 }?.name == nil, "Wrong-typed (numeric) name must decode to nil, not throw")
 
-        let names = ZoteroService.groupLibraryNames(from: libraries)
-        #expect(names.isEmpty, "Both id 19 (nameless) and id 20 (wrong-typed name) must be dropped -- neither has a usable name")
+        let metadata = ZoteroService.groupLibraryMetadata(from: libraries)
+        #expect(metadata.names.isEmpty, "Neither id 19 (nameless) nor id 20 (wrong-typed name) has a usable name to batch")
+        #expect(
+            Set(metadata.ids) == [19, 20],
+            "Both nameless libraries must still be searchable -- scoped by numeric id instead of silently dropped"
+        )
     }
 
     @Test("parseLibraries throws for a missing OR explicitly-null result key, never silently degrading to []")
