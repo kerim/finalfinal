@@ -312,18 +312,36 @@ extension XCUIApplication {
         button.click()
     }
 
-    /// True if `text` appears in full anywhere inside editor-area. Scans EVERY
-    /// element and skips ones the tree has invalidated -- never indexes a single
-    /// position. Fresh fetch per poll. Substring, not equality: a leaf run can
-    /// carry a leading/trailing space and a heading container concatenates its
-    /// children (see editorStaticText's doc comment).
+    /// True if `text` appears in full anywhere inside editor-area. Fresh fetch per poll.
+    /// Substring, not equality: a leaf run can carry a leading/trailing space and a heading
+    /// container concatenates its children (see editorStaticText's doc comment).
+    ///
+    /// Scoped to `descendants(matching: .any)`, NOT `staticTexts` (vmtest strike 3, bt
+    /// t-ef411da3's e2e-verify round): CONFIRMED live that a freshly-edited CodeMirror line gets
+    /// split across MULTIPLE DOM text nodes/leaf `StaticText`s (e.g. a typed heading landed as
+    /// two separate elements, `"## New Section "` and the rest of the line concatenated onto
+    /// it) -- so the full typed run is never contained in any SINGLE `staticTexts` leaf, only in
+    /// a containing element reachable via `.any`. Scanning `staticTexts` alone produced a false
+    /// "not landed" here even though the text had landed byte-for-byte correct, which then fed a
+    /// broken repair attempt in `typeTextVerifyingLanded` below.
+    ///
+    /// Two-part approach, mirroring `EditorModeSwitchUndoE2ETests.markerPresent` (which has
+    /// caught this exact class of AX-tree gotcha before): a `label CONTAINS` predicate first
+    /// (`label` is always a non-optional `String`, safe for `CONTAINS`), then a
+    /// `.exists`-guarded manual scan of `value as? String` -- `value` is typed `Any?` and this
+    /// WebKit-backed tree exposes some elements (a heading container's level, a checkbox marker)
+    /// with a non-`String` value, which throws under a direct `CONTAINS` predicate.
     func editorContainsText(_ text: String, timeout: TimeInterval = 5) -> Bool {
         let deadline = Date(timeIntervalSinceNow: timeout)
         repeat {
-            for element in editorArea.staticTexts.allElementsBoundByIndex {
+            let labelMatch = editorArea.descendants(matching: .any)
+                .matching(NSPredicate(format: "label CONTAINS %@", text))
+                .firstMatch
+            if labelMatch.exists { return true }
+
+            for element in editorArea.descendants(matching: .any).allElementsBoundByIndex {
                 guard element.exists else { continue }
                 if let value = element.value as? String, value.contains(text) { return true }
-                if element.label.contains(text) { return true }
             }
             RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.25))
         } while Date() < deadline
@@ -355,14 +373,28 @@ extension XCUIApplication {
     ///
     /// On a mismatch, this looks for a PARTIAL/corrupted landing of `text` -- an element whose
     /// value or label shares `text`'s first 8+ characters -- rather than assuming the editor is
-    /// empty. If found, it clears exactly what actually landed (the READ-BACK length, not
-    /// `text.count`): those two can differ precisely because of the drop this method exists to
-    /// catch, so backspacing the intended length risks eating past this line's own content into
-    /// whatever preceded it. If nothing resembling `text` is found at all -- no exact match, no
-    /// partial-prefix match -- this does NOT blind-retype (that would compound garbage on top of
-    /// garbage against who-knows-what state); it fails immediately with every surviving
-    /// element's value/label dumped, so the failure is legible instead of misleadingly claiming
-    /// "empty" against a tree that may still hold plenty of content.
+    /// empty. If found, it clears the CURRENT LINE (not a computed character count -- see the
+    /// vmtest-strike-3 note below) and retries. If nothing resembling `text` is found at all --
+    /// no exact match, no partial-prefix match -- this does NOT blind-retype (that would
+    /// compound garbage on top of garbage against who-knows-what state); it fails immediately
+    /// with every surviving element's value/label dumped, so the failure is legible instead of
+    /// misleadingly claiming "empty" against a tree that may still hold plenty of content.
+    ///
+    /// Both scans below are `descendants(matching: .any)`-scoped, NOT `staticTexts` -- same
+    /// vmtest-strike-3 fix as `editorContainsText` above (a freshly-edited CodeMirror line can
+    /// split across multiple DOM text nodes, so no single `staticTexts` leaf need hold the whole
+    /// typed run).
+    ///
+    /// vmtest strike 3 (bt t-ef411da3's e2e-verify round): the retry-repair here used to
+    /// backspace `partialLanded.count` times -- the length of whatever FRAGMENT this scan
+    /// happened to match, not the length of `text` that was actually typed. Combined with the
+    /// `staticTexts` scope bug above (which made this repair path trigger on text that had
+    /// ALREADY landed correctly, just split across elements), that under-backspaced, left a
+    /// leftover fragment behind, and the retry's fresh `typeText(text)` landed ON TOP of it --
+    /// producing a visible duplicate. Now clears the whole current line via
+    /// `Shift-Home` (select to logical line start) + one `Delete`, which is correct under this
+    /// method's own documented precondition (caret lands on its own, otherwise-empty line before
+    /// typing) regardless of how many characters actually landed -- no count to get wrong.
     func typeTextVerifyingLanded(
         _ text: String, maxAttempts: Int = 3,
         file: StaticString = #filePath, line: UInt = #line
@@ -382,7 +414,7 @@ extension XCUIApplication {
             let expectedPrefix = String(text.prefix(prefixLen))
             var partialElement: XCUIElement?
             var partialLanded = ""
-            for element in editorArea.staticTexts.allElementsBoundByIndex {
+            for element in editorArea.descendants(matching: .any).allElementsBoundByIndex {
                 guard element.exists else { continue }
                 let candidate = (element.value as? String) ?? element.label
                 if candidate.hasPrefix(expectedPrefix) {
@@ -396,7 +428,7 @@ extension XCUIApplication {
                 // Nothing recognizable at all: not "empty" (that misreading is exactly the bug
                 // this method used to have), but nothing resembling `text` either. Fail loud
                 // with a full dump instead of guessing by blind-retyping.
-                let elements = editorArea.staticTexts.allElementsBoundByIndex
+                let elements = editorArea.descendants(matching: .any).allElementsBoundByIndex
                 var dump: [String] = []
                 for (idx, element) in elements.enumerated() {
                     guard element.exists else {
@@ -408,7 +440,7 @@ extension XCUIApplication {
                 }
                 XCTFail(
                     "typeTextVerifyingLanded: expected \"\(text)\" but found no exact or "
-                        + "partial-prefix match among \(elements.count) editor static text(s) "
+                        + "partial-prefix match among \(elements.count) editor descendant(s) "
                         + "after attempt \(attempt) of \(maxAttempts):\n"
                         + dump.joined(separator: "\n"), file: file, line: line
                 )
@@ -425,9 +457,12 @@ extension XCUIApplication {
                 return
             }
 
-            for _ in 0..<partialLanded.count {
-                typeKey(.delete, modifierFlags: [])
-            }
+            // Clear the whole current line (Shift-Home selects back to logical line start, then
+            // one Delete removes the selection) instead of backspacing a computed character
+            // count -- see this method's doc comment for why a count-based clear was the
+            // vmtest-strike-3 bug.
+            typeKey(.home, modifierFlags: .shift)
+            typeKey(.delete, modifierFlags: [])
             Thread.sleep(forTimeInterval: 0.3)
         }
     }
@@ -440,7 +475,7 @@ extension XCUIElement {
     /// never land, and the failure masquerades as a layout/obstruction
     /// problem. Every positioned click in this suite goes through
     /// coordinates; this wraps that precedent.
-    func clickViaCoordinate(dx: CGFloat = 0.5, dy: CGFloat = 0.5,
+    func clickViaCoordinate(normalizedDx: CGFloat = 0.5, normalizedDy: CGFloat = 0.5,
                             timeout: TimeInterval = 10,
                             file: StaticString = #filePath, line: UInt = #line) {
         if !waitForExistence(timeout: timeout) {
@@ -448,7 +483,7 @@ extension XCUIElement {
                 + "for coordinate click", file: file, line: line)
             return
         }
-        coordinate(withNormalizedOffset: CGVector(dx: dx, dy: dy)).click()
+        coordinate(withNormalizedOffset: CGVector(dx: normalizedDx, dy: normalizedDy)).click()
     }
 }
 

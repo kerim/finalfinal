@@ -28,20 +28,26 @@ enum DebugLog {
                          // from inside NSViewRepresentable.updateNSView (Milkdown/CodeMirror editors)
         case undo        // [UnifiedUndoService] unified chronological undo: routing decisions,
                           // refusals, degradations, barriers (docs/architecture/unified-undo.md)
+        case viewUpdates  // [ContentViewBody] [SidebarBody] [WordCountLabel] body-invocation counters
+                          // for the sidebar re-render investigation (bt t-ef411da3). DEBUG-ONLY: every
+                          // call site is `#if DEBUG`-guarded, so a Release build emits nothing for this
+                          // category regardless of the user's Diagnostics toggle. In a DEBUG build the
+                          // toggle routes it to the persistent DiagnosticLogFile; deliberately NOT added
+                          // to `enabled` below, so it stays out of the console for other developers.
     }
 
     /// Default: only lifecycle + zotero + editor. Add categories here when debugging.
     /// `.outline` and `.data` enabled temporarily for word-count debugging — gives
     /// per-refresh totals (`[batchWordCounts]`) and per-edit deltas (`[Blocks:edit]`)
     /// so a spurious wordcount jump can be traced to the exact block that moved.
-    // DIAGNOSTIC (temporary, added during footnote-export-race investigation):
-    // `.sync` and `.blockPoll` enabled to trace pollBlockChangesNow()/getBlockChanges()
-    // during FootnoteExportRaceTests. Safe to remove once the flush race is resolved.
-    //
-    // `.reentrancy` is deliberately NOT added here — it stays out of the DEBUG console by
-    // default; it still reaches the persistent file whenever the user's Diagnostics toggle
-    // is on, which is the whole point (a durable trail without adding console noise for
-    // other developers).
+    /// DIAGNOSTIC (temporary, added during footnote-export-race investigation):
+    /// `.sync` and `.blockPoll` enabled to trace pollBlockChangesNow()/getBlockChanges()
+    /// during FootnoteExportRaceTests. Safe to remove once the flush race is resolved.
+    ///
+    /// `.reentrancy` is deliberately NOT added here — it stays out of the DEBUG console by
+    /// default; it still reaches the persistent file whenever the user's Diagnostics toggle
+    /// is on, which is the whole point (a durable trail without adding console noise for
+    /// other developers).
     static let enabled: Set<Category> = [.lifecycle, .zotero, .editor, .outline, .data, .footnotes, .sync, .blockPoll]
 
     /// Category-gated log. In DEBUG builds, prints to the console when `category` is in

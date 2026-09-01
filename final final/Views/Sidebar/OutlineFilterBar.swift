@@ -10,13 +10,11 @@ import SwiftUI
 struct OutlineFilterBar: View {
     @Binding var selectedLevel: Int?
     @Binding var selectedFilter: SectionStatus?
-    let filteredWordCount: Int
+    let visibleSections: [SectionViewModel]
     @Binding var documentGoal: Int?
     @Binding var documentGoalType: GoalType
     @Binding var excludeBibliography: Bool
     @Environment(ThemeManager.self) private var themeManager
-    @Environment(GoalColorSettingsManager.self) private var goalManager
-    @State private var showingGoalEditor = false
 
     var body: some View {
         HStack {
@@ -102,22 +100,17 @@ struct OutlineFilterBar: View {
 
             Spacer()
 
-            // Word count display with goal color (right-aligned)
-            Text("\(filteredWordCount)")
-                .font(.system(size: TypeScale.smallUI, weight: .medium, design: .monospaced))
-                .foregroundColor(wordCountColor)
-                .onTapGesture {
-                    showingGoalEditor = true
-                }
-                .popover(isPresented: $showingGoalEditor, arrowEdge: .bottom) {
-                    DocumentGoalPopover(
-                        documentGoal: $documentGoal,
-                        goalType: $documentGoalType,
-                        excludeBibliography: $excludeBibliography,
-                        currentWordCount: filteredWordCount,
-                        isPresented: $showingGoalEditor
-                    )
-                }
+            // Word count display with goal color (right-aligned). Extracted into its own leaf
+            // view so that the word-count total -- which reads every visible section's
+            // `wordCount` on every keystroke -- invalidates only this small leaf instead of the
+            // whole filter bar (and, since this bar lives inside OutlineSidebar's body, the
+            // whole sidebar). See FilteredWordCountLabel's doc comment.
+            FilteredWordCountLabel(
+                visibleSections: visibleSections,
+                documentGoal: $documentGoal,
+                documentGoalType: $documentGoalType,
+                excludeBibliography: $excludeBibliography
+            )
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
@@ -136,10 +129,54 @@ struct OutlineFilterBar: View {
         }
         return filter.displayName
     }
+}
 
-    private var wordCountColor: Color {
+/// Leaf view for the sidebar's word-count display. Extracted from `OutlineFilterBar` (bt
+/// t-ef411da3, sidebar re-render investigation) so that summing `wordCount` across every visible
+/// section -- necessarily an every-keystroke read of each section's `@Observable` `wordCount` --
+/// invalidates only this small view, not `OutlineFilterBar` and (since `OutlineFilterBar` is
+/// built inside `OutlineSidebar.body`) not the whole sidebar tree.
+struct FilteredWordCountLabel: View {
+    let visibleSections: [SectionViewModel]
+    @Binding var documentGoal: Int?
+    @Binding var documentGoalType: GoalType
+    @Binding var excludeBibliography: Bool
+    @Environment(ThemeManager.self) private var themeManager
+    @Environment(GoalColorSettingsManager.self) private var goalManager
+    @State private var showingGoalEditor = false
+
+    /// Total word count of the given (already-filtered) sections, respecting
+    /// `excludeBibliography`. `static` testable seam -- see `SidebarWordCountLeafTests`.
+    static func total(of visible: [SectionViewModel], excludeBibliography: Bool) -> Int {
+        visible.filter { !excludeBibliography || !$0.isBibliography }.reduce(0) { $0 + $1.wordCount }
+    }
+
+    var body: some View {
+        let total = Self.total(of: visibleSections, excludeBibliography: excludeBibliography)
+        #if DEBUG
+        // swiftlint:disable:next redundant_discardable_let
+        let _ = DebugLog.log(.viewUpdates, "[WordCountLabel] total=\(total)")
+        #endif
+        Text("\(total)")
+            .font(.system(size: TypeScale.smallUI, weight: .medium, design: .monospaced))
+            .foregroundColor(wordCountColor(total: total))
+            .onTapGesture {
+                showingGoalEditor = true
+            }
+            .popover(isPresented: $showingGoalEditor, arrowEdge: .bottom) {
+                DocumentGoalPopover(
+                    documentGoal: $documentGoal,
+                    goalType: $documentGoalType,
+                    excludeBibliography: $excludeBibliography,
+                    currentWordCount: total,
+                    isPresented: $showingGoalEditor
+                )
+            }
+    }
+
+    private func wordCountColor(total: Int) -> Color {
         let status = GoalStatus.calculate(
-            wordCount: filteredWordCount,
+            wordCount: total,
             goal: documentGoal,
             goalType: documentGoalType,
             thresholds: goalManager.settings.thresholds
@@ -240,7 +277,7 @@ struct DocumentGoalPopover: View {
         OutlineFilterBar(
             selectedLevel: $levelFilter,
             selectedFilter: $filter,
-            filteredWordCount: 1234,
+            visibleSections: [],
             documentGoal: $goal,
             documentGoalType: $goalType,
             excludeBibliography: $excludeBib

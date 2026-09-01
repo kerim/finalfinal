@@ -141,6 +141,10 @@ struct ContentView: View {
     }
 
     var body: some View {
+        #if DEBUG
+        // swiftlint:disable:next redundant_discardable_let
+        let _ = DebugLog.log(.viewUpdates, "[ContentViewBody]")
+        #endif
         mainContentView
             .withEditorNotifications(
                 editorState: editorState,
@@ -415,6 +419,22 @@ struct ContentView: View {
                 headerLevelFilter: $editorState.headerLevelFilter,
                 zoomedSectionId: $editorState.zoomedSectionId,
                 zoomedSectionIds: editorState.zoomedSectionIds,
+                // Built fresh each body pass, by VALUE (not through the `$`-prefixed bindings
+                // above) -- see `OutlineSidebarRenderKey`'s doc comment
+                // (OutlineSidebar+Models.swift) for exactly why this exists: it's what lets
+                // `OutlineSidebar`'s `.equatable()` below tell a keystroke that changed none of
+                // these render-relevant values apart from one that did, instead of forcing
+                // `OutlineSidebar.body` to re-run on every reconstruction regardless (bt
+                // t-ef411da3).
+                renderKey: OutlineSidebarRenderKey(
+                    sections: editorState.sections,
+                    statusFilter: editorState.statusFilter,
+                    headerLevelFilter: editorState.headerLevelFilter,
+                    zoomedSectionId: editorState.zoomedSectionId,
+                    documentGoal: editorState.documentGoal,
+                    documentGoalType: editorState.documentGoalType,
+                    excludeBibliography: editorState.excludeBibliography
+                ),
                 documentGoal: $editorState.documentGoal,
                 documentGoalType: $editorState.documentGoalType,
                 excludeBibliography: $editorState.excludeBibliography,
@@ -518,6 +538,16 @@ struct ContentView: View {
                     deleteSectionFromSidebar(sectionId)
                 }
             )
+            // The actual root-cause fix for bt t-ef411da3: `sidebarView` reconstructs
+            // `OutlineSidebar` fresh on every `ContentView.body` pass (every keystroke), and
+            // without `.equatable()` here SwiftUI has no way to distinguish that reconstruction
+            // from a genuine content change -- `OutlineSidebar.body` re-ran unconditionally.
+            // Paired with `OutlineSidebar: Equatable` (OutlineSidebar+Models.swift), this lets
+            // SwiftUI skip re-invoking `OutlineSidebar.body` when `renderKey` and the other
+            // compared fields are unchanged. Must stay directly on `OutlineSidebar` itself, not
+            // on the enclosing `VStack` -- `.equatable()` compares the view value it's attached
+            // to, not its container.
+            .equatable()
         }
         .frame(minWidth: 250)
         .background(themeManager.currentTheme.sidebarBackground)

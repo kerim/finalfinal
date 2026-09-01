@@ -17,6 +17,13 @@ struct OutlineSidebar: View {
     /// Zoomed section IDs from EditorViewState (includes root + descendants via document order)
     /// This is read-only because the sidebar never modifies the zoom state directly
     let zoomedSectionIds: Set<String>?
+    /// Precomputed once per pass by the caller (`ContentView`) from this pass's `sections` plus
+    /// the filter/zoom/goal `@Binding` values below -- see `OutlineSidebarRenderKey`'s doc
+    /// comment (OutlineSidebar+Models.swift) for exactly what's folded in and the explicit
+    /// invariant about future `@Binding`s. Declared here, immediately after `zoomedSectionIds`,
+    /// purely so the memberwise-initializer argument order at every call site lines up with
+    /// declaration order.
+    let renderKey: OutlineSidebarRenderKey
     /// Document-level goal settings
     @Binding var documentGoal: Int?
     @Binding var documentGoalType: GoalType
@@ -62,17 +69,6 @@ struct OutlineSidebar: View {
     @State private var subtreeDragHintTask: Task<Void, Never>?  // Replaces Timer for proper lifecycle
     private let hasSeenSubtreeDragHintKey = "hasSeenSubtreeDragHint"
 
-    /// Total word count of the given (already-filtered) sections, respecting excludeBibliography.
-    /// Takes `visible` explicitly rather than recomputing `filteredSections` -- this still reads
-    /// every section's `wordCount` on every body pass (so it still re-runs on each keystroke,
-    /// which is expected: SwiftUI can't skip a body read of a changed `@Observable` property),
-    /// but no longer duplicates the filter+sort+allocate work `visible` already paid for once.
-    private func filteredWordCount(of visible: [SectionViewModel]) -> Int {
-        visible
-            .filter { !excludeBibliography || !$0.isBibliography }
-            .reduce(0) { $0 + $1.wordCount }
-    }
-
     var body: some View {
         // Computed once per body pass and threaded through -- previously `filteredSections`
         // (filter+sort+allocate) and `sectionLevelInfos` (walks filteredSections) were each
@@ -82,11 +78,15 @@ struct OutlineSidebar: View {
         let visible = filteredSections
         let levelInfos = Self.levelInfos(for: visible)
         let structuralSignature = Self.structuralSignature(of: visible)
+        #if DEBUG
+        // swiftlint:disable:next redundant_discardable_let
+        let _ = DebugLog.log(.viewUpdates, "[SidebarBody] visible=\(visible.count)")
+        #endif
         VStack(spacing: 0) {
             OutlineFilterBar(
                 selectedLevel: $headerLevelFilter,
                 selectedFilter: $statusFilter,
-                filteredWordCount: filteredWordCount(of: visible),
+                visibleSections: visible,
                 documentGoal: $documentGoal,
                 documentGoalType: $documentGoalType,
                 excludeBibliography: $excludeBibliography
@@ -240,11 +240,62 @@ struct OutlineSidebar: View {
     /// those already propagate to a hosted card via `@Observable` and don't change what any
     /// *other* card's subtree walk would compute, so a pure content edit should still let
     /// untouched cards skip `updateNSView`.
+    ///
+    /// See `renderSignature(of:)` below (bt t-ef411da3) for the sibling signature that gates
+    /// whether `OutlineSidebar.body` re-runs AT ALL. That one's field set must remain a
+    /// SUPERSET of this one's (currently `id` and `headerLevel`, both included there too) -- if
+    /// this function ever grows a field `renderSignature` doesn't also hash, a structural change
+    /// could leave `body` skipped while a per-card `DraggableCardView.updateNSView` still needed
+    /// to run against stale data, which is exactly backwards. Keep the two lists in sync by
+    /// hand; there is no compiler check for this.
     static func structuralSignature(of sections: [SectionViewModel]) -> Int {
         var hasher = Hasher()
         for section in sections {
             hasher.combine(section.id)
             hasher.combine(section.headerLevel)
+        }
+        return hasher.finalize()
+    }
+
+    /// Render-affecting signature of an ordered, UNFILTERED section list -- the fields
+    /// `OutlineSidebar.body`'s own rendering logic actually depends on (the three leaves that
+    /// read title/word count instead do so LIVE off the `@Observable` object -- see
+    /// `OutlineSidebarRenderKey`'s doc comment). Folded into
+    /// `OutlineSidebarRenderKey.sectionsSignature` (OutlineSidebar+Models.swift), which
+    /// `ContentView` builds once per pass and `OutlineSidebar`'s `Equatable` conformance
+    /// (also OutlineSidebar+Models.swift -- moved there to stay clear of this file's
+    /// SwiftLint `file_length` warning threshold) compares, so SwiftUI can skip re-invoking
+    /// `OutlineSidebar.body` entirely when nothing here changed -- the actual root-cause fix for
+    /// bt t-ef411da3 (rounds 1-2 fixed leaf-level over-invalidation; this fixes body-level
+    /// over-invalidation).
+    ///
+    /// Deliberately a SEPARATE function from `structuralSignature(of:)` above, not a call site
+    /// built on top of it -- the two exist for different purposes (this one for whether `body`
+    /// needs to re-run at all; `structuralSignature` for whether an already-rendered card's
+    /// `DraggableCardView.updateNSView` needs to re-run) and are allowed to diverge. But this
+    /// function's field set must remain a SUPERSET of whatever `structuralSignature` reads --
+    /// see that function's own doc comment for the direction this must never be violated in.
+    /// Called on the RAW, UNFILTERED `sections` array (not `filteredSections`): `body` reads
+    /// `sections` before applying the status/level/zoom filters, and those filters are already
+    /// covered by `OutlineSidebarRenderKey`'s own separate `statusFilter`/`headerLevelFilter`/
+    /// `zoomedSectionId` fields, so hashing the raw array here avoids computing (and hashing) a
+    /// filtered copy just to throw it away.
+    ///
+    /// Deliberately excludes `title`/`wordCount`/`aggregateWordCount`/`tags`/goal fields -- the
+    /// exact per-keystroke-churning properties this whole fix exists to stop re-coupling `body`
+    /// to. Including any of them here would silently reintroduce the original bug: every heading
+    /// edit or word-count update would change this signature, invalidate
+    /// `OutlineSidebarRenderKey`, and force `body` to re-run on every keystroke again, exactly as
+    /// before this fix.
+    static func renderSignature(of sections: [SectionViewModel]) -> Int {
+        var hasher = Hasher()
+        for section in sections {
+            hasher.combine(ObjectIdentifier(section))
+            hasher.combine(section.id)
+            hasher.combine(section.headerLevel)
+            hasher.combine(section.status)
+            hasher.combine(section.isBibliography)
+            hasher.combine(section.sortOrder)
         }
         return hasher.finalize()
     }
@@ -299,32 +350,23 @@ struct OutlineSidebar: View {
             } action: { newWidth in
                 sidebarWidth = newWidth
             }
-            // Tooltip overlay at ScrollView level (renders above all cards)
+            // Tooltip overlay at ScrollView level (renders above all cards). `.overlay`'s content
+            // closure -- unlike `.popover`/`.sheet` -- is evaluated EAGERLY as part of this
+            // view's own body, so this closure must not itself read any `@Observable`
+            // string-returning property (`section.title`, etc.): that would put OutlineSidebar's
+            // body back on the hook for a per-keystroke invalidation whenever a hovered card's
+            // title changes -- a narrower instance of the exact bug bt t-ef411da3 fixes. The whole
+            // `section` object is passed into `SectionTitleTooltip` below (never `section.title`
+            // as a string extracted here); the truncation check and the title `Text` both live in
+            // that leaf's own body instead. `hoveredId`/`isDragging`/`cardFrames`/`section.id` are
+            // all safe to read here: the first three are plain `@State`, and `id` is a `let` on
+            // `SectionViewModel`, which `@Observable` never instruments.
             .overlay(alignment: .topLeading) {
                 if let hoveredId = hoveredCardId,
                    !isDragging,
                    let frame = cardFrames[hoveredId],
-                   let section = visible.first(where: { $0.id == hoveredId }),
-                   TypeScale.sectionTitleIsTruncated(
-                       section.title,
-                       level: section.headerLevel,
-                       isItalic: section.isPseudoSection,
-                       availableWidth: sidebarWidth - 24
-                   ) {
-                    Text(section.title)
-                        .font(.system(size: TypeScale.smallUI))
-                        .foregroundColor(themeManager.currentTheme.tooltipText)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(
-                            RoundedRectangle(cornerRadius: 4)
-                                .fill(themeManager.currentTheme.tooltipBackground)
-                                .shadow(color: .black.opacity(0.2), radius: 4, y: 2)
-                        )
-                        .fixedSize(horizontal: false, vertical: true)
-                        .frame(maxWidth: 280)
-                        .offset(x: frame.minX + 12, y: frame.maxY)
-                        .allowsHitTesting(false)
+                   let section = visible.first(where: { $0.id == hoveredId }) {
+                    SectionTitleTooltip(section: section, frame: frame, sidebarWidth: sidebarWidth)
                 }
             }
             // Subtree drag hint overlay
@@ -500,12 +542,21 @@ struct OutlineSidebar: View {
         return 1  // Default level when not visible
     }
 
-    /// Calculate approximate card height for GeometryReader frame
+    /// Fallback card height, used for any card `cardFrames` has no measurement for yet -- not just
+    /// before first layout, but for any card the LazyVStack hasn't materialized (off-screen rows).
+    static let estimatedCardHeight: CGFloat = 70
+
+    static func cardHeight(measured: CGRect?) -> CGFloat {
+        measured?.height ?? estimatedCardHeight
+    }
+
+    /// Calculate approximate card height for GeometryReader frame. Reads only the plain
+    /// `cardFrames` `@State` dictionary (populated per-card via `.onGeometryChange`) -- not
+    /// `section.title`, which previously made this reachable from `body`'s `@Observable` call
+    /// graph (`body` -> `sectionCard` -> `cardHeight`) and invalidated the whole sidebar on
+    /// every heading keystroke.
     private func cardHeight(for section: SectionViewModel) -> CGFloat {
-        // Base height + extra for longer titles
-        let baseHeight: CGFloat = 70
-        let titleLines = section.title.count > 30 ? 2 : 1
-        return baseHeight + (titleLines > 1 ? 20 : 0)
+        Self.cardHeight(measured: cardFrames[section.id])
     }
 
     /// Handle drop onto a section card with position awareness
@@ -630,6 +681,44 @@ struct OutlineSidebar: View {
 }
 // swiftlint:enable type_body_length
 
+/// Leaf view for the sidebar's hover tooltip (bt t-ef411da3, sidebar re-render investigation).
+/// Extracted from `OutlineSidebar.sectionsList`'s `.overlay` closure so that the truncation check
+/// (`TypeScale.sectionTitleIsTruncated`, a real Core Text measurement) and the title `Text` --
+/// both of which read `section.title`, an `@Observable` property -- invalidate only this small
+/// leaf when the hovered section's title changes, not the whole sidebar body. Takes the whole
+/// `SectionViewModel`, not a pre-extracted `String`: passing a string would just move the read to
+/// wherever that string gets pulled out of `section`, defeating the extraction.
+struct SectionTitleTooltip: View {
+    let section: SectionViewModel
+    let frame: CGRect
+    let sidebarWidth: CGFloat
+    @Environment(ThemeManager.self) private var themeManager
+
+    var body: some View {
+        if TypeScale.sectionTitleIsTruncated(
+            section.title,
+            level: section.headerLevel,
+            isItalic: section.isPseudoSection,
+            availableWidth: sidebarWidth - 24
+        ) {
+            Text(section.title)
+                .font(.system(size: TypeScale.smallUI))
+                .foregroundColor(themeManager.currentTheme.tooltipText)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(themeManager.currentTheme.tooltipBackground)
+                        .shadow(color: .black.opacity(0.2), radius: 4, y: 2)
+                )
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: 280)
+                .offset(x: frame.minX + 12, y: frame.maxY)
+                .allowsHitTesting(false)
+        }
+    }
+}
+
 #Preview {
     @Previewable @State var sections = [
         SectionViewModel(from: Section(
@@ -675,6 +764,15 @@ struct OutlineSidebar: View {
         headerLevelFilter: $levelFilter,
         zoomedSectionId: $zoom,
         zoomedSectionIds: nil,
+        renderKey: OutlineSidebarRenderKey(
+            sections: sections,
+            statusFilter: filter,
+            headerLevelFilter: levelFilter,
+            zoomedSectionId: zoom,
+            documentGoal: docGoal,
+            documentGoalType: docGoalType,
+            excludeBibliography: excludeBib
+        ),
         documentGoal: $docGoal,
         documentGoalType: $docGoalType,
         excludeBibliography: $excludeBib,
@@ -698,4 +796,5 @@ struct OutlineSidebar: View {
     )
     .frame(width: 300, height: 500)
     .environment(ThemeManager.shared)
+    .environment(GoalColorSettingsManager.shared)
 }

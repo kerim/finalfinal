@@ -519,6 +519,31 @@ extension UnifiedUndoE2ETests {
 
     static var diagnosticLogStartOffsets: [URL: UInt64] = [:]
 
+    /// Three directory candidates x 3 rotation filenames, DEDUPED by resolved path.
+    ///
+    /// FIXED (2026-08-31, round 3 -- the tripling bug): the three directory candidates below
+    /// (`/Users/<name>/...`, `.applicationSupportDirectory`, `homeDirectoryForCurrentUser`) exist
+    /// because different sandboxing/build configurations have historically resolved
+    /// Application Support to different-looking paths -- but on THIS machine, for THIS app, all
+    /// three resolve to the exact same actual file. Before this fix, `currentDiagnosticLogContents()`
+    /// read and concatenated all 9 candidate URLs with no dedup, so every real diagnostic marker
+    /// in `diagnostic.log` got counted 3x (once per directory alias).
+    ///
+    /// This was INVISIBLE in earlier investigation rounds because every prior assertion built on
+    /// this helper was a ratio of two counts both read from this same tripled log (e.g.
+    /// `markerA / markerB`) -- both numerator and denominator were inflated by the identical 3x
+    /// factor, which cancels out of a ratio. It only became visible -- and load-bearing -- once a
+    /// caller (the sidebar-rerender e2e test) started dividing a log-derived count by an
+    /// independently-known keystroke count instead: a fixed external denominator doesn't inflate
+    /// alongside a tripled numerator, so the tripling directly corrupted the result (a real ~0%
+    /// re-render rate read back as a false ~100%+).
+    ///
+    /// Dedup is by resolved path (`resolvingSymlinksInPath().standardizedFileURL.path`), not by
+    /// URL equality or filename alone -- filenames alone would also collapse the genuinely
+    /// distinct rotation files (`diagnostic.log.1`, `diagnostic.log.2` are real, separate files
+    /// once rotation has happened) into the base name, which is wrong. First-seen order is
+    /// preserved so `recordDiagnosticLogStartOffsets`/`currentDiagnosticLogContents` keep reading
+    /// deterministically.
     static func diagnosticLogCandidateURLs() -> [URL] {
         let relativePath = "Library/Application Support/com.kerim.final-final/Diagnostics"
         var directories: [URL] = []
@@ -534,7 +559,17 @@ extension UnifiedUndoE2ETests {
                 .appendingPathComponent(relativePath, isDirectory: true)
         )
         let fileNames = ["diagnostic.log", "diagnostic.log.1", "diagnostic.log.2"]
-        return directories.flatMap { dir in fileNames.map { dir.appendingPathComponent($0) } }
+        let allCandidates = directories.flatMap { dir in fileNames.map { dir.appendingPathComponent($0) } }
+
+        var seenResolvedPaths = Set<String>()
+        var deduped: [URL] = []
+        for url in allCandidates {
+            let resolvedPath = url.resolvingSymlinksInPath().standardizedFileURL.path
+            if seenResolvedPaths.insert(resolvedPath).inserted {
+                deduped.append(url)
+            }
+        }
+        return deduped
     }
 
     static func recordDiagnosticLogStartOffsets() {
