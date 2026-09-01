@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.130] - 2026-09-01
+
 ### Fixed
 
 - **Typing anywhere in a document could redraw the entire outline sidebar on nearly every keystroke**, even though nothing in it had actually changed — fixed; the sidebar now only redraws when its own content changes.
