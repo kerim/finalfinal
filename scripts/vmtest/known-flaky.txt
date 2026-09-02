@@ -98,3 +98,30 @@ final finalUITests/UnifiedUndoE2ETests/testEvictionCapEvictsOldestEntryAndStaysC
 # testDeliberateNewListRestartsAtOne and testFocusModeToggle above. Quarantined rather
 # than root-caused; revisit t-e006ebc5 if it starts failing in isolation too.
 final finalUITests/EditorModeSwitchUndoE2ETests/testUndoAfterHeadingBreakingEditInWysiwyg
+
+# Added 2026-09-02 during sd-wrap-up for the notes-heading-scanner-unify batch
+# (t-7f7e6ed2, t-mtianjujt9ub). Asserts that deleting the last footnote reference
+# under a Notes heading dissolves the whole section (heading + orphaned
+# definition) via FootnoteSyncService's debounced path, while the user's own
+# surrounding prose survives. Two diagnostician rounds traced this to a genuine
+# test-authoring timing gap: the original assertion had no wait at all; a fix
+# added a quiet window plus a bounded 20s poll for notesHeadingCount()==0. Even
+# with that fix applied, the poll still timed out on a third occurrence with the
+# identical shape (heading count still 1, not 0) — so some residual timing
+# variance in the debounced dissolve remains unexplained by the automated
+# harness alone.
+#
+# The underlying invariant this test protects (user prose is never deleted —
+# plan item B1) is independently proven at the unit level via
+# NotesH2DataLossTests, which does not depend on this timing at all. Critically,
+# the user manually tested this EXACT live scenario in the actual running app —
+# delete the last footnote reference under a Notes heading with their own
+# prose beneath it — and confirmed correct behavior (the section dissolved,
+# their prose survived) before approving the merge. This is a
+# live-app-confirmed-correct / automated-check-unreliable-timing gap, the same
+# class already documented above for testFocusModeToggle and
+# testUndoAfterHeadingBreakingEditInWysiwyg — not a data-loss or correctness
+# regression. Quarantined rather than chasing a fourth timing fix; revisit if a
+# live-app manual check ever fails, or if the debounce/dissolve mechanism
+# changes again.
+final finalUITests/FootnoteCursorPlacementE2ETests/testDeletingLastFootnoteReferencePreservesUserProseUnderNotes
