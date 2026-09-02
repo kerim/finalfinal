@@ -81,24 +81,12 @@ extension SectionSyncService {
 
         do {
             try db.write { dbConn in
-                // C7: preserve the existing Notes heading's block ID (scroll stability, as
-                // before) AND its title/level -- this used to hardcode `textContent: "Notes",
-                // markdownFragment: "# Notes", headingLevel: 1` unconditionally, which was a
-                // no-op before Stage C (the only heading that could ever be flagged `isNotes`
-                // WAS already H1 "# Notes"). Now that `NotesOpeningSelector`-backed recognition
-                // accepts H1 OR H2, a genuinely H2 "## Notes" heading -- or any DB-resolved,
-                // already-recognized title (see `fetchNotesHeadingTitle`) -- reaching this path
-                // would otherwise be silently DELETED and replaced with a fresh H1 "# Notes"
-                // heading on every mini-Notes edit, directly violating the plan's settled
-                // decision #2 ("heading level is kept as typed on adoption, never normalized").
-                let existingHeading = try Block
+                // Preserve existing Notes heading block ID for scroll stability
+                let existingHeadingId = try Block
                     .filter(Block.Columns.projectId == pid)
                     .filter(Block.Columns.isNotes == true)
                     .filter(Block.Columns.blockType == BlockType.heading.rawValue)
-                    .fetchOne(dbConn)
-                let existingHeadingId = existingHeading?.id
-                let headingLevel = existingHeading?.headingLevel ?? 1
-                let headingTitle = existingHeading?.textContent ?? "Notes"
+                    .fetchOne(dbConn)?.id
 
                 try Block.filter(Block.Columns.projectId == pid)
                     .filter(Block.Columns.isNotes == true)
@@ -114,9 +102,8 @@ extension SectionSyncService {
                 var heading = Block(
                     id: existingHeadingId ?? UUID().uuidString,
                     projectId: pid, sortOrder: baseSortOrder,
-                    blockType: .heading, textContent: headingTitle,
-                    markdownFragment: String(repeating: "#", count: headingLevel) + " " + headingTitle,
-                    headingLevel: headingLevel,
+                    blockType: .heading, textContent: "Notes",
+                    markdownFragment: "# Notes", headingLevel: 1,
                     status: .final_, isNotes: true
                 )
                 heading.recalculateWordCount()

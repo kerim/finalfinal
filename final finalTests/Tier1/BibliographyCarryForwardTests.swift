@@ -299,37 +299,8 @@ struct BibliographyCarryForwardTests {
         )
     }
 
-    @Test("Stage C: a restored '## Notes' heading WITH real footnote evidence now carries its flag onto its own definition")
-    func notesWithEvidenceCarriesForwardOntoItsOwnDefinition() throws {
-        // HISTORY: before Stage C (t-mtianjujt9ub), `BlockParser.parse`'s Notes recognition was
-        // an exact H1-literal check (`trimmed.lowercased() == "# notes"`) with no evidence gate
-        // at all -- so a "## Notes" heading was NEVER recognized as opening a Notes run, full
-        // stop, regardless of what followed it. This test used to assert `isNotes == false` here,
-        // with the message "Deliberate: no Notes terminator exists to bound a carry" -- but
-        // tracing the actual mechanism (not just the assertion) shows that message described the
-        // wrong cause: the old test passed because the H2 heading was never recognized as an
-        // opener AT ALL post-roundtrip, not because any terminator-bounding logic stopped a carry
-        // that had actually started. Notes still has no terminator (unlike Bibliography's
-        // `bibliographyEndMarker`) -- that part of the old comment was correct -- but the
-        // resulting behavior it was protecting against never actually fired.
-        //
-        // Stage C's `NotesOpeningSelector` now recognizes "## Notes" (H1 or H2) as a genuine
-        // opener when real `[^N]:` evidence follows it before the next heading -- this exact
-        // shape (a heading plus its own definition, nothing else in the document) IS the primary
-        // bug this whole task exists to fix (t-7f7e6ed2: "## Notes" sections silently losing
-        // footnote text because nothing ever recognized them). Asserting `false` here would mean
-        // re-asserting that bug, not guarding against a real regression -- so the flag correctly
-        // carrying onto the footnote body is the intended, corrected behavior, and this test now
-        // asserts it end-to-end through a full assemble-and-reparse roundtrip.
-        //
-        // REMAINING KNOWN GAP (unchanged by Stage C, not newly introduced by it, out of scope for
-        // this task): because Notes still has no terminator, `sectionFlagCarriedForward` carries
-        // the flag until the NEXT HEADING exactly as it always has -- for a document shaped
-        // "## Notes" / "[^1]: real text" / unrelated trailing prose with NO heading after the
-        // footnote, that trailing prose would also end up flagged. This fixture deliberately has
-        // nothing after the footnote body, so it does not exercise that gap; see this file's own
-        // header comment on what bounds a carry (next heading / terminator / budget) -- Notes
-        // still only has the first of those three.
+    @Test("A restored isNotes heading does NOT carry its flag forward")
+    func notesIsNotCarriedForward() throws {
         let content = """
         ## Notes
 
@@ -351,10 +322,7 @@ struct BibliographyCarryForwardTests {
 
         let after = try BibliographyCarryForwardSupport.blocks(db, projectId)
         let footnote = try #require(after.first { $0.markdownFragment.contains("[^1]:") })
-        #expect(
-            footnote.isNotes == true,
-            "Stage C: '## Notes' + real evidence is now recognized end-to-end -- the footnote body carries the flag from its own heading, same as the primary bug fix requires"
-        )
+        #expect(footnote.isNotes == false, "Deliberate: no Notes terminator exists to bound a carry")
         #expect(footnote.isBibliography == false)
     }
 

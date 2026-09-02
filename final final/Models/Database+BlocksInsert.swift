@@ -158,20 +158,14 @@ extension ProjectDatabase {
     /// for a next-block signal the way bibliography does would just leave a genuine
     /// continuation unflagged for no safety benefit.
     ///
-    /// Notes containment (i.e. inheriting `isNotes` from the anchor) is suppressed the same way
-    /// bibliography's is — forced `false` when the INSERTED fragment is itself a heading — so
-    /// that a heading pasted or typed right after the last footnote (e.g. starting a new
-    /// document section) never inherits `isNotes = true` from its anchor. This suppression is
-    /// about NOT inheriting from an unrelated anchor; it does not apply to a heading that IS the
-    /// Notes section's own opening — see `liveInsertOpensNotesSection` below, checked
-    /// independently of anchor containment for every heading insert.
+    /// Notes containment is suppressed the same way bibliography's is — forced `false` when
+    /// the INSERTED fragment is itself a heading — so that a heading pasted or typed right
+    /// after the last footnote (e.g. starting a new document section) never inherits
+    /// `isNotes = true` from its anchor.
     ///
     /// Both no-anchor branches (doc-start insert, shared-counter fallback) always resolve
     /// Notes containment `false` too — a block with no Notes anchor can never be "inside" the
-    /// section by this rule. (A doc-start or fallback-positioned heading insert is not run
-    /// through `liveInsertOpensNotesSection` either — those placements are rare edge cases
-    /// distinct from the ordinary anchored-insert path this fix targets, and
-    /// `adoptUnflaggedNotesContinuations` remains the backstop for them too.)
+    /// section by this rule.
     func resolveInsertPlacement(
         db: Database,
         insert: BlockInsert,
@@ -204,27 +198,7 @@ extension ProjectDatabase {
             // No next-block requirement here — see this function's doc comment for why the
             // anchor alone is sufficient evidence for Notes, unlike bibliography.
             let notesContainment = afterBlock.isNotes && afterBlock.blockType != .heading
-            // A live-typed heading insert that IS ITSELF the Notes section's own opening must
-            // not be unconditionally suppressed like every other heading insert -- unlike
-            // bibliography, Notes has no persisted opening marker (see `NotesOpeningSelector`'s
-            // doc comment), so the analogous "this heading opens the section itself" signal is
-            // the shared `NotesOpeningSelector` evidence rule (title match at H1-or-H2 + a
-            // genuine `[^N]:` definition strictly before the next heading), checked here against
-            // blocks ALREADY persisted in the DB. A sibling insert later in the SAME editor-diff
-            // batch (e.g. the definition line immediately below a freshly retyped heading) hasn't
-            // landed yet when this runs and so can't be seen here -- that's fine: this insert's
-            // own not-yet-written siblings aside, `adoptUnflaggedNotesContinuations` (run at the
-            // top of every `reconcileNotesBlocks` call, i.e. every subsequent footnote-touching
-            // edit) is the backstop that adopts this heading once those siblings commit, applying
-            // the identical evidence rule against the by-then-complete document. Deliberately NOT
-            // a provisional flag-then-retract: `NotesOpeningSelector` never selects a title match
-            // with no evidence, and nothing in this codebase retracts an `isNotes` flag once set,
-            // so provisionally flagging an ordinary heading merely titled "Notes" would leave it
-            // permanently misflagged if no footnote ever followed it.
-            let isNotesOpeningHeadingInsert = try isHeadingInsert && Self.liveInsertOpensNotesSection(
-                db: db, projectId: projectId, insertTrimmed: insertTrimmed, afterSortOrder: sortOrder
-            )
-            let isNotes = isHeadingInsert ? isNotesOpeningHeadingInsert : notesContainment
+            let isNotes = isHeadingInsert ? false : notesContainment
             return InsertPlacement(sortOrder: sortOrder, isBibliography: isBibliography, isNotes: isNotes)
         } else if resolvedAfterId == nil, insert.atDocumentStart == true {
             // Block is literal ProseMirror doc position 0 — anchor it before the
@@ -242,50 +216,6 @@ extension ProjectDatabase {
             nextSortOrder += 1.0
             return InsertPlacement(sortOrder: sortOrder, isBibliography: false, isNotes: false)
         }
-    }
-
-    /// Whether a live-typed heading insert, landing at `afterSortOrder`, is confirmed as a
-    /// Notes-section opening by the shared `NotesOpeningSelector` rule: a title match against
-    /// the document's currently-recognized Notes header name (mirrors `adoptUnflaggedNotesContinuations`'s
-    /// own resolution — whatever heading is ALREADY flagged `isNotes`, else the literal default
-    /// `"Notes"`) at heading level 1 or 2, AND a genuine `[^N]:` definition strictly before the
-    /// next heading (or end of document). Evaluated only against blocks ALREADY persisted to the
-    /// DB — see this function's call site for why a sibling insert later in the same editor-diff
-    /// batch is invisible here, and why that's an accepted gap covered by a different backstop.
-    private static func liveInsertOpensNotesSection(
-        db: Database, projectId: String, insertTrimmed: String, afterSortOrder: Double
-    ) throws -> Bool {
-        let existingNotesHeaderName = try Block
-            .filter(Block.Columns.projectId == projectId)
-            .filter(Block.Columns.blockType == BlockType.heading.rawValue)
-            .filter(Block.Columns.isNotes == true)
-            .order(Block.Columns.sortOrder)
-            .fetchOne(db)?.textContent
-        let notesHeaderName = existingNotesHeaderName ?? "Notes"
-        guard BlockParser.isNotesHeading(insertTrimmed, notesHeaderName: notesHeaderName) else {
-            return false
-        }
-        let followingBlocks = try Block
-            .filter(Block.Columns.projectId == projectId)
-            .filter(Block.Columns.sortOrder > afterSortOrder)
-            .order(Block.Columns.sortOrder)
-            .fetchAll(db)
-        // Evidence check refactored onto the shared `NotesOpeningSelector` as the
-        // source-of-truth rule (was previously this function's own inline walk-forward
-        // loop) -- behavior unchanged: `hasEvidence` walks `followingBlocks` in order,
-        // stopping at the first heading (mirroring the old `break` on `block.blockType ==
-        // .heading`) and returning `true` on the first genuine `[^N]:` definition found
-        // before that, exactly like `SectionSyncService+Parsing.swift`'s
-        // `confirmNotesCandidates` does for its own (line-based, not block-based) content
-        // span. `isCandidateHeading` is irrelevant to a pure evidence probe, same as there.
-        let followingUnits = followingBlocks.map { block -> NotesOpeningSelector.Unit in
-            NotesOpeningSelector.Unit(
-                isCandidateHeading: false,
-                isAnyHeading: block.blockType == .heading,
-                isEvidence: FootnoteSyncService.parseNotesLabel(from: block.markdownFragment) != nil
-            )
-        }
-        return NotesOpeningSelector.hasEvidence(in: followingUnits, after: 0)
     }
 
     /// Builds the Block row for an editor insert: detects heading syntax (belt-and-suspenders

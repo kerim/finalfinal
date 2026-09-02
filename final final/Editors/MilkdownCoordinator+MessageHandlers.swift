@@ -294,8 +294,7 @@ extension MilkdownEditor.Coordinator {
         }
 
         DebugLog.log(.editor,
-            "[batchInit] isResetting=\(isResettingContentBinding.wrappedValue) editorMounted=\(editorMounted) " +
-            "content=\(content.count) effective=\(effectiveContent.count)")
+            "[batchInit] isResetting=\(isResettingContentBinding.wrappedValue) editorMounted=\(editorMounted) content=\(content.count) effective=\(effectiveContent.count)")
 
         // Build options dictionary for JSON encoding
         // Using JSON instead of template literals handles ALL special characters safely
@@ -364,22 +363,7 @@ extension MilkdownEditor.Coordinator {
             DebugLog.log(.editor, "[CURSOR-SYNC] restoreCursorIfNeeded: no cursor binding, skipping")
             return
         }
-        // Idempotence guard: the clear below is asynchronous (moved off the view-update
-        // pass, where it was provably not persisting -- see the async dispatch just below),
-        // which opens a small gap where a subsequent content-reset cycle can observe this
-        // same still-set binding and re-enter this function before the clear lands. Without
-        // this guard that replays the identical stale position a second (or Nth) time.
-        guard position != consumedCursorRestore else {
-            DebugLog.log(.editor, "[CURSOR-SYNC] restoreCursorIfNeeded: already consumed this position, skipping")
-            return
-        }
-        consumedCursorRestore = position
-        // Clearing synchronously inside updateNSView (a SwiftUI view-update pass) was provably
-        // not persisting -- the same stale value kept getting replayed on every subsequent
-        // content-reset cycle. Move the write off that pass.
-        DispatchQueue.main.async { [weak self] in
-            self?.cursorPositionToRestoreBinding.wrappedValue = nil
-        }
+        cursorPositionToRestoreBinding.wrappedValue = nil
 
         let useScrollRestore = !position.cursorIsVisible && position.topLine > 1.0
 
@@ -393,16 +377,13 @@ extension MilkdownEditor.Coordinator {
         } else if position.line != 1 || position.column != 0 {
             // Cursor was placed and is visible — set cursor and center on it
             DebugLog.log(.editor, "[CURSOR-SYNC] restoreCursorIfNeeded: restoring line=\(position.line) col=\(position.column)")
-            cursorRestoreWorkItem?.cancel()
-            let workItem = DispatchWorkItem { [weak self] in
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
                 self?.setCursorPosition(position) {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
                         self?.scrollCursorToCenter()
                     }
                 }
             }
-            cursorRestoreWorkItem = workItem
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1, execute: workItem)
         }
         // Default cursor at top with scrollFraction 0 — do nothing
     }

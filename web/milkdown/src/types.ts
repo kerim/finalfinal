@@ -224,10 +224,6 @@ declare global {
       insertFootnote: (atPosition?: number) => string | null;
       renumberFootnotes: (mapping: Record<string, string>) => void;
       scrollToFootnoteDefinition: (label: string) => void;
-      /** E1: id-addressed cursor placement — resolves `blockId` via the block-id map before
-       *  falling back to `scrollToFootnoteDefinition`'s node/text-search chain. See
-       *  footnote-plugin.ts's doc comment for the full fallback order and NOT_FOUND contract. */
-      focusFootnoteDefinition: (label: string, blockId?: string) => void;
       setZoomFootnoteState: (zoomed: boolean, maxLabel: number) => void;
       // Image API
       insertImage: (opts: {

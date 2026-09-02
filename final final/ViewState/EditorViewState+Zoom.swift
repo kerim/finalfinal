@@ -514,13 +514,10 @@ extension EditorViewState {
 
             // Metadata preserved atomically by replaceBlocks/replaceBlocksInRange
             // inside their write transactions (8 fields vs. the old pre-read's 3)
-            // C5: highest-stakes site -- the general content-flush path (editor-mode switches,
-            // zoom flushes, etc.) -- threads the DB-resolved Notes title explicitly.
             let blocks = BlockParser.parse(
                 markdown: contentToParse,
                 projectId: pid,
-                existingSectionMetadata: nil,
-                notesHeaderName: try? db.fetchNotesHeadingTitle(projectId: pid)
+                existingSectionMetadata: nil
             )
 
             DebugLog.log(.zoom, "[FLUSH] Input length=\(contentToParse.count), parsed \(blocks.count) blocks")

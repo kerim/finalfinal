@@ -103,68 +103,6 @@ extension ProjectDatabase {
         }
     }
 
-    /// C6: everything `SectionSyncService.syncContent`/`syncZoomedSections` need to read
-    /// before calling `parseHeaders` and reconciling, gathered in ONE `read` transaction
-    /// instead of the four-to-five separate `read {}` calls (`fetchSections`,
-    /// `fetchBibliographyHeadingTitle`, an equivalent Notes query, `hasBibliographyBlocks`,
-    /// `hasNotesBlocks`) each of those functions used to make independently. Each
-    /// standalone `read` opens and closes its OWN transaction, so between any two of them a
-    /// concurrent write on another `Task` (this whole call already runs inside
-    /// `Task.detached`, off the MainActor serialization that would otherwise rule this out)
-    /// could land -- e.g. a bibliography/Notes heading being flagged or unflagged mid-way
-    /// through this function's own reads, making `existingBibTitle`/`bibliographyExistsInBlocks`
-    /// (or their Notes equivalents) describe two different, inconsistent moments of the same
-    /// project. Wrapping every one of those reads in a single transaction here gives them
-    /// one consistent snapshot instead.
-    struct SectionSyncSnapshot {
-        let dbSections: [Section]
-        let existingBibTitle: String?
-        let existingNotesTitle: String?
-        let bibliographyExistsInBlocks: Bool
-        let notesExistsInBlocks: Bool
-    }
-
-    /// See `SectionSyncSnapshot`'s doc comment. `existingBibTitle`/`existingNotesTitle` keep
-    /// the exact same block-table-first, section-table-fallback precedence
-    /// `fetchBibliographyHeadingTitle`'s own doc comment describes (the "first
-    /// citation/footnote ever" gap) -- `fetchNotesHeadingTitle` (C2) closes the same gap for
-    /// Notes that already existed for Bibliography.
-    func fetchSectionSyncSnapshot(projectId: String) throws -> SectionSyncSnapshot {
-        try read { db in
-            let dbSections = try Section
-                .filter(Section.Columns.projectId == projectId)
-                .order(Section.Columns.sortOrder)
-                .fetchAll(db)
-            let bibHeadingTitle = try Block
-                .filter(Block.Columns.projectId == projectId)
-                .filter(Block.Columns.blockType == BlockType.heading.rawValue)
-                .filter(Block.Columns.isBibliography == true)
-                .order(Block.Columns.sortOrder)
-                .fetchOne(db)?.textContent
-            let notesHeadingTitle = try Block
-                .filter(Block.Columns.projectId == projectId)
-                .filter(Block.Columns.blockType == BlockType.heading.rawValue)
-                .filter(Block.Columns.isNotes == true)
-                .order(Block.Columns.sortOrder)
-                .fetchOne(db)?.textContent
-            let bibliographyExistsInBlocks = try Block
-                .filter(Block.Columns.projectId == projectId)
-                .filter(Block.Columns.isBibliography == true)
-                .fetchCount(db) > 0
-            let notesExistsInBlocks = try Block
-                .filter(Block.Columns.projectId == projectId)
-                .filter(Block.Columns.isNotes == true)
-                .fetchCount(db) > 0
-            return SectionSyncSnapshot(
-                dbSections: dbSections,
-                existingBibTitle: bibHeadingTitle ?? dbSections.first(where: { $0.isBibliography })?.title,
-                existingNotesTitle: notesHeadingTitle ?? dbSections.first(where: { $0.isNotes })?.title,
-                bibliographyExistsInBlocks: bibliographyExistsInBlocks,
-                notesExistsInBlocks: notesExistsInBlocks
-            )
-        }
-    }
-
     /// Fetch only root sections (no parent) for a project
     func fetchRootSections(projectId: String) throws -> [Section] {
         try read { db in

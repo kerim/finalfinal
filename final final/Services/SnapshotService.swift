@@ -262,16 +262,10 @@ final class SnapshotService {
                 wordGoal: snapshotSection.wordGoal
             )
         }
-        // C5: highest-stakes `BlockParser.parse` site (full snapshot restore) -- threads the
-        // DB-resolved Notes title so an already-recognized, non-default-titled Notes heading
-        // (see `fetchNotesHeadingTitle`'s doc comment) is still recognized after restore,
-        // same as `bibliographyHeaderName` would be threaded if this call needed a custom
-        // bibliography name (it doesn't; `ExportSettings.load()`'s default already covers it).
         let blocks = BlockParser.parse(
             markdown: snapshot.previewMarkdown,
             projectId: projectId,
-            existingSectionMetadata: metadata.isEmpty ? nil : metadata,
-            notesHeaderName: try? database.fetchNotesHeadingTitle(projectId: projectId)
+            existingSectionMetadata: metadata.isEmpty ? nil : metadata
         )
         try database.replaceBlocks(blocks, for: projectId)
     }
@@ -314,12 +308,9 @@ final class SnapshotService {
         let sections = try database.fetchSections(projectId: projectId)
         var metadata: [String: SectionMetadata] = [:]
         for section in sections { metadata[section.title] = SectionMetadata(from: section) }
-        // C5: see `restoreLatestFullSnapshot`'s matching call above for why this threads
-        // `notesHeaderName`.
         let blocks = BlockParser.parse(
             markdown: contentRecord.markdown, projectId: projectId,
-            existingSectionMetadata: metadata.isEmpty ? nil : metadata,
-            notesHeaderName: try? database.fetchNotesHeadingTitle(projectId: projectId)
+            existingSectionMetadata: metadata.isEmpty ? nil : metadata
         )
         // preservingMachineManagedBlocks: true -- rebuildContentFromSections (above) excludes
         // isBibliography AND isNotes sections from contentRecord.markdown, so `blocks` here has
@@ -388,12 +379,9 @@ final class SnapshotService {
         let allSectionsAfter = try database.fetchSections(projectId: projectId)
         var metadataForBlocks: [String: SectionMetadata] = [:]
         for section in allSectionsAfter { metadataForBlocks[section.title] = SectionMetadata(from: section) }
-        // C5: see `restoreLatestFullSnapshot`'s matching call above for why this threads
-        // `notesHeaderName`.
         let blocks = BlockParser.parse(
             markdown: contentRecord.markdown, projectId: projectId,
-            existingSectionMetadata: metadataForBlocks.isEmpty ? nil : metadataForBlocks,
-            notesHeaderName: try? database.fetchNotesHeadingTitle(projectId: projectId)
+            existingSectionMetadata: metadataForBlocks.isEmpty ? nil : metadataForBlocks
         )
         // preservingMachineManagedBlocks: true -- see restoreSectionReplace's matching call
         // for why (rebuildContentFromSections excludes bibliography AND Notes from this

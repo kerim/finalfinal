@@ -454,18 +454,6 @@ struct MilkdownEditor: NSViewRepresentable {
         /// Pending cursor position that is being restored (set before JS call, cleared after)
         var pendingCursorRestore: CursorPosition?
 
-        /// The last position `restoreCursorPositionIfNeeded()` actually consumed and applied.
-        /// Idempotence guard: the async clear of `cursorPositionToRestoreBinding` (below) opens
-        /// a small window where a subsequent content-reset cycle could see the same
-        /// not-yet-nilled value and replay it a second time. Compared against on entry; reset in
-        /// `saveAndNotify()` so a genuinely-saved-twice identical position still restores.
-        var consumedCursorRestore: CursorPosition?
-
-        /// Cancellable handle for the delayed `setCursorPosition` call in
-        /// `restoreCursorPositionIfNeeded()`, so a later event (e.g. the footnote's own cursor
-        /// placement) can cancel a still-pending stale restore before it fires.
-        var cursorRestoreWorkItem: DispatchWorkItem?
-
         /// Last sent annotation display modes (to avoid redundant calls)
         var lastAnnotationDisplayModes: [AnnotationType: AnnotationDisplayMode] = [:]
 

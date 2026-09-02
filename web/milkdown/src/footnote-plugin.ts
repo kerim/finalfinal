@@ -11,10 +11,8 @@ import { Plugin, Selection, TextSelection } from '@milkdown/kit/prose/state';
 import { $node, $prose, $remark, $view } from '@milkdown/kit/utils';
 import type { Root } from 'mdast';
 import { visit } from 'unist-util-visit';
-import { getAllBlockIds } from './block-id-plugin';
 import { getDocumentFootnoteCount, getEditorInstance, getIsZoomMode, setZoomFootnoteState } from './editor-state';
 import { isSourceModeEnabled } from './source-mode-plugin';
-import { syncLog } from './sync-debug';
 
 // === Footnote Definitions State ===
 // Module-level map of label → definition text, populated by FootnoteSyncService via setFootnoteDefinitions()
@@ -675,21 +673,11 @@ export function insertFootnoteWithDelete(
  * create TextSelection after prefix, scrollIntoView, focus.
  */
 export function scrollToFootnoteDefinition(label: string): void {
-  syncLog('Footnote:scroll', `entry label=${label}`);
-
   const editorInstance = getEditorInstance();
-  if (!editorInstance) {
-    syncLog('Footnote:scroll', `label=${label} path=NOT_FOUND reason=no-editor-instance`);
-    return;
-  }
+  if (!editorInstance) return;
 
   const view = editorInstance.ctx.get(editorViewCtx);
-  if (!view) {
-    syncLog('Footnote:scroll', `label=${label} path=NOT_FOUND reason=no-view`);
-    return;
-  }
-
-  const docSize = view.state.doc.content.size;
+  if (!view) return;
 
   // Search for footnote_def node with matching label
   let targetPos = -1;
@@ -715,35 +703,22 @@ export function scrollToFootnoteDefinition(label: string): void {
     });
   }
 
-  if (targetPos === -1) {
-    syncLog('Footnote:scroll', `label=${label} path=NOT_FOUND targetPos=-1 docSize=${docSize}`);
-  }
-
   if (targetPos !== -1) {
     try {
       let cursorPos: number;
-      let parentStart: number;
-      let parentEnd: number;
       if (usedTextFallback) {
         // Text-based: targetPos is paragraph position, content starts at +1
         const searchText = `[^${label}]:`;
         const contentStart = targetPos + 1;
         const paragraphEnd = view.state.doc.resolve(contentStart).end();
         cursorPos = Math.min(contentStart + searchText.length + 1, paragraphEnd);
-        parentStart = contentStart;
-        parentEnd = paragraphEnd;
       } else {
         // Node-based: targetPos is the atom node position
         const resolvedTarget = view.state.doc.resolve(targetPos);
-        parentStart = resolvedTarget.start(resolvedTarget.depth);
-        parentEnd = view.state.doc.resolve(parentStart).end();
+        const parentStart = resolvedTarget.start(resolvedTarget.depth);
+        const parentEnd = view.state.doc.resolve(parentStart).end();
         cursorPos = Math.min(parentStart + 2, parentEnd);
       }
-      syncLog(
-        'Footnote:scroll',
-        `label=${label} path=${usedTextFallback ? 'textFallback' : 'node'} targetPos=${targetPos} ` +
-          `cursorPos=${cursorPos} parentStart=${parentStart} parentEnd=${parentEnd} docSize=${docSize}`
-      );
       const sel = TextSelection.create(view.state.doc, cursorPos);
       view.dispatch(view.state.tr.setSelection(sel).scrollIntoView());
       // Double-RAF: WebKit needs a full layout+paint cycle after the document
@@ -765,114 +740,10 @@ export function scrollToFootnoteDefinition(label: string): void {
           }
         });
       });
-    } catch (e) {
-      syncLog(
-        'Footnote:scroll',
-        `label=${label} path=${usedTextFallback ? 'textFallback' : 'node'} EXCEPTION targetPos=${targetPos} ` +
-          `${e instanceof Error ? e.message : String(e)}`
-      );
+    } catch {
+      /* scroll failed */
     }
   }
-}
-
-/**
- * E1: id-addressed cursor placement for a just-inserted footnote definition. Resolves
- * `blockId` (the definition row's real DB id, threaded through from
- * `handleFootnoteInsertedImmediate`'s `.scrollToFootnoteDefinition` post — see
- * `MilkdownCoordinator+Content.swift`) via the existing `getAllBlockIds()` map, and — when
- * found — sets a real `TextSelection` just after the `[^N]: ` prefix inside that exact node.
- * This is what makes cursor placement content-ADDRESSED rather than content-ADDRESSED-BY-
- * SEARCH: two definitions that transiently share a label (the blank-twin shape Stage B/C's
- * tests cover) are indistinguishable to a label search but never to a block id.
- *
- * Falls back, in order, to the pre-existing `scrollToFootnoteDefinition(label)` fallback
- * chain (node-by-label match, then text search) whenever: `blockId` is omitted/empty, the id
- * isn't in `getAllBlockIds()`'s map (e.g. a temp id not yet confirmed, or — in zoom mode —
- * the mini-Notes tail, which `pushBlockIds` deliberately excludes isNotes blocks from, see
- * `ContentView+ContentRebuilding.swift`'s `handleZoomedFootnoteInsertion`), or the resolved
- * position doesn't land on a textblock. Every path is logged via the shared `Footnote:scroll`
- * tag (Stage A's convention) so a real miss is never silent. On a TOTAL miss (blockId path AND
- * every fallback fail), the cursor is left exactly as `scrollToFootnoteDefinition` would leave
- * it — untouched from its pre-call value — never falling back to whatever
- * `setContentWithBlockIds`'s restoration left it at.
- */
-export function focusFootnoteDefinition(label: string, blockId?: string): void {
-  syncLog('Footnote:scroll', `entry(focus) label=${label} blockId=${blockId ?? 'none'}`);
-
-  if (blockId) {
-    const editorInstance = getEditorInstance();
-    const view = editorInstance?.ctx.get(editorViewCtx);
-    if (editorInstance && view) {
-      const docSize = view.state.doc.content.size;
-      const blockIds = getAllBlockIds();
-      let blockPos: number | undefined;
-      for (const [pos, id] of blockIds) {
-        if (id === blockId) {
-          blockPos = pos;
-          break;
-        }
-      }
-
-      if (blockPos !== undefined && blockPos >= 0 && blockPos < docSize) {
-        try {
-          const node = view.state.doc.nodeAt(blockPos);
-          if (node?.isTextblock) {
-            const parentStart = blockPos + 1;
-            const parentEnd = view.state.doc.resolve(parentStart).end();
-            const cursorPos = Math.min(parentStart + 2, parentEnd);
-            syncLog(
-              'Footnote:scroll',
-              `label=${label} path=blockId blockId=${blockId} blockPos=${blockPos} ` +
-                `cursorPos=${cursorPos} parentStart=${parentStart} parentEnd=${parentEnd} docSize=${docSize}`
-            );
-            const sel = TextSelection.create(view.state.doc, cursorPos);
-            view.dispatch(view.state.tr.setSelection(sel).scrollIntoView());
-            // Double-RAF: see scrollToFootnoteDefinition's matching comment — WebKit needs a
-            // full layout+paint cycle after the document replacement before coordsAtPos is
-            // accurate.
-            requestAnimationFrame(() => {
-              requestAnimationFrame(() => {
-                try {
-                  view.focus();
-                  const coords = view.coordsAtPos(blockPos!);
-                  if (coords) {
-                    window.scrollTo({
-                      top: Math.max(0, coords.top + window.scrollY - 100),
-                      behavior: 'smooth',
-                    });
-                  }
-                } catch {
-                  /* focus/scroll failed */
-                }
-              });
-            });
-            return; // success via the blockId path — do not fall through
-          }
-          syncLog(
-            'Footnote:scroll',
-            `label=${label} path=blockId-miss blockId=${blockId} blockPos=${blockPos} reason=not-a-textblock`
-          );
-        } catch (e) {
-          syncLog(
-            'Footnote:scroll',
-            `label=${label} path=blockId-miss blockId=${blockId} EXCEPTION ` +
-              `${e instanceof Error ? e.message : String(e)}`
-          );
-        }
-      } else {
-        syncLog(
-          'Footnote:scroll',
-          `label=${label} path=blockId-miss blockId=${blockId} reason=not-in-block-id-map mapSize=${blockIds.size}`
-        );
-      }
-    } else {
-      syncLog('Footnote:scroll', `label=${label} path=blockId-miss blockId=${blockId} reason=no-editor-or-view`);
-    }
-  }
-
-  // Fall back to the pre-existing node-by-label / text-search chain (also handles the
-  // no-blockId call shape). Its own NOT_FOUND path already leaves the cursor untouched.
-  scrollToFootnoteDefinition(label);
 }
 
 /**

@@ -170,12 +170,7 @@ extension CodeMirrorEditor.Coordinator {
             }
         }
 
-        // Subscribe to scroll-to-footnote-definition notification.
-        // E4: `userInfo["blockId"]`, when present, is deliberately NOT read here -- CodeMirror
-        // has no block-id concept (plain text, no ProseMirror doc), so E2's fix is a
-        // region-anchored TEXT search (bounded to the Notes section, see `api.ts`'s
-        // `scrollToFootnoteDefinition`) rather than id-addressed lookup. Milkdown's observer
-        // (MilkdownCoordinator+NotificationObservers.swift) is the one that consumes `blockId`.
+        // Subscribe to scroll-to-footnote-definition notification
         scrollToFootnoteDefObserver = NotificationCenter.default.addObserver(
             forName: .scrollToFootnoteDefinition,
             object: nil,

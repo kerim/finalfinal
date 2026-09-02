@@ -189,15 +189,7 @@ extension View {
                         // Parse initial content into blocks
                         if let db = DocumentManager.shared.projectDatabase,
                            let pid = DocumentManager.shared.projectId {
-                            // C5: a brand-new project has no pre-existing Notes heading yet, so
-                            // this resolves to nil -> the "Notes" default either way -- wired
-                            // for consistency with every other production `BlockParser.parse`
-                            // site rather than as a behavior-affecting change here.
-                            let blocks = BlockParser.parse(
-                                markdown: content,
-                                projectId: pid,
-                                notesHeaderName: try? db.fetchNotesHeadingTitle(projectId: pid)
-                            )
+                            let blocks = BlockParser.parse(markdown: content, projectId: pid)
                             try? db.replaceBlocks(blocks, for: pid)
                         }
                         // Also sync to legacy sections (until fully retired)
@@ -399,14 +391,10 @@ extension View {
                     wordGoal: block.wordGoal
                 )
             }
-            // C5: highest-stakes site -- this IS the live, debounced Source Mode re-parse a
-            // hand-typed "## Notes" heading goes through, so the DB-resolved title is threaded
-            // explicitly rather than left to default.
             let blocks = BlockParser.parse(
                 markdown: newValue,
                 projectId: pid,
-                existingSectionMetadata: metadata.isEmpty ? nil : metadata,
-                notesHeaderName: try? db.fetchNotesHeadingTitle(projectId: pid)
+                existingSectionMetadata: metadata.isEmpty ? nil : metadata
             )
             try? db.replaceBlocks(blocks, for: pid)
         }
