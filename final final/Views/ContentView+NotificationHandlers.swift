@@ -57,6 +57,12 @@ extension ContentView {
         // and the 100ms-delayed pushBlockIds() arrives too late — block-sync reports
         // changes with temp IDs, Swift creates new blocks at maxSortOrder+1.
         editorState.contentState = .bibliographyUpdate
+        // This is a synthetic content rebuild, not a mode switch — any cursor position
+        // already sitting in cursorPositionToRestore was computed against the
+        // pre-rebuild document and is stale by construction. Drop it so the stale
+        // mode-switch restore mechanism can't fire later and overwrite whatever
+        // cursor placement this rebuild (or a subsequent one) actually wants.
+        cursorPositionToRestore = nil
         editorState.isResettingContent = true  // prevent updateNSView → setContent()
 
         Task {
@@ -222,6 +228,12 @@ extension ContentView {
 
         // Atomic content+IDs push (same pattern as bibliography)
         editorState.contentState = .bibliographyUpdate  // Reuse same state
+        // This is a synthetic content rebuild, not a mode switch — any cursor position
+        // already sitting in cursorPositionToRestore was computed against the
+        // pre-rebuild document and is stale by construction. Drop it so the stale
+        // mode-switch restore mechanism can't fire later and overwrite whatever
+        // cursor placement this rebuild (or a subsequent one) actually wants.
+        cursorPositionToRestore = nil
         editorState.isResettingContent = true
 
         Task {
@@ -311,28 +323,50 @@ extension ContentView {
     /// Inserts a footnote definition into the Notes section after a slash-command insertion
     @MainActor
     func handleFootnoteInsertedImmediate(_ notification: Notification) {
+        DebugLog.log(.footnotes, "[ContentView] handleFootnoteInsertedImmediate: entry " +
+            "label=\(notification.userInfo?["label"] as? String ?? "nil") " +
+            "projectId=\(documentManager.projectId ?? "nil")")
+
         guard let label = notification.userInfo?["label"] as? String,
               let projectId = documentManager.projectId else {
+            DebugLog.log(.footnotes, "[ContentView] handleFootnoteInsertedImmediate: skip " +
+                "reason=missing-label-or-projectId")
             drainNextPendingFootnoteIfPossible()
             return
         }
         // Zoom-aware handling: use zoom-specific insertion path
         if editorState.zoomedSectionId != nil {
+            DebugLog.log(.footnotes, "[ContentView] handleFootnoteInsertedImmediate: routing to zoom path " +
+                "label=\(label) zoomedSectionId=\(editorState.zoomedSectionId ?? "?")")
             handleZoomedFootnoteInsertion(label: label, projectId: projectId)
             return
         }
 
         // Rapid double-insertion safety: queue label if busy
         guard editorState.contentState == .idle else {
+            DebugLog.log(.footnotes, "[ContentView] handleFootnoteInsertedImmediate: queueing (busy) " +
+                "label=\(label) contentState=\(editorState.contentState)")
             pendingFootnoteLabels.enqueue(label)
             return
         }
 
         // Set content state BEFORE DB write to suppress sync
         editorState.contentState = .bibliographyUpdate
+        // This is a synthetic content rebuild, not a mode switch — any cursor position
+        // already sitting in cursorPositionToRestore was computed against the
+        // pre-rebuild document and is stale by construction. Drop it so the stale
+        // mode-switch restore mechanism can't fire later and overwrite the correct
+        // footnote cursor placement Stage E is about to set below.
+        cursorPositionToRestore = nil
         editorState.isResettingContent = true
 
-        footnoteSyncService.handleImmediateInsertion(label: label, projectId: projectId)
+        DebugLog.log(.footnotes, "[ContentView] handleFootnoteInsertedImmediate: proceeding " +
+            "label=\(label) projectId=\(projectId)")
+        // E1/E4: capture the real DB id of the definition row just inserted for `label`, so
+        // it can ride along on the `.scrollToFootnoteDefinition` post below instead of being
+        // discarded -- lets Milkdown resolve the cursor target by block identity rather than
+        // a positional/label search.
+        let insertedBlockId = footnoteSyncService.handleImmediateInsertion(label: label, projectId: projectId)
 
         Task {
             // Force-flush pending JS changes to DB. This MUST complete before the
@@ -357,6 +391,8 @@ extension ContentView {
             // identity to the wrong (blank) node. Pushing result.markdown directly (the
             // same pattern rebuildDocumentContent already uses) eliminates that mismatch.
             guard let result = fetchBlocksWithIds() else {
+                DebugLog.log(.footnotes, "[ContentView] handleFootnoteInsertedImmediate: aborting " +
+                    "label=\(label) reason=fetchBlocksWithIds-returned-nil")
                 editorState.isResettingContent = false
                 editorState.contentState = .idle
                 resyncFootnotesAfterImmediateInsertion(projectId: projectId)
@@ -393,11 +429,21 @@ extension ContentView {
 
             await Task.yield()
 
-            // Navigate cursor to new definition
+            // Navigate cursor to new definition. E1: `blockId`, when present, is threaded
+            // through to Milkdown's id-addressed cursor placement (`focusFootnoteDefinition`)
+            // -- see MilkdownCoordinator+NotificationObservers.swift. CodeMirror's observer
+            // ignores `blockId` (E2's fix is region-anchored text search, not id-addressed;
+            // CodeMirror has no block ids).
+            DebugLog.log(.footnotes, "[ContentView] handleFootnoteInsertedImmediate: posting " +
+                "scrollToFootnoteDefinition label=\(label) blockId=\(insertedBlockId ?? "nil")")
+            var scrollUserInfo: [String: Any] = ["label": label]
+            if let insertedBlockId {
+                scrollUserInfo["blockId"] = insertedBlockId
+            }
             NotificationCenter.default.post(
                 name: .scrollToFootnoteDefinition,
                 object: nil,
-                userInfo: ["label": label]
+                userInfo: scrollUserInfo
             )
         }
     }

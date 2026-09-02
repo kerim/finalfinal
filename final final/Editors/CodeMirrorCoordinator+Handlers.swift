@@ -104,6 +104,12 @@ extension CodeMirrorEditor.Coordinator {
     /// Save cursor and post notification for two-phase toggle
     /// IMPORTANT: Also syncs content to binding BEFORE cursor save to prevent content loss
     func saveAndNotify() {
+        // A genuinely new save-cursor cycle starts here -- clear the consumed-position guard
+        // so an identical position saved a second time (e.g. after another mode switch) is
+        // still eligible to be restored by restoreCursorPositionIfNeeded(), rather than being
+        // silently treated as an already-applied replay of the earlier one.
+        consumedCursorRestore = nil
+
         guard isEditorReady, let webView, !isCleanedUp else {
             // Editor not ready - post notification with start position
             NotificationCenter.default.post(
@@ -299,7 +305,19 @@ extension CodeMirrorEditor.Coordinator {
 
     func restoreCursorPositionIfNeeded() {
         guard let position = cursorPositionToRestoreBinding.wrappedValue else { return }
-        cursorPositionToRestoreBinding.wrappedValue = nil
+        // Idempotence guard: the clear below is asynchronous (moved off the view-update
+        // pass, where it was provably not persisting -- see the async dispatch just below),
+        // which opens a small gap where a subsequent content-reset cycle can observe this
+        // same still-set binding and re-enter this function before the clear lands. Without
+        // this guard that replays the identical stale position a second (or Nth) time.
+        guard position != consumedCursorRestore else { return }
+        consumedCursorRestore = position
+        // Clearing synchronously inside updateNSView (a SwiftUI view-update pass) was provably
+        // not persisting -- the same stale value kept getting replayed on every subsequent
+        // content-reset cycle. Move the write off that pass.
+        DispatchQueue.main.async { [weak self] in
+            self?.cursorPositionToRestoreBinding.wrappedValue = nil
+        }
 
         let useScrollRestore = !position.cursorIsVisible && position.topLine > 1.0
 
@@ -308,13 +326,16 @@ extension CodeMirrorEditor.Coordinator {
             scrollToLine(position.topLine)
         } else if position.line != 1 || position.column != 0 {
             // Cursor was placed and is visible — set cursor and center on it
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+            cursorRestoreWorkItem?.cancel()
+            let workItem = DispatchWorkItem { [weak self] in
                 self?.setCursorPosition(position) {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
                         self?.scrollCursorToCenter()
                     }
                 }
             }
+            cursorRestoreWorkItem = workItem
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1, execute: workItem)
         }
         // Default cursor at top with scrollFraction 0 — do nothing
     }
@@ -815,6 +836,18 @@ extension CodeMirrorEditor.Coordinator {
     func scrollToFootnoteDefinition(label: String) {
         guard isEditorReady, let webView else { return }
         guard label.allSatisfy(\.isNumber) else { return }
+        // This call is about to place the cursor in the footnote definition itself -- that
+        // placement must win outright over any stale mode-switch cursor-restore still in
+        // flight (see restoreCursorPositionIfNeeded()'s doc comment for the race this closes).
+        // Cancel a pending delayed restore, clear the idempotence guard so a *future* restore
+        // isn't wrongly treated as already-consumed, and drop whatever position is currently
+        // sitting in the binding so it can't fire again after this placement lands.
+        cursorRestoreWorkItem?.cancel()
+        cursorRestoreWorkItem = nil
+        consumedCursorRestore = nil
+        DispatchQueue.main.async { [weak self] in
+            self?.cursorPositionToRestoreBinding.wrappedValue = nil
+        }
         webView.evaluateJavaScript(
             "window.FinalFinal.scrollToFootnoteDefinition('\(label)')"
         ) { _, _ in }

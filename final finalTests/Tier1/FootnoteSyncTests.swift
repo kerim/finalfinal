@@ -287,6 +287,90 @@ struct FootnoteSyncTests {
         )
     }
 
+    // MARK: - E6 (Stage E): handleImmediateInsertion's returned blockId is the PIVOT's row,
+    // not just any row reconcileNotesBlocks touched in the same call.
+    //
+    // Same rename-shift scenario as handleImmediateInsertionPreservesIdentityAcrossRename
+    // above (both existing definitions get renamed in the same reconciliation pass that
+    // inserts the new one), but asserts on the RETURN VALUE this time. This is the exact
+    // seam Stage D's diagnostic logs showed working only by label-search luck: before E1,
+    // reconcileNotesBlocks's step-6 insert id was discarded entirely, so the cursor-placement
+    // notification had no way to name a row at all -- E1 makes it a guarantee by returning
+    // the id keyed by label, and this test proves handleImmediateInsertion picks the PIVOT's
+    // key out of that map (String(pivot)), not e.g. the first/any entry, and never one of the
+    // renamed (pre-existing, real-text) rows that were also written to in this same call.
+    @Test("handleImmediateInsertion returns the block id of the label the user actually inserted, not a renamed pre-existing row")
+    @MainActor
+    func handleImmediateInsertionReturnsPivotBlockIdNotRenamedRow() throws {
+        let seed = """
+        Body[^1] and[^2].
+
+        # Notes
+
+        [^1]: First real text.
+
+        [^2]: Second real text.
+        """
+        let db = try TestFixtureFactory.createTemporary(content: seed)
+        let projectId = try TestFixtureFactory.getProjectId(from: db)
+
+        let before = try TestFixtureFactory.fetchBlocks(from: db)
+            .filter { $0.isNotes && $0.blockType == .paragraph }
+        let originalOne = try #require(before.first { $0.markdownFragment.hasPrefix("[^1]:") })
+        let originalTwo = try #require(before.first { $0.markdownFragment.hasPrefix("[^2]:") })
+
+        let service = FootnoteSyncService()
+        service.configure(database: db, projectId: projectId)
+
+        // Pivot "1": both pre-existing definitions get renamed (1->2, 2->3) in the SAME
+        // reconciliation pass that inserts the new blank [^1] row -- exactly the shape where
+        // "any row this call touched" and "the row the user actually inserted" diverge.
+        let insertedBlockId = service.handleImmediateInsertion(label: "1", projectId: projectId)
+
+        let after = try TestFixtureFactory.fetchBlocks(from: db)
+            .filter { $0.isNotes && $0.blockType == .paragraph }
+        let newBlock = try #require(after.first { $0.markdownFragment.hasPrefix("[^1]:") })
+        let renamedOne = try #require(after.first { $0.id == originalOne.id }) // now "[^2]:"
+        let renamedTwo = try #require(after.first { $0.id == originalTwo.id }) // now "[^3]:"
+
+        #expect(insertedBlockId == newBlock.id, "Must name the genuinely-new [^1] row")
+        #expect(
+            insertedBlockId != renamedOne.id && insertedBlockId != renamedTwo.id,
+            "Must NOT name either renamed pre-existing row, even though reconcileNotesBlocks wrote to them in the same call"
+        )
+        #expect(newBlock.markdownFragment == "[^1]: ", "Sanity: the named row really is the new blank definition")
+        #expect(renamedOne.markdownFragment == "[^2]: First real text.")
+        #expect(renamedTwo.markdownFragment == "[^3]: Second real text.")
+    }
+
+    @Test("handleImmediateInsertion returns the correct pivot id on a pure append (no renames in play)")
+    @MainActor
+    func handleImmediateInsertionReturnsPivotBlockIdOnAppend() throws {
+        let seed = """
+        Body[^1].
+
+        # Notes
+
+        [^1]: Only definition.
+        """
+        let db = try TestFixtureFactory.createTemporary(content: seed)
+        let projectId = try TestFixtureFactory.getProjectId(from: db)
+
+        let service = FootnoteSyncService()
+        service.configure(database: db, projectId: projectId)
+
+        // Pivot "2": appends after the existing [^1], nothing to rename.
+        let insertedBlockId = try #require(service.handleImmediateInsertion(label: "2", projectId: projectId))
+
+        let after = try TestFixtureFactory.fetchBlocks(from: db)
+            .filter { $0.isNotes && $0.blockType == .paragraph }
+        let newBlock = try #require(after.first { $0.markdownFragment.hasPrefix("[^2]:") })
+        let untouchedOne = try #require(after.first { $0.markdownFragment.hasPrefix("[^1]:") })
+
+        #expect(insertedBlockId == newBlock.id)
+        #expect(insertedBlockId != untouchedOne.id)
+    }
+
     @Test("reconcileNotesBlocks resolves a mixed insert+delete+rename in a single call")
     @MainActor
     func reconcileNotesBlocksHandlesMixedInsertDeleteRenameInOneCall() throws {

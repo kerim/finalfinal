@@ -306,21 +306,32 @@ extension SectionSyncService {
             let endIdx = markdown.index(markdown.startIndex, offsetBy: min(nextBoundaryOffset, markdown.count))
             let pendingContent = String(markdown[startIdx..<endIdx])
 
-            // Check for [^N]: definition patterns, ANCHORED to line start (MUST-FIX 3) --
-            // every other footnote-definition regex in the codebase (MarkdownUtils.swift,
-            // FootnoteSyncService+Reconciliation.swift, BlockParser.swift,
-            // Database+BlocksInsert.swift, BlockParser+Splitting.swift) anchors with `^` (plus
-            // `.anchorsMatchLines` for a multi-line haystack like this one) rather than
-            // searching anywhere in the string. Unanchored, a section merely discussing
-            // footnote syntax inline -- e.g. prose containing "write it as [^1]: text" -- would
-            // false-positively read as real footnote-definition evidence. `String.range(of:
-            // options:)`'s `.regularExpression` compare option has no `.anchorsMatchLines`
-            // equivalent, so this needs `NSRegularExpression` directly, same as every other
-            // anchored example above.
-            let contentRange = NSRange(pendingContent.startIndex..., in: pendingContent)
-            let hasFootnoteEvidence = (try? NSRegularExpression(
-                pattern: #"^\[\^\d+\]:"#, options: [.anchorsMatchLines]
-            ))?.firstMatch(in: pendingContent, range: contentRange) != nil
+            // C4: evidence check refactored onto the shared `NotesOpeningSelector` as the
+            // source-of-truth rule (was previously this file's own inline `NSRegularExpression`
+            // scan) -- behavior unchanged: `NotesOpeningSelector.hasEvidence` walks line-by-line
+            // looking for a `[^N]:` definition ANCHORED to line start via `FootnoteSyncService.
+            // parseNotesLabel` (the same anchored, `.anchorsMatchLines`-equivalent match every
+            // other footnote-definition check in the codebase shares -- see that function's own
+            // doc comment), stopping at the next heading. `isAnyHeading` is computed defensively
+            // (matching every other heading test in this codebase) even though, by construction,
+            // `pendingContent` never actually CONTAINS another heading line -- `boundaries`
+            // already captures every heading as its own boundary and this slice stops at the
+            // very next one -- so this never changes the result today, but keeps the shared
+            // function's real contract honored rather than silently relying on that invariant.
+            // `isCandidateHeading` is irrelevant to a pure evidence probe.
+            let candidateUnits = pendingContent.components(separatedBy: "\n").map { line -> NotesOpeningSelector.Unit in
+                let trimmedLine = line.trimmingCharacters(in: .whitespaces)
+                return NotesOpeningSelector.Unit(
+                    isCandidateHeading: false,
+                    isAnyHeading: trimmedLine.range(of: "^#{1,6}\\s+", options: .regularExpression) != nil,
+                    isEvidence: FootnoteSyncService.parseNotesLabel(from: trimmedLine) != nil
+                )
+            }
+            // `candidateUnits[0]` IS the candidate heading's own line (`pendingContent` starts
+            // at `candidate.offset`, the heading itself) -- scanning starts at index 1, exactly
+            // like `select`'s own `after: index + 1`, so the heading's own `isAnyHeading == true`
+            // never short-circuits the scan before it looks at any real content.
+            let hasFootnoteEvidence = NotesOpeningSelector.hasEvidence(in: candidateUnits, after: 1)
 
             guard hasFootnoteEvidence else { continue }
 

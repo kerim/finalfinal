@@ -373,6 +373,19 @@ final class ProjectDatabase: Sendable {
             }
         }
 
+        // B10: one-time cleanup pass, replacing the sweep that used to run on every
+        // project open (`ContentView+ProjectLifecycle.swift`'s `loadInitialContent`,
+        // before this change). B5 already made the sweep an allowlist rather than a
+        // denylist, so running it on every open stopped being actively destructive -- but
+        // there is no reason to keep re-running it forever when a single pass handles
+        // whatever pre-existing corruption is actually sitting in a project today.
+        migrator.registerMigration("v16_notes_orphan_sweep") { db in
+            let projectIds = try String.fetchAll(db, sql: "SELECT DISTINCT id FROM project")
+            for projectId in projectIds {
+                try ProjectDatabase.sweepOrphanedNotesDefinitionsAtV16(db: db, projectId: projectId)
+            }
+        }
+
         try migrator.migrate(dbWriter)
     }
 
@@ -411,6 +424,64 @@ final class ProjectDatabase: Sendable {
                 sql: "UPDATE block SET sectionParentId = ? WHERE id = ?",
                 arguments: [newParentId, id]
             )
+        }
+    }
+
+    /// Raw-`Row` reimplementation of `FootnoteSyncService.deleteOrphanedFootnoteDefinitions`'s
+    /// B5 allowlist rule, used ONLY by the `v16_notes_orphan_sweep` migration above -- see
+    /// that migration's comment for why this must not decode through the `Block` record
+    /// type (same reasoning as `backfillSectionParentIdsAtV15` immediately above). Reads
+    /// only `id`/`markdownFragment`/`isNotes`/`isBibliography`/`blockType`, all present by
+    /// v13 -- well before this migration runs for any database. Deletes a candidate ONLY
+    /// on the exact same positive-evidence rule B5 states: an unparseable label, or no
+    /// same-label `isNotes == true` twin, never deletes; a non-blank candidate body never
+    /// loses to a blank twin; two differing non-blank bodies never delete either row.
+    private static func sweepOrphanedNotesDefinitionsAtV16(db: Database, projectId: String) throws {
+        let candidateRows = try Row.fetchAll(
+            db,
+            sql: """
+                SELECT id, markdownFragment FROM block
+                WHERE projectId = ? AND isNotes = 0 AND blockType = ?
+                """,
+            arguments: [projectId, BlockType.paragraph.rawValue]
+        )
+        guard !candidateRows.isEmpty else { return }
+
+        let twinRows = try Row.fetchAll(
+            db,
+            sql: """
+                SELECT markdownFragment FROM block
+                WHERE projectId = ? AND isNotes = 1 AND isBibliography = 0 AND blockType = ?
+                """,
+            arguments: [projectId, BlockType.paragraph.rawValue]
+        )
+        var twinBodyByLabel: [String: String] = [:]
+        for row in twinRows {
+            let fragment: String = row["markdownFragment"]
+            guard let parsed = FootnoteSyncService.parseNotesLabel(from: fragment) else { continue }
+            twinBodyByLabel[parsed.label] = parsed.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        for row in candidateRows {
+            let id: String = row["id"]
+            let fragment: String = row["markdownFragment"]
+            guard let parsed = FootnoteSyncService.parseNotesLabel(from: fragment) else { continue }
+            guard let twinBody = twinBodyByLabel[parsed.label] else { continue }
+            let candidateBody = parsed.text.trimmingCharacters(in: .whitespacesAndNewlines)
+
+            let shouldDelete: Bool
+            if candidateBody.isEmpty {
+                shouldDelete = true
+            } else if twinBody.isEmpty {
+                shouldDelete = false
+            } else {
+                shouldDelete = candidateBody == twinBody
+            }
+
+            guard shouldDelete else { continue }
+            DebugLog.log(.footnotes, "[ProjectDatabase] v16_notes_orphan_sweep: deleting orphaned Notes " +
+                "definition id=\(id) fragment=\"\(fragment)\"")
+            try db.execute(sql: "DELETE FROM block WHERE id = ?", arguments: [id])
         }
     }
 

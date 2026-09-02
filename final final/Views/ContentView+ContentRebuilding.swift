@@ -736,8 +736,16 @@ extension ContentView {
             sectionSyncService.syncMiniNotesBackPublic(miniNotes, projectId: projectId)
         }
 
-        // Create definition in DB (reuses existing logic)
-        footnoteSyncService.handleImmediateInsertion(label: label, projectId: projectId)
+        // Create definition in DB (reuses existing logic). E4: capture the inserted row's id
+        // for the `.scrollToFootnoteDefinition` post below, same as the non-zoomed path in
+        // ContentView+NotificationHandlers.swift. NOTE: in zoom mode the mini-Notes tail is
+        // NOT included in `pushBlockIds`'s array (isNotes blocks are excluded -- see the
+        // KNOWN RESIDUAL RISK comment on the `pushBlockIds` call below), so this id will
+        // typically be absent from the JS side's `getAllBlockIds()` map when zoomed; Milkdown's
+        // `focusFootnoteDefinition` falls back to its node/text search in that case (loudly
+        // logged), same as any other blockId-miss. Threading it through anyway costs nothing
+        // and helps on the rare path where the id IS already present (e.g. zoom-out/back-in).
+        let insertedBlockId = footnoteSyncService.handleImmediateInsertion(label: label, projectId: projectId)
 
         // Recalculate zoom range using count-based boundary
         recalculateZoomRangeCountBased(projectId: projectId)
@@ -791,10 +799,14 @@ extension ContentView {
             await Task.yield()
 
             // Scroll to new definition
+            var scrollUserInfo: [String: Any] = ["label": label]
+            if let insertedBlockId {
+                scrollUserInfo["blockId"] = insertedBlockId
+            }
             NotificationCenter.default.post(
                 name: .scrollToFootnoteDefinition,
                 object: nil,
-                userInfo: ["label": label]
+                userInfo: scrollUserInfo
             )
         }
     }
@@ -808,7 +820,15 @@ extension ContentView {
 
         // Count body blocks in zoom scope (same approach as flushContentToDatabase)
         let (body, _) = SectionSyncService.stripZoomNotes(from: editorState.content)
-        let bodyBlocks = BlockParser.parse(markdown: body, projectId: projectId)
+        // C5: threads the DB-resolved Notes title for consistency with every other production
+        // `BlockParser.parse` site -- low-stakes here specifically (only `bodyBlocks.count` is
+        // used, and `body` is already mini-Notes-stripped so Notes recognition rarely matters),
+        // but `db`/`projectId` are already in scope so there is no reason to leave it defaulted.
+        let bodyBlocks = BlockParser.parse(
+            markdown: body,
+            projectId: projectId,
+            notesHeaderName: try? db.fetchNotesHeadingTitle(projectId: projectId)
+        )
         let newEnd = newStart + Double(bodyBlocks.count)
 
         let allBlocks = (try? db.fetchBlocks(projectId: projectId)) ?? []

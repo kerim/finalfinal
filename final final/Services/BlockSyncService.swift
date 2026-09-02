@@ -654,7 +654,8 @@ class BlockSyncService {
         ) else { return false }
         DebugLog.always(
             "[SYNC-DIAG:BlockPoll] REJECTED: reason=generationChangedMidFlight stage=\(stage) " +
-            "generationAtPoll=\(generationAtPoll) wasWired=\(wasWiredAtPoll) current=\(String(describing: editorState?.contentGeneration)) force=\(force)"
+            "generationAtPoll=\(generationAtPoll) wasWired=\(wasWiredAtPoll) " +
+            "current=\(String(describing: editorState?.contentGeneration)) force=\(force)"
         )
         #if DEBUG
         testGenerationAbandonCount += 1
@@ -745,10 +746,14 @@ class BlockSyncService {
             throw SyncConfigurationError.notConfigured
         }
 
+        // C5: threads the DB-resolved Notes title -- called when loading a project or switching
+        // from section-based to block-based, so an already-recognized Notes heading (from a
+        // prior migration/import) is threaded through explicitly rather than defaulted.
         let blocks = BlockParser.parse(
             markdown: markdown,
             projectId: projectId,
-            existingSectionMetadata: preservingMetadata
+            existingSectionMetadata: preservingMetadata,
+            notesHeaderName: try? database.fetchNotesHeadingTitle(projectId: projectId)
         )
 
         try database.replaceBlocks(blocks, for: projectId)
@@ -1017,7 +1022,9 @@ extension BlockSyncService {
     /// Change-digest logging for a non-empty batch: processing counts, delete IDs,
     /// and the Phase 0 update digest.
     private func logChangeDigest(_ changes: BlockChanges, force: Bool) {
-        DebugLog.log(.blockPoll, "[SYNC-DIAG:BlockPoll] Processing: u=\(changes.updates.count) i=\(changes.inserts.count) d=\(changes.deletes.count) force=\(force)")
+        DebugLog.log(.blockPoll,
+            "[SYNC-DIAG:BlockPoll] Processing: u=\(changes.updates.count) i=\(changes.inserts.count) " +
+            "d=\(changes.deletes.count) force=\(force)")
         if !changes.deletes.isEmpty {
             DebugLog.log(.blockPoll, "[SYNC-DIAG:BlockPoll] Deleting IDs: \(changes.deletes.prefix(5))")
         }
@@ -1025,9 +1032,13 @@ extension BlockSyncService {
         // to correlate suspicious empty-textContent UPDATEs with DB row state.
         if !changes.updates.isEmpty {
             let digest = changes.updates.prefix(10).map { ($0.id.prefix(8), $0.textContent?.count ?? -1) }
-            DebugLog.log(.blockPoll, "[SYNC-DIAG:BlockPoll] Phase0 updateDigest=\(digest) u=\(changes.updates.count) i=\(changes.inserts.count) d=\(changes.deletes.count)")
+            DebugLog.log(.blockPoll,
+                "[SYNC-DIAG:BlockPoll] Phase0 updateDigest=\(digest) u=\(changes.updates.count) " +
+                "i=\(changes.inserts.count) d=\(changes.deletes.count)")
         } else if !changes.deletes.isEmpty || !changes.inserts.isEmpty {
-            DebugLog.log(.blockPoll, "[SYNC-DIAG:BlockPoll] Phase0 u=0 i=\(changes.inserts.count) d=\(changes.deletes.count) delIds=\(changes.deletes.prefix(5))")
+            DebugLog.log(.blockPoll,
+                "[SYNC-DIAG:BlockPoll] Phase0 u=0 i=\(changes.inserts.count) d=\(changes.deletes.count) " +
+                "delIds=\(changes.deletes.prefix(5))")
         }
     }
 
