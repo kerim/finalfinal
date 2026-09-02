@@ -276,11 +276,11 @@ extension ContentView {
     /// Load content from blocks (or fall back to legacy content table).
     private func loadInitialContent(db: ProjectDatabase, pid: String) {
         do {
-            // Clean up orphaned footnote definitions from previous sessions before assembling
-            try db.write { database in
-                try FootnoteSyncService.deleteOrphanedFootnoteDefinitions(db: database, projectId: pid)
-            }
-
+            // B10: this used to re-run `deleteOrphanedFootnoteDefinitions` on EVERY
+            // project open. Demoted to a one-time migration (`v16_notes_orphan_sweep`,
+            // ProjectDatabase.swift) -- B5 already made the sweep an allowlist rather
+            // than a denylist, so there is no correctness reason left to keep re-running
+            // it on every open rather than once, ever, per project.
             let existingBlocks = try db.fetchBlocks(projectId: pid)
 
             if !existingBlocks.isEmpty {
@@ -313,11 +313,16 @@ extension ContentView {
                     // tier 2 can't fire either). `strippingBibliographyMarkerFromBlocks: true`
                     // removes the marker literal from each resulting block's own
                     // markdownFragment, so it never leaks into the editor from here.
+                    // C5: threads the DB-resolved Notes title (mirrors `bibliographyHeaderName`'s
+                    // own default-`ExportSettings.load()` treatment) so an already-recognized,
+                    // non-default-titled Notes heading survives this initial-load reparse too --
+                    // see `fetchNotesHeadingTitle`'s doc comment.
                     let blocks = BlockParser.parse(
                         markdown: savedContent,
                         projectId: pid,
                         existingSectionMetadata: metadata.isEmpty ? nil : metadata,
-                        strippingBibliographyMarkerFromBlocks: true
+                        strippingBibliographyMarkerFromBlocks: true,
+                        notesHeaderName: try? db.fetchNotesHeadingTitle(projectId: pid)
                     )
 
                     // editorState.content MUST be the STRIPPED content -- assembleMarkdownForEditor

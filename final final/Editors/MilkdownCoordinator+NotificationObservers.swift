@@ -181,14 +181,18 @@ extension MilkdownEditor.Coordinator {
             }
         }
 
-        // Subscribe to scroll-to-footnote-definition notification
+        // Subscribe to scroll-to-footnote-definition notification.
+        // E1/E4: `blockId`, when present, routes Milkdown through the new id-addressed
+        // `focusFootnoteDefinition` JS API instead of the pre-existing label-only path -- see
+        // `scrollToFootnoteDefinition(label:blockId:)`'s doc comment.
         scrollToFootnoteDefObserver = NotificationCenter.default.addObserver(
             forName: .scrollToFootnoteDefinition,
             object: nil,
             queue: .main
         ) { [weak self] notification in
             if let label = notification.userInfo?["label"] as? String {
-                self?.scrollToFootnoteDefinition(label: label)
+                let blockId = notification.userInfo?["blockId"] as? String
+                self?.scrollToFootnoteDefinition(label: label, blockId: blockId)
             }
         }
 

@@ -44,6 +44,28 @@ import { formatTableCommand, insertTableCommand } from './table-format';
 import { computeMinimalChanges } from './text-diff';
 import type { AnnotationType, FindOptions, FindResult, ParsedAnnotation, SearchState } from './types';
 
+/** Route diagnostic messages through the WKWebView errorHandler bridge — the same
+ *  `sync-diag` message type Milkdown's `sync-debug.ts#syncLog` uses, so both editors'
+ *  Notes/footnote diagnostics land in the same `DebugLog.log(.sync, ...)` stream on the
+ *  Swift side. JS console.log/error are NOT bridged to Xcode. */
+function syncLog(tag: string, ...args: unknown[]): void {
+  const msg = args
+    .map((a) => {
+      if (a instanceof Error) return `${a.message}\n${a.stack}`;
+      if (typeof a === 'string') return a;
+      try {
+        return JSON.stringify(a);
+      } catch {
+        return String(a);
+      }
+    })
+    .join(' ');
+  (window as any).webkit?.messageHandlers?.errorHandler?.postMessage({
+    type: 'sync-diag',
+    message: `[${tag}] ${msg}`,
+  });
+}
+
 // --- Pending drop position for image drops ---
 
 let pendingCMDropPos: number | null = null;
@@ -886,20 +908,172 @@ export function insertFootnoteReplacingRange(from: number, to: number): string |
   return String(newLabel);
 }
 
+/** One tokenized line for `findNotesRegion` — mirrors NotesOpeningSelector.Unit's three
+ *  booleans (Swift, NotesOpeningSelector.swift), tokenized here from raw text lines the
+ *  same way `stripNotesSection`/`pushDefinitionsToEditor` do on the Swift side. */
+interface NotesRegionUnit {
+  isCandidateHeading: boolean;
+  isAnyHeading: boolean;
+  isEvidence: boolean;
+}
+
+/**
+ * E2: locate the `[start, end)` character range of the Notes section within `content`,
+ * mirroring `NotesOpeningSelector`'s shared rule (Swift, `NotesOpeningSelector.swift`): a
+ * heading titled `notesHeaderName` at level 1 or 2, confirmed by at least one `[^N]:`
+ * evidence line strictly before the next heading of ANY level (or end of document). When
+ * more than one confirmed opening exists, the FIRST in document order wins — the same
+ * `primaryOpening` tie rule the Swift selector uses (heading level is never a tiebreaker;
+ * see that type's own doc comment for why). Code-fence tracking (``` toggling) matches
+ * `stripNotesSection`'s fence-safety fix — a heading/evidence-shaped line inside a fence is
+ * never treated as real.
+ *
+ * CodeMirror has no block ids, so this stays entirely text-based — the point of this
+ * function is only to BOUND a subsequent `indexOf` search to the Notes region instead of
+ * scanning the whole document, not to address content by identity the way Milkdown's
+ * `focusFootnoteDefinition` (id-addressed) does.
+ *
+ * Returns `null` when no confirmed Notes opening exists — callers fall back to a
+ * whole-document search in that case (logged as a region miss, not a total miss).
+ */
+export function findNotesRegion(content: string, notesHeaderName = 'Notes'): { start: number; end: number } | null {
+  const lines = content.split('\n');
+  const headingLineRegex = /^#{1,6}\s+/;
+  const evidenceLineRegex = /^\[\^\d+\]:/;
+  const nameLower = notesHeaderName.trim().toLowerCase();
+
+  let inCodeBlock = false;
+  const units: NotesRegionUnit[] = lines.map((line) => {
+    const trimmed = line.trim();
+    if (trimmed.startsWith('```')) {
+      inCodeBlock = !inCodeBlock;
+      return { isCandidateHeading: false, isAnyHeading: false, isEvidence: false };
+    }
+    if (inCodeBlock) {
+      return { isCandidateHeading: false, isAnyHeading: false, isEvidence: false };
+    }
+    const lower = trimmed.toLowerCase();
+    return {
+      isCandidateHeading: lower === `# ${nameLower}` || lower === `## ${nameLower}`,
+      isAnyHeading: headingLineRegex.test(trimmed),
+      isEvidence: evidenceLineRegex.test(trimmed),
+    };
+  });
+
+  // select() + primaryOpening(): first candidate heading with >=1 evidence line before the
+  // next heading of any kind (or end of document).
+  let openingIndex = -1;
+  for (let i = 0; i < units.length; i++) {
+    if (!units[i].isCandidateHeading) continue;
+    let hasEvidence = false;
+    for (let scan = i + 1; scan < units.length && !units[scan].isAnyHeading; scan++) {
+      if (units[scan].isEvidence) {
+        hasEvidence = true;
+        break;
+      }
+    }
+    if (hasEvidence) {
+      openingIndex = i;
+      break;
+    }
+  }
+  if (openingIndex === -1) return null;
+
+  let endIndex = lines.length;
+  for (let scan = openingIndex + 1; scan < units.length; scan++) {
+    if (units[scan].isAnyHeading) {
+      endIndex = scan;
+      break;
+    }
+  }
+
+  // Line index -> absolute character offset.
+  const lineStarts: number[] = [];
+  let charOffset = 0;
+  for (const line of lines) {
+    lineStarts.push(charOffset);
+    charOffset += line.length + 1; // +1 for the '\n' joiner split() consumed
+  }
+  const start = lineStarts[openingIndex];
+  const end = endIndex < lines.length ? lineStarts[endIndex] : content.length;
+  return { start, end };
+}
+
 /**
  * Scroll to and focus the footnote definition [^N]: in the Notes section.
+ *
+ * E2: bounded to the Notes region first (`findNotesRegion`) rather than a whole-document
+ * `indexOf` — a duplicate/relocated `[^N]:`-shaped line elsewhere in the document (or inside
+ * a Notes-adjacent code fence) can no longer be mistaken for the real definition. Region miss
+ * (no confirmed Notes section, or the label isn't found within it) falls back to the
+ * pre-existing whole-document search, logged as `path=wholeDocFallback`. A total miss (region
+ * AND whole-document both fail) is `path=NOT_FOUND`, logged, and leaves the cursor exactly as
+ * it was before this call — no dispatch happens on that path, same contract as Milkdown's
+ * `scrollToFootnoteDefinition`/`focusFootnoteDefinition`.
  */
-export function scrollToFootnoteDefinition(label: string): void {
+export function scrollToFootnoteDefinition(label: string, notesHeaderName = 'Notes'): void {
+  syncLog('Footnote:scroll', `entry label=${label}`);
+
   const view = getEditorView();
-  if (!view) return;
+  if (!view) {
+    syncLog('Footnote:scroll', `label=${label} path=NOT_FOUND reason=no-view`);
+    return;
+  }
 
   const content = view.state.doc.toString();
   const searchText = `[^${label}]:`;
-  const idx = content.indexOf(searchText);
-  if (idx === -1) return;
+
+  const region = findNotesRegion(content, notesHeaderName);
+  let idx = -1;
+  let path: 'region' | 'wholeDocFallback' = 'region';
+  if (region) {
+    const regionText = content.slice(region.start, region.end);
+    const localIdx = regionText.indexOf(searchText);
+    if (localIdx !== -1) {
+      idx = region.start + localIdx;
+    } else {
+      syncLog(
+        'Footnote:scroll',
+        `label=${label} path=region-miss regionStart=${region.start} regionEnd=${region.end} ` +
+          `reason=not-found-in-region`
+      );
+    }
+  } else {
+    syncLog('Footnote:scroll', `label=${label} path=region-miss reason=no-notes-region-found`);
+  }
+
+  if (idx === -1) {
+    path = 'wholeDocFallback';
+    idx = content.indexOf(searchText);
+  }
+
+  // Diagnostic only, doesn't change which occurrence is chosen: every `[^N]:` index in
+  // the document, not just the first one `idx` picks — lets a later stage tell whether
+  // the chosen occurrence was the right one when the label appears more than once.
+  const allOccurrences: number[] = [];
+  let scanFrom = 0;
+  let found = content.indexOf(searchText, scanFrom);
+  while (found !== -1) {
+    allOccurrences.push(found);
+    scanFrom = found + 1;
+    found = content.indexOf(searchText, scanFrom);
+  }
+
+  if (idx === -1) {
+    syncLog(
+      'Footnote:scroll',
+      `label=${label} path=NOT_FOUND idx=-1 occurrences=[${allOccurrences.join(',')}] docLen=${content.length}`
+    );
+    return;
+  }
 
   // Position cursor after "[^N]: " prefix for immediate typing
   const cursorPos = Math.min(idx + searchText.length + 1, content.length);
+  syncLog(
+    'Footnote:scroll',
+    `label=${label} path=${path} idx=${idx} cursorPos=${cursorPos} occurrences=[${allOccurrences.join(',')}] ` +
+      `docLen=${content.length} region=${region ? `[${region.start},${region.end})` : 'none'}`
+  );
 
   view.dispatch({
     selection: { anchor: cursorPos },

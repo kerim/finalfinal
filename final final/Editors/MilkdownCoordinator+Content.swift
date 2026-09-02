@@ -174,13 +174,39 @@ extension MilkdownEditor.Coordinator {
         }
     }
 
-    /// Scroll to the footnote definition [^N]: in the Notes section
-    func scrollToFootnoteDefinition(label: String) {
+    /// Scroll to the footnote definition [^N]: in the Notes section.
+    ///
+    /// E1: `blockId`, when non-nil, routes through the new `focusFootnoteDefinition(label,
+    /// blockId)` JS API -- resolves the definition's real DB block id via
+    /// `getAllBlockIds()` first, before falling back to the pre-existing node-by-label and
+    /// text-search paths (see `footnote-plugin.ts`'s own doc comment for the full fallback
+    /// chain). `blockId == nil` (the label-only pre-Stage-E call shape, e.g. click-to-navigate
+    /// from a footnote_ref NodeView, or a caller with no DB id in hand) preserves the exact
+    /// prior behavior by calling the original `scrollToFootnoteDefinition(label)` JS API
+    /// directly.
+    func scrollToFootnoteDefinition(label: String, blockId: String? = nil) {
         guard isEditorReady, let webView else { return }
         guard label.allSatisfy(\.isNumber) else { return }
-        webView.evaluateJavaScript(
-            "window.FinalFinal.scrollToFootnoteDefinition('\(label)')"
-        ) { [weak webView] _, _ in
+        // This call is about to place the cursor in the footnote definition itself -- that
+        // placement must win outright over any stale mode-switch cursor-restore still in
+        // flight (see restoreCursorPositionIfNeeded()'s doc comment for the race this closes).
+        // Cancel a pending delayed restore, clear the idempotence guard so a *future* restore
+        // isn't wrongly treated as already-consumed, and drop whatever position is currently
+        // sitting in the binding so it can't fire again after this placement lands.
+        cursorRestoreWorkItem?.cancel()
+        cursorRestoreWorkItem = nil
+        consumedCursorRestore = nil
+        DispatchQueue.main.async { [weak self] in
+            self?.cursorPositionToRestoreBinding.wrappedValue = nil
+        }
+        let script: String
+        if let blockId, !blockId.isEmpty {
+            let escapedBlockId = blockId.escapedForJSTemplateLiteral
+            script = "window.FinalFinal.focusFootnoteDefinition('\(label)', `\(escapedBlockId)`)"
+        } else {
+            script = "window.FinalFinal.scrollToFootnoteDefinition('\(label)')"
+        }
+        webView.evaluateJavaScript(script) { [weak webView] _, _ in
             // Ensure WKWebView is macOS first responder for caret rendering
             // (JS view.focus() sets DOM focus but not the NSWindow responder chain)
             if let webView, let window = webView.window {
@@ -265,6 +291,12 @@ extension MilkdownEditor.Coordinator {
     /// Save cursor and post notification for two-phase toggle
     /// IMPORTANT: Also syncs content to binding BEFORE cursor save to prevent content loss
     func saveAndNotify() {
+        // A genuinely new save-cursor cycle starts here -- clear the consumed-position guard
+        // so an identical position saved a second time (e.g. after another mode switch) is
+        // still eligible to be restored by restoreCursorPositionIfNeeded(), rather than being
+        // silently treated as an already-applied replay of the earlier one.
+        consumedCursorRestore = nil
+
         guard isEditorReady, let webView, !isCleanedUp else {
             // Editor not ready - post notification with start position
             NotificationCenter.default.post(

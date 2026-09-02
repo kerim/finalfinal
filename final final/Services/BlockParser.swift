@@ -60,6 +60,17 @@ enum BlockParser {
     ///   - graceNames: Explicit override for the grace list (see `isBibliographyHeading`'s
     ///     `graceNames` parameter doc comment); same override contract as
     ///     `bibliographyHeaderName` above -- both must be supplied together to skip the load.
+    ///   - notesHeaderName: C2/C4 -- the currently-recognized Notes heading title, normally
+    ///     `Database+Blocks.swift`'s `fetchNotesHeadingTitle(projectId:)` (the DB-authoritative
+    ///     title of whatever heading is ALREADY flagged `isNotes`, if any), falling back to the
+    ///     literal `"Notes"` when `nil` (no Notes section recognized yet, or the caller has no DB
+    ///     handle -- e.g. this file's own unqualified Tier1 test-suite callers). Unlike
+    ///     `bibliographyHeaderName`, there is no settings-driven configured name and no grace
+    ///     list to join it with -- Notes has no rename UI (see `NotesOpeningSelector`'s doc
+    ///     comment and bt t-412c9fab) -- so this is a single, optional string, not a
+    ///     both-or-neither pair. Threaded into the H1-or-H2, evidence-gated pre-scan
+    ///     (`selectNotesOpeningIndices`, delegating to the shared `NotesOpeningSelector`) that
+    ///     replaces the old exact-H1-literal-only `# notes` check below.
     /// - Returns: Array of Block structures
     static func parse(
         markdown: String,
@@ -67,7 +78,8 @@ enum BlockParser {
         existingSectionMetadata: [String: SectionMetadata]? = nil,
         strippingBibliographyMarkerFromBlocks: Bool = false,
         bibliographyHeaderName explicitBibliographyHeaderName: String? = nil,
-        graceNames explicitGraceNames: [String]? = nil
+        graceNames explicitGraceNames: [String]? = nil,
+        notesHeaderName explicitNotesHeaderName: String? = nil
     ) -> [Block] {
         guard !markdown.isEmpty else { return [] }
 
@@ -138,6 +150,19 @@ enum BlockParser {
             graceNames: bibliographyGraceNames
         )
 
+        // C4: pre-scan every raw-block index that opens a Notes run, via the shared
+        // `NotesOpeningSelector` (H1-or-H2 title match + real `[^N]:` evidence beneath,
+        // no marker/terminator -- see that type's doc comment for the full rule and why
+        // it deliberately returns every confirmed opening rather than one winner).
+        // Replaces the old inline `trimmed.lowercased() == "# notes"` exact-H1-literal
+        // check, which is why this widens recognition from "exact H1 only" to
+        // "H1 or H2, with evidence" -- the actual point of Stage C.
+        let notesHeaderName = explicitNotesHeaderName ?? "Notes"
+        let notesOpeningIndices = selectNotesOpeningIndices(
+            rawBlocks: rawBlocks,
+            notesHeaderName: notesHeaderName
+        )
+
         var inBibliographySection = false
         var inNotesSection = false
 
@@ -206,7 +231,7 @@ enum BlockParser {
             )
             inNotesSection = sectionFlagCarriedForward(
                 current: inNotesSection,
-                opensSection: trimmed.lowercased() == "# notes",
+                opensSection: notesOpeningIndices.contains(index),
                 blockType: blockType
             )
             let isPseudoSection = isSectionBreakMarker(trimmed)
@@ -519,6 +544,46 @@ enum BlockParser {
             nextBlock, bibliographyHeaderName: bibliographyHeaderName, graceNames: graceNames
         ) else { return nil }
         return nextIndex
+    }
+
+    /// Whether `trimmed` is a heading (level 1 or 2 only, mirroring `isBibliographyHeading`'s
+    /// own H1-or-H2 acceptance) whose title matches `notesHeaderName` case-insensitively.
+    /// Title match ALONE is not evidence a real Notes section opens here -- see
+    /// `NotesOpeningSelector`'s doc comment; this is only the CANDIDATE half of that shared
+    /// rule's two conditions, mirroring `isBibliographyHeading`'s own role as tier 2's
+    /// candidate predicate for `BibliographyOpeningSelector`. Not `private`: this file's own
+    /// Tier1 test suite exercises it directly.
+    static func isNotesHeading(_ trimmed: String, notesHeaderName: String = "Notes") -> Bool {
+        let lowered = trimmed.lowercased()
+        let name = notesHeaderName.lowercased()
+        return lowered == "# \(name)" || lowered == "## \(name)"
+    }
+
+    /// Selects every raw-block index that opens a confirmed Notes run, delegating to the
+    /// shared `NotesOpeningSelector.select` -- see that type's doc comment for the full rule
+    /// (H1-or-H2 title match + `[^N]:` evidence beneath, no marker/terminator, multiple runs
+    /// supported).
+    ///
+    /// This site's predicates:
+    /// - `isCandidateHeading`: `isNotesHeading` above.
+    /// - `isAnyHeading`: whatever `detectBlockType` classifies as `.heading` (any level).
+    /// - `isEvidence`: `FootnoteSyncService.parseNotesLabel` finds a genuine `[^N]:`
+    ///   definition line inside this raw block -- the same regex-anchored parse every other
+    ///   Notes-evidence check in the codebase already shares (`confirmNotesCandidates`,
+    ///   `notesOwnershipMap`, `reconcileNotesBlocks`).
+    private static func selectNotesOpeningIndices(
+        rawBlocks: [String],
+        notesHeaderName: String
+    ) -> Set<Int> {
+        let trimmedBlocks = rawBlocks.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        let units = trimmedBlocks.map { trimmed in
+            NotesOpeningSelector.Unit(
+                isCandidateHeading: isNotesHeading(trimmed, notesHeaderName: notesHeaderName),
+                isAnyHeading: detectBlockType(trimmed).0 == .heading,
+                isEvidence: FootnoteSyncService.parseNotesLabel(from: trimmed) != nil
+            )
+        }
+        return Set(NotesOpeningSelector.select(units))
     }
 
     /// Section metadata to carry over from an existing section, matched by heading title

@@ -136,6 +136,31 @@ extension ProjectDatabase {
     ///   Defaults to `true`. Both `replaceBlocksInRange`'s call site and `replaceBlocks`'
     ///   bibliography+Notes preservation path pass `true` -- see `replaceBlocks`' doc comment
     ///   for why Notes is protected on equal footing with bibliography there now.
+    ///
+    /// B3 (#4) -- tried and reverted, recorded here so it isn't retried the same way:
+    /// this predicate exempts EVERY non-heading `isNotes == true` row unconditionally,
+    /// including the user's own hand-typed prose living inside a flagged Notes run (once
+    /// adoption can flag such a row at all). A first pass at B3 narrowed this to only
+    /// MACHINE-OWNED rows (heading/definition/continuation, via
+    /// `FootnoteSyncService.notesOwnershipMap`, the same classification B1's
+    /// `removeNotesBlock` uses), on the theory that a non-machine-owned row should be as
+    /// deletable/replaceable as any other body content. That regressed
+    /// `MultiParagraphFootnoteReplaceTests.newContinuationNeverOverwritesLaterRunsUserProse`:
+    /// `replaceBlocksInRange`'s range is not always exhaustive for every Notes run it
+    /// happens to overlap -- a call scoped to editing Notes run ONE, with
+    /// `endSortOrder: nil`, mechanically sweeps in a SECOND, unrelated Notes run's rows
+    /// purely by sort order, and `newBlocks` was never meant to represent that second
+    /// run at all. Narrowing the exemption made that second run's user prose look
+    /// deletable for the wrong reason (never reproduced in `newBlocks`) rather than the
+    /// right one (the user actually deleted it). Unlike B1's `removeNotesBlock` --  which
+    /// only ever runs once ALL footnotes are gone from the WHOLE document, where a
+    /// `.userProse` row is unambiguously orphaned -- this function cannot tell "the user
+    /// deleted this row" apart from "this row just wasn't this call's business." Reverted
+    /// to the original, unconditional exemption. The plan's own preferred remedy (C1(3):
+    /// never flag arbitrary user prose as `isNotes` in the first place, so this predicate
+    /// never has to make the distinction) is Stage C, not implemented here -- until then
+    /// B3's "ghost row the editor can't delete" concern (if reachable at all, given B1
+    /// already narrows the one confirmed destructive path) stays open, tracked for C1(3).
     func deleteBlocksInRange(
         db: Database,
         projectId: String,

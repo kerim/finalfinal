@@ -228,36 +228,27 @@ class SectionSyncService {
         let fallbackBibTitle = ExportSettingsManager.shared.effectiveBibliographyHeaderName
 
         do {
-            let dbSections = try db.fetchSections(projectId: pid)
-
-            // The `block` table's own bibliography heading is the authoritative signal;
-            // falls back to the `section` table's `isBibliography` flag only when the block
-            // table hasn't reconciled one yet -- see `fetchBibliographyHeadingTitle`'s doc
-            // comment for why (the "first citation ever" gap, 2026-08-22).
-            let existingBibTitle = try db.fetchBibliographyHeadingTitle(projectId: pid)
-                ?? dbSections.first(where: { $0.isBibliography })?.title
-            let existingNotesTitle = dbSections.first(where: { $0.isNotes })?.title
+            // Runs synchronously and inline on @MainActor -- no `await` gap between reads,
+            // so no concurrent write can interleave the way it could in the two
+            // `Task.detached` paths above; still uses the same consolidated snapshot for
+            // consistency and for C2's Notes-title fallback (see
+            // `fetchSectionSyncSnapshot`'s doc comment).
+            let snapshot = try db.fetchSectionSyncSnapshot(projectId: pid)
+            let dbSections = snapshot.dbSections
             let headers = SectionSyncService.parseHeaders(
                 from: markdown,
-                existingBibTitle: existingBibTitle,
-                existingNotesTitle: existingNotesTitle,
+                existingBibTitle: snapshot.existingBibTitle,
+                existingNotesTitle: snapshot.existingNotesTitle,
                 fallbackBibTitle: fallbackBibTitle
             )
             guard !headers.isEmpty else { return }
-
-            // Broader than existingBibTitle's heading-only query -- see
-            // hasBibliographyBlocks' doc comment for why the immortal-row check below needs
-            // this instead (MUST-FIX: an orphaned non-heading bibliography block would be
-            // invisible to fetchBibliographyHeadingTitle alone).
-            let bibliographyExistsInBlocks = try db.hasBibliographyBlocks(projectId: pid)
-            let notesExistsInBlocks = try db.hasNotesBlocks(projectId: pid)
 
             let changes = reconciler.reconcile(
                 headers: headers,
                 dbSections: dbSections,
                 projectId: pid,
-                bibliographyExistsInBlocks: bibliographyExistsInBlocks,
-                notesExistsInBlocks: notesExistsInBlocks
+                bibliographyExistsInBlocks: snapshot.bibliographyExistsInBlocks,
+                notesExistsInBlocks: snapshot.notesExistsInBlocks
             )
 
             if !changes.isEmpty {
@@ -344,36 +335,28 @@ class SectionSyncService {
 
         do {
             try await Task.detached(priority: .utility) {
-                // 1. Get current DB sections first (need to identify bibliography by title)
-                let dbSections = try db.fetchSections(projectId: pid)
-
-                // 2. Parse headers from markdown (pass existing bibliography/notes title for
-                // detection). The `block` table's own bibliography heading is the authoritative
-                // signal; falls back to the `section` table's `isBibliography` flag only when
-                // the block table hasn't reconciled one yet -- see
-                // `fetchBibliographyHeadingTitle`'s doc comment for why (the "first citation
-                // ever" gap, 2026-08-22).
-                let existingBibTitle = try db.fetchBibliographyHeadingTitle(projectId: pid)
-                    ?? dbSections.first(where: { $0.isBibliography })?.title
-                let existingNotesTitle = dbSections.first(where: { $0.isNotes })?.title
+                // 1-2. C6: every read `parseHeaders`/`reconcile` below depend on --
+                // dbSections, bibliography/Notes heading titles, and the broader
+                // isBibliography/isNotes-exists-anywhere checks -- comes from ONE
+                // consistent snapshot instead of several separate `read {}` transactions
+                // that a concurrent write (this whole call runs off-MainActor, inside
+                // `Task.detached`) could interleave between. See
+                // `fetchSectionSyncSnapshot`'s doc comment for the full TOCTOU this closes.
+                let snapshot = try db.fetchSectionSyncSnapshot(projectId: pid)
+                let dbSections = snapshot.dbSections
                 let headers = SectionSyncService.parseHeaders(
-                    from: markdown, existingBibTitle: existingBibTitle,
-                    existingNotesTitle: existingNotesTitle, fallbackBibTitle: fallbackBibTitle)
+                    from: markdown, existingBibTitle: snapshot.existingBibTitle,
+                    existingNotesTitle: snapshot.existingNotesTitle, fallbackBibTitle: fallbackBibTitle)
 
                 // 3-4. Reconcile + apply -- skipped entirely while suppressed (§4d). Guarded
                 // on `!headers.isEmpty` same as before, only now nested under the
                 // suppression check rather than an early return, since step 5 below must
                 // still run even when headers is empty or suppression is active.
                 if !suppressReconcile && !headers.isEmpty {
-                    // Broader than existingBibTitle's heading-only query -- see
-                    // hasBibliographyBlocks' doc comment for why the immortal-row check
-                    // needs this instead of fetchBibliographyHeadingTitle alone.
-                    let bibliographyExistsInBlocks = try db.hasBibliographyBlocks(projectId: pid)
-                    let notesExistsInBlocks = try db.hasNotesBlocks(projectId: pid)
                     let changes = reconciler.reconcile(
                         headers: headers, dbSections: dbSections, projectId: pid,
-                        bibliographyExistsInBlocks: bibliographyExistsInBlocks,
-                        notesExistsInBlocks: notesExistsInBlocks
+                        bibliographyExistsInBlocks: snapshot.bibliographyExistsInBlocks,
+                        notesExistsInBlocks: snapshot.notesExistsInBlocks
                     )
                     if !changes.isEmpty {
                         try db.applySectionChanges(changes, for: pid)
@@ -424,20 +407,14 @@ class SectionSyncService {
         let updatedZoomedIds: Set<String>?
         do {
             updatedZoomedIds = try await Task.detached(priority: .utility) {
-                // Fetch existing sections from database first (need bibliography title for detection)
-                let existingSections = try db.fetchSections(projectId: pid)
-
-                // Parse zoomed markdown to extract section content (pass bibliography/notes
-                // title for detection). Same block-table-authoritative lookup as the
-                // non-zoomed path (falls back to the `section` table's `isBibliography` flag
-                // only when the block table hasn't reconciled one yet) -- see
-                // `fetchBibliographyHeadingTitle`'s doc comment.
-                let existingBibTitle = try db.fetchBibliographyHeadingTitle(projectId: pid)
-                    ?? existingSections.first(where: { $0.isBibliography })?.title
-                let existingNotesTitle = existingSections.first(where: { $0.isNotes })?.title
+                // C6: one consistent snapshot instead of separate `read {}` transactions --
+                // same TOCTOU this closes as the non-zoomed path above; see
+                // `fetchSectionSyncSnapshot`'s doc comment.
+                let snapshot = try db.fetchSectionSyncSnapshot(projectId: pid)
+                let existingSections = snapshot.dbSections
                 let headers = SectionSyncService.parseHeaders(
-                    from: strippedMarkdown, existingBibTitle: existingBibTitle,
-                    existingNotesTitle: existingNotesTitle, fallbackBibTitle: fallbackBibTitle)
+                    from: strippedMarkdown, existingBibTitle: snapshot.existingBibTitle,
+                    existingNotesTitle: snapshot.existingNotesTitle, fallbackBibTitle: fallbackBibTitle)
 
                 // The bibliography heading is now emitted as a ParsedHeader (see
                 // parseHeaders), but the zoomed change-computation functions below align

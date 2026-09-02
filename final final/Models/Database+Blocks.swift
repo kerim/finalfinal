@@ -101,6 +101,39 @@ extension ProjectDatabase {
         }
     }
 
+    /// Title of the Notes heading block, if a real (machine-managed or evidence-adopted)
+    /// Notes section currently exists at the `block`-table level — mirrors
+    /// `fetchBibliographyHeadingTitle` exactly, for the same "first footnote ever
+    /// inserted" gap: `SectionSyncService.parseHeaders`'s `existingNotesTitle` parameter
+    /// is normally seeded from the LEGACY `section` table's own prior state
+    /// (`dbSections.first(where: { $0.isNotes })?.title`), which is `nil` the very
+    /// first time a Notes section is created or adopted — the `section` table hasn't
+    /// reconciled a Notes row yet, so there is nothing there to seed it from, even
+    /// though the `block` table already has one (e.g. freshly flagged by
+    /// `NotesOpeningSelector`-backed adoption). Falling back to THIS query lets that
+    /// first resync recognize the Notes heading immediately, instead of one sync cycle
+    /// late.
+    ///
+    /// Stage C (C2) scope: this makes the title mechanism correct ONCE a section is
+    /// already recognized (flagged `isNotes` on a heading row) — it does not assume any
+    /// Notes-heading-rename UI exists. None does today (unlike Bibliography, which has
+    /// `BibliographyHeadingRenamer`); a live rename path is a separate, deferred
+    /// feature (bt t-412c9fab) and out of scope here. `ORDER BY sortOrder ASC LIMIT 1`
+    /// is also `NotesOpeningSelector`'s named tie rule in its DB-query form: when more
+    /// than one heading is flagged `isNotes` (two independent Notes runs — see
+    /// `notesOwnershipMap`'s RUN-BOUNDARY RESET doc comment), the FIRST one in document
+    /// order is the canonical title, never a level heuristic.
+    func fetchNotesHeadingTitle(projectId: String) throws -> String? {
+        try read { db in
+            try Block
+                .filter(Block.Columns.projectId == projectId)
+                .filter(Block.Columns.blockType == BlockType.heading.rawValue)
+                .filter(Block.Columns.isNotes == true)
+                .order(Block.Columns.sortOrder)
+                .fetchOne(db)?.textContent
+        }
+    }
+
     /// Whether ANY `isNotes`-flagged block exists at all, regardless of `blockType`. Mirrors
     /// `hasBibliographyBlocks` exactly, for the same reason: `SectionReconciler`'s
     /// `notesExistsInBlocks` immortal-row check needs to know whether the Notes section is

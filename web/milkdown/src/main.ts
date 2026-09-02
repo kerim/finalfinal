@@ -119,6 +119,7 @@ import {
 } from './editor-state';
 import { focusModePlugin, isFocusModeEnabled } from './focus-mode-plugin';
 import {
+  focusFootnoteDefinition,
   footnotePlugin,
   insertFootnote,
   renumberFootnotes,
@@ -671,6 +672,7 @@ window.FinalFinal = {
   insertFootnote,
   renumberFootnotes,
   scrollToFootnoteDefinition,
+  focusFootnoteDefinition,
   setZoomFootnoteState: (zoomed: boolean, maxLabel: number) => {
     setZoomFootnoteState(zoomed, maxLabel);
   },
