@@ -190,6 +190,48 @@ function forceCompositorRepaint(view: { dom: HTMLElement }): void {
 }
 
 /**
+ * Force ProseMirror to recompute block-id decorations after `currentBlockIds` has been
+ * mutated OUTSIDE the transaction cycle. `data-block-id` is a `Decoration.node` built in
+ * block-id-plugin's `decorations(state)` prop (except figure/image nodes, which emit this
+ * attribute from a node attribute in image-plugin.ts's `toDOM`, not from this decoration -- a
+ * decoration at the same offset wins in the DOM when one exists, but this fix does not correct
+ * a stale figure attribute where no decoration covers it; tracked separately, out of scope
+ * here), and ProseMirror only re-runs that prop when a transaction reaches the view -- so
+ * without this, the Map holds the real DB ids while the DOM keeps rendering whatever the
+ * previous dispatch painted, usually stale temp- ids (t-623b1713). DOM consumers that read
+ * `el.getAttribute('data-block-id')` then see the stale value.
+ *
+ * Safe, and specifically safe against re-minting temps: blockIdPlugin's `apply` early-returns
+ * its existing value on `!tr.docChanged` (block-id-plugin.ts:957-959), so `assignBlockIds` does
+ * NOT re-run; that returned value's `blockIds` is the SAME Map object as the module-level
+ * `currentBlockIds` (every reassignment at :952/:973 is immediately re-aliased into the
+ * returned state, and all between-transaction writes are in-place `.clear()`/`.set()`), so the
+ * untouched plugin value already reflects the corrected ids. blockSyncPlugin's `apply` likewise
+ * early-returns on `!tr.docChanged || syncPaused`, so change detection sees nothing.
+ *
+ * Note: this dispatch is NOT fully inert -- main.ts's `view.dispatch` wrapper restarts a 150ms
+ * sectionChanged-notification debounce on ANY transaction not wrapped in `getIsSettingContent()`
+ * (that wrapper's own comment: "Check for section change on ANY transaction"), which the
+ * `confirmBlockIdsApi` and `syncBlockIds` call sites below are not (the `setContentWithBlockIds`
+ * call sites ARE inside a `getIsSettingContent()`-guarded region, so they don't reach it). This
+ * is an accepted trade-off (<=150ms delay to that notification, no data loss) -- do not read
+ * the plugin-level `docChanged` gates above as proof this dispatch has zero observers.
+ *
+ * Bare `view.state.tr` with no meta, mirroring setAnnotationDisplayModes and the three other
+ * redecoration dispatches in api-annotations.ts (lines 33, 119, 184, 208) -- the established
+ * precedent for this exact technique. `addToHistory` is deliberately NOT set: prosemirror-history
+ * only consults it inside its `docChanged` branch, so on a stepless transaction the meta is inert,
+ * and adding it would imply to a reader that it is load-bearing here.
+ */
+function redecorateBlockIds(view: EditorView): void {
+  try {
+    view.dispatch(view.state.tr);
+  } catch (e) {
+    console.error('[Milkdown] redecorateBlockIds dispatch failed:', e);
+  }
+}
+
+/**
  * Double-RAF + micro-scroll force-repaint, THEN signal Swift via the `paintComplete`
  * postMessage channel once that repaint has actually happened. Same technique as
  * `forceCompositorRepaint` above (WKWebView's compositor can keep showing a stale frame for
@@ -992,6 +1034,7 @@ export function setContentWithBlockIds(
         const tr = view.state.tr.replaceWith(0, view.state.doc.content.size, emptyDoc.content);
         view.dispatch(tr.setMeta('addToHistory', false).setSelection(Selection.atStart(tr.doc)));
         clearBlockIds();
+        redecorateBlockIds(view);
         forceCompositorRepaint(view);
         if (options?.detectPausedEdits) {
           emptyPushBaseline = snapshotBlocks(view.state.doc);
@@ -1087,6 +1130,7 @@ export function setContentWithBlockIds(
       if (blockIds.length > 0) {
         setBlockIdsForTopLevel(blockIds, view.state.doc, options?.expected);
       }
+      redecorateBlockIds(view);
 
       // Inject image metadata (width, caption, blockId) into figure nodes
       // Same pattern as applyBlocks — matches figure nodes positionally with metadata
@@ -1246,7 +1290,19 @@ export function confirmBlockIdsApi(mapping: Record<string, string>): void {
   confirmBlockIdsPlugin(mapping);
   const applied = applyPendingConfirmations();
   updateSnapshotIds(applied);
-  // No empty transaction needed — IDs updated synchronously in maps
+  // The Map is updated synchronously, but `data-block-id` in the DOM is a decoration that
+  // only recomputes on dispatch -- without this, every confirmed block keeps rendering its
+  // old temp- id until some unrelated later transaction happens to repaint it (t-623b1713).
+  if (applied.size > 0) {
+    const editorInstance = getEditorInstance();
+    if (editorInstance) {
+      try {
+        redecorateBlockIds(editorInstance.ctx.get(editorViewCtx));
+      } catch (e) {
+        console.error('[Milkdown] confirmBlockIdsApi redecorate failed:', e);
+      }
+    }
+  }
 }
 
 export function syncBlockIds(orderedIds: string[], zoomMode: boolean, expected?: ExpectedBlockMeta[]): void {
@@ -1265,6 +1321,7 @@ export function syncBlockIds(orderedIds: string[], zoomMode: boolean, expected?:
   setBlockIdZoomMode(zoomMode); // Set zoom mode based on caller context
   setBlockIdsForTopLevel(orderedIds, view.state.doc, expected);
   resetAndSnapshot(view.state.doc);
+  redecorateBlockIds(view);
 }
 
 // ---------------------------------------------------------------------------
