@@ -24,8 +24,9 @@ import { commonmark } from '@milkdown/kit/preset/commonmark';
 import { gfm } from '@milkdown/kit/preset/gfm';
 import { Selection } from '@milkdown/kit/prose/state';
 import type { EditorView } from '@milkdown/kit/prose/view';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { annotationDisplayPlugin } from '../annotation-display-plugin';
+import { hideAnnotationEditPopup } from '../annotation-edit-popup';
 import { annotationNode, annotationPlugin } from '../annotation-plugin';
 import { insertAnnotation, setAnnotationDisplayModes } from '../api-annotations';
 import { setEditorInstance } from '../editor-state';
@@ -34,6 +35,23 @@ describe('freshly-created annotation respects the current collapse mode', () => 
   let editor: Editor | null = null;
 
   afterEach(async () => {
+    // Prevent the edit-popup module singleton (an open popup, a pending
+    // blur-commit timeout) from leaking into other tests in this file.
+    // hideAnnotationEditPopup() already clears that timeout itself
+    // (annotation-edit-popup.ts), so none is pending by the time the
+    // drain loop below runs.
+    hideAnnotationEditPopup();
+
+    // Mirrors mount-paint-signal.test.ts's afterEach: if a test left some
+    // *other* fake timer running (e.g. an assertion threw before it could
+    // restore real timers), drain and restore here so it never leaks into
+    // the next test.
+    if (vi.isFakeTimers()) {
+      while (vi.getTimerCount() > 0) {
+        await vi.runOnlyPendingTimersAsync();
+      }
+    }
+    vi.useRealTimers();
     // Reset module-level display-mode state so it doesn't leak into other
     // tests in this file (or, in watch mode, other files sharing the worker).
     setAnnotationDisplayModes({ task: 'inline', comment: 'inline', reference: 'inline' });
@@ -116,5 +134,48 @@ describe('freshly-created annotation respects the current collapse mode', () => 
     const el = view.dom.querySelector('.ff-annotation') as HTMLElement | null;
     expect(el).not.toBeNull();
     expect(el!.className).not.toContain('ff-annotation-collapsed');
+  });
+
+  it('stays collapsed after the edit popup commits on blur (the real click-out path)', async () => {
+    const view = await makeEditor('Hello world');
+    setEditorInstance(editor);
+
+    // The preference is ALREADY 'collapsed' before the annotation is created,
+    // same as the other tests in this file.
+    setAnnotationDisplayModes({ comment: 'collapsed' });
+
+    view.dispatch(view.state.tr.setSelection(Selection.near(view.state.doc.resolve(3))));
+
+    // insertAnnotation() both inserts the node AND opens the edit popup on it
+    // (api-annotations.ts calls showAnnotationEditPopup() right after dispatch).
+    insertAnnotation('comment');
+
+    const input = document.querySelector('.ff-annotation-edit-input') as HTMLTextAreaElement | null;
+    expect(input).not.toBeNull();
+
+    input!.value = 'typed via popup';
+
+    // Dispatch a real `blur` event -- this is the actual click-out path.
+    // annotation-edit-popup.ts's blur listener commits via a ~150ms
+    // setTimeout, calling commitAnnotationEdit() -> setNodeMarkup().
+    vi.useFakeTimers();
+    input!.dispatchEvent(new Event('blur'));
+
+    // Wait past the commit timeout.
+    while (vi.getTimerCount() > 0) {
+      await vi.runOnlyPendingTimersAsync();
+    }
+    vi.useRealTimers();
+
+    const el = view.dom.querySelector('.ff-annotation') as HTMLElement | null;
+    expect(el).not.toBeNull();
+    expect(el!.className).toContain('ff-annotation-collapsed');
+
+    let savedText: string | undefined;
+    view.state.doc.descendants((node) => {
+      if (node.type.name === 'annotation') savedText = node.attrs.text;
+      return true;
+    });
+    expect(savedText).toBe('typed via popup');
   });
 });

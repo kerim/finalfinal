@@ -598,18 +598,32 @@ const annotationNodeView = $view(annotationNode, (_ctx: Ctx) => {
 
         const newAttrs = updatedNode.attrs as AnnotationAttrs;
 
+        // Swap only the attrs-derived classes, preserving any class
+        // ProseMirror's decoration mechanism has added to this element
+        // (ff-annotation-collapsed / ff-annotation-hidden, applied by
+        // annotation-display-plugin.ts's `Decoration.node()` outer
+        // decorations). A wholesale `dom.className = ...` here would erase
+        // those -- and prosemirror-view's NodeViewDesc.updateOuterDeco()
+        // only RE-patches decoration classes onto the DOM when the computed
+        // decoration itself changed since the last render (it short-circuits
+        // via its internal `sameOuterDeco()` check when it hasn't), so
+        // nothing would restore them afterwards. commitAnnotationEdit()'s
+        // setNodeMarkup() (annotation-edit-popup.ts) is exactly such an
+        // edit: it changes the node's text/isCompleted while the collapse
+        // decoration for this annotation stays the same (same type, same
+        // display mode), so PM sees no decoration change and never
+        // reapplies the class -- this update() must not disturb classes it
+        // doesn't own, or the annotation silently loses its collapsed
+        // rendering the moment its text is edited.
+        dom.classList.remove(`ff-annotation-${dom.dataset.type}`);
+        dom.classList.add('ff-annotation', `ff-annotation-${newAttrs.type}`);
+        dom.classList.toggle('ff-annotation-completed', !!newAttrs.isCompleted);
+
         // Update wrapper attributes
         dom.dataset.type = newAttrs.type;
         dom.dataset.completed = String(newAttrs.isCompleted);
         dom.dataset.text = newAttrs.text || '';
         applyAnnotationAccessibilityAttrs(dom, newAttrs.type, newAttrs.text);
-        dom.className = [
-          'ff-annotation',
-          `ff-annotation-${newAttrs.type}`,
-          newAttrs.isCompleted ? 'ff-annotation-completed' : '',
-        ]
-          .filter(Boolean)
-          .join(' ');
 
         if (isSourceModeEnabled()) {
           renderSourceMode(newAttrs);
