@@ -68,7 +68,10 @@ extension EditorViewState {
         // Guard against re-entry during transitions (accept .zoomTransition if caller pre-set it)
         guard contentState == .idle || contentState == .zoomTransition else { return }
 
-        guard let db = projectDatabase, let pid = currentProjectId else { return }
+        guard let db = projectDatabase, let pid = currentProjectId else {
+            DebugLog.log(.zoom, "[Zoom] zoomToSection(\(sectionId)) aborted: no projectDatabase/currentProjectId")
+            return
+        }
 
         // Caller manages state if already in transition (pre-set by sidebar callbacks)
         let callerManagedState = (contentState == .zoomTransition)
@@ -85,6 +88,7 @@ extension EditorViewState {
         }
 
         guard sections.first(where: { $0.id == sectionId }) != nil else {
+            DebugLog.log(.zoom, "[Zoom] zoomToSection(\(sectionId)) aborted: no matching outline section")
             zoomedSectionIds = nil
             zoomedSectionId = nil
             zoomedBlockRange = nil
@@ -96,6 +100,7 @@ extension EditorViewState {
             // Find the heading block BEFORE computing descendant IDs
             guard let headingBlock = try db.fetchBlock(id: sectionId),
                   let headingLevel = headingBlock.headingLevel else {
+                DebugLog.log(.zoom, "[Zoom] zoomToSection(\(sectionId)) aborted: block missing or not a heading (headingLevel nil)")
                 zoomedSectionIds = nil
                 zoomedSectionId = nil
                 zoomedBlockRange = nil

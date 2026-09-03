@@ -711,7 +711,7 @@ extension MilkdownEditor.Coordinator {
 
     /// Fallback duration for an unreleased cloak token, so a lost/never-sent `paintComplete`
     /// (a failed mount, a superseded reset, a dropped message) can never leave the WebView
-    /// permanently invisible. Derived from `forceCompositorRepaint`'s doc comment
+    /// permanently invisible. Derived from `signalPaintComplete`'s doc comment
     /// (web/milkdown/src/api-content.ts), which documents a CONFIRMED ~1 second WKWebView
     /// stale-frame window in this exact subsystem, with ~2.5x headroom.
     ///

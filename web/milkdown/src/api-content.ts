@@ -154,42 +154,6 @@ export function clearEditorHistory(view: EditorView): void {
 }
 
 /**
- * Force WKWebView to actually repaint after a block-level document replace.
- *
- * WKWebView's compositor can keep showing the previous frame after a large
- * ProseMirror document replace even though the DOM/JS state is already
- * correct -- confirmed live (doc-open-blank-regression, 2026-08-28): a
- * project switch pushes the new project's content via
- * setContentWithBlockIds with scrollToStart=false (the block table and JS
- * doc are both correct within milliseconds), but the visible pane stayed
- * blank for roughly a second before painting on its own with no user
- * interaction. setContent()'s scrollToStart path already works around the
- * identical WKWebView quirk with a double-RAF micro-scroll (see its own
- * comment above); setContentWithBlockIds had no such nudge on ANY path,
- * scrollToStart or not, which is why the gap surfaced there specifically.
- * Called unconditionally (not gated on scrollToStart) because the
- * confirmed repro needed it fixed even when scrollToStart is false.
- *
- * NOTE: this does not fix (and was never the cause of) the separate persistent-blank
- * -after-repeated-switch bug also investigated under doc-open-blank-regression -- that
- * one turned out to be Milkdown's own internal view-remount relocating the live editor
- * dom out of #editor and into document.body (rootCtx was never configured), triggered
- * by clearEditorHistory()'s view.updateState(). Fixed by setting rootCtx in main.ts's
- * initEditor(), not by anything here.
- */
-function forceCompositorRepaint(view: { dom: HTMLElement }): void {
-  requestAnimationFrame(() => {
-    requestAnimationFrame(() => {
-      const scrollParent = view.dom;
-      window.scrollTo({ top: 1, left: 0, behavior: 'instant' });
-      window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
-      scrollParent.scrollTop = 1;
-      scrollParent.scrollTop = 0;
-    });
-  });
-}
-
-/**
  * Force ProseMirror to recompute block-id decorations after `currentBlockIds` has been
  * mutated OUTSIDE the transaction cycle. `data-block-id` is a `Decoration.node` built in
  * block-id-plugin's `decorations(state)` prop (except figure/image nodes, which emit this
@@ -233,23 +197,30 @@ function redecorateBlockIds(view: EditorView): void {
 
 /**
  * Double-RAF + micro-scroll force-repaint, THEN signal Swift via the `paintComplete`
- * postMessage channel once that repaint has actually happened. Same technique as
- * `forceCompositorRepaint` above (WKWebView's compositor can keep showing a stale frame for
- * roughly a second after a large document replace -- see that function's doc comment), but
- * this variant additionally posts the signal Swift's cloak-ownership system
- * (`beginCloak`/`endCloak` in MilkdownCoordinator+MessageHandlers.swift) is listening for
- * before it un-hides the WKWebView.
+ * postMessage channel once that repaint has actually happened. WKWebView's compositor can
+ * keep showing the previous frame after a large ProseMirror document replace even though
+ * the DOM/JS state is already correct -- confirmed live (doc-open-blank-regression,
+ * 2026-08-28) -- so the RAF pair plus a throwaway scroll forces a real compositor refresh
+ * before Swift is told painting is done.
  *
  * Extracted so the double-RAF + micro-scroll + `paintComplete`-post sequence exists in
- * exactly one place instead of being hand-copied a third time: `setContent()`'s zoom branch
- * below used to inline this directly, and `resetForProjectSwitch()` needed the identical
- * sequence added for the first-open/project-switch mount flash fix.
+ * exactly one place instead of being hand-copied repeatedly: `setContent()`'s zoom branch
+ * below used to inline this directly, `resetForProjectSwitch()` needed the identical
+ * sequence for the first-open/project-switch mount flash fix, and `setContentWithBlockIds()`
+ * (zoom entry/exit, via BlockSyncService on the Swift side) now uses it too -- that function
+ * used to call a signal-less variant of this same repaint dance, which meant nothing ever
+ * told Swift's `waitForContentAcknowledgement()` (EditorViewState+Zoom.swift) that the
+ * redraw was actually done: every zoom in/out sat out that function's full 1s timeout
+ * fallback before continuing (e.g. before `scrollToSection` could fire on zoom-out), even
+ * though the visible repaint itself finished within a couple of frames.
  *
- * `extra` is merged into the postMessage body. Zoom's two callers pass nothing (`{}`) --
- * their body must stay exactly `{scrollHeight, timestamp}` with NO `reason` key, because
- * Swift's `resolveCloakToken` treats a missing/unrecognized `reason` as the legacy `.zoom`
- * case (that behavior predates this cloak-token system and must not change). Newer,
- * non-zoom callers pass `{ reason: 'projectReset', token }` etc.
+ * `extra` is merged into the postMessage body. Zoom's callers (this file's two
+ * `setContent`/`setContentWithBlockIds` zoom paths, plus CodeMirror's own separate
+ * implementation) pass nothing (`{}`) -- their body must stay exactly
+ * `{scrollHeight, timestamp}` with NO `reason` key, because Swift's `resolveCloakToken`
+ * treats a missing/unrecognized `reason` as the legacy `.zoom` case (that behavior predates
+ * this cloak-token system and must not change). Newer, non-zoom callers pass
+ * `{ reason: 'projectReset', token }` etc.
  */
 export function signalPaintComplete(dom: HTMLElement, extra: Record<string, unknown> = {}): void {
   requestAnimationFrame(() => {
@@ -1035,7 +1006,9 @@ export function setContentWithBlockIds(
         view.dispatch(tr.setMeta('addToHistory', false).setSelection(Selection.atStart(tr.doc)));
         clearBlockIds();
         redecorateBlockIds(view);
-        forceCompositorRepaint(view);
+        // Also tells Swift's waitForContentAcknowledgement() (zoom in/out) the redraw is
+        // actually done -- see signalPaintComplete's doc comment.
+        signalPaintComplete(view.dom);
         if (options?.detectPausedEdits) {
           emptyPushBaseline = snapshotBlocks(view.state.doc);
         }
@@ -1160,7 +1133,9 @@ export function setContentWithBlockIds(
         pausedPushBaseline = snapshotBlocks(view.state.doc);
       }
 
-      forceCompositorRepaint(view);
+      // Also tells Swift's waitForContentAcknowledgement() (zoom in/out) the redraw is
+      // actually done -- see signalPaintComplete's doc comment.
+      signalPaintComplete(view.dom);
     });
     if (parseSucceeded) {
       setCurrentContent(markdown);

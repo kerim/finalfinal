@@ -153,6 +153,7 @@ import {
   requestUnifiedUndo,
   setUndoDescriptor,
 } from './undo-coordinator';
+import './heading-zoom-click-handler';
 import './link-click-handler';
 import { insertEquation, insertEquationDialog } from './api-math';
 import { linkTooltipPlugin, openLinkEdit } from './link-tooltip';

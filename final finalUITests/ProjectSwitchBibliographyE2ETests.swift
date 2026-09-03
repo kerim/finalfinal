@@ -141,7 +141,7 @@ final class ProjectSwitchBibliographyE2ETests: XCTestCase {
         // Visual evidence (t-b3142f13): confirms the pane is actually painted, not just that
         // the block table is correct -- the two can diverge (WKWebView compositor caching a
         // stale frame after a large ProseMirror document replace; see
-        // forceCompositorRepaint's doc comment in api-content.ts). Immediate shot right after
+        // signalPaintComplete's doc comment in api-content.ts). Immediate shot right after
         // the DB confirms the switch landed, then one more after a brief settle.
         let immediateAfterSwitchShot = XCTAttachment(screenshot: app.screenshot())
         immediateAfterSwitchShot.name = "project-switch-immediate-after-block-parse"

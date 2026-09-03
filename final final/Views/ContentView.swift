@@ -4,6 +4,7 @@
 //
 
 import SwiftUI
+import WebKit
 
 /// Line-based cursor position for cross-editor coordination.
 /// Uses line/column instead of raw offsets because ProseMirror (tree-based)
@@ -222,6 +223,25 @@ struct ContentView: View {
             .onReceive(NotificationCenter.default.publisher(for: .zoomStateCleared)) { _ in
                 handleZoomStateCleared()
             }
+            .onReceive(NotificationCenter.default.publisher(for: .zoomHeadingClicked)) { notification in
+                // Scoped to this window's own webview -- MilkdownCoordinator+MessageDispatch's
+                // "zoomHeadingClicked" case posts with `object: message.webView` (not nil) for
+                // exactly this: NotificationCenter.default is shared across every open project
+                // window, so without this check a Cmd-click in a background window's editor
+                // would zoom the window whose ContentView happens to receive this closure first.
+                let notificationWebView = notification.object as? WKWebView
+                guard notificationWebView === findBarState.activeWebView else {
+                    let notificationID = notificationWebView.map { String(describing: ObjectIdentifier($0)) } ?? "nil"
+                    let activeID = findBarState.activeWebView.map { String(describing: ObjectIdentifier($0)) } ?? "nil"
+                    DebugLog.log(
+                        .editor,
+                        "[ZoomClick] dropped -- notification webview (\(notificationID)) != findBarState.activeWebView (\(activeID))"
+                    )
+                    return
+                }
+                DebugLog.log(.editor, "[ZoomClick] webview identity check passed, routing to handleZoomHeadingClicked")
+                handleZoomHeadingClicked(notification)
+            }
             .onReceive(NotificationCenter.default.publisher(for: .scrollToSection)) { notification in
                 if let sectionId = notification.userInfo?["sectionId"] as? String {
                     scrollToSection(sectionId)
@@ -395,19 +415,7 @@ struct ContentView: View {
                         // (StructuralUndoController's autoZoomOut policy), and hooking inside
                         // zoomOut() would make an op falsely invalidate its own just-recorded
                         // entry.
-                        unifiedUndoService.invalidateAll(reason: "user zoomed out (breadcrumb)")
-                        let savedSectionId = editorState.zoomedSectionId
-                        findBarState.clearSearch()
-                        editorState.contentState = .zoomTransition
-                        Task {
-                            await editorState.zoomOut()
-                            await blockSyncService.pushBlockIds()
-                            editorState.contentState = .idle
-                            NotificationCenter.default.post(name: .didZoomOut, object: nil)
-                            if let sectionId = savedSectionId {
-                                scrollToSection(sectionId)
-                            }
-                        }
+                        performUserZoomOut(reason: "user zoomed out (breadcrumb)")
                     }
                 )
                 Divider()
@@ -452,32 +460,12 @@ struct ContentView: View {
                     // Barrier -- user-initiated zoom in (see the breadcrumb onZoomOut's
                     // matching comment above for why this is hooked at the call site, not
                     // inside EditorViewState+Zoom.swift's zoomToSection()).
-                    unifiedUndoService.invalidateAll(reason: "user zoomed in")
-                    findBarState.clearSearch()
-                    editorState.contentState = .zoomTransition
-                    Task {
-                        await editorState.zoomToSection(sectionId, mode: mode)
-                        await blockSyncService.pushBlockIds(for: editorState.zoomedBlockRange)
-                        await annotationSyncService.syncNow(editorState.content)
-                        editorState.contentState = .idle
-                    }
+                    performUserZoomIn(sectionId, mode: mode, reason: "user zoomed in")
                 },
                 onZoomOut: {
                     // Barrier -- user-initiated zoom out from the sidebar (see the breadcrumb
                     // onZoomOut's matching comment above).
-                    unifiedUndoService.invalidateAll(reason: "user zoomed out (sidebar)")
-                    let savedSectionId = editorState.zoomedSectionId
-                    findBarState.clearSearch()
-                    editorState.contentState = .zoomTransition
-                    Task {
-                        await editorState.zoomOut()
-                        await blockSyncService.pushBlockIds()
-                        editorState.contentState = .idle
-                        NotificationCenter.default.post(name: .didZoomOut, object: nil)
-                        if let sectionId = savedSectionId {
-                            scrollToSection(sectionId)
-                        }
-                    }
+                    performUserZoomOut(reason: "user zoomed out (sidebar)")
                 },
                 onDragStarted: {
                     // MF-2 point 7 (Phase 7 review round): guard the contentState write the

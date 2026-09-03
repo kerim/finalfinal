@@ -161,6 +161,11 @@ extension Notification.Name {
     /// sites) means every one of them is covered uniformly, including any future one. See
     /// `ContentView.handleZoomStateCleared()`, the one place this is currently consumed.
     static let zoomStateCleared = Notification.Name("zoomStateCleared")
+    /// Posted by MilkdownCoordinator+MessageDispatch's "zoomHeadingClicked" case when the
+    /// user Cmd-clicks a heading in the editor (heading-zoom-click-handler.ts). Always-on
+    /// editor interaction -- no Focus Mode gate. userInfo carries `"blockId": String`.
+    /// Routed through HeadingZoomClickRouter.decide by ContentView.handleZoomHeadingClicked.
+    static let zoomHeadingClicked = Notification.Name("zoomHeadingClicked")
     /// Posted when spellcheck is toggled on/off - editors should enable/disable spellcheck
     static let spellcheckStateChanged = Notification.Name("spellcheckStateChanged")
     /// Posted after BlockSyncService pushes content to JS — coordinator updates lastPushedContent

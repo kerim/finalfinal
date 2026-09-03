@@ -56,6 +56,7 @@ private func registerMilkdownMessageHandlers(on controller: WKUserContentControl
     controller.add(coordinator, name: "resolveCitekeys")
     controller.add(coordinator, name: "paintComplete")
     controller.add(coordinator, name: "openURL")
+    controller.add(coordinator, name: "zoomHeadingClicked")
     controller.add(coordinator, name: "spellcheck")
     controller.add(coordinator, name: "navigateToFootnote")
     controller.add(coordinator, name: "footnoteInserted")

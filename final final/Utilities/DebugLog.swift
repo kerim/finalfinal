@@ -43,12 +43,17 @@ enum DebugLog {
     /// DIAGNOSTIC (temporary, added during footnote-export-race investigation):
     /// `.sync` and `.blockPoll` enabled to trace pollBlockChangesNow()/getBlockChanges()
     /// during FootnoteExportRaceTests. Safe to remove once the flush race is resolved.
+    /// `.zoom` enabled permanently: `HeadingZoomClickRouter.decide`'s drop-reason logging
+    /// uses this category, and it was invisible in the console by default — a violation of
+    /// this feature's own "no silent failures" invariant.
     ///
     /// `.reentrancy` is deliberately NOT added here — it stays out of the DEBUG console by
     /// default; it still reaches the persistent file whenever the user's Diagnostics toggle
     /// is on, which is the whole point (a durable trail without adding console noise for
     /// other developers).
-    static let enabled: Set<Category> = [.lifecycle, .zotero, .editor, .outline, .data, .footnotes, .sync, .blockPoll]
+    static let enabled: Set<Category> = [
+        .lifecycle, .zotero, .editor, .outline, .data, .footnotes, .sync, .blockPoll, .zoom
+    ]
 
     /// Category-gated log. In DEBUG builds, prints to the console when `category` is in
     /// `enabled`. In ALL builds (including Release), forwards to the persistent

@@ -30,10 +30,10 @@ describe('mount-paint-signal: paintComplete posting around clearEditorHistory()â
 
   afterEach(async () => {
     // Loop, not a single flush: signalPaintComplete schedules a rAF-inside-a-rAF chain (see
-    // block-sync-document-start.test.ts:151's identical note for forceCompositorRepaint) --
-    // a single runOnlyPendingTimersAsync() call only drains timers that were ALREADY pending
-    // when it started, leaving the inner rAF (registered mid-flush by the outer one) to leak
-    // into whichever test runs next.
+    // block-sync-document-start.test.ts's identical note on its own signalPaintComplete
+    // afterEach) -- a single runOnlyPendingTimersAsync() call only drains timers that were
+    // ALREADY pending when it started, leaving the inner rAF (registered mid-flush by the
+    // outer one) to leak into whichever test runs next.
     if (vi.isFakeTimers()) {
       while (vi.getTimerCount() > 0) {
         await vi.runOnlyPendingTimersAsync();

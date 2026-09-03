@@ -191,6 +191,31 @@ extension MilkdownEditor.Coordinator {
             }
             return true
 
+        case "zoomHeadingClicked":
+            // Always-on editor interaction (no Focus Mode gate) -- heading-zoom-click-handler.ts
+            // sent this from a Cmd-click on a heading. The real gating (contentState == .idle,
+            // temp-id, zoom-toggle, unknown-section) lives in HeadingZoomClickRouter.decide,
+            // invoked from ContentView.handleZoomHeadingClicked on the .zoomHeadingClicked
+            // notification posted below -- this dispatch case only forwards the blockId.
+            //
+            // Posted with `object: message.webView` (not nil) so a multi-window ContentView's
+            // `.onReceive` can filter to its own webview -- mirrors the webview-identity-guarded
+            // routing on the structuralUndoRequested/structuralRedoRequested/historyEdited cases
+            // above, which exists for the same reason: NotificationCenter.default is a single
+            // shared bus, so an un-scoped post would let a Cmd-click in a background window's
+            // editor zoom the FOREGROUND window's document instead.
+            DebugLog.log(.editor, "[ZoomClick] zoomHeadingClicked message received, body: \(message.body)")
+            guard let body = message.body as? [String: Any], let blockId = body["blockId"] as? String else {
+                DebugLog.log(.editor, "[MilkdownEditor] zoomHeadingClicked message missing blockId — ignoring")
+                return true
+            }
+            let requestingWebView = message.webView
+            Task { @MainActor in
+                NotificationCenter.default.post(
+                    name: .zoomHeadingClicked, object: requestingWebView, userInfo: ["blockId": blockId])
+            }
+            return true
+
         default:
             return false
         }

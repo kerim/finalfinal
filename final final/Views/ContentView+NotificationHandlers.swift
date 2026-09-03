@@ -545,4 +545,108 @@ extension ContentView {
             NotificationCenter.default.post(name: .bibliographySectionChanged, object: nil)
         }
     }
+
+    // MARK: - Shared zoom-in/zoom-out tails (heading Cmd-click + sidebar + breadcrumb)
+
+    /// Single implementation of the user-initiated zoom-IN tail -- byte-for-byte the same
+    /// sequence the sidebar's `onZoomToSection` callback used to inline directly (see
+    /// `sidebarView` in ContentView.swift). Factored out so heading Cmd-click (always-on,
+    /// no Focus Mode gate) shares this instead of risking a second, drifting copy.
+    @MainActor
+    func performUserZoomIn(_ sectionId: String, mode: ZoomMode, reason: String) {
+        // Barrier (see docs/architecture/unified-undo.md's Barriers section): a USER-initiated
+        // zoom in, hooked at the call site rather than inside EditorViewState+Zoom.swift's
+        // zoomToSection() itself -- matches the zoom-out barrier's placement below.
+        unifiedUndoService.invalidateAll(reason: reason)
+        findBarState.clearSearch()
+        editorState.contentState = .zoomTransition
+        Task {
+            await editorState.zoomToSection(sectionId, mode: mode)
+            await blockSyncService.pushBlockIds(for: editorState.zoomedBlockRange)
+            await annotationSyncService.syncNow(editorState.content)
+            editorState.contentState = .idle
+        }
+    }
+
+    /// Single implementation of the user-initiated zoom-OUT tail -- byte-for-byte the same
+    /// sequence both the breadcrumb's and the sidebar's `onZoomOut` callbacks used to inline
+    /// separately (see `sidebarView` in ContentView.swift). Factored out so heading Cmd-click
+    /// (always-on, no Focus Mode gate) shares this instead of risking a third, drifting copy --
+    /// the `.didZoomOut` post and `scrollToSection` call below trigger bibliography/citation
+    /// resync and were the easiest pieces to silently drop when this was duplicated by hand.
+    ///
+    /// Feedback-round fix (zoom-out redraw/scroll perf): the inherited pre-Cmd-click version of
+    /// this sequence (present verbatim in main's old sidebar/breadcrumb `onZoomOut` closures)
+    /// followed `editorState.zoomOut()` with an UNRANGED `blockSyncService.pushBlockIds()` --
+    /// i.e. `range: nil`, which re-fetches EVERY block from the DB and re-syncs block IDs for
+    /// the WHOLE document a second time. That work is already done: `zoomOut()`'s own
+    /// `setContentWithBlockIds(...)` call (EditorViewState+Zoom.swift) already pushes the
+    /// full, post-flush block-ID mapping for the restored document -- assigning IDs
+    /// (`setBlockIdsForTopLevel`), redecorating, AND scheduling the post-RAF snapshot
+    /// (`deferredSnapshotAndUnpause` -> `resetAndSnapshot`, web/milkdown/src/api-content.ts) --
+    /// as part of the SAME content push. The follow-up `pushBlockIds()` repeated every step of
+    /// that (a second full-document DB fetch, a second `setBlockIdsForTopLevel` pass, a second
+    /// `redecorateBlockIds` ProseMirror dispatch, a second `resetAndSnapshot`) via ANOTHER full
+    /// `webView.evaluateJavaScript` round trip -- pure duplicated work whose cost scales with
+    /// the FULL document size, sitting directly in front of the `scrollToSection` call below.
+    /// That's why zoom-out visibly paused far longer than zoom-in: zoom-in's matching call
+    /// (`performUserZoomIn`, just above) passes `pushBlockIds(for: editorState.zoomedBlockRange)`
+    /// -- scoped to the small zoomed range, so the same redundancy there is cheap. Deleted here
+    /// rather than scoped to a range, since `zoomOut()` always restores the ENTIRE document and
+    /// its own `setContentWithBlockIds` call already covers exactly that. Left untouched:
+    /// `performUserZoomIn` above (zoom-in behavior/perf is explicitly out of scope for this
+    /// round) and every other `zoomOut()` caller (StructuralUndoController's auto-zoom-out
+    /// paths ahead of delete/duplicate/reorder), which are a different scenario, not this
+    /// user-facing zoom-out tail.
+    @MainActor
+    func performUserZoomOut(reason: String) {
+        unifiedUndoService.invalidateAll(reason: reason)
+        let savedSectionId = editorState.zoomedSectionId
+        findBarState.clearSearch()
+        editorState.contentState = .zoomTransition
+        let zoomOutStart = Date()
+        Task {
+            await editorState.zoomOut()
+            DebugLog.log(.zoom, "[ZoomClick] zoomOut() settled in \(Date().timeIntervalSince(zoomOutStart))s")
+            editorState.contentState = .idle
+            NotificationCenter.default.post(name: .didZoomOut, object: nil)
+            if let sectionId = savedSectionId {
+                scrollToSection(sectionId)
+            }
+            DebugLog.log(.zoom, "[ZoomClick] performUserZoomOut tail complete in \(Date().timeIntervalSince(zoomOutStart))s")
+        }
+    }
+
+    /// Handles a Cmd-click on a heading in the editor (heading-zoom-click-handler.ts, via the
+    /// `zoomHeadingClicked` message and `.zoomHeadingClicked` notification). Always-on -- no
+    /// Focus Mode gate anywhere in this path; the only gate is `contentState == .idle`, applied
+    /// inside `HeadingZoomClickRouter.decide`.
+    @MainActor
+    func handleZoomHeadingClicked(_ notification: Notification) {
+        guard let blockId = notification.userInfo?["blockId"] as? String else {
+            DebugLog.log(.zoom, "[ZoomClick] .zoomHeadingClicked notification missing blockId — ignoring")
+            return
+        }
+        let action = HeadingZoomClickRouter.decide(
+            blockId: blockId,
+            zoomedSectionId: editorState.zoomedSectionId,
+            contentState: editorState.contentState,
+            sections: editorState.sections.map {
+                HeadingZoomClickSectionInfo(
+                    id: $0.id,
+                    isBibliography: $0.isBibliography,
+                    isNotes: $0.isNotes,
+                    isPseudoSection: $0.isPseudoSection
+                )
+            }
+        )
+        switch action {
+        case .drop(let reason):
+            DebugLog.log(.zoom, "[ZoomClick] ignored Cmd-click on \(blockId): \(reason)")
+        case .zoomIn(let id, let mode):
+            performUserZoomIn(id, mode: mode, reason: "user zoomed in (heading Cmd-click)")
+        case .zoomOut:
+            performUserZoomOut(reason: "user zoomed out (heading Cmd-click)")
+        }
+    }
 }
