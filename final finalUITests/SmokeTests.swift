@@ -230,7 +230,12 @@ final class EditorSmokeTests: XCTestCase {
 
         let editorArea = app.groups["editor-area"]
         XCTAssertTrue(editorArea.waitForExistence(timeout: 10), "Editor area should appear after seeding")
-        XCTAssertTrue(app.editorContainsText("Seed paragraph"), "Seeded content should render before typing")
+        // 10s, not editorContainsText's 5s default -- found live in a sharded
+        // --suite full run (two VMs contending for the same host): the
+        // editor-area container existed well before the WebView had actually
+        // rendered the seeded content, and 5s wasn't always enough margin for
+        // that render to catch up under VM/host contention.
+        XCTAssertTrue(app.editorContainsText("Seed paragraph", timeout: 10), "Seeded content should render before typing")
 
         // Click at the end of the seed paragraph and open a fresh, empty
         // line -- typeTextVerifyingLanded's documented precondition.
