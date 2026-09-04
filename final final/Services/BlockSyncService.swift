@@ -863,7 +863,16 @@ extension BlockSyncService {
         cursorBoundaryEnd: Int? = nil,
         detectPausedEdits: Bool = false,
         expectedBlocks: [BlockParser.BlockAlignmentMeta] = [],
-        zoomMode: Bool = false
+        zoomMode: Bool = false,
+        /// Zoom-out: land on this block, in the restored document's own coordinate space,
+        /// instead of re-applying the zoomed view's captured scroll position (which lands at
+        /// the document's actual top — a coordinate-space mismatch). See the matching option
+        /// on the JS side, web/milkdown/src/api-content.ts's setContentWithBlockIds. Resolved
+        /// and applied synchronously, in-push, during this same content replace. Unrelated to,
+        /// and NOT the same mechanism as, `EditorViewState.scrollToBlockId` (EditorViewState.swift)
+        /// -- that one is a deferred, smoothly-animated follow-up scroll consumed by
+        /// MilkdownEditor's `@Binding`. The two happen to share a name; they do not share code.
+        scrollToBlockId: String? = nil
     ) async {
         guard let webView else { return }
 
@@ -872,7 +881,8 @@ extension BlockSyncService {
                 .first(where: { $0.hasPrefix("#") })?.prefix(60) ?? "(none)"
             return "[SYNC-DIAG:BlockSync] setContentWithBlockIds: len=\(markdown.count) "
                 + "blocks=\(blockIds.count) firstH=\"\(firstHeading)\" "
-                + "scrollToStart=\(scrollToStart) cursorBoundary=\(String(describing: cursorBoundary))"
+                + "scrollToStart=\(scrollToStart) cursorBoundary=\(String(describing: cursorBoundary)) "
+                + "scrollToBlockId=\(String(describing: scrollToBlockId))"
         }())
 
         // Escape markdown for JS template literal
@@ -923,6 +933,7 @@ extension BlockSyncService {
             }
         }
         appendFlagOption(&optionParts, zoomMode, "zoomMode")
+        appendOption(&optionParts, scrollToBlockId) { "scrollToBlockId: `\($0.escapedForJSTemplateLiteral)`" }
         let options = optionParts.isEmpty ? "" : ", {\(optionParts.joined(separator: ", "))}"
         let js = "window.FinalFinal.setContentWithBlockIds(`\(escapedMarkdown)`, JSON.parse(`\(escapedIds)`)\(options))"
 

@@ -319,7 +319,12 @@ class EditorViewState {
 
     // MARK: - Scroll Request
     var scrollToOffset: Int?
-    /// Block-ID-based scroll for Milkdown (avoids character-offset mismatch with atom nodes)
+    /// Block-ID-based scroll for Milkdown (avoids character-offset mismatch with atom nodes).
+    /// A deferred, smoothly-animated follow-up scroll consumed by MilkdownEditor's `@Binding`
+    /// (see MilkdownEditor.swift) via `scrollToBlock()`. Unrelated to, and NOT the same
+    /// mechanism as, `BlockSyncService.setContentWithBlockIds`'s own `scrollToBlockId`
+    /// parameter (BlockSyncService.swift) -- that one lands synchronously, in-push, during the
+    /// zoom-out content replace itself. The two happen to share a name; they do not share code.
     var scrollToBlockId: String?
     /// Index into `annotations` array — triggers scroll to nth annotation in editor
     var scrollToAnnotationIndex: Int?

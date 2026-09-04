@@ -180,6 +180,11 @@ declare global {
           // after this function unconditionally cleared it. Defaults to false,
           // matching every pre-existing (non-zoom) call site untouched by this.
           zoomMode?: boolean;
+          // Zoom-out: land on this block, in the restored document's own coordinate space,
+          // instead of re-applying the zoomed view's captured scroll position (a
+          // coordinate-space mismatch that lands at the document's actual top). Ignored when
+          // scrollToStart is true. See api-content.ts's setContentWithBlockIds.
+          scrollToBlockId?: string;
         }
       ) => void;
       scrollToBlock: (blockId: string) => void;

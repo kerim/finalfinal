@@ -261,7 +261,13 @@ extension EditorViewState {
     }
 
     /// Zoom out from current section - fetch ALL blocks from DB and restore full document
-    func zoomOut() async {
+    /// - Parameter restoreScrollToSectionId: In WYSIWYG, land the restored document's scroll
+    ///   position on this block instead of re-applying the zoomed view's captured scroll
+    ///   position (a coordinate-space mismatch that visibly flashes to the document's actual
+    ///   top before the caller's own follow-up `scrollToSection` corrects it). Defaults to nil
+    ///   so every existing caller (StructuralUndoController's auto-zoom-out paths, and this
+    ///   file's own internal zoom-out-before-re-zoom call in `zoomToSection`) is unaffected.
+    func zoomOut(restoreScrollToSectionId: String? = nil) async {
         guard zoomedSectionId != nil else { return }
         guard let db = projectDatabase, let pid = currentProjectId else {
             zoomedSectionId = nil
@@ -313,7 +319,8 @@ extension EditorViewState {
             isResettingContent = true
             await blockSyncService?.setContentWithBlockIds(
                 markdown: mergedContent, blockIds: allBlockIds,
-                imageMeta: allImageMeta, expectedBlocks: allExpectedBlocks)
+                imageMeta: allImageMeta, expectedBlocks: allExpectedBlocks,
+                scrollToBlockId: restoreScrollToSectionId)
             content = mergedContent
             pendingImageMeta = allImageMeta
             isResettingContent = false

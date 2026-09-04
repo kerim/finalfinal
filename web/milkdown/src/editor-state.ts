@@ -37,6 +37,7 @@ export interface PendingBlockContent {
     detectPausedEdits?: boolean;
     expected?: ExpectedBlockMeta[];
     zoomMode?: boolean;
+    scrollToBlockId?: string;
   };
 }
 let pendingBlockContent: PendingBlockContent | null = null;

@@ -181,25 +181,28 @@ enum E2EShotDir {
     /// to the runner process with the prefix stripped) or directly by the
     /// `e2e-verify` skill for a host run.
     ///
-    /// Three cases, deliberately distinct:
+    /// Two cases, deliberately distinct:
     /// - Unset → `NSTemporaryDirectory()`, which the runner can always write
     ///   to (already relied on by `TestFixtureHelper.fixturePath` above).
     ///   This is the safe default when nobody wired anything up.
-    /// - Set to an absolute path (starts with "/") → used as-is. This is the
-    ///   host case: `e2e-verify`/superdev pass an explicit run-notes folder.
-    /// - Set to a bare relative name → resolved against `NSHomeDirectory()`
-    ///   **at runtime, inside this process**. This is the VM-guest case:
-    ///   `vmtest` cannot know the runner's container path in advance (it
-    ///   contains a UUID chosen when the runner launches), so it passes a
-    ///   relative name and lets the sandboxed process resolve its own home —
-    ///   which the POC proved is the one writable location in the guest, and
-    ///   which matches `export-evidence.sh`'s existing container-glob
-    ///   discovery (`Containers/*xctrunner/Data/e2e-shots`).
+    /// - Set to an absolute path (starts with "/") → used as-is. Both the
+    ///   host case (`e2e-verify`/superdev pass an explicit run-notes folder)
+    ///   and the VM-guest case go through this branch: `vmtest` sets it to
+    ///   an absolute path under `/tmp/` (e.g. `/tmp/vmtest-e2e-shots`),
+    ///   which sits outside any app sandbox — the same convention its
+    ///   video-recording feature already uses, which the exporter reads
+    ///   back over SSH/SCP reliably. An earlier convention had `vmtest`
+    ///   pass a bare relative name for the runner to resolve against its
+    ///   own sandboxed `NSHomeDirectory()`; that landed screenshots inside
+    ///   the XCUITest runner's App Sandbox container, which an external SSH
+    ///   session generally cannot read into (a macOS permission boundary),
+    ///   so evidence export silently found nothing on every run. Superseded
+    ///   by the absolute-path convention above.
     ///
-    /// Never a *bare* `NSHomeDirectory()` default — outside a VM the runner's
-    /// home can be the user's real home, and a silent default there would
-    /// grow an unpruned `~/e2e-shots/`. Here it is only ever reached when
-    /// `vmtest` deliberately opts in with a relative value.
+    /// A bare relative value (no leading "/") still resolves against
+    /// `NSHomeDirectory()` rather than silently falling back to the temp
+    /// dir, so a misconfiguration stays visible instead of hidden — but
+    /// nothing in this codebase passes one anymore.
     static var path: String {
         guard let dir = ProcessInfo.processInfo.environment["FF_E2E_SHOT_DIR"], !dir.isEmpty else {
             return NSTemporaryDirectory() + "ff-e2e-shots"
@@ -270,6 +273,69 @@ extension XCUIApplication {
                 if element.label.hasPrefix(text) {
                     return element
                 }
+            }
+            RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.25))
+        } while Date() < deadline
+        return nil
+    }
+
+    /// True if a StaticText inside `editor-area` whose value/label starts with `prefix` EXISTS
+    /// (within `timeout`) AND its accessibility frame currently intersects `editor-area`'s own
+    /// visible frame -- i.e. it is genuinely on screen right now, not merely present somewhere
+    /// in the (possibly much taller) document. Built on `editorStaticText` above, so it
+    /// inherits that function's poll behavior; the short default `timeout` makes this a
+    /// near-immediate single pass, appropriate for checking an "immediately after an
+    /// interaction" moment rather than a settled state -- use `waitForValue`/a manual poll loop
+    /// around this call for the latter.
+    ///
+    /// IMPORTANT caveat this function cannot resolve on its own: a `false` result can mean
+    /// either "present, but scrolled off screen" OR "not exposed in the AX tree at all" --
+    /// CONFIRMED live (vmtest diagnosis, milkdown-citation-scroll-top branch, 2026-09-04):
+    /// content below the viewport is not reliably enumerable in this WebView's AX tree even
+    /// when it is genuinely present in the document -- a scan's element enumeration can simply
+    /// stop short of a marker seeded at a fixed offset, confirmed in two separate failing runs.
+    /// (A prior misdiagnosis of the same failure treated an XCTest log line describing the
+    /// query being resolved -- e.g. "Find the 'X' StaticText" -- as proof a match had been
+    /// found; that line is XCUITest's own query-description logging, emitted regardless of
+    /// whether anything actually matches, not a positive result.) Never assert "scrolled away
+    /// from" a marker seeded at a calibrated document offset off a single `false` here -- use
+    /// `visibleEditorText(matching:)` below to discover whatever's ACTUALLY on screen instead,
+    /// which sidesteps needing that calibration at all.
+    func editorTextVisible(startingWith prefix: String, timeout: TimeInterval = 0.1) -> Bool {
+        guard let element = editorStaticText(startingWith: prefix, timeout: timeout) else { return false }
+        return editorArea.frame.intersects(element.frame)
+    }
+
+    /// The prefix (through the first `delimiter`, default a comma; the full value if none is
+    /// found) of any StaticText inside `editor-area` that is CURRENTLY on screen -- see
+    /// `editorTextVisible` above for exactly what "on screen" means and why a naive existence
+    /// check isn't enough -- and whose value/label starts with `prefix`. This discovers the
+    /// viewport's own identity at runtime, rather than requiring a marker pre-placed at a
+    /// calibrated document offset.
+    ///
+    /// Use this to build a scroll-position-preservation assertion without knowing in advance
+    /// where in the document the viewport will land: capture the result BEFORE the action under
+    /// test as an anchor (e.g. a fixture's own repeating padding-paragraph prefix, "Body padding
+    /// paragraph "), then assert `editorTextVisible(startingWith: anchor)` is still true AFTER
+    /// it. This is the fix for the failure mode `editorTextVisible`'s doc comment describes -- a
+    /// hand-placed marker at a guessed "N paragraphs down" offset is fragile against viewport
+    /// height, font size, and exact line-wrap points, and this app exposes no `window.scrollY`
+    /// read to XCUITest to check scroll position any more directly.
+    ///
+    /// Polls, like `editorStaticText`: the WebView's AX tree can be transiently EMPTY right
+    /// after an interaction (confirmed live: a scan returned only 2 elements -- the status-bar
+    /// word count and a heading -- while paragraphs were plainly visible in a screenshot from
+    /// the same moment).
+    func visibleEditorText(matching prefix: String, upTo delimiter: Character = ",", timeout: TimeInterval = 10) -> String? {
+        let deadline = Date(timeIntervalSinceNow: timeout)
+        repeat {
+            let editorFrame = editorArea.frame
+            for element in editorArea.staticTexts.allElementsBoundByIndex {
+                guard element.exists else { continue }
+                guard let value = element.value as? String, value.hasPrefix(prefix) else { continue }
+                guard editorFrame.intersects(element.frame) else { continue }
+                guard let cut = value.firstIndex(of: delimiter) else { return value }
+                return String(value[...cut])
             }
             RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.25))
         } while Date() < deadline

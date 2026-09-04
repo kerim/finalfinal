@@ -606,11 +606,23 @@ extension ContentView {
         editorState.contentState = .zoomTransition
         let zoomOutStart = Date()
         Task {
-            await editorState.zoomOut()
+            await editorState.zoomOut(restoreScrollToSectionId: savedSectionId)
             DebugLog.log(.zoom, "[ZoomClick] zoomOut() settled in \(Date().timeIntervalSince(zoomOutStart))s")
             editorState.contentState = .idle
             NotificationCenter.default.post(name: .didZoomOut, object: nil)
             if let sectionId = savedSectionId {
+                // KEPT even though zoomOut() above already resolved and landed on this same
+                // target in WYSIWYG -- via BlockSyncService.setContentWithBlockIds's
+                // scrollToBlockId option (in-push, synchronous), same blockScrollTargetTop math
+                // as scrollToSection() below reaches through a DIFFERENT, same-named mechanism:
+                // it sets EditorViewState.scrollToBlockId (the deferred @Binding MilkdownEditor
+                // consumes to call window.FinalFinal.scrollToBlock -- see that property's doc
+                // comment in EditorViewState.swift for the two mechanisms sharing this name).
+                // scrollToSection() is the ONLY mechanism for Source (CodeMirror) mode, a
+                // separate offset-based path (ContentView+SectionManagement.swift:11) this
+                // JS-side fix doesn't reach. In WYSIWYG it recomputes the identical position and
+                // produces no visible movement, so keeping it unconditionally is harmless there
+                // and necessary here.
                 scrollToSection(sectionId)
             }
             DebugLog.log(.zoom, "[ZoomClick] performUserZoomOut tail complete in \(Date().timeIntervalSince(zoomOutStart))s")

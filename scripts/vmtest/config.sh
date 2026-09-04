@@ -15,9 +15,23 @@ VMTEST_PROVISION_WARM_SCRIPT="provision-warm.sh"
 
 # Extra VAR=value pairs for the xcodebuild invocation. TEST_RUNNER_ prefix
 # required for anything the XCUITest runner process must see — xcodebuild
-# forwards only that prefix, stripping it on arrival. The relative value
-# resolves against the runner's sandboxed home (the one writable location).
-VMTEST_GUEST_TEST_ENV="TEST_RUNNER_FF_E2E_SHOT_DIR=e2e-shots"
+# forwards only that prefix, stripping it on arrival. Absolute path under
+# /tmp/ (per E2EShotDir's documented contract in UITestHelpers.swift, an
+# absolute value is used as-is) so screenshots land outside any app
+# sandbox — the same location the video-recording feature already uses and
+# reliably reads back over SSH/SCP. A bare relative name used to resolve
+# against the runner's own sandboxed home instead, which put screenshots
+# inside the XCUITest runner's App Sandbox container that an external SSH
+# session generally cannot read into — the root cause of evidence export
+# silently finding nothing on every run.
+VMTEST_GUEST_TEST_ENV="TEST_RUNNER_FF_E2E_SHOT_DIR=/tmp/vmtest-e2e-shots"
+
+# Where the vmtest tool's export side (evidence.sh) looks for exported
+# screenshots on the guest. Must match the path in TEST_RUNNER_FF_E2E_SHOT_DIR
+# above — evidence.sh defaults to this same value if unset, but stating it
+# explicitly here keeps that agreement visible instead of relying on the
+# default matching by coincidence.
+VMTEST_E2E_SHOT_DIR="/tmp/vmtest-e2e-shots"
 
 VMTEST_GOLDEN="ff-golden"
 VMTEST_GOLDEN_PREV="ff-golden-prev"

@@ -221,16 +221,132 @@ function redecorateBlockIds(view: EditorView): void {
  * treats a missing/unrecognized `reason` as the legacy `.zoom` case (that behavior predates
  * this cloak-token system and must not change). Newer, non-zoom callers pass
  * `{ reason: 'projectReset', token }` etc.
+ *
+ * Scroll-to-top-on-citation-insert regression (2026-09-04): the micro-scroll nudge below
+ * used to be unconditional (`scrollTo(top:1)` -> `scrollTo(top:0)` -> `dom.scrollTop = 0`).
+ * `setContentWithBlockIds()` calls this on EVERY push, including the `scrollToStart: false`
+ * bibliography resync that lands ~1s after a citation is inserted -- so a citation inserted
+ * partway down a long document jumped the view to the top two frames later. Two rules fix
+ * this without losing the repaint:
+ *
+ * 1. CAPTURE BEFORE DISPATCH. The caller must capture the reader's scroll position BEFORE
+ *    the document-replacing transaction is dispatched, and pass it in as `options.restoreScroll`.
+ *    Capturing early is correct regardless of whether the document ends up shorter or longer
+ *    -- nothing else can have intervened between capture and dispatch. (It happens to make no
+ *    practical difference in the shortening case specifically: re-reading `window.scrollY`
+ *    inside this function's rAF two frames later would see the browser's already-clamped
+ *    value, and restoring the earlier-captured `anchor.y` is clamped by the browser to that
+ *    SAME value -- the two are equivalent there, not "wrong vs. right" the way they are for
+ *    every OTHER source of drift between capture time and paint time.)
+ * 2. NUDGE AWAY FROM THE CLAMP, THEN VERIFY IT ACTUALLY MOVED. At the bottom of a document the
+ *    browser clamps scrollTo, so a naive "+1 then back" nudge at the end of the document
+ *    produces no scroll event and no compositor refresh -- reintroducing the exact
+ *    stale/blank-frame bug this function exists to fix. Nudging toward `y - 1` (when `y > 0`)
+ *    instead of `y + 1` is the right GUESS for the common case, but it is only a guess: if the
+ *    document shrank below `anchor.y` (a bibliography regeneration shortened it) or `anchor.y`
+ *    was already 0 in a document with no scrollable range, `y - 1` clamps to the exact same
+ *    position the browser is already sitting at, and the guessed direction produces no scroll
+ *    event either -- the direction choice ALONE does not guarantee anything. What guarantees a
+ *    real scroll event is reading `window.scrollY` back after the first attempt and, if it
+ *    didn't move, retrying away from that OBSERVED position (not the possibly-stale anchor)
+ *    before the final restore -- see the retry below.
+ *
+ * `options.restoreScroll` absent means this function always resets to the top -- but that is
+ * NOT the same thing as "every zoom/reset caller wants the top". The gate callers actually pull
+ * on is `scrollToStart` (on `setContentWithBlockIds`/`setContent`): passing it true makes the
+ * CALLER omit `restoreScroll` here (so the top-reset below runs); omitting it makes the caller
+ * capture-and-restore instead. Of the 9 Swift call sites of `setContentWithBlockIds`, only ONE
+ * passes `scrollToStart: true` -- zoom-in (`EditorViewState+Zoom.swift:190`). Every other caller
+ * now gets scroll-preservation instead of a top-reset: the bibliography resync that originally
+ * surfaced this bug, the footnote-section-changed and footnote-inserted resyncs
+ * (`ContentView+NotificationHandlers.swift:90`, `:254`, `:419`), the two content-rebuild paths
+ * (`ContentView+ContentRebuilding.swift:108`, `:572`), structural undo/redo
+ * (`StructuralUndoController.swift:470`), project switch
+ * (`ContentView+ProjectLifecycle.swift:544`), and zoom-out (`EditorViewState+Zoom.swift:320`).
+ * That is broader than the original bibliography-resync report, and deliberately so -- it is not
+ * a scope expansion each site needs separately justified. Several of these (footnote insertion
+ * and structural undo/redo especially) were quietly suffering the exact same undiagnosed
+ * "jump to top" defect before this fix; jumping to the top on an undo, for instance, would
+ * itself be a bug. Fixing the shared mechanism here fixed all of them at once, and preservation
+ * is the desirable behavior at every one of these call sites, not only the two walked through
+ * below.
+ *
+ * Two of these are worth walking through in detail because their safety isn't obvious from
+ * "preservation is generally desirable" alone -- project switch
+ * (`ContentView+ProjectLifecycle.swift`'s `handleProjectOpened()`, whose `setContentWithBlockIds`
+ * push at line ~544 follows an earlier one) and zoom-out
+ * (`ContentView+NotificationHandlers.swift`'s `performUserZoomOut()`, whose awaited
+ * `EditorViewState.zoomOut()` pushes via `EditorViewState+Zoom.swift:314`). Project switch is
+ * safe because `resetForProjectSwitch()` (this file, below) already did its own unconditional
+ * `window.scrollTo(0, 0)` before that later push, so the position it captures and "restores" is
+ * already 0. Zoom-out is safe for a DIFFERENT reason, since 2026-09-04: its caller passes
+ * `scrollToBlockId` (the section the user zoomed out of) into `setContentWithBlockIds`, which
+ * resolves that block's position in the JUST-RESTORED, un-zoomed document -- via the same
+ * `blockScrollTargetTop` helper `scrollToBlock` uses -- scrolls there itself, and re-captures
+ * `restoreScroll` from that resolved position before calling this function. What this function
+ * receives as `restoreScroll` is therefore already the correct landing spot, not the captured
+ * position of the (differently-scrolled) zoomed view being replaced -- the old coordinate-space
+ * mismatch that caused a visible flash to the document's actual top. `performUserZoomOut()`'s
+ * own follow-up `scrollToSection(savedSectionId)` call is kept, but only for the CodeMirror
+ * (Source) path this JS fix doesn't reach; in WYSIWYG it recomputes the identical target via the
+ * same helper and lands on a position already reached, so it produces no visible movement. This
+ * function's actual unconditional-top callers are the ones below that call it with no
+ * `options` argument at all: `setContent()`'s own `scrollToStart` branch,
+ * `resetForProjectSwitch()`, `signalMountPaintComplete()`, and `setContentWithBlockIds()`'s
+ * empty-document branch (see that branch's own comment, below).
  */
-export function signalPaintComplete(dom: HTMLElement, extra: Record<string, unknown> = {}): void {
+export function signalPaintComplete(
+  dom: HTMLElement,
+  extra: Record<string, unknown> = {},
+  options: { restoreScroll?: { x: number; y: number; domTop: number } } = {}
+): void {
   requestAnimationFrame(() => {
     requestAnimationFrame(() => {
       // CRITICAL: Force compositor refresh with micro-scroll
       // WKWebView's compositor caches the previous content.
       // A scroll triggers compositor refresh, showing the new content.
-      window.scrollTo({ top: 1, left: 0, behavior: 'instant' });
-      window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
-      dom.scrollTop = 0;
+      const anchor = options.restoreScroll;
+      if (anchor) {
+        // Nudge AWAY from the end the browser clamps at, then back. Direction matters: at
+        // the bottom of the document, scrollTo(y + 1) clamps to y, so a "+1 then back" nudge
+        // fires no scroll event and the compositor is never refreshed -- reintroducing the
+        // stale/blank frame d9fa212e exists to fix, on exactly the likely case (reader
+        // scrolled down, watching the bibliography regenerate). Going to y - 1 is the right
+        // guess when y > 0, but it's only a guess -- see the readback-and-retry below for the
+        // case where that guess is ALSO clamped -- doc shrank below the anchor, or the
+        // anchor was already 0 in a non-scrolling doc.
+        const nudgeY = anchor.y > 0 ? anchor.y - 1 : anchor.y + 1;
+        const nudgeDomTop = anchor.domTop > 0 ? anchor.domTop - 1 : anchor.domTop + 1;
+        // `left: anchor.x` preserves horizontal scroll, where this used to always reset to
+        // `left: 0`. Almost certainly harmless -- the window rarely scrolls horizontally --
+        // but worth naming as an intentional behavior change.
+        const beforeNudgeY = window.scrollY;
+        window.scrollTo({ top: nudgeY, left: anchor.x, behavior: 'instant' });
+        // Read back window.scrollY (this also forces the pending layout/reflow). If the guessed
+        // direction above was clamped right back to where we started, it produced no scroll
+        // event at all -- retry away from the OBSERVED position instead of the (possibly now
+        // out-of-range) anchor, so a real scroll event fires before the final restore below.
+        // This is what makes a real scroll event likely in the common case, not a guarantee of
+        // one: when the anchor's y is already 0 in a document with no scrollable range at all,
+        // there is nothing to nudge into and no code here can force a scroll event to fire (see
+        // the doc comment above).
+        if (window.scrollY === beforeNudgeY) {
+          const altNudgeY = beforeNudgeY > 0 ? beforeNudgeY - 1 : beforeNudgeY + 1;
+          window.scrollTo({ top: Math.max(0, altNudgeY), left: anchor.x, behavior: 'instant' });
+        }
+        window.scrollTo({ top: anchor.y, left: anchor.x, behavior: 'instant' });
+        // dom.scrollTop nudging, kept for symmetry/defensiveness with the window-level nudge
+        // above -- but inert under the current CSS: no `overflow` is set on
+        // `.ProseMirror`/`#editor` in styles.css, so `view.dom` is never the actual scroll
+        // container, and both the read and the writes below are no-ops that each force a
+        // synchronous layout for nothing. Left in case that CSS ever changes.
+        dom.scrollTop = nudgeDomTop;
+        dom.scrollTop = anchor.domTop;
+      } else {
+        window.scrollTo({ top: 1, left: 0, behavior: 'instant' });
+        window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+        dom.scrollTop = 0;
+      }
 
       if (typeof (window as any).webkit?.messageHandlers?.paintComplete?.postMessage === 'function') {
         (window as any).webkit.messageHandlers.paintComplete.postMessage({
@@ -959,6 +1075,10 @@ export function setContentWithBlockIds(
     // matching doc comment on window.FinalFinal.setContentWithBlockIds in
     // types.ts for the race this closes. Defaults to false (full-document load).
     zoomMode?: boolean;
+    // Zoom-out: land on this block, in the restored document's own coordinate space. Resolved
+    // AFTER block ids and image metadata have settled for the newly-pushed document -- see the
+    // insertion point inside the paused callback below. Ignored when `scrollToStart` is true.
+    scrollToBlockId?: string;
   }
 ): void {
   clearContentPushTimer(); // Cancel stale timers before document replacement
@@ -1007,7 +1127,10 @@ export function setContentWithBlockIds(
         clearBlockIds();
         redecorateBlockIds(view);
         // Also tells Swift's waitForContentAcknowledgement() (zoom in/out) the redraw is
-        // actually done -- see signalPaintComplete's doc comment.
+        // actually done -- see signalPaintComplete's doc comment. Called with no `options`:
+        // an emptied document always resets scroll to the top regardless of
+        // `options?.scrollToStart`, deliberately -- there is no meaningful position left to
+        // preserve once the document has nothing in it.
         signalPaintComplete(view.dom);
         if (options?.detectPausedEdits) {
           emptyPushBaseline = snapshotBlocks(view.state.doc);
@@ -1049,6 +1172,14 @@ export function setContentWithBlockIds(
       }
 
       const { from } = view.state.selection;
+      // Capture the reader's scroll position BEFORE the document is replaced. It cannot be
+      // re-read inside signalPaintComplete's rAF callback two frames later: a bibliography
+      // regeneration often makes the document SHORTER, and by then the browser has already
+      // clamped window.scrollY to the new, smaller layout -- "restore the current scroll" at
+      // that point would faithfully restore the wrong, already-clamped value.
+      const scrollAnchor = options?.scrollToStart
+        ? undefined
+        : { x: window.scrollX, y: window.scrollY, domTop: view.dom.scrollTop };
       let tr = buildBlockLevelReplace(view.state.tr, view.state.doc, doc);
 
       if (options?.scrollToStart) {
@@ -1133,9 +1264,35 @@ export function setContentWithBlockIds(
         pausedPushBaseline = snapshotBlocks(view.state.doc);
       }
 
+      // Resolve the zoom-out target LAST: block IDs are only valid after
+      // setBlockIdsForTopLevel/redecorateBlockIds, and figure heights above the target only
+      // settle after the image-metadata pass above.
+      let paintAnchor = scrollAnchor;
+      const targetTop =
+        !options?.scrollToStart && options?.scrollToBlockId
+          ? blockScrollTargetTop(view, options.scrollToBlockId)
+          : null;
+      if (!options?.scrollToStart && options?.scrollToBlockId && targetTop === null) {
+        // blockScrollTargetTop() couldn't resolve the zoom-out target (stale/unknown blockId,
+        // or coordsAtPos() threw) -- this silently falls through to the pre-fix captured-anchor
+        // behaviour below, i.e. exactly the scroll-flash bug this whole mechanism exists to
+        // close. Log it so a recurrence in practice is diagnosable instead of invisible.
+        syncLog(
+          'API:setContentWithBlockIds',
+          `zoom-out scroll target unresolved for blockId=${options.scrollToBlockId.slice(0, 8)}, falling back to captured anchor`
+        );
+      }
+      // `!== null`, NOT a truthiness check: 0 is a legitimate target (a section at the very
+      // top of the document). `if (targetTop)` would fall through to the pre-fix
+      // captured-anchor behaviour on exactly that case.
+      if (targetTop !== null) {
+        window.scrollTo({ top: targetTop, left: window.scrollX, behavior: 'instant' });
+        paintAnchor = { x: window.scrollX, y: window.scrollY, domTop: view.dom.scrollTop };
+      }
+
       // Also tells Swift's waitForContentAcknowledgement() (zoom in/out) the redraw is
       // actually done -- see signalPaintComplete's doc comment.
-      signalPaintComplete(view.dom);
+      signalPaintComplete(view.dom, {}, { restoreScroll: paintAnchor });
     });
     if (parseSucceeded) {
       setCurrentContent(markdown);
@@ -1189,33 +1346,61 @@ export function replayPendingPreMountContent(): void {
   }
 }
 
+/**
+ * Resolve the scroll-target `top` for a block id, in the given view's OWN coordinate space --
+ * the shared computation behind both `scrollToBlock` (below) and the zoom-out in-push scroll
+ * resolution in `setContentWithBlockIds`. Single copy, load-bearing: the two call sites must
+ * compute the exact identical value (the -100 offset included) or the zoom-out fix's kept
+ * `scrollToSection` follow-up (WYSIWYG) stops being a harmless no-op and starts fighting the
+ * in-push scroll instead of merely re-confirming it.
+ *
+ * Returns null if the id isn't in `getAllBlockIds()` (stale/unknown id) or `coordsAtPos` throws
+ * (e.g. a position outside the current document) -- callers treat null as "can't resolve,
+ * fall back."
+ */
+function blockScrollTargetTop(view: EditorView, blockId: string): number | null {
+  const blockIds = getAllBlockIds();
+
+  let targetPos: number | null = null;
+  for (const [pos, id] of blockIds) {
+    if (id === blockId) {
+      targetPos = pos;
+      break;
+    }
+  }
+
+  if (targetPos === null) {
+    return null;
+  }
+
+  try {
+    // Scroll to position ~100px from top for visual consistency with scrollToOffset
+    const coords = view.coordsAtPos(targetPos + 1);
+    if (!coords) return null;
+    return Math.max(0, coords.top + window.scrollY - 100);
+  } catch (e) {
+    console.error('[Milkdown] blockScrollTargetTop failed:', e);
+    return null;
+  }
+}
+
 export function scrollToBlock(blockId: string): void {
   const editorInstance = getEditorInstance();
   if (!editorInstance) return;
 
   try {
     const view = editorInstance.ctx.get(editorViewCtx);
-    const blockIds = getAllBlockIds();
-
-    // Find position for this block ID
-    let targetPos: number | null = null;
-    for (const [pos, id] of blockIds) {
-      if (id === blockId) {
-        targetPos = pos;
-        break;
-      }
-    }
-
-    if (targetPos === null) {
+    const targetTop = blockScrollTargetTop(view, blockId);
+    if (targetTop === null) {
+      // Matches the pre-refactor behavior: even when the target can't be resolved, still
+      // focus the editor before returning.
+      view.focus();
       return;
     }
-
-    // Scroll to position ~100px from top for visual consistency with scrollToOffset
-    const coords = view.coordsAtPos(targetPos + 1);
-    if (coords) {
-      const targetScrollY = coords.top + window.scrollY - 100;
-      window.scrollTo({ top: Math.max(0, targetScrollY), behavior: 'smooth' });
-    }
+    // No `left` key -- matches the pre-refactor behavior this was extracted from exactly:
+    // horizontal scroll position is left untouched (sidebar-click/find-bar/outline navigation
+    // never intended to move it).
+    window.scrollTo({ top: targetTop, behavior: 'smooth' });
     view.focus();
   } catch (e) {
     console.error('[Milkdown] scrollToBlock failed:', e);
