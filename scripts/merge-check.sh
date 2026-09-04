@@ -3,16 +3,17 @@
 # merge-check.sh — Merge-readiness gate
 #
 # Runs Tier 1 (Silent Killers, host unit tests) + Tier 2 (Visible Breakage,
-# macOS UI tests) sequentially. Exit 0 = READY, Exit 1 = NOT READY.
+# a small UI smoke set) sequentially. Exit 0 = READY, Exit 1 = NOT READY.
 #
-# The UI step runs through vmtest — macOS UI tests run in a disposable VM
-# now, not on this screen (see scripts/vmtest/README.md). It calls `vmtest
-# run` WITHOUT --detach, which blocks until the whole suite finishes
-# (several minutes). That is fine from your own terminal but WILL exceed the
-# Bash tool's 600s cap if Claude runs this script directly — this script's
-# full form is for the user's own terminal. From Claude, use
-# `scripts/vmtest/vmtest run --detach` plus `vmtest wait`/`vmtest status`
-# instead of invoking this script for the UI step.
+# The UI step runs `vmtest run --suite smoke` — macOS UI tests run in a
+# disposable VM, not on this screen (see scripts/vmtest/README.md). Since
+# 2026-09-04 (test-tiers-ship plan) this is a small golden-path smoke set
+# under 5 minutes, not the whole scheme — the full UI suite runs at release
+# time instead, driven by `/ship` (`scripts/vmtest/vmtest run --suite full`).
+# This script itself detaches the smoke run and polls it in bounded slices
+# via `vmtest wait --timeout`, so the script is safe to invoke directly from
+# Claude too, not just from your own terminal — no separate --detach dance
+# needed at the call site.
 #
 # Usage: ./scripts/merge-check.sh
 #
@@ -119,18 +120,44 @@ else
 fi
 
 # ─────────────────────────────────────────────
-# Step 3: Tier 2 — UI Tests (Visible Breakage), via vmtest
+# Step 3: Tier 2 — UI smoke tests (Visible Breakage), via vmtest
+#
+# --suite smoke, not the whole scheme — see the file header. Detached +
+# polled in bounded slices (vmtest wait --timeout, looping on its exit 124)
+# rather than a single blocking `vmtest run`, so this step never risks the
+# Bash tool's 600s cap when this script is run directly from Claude, and
+# still finishes just as fast from a real terminal.
 # ─────────────────────────────────────────────
-print_header "Step 3/3: Tier 2 — UI Tests (Visible Breakage) — vmtest"
+print_header "Step 3/3: Tier 2 — UI smoke tests (Visible Breakage) — vmtest"
 
 cd "$PROJECT_DIR"
 start_time=$(date +%s)
-if "$PROJECT_DIR/scripts/vmtest/vmtest" run --scope "final finalUITests" 2>&1 | tail -20; then
-    end_time=$(date +%s)
-    print_result "UI tests (final finalUITests, via vmtest)" "pass" "$((end_time - start_time))s"
+smoke_run_output="$("$PROJECT_DIR/scripts/vmtest/vmtest" run --suite smoke --detach 2>&1)" || true
+echo "$smoke_run_output" | tail -5
+smoke_run_id="$(printf '%s\n' "$smoke_run_output" | sed -n 's/^run id: //p')"
+smoke_status=1
+smoke_wait_out="$(mktemp)"
+if [ -n "$smoke_run_id" ]; then
+    while true; do
+        # A plain statement here (not inside this if) would trip `set -e` on
+        # the very first exit-124 slice, since a bare command's non-zero exit
+        # is fatal under set -e outside an if/while condition.
+        if "$PROJECT_DIR/scripts/vmtest/vmtest" wait "$smoke_run_id" --timeout 540 > "$smoke_wait_out" 2>&1; then
+            smoke_status=0
+            break
+        else
+            smoke_status=$?
+            [ "$smoke_status" -eq 124 ] || break
+        fi
+    done
+    tail -20 "$smoke_wait_out"
+fi
+rm -f "$smoke_wait_out"
+end_time=$(date +%s)
+if [ "$smoke_status" -eq 0 ]; then
+    print_result "UI smoke tests (final finalUITests, via vmtest --suite smoke)" "pass" "$((end_time - start_time))s"
 else
-    end_time=$(date +%s)
-    print_result "UI tests (final finalUITests, via vmtest)" "fail" "$((end_time - start_time))s"
+    print_result "UI smoke tests (final finalUITests, via vmtest --suite smoke)" "fail" "$((end_time - start_time))s"
 fi
 
 # ─────────────────────────────────────────────

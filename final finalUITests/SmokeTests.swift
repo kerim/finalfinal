@@ -196,31 +196,65 @@ final class EditorSmokeTests: XCTestCase {
         app.activateAndWaitForForeground()
         app.typeKey("[", modifierFlags: .command)
 
-        // Wait a moment for animation
+        // Wait a moment for animation, then assert the toggle actually took
+        // effect. This used to fall back to "the app still has a window" when
+        // the isHittable predicate didn't resolve in time -- that fallback
+        // passes whether or not Cmd+[ did anything at all, so a genuinely
+        // broken sidebar toggle could sail through this smoke test green.
         let hidePredicate = NSPredicate(format: "isHittable == false")
         let hideExpectation = XCTNSPredicateExpectation(predicate: hidePredicate, object: sidebar)
         let hideResult = XCTWaiter().wait(for: [hideExpectation], timeout: 5)
-
-        // If isHittable check doesn't work, try exists check
-        if hideResult != .completed {
-            // Sidebar might use different visibility mechanism — just verify
-            // the toggle command didn't crash the app
-            XCTAssertTrue(app.windows.count > 0, "App should still have a window after toggle")
-        }
+        XCTAssertEqual(hideResult, .completed, "Sidebar should become non-hittable after Cmd+[")
 
         // Toggle sidebar back on
         app.activateAndWaitForForeground()
         app.typeKey("[", modifierFlags: .command)
 
-        // Verify sidebar is visible again
+        // Verify sidebar is visible again -- same hard assertion, no fallback.
         let showPredicate = NSPredicate(format: "isHittable == true")
         let showExpectation = XCTNSPredicateExpectation(predicate: showPredicate, object: sidebar)
         let showResult = XCTWaiter().wait(for: [showExpectation], timeout: 5)
+        XCTAssertEqual(showResult, .completed, "Sidebar should become hittable again after a second Cmd+[")
+    }
 
-        if showResult != .completed {
-            // If predicate didn't match, at least verify app is still running
-            XCTAssertTrue(app.windows.count > 0, "App should still have a window")
-        }
+    func testTypedTextPersistsAcrossRelaunch() {
+        // Seed a small, known document distinct from the class's default
+        // fixture content, so a stray leftover marker from an earlier run
+        // can never be mistaken for the one this test cares about.
+        app.terminate()
+        FixtureDatabase.seedMarkdown(
+            fixturePath: TestFixtureHelper.fixturePath,
+            markdown: "# Persistence Smoke\n\nSeed paragraph.\n\n"
+        )
+        app.launchForTesting(fixturePath: TestFixtureHelper.fixturePath)
+
+        let editorArea = app.groups["editor-area"]
+        XCTAssertTrue(editorArea.waitForExistence(timeout: 10), "Editor area should appear after seeding")
+        XCTAssertTrue(app.editorContainsText("Seed paragraph"), "Seeded content should render before typing")
+
+        // Click at the end of the seed paragraph and open a fresh, empty
+        // line -- typeTextVerifyingLanded's documented precondition.
+        let seedParagraph = app.staticTexts["Seed paragraph."]
+        XCTAssertTrue(seedParagraph.waitForExistence(timeout: 10), "Seed paragraph should be reachable via accessibility")
+        let endOfSeed = seedParagraph.coordinate(withNormalizedOffset: CGVector(dx: 0.98, dy: 0.5))
+        endOfSeed.click()
+        app.activateAndWaitForForeground()
+        app.typeKey(.return, modifierFlags: [])
+
+        let marker = "persistence-smoke-\(UUID().uuidString.prefix(8))"
+        app.typeTextVerifyingLanded(marker)
+
+        // The actual proof: terminate for real and relaunch against the same
+        // (already-mutated) fixture path -- not just an in-memory check.
+        app.terminate()
+        app.launchForTesting(fixturePath: TestFixtureHelper.fixturePath)
+
+        let editorAreaAfterRelaunch = app.groups["editor-area"]
+        XCTAssertTrue(editorAreaAfterRelaunch.waitForExistence(timeout: 10), "Editor area should reappear after relaunch")
+        XCTAssertTrue(
+            app.editorContainsText(marker, timeout: 10),
+            "Typed text should survive a real terminate + relaunch, not just in-memory state"
+        )
     }
 
     func testFocusModeToggle() {

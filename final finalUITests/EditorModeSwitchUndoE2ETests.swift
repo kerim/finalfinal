@@ -60,7 +60,11 @@ final class EditorModeSwitchUndoE2ETests: XCTestCase {
     var app: XCUIApplication!
 
     /// How many switch -> type -> undo cycles each test runs within its one app launch.
-    private static let iterationsPerTest = 4
+    /// Lowered from 4 to 2 (2026-09-04, the test-tiers-ship plan): this class alone took ~9
+    /// minutes of the unscoped full-suite run because three tests each looped this cycle 4
+    /// times. 2 iterations still proves the cycle is stable across a repeat, not a one-shot
+    /// fluke, which is what this coverage is actually for -- it does not need 4 to do that.
+    private static let iterationsPerTest = 2
 
     override func setUpWithError() throws {
         continueAfterFailure = false

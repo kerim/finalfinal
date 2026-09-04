@@ -39,6 +39,20 @@ VMTEST_TIMEOUT_FULLSUITE=1800
 VMTEST_TIMEOUT_SCOPED=600
 VMTEST_TIMEOUT_GUEST_AGENT=120
 
+# --suite smoke|full (test-tiers-ship plan, 2026-09-04). The merge gate runs
+# --suite smoke; the full UI suite moves to release time via `/ship`, sharded
+# across VMTEST_MAX_SLOTS clones. VMTEST_TIMEOUT_FULLSUITE above is a
+# starting guess until Phase 1's measured runs set it with headroom.
+VMTEST_SMOKE_SCOPES=(
+  "final finalUITests/LaunchSmokeTests"
+  "final finalUITests/EditorSmokeTests"
+  "final finalUITests/ProjectSwitchBibliographyE2ETests"
+)
+VMTEST_UI_TEST_DIR="final finalUITests"
+VMTEST_UI_TEST_MODULE="final_finalUITests"
+VMTEST_SCRATCH_CLASS="E2EScratchTests"
+VMTEST_LOCK_WAIT_SUITE=900
+
 # Disk headroom floor, in GB. `vmtest run` refuses below this rather than
 # filling the volume — see the Risks section of the plan.
 VMTEST_DISK_FLOOR_GB=30
