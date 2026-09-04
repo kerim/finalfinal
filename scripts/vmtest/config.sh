@@ -35,7 +35,13 @@ VMTEST_DEFAULT_OUT_SUBDIR=".claude/vmtest-runs"
 # 6 GB first: either restore 10 GB and drop back to 1 slot, or tune between.
 VMTEST_MAX_SLOTS=2
 
-VMTEST_TIMEOUT_FULLSUITE=1800
+# Per-shard watchdog for --suite full (shards each get this full budget, not
+# a divided one — see cmd__run_suite_full). Measured live 2026-09-04 on a
+# 2-slot sharded run of the real 16-class suite: slowest shard 1186s (19.8
+# min), other shard 1162s. 1560s gives that slowest shard ~31% headroom. The
+# unscoped whole-scheme legacy path (no --suite, transitional — see
+# README.md) also reads this value.
+VMTEST_TIMEOUT_FULLSUITE=1560
 VMTEST_TIMEOUT_SCOPED=600
 VMTEST_TIMEOUT_GUEST_AGENT=120
 
