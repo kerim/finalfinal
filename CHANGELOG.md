@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **Cmd-click any heading in the editor to zoom into that section.** Cmd-click the same heading again to zoom back out. It's always available — there's no setting to turn on. Cmd-clicking a link inside a heading zooms instead of opening the link, and the Notes and Bibliography headings are excluded. Zooming from the sidebar or the breadcrumb behaves the same way.
+
+### Fixed
+
+- **Adding a citation or footnote, or restoring, duplicating, deleting, or reordering a section, could jump your view back to the top of the document** — fixed; your scroll position is now preserved.
+- **An annotation could lose its "collapsed" appearance right after you clicked out of it to commit an edit** — fixed.
+- **A "Notes" heading written at the ## level instead of # could produce a duplicate heading, or in some cases quietly lose footnote text** — fixed; the app now recognizes a Notes heading the same way everywhere.
+- **Typing could make the app redraw parts of the window on nearly every keystroke**, even when nothing on screen had changed — fixed.
+
 ## [0.2.130] - 2026-09-01
 
 ### Fixed
