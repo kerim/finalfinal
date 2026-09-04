@@ -402,145 +402,103 @@ struct ContentView: View {
 
     @ViewBuilder
     private var sidebarView: some View {
-        VStack(spacing: 0) {
-            // Zoom breadcrumb when zoomed into a section
-            if let zoomedSection = editorState.zoomedSection {
-                ZoomBreadcrumb(
-                    zoomedSection: zoomedSection,
-                    onZoomOut: {
-                        // Barrier (see docs/architecture/unified-undo.md's Barriers section):
-                        // a USER-initiated zoom out, hooked here rather than inside
-                        // EditorViewState+Zoom.swift's zoomOut() itself -- the structural-op
-                        // sequence already calls zoomOut() as its OWN internal housekeeping
-                        // (StructuralUndoController's autoZoomOut policy), and hooking inside
-                        // zoomOut() would make an op falsely invalidate its own just-recorded
-                        // entry.
-                        performUserZoomOut(reason: "user zoomed out (breadcrumb)")
-                    }
-                )
-                Divider()
-            }
-
-            OutlineSidebar(
-                sections: $editorState.sections,
-                statusFilter: $editorState.statusFilter,
-                headerLevelFilter: $editorState.headerLevelFilter,
-                zoomedSectionId: $editorState.zoomedSectionId,
-                zoomedSectionIds: editorState.zoomedSectionIds,
-                // Built fresh each body pass, by VALUE (not through the `$`-prefixed bindings
-                // above) -- see `OutlineSidebarRenderKey`'s doc comment
-                // (OutlineSidebar+Models.swift) for exactly why this exists: it's what lets
-                // `OutlineSidebar`'s `.equatable()` below tell a keystroke that changed none of
-                // these render-relevant values apart from one that did, instead of forcing
-                // `OutlineSidebar.body` to re-run on every reconstruction regardless (bt
-                // t-ef411da3).
-                renderKey: OutlineSidebarRenderKey(
-                    sections: editorState.sections,
-                    statusFilter: editorState.statusFilter,
-                    headerLevelFilter: editorState.headerLevelFilter,
-                    zoomedSectionId: editorState.zoomedSectionId,
-                    documentGoal: editorState.documentGoal,
-                    documentGoalType: editorState.documentGoalType,
-                    excludeBibliography: editorState.excludeBibliography
-                ),
-                documentGoal: $editorState.documentGoal,
-                documentGoalType: $editorState.documentGoalType,
-                excludeBibliography: $editorState.excludeBibliography,
-                onScrollToSection: { sectionId in
-                    scrollToSection(sectionId)
-                },
-                onSectionUpdated: { section in
-                    updateSection(section)
-                },
-                onSectionReorder: { request in
-                    reorderSection(request)
-                },
-                currentSectionId: editorState.currentSectionId,
-                onZoomToSection: { sectionId, mode in
-                    // Barrier -- user-initiated zoom in (see the breadcrumb onZoomOut's
-                    // matching comment above for why this is hooked at the call site, not
-                    // inside EditorViewState+Zoom.swift's zoomToSection()).
-                    performUserZoomIn(sectionId, mode: mode, reason: "user zoomed in")
-                },
-                onZoomOut: {
-                    // Barrier -- user-initiated zoom out from the sidebar (see the breadcrumb
-                    // onZoomOut's matching comment above).
-                    performUserZoomOut(reason: "user zoomed out (sidebar)")
-                },
-                onDragStarted: {
-                    // MF-2 point 7 (Phase 7 review round): guard the contentState write the
-                    // same way onDragEnded below is guarded -- if a PRIOR reorder's audited
-                    // sequence is still mid-flight (isPerforming) when a NEW drag starts,
-                    // don't stomp that sequence's own .structuralUndo contentState with
-                    // .dragReorder. cancelPendingSync() stays unconditional: it's a cheap,
-                    // idempotent debounce cancel with no ordering hazard either way.
-                    if !structuralUndoController.isPerforming {
-                        editorState.contentState = .dragReorder
-                    }
-                    sectionSyncService.cancelPendingSync()
-                },
-                onDragEnded: {
-                    // MF-2 (Phase 7 review round, plan §7 -- corrects the prior round's factually
-                    // wrong claim that onDrop and onDragEnded "run synchronously with no await
-                    // between them"): this closure is ContentView's REAL onDragEnded target, but
-                    // it is reached through exactly ONE of two decoupled paths per drag, and they
-                    // are NOT interchangeable:
-                    //
-                    // Path A -- the drag SOURCE's own completion, `DraggableCardView.swift`'s
-                    // `draggingSession(_:endedAt:operation:)`, wired above via
-                    // `onDragEnded: { clearDragState(); onDragEnded?() }`. AppKit fires this
-                    // almost immediately once a drop delegate's `performDrop` returns `true` --
-                    // it does NOT wait for the drop target's own async `loadTransferable` work.
-                    // Both `SectionDropDelegate` and `EndDropDelegate` (OutlineSidebar.swift's
-                    // `sectionCard`/`sectionsList`) now wire their OWN `onDragEnded` parameter to
-                    // a no-op ("already handled by DraggableCardView") specifically so Path A is
-                    // the single source that ever reaches this closure -- see those call sites'
-                    // comments; a prior asymmetry where EndDropDelegate wired the real closure
-                    // directly meant an end-of-list drop invoked this guarded body TWICE.
-                    //
-                    // Path B -- the drop TARGET's async completion (`loadTransferable` ->
-                    // `onDrop` -> `dispatchSectionReorder`'s `Task`), which is what actually
-                    // spawns `StructuralUndoController.performSectionReorder`'s audited sequence.
-                    // Path A is fully decoupled from Path B's timing: for the common case, Path A
-                    // fires while `isPerforming` is STILL `false` (the reorder Task hasn't even
-                    // started), so an isPerforming-only guard here does nothing and this closure
-                    // would set contentState = .idle prematurely, re-arming the block-sync poll
-                    // mid-reorder -- the normal case, not an edge case.
-                    //
-                    // `editorState.sectionDropInFlight` (set synchronously in `performDrop`,
-                    // before AppKit can fire Path A -- see its own doc comment) closes exactly
-                    // that gap: it's the "a reorder is about to start, or already stashed for
-                    // retry" flag; `isPerforming` covers "a reorder's audited sequence already
-                    // claimed the latch". Both are needed -- neither alone spans the whole window
-                    // from drop-accepted to the reorder Task's own `defer` clearing the flag
-                    // (`dispatchSectionReorder`, ContentView+SectionManagement.swift).
-                    if !structuralUndoController.isPerforming && !editorState.sectionDropInFlight {
-                        editorState.contentState = .idle
-                    }
-                },
-                sectionDropInFlight: $editorState.sectionDropInFlight,
-                onDuplicateSection: { sectionId in
-                    duplicateSectionFromSidebar(sectionId)
-                },
-                onDeleteSection: { sectionId in
-                    deleteSectionFromSidebar(sectionId)
+        // Extracted to its own view, OutlineSidebarPane (bt t-fecee361): reads that used to
+        // happen inline here (editorState.sections, .zoomedSection, .currentSectionId, the whole
+        // OutlineSidebarRenderKey(...)) were dependencies of ContentView.body itself -- every
+        // keystroke that moved the caret's section touched currentSectionId, which @Observable
+        // treats as a dependency the instant it's read, regardless of whether the value actually
+        // changed. See OutlineSidebarPane's own doc comment for the invariant that keeps this
+        // fixed: its initializer takes only `editorState` as a non-closure parameter.
+        OutlineSidebarPane(
+            editorState: editorState,
+            onScrollToSection: { sectionId in
+                scrollToSection(sectionId)
+            },
+            onSectionUpdated: { section in
+                updateSection(section)
+            },
+            onSectionReorder: { request in
+                reorderSection(request)
+            },
+            onZoomToSection: { sectionId, mode in
+                // Barrier -- user-initiated zoom in (see the breadcrumb onZoomOut's
+                // matching comment below for why this is hooked at the call site, not
+                // inside EditorViewState+Zoom.swift's zoomToSection()).
+                performUserZoomIn(sectionId, mode: mode, reason: "user zoomed in")
+            },
+            onZoomOutFromSidebar: {
+                // Barrier -- user-initiated zoom out from the sidebar (see the breadcrumb
+                // onZoomOut's matching comment below).
+                performUserZoomOut(reason: "user zoomed out (sidebar)")
+            },
+            onZoomOutFromBreadcrumb: {
+                // Barrier (see docs/architecture/unified-undo.md's Barriers section):
+                // a USER-initiated zoom out, hooked here rather than inside
+                // EditorViewState+Zoom.swift's zoomOut() itself -- the structural-op
+                // sequence already calls zoomOut() as its OWN internal housekeeping
+                // (StructuralUndoController's autoZoomOut policy), and hooking inside
+                // zoomOut() would make an op falsely invalidate its own just-recorded
+                // entry.
+                performUserZoomOut(reason: "user zoomed out (breadcrumb)")
+            },
+            onDragStarted: {
+                // MF-2 point 7 (Phase 7 review round): guard the contentState write the
+                // same way onDragEnded below is guarded -- if a PRIOR reorder's audited
+                // sequence is still mid-flight (isPerforming) when a NEW drag starts,
+                // don't stomp that sequence's own .structuralUndo contentState with
+                // .dragReorder. cancelPendingSync() stays unconditional: it's a cheap,
+                // idempotent debounce cancel with no ordering hazard either way.
+                if !structuralUndoController.isPerforming {
+                    editorState.contentState = .dragReorder
                 }
-            )
-            // The actual root-cause fix for bt t-ef411da3: `sidebarView` reconstructs
-            // `OutlineSidebar` fresh on every `ContentView.body` pass (every keystroke), and
-            // without `.equatable()` here SwiftUI has no way to distinguish that reconstruction
-            // from a genuine content change -- `OutlineSidebar.body` re-ran unconditionally.
-            // Paired with `OutlineSidebar: Equatable` (OutlineSidebar+Models.swift), this lets
-            // SwiftUI skip re-invoking `OutlineSidebar.body` when `renderKey` and the other
-            // compared fields are unchanged. Must stay directly on `OutlineSidebar` itself, not
-            // on the enclosing `VStack` -- `.equatable()` compares the view value it's attached
-            // to, not its container.
-            .equatable()
-        }
-        .frame(minWidth: 250)
-        .background(themeManager.currentTheme.sidebarBackground)
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("outline-sidebar")
+                sectionSyncService.cancelPendingSync()
+            },
+            onDragEnded: {
+                // MF-2 (Phase 7 review round, plan §7 -- corrects the prior round's factually
+                // wrong claim that onDrop and onDragEnded "run synchronously with no await
+                // between them"): this closure is ContentView's REAL onDragEnded target, but
+                // it is reached through exactly ONE of two decoupled paths per drag, and they
+                // are NOT interchangeable:
+                //
+                // Path A -- the drag SOURCE's own completion, `DraggableCardView.swift`'s
+                // `draggingSession(_:endedAt:operation:)`, wired above via
+                // `onDragEnded: { clearDragState(); onDragEnded?() }`. AppKit fires this
+                // almost immediately once a drop delegate's `performDrop` returns `true` --
+                // it does NOT wait for the drop target's own async `loadTransferable` work.
+                // Both `SectionDropDelegate` and `EndDropDelegate` (OutlineSidebar.swift's
+                // `sectionCard`/`sectionsList`) now wire their OWN `onDragEnded` parameter to
+                // a no-op ("already handled by DraggableCardView") specifically so Path A is
+                // the single source that ever reaches this closure -- see those call sites'
+                // comments; a prior asymmetry where EndDropDelegate wired the real closure
+                // directly meant an end-of-list drop invoked this guarded body TWICE.
+                //
+                // Path B -- the drop TARGET's async completion (`loadTransferable` ->
+                // `onDrop` -> `dispatchSectionReorder`'s `Task`), which is what actually
+                // spawns `StructuralUndoController.performSectionReorder`'s audited sequence.
+                // Path A is fully decoupled from Path B's timing: for the common case, Path A
+                // fires while `isPerforming` is STILL `false` (the reorder Task hasn't even
+                // started), so an isPerforming-only guard here does nothing and this closure
+                // would set contentState = .idle prematurely, re-arming the block-sync poll
+                // mid-reorder -- the normal case, not an edge case.
+                //
+                // `editorState.sectionDropInFlight` (set synchronously in `performDrop`,
+                // before AppKit can fire Path A -- see its own doc comment) closes exactly
+                // that gap: it's the "a reorder is about to start, or already stashed for
+                // retry" flag; `isPerforming` covers "a reorder's audited sequence already
+                // claimed the latch". Both are needed -- neither alone spans the whole window
+                // from drop-accepted to the reorder Task's own `defer` clearing the flag
+                // (`dispatchSectionReorder`, ContentView+SectionManagement.swift).
+                if !structuralUndoController.isPerforming && !editorState.sectionDropInFlight {
+                    editorState.contentState = .idle
+                }
+            },
+            onDuplicateSection: { sectionId in
+                duplicateSectionFromSidebar(sectionId)
+            },
+            onDeleteSection: { sectionId in
+                deleteSectionFromSidebar(sectionId)
+            }
+        )
     }
 }
 

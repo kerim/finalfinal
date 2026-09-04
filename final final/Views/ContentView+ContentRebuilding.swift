@@ -540,7 +540,7 @@ extension ContentView {
                         cursorPositionToRestore = position
                     },
                     onSectionIdChange: { blockId, title in
-                        editorState.currentSectionId = editorState.resolveSectionId(blockId: blockId, title: title)
+                        editorState.setCurrentSectionId(blockId: blockId, title: title)
                     },
                     onSelectionChange: { text in
                         editorState.updateSelection(text)
@@ -647,7 +647,7 @@ extension ContentView {
                         cursorPositionToRestore = position
                     },
                     onSectionIdChange: { blockId, title in
-                        editorState.currentSectionId = editorState.resolveSectionId(blockId: blockId, title: title)
+                        editorState.setCurrentSectionId(blockId: blockId, title: title)
                     },
                     onSelectionChange: { text in
                         editorState.updateSelection(text)
