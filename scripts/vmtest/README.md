@@ -2,18 +2,26 @@
 
 The vmtest **engine** is shared and lives in
 `~/Code/Claude Code Meta /vmtest/` — see the README there for the full
-design, the circuit breaker, and the residual risks. `scripts/vmtest/vmtest`
-here is a thin shim that execs the shared engine with this directory as
-`VMTEST_PROJECT_DIR`.
+design, the per-key retry gate, sharding, and the residual risks.
+`scripts/vmtest/vmtest` here is a thin shim that execs the shared engine
+with this directory as `VMTEST_PROJECT_DIR`.
+
+**Two suites, since the test-tiers-ship plan (2026-09-04):** `vmtest run
+--suite smoke` (a handful of golden-path classes, the merge gate, under 5
+min) and `vmtest run --suite full` (the whole scheme, sharded across two
+VM clones, the release gate — driven by the `ship` skill, not run ad hoc).
+A bare `vmtest run` or a bare-target `--scope` is a hard error now; name
+`--suite` or a `Target/Class[/method]` scope.
 
 This directory carries only what is final-final-specific:
 
-- `config.sh` — scheme, destination, golden-image names, timeouts, and the
-  pointers below
+- `config.sh` — scheme, destination, golden-image names, timeouts,
+  `VMTEST_SMOKE_SCOPES`, `VMTEST_UI_TEST_DIR`/`MODULE`,
+  `VMTEST_SCRATCH_CLASS`, and the pointers below
 - `guest-prep.sh` — in-guest build steps before xcodebuild (web bundle,
   xcodegen, scheme verification)
 - `provision-warm.sh` — host-side pnpm-store warm during golden-image builds
-- `known-flaky.txt` — test ids allowed to fail without accruing a breaker
+- `known-flaky.txt` — test ids allowed to fail without accruing a retry-gate
   streak
 
 Anything touching a live VM needs the Bash sandbox disabled
