@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.131] - 2026-09-04
+
 ### Added
 
 - **Cmd-click any heading in the editor to zoom into that section.** Cmd-click the same heading again to zoom back out. It's always available — there's no setting to turn on. Cmd-clicking a link inside a heading zooms instead of opening the link, and the Notes and Bibliography headings are excluded. Zooming from the sidebar or the breadcrumb behaves the same way.
