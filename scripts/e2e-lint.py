@@ -14,13 +14,33 @@ Exit codes: 0 = clean or warnings only, 2 = at least one error.
 A finding can be suppressed where the flagged usage is genuinely intended:
 put `e2e-lint: allow <rule-id>` in a comment on the same line or the line
 above. Suppressions are printed so they never pass silently.
+
+Separately, --ratchet stops fixed sleeps from creeping back into the
+*permanent* suite (final finalUITests/*.swift, scratch excluded) — the
+per-file "sleep" rule count must never go UP from a baseline:
+
+    python3 scripts/e2e-lint.py --ratchet
+    python3 scripts/e2e-lint.py --ratchet --baseline path/to/baseline.json
+    python3 scripts/e2e-lint.py --ratchet --update-baseline
+
+--update-baseline regenerates the baseline from the CURRENT counts (run
+after removing sleeps, to lock the lower number in) and always exits 0.
+Without it, --ratchet exits 2 naming any file above its baseline count;
+a file with no baseline entry is treated as baseline 0 (a brand-new file
+with sleeps in it fails immediately, same as any existing file gaining
+one). The baseline file itself is generated, never hand-edited.
 """
 
+import json
 import re
 import sys
 from pathlib import Path
 
 DEFAULT_TARGET = "final finalUITests/E2EScratchTests.swift"
+DEFAULT_BASELINE = "scripts/e2e-lint-baseline.json"
+UI_TEST_DIR = "final finalUITests"
+SCRATCH_CLASS_FILE = "E2EScratchTests.swift"
+SLEEP_PATTERN = r"(?:Thread\.sleep|\busleep\(|(?<![\w.])sleep\()"
 
 # Single-line rules: (id, severity, regex, message). Messages cite the
 # proven pattern they enforce.
@@ -262,8 +282,104 @@ def lint_file(path):
     return findings
 
 
+def sleep_hit_count(path):
+    """Per-file count of the "sleep" rule's un-suppressed hits, code lines
+    only (comments excluded, same as lint_file's SINGLE-rule pass)."""
+    lines = Path(path).read_text().splitlines()
+    count = 0
+    pattern = re.compile(SLEEP_PATTERN)
+    for i, line in enumerate(lines):
+        if is_comment(line):
+            continue
+        if pattern.search(line):
+            if "sleep" in suppressions_for(lines, i):
+                continue
+            count += 1
+    return count
+
+
+def permanent_ui_test_files(repo_root):
+    """Every *.swift directly under the UI test dir, excluding the scratch
+    class — that file is deliberately overwritten with throwaway content on
+    every branch, so it has no baseline of its own worth tracking."""
+    ui_dir = repo_root / UI_TEST_DIR
+    return sorted(
+        f for f in ui_dir.glob("*.swift") if f.name != SCRATCH_CLASS_FILE
+    )
+
+
+def ratchet(repo_root, baseline_path, update_baseline):
+    files = permanent_ui_test_files(repo_root)
+    counts = {f.name: sleep_hit_count(f) for f in files}
+
+    if update_baseline:
+        baseline_path.write_text(
+            json.dumps(counts, indent=2, sort_keys=True) + "\n"
+        )
+        print(
+            f"e2e-lint --ratchet: wrote {baseline_path} "
+            f"({sum(counts.values())} sleep hit(s) across {len(counts)} file(s))."
+        )
+        return 0
+
+    try:
+        baseline = json.loads(baseline_path.read_text())
+    except FileNotFoundError:
+        baseline = {}
+    except (OSError, json.JSONDecodeError) as e:
+        print(f"e2e-lint --ratchet: cannot read {baseline_path}: {e}", file=sys.stderr)
+        return 2
+
+    regressions = []
+    for name, count in sorted(counts.items()):
+        base = baseline.get(name, 0)
+        if count > base:
+            regressions.append((name, count, base))
+
+    if regressions:
+        for name, count, base in regressions:
+            print(
+                f"e2e-lint --ratchet: {name}: {count} sleep hit(s), "
+                f"baseline is {base} — new fixed sleeps are not allowed in "
+                "the permanent suite."
+            )
+        print(
+            f"\ne2e-lint --ratchet: {len(regressions)} file(s) regressed. "
+            "Remove the sleep(s), or if this baseline itself is stale "
+            "after a genuine cleanup, re-run with --update-baseline."
+        )
+        return 2
+
+    print(
+        f"e2e-lint --ratchet: clean — {sum(counts.values())} sleep hit(s) "
+        f"across {len(counts)} file(s), none above baseline."
+    )
+    return 0
+
+
 def main(argv):
     repo_root = Path(__file__).resolve().parent.parent
+
+    if "--ratchet" in argv[1:]:
+        rest = [a for a in argv[1:] if a != "--ratchet"]
+        baseline_path = repo_root / DEFAULT_BASELINE
+        update_baseline = False
+        i = 0
+        while i < len(rest):
+            if rest[i] == "--baseline" and i + 1 < len(rest):
+                baseline_path = Path(rest[i + 1])
+                i += 2
+            elif rest[i] == "--update-baseline":
+                update_baseline = True
+                i += 1
+            else:
+                print(
+                    f"e2e-lint --ratchet: unknown argument {rest[i]!r}",
+                    file=sys.stderr,
+                )
+                return 2
+        return ratchet(repo_root, baseline_path, update_baseline)
+
     targets = argv[1:] or [str(repo_root / DEFAULT_TARGET)]
     errors = warnings = 0
     for target in targets:

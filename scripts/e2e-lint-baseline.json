@@ -1,0 +1,19 @@
+{
+  "E2EAsyncImageCorruptionTests.swift": 3,
+  "E2ESectionReconcilerPseudoSectionTests.swift": 5,
+  "EditorModeSwitchUndoE2ETests.swift": 22,
+  "FirstProjectOpenBlankMarginsE2ETests.swift": 4,
+  "FootnoteCursorPlacementE2ETests.swift": 3,
+  "HrTypedConversionE2ETests.swift": 6,
+  "ListNumberingE2ETests.swift": 7,
+  "NestedListE2ETests.swift": 6,
+  "PrintE2ETests.swift": 0,
+  "ProjectOpenErrorE2ETests.swift": 2,
+  "ProjectSwitchBibliographyE2ETests.swift": 1,
+  "ProjectSwitchMarginsE2ETests.swift": 4,
+  "SidebarRerenderCountE2ETests.swift": 3,
+  "SmokeTests.swift": 0,
+  "UITestHelpers.swift": 2,
+  "UnifiedUndoE2ETests+Helpers.swift": 5,
+  "UnifiedUndoE2ETests.swift": 14
+}

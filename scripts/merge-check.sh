@@ -80,6 +80,21 @@ run_step() {
 }
 
 # ─────────────────────────────────────────────
+# Step 0: e2e hygiene — sleep ratchet + new-file cap, both vs main
+# ─────────────────────────────────────────────
+print_header "Step 0/3: e2e hygiene"
+
+cd "$PROJECT_DIR"
+start_time=$(date +%s)
+if bash "$PROJECT_DIR/scripts/e2e-hygiene.sh" --base main 2>&1 | tail -20; then
+    end_time=$(date +%s)
+    print_result "e2e hygiene (sleep ratchet + new-file cap)" "pass" "$((end_time - start_time))s"
+else
+    end_time=$(date +%s)
+    print_result "e2e hygiene (sleep ratchet + new-file cap)" "fail" "$((end_time - start_time))s"
+fi
+
+# ─────────────────────────────────────────────
 # Step 1: Web tests (if configured)
 # ─────────────────────────────────────────────
 print_header "Step 1/3: Web Tests"
