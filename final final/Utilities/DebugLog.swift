@@ -29,7 +29,14 @@ enum DebugLog {
         case undo        // [UnifiedUndoService] unified chronological undo: routing decisions,
                           // refusals, degradations, barriers (docs/architecture/unified-undo.md)
         case viewUpdates  // [ContentViewBody] [SidebarBody] [WordCountLabel] body-invocation counters
-                          // for the sidebar re-render investigation (bt t-ef411da3). DEBUG-ONLY: every
+                          // for the sidebar re-render investigation (bt t-ef411da3), plus
+                          // [ContentSyncObserved] marking each `.onChange(of: editorState.content)`
+                          // firing inside ContentSyncObserverHost (bt t-63c521f5,
+                          // ViewNotificationModifiers.swift) -- logged before the `.idle` guard, so it
+                          // counts every attempted invocation (including no-op returns during
+                          // bibliography rebuilds, zoom transitions, and mode switches), not only
+                          // completed syncs. Extracted so this counter tracks content-sync activity even
+                          // after ContentViewBody itself is driven toward zero. DEBUG-ONLY: every
                           // call site is `#if DEBUG`-guarded, so a Release build emits nothing for this
                           // category regardless of the user's Diagnostics toggle. In a DEBUG build the
                           // toggle routes it to the persistent DiagnosticLogFile; deliberately NOT added

@@ -146,7 +146,30 @@ struct ContentView: View {
         // swiftlint:disable:next redundant_discardable_let
         let _ = DebugLog.log(.viewUpdates, "[ContentViewBody]")
         #endif
-        mainContentView
+        // bt t-63c521f5: constructed directly here (not via a `View` extension method chained
+        // onto `mainContentView`) so `mainContentView` is passed UNEVALUATED in the trailing
+        // closure below -- `ContentSyncObserverHost.body` is what actually evaluates it, inside
+        // its own separate Observation-tracking scope, not this `body`'s. The win this buys: THIS
+        // `body`'s own outer chain below (the `.onReceive`s, the two `.alert`s, the four
+        // `with*Notifications` chains) no longer re-evaluates on every `editorState.content`
+        // keystroke -- confirmed by ContentViewBody=0 in the e2e measurement. It does NOT stop the
+        // wrapped subtree (`mainContentView` and everything under it) from rebuilding every
+        // keystroke -- that still happens, just inside `ContentSyncObserverHost.body` now instead
+        // of here. See `ContentSyncObserverHost`'s own doc comment (ViewNotificationModifiers.swift)
+        // for the mechanism.
+        ContentSyncObserverHost(
+            editorState: editorState,
+            services: ContentSyncServices(
+                sectionSync: sectionSyncService,
+                annotationSync: annotationSyncService,
+                bibliographySync: bibliographySyncService,
+                footnoteSync: footnoteSyncService,
+                autoBackup: autoBackupService,
+                documentManager: documentManager
+            )
+        ) {
+            mainContentView
+        }
             .withEditorNotifications(
                 editorState: editorState,
                 cursorRestore: $cursorPositionToRestore,
@@ -285,17 +308,6 @@ struct ContentView: View {
         navigationSplitViewContent
             .focusedSceneValue(\.editorState, editorState)
             .focusedSceneValue(\.unifiedUndoService, unifiedUndoService)
-            .withContentObservers(
-                editorState: editorState,
-                services: ContentSyncServices(
-                    sectionSync: sectionSyncService,
-                    annotationSync: annotationSyncService,
-                    bibliographySync: bibliographySyncService,
-                    footnoteSync: footnoteSyncService,
-                    autoBackup: autoBackupService,
-                    documentManager: documentManager
-                )
-            )
             .withContentStateRecovery(editorState: editorState)
             .withResettingContentRecovery(editorState: editorState)
             .withSidebarSync(
