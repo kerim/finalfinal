@@ -129,11 +129,6 @@ export function getBlockIdAtPos(pos: number): string | undefined {
   return currentBlockIds.get(pos);
 }
 
-/** Block type on record for a top-level offset — the type gate assignBlockIds itself uses. */
-export function getBlockTypeAtPos(pos: number): string | undefined {
-  return currentBlockTypes.get(pos);
-}
-
 /**
  * Get all block IDs in the document
  */

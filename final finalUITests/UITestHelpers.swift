@@ -391,16 +391,20 @@ extension XCUIApplication {
     /// "not landed" here even though the text had landed byte-for-byte correct, which then fed a
     /// broken repair attempt in `typeTextVerifyingLanded` below.
     ///
-    /// A `.exists`-guarded manual scan of `value as? String` -- `value` is typed `Any?` and
-    /// this WebKit-backed tree exposes some elements (a heading container's level, a checkbox
-    /// marker) with a non-`String` value, which throws under a direct `CONTAINS` predicate.
-    /// This editor's text lives in `value`, not `label` (see this project's e2e-verify skill
-    /// and `E2EAsyncImageCorruptionTests.swift`'s lesson block) -- a `label CONTAINS` query
-    /// against editor content matches nothing, so it was dropped rather than paying for a
-    /// full-tree scan that can never succeed.
+    /// Two-part approach, mirroring `EditorModeSwitchUndoE2ETests.markerPresent` (which has
+    /// caught this exact class of AX-tree gotcha before): a `label CONTAINS` predicate first
+    /// (`label` is always a non-optional `String`, safe for `CONTAINS`), then a
+    /// `.exists`-guarded manual scan of `value as? String` -- `value` is typed `Any?` and this
+    /// WebKit-backed tree exposes some elements (a heading container's level, a checkbox marker)
+    /// with a non-`String` value, which throws under a direct `CONTAINS` predicate.
     func editorContainsText(_ text: String, timeout: TimeInterval = 5) -> Bool {
         let deadline = Date(timeIntervalSinceNow: timeout)
         repeat {
+            let labelMatch = editorArea.descendants(matching: .any)
+                .matching(NSPredicate(format: "label CONTAINS %@", text))
+                .firstMatch
+            if labelMatch.exists { return true }
+
             for element in editorArea.descendants(matching: .any).allElementsBoundByIndex {
                 guard element.exists else { continue }
                 if let value = element.value as? String, value.contains(text) { return true }
@@ -434,7 +438,7 @@ extension XCUIApplication {
     /// "nothing here."
     ///
     /// On a mismatch, this looks for a PARTIAL/corrupted landing of `text` -- an element whose
-    /// value or label shares `text`'s first 24+ characters -- rather than assuming the editor is
+    /// value or label shares `text`'s first 8+ characters -- rather than assuming the editor is
     /// empty. If found, it clears the CURRENT LINE (not a computed character count -- see the
     /// vmtest-strike-3 note below) and retries. If nothing resembling `text` is found at all --
     /// no exact match, no partial-prefix match -- this does NOT blind-retype (that would
@@ -453,16 +457,10 @@ extension XCUIApplication {
     /// `staticTexts` scope bug above (which made this repair path trigger on text that had
     /// ALREADY landed correctly, just split across elements), that under-backspaced, left a
     /// leftover fragment behind, and the retry's fresh `typeText(text)` landed ON TOP of it --
-    /// producing a visible duplicate. Now clears the whole current line via Cmd+Left
-    /// (moveToBeginningOfLine) + Cmd+Shift+Right (moveToEndOfLineAndModifySelection) + one
-    /// `Delete`, which is correct under this method's own documented precondition (caret lands
-    /// on its own, otherwise-empty line before typing) regardless of how many characters
-    /// actually landed -- no count to get wrong. NOT `Shift-Home` + `Delete`: Home/Shift+Home
-    /// are DOCUMENT-boundary motions in this WebKit editor (moveToBeginningOfDocument), not
-    /// line-boundary ones, so that repair could select and delete everything before the caret
-    /// instead of just the current line -- confirmed live (E2EScratchTests.swift, image
-    /// caption editing) where this exact repair path made a partial-landing collision
-    /// catastrophically worse.
+    /// producing a visible duplicate. Now clears the whole current line via
+    /// `Shift-Home` (select to logical line start) + one `Delete`, which is correct under this
+    /// method's own documented precondition (caret lands on its own, otherwise-empty line before
+    /// typing) regardless of how many characters actually landed -- no count to get wrong.
     func typeTextVerifyingLanded(
         _ text: String, maxAttempts: Int = 3,
         file: StaticString = #filePath, line: UInt = #line
@@ -478,11 +476,7 @@ extension XCUIApplication {
 
             // Not an exact landing -- look for a partial/corrupted version of what we just
             // typed (shares a meaningful prefix) so we can clean it up before retrying.
-            // 24, not 8: two strings sharing an 8-char prefix (e.g. two test captions both
-            // starting "Caption ") could otherwise collide here, making this guard unable to
-            // tell a genuine partial landing of `text` apart from a DIFFERENT string that
-            // merely starts the same way.
-            let prefixLen = min(24, text.count)
+            let prefixLen = min(8, text.count)
             let expectedPrefix = String(text.prefix(prefixLen))
             var partialElement: XCUIElement?
             var partialLanded = ""
@@ -529,14 +523,11 @@ extension XCUIApplication {
                 return
             }
 
-            // Clear the whole current line (Cmd+Left to the line start, Cmd+Shift+Right to
-            // select to the line end, then one Delete removes the selection) instead of
-            // backspacing a computed character count -- see this method's doc comment for why
-            // a count-based clear was the vmtest-strike-3 bug, and for why Home/Shift+Home are
-            // NOT used here (they are document-boundary motions in this WebKit editor, not
-            // line-boundary ones).
-            typeKey(.leftArrow, modifierFlags: .command)
-            typeKey(.rightArrow, modifierFlags: [.command, .shift])
+            // Clear the whole current line (Shift-Home selects back to logical line start, then
+            // one Delete removes the selection) instead of backspacing a computed character
+            // count -- see this method's doc comment for why a count-based clear was the
+            // vmtest-strike-3 bug.
+            typeKey(.home, modifierFlags: .shift)
             typeKey(.delete, modifierFlags: [])
             Thread.sleep(forTimeInterval: 0.3)
         }
