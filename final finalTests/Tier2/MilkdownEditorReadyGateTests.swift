@@ -8,7 +8,7 @@
 //  Root cause: `didFinish`/`handlePreloadedView` fired `onWebViewReady?(webView)` the instant
 //  WKWebView's page load finished -- but main.ts's `initEditor()` awaits
 //  `Editor.make().create()` (~30 plugins) well after that. A project-open content push
-//  (ContentView+ContentRebuilding.swift's `onWebViewReady` closure -> setContentWithBlockIds)
+//  (ContentView+EditorPresentation.swift's `onWebViewReady` closure -> setContentWithBlockIds)
 //  landing before that async mount completed got stashed by api-content.ts, then silently
 //  dropped by main.ts's old replay guard -- the blank-pane bug. This fix gates
 //  `onWebViewReady` behind `window.FinalFinal.isEditorReady()` actually reporting true (or a

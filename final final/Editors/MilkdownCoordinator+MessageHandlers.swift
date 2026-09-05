@@ -103,7 +103,7 @@ extension MilkdownEditor.Coordinator {
     /// and EditorPreloader's `.ready` state signal page load, which happens well before
     /// `initEditor()`'s awaited `Editor.make().create()` resolves -- see main.ts. Firing
     /// `onWebViewReady` (and therefore the first `setContentWithBlockIds` push, see
-    /// ContentView+ContentRebuilding.swift) before that resolves is exactly what let a
+    /// ContentView+EditorPresentation.swift) before that resolves is exactly what let a
     /// freshly-opened document's content get stashed and then silently dropped by a dead
     /// replay guard (t-18576cf7's root cause).
     ///
@@ -262,7 +262,7 @@ extension MilkdownEditor.Coordinator {
 
         // Skip content here whenever the editor isn't mounted yet OR isResettingContent is
         // true (onWebViewReady is already mid-push via setContentWithBlockIds() -- see that
-        // closure in ContentView+ContentRebuilding.swift, which includes image metadata like
+        // closure in ContentView+EditorPresentation.swift, which includes image metadata like
         // width/caption that initialize() would otherwise race).
         //
         // MF1: editorMounted must be checked DIRECTLY, not inferred from isResettingContent.
@@ -735,26 +735,14 @@ extension MilkdownEditor.Coordinator {
     ///
     /// Must-fix #5 (review round 2): supersedes an already-outstanding cloak of the SAME
     /// `reason`, for reasons that resolve via reason-only lookup (`resolveCloakToken`'s
-    /// fallback). Without this, two pushes of the same reason landing before either paints
-    /// would strand the OLDER token forever: reason-only resolution can only ever point at the
-    /// LATEST token for a given reason, so the older one's `paintComplete` can never distinctly
-    /// arrive, leaving it stuck until its own 2.5s fallback.
-    ///
-    /// The actual rule the `reason != .projectReset` check below implements (corrected, review
-    /// round 3 -- the previous wording here claimed the exclusion was because `.projectReset`
-    /// "echoes back its own real token", but `.zoom` now does exactly that too, via
-    /// `paintcomplete-zoom-reason`, and is NOT excluded, so that could no longer be the actual
-    /// distinguishing rule): `.projectReset` alone is excluded from supersession, because a
-    /// newer project switch starting before an earlier one's visual settle has actually
-    /// happened must not blindly clear the earlier switch's cloak -- that would risk revealing
-    /// the WebView mid-transition; its release must come from ITS OWN paintComplete/failure
-    /// signal only (`beginProjectResetCloak`'s doc comment). `.zoom` IS still superseded here,
-    /// even though it also echoes back its own real token the same way -- superseding it is
-    /// safe (the newer token is already in `outstandingCloaks` by the time the older one is
-    /// ended, so this can never prematurely reveal the WebView) and simply means the older
-    /// zoom's own later-arriving `paintComplete` resolves to nothing, a no-op. This is an
-    /// accepted asymmetry between the two reasons, not a bug -- see this round's judge
-    /// discussion for the "no functional harm" call.
+    /// fallback). Without this, two zoom pushes landing before either paints would strand the
+    /// OLDER token forever: reason-only resolution can only ever point at the LATEST token for
+    /// a given reason, so the older one's `paintComplete` can never distinctly arrive, leaving
+    /// it stuck until its own 2.5s fallback. `.projectReset` is deliberately excluded --
+    /// `resetForProjectSwitch()` echoes back its OWN real token (`beginProjectResetCloak`'s
+    /// doc comment), so ITS release must come from ITS OWN paintComplete/failure signal, not
+    /// be blindly superseded by a newer switch starting before the first one's visual settle
+    /// has actually happened -- that would risk revealing the WebView mid-transition.
     @discardableResult
     func beginCloak(_ reason: MilkdownEditor.CloakReason) -> Int {
         let token = nextCloakToken
@@ -804,77 +792,36 @@ extension MilkdownEditor.Coordinator {
         }
     }
 
-    /// Classifies a `paintComplete` body's EXPLICIT `reason` field, for the reason-based
-    /// resolution path in `resolveCloakToken` below. Unlike the old `legacyReasonOnly` this
-    /// replaces, a missing or unrecognized `reason` returns `nil` rather than defaulting to
-    /// `.zoom` -- paintcomplete-zoom-reason: `BlockSyncService.setContentWithBlockIds`'s 9 call
-    /// sites post a reason-less `paintComplete` on EVERY ordinary paint (not just zoom
-    /// transitions), so a reason-less body can no longer be assumed to mean "this is zoom" --
-    /// it has no cloak to release at all, and must resolve to nothing. Zoom's own cloaked
-    /// transition (`setContent`'s `scrollToStart` branch, MilkdownCoordinator+Content.swift)
-    /// now sends an explicit `reason: "zoom"` instead of relying on this fallback.
-    private func cloakReason(from body: [String: Any]?) -> MilkdownEditor.CloakReason? {
+    /// Classifies a `paintComplete` body's `reason` field for the reason-ONLY resolution path
+    /// (used by both `resolveCloakToken`'s fallback below and `handlePaintComplete`'s
+    /// `onContentAcknowledged` gate) -- a missing OR unrecognized `reason` key means `.zoom`,
+    /// since zoom's two senders predate this cloak-token system and never include one.
+    private func legacyReasonOnly(from body: [String: Any]?) -> MilkdownEditor.CloakReason {
         switch body?["reason"] as? String {
-        case "zoom": return .zoom
         case "mount": return .mount
         case "projectReset": return .projectReset
-        default: return nil
+        default: return .zoom
         }
     }
 
-    /// True when a `paintComplete` body should fire `handlePaintComplete`'s
-    /// `onContentAcknowledged` callback (used for zoom's acknowledgement-based content sync).
-    /// A reason-less body (every one of `BlockSyncService.setContentWithBlockIds`'s 9 ordinary
-    /// paints, plus any other non-cloaking caller) or an explicit `reason: "zoom"` body
-    /// acknowledges; `.mount` and `.projectReset` never do -- see `handlePaintComplete`'s doc
-    /// comment for why a mount or reset landing mid-zoom must not resume the zoom's own
-    /// continuation early via an unrelated signal.
-    private func isZoomAcknowledgement(_ body: [String: Any]?) -> Bool {
-        // Derived from `cloakReason(from:)` rather than duplicating its switch (must-fix #5,
-        // review round 3): behavior-identical to the separate switch this replaces for all 4
-        // body shapes -- reason-less (`nil`, `?? true` -> true), "zoom" (`.zoom == .zoom` ->
-        // true), "mount" (`.mount == .zoom` -> false), "projectReset" (`.projectReset ==
-        // .zoom` -> false). A future third reason then only needs `cloakReason` updated, not
-        // this switch too.
-        cloakReason(from: body).map { $0 == .zoom } ?? true
-    }
-
     /// Resolves an incoming `paintComplete` message body to the cloak token it should
-    /// release. Prefers an explicit `token` field -- posted by `resetForProjectSwitch()`
-    /// (echoing back the exact token `beginProjectResetCloak()` minted) and by `setContent()`'s
-    /// zoom branch (echoing back the exact token its own `beginCloak(.zoom)` call minted,
-    /// MilkdownCoordinator+Content.swift) -- since both are senders that can have MORE THAN ONE
-    /// cloak of their own reason outstanding at once (e.g. rapid A→B→A project switching, or
-    /// two zooms queued before either paints), for which only the SENDER'S OWN echoed token
-    /// unambiguously identifies which cloak this release is for.
-    ///
-    /// Falls back to `cloakReason(from:)` for a body with a recognized `reason` but no
-    /// `token` -- in practice only `.mount`, which can have at most one outstanding cloak per
-    /// Coordinator instance (a fresh WKWebView only ever runs `initEditor()` once, and the
-    /// claimed-preloaded branch's own poll -- see `pollMountCloakReleaseForClaimedView` -- only
-    /// ever mints one `.mount` token per Coordinator too), so reason-only resolution is
-    /// unambiguous for it.
-    ///
-    /// `.zoom` is explicitly excluded from this fallback (must-fix #4, review round 3), even
-    /// though `cloakReason` still maps `"zoom"` to `.zoom` (must-fix #5's `isZoomAcknowledgement`
-    /// needs that mapping intact for its own, unrelated purpose). Without this exclusion, a
-    /// `reason: "zoom"` body with no `token` -- which should never happen from `setContent()`'s
-    /// own sender, which always includes both together, but is not guaranteed against some
-    /// other future/malformed sender -- would resolve to "whatever `.zoom` cloak happens to be
-    /// outstanding", a narrower rerun of the exact reason-vs-token ambiguity this whole change
-    /// removes.
-    ///
-    /// Returns `nil` for a body with neither a `token` nor a non-`.zoom` `reason` that resolves
-    /// to an outstanding cloak -- the expected, common case for every one of
-    /// `BlockSyncService.setContentWithBlockIds`'s 9 reason-less call sites, which have no
-    /// cloak to release at all.
+    /// release. Prefers an explicit `token` field (posted by `resetForProjectSwitch()`,
+    /// which echoes back the exact token `beginProjectResetCloak()` minted it -- the only
+    /// sender that can have MORE THAN ONE cloak of its own reason outstanding at once, e.g.
+    /// rapid A→B→A project switching before the first switch's mount flash even resolves).
+    /// Falls back to reason-based resolution (`legacyReasonOnly`) for every other sender:
+    /// zoom's two senders (`web/milkdown/src/api-content.ts`, `web/codemirror/src/api.ts` --
+    /// though CodeMirror's own paintComplete never reaches this Coordinator at all, see that
+    /// file's divergence comment) never include a `reason` key at all, and `.mount` can have
+    /// at most one outstanding cloak per Coordinator instance (a fresh WKWebView only ever
+    /// runs `initEditor()` once, and the claimed-preloaded branch's own poll -- see
+    /// `pollMountCloakReleaseForClaimedView` -- only ever mints one `.mount` token per
+    /// Coordinator too), so reason-only resolution is unambiguous for it too.
     func resolveCloakToken(from body: [String: Any]?) -> Int? {
         if let token = body?["token"] as? Int {
             return token
         }
-        let reason = cloakReason(from: body)
-        if reason == .zoom { return nil }
-        return reason.flatMap { latestCloakTokenForReason[$0] }
+        return latestCloakTokenForReason[legacyReasonOnly(from: body)]
     }
 
     /// Handles `.willResetEditorForProjectSwitch` (MilkdownCoordinator+NotificationObservers.swift).
@@ -897,15 +844,7 @@ extension MilkdownEditor.Coordinator {
     func handlePaintComplete(body: [String: Any]?) {
         if let token = resolveCloakToken(from: body) {
             endCloak(token)
-        } else if body == nil || body?["token"] != nil || body?["reason"] != nil {
-            // A body that carried a `token` or a `reason` key but STILL failed to resolve is a
-            // genuine anomaly worth a log line: a malformed/absent body, a `token` value of the
-            // wrong type, a duplicate/orphaned `.mount` paint (no `.mount` cloak outstanding),
-            // or a `.projectReset` paint with no registered token. A bare body with NEITHER key
-            // -- the normal shape from every one of BlockSyncService.setContentWithBlockIds's 9
-            // non-cloaking call sites, posted on every ordinary paint -- is expected and must
-            // NOT be logged, or the app's single most common paint path would produce a
-            // permanent failure-shaped log line on every normal paint.
+        } else {
             DebugLog.log(.editor, "[MilkdownEditor] handlePaintComplete: could not resolve a cloak token from body \(String(describing: body))")
         }
 
@@ -920,7 +859,7 @@ extension MilkdownEditor.Coordinator {
         // mount) landing mid-zoom-transition -- a scenario this cloak redesign already
         // explicitly accounts for via the token Set -- would resume the zoom's own
         // continuation early via a completely unrelated signal.
-        guard isZoomAcknowledgement(body) else { return }
+        guard legacyReasonOnly(from: body) == .zoom else { return }
         if let callback = onContentAcknowledged {
             onContentAcknowledged = nil  // One-shot callback
             callback()

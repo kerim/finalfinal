@@ -303,7 +303,7 @@ final class FindBarState {
     /// Return keyboard focus to the editor webview when the find bar closes.
     ///
     /// Root cause of "search breaks undo permanently" (live user report): closing the find
-    /// bar unmounts its SwiftUI `TextField` (`ContentView+ContentRebuilding.swift` only
+    /// bar unmounts its SwiftUI `TextField` (`ContentView+EditorPresentation.swift` only
     /// instantiates `FindBarView` while `isVisible` is true), but nothing ever explicitly
     /// hands the window's native first-responder status back to the editor's `WKWebView`.
     /// `UndoRedoCommands.performUndo()/performRedo()` route to the editor's JS undo/redo ONLY

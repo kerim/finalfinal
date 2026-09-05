@@ -497,11 +497,9 @@ struct MilkdownEditor: NSViewRepresentable {
         var cloakFallbackWorkItems: [Int: DispatchWorkItem] = [:]
 
         /// Latest token minted for a given reason -- used to resolve a `paintComplete`
-        /// message that carries a recognized `reason` but no explicit `token` field. In
-        /// practice this is only `.mount`, which can have at most one outstanding cloak per
-        /// Coordinator instance; `.zoom` and `.projectReset` each echo back their own real
-        /// token instead (see resolveCloakToken's doc comment, MilkdownCoordinator+
-        /// MessageHandlers.swift).
+        /// message that has no explicit `token` field in its body (zoom's two legacy
+        /// senders, and `.mount`, which can have at most one outstanding cloak per
+        /// Coordinator instance -- see resolveCloakToken's doc comment).
         var latestCloakTokenForReason: [CloakReason: Int] = [:]
 
         /// Observes `.willResetEditorForProjectSwitch` (posted by ContentView+
