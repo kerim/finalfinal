@@ -8,6 +8,7 @@ import type { Ctx, MilkdownPlugin } from '@milkdown/kit/ctx';
 import { InputRule, inputRules } from '@milkdown/kit/prose/inputrules';
 import type { Node } from '@milkdown/kit/prose/model';
 import { Plugin, Selection, TextSelection } from '@milkdown/kit/prose/state';
+import type { EditorView } from '@milkdown/kit/prose/view';
 import { $node, $prose, $remark, $view } from '@milkdown/kit/utils';
 import type { Root } from 'mdast';
 import { visit } from 'unist-util-visit';
@@ -272,6 +273,56 @@ export const footnoteDefNode = $node('footnote_def', () => ({
   },
 }));
 
+/**
+ * Find the footnote_ref atom node with the given label and place the selection immediately
+ * AFTER it, so typing continues the main text rather than landing before the superscript
+ * marker. Shared by both places that navigate from a definition back to its reference: the
+ * footnote_def pill's click handler (below) and footnoteClickPlugin's safety net for clicks on
+ * raw `[^N]:` text before the remark plugin has converted it to a footnote_def atom.
+ *
+ * Uses `nodePos + node.nodeSize` (not just `nodePos`, which is the position BEFORE the atom
+ * and already a legal text position — `Selection.near` would stop right there) to compute the
+ * position after the ref.
+ *
+ * Returns true if a matching ref was found and the selection was set.
+ */
+export function selectFootnoteReference(view: EditorView, label: string): boolean {
+  let refEnd = -1;
+  view.state.doc.descendants((node: Node, nodePos: number) => {
+    if (refEnd !== -1) return false;
+    if (node.type.name === 'footnote_ref' && node.attrs.label === label) {
+      refEnd = nodePos + node.nodeSize;
+      return false;
+    }
+  });
+
+  if (refEnd === -1) return false;
+
+  const sel = Selection.near(view.state.doc.resolve(refEnd));
+  view.dispatch(view.state.tr.setSelection(sel).scrollIntoView());
+
+  // The selection is already committed above. Scroll/focus are best-effort polish only — a
+  // failure here (e.g. coordsAtPos throwing) must never undo the navigation or change this
+  // function's return value: footnoteClickPlugin's raw-text safety net does
+  // `return selectFootnoteReference(view, label)`, and a `false` there falls through to
+  // ProseMirror's default click handling, which would silently re-place the caret at the
+  // clicked definition text.
+  try {
+    const coords = view.coordsAtPos(refEnd);
+    if (coords) {
+      window.scrollTo({
+        top: Math.max(0, coords.top + window.scrollY - 100),
+        behavior: 'smooth',
+      });
+    }
+    view.focus();
+  } catch {
+    /* scroll/focus failed — selection above already succeeded */
+  }
+
+  return true;
+}
+
 // NodeView for footnote definition pill with click-to-navigate-back
 const footnoteDefNodeView = $view(footnoteDefNode, (_ctx: Ctx) => {
   return (node, _view, _getPos) => {
@@ -311,32 +362,7 @@ const footnoteDefNodeView = $view(footnoteDefNode, (_ctx: Ctx) => {
       const view = editorInstance.ctx.get(editorViewCtx);
       const label = attrs.label;
 
-      // Find first footnote_ref node with matching label
-      let refPos = -1;
-      view.state.doc.descendants((node: Node, nodePos: number) => {
-        if (refPos !== -1) return false;
-        if (node.type.name === 'footnote_ref' && node.attrs.label === label) {
-          refPos = nodePos;
-          return false;
-        }
-      });
-
-      if (refPos !== -1) {
-        try {
-          const sel = Selection.near(view.state.doc.resolve(refPos));
-          view.dispatch(view.state.tr.setSelection(sel).scrollIntoView());
-          const coords = view.coordsAtPos(refPos);
-          if (coords) {
-            window.scrollTo({
-              top: Math.max(0, coords.top + window.scrollY - 100),
-              behavior: 'smooth',
-            });
-          }
-          view.focus();
-        } catch {
-          /* scroll failed */
-        }
-      }
+      selectFootnoteReference(view, label);
     });
 
     // Initial render
@@ -954,34 +980,7 @@ const footnoteClickPlugin = $prose((_ctx) => {
         const label = defMatch[1];
 
         // Navigate to the corresponding footnote_ref
-        let refPos = -1;
-        view.state.doc.descendants((node: Node, nodePos: number) => {
-          if (refPos !== -1) return false;
-          if (node.type.name === 'footnote_ref' && node.attrs.label === label) {
-            refPos = nodePos;
-            return false;
-          }
-        });
-
-        if (refPos !== -1) {
-          try {
-            const sel = Selection.near(view.state.doc.resolve(refPos));
-            view.dispatch(view.state.tr.setSelection(sel).scrollIntoView());
-            const coords = view.coordsAtPos(refPos);
-            if (coords) {
-              window.scrollTo({
-                top: Math.max(0, coords.top + window.scrollY - 100),
-                behavior: 'smooth',
-              });
-            }
-            view.focus();
-          } catch {
-            /* navigation failed */
-          }
-          return true;
-        }
-
-        return false;
+        return selectFootnoteReference(view, label);
       },
     },
   });
