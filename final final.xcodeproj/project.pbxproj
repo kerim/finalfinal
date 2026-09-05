@@ -211,6 +211,7 @@
 		6FED2130C6DF83776C6BE50B /* SnapshotBackupFlushTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A85601DB766C7F746FEE509A /* SnapshotBackupFlushTests.swift */; };
 		7042D9A13DBB273E726F8D1A /* BibliographySyncTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 550103BE52E55711AC28DA7D /* BibliographySyncTests.swift */; };
 		71CD51886DBBD5690DD34F8E /* EditorTestHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = E73273BD2D10F6D5912C9778 /* EditorTestHelper.swift */; };
+		71D86B7A64D61D6C68E86C7F /* ContentView+EditorPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2DD3C85888561DD4D3991151 /* ContentView+EditorPresentation.swift */; };
 		72BC27601E99F37F134C760E /* AnnotationSyncService+Markdown.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4C0F17548A3E883FD14975A0 /* AnnotationSyncService+Markdown.swift */; };
 		7399B661D4788F2227D1EC00 /* TableBridgeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E8CFBF7223E370C384997AA /* TableBridgeTests.swift */; };
 		739AC533442492DFA6D71864 /* URLWrapArchiveSuppressionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 56269C760549354B1E6DF811 /* URLWrapArchiveSuppressionTests.swift */; };
@@ -555,6 +556,7 @@
 		2C25DB913B058AA1C927E6E8 /* SidebarRerenderCountE2ETests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarRerenderCountE2ETests.swift; sourceTree = "<group>"; };
 		2C35368F8803D097BE31BCE4 /* WindowFrameCoalescerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowFrameCoalescerTests.swift; sourceTree = "<group>"; };
 		2DCF8B3C43019E1484AD2A3F /* BibliographyOpeningSelectorCrossCheckTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BibliographyOpeningSelectorCrossCheckTests.swift; sourceTree = "<group>"; };
+		2DD3C85888561DD4D3991151 /* ContentView+EditorPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ContentView+EditorPresentation.swift"; sourceTree = "<group>"; };
 		2DF03FED8A179BEDA3520FDF /* HeadingZoomClickRouter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HeadingZoomClickRouter.swift; sourceTree = "<group>"; };
 		2E679B9B7CE23B991E60A9CE /* DocumentManagerOpenTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocumentManagerOpenTests.swift; sourceTree = "<group>"; };
 		2E8CFBF7223E370C384997AA /* TableBridgeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableBridgeTests.swift; sourceTree = "<group>"; };
@@ -1084,13 +1086,6 @@
 			path = Utilities;
 			sourceTree = "<group>";
 		};
-		80CD88D54E627545AA439A04 /* .cc-writes */ = {
-			isa = PBXGroup;
-			children = (
-			);
-			path = ".cc-writes";
-			sourceTree = "<group>";
-		};
 		863FDB9EBD7F0987C81E6ECA /* Models */ = {
 			isa = PBXGroup;
 			children = (
@@ -1233,6 +1228,7 @@
 			children = (
 				02E925EEE027AE829C229AAA /* ContentView.swift */,
 				E856C7AE9A5FD0C74735140C /* ContentView+ContentRebuilding.swift */,
+				2DD3C85888561DD4D3991151 /* ContentView+EditorPresentation.swift */,
 				97EBF329386AD7C3A261ACC6 /* ContentView+HierarchyEnforcement.swift */,
 				06767F5DC4B8184E64E97C63 /* ContentView+NotificationHandlers.swift */,
 				07DB82121B58A51D0946666A /* ContentView+ProjectLifecycle.swift */,
@@ -1296,14 +1292,6 @@
 			path = Resources;
 			sourceTree = "<group>";
 		};
-		A13B4553281BE902547B8054 /* .claude */ = {
-			isa = PBXGroup;
-			children = (
-				80CD88D54E627545AA439A04 /* .cc-writes */,
-			);
-			path = .claude;
-			sourceTree = "<group>";
-		};
 		A84CEC80803D2C7F6A6D2A7C /* .ruff_cache */ = {
 			isa = PBXGroup;
 			children = (
@@ -1335,7 +1323,6 @@
 				DA881EDD8E51F372A2C980A5 /* UITestHelpers.swift */,
 				547B735C32F85280F996A93B /* UnifiedUndoE2ETests.swift */,
 				1B92CF36856E2AA322B31A8E /* UnifiedUndoE2ETests+Helpers.swift */,
-				A13B4553281BE902547B8054 /* .claude */,
 				A84CEC80803D2C7F6A6D2A7C /* .ruff_cache */,
 			);
 			path = "final finalUITests";
@@ -2094,6 +2081,7 @@
 				0127F846C37CAFAFA0455C60 /* CodeMirrorEditor.swift in Sources */,
 				790667B521454C125B0FE74B /* ColorScheme.swift in Sources */,
 				5AFFFF64449FC6C7058004E5 /* ContentView+ContentRebuilding.swift in Sources */,
+				71D86B7A64D61D6C68E86C7F /* ContentView+EditorPresentation.swift in Sources */,
 				49DBFD0515384750FE283806 /* ContentView+HierarchyEnforcement.swift in Sources */,
 				EE744BD3CC91362D526CB4D5 /* ContentView+NotificationHandlers.swift in Sources */,
 				062B41D5D62F9F40057C254B /* ContentView+ProjectLifecycle.swift in Sources */,

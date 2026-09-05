@@ -103,7 +103,7 @@ extension MilkdownEditor.Coordinator {
     /// and EditorPreloader's `.ready` state signal page load, which happens well before
     /// `initEditor()`'s awaited `Editor.make().create()` resolves -- see main.ts. Firing
     /// `onWebViewReady` (and therefore the first `setContentWithBlockIds` push, see
-    /// ContentView+ContentRebuilding.swift) before that resolves is exactly what let a
+    /// ContentView+EditorPresentation.swift) before that resolves is exactly what let a
     /// freshly-opened document's content get stashed and then silently dropped by a dead
     /// replay guard (t-18576cf7's root cause).
     ///
@@ -262,7 +262,7 @@ extension MilkdownEditor.Coordinator {
 
         // Skip content here whenever the editor isn't mounted yet OR isResettingContent is
         // true (onWebViewReady is already mid-push via setContentWithBlockIds() -- see that
-        // closure in ContentView+ContentRebuilding.swift, which includes image metadata like
+        // closure in ContentView+EditorPresentation.swift, which includes image metadata like
         // width/caption that initialize() would otherwise race).
         //
         // MF1: editorMounted must be checked DIRECTLY, not inferred from isResettingContent.
