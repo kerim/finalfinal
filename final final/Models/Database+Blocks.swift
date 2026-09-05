@@ -507,7 +507,7 @@ extension ProjectDatabase {
             //   reached only via BlockSyncService.applyChanges(), which is fed by
             //   the Milkdown webview's getBlockChanges() poll —
             //   BlockSyncService.configure(webView:) is wired up exclusively from
-            //   MilkdownEditor's onWebViewReady (ContentView+EditorPresentation.swift),
+            //   MilkdownEditor's onWebViewReady (ContentView+ContentRebuilding.swift),
             //   never from CodeMirrorEditor's. Source Mode content instead flows
             //   through flushContentToDatabase() → BlockParser.parse() (a full
             //   document reparse using the same pre-existing detector referenced

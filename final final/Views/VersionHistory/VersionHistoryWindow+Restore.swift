@@ -26,7 +26,7 @@ extension VersionHistoryWindow {
     // MARK: - Focus Restoration (Phase C audit)
 
     /// Deferred one run-loop turn so the window's own close transition has settled first
-    /// (mirrors `ContentView+EditorPresentation.restoreEditorFocus`'s retry pattern for the
+    /// (mirrors `ContentView+ContentRebuilding.restoreEditorFocus`'s retry pattern for the
     /// same class of timing reason), then restores both focus halves to the main editor's
     /// WebView -- called from `.onDisappear` (`VersionHistoryWindow.swift`), the one choke
     /// point every dismissal mechanism (buttons, post-restore auto-close, standard titlebar
