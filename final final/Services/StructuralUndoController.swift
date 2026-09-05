@@ -238,9 +238,20 @@ final class StructuralUndoController {
         // Step 1: zoom out first if zoomed (autoZoomOut policy only); enter non-idle
         // contentState (bumps contentGeneration, gating the 2s poll); cancel pending async
         // insertions.
+        //
+        // No follow-up pushBlockIds() here (t-359bdd36): zoomOut()'s own
+        // setContentWithBlockIds call (EditorViewState+Zoom.swift) already pushes the full,
+        // post-flush block-ID mapping for the restored document -- an unranged pushBlockIds()
+        // right after it re-does that exact full-document work a second time via another
+        // webView.evaluateJavaScript round trip. Same redundant pattern (and same fix) as
+        // performUserZoomOut's zoom-out tail, see that function's doc comment in
+        // ContentView+NotificationHandlers.swift. Mirrors performUndo/performRedo's own
+        // unconditional zoom-out (below, no follow-up push either) -- those are a different
+        // case (a full DB snapshot restore mints fresh block ids afterward, which
+        // settleAfterDBRestore's own pushBlockIds() legitimately pushes), but neither needs a
+        // push immediately after zoomOut() itself.
         if case .autoZoomOut = zoomPolicy, editorState.zoomedSectionId != nil {
             await editorState.zoomOut()
-            await blockSyncService?.pushBlockIds()
         }
         editorState.contentState = .structuralUndo
         await evalVoid("window.FinalFinal.cancelPendingInsertions?.()")
