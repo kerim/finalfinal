@@ -413,7 +413,6 @@ extension MilkdownEditor.Coordinator {
         // so it's guaranteed to be fresh (unlike contentState which may be stale due to
         // SwiftUI's reactive notification timing).
         let shouldScrollToStart = isZoomingContent
-        let optionsArg = shouldScrollToStart ? ", {scrollToStart: true}" : ""
 
         // Hide WKWebView at compositor level during zoom transitions
         // This prevents visible scroll animation by hiding at the CALayer level
@@ -422,16 +421,42 @@ extension MilkdownEditor.Coordinator {
         // token-based cloak system (beginCloak/endCloak, MilkdownCoordinator+
         // MessageHandlers.swift) so a project reset landing mid-zoom can't have its own
         // release prematurely reveal a WebView zoom is still relying on staying hidden.
+        //
+        // paintcomplete-zoom-reason: the minted token is threaded through to the JS call as
+        // `cloakToken` below, and echoed back verbatim in that call's `paintComplete` post
+        // (`reason: 'zoom', token: <this>`, web/milkdown/src/api-content.ts's `setContent`) --
+        // the same explicit-token pattern `beginProjectResetCloak()` already uses. This closes
+        // the reason-only ambiguity a prior version of this comment warned about: minting a
+        // `.zoom` token here used to risk having ITS release consumed by an unrelated,
+        // reason-less block-sync paint (`BlockSyncService.setContentWithBlockIds`'s 9 call
+        // sites, none of which carry a `reason` or `token` and so can never resolve to this
+        // token now that resolution requires one or the other -- see `resolveCloakToken`).
+        var optionParts: [String] = []
+        // Hoisted out of the `if shouldScrollToStart` block below (must-fix #3, review round
+        // 3) so it's still in scope in the evaluateJavaScript completion handler further
+        // down -- needed there to release this exact cloak if the JS call itself throws.
+        var zoomCloakToken: Int?
         if shouldScrollToStart {
-            beginCloak(.zoom)
+            let token = beginCloak(.zoom)
+            zoomCloakToken = token
+            optionParts.append("scrollToStart: true")
+            optionParts.append("cloakToken: \(token)")
         }
+        let optionsArg = optionParts.isEmpty ? "" : ", {\(optionParts.joined(separator: ", "))}"
 
         // Set content and then read it back to confirm (acknowledgement pattern)
         // This ensures WebView has processed the content before we continue
         webView.evaluateJavaScript("""
             window.FinalFinal.setContent(\(jsonString)\(optionsArg));
             window.FinalFinal.getContent();
-        """) { [weak self] _, _ in
+        """) { [weak self] _, error in
+            // If the evaluateJavaScript call itself threw -- e.g. window.FinalFinal is gone
+            // because a project reset landed mid-zoom -- no `paintComplete` will ever arrive
+            // to release this cloak, and it would otherwise sit out the full ~2.5s fallback
+            // with the editor invisible the whole time (must-fix #3, review round 3).
+            if shouldScrollToStart, error != nil, let zoomCloakToken {
+                self?.endCloak(zoomCloakToken)
+            }
             // For zoom transitions, DON'T show WebView here - wait for paintComplete message
             // The JS double-RAF pattern will signal when paint is complete
             if !shouldScrollToStart {

@@ -76,7 +76,7 @@ export interface CAYWCallbackData {
 declare global {
   interface Window {
     FinalFinal: {
-      setContent: (markdown: string, options?: { scrollToStart?: boolean }) => void;
+      setContent: (markdown: string, options?: { scrollToStart?: boolean; cloakToken?: number }) => void;
       getContent: () => string;
       setFocusMode: (enabled: boolean) => void;
       getStats: () => { words: number; characters: number };

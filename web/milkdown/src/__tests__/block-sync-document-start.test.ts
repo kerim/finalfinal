@@ -334,9 +334,11 @@ describe('setContentWithBlockIds signals paintComplete once the redraw settles (
     }
 
     expect(postMessage).toHaveBeenCalledTimes(1);
-    // No `reason`/`token` key -- Swift's resolveCloakToken treats a missing `reason` as the
-    // legacy `.zoom` case, and onContentAcknowledged's gate (handlePaintComplete) requires
-    // exactly that to resume waitForContentAcknowledgement() for a zoom transition.
+    // No `reason`/`token` key -- this is an ordinary, uncloaked setContentWithBlockIds push
+    // (paintcomplete-zoom-reason): Swift's resolveCloakToken correctly resolves a reason-less
+    // body to no cloak at all, but onContentAcknowledged's gate (isZoomAcknowledgement,
+    // handlePaintComplete) still treats a missing `reason` as the zoom/default acknowledgement
+    // case, resuming waitForContentAcknowledgement() for this transition.
     const body = postMessage.mock.calls[0][0];
     expect(body.reason).toBeUndefined();
     expect(body.token).toBeUndefined();

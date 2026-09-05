@@ -280,13 +280,15 @@ function syncFigureBlockIdAttrs(view: EditorView): void {
  * fallback before continuing (e.g. before `scrollToSection` could fire on zoom-out), even
  * though the visible repaint itself finished within a couple of frames.
  *
- * `extra` is merged into the postMessage body. Zoom's callers (this file's two
- * `setContent`/`setContentWithBlockIds` zoom paths, plus CodeMirror's own separate
- * implementation) pass nothing (`{}`) -- their body must stay exactly
- * `{scrollHeight, timestamp}` with NO `reason` key, because Swift's `resolveCloakToken`
- * treats a missing/unrecognized `reason` as the legacy `.zoom` case (that behavior predates
- * this cloak-token system and must not change). Newer, non-zoom callers pass
- * `{ reason: 'projectReset', token }` etc.
+ * `extra` is merged into the postMessage body. `setContentWithBlockIds()`'s zoom paths (via
+ * BlockSyncService on the Swift side) and CodeMirror's own separate implementation pass
+ * nothing (`{}`) -- their body stays exactly `{scrollHeight, timestamp}` with no `reason` or
+ * `token` key, and Swift's `resolveCloakToken` (MilkdownCoordinator+MessageHandlers.swift)
+ * correctly resolves that to `nil`: these are ordinary paints with no cloak of their own to
+ * release. `setContent()`'s own zoom branch is the one caller in THIS file that DOES pass a
+ * payload -- `{ reason: 'zoom', token }` (paintcomplete-zoom-reason), echoing back the exact
+ * token its own `beginCloak(.zoom)` call minted -- the same explicit-token pattern
+ * `resetForProjectSwitch()` uses below for `{ reason: 'projectReset', token }`.
  *
  * Scroll-to-top-on-citation-insert regression (2026-09-04): the micro-scroll nudge below
  * used to be unconditional (`scrollTo(top:1)` -> `scrollTo(top:0)` -> `dom.scrollTop = 0`).
@@ -478,8 +480,19 @@ function deferredSnapshotAndUnpause(detectPausedEdits = false, baseline?: Map<st
   });
 }
 
-export function setContent(markdown: string, options?: { scrollToStart?: boolean }): void {
+export function setContent(markdown: string, options?: { scrollToStart?: boolean; cloakToken?: number }): void {
   syncLog('API:setContent', `entry len=${markdown.length} scrollToStart=${options?.scrollToStart ?? false}`);
+
+  // paintcomplete-zoom-reason: merged into whichever exit below actually fires, mirroring
+  // resetForProjectSwitch()'s `resetExtra` pattern (below) -- pre-mount stash, empty-content
+  // normalization, no-op (content unchanged), or the real scrollToStart repaint all count as
+  // "the paint this call was responsible for" from Swift's side, once a token is present.
+  // `cloakToken` is only ever set by Swift's own `setContent()` zoom branch
+  // (MilkdownCoordinator+Content.swift), which mints it via `beginCloak(.zoom)` exactly when
+  // it also passes `scrollToStart: true` -- so a caller with no `cloakToken` (every other
+  // caller of this function) sees no behavior change at all: no paint is posted from the
+  // early-return paths below, exactly as before this fix.
+  const zoomExtra = options?.cloakToken != null ? { reason: 'zoom', token: options.cloakToken } : undefined;
 
   // NOTE: Do NOT clear zoom mode here. setContent() is called from updateNSView
   // during zoom, and clearing zoom mode causes temp IDs to be generated for mini-Notes
@@ -496,6 +509,10 @@ export function setContent(markdown: string, options?: { scrollToStart?: boolean
     // this newer plain push (replayPendingPreMountContent below).
     setPendingBlockContent(null);
     setCurrentContent(markdown);
+    // A zoom into a not-yet-mounted editor has no `view.dom` to repaint at all -- release
+    // Swift's cloak directly (no RAF/scroll dance) rather than leaving it to the 2.5s
+    // fallback. See signalPaintCompleteDirect's doc comment.
+    if (zoomExtra) signalPaintCompleteDirect(zoomExtra);
     return;
   }
 
@@ -514,6 +531,9 @@ export function setContent(markdown: string, options?: { scrollToStart?: boolean
       // Check if already a valid empty paragraph (optimization: skip if already correct)
       if (doc.childCount === 1 && doc.firstChild?.type.name === 'paragraph' && doc.firstChild?.textContent === '') {
         setCurrentContent(markdown);
+        // No transaction was dispatched -- nothing to repaint, same as the "unchanged
+        // content" no-op branch below. Direct post (paintcomplete-zoom-reason).
+        if (zoomExtra) signalPaintCompleteDirect(zoomExtra);
         return;
       }
 
@@ -530,12 +550,24 @@ export function setContent(markdown: string, options?: { scrollToStart?: boolean
         setIsSettingContent(false);
         deferredSnapshotAndUnpause();
       }
+      // A zoom into an empty section DID dispatch a real document-replacing transaction
+      // above (must-fix #2, review round 3) -- use the RAF'd signalPaintComplete, the same
+      // way resetForProjectSwitch()'s success path does for its own empty-doc replace, so
+      // the compositor genuinely settles before Swift is told to reveal. `view.dom` is live
+      // here (bound at the top of this action) -- unlike the genuine failure paths
+      // elsewhere in this function (pre-mount stash, parser error/null below), which have
+      // no live document change to repaint and correctly use signalPaintCompleteDirect
+      // instead.
+      if (zoomExtra) signalPaintComplete(view.dom, zoomExtra);
     });
     return;
   }
 
   // For non-empty content, skip if unchanged
   if (getCurrentContent() === markdown) {
+    // A no-op zoom (already showing this section's content) never reaches the scrollToStart
+    // repaint below -- must still release Swift's cloak (paintcomplete-zoom-reason).
+    if (zoomExtra) signalPaintCompleteDirect(zoomExtra);
     return;
   }
 
@@ -552,10 +584,16 @@ export function setContent(markdown: string, options?: { scrollToStart?: boolean
       } catch (e) {
         console.error('[Milkdown] Parser error:', e instanceof Error ? e.message : e);
         console.error('[Milkdown] Stack:', e instanceof Error ? e.stack : 'N/A');
+        // A failed parse has no new document to repaint -- release Swift's cloak directly
+        // rather than leaving it to sit out the full 2.5s fallback (must-fix #1,
+        // paintcomplete-zoom-reason review round 3).
+        if (zoomExtra) signalPaintCompleteDirect(zoomExtra);
         return;
       }
       if (!doc) {
         console.error('[Milkdown] Parser returned null/undefined doc');
+        // Same reasoning as the parser-error catch just above -- no document to repaint.
+        if (zoomExtra) signalPaintCompleteDirect(zoomExtra);
         return;
       }
 
@@ -637,8 +675,12 @@ export function setContent(markdown: string, options?: { scrollToStart?: boolean
         // Wait for actual paint to complete using double RAF, then signal Swift -- see
         // signalPaintComplete's doc comment for the shared double-RAF + micro-scroll +
         // paintComplete-post sequence (also used by resetForProjectSwitch() and
-        // initEditor()'s post-mount settle, main.ts).
-        signalPaintComplete(view.dom);
+        // initEditor()'s post-mount settle, main.ts). `zoomExtra` (paintcomplete-zoom-reason)
+        // echoes Swift's own `.zoom` cloak token back so `resolveCloakToken`
+        // (MilkdownCoordinator+MessageHandlers.swift) releases exactly the cloak THIS call
+        // began, not whatever `.zoom` cloak happens to be outstanding; absent when Swift
+        // passed no `cloakToken`, preserving today's reason-less `{}` body unchanged.
+        signalPaintComplete(view.dom, zoomExtra ?? {});
       }
     });
     setCurrentContent(markdown);
