@@ -13,6 +13,7 @@ import {
   confirmBlockIds as confirmBlockIdsPlugin,
   getAllBlockIds,
   getBlockIdAtPos,
+  getBlockTypeAtPos,
   resetBlockIdState,
   SYNC_DIAG_DETAIL,
   setBlockIdsForTopLevel,
@@ -193,6 +194,71 @@ function redecorateBlockIds(view: EditorView): void {
   } catch (e) {
     console.error('[Milkdown] redecorateBlockIds dispatch failed:', e);
   }
+}
+
+/**
+ * Correct a stale `blockId` NODE ATTR on top-level figure nodes so it matches
+ * block-id-plugin's authoritative position map (`currentBlockIds`, read here via
+ * `getBlockIdAtPos`).
+ *
+ * Why this exists: `FigureNodeView.resolveBlockId()` (image-plugin.ts) now prefers a
+ * real (non-temp) map id over the node attr — see that function's doc comment — but the
+ * two content-push call sites here (`applyBlocks`, `setContentWithBlockIds`) still write
+ * Swift-supplied ids straight onto figure attrs via their own imageMeta/figureBlocks loop,
+ * ahead of the map catching up. This corrects the attr to match the map right after that
+ * loop, so the DOM (`data-block-id`) and the attr stay consistent with what
+ * `resolveBlockId()` will actually resolve to.
+ *
+ * Walks the doc at TOP LEVEL ONLY (`doc.forEach`), matching how `currentBlockIds` and
+ * `assignBlockIds`/`setBlockIdsForTopLevel` are keyed (by top-level offset) — deliberately NOT
+ * `doc.descendants()`, which would also visit a figure nested inside a blockquote or list item.
+ * Those have no entry in the top-level map at all (`getBlockIdAtPos` returns undefined for
+ * them regardless of their real nested identity), so touching them here would be operating on
+ * data this map was never designed to describe.
+ *
+ * Only called from the two content-push sites (`applyBlocks`, `setContentWithBlockIds`),
+ * both already inside a `setIsSettingContent`/`setSyncPaused` window, after their own
+ * imageMeta/figureBlocks loop, before `pausedPushBaseline` is captured. NOT called from the
+ * two poll-driven sites (`confirmBlockIdsApi`, `syncBlockIds`) — dispatching a doc-mutating
+ * correction from those outside the settle/pause machinery caused a caption-clobber race, a
+ * spurious content push, and DELETE+INSERT churn (round 1). This function never clears an
+ * attr — absence of a map entry isn't evidence of staleness, just "not decided yet here".
+ *
+ * Type-gated FIRST: if the map's type record at this offset disagrees with 'figure', skip
+ * entirely — same cross-type-theft class `assignBlockIds` itself guards against. Both call
+ * sites here run `clearBlockIds()` immediately before this function, so within a single call
+ * the map can't actually hold a stale type at a live offset — this isn't guarding against a
+ * live mechanism for this function specifically. It is kept anyway because the underlying
+ * hazard the gate exists for is real elsewhere: `resolveBlockId()` (image-plugin.ts) compares
+ * this same offset-keyed map against a NodeView's `getPos()`, which can be captured once and
+ * held across a doc-changing edit (see its 3-second retry timers) — by the time it is read
+ * again, the map has moved on and the offset may now belong to a different block. The type
+ * gate is what stops that stale pairing from donating an unrelated block's id.
+ *
+ * Dispatches nothing when no figure actually needs correcting — the common case — which also
+ * means a no-op pass never touches undo history and never gives block-sync's change-detection
+ * anything to see. That last point holds even when a real correction DOES dispatch: `blockId`
+ * is not part of `toMarkdown` (see the `figureNode` schema in image-plugin.ts), so block-sync's
+ * markdown/text-based diff can never observe a pure blockId-attr change as an update or insert.
+ */
+function syncFigureBlockIdAttrs(view: EditorView): void {
+  const { doc } = view.state;
+  let tr: Transaction | null = null;
+  doc.forEach((node, pos) => {
+    if (node.type.name !== 'figure') return;
+    if (getBlockTypeAtPos(pos) !== 'figure') return; // map disagrees on type — don't touch
+    const mapId = getBlockIdAtPos(pos) ?? '';
+    if (mapId === '') return; // no correction — absence isn't staleness
+    const attrId = node.attrs.blockId || '';
+    if (mapId === attrId) return; // already in sync — nothing to correct
+    // A not-yet-confirmed temp id must never be stamped into the attr, even when the
+    // attr is currently empty -- matches resolveBlockId's own ranking, which never
+    // trusts a temp map id either.
+    if (mapId.startsWith('temp-')) return;
+    tr = (tr ?? view.state.tr).setNodeMarkup(pos, undefined, { ...node.attrs, blockId: mapId });
+  });
+  if (!tr) return;
+  view.dispatch((tr as Transaction).setMeta('addToHistory', false));
 }
 
 /**
@@ -824,6 +890,11 @@ export function applyBlocks(blocks: Block[]): void {
         });
         if (metaTr.steps.length > 0) view.dispatch(metaTr.setMeta('addToHistory', false));
       }
+
+      // Correct any figure whose attr still disagrees with the map after the loop above —
+      // e.g. a figure the loop above skipped entirely (figureIdx ran out before this offset).
+      // See syncFigureBlockIdAttrs's doc comment.
+      syncFigureBlockIdAttrs(view);
     } finally {
       setIsSettingContent(false);
       // Delay snapshot + unpause to RAF so normalization transactions are absorbed
@@ -1256,6 +1327,12 @@ export function setContentWithBlockIds(
         });
         if (metaTr.steps.length > 0) view.dispatch(metaTr.setMeta('addToHistory', false));
       }
+
+      // Correct any figure whose attr still disagrees with the map after the loop above.
+      // See syncFigureBlockIdAttrs's doc comment. MUST run before pausedPushBaseline is
+      // captured below — dispatching this correction AFTER that snapshot would register as a
+      // paused user edit and confuse block-sync's detectPausedEdits comparison.
+      syncFigureBlockIdAttrs(view);
 
       // Capture the "just pushed" baseline LAST, after every transaction in this
       // paused callback has settled, so it reflects the fully-assembled restored
