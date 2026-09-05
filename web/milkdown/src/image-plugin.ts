@@ -16,7 +16,7 @@ import {
   isRecognizedAttrBlock,
   unescapeOnce,
 } from '../../shared/image-caption-attrs';
-import { getBlockIdAtPos } from './block-id-plugin';
+import { getBlockIdAtPos, getBlockTypeAtPos } from './block-id-plugin';
 import { isSourceModeEnabled } from './source-mode-plugin';
 import { syncLog } from './sync-debug';
 
@@ -330,16 +330,25 @@ class FigureNodeView implements ProsemirrorNodeView {
 
   /** Resolve the block ID for this figure node.
    * The node attr may be empty ('') when first inserted — BlockSyncService
-   * assigns the real ID asynchronously.  Fall back to the block-id-plugin
-   * position map which always has the confirmed ID after the first poll. */
+   * assigns the real ID asynchronously. The type gate below guards against a
+   * stale NodeView position, not a "withheld" map entry (no such mechanism
+   * exists here): `getPos()` is captured once and can be held across a
+   * doc-changing edit (see the 3-second retry timers in the caption/width/alt
+   * handlers below), while `currentBlockIds`/`currentBlockTypes` are keyed by
+   * live document offsets and move on as soon as the doc changes. By the time
+   * a held position is read again, the map entry at that offset may belong to
+   * a different block entirely — checking the type first stops that unrelated
+   * block's id from being handed to this figure. */
   private resolveBlockId(): string {
-    const id = this.node.attrs.blockId;
-    if (id) return id;
     const pos = this.getPos();
-    if (pos !== undefined) {
-      return getBlockIdAtPos(pos) || '';
-    }
-    return '';
+    const mapId = pos !== undefined ? getBlockIdAtPos(pos) : undefined;
+    const mapType = pos !== undefined ? getBlockTypeAtPos(pos) : undefined;
+    // A real (non-temp) map id outranks the node attr — the map is what every
+    // reassignment path updates; the attr is only written by content pushes.
+    // Gated on type to avoid preferring an unrelated block's id at a stale offset
+    // (see this function's doc comment above for why a held position can go stale).
+    if (mapType === 'figure' && mapId && !mapId.startsWith('temp-')) return mapId;
+    return this.node.attrs.blockId || (mapType === 'figure' ? mapId : '') || '';
   }
 
   private onResizeStart = (e: MouseEvent) => {
@@ -415,7 +424,7 @@ class FigureNodeView implements ProsemirrorNodeView {
         const currentPos = this.getPos();
         if (currentPos === undefined) return;
         const retryId = getBlockIdAtPos(currentPos);
-        if (retryId && !retryId.startsWith('temp-')) {
+        if (retryId && !retryId.startsWith('temp-') && getBlockTypeAtPos(currentPos) === 'figure') {
           window.webkit?.messageHandlers?.updateImageMeta?.postMessage({
             blockId: retryId,
             width: retryWidth,
@@ -453,7 +462,7 @@ class FigureNodeView implements ProsemirrorNodeView {
         const currentPos = this.getPos();
         if (currentPos === undefined) return;
         const retryId = getBlockIdAtPos(currentPos);
-        if (retryId && !retryId.startsWith('temp-')) {
+        if (retryId && !retryId.startsWith('temp-') && getBlockTypeAtPos(currentPos) === 'figure') {
           window.webkit?.messageHandlers?.updateImageMeta?.postMessage({
             blockId: retryId,
             caption: retryCaption,
@@ -502,7 +511,7 @@ class FigureNodeView implements ProsemirrorNodeView {
         const currentPos = this.getPos();
         if (currentPos === undefined) return;
         const retryId = getBlockIdAtPos(currentPos);
-        if (retryId && !retryId.startsWith('temp-')) {
+        if (retryId && !retryId.startsWith('temp-') && getBlockTypeAtPos(currentPos) === 'figure') {
           window.webkit?.messageHandlers?.updateImageMeta?.postMessage({
             blockId: retryId,
             alt: retryAlt,
