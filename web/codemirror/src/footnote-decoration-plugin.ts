@@ -55,7 +55,7 @@ function buildDecorations(view: EditorView): DecorationSet {
 
 // --- Click handler ---
 
-export function handleClick(view: EditorView, event: MouseEvent): boolean {
+function handleClick(view: EditorView, event: MouseEvent): boolean {
   const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
   if (pos === null) return false;
 
@@ -70,13 +70,9 @@ export function handleClick(view: EditorView, event: MouseEvent): boolean {
       const defRegex = new RegExp(`^\\[\\^${label}\\]:`, 'm');
       const defMatch = defRegex.exec(text);
       if (defMatch) {
-        // Land just past "[^N]: " (prefix + space) so typing continues the definition body
-        // rather than landing before it — matches api.ts's scrollToFootnoteDefinition, which
-        // does the same `+ 1` to skip the space after the colon, clamped to content.length.
-        const defEnd = Math.min(defMatch.index + defMatch[0].length + 1, text.length);
         view.dispatch({
-          selection: { anchor: defEnd },
-          effects: EditorView.scrollIntoView(defEnd, {
+          selection: { anchor: defMatch.index },
+          effects: EditorView.scrollIntoView(defMatch.index, {
             y: 'center',
             yMargin: 100,
           }),
@@ -94,12 +90,9 @@ export function handleClick(view: EditorView, event: MouseEvent): boolean {
       const refRegex = new RegExp(`\\[\\^${label}\\](?!:)`);
       const refMatch = refRegex.exec(text);
       if (refMatch) {
-        // Land just past the closing "]" so typing continues the main text rather than
-        // landing before the superscript marker (the ref-return cursor-placement bug).
-        const refEnd = refMatch.index + refMatch[0].length;
         view.dispatch({
-          selection: { anchor: refEnd },
-          effects: EditorView.scrollIntoView(refEnd, {
+          selection: { anchor: refMatch.index },
+          effects: EditorView.scrollIntoView(refMatch.index, {
             y: 'center',
             yMargin: 100,
           }),

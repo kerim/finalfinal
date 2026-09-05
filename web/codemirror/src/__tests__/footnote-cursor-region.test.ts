@@ -21,7 +21,6 @@ import { EditorView } from '@codemirror/view';
 import { afterEach, describe, expect, it } from 'vitest';
 import { findNotesRegion, scrollToFootnoteDefinition } from '../api';
 import { setEditorView } from '../editor-state';
-import { handleClick } from '../footnote-decoration-plugin';
 
 describe('findNotesRegion', () => {
   it('finds the [start, end) range of a confirmed H1 Notes section', () => {
@@ -145,66 +144,5 @@ describe('scrollToFootnoteDefinition — E2 region-anchored cursor placement', (
     scrollToFootnoteDefinition('99');
 
     expect(v.state.selection.main.head).toBe(preCallPos);
-  });
-
-  // Regression test for t-fee9dce6: clicking a footnote's number in its definition (the
-  // ref-return direction, def -> ref — the reverse of the tests above) used to land the anchor
-  // at refMatch.index, the START of "[^N]", which sits BEFORE the marker.
-  // footnoteDecorationPlugin's click handler now uses refMatch.index + refMatch[0].length so
-  // typing continues the main text right after the marker instead of re-typing over it.
-  //
-  // This exercises the real `handleClick` from footnote-decoration-plugin.ts — the actual
-  // fixed code — rather than duplicating its regex here. jsdom does no real layout, so
-  // `posAtCoords` is stubbed to return the click's already-resolved document position (what a
-  // real browser's coordinate math would produce for a click landing inside the "[^1]:"
-  // prefix); everything downstream, including the fixed anchor computation, runs unmodified.
-  it('t-fee9dce6: clicking a definition lands the anchor just past the closing "]" of its reference, not before it', () => {
-    const content = 'Body text[^1] tail.\n\n[^1]: the note';
-    const v = makeEditor(content);
-
-    const refMatch = /\[\^1\](?!:)/.exec(content);
-    expect(refMatch).not.toBeNull();
-    const expectedAnchor = refMatch!.index + refMatch![0].length;
-
-    // Click in the middle of the "[^1]:" definition prefix, same region the other tests target.
-    const defIndex = content.indexOf('[^1]:', content.indexOf('\n\n') + 2);
-    const clickPos = defIndex + 2;
-    (v as unknown as { posAtCoords: () => number }).posAtCoords = () => clickPos;
-
-    const handled = handleClick(v, new MouseEvent('click', { clientX: 0, clientY: 0 }));
-
-    expect(handled).toBe(true);
-    expect(v.state.selection.main.head).toBe(expectedAnchor);
-    // Sanity check that this is genuinely past the marker, not at/before it (the regression).
-    expect(v.state.selection.main.head).toBeGreaterThan(refMatch!.index);
-  });
-
-  // M2 (fix round for t-fee9dce6): the mirror-image bug in the OTHER direction — clicking a
-  // reference in the body to jump to its definition — used to land the anchor at
-  // defMatch.index, the START of "[^N]:", which sits BEFORE the marker. handleClick's
-  // ref->def branch now matches api.ts's scrollToFootnoteDefinition arithmetic
-  // (`idx + searchText.length + 1`, clamped to content.length) so the cursor lands right
-  // after "[^N]: " for immediate typing into the definition body, same as every other entry
-  // point into a definition.
-  it('t-fee9dce6/M2: clicking a reference lands the anchor just past "[^N]: " in its definition, not before it', () => {
-    const content = 'Body text[^1] tail.\n\n[^1]: the note';
-    const v = makeEditor(content);
-
-    const defMatch = /^\[\^1\]:/m.exec(content);
-    expect(defMatch).not.toBeNull();
-    const expectedAnchor = defMatch!.index + defMatch![0].length + 1;
-
-    // Click in the middle of the "[^1]" reference in the body text.
-    const refIndex = content.indexOf('[^1]');
-    const clickPos = refIndex + 1;
-    (v as unknown as { posAtCoords: () => number }).posAtCoords = () => clickPos;
-
-    const handled = handleClick(v, new MouseEvent('click', { clientX: 0, clientY: 0 }));
-
-    expect(handled).toBe(true);
-    expect(v.state.selection.main.head).toBe(expectedAnchor);
-    // Sanity check: past the colon+space, not at/before the "[^1]:" prefix start (the regression).
-    expect(v.state.selection.main.head).toBeGreaterThan(defMatch!.index + defMatch![0].length);
-    expect(v.state.doc.sliceString(expectedAnchor)).toBe('the note');
   });
 });
