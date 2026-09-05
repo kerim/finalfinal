@@ -593,15 +593,11 @@ extension ContentView {
     /// (`performUserZoomIn`, just above) passes `pushBlockIds(for: editorState.zoomedBlockRange)`
     /// -- scoped to the small zoomed range, so the same redundancy there is cheap. Deleted here
     /// rather than scoped to a range, since `zoomOut()` always restores the ENTIRE document and
-    /// its own `setContentWithBlockIds` call already covers exactly that. `performUserZoomIn`
-    /// above is left untouched (zoom-in behavior/perf is explicitly out of scope for this
-    /// round). `zoomOut()`'s other caller family, StructuralUndoController's `.autoZoomOut`
-    /// step -- used only by the three Version-History restore actions (`restoreSectionReplace`,
-    /// `restoreEntireProject`, `restoreSectionAsDuplicate`); `deleteSections` and
-    /// `duplicateSections` are `.refuseIfZoomed` and never reach this step, and
-    /// `reorderAllBlocks` is `.allowWhileZoomed` and never auto-zooms out at all -- had this
-    /// same redundant follow-up `pushBlockIds()` call after its own `zoomOut()`. That has now
-    /// been fixed there too; see that call site's own comment in StructuralUndoController.swift.
+    /// its own `setContentWithBlockIds` call already covers exactly that. Left untouched:
+    /// `performUserZoomIn` above (zoom-in behavior/perf is explicitly out of scope for this
+    /// round) and every other `zoomOut()` caller (StructuralUndoController's auto-zoom-out
+    /// paths ahead of delete/duplicate/reorder), which are a different scenario, not this
+    /// user-facing zoom-out tail.
     @MainActor
     func performUserZoomOut(reason: String) {
         unifiedUndoService.invalidateAll(reason: reason)
