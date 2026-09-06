@@ -1,4 +1,4 @@
-// swiftlint:disable type_body_length
+// swiftlint:disable type_body_length file_length
 //
 //  OutlineSidebar.swift
 //  final final
@@ -305,7 +305,16 @@ struct OutlineSidebar: View {
     ) -> some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(spacing: 0) {
+                // Deliberately a plain VStack, not LazyVStack: the lazy container's
+                // prefetch path (LazyLayoutViewCache.signalPrefetch -> NSHostingView
+                // .requestUpdate(after:) -> setNeedsUpdateConstraints ->
+                // _postWindowNeedsUpdateConstraints) fires reentrantly inside the
+                // window's own layout pass and can throw in AppKit when scrolling
+                // reveals a not-yet-materialized row in an overflowing sidebar (bt
+                // t-cfb8d403). Outlines are at most a few hundred sections, so building
+                // every card up front is not a cost worth taking that crash for. See
+                // docs/lessons/swiftui-webkit/event-handling.md.
+                VStack(spacing: 0) {
                     ForEach(Array(visible.enumerated()), id: \.element.id) { index, section in
                         sectionCard(
                             section: section, index: index, visible: visible, levelInfos: levelInfos,
@@ -343,6 +352,7 @@ struct OutlineSidebar: View {
                             }
                         ))
                 }
+                .frame(maxWidth: .infinity)
             }
             .coordinateSpace(.named("sidebarScroll"))
             .onGeometryChange(for: CGFloat.self) { proxy in
@@ -542,8 +552,11 @@ struct OutlineSidebar: View {
         return 1  // Default level when not visible
     }
 
-    /// Fallback card height, used for any card `cardFrames` has no measurement for yet -- not just
-    /// before first layout, but for any card the LazyVStack hasn't materialized (off-screen rows).
+    /// Fallback card height, used for any card `cardFrames` has no measurement for yet --
+    /// i.e. before that card's first `.onGeometryChange` reports. With the plain `VStack`
+    /// (see `sectionsList`) every card is built up front, so this is a first-layout
+    /// fallback rather than a permanent off-screen-row fallback -- at first layout, and
+    /// briefly for any newly inserted section.
     static let estimatedCardHeight: CGFloat = 70
 
     static func cardHeight(measured: CGRect?) -> CGFloat {
@@ -680,6 +693,8 @@ struct OutlineSidebar: View {
     }
 }
 // swiftlint:enable type_body_length
+// file_length stays disabled (see the file header) -- it's a whole-file rule, so a scoped
+// enable here wouldn't cover the violation SwiftLint reports at the file's actual end.
 
 /// Leaf view for the sidebar's hover tooltip (bt t-ef411da3, sidebar re-render investigation).
 /// Extracted from `OutlineSidebar.sectionsList`'s `.overlay` closure so that the truncation check
