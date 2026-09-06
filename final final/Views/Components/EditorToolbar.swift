@@ -55,14 +55,22 @@ struct EditorToolbar: ToolbarContent {
                 Button {
                     NotificationCenter.default.post(name: .insertCitation, object: nil)
                 } label: {
-                    Label("Citation", systemImage: "text.book.closed")
+                    Label {
+                        Text("Cite")
+                    } icon: {
+                        Text("\u{275D}").font(.system(size: 16, weight: .medium))
+                    }
                 }
                 .help("Insert citation (⌘⇧K)")
 
                 Button {
                     NotificationCenter.default.post(name: .insertFootnote, object: nil)
                 } label: {
-                    Label("Footnote", systemImage: "text.append")
+                    Label {
+                        Text("Footnote")
+                    } icon: {
+                        Text("‡").font(.system(size: 16, weight: .medium))
+                    }
                 }
                 .help("Insert footnote (⌘⇧N)")
             }
@@ -96,14 +104,14 @@ struct EditorToolbar: ToolbarContent {
             NativeToolbarButton(
                 systemSymbolName: "sidebar.right",
                 accessibilityLabel: editorState.isAnnotationPanelVisible
-                    ? "Hide annotations panel"
-                    : "Show annotations panel"
+                    ? "Hide Annotations"
+                    : "Show Annotations"
             ) {
                 editorState.toggleAnnotationPanel()
             }
             .help(editorState.isAnnotationPanelVisible
-                  ? "Hide annotations panel (⌘])"
-                  : "Show annotations panel (⌘])")
+                  ? "Hide Annotations (⌘])"
+                  : "Show Annotations (⌘])")
         }
     }
 }

@@ -10,7 +10,6 @@ import SwiftUI
 /// Find and replace bar following Apple's design standards
 struct FindBarView: View {
     @Bindable var state: FindBarState
-    @Environment(ThemeManager.self) private var themeManager
     @FocusState private var isSearchFieldFocused: Bool
 
     var body: some View {
@@ -70,7 +69,7 @@ struct FindBarView: View {
                         Image(systemName: "chevron.up")
                             .font(.system(size: 12, weight: .medium))
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.borderless)
                     .disabled(state.searchQuery.isEmpty)
                     .keyboardShortcut("g", modifiers: [.command, .shift])
                     .help("Find Previous (⇧⌘G)")
@@ -81,7 +80,7 @@ struct FindBarView: View {
                         Image(systemName: "chevron.down")
                             .font(.system(size: 12, weight: .medium))
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.borderless)
                     .disabled(state.searchQuery.isEmpty)
                     .keyboardShortcut("g", modifiers: .command)
                     .help("Find Next (⌘G)")
@@ -95,10 +94,10 @@ struct FindBarView: View {
                         state.showReplace.toggle()
                     }
                 } label: {
-                    Image(systemName: state.showReplace ? "chevron.down" : "chevron.right")
+                    Image(systemName: state.showReplace ? "chevron.up.square" : "chevron.down.square")
                         .font(.system(size: 14))
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.borderless)
                 .help(state.showReplace ? "Hide Replace" : "Show Replace (⌘H)")
 
                 // Options menu
@@ -127,7 +126,7 @@ struct FindBarView: View {
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(.secondary)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.borderless)
                 .keyboardShortcut(.escape, modifiers: [])
                 .help("Close (Esc)")
             }
@@ -159,16 +158,14 @@ struct FindBarView: View {
                     Button("Replace") {
                         state.replaceCurrent()
                     }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(state.searchQuery.isEmpty ? .secondary : themeManager.currentTheme.accentColor)
+                    .buttonStyle(.borderless)
                     .disabled(state.searchQuery.isEmpty)
                     .help("Replace current match")
 
                     Button("All") {
                         state.replaceAll()
                     }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(state.searchQuery.isEmpty ? .secondary : themeManager.currentTheme.accentColor)
+                    .buttonStyle(.borderless)
                     .disabled(state.searchQuery.isEmpty)
                     .help("Replace all matches")
 

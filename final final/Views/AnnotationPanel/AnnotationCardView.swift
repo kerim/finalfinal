@@ -160,7 +160,7 @@ struct AnnotationCardView: View {
                 Spacer()
                 HStack(spacing: 3) {
                     Text(isExpanded ? "less" : "more")
-                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                    Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
                         .font(.system(size: 9, weight: .medium))
                 }
                 .font(.system(size: TypeScale.annotationSmall, weight: .medium))

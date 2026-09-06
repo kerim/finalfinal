@@ -259,7 +259,7 @@ struct GoalPreferencesPane: View {
                     Image(systemName: "arrow.counterclockwise")
                         .font(.caption)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.borderless)
                 .help("Reset to default")
             } else {
                 Image(systemName: "arrow.counterclockwise")

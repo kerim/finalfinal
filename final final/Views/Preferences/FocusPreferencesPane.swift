@@ -19,12 +19,12 @@ struct FocusPreferencesPane: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
 
-                    Toggle("Hide Outline Sidebar", isOn: Binding(
+                    Toggle("Hide Outline", isOn: Binding(
                         get: { settingsManager.hideLeftSidebar },
                         set: { settingsManager.hideLeftSidebar = $0 }
                     ))
 
-                    Toggle("Hide Annotation Panel", isOn: Binding(
+                    Toggle("Hide Annotations", isOn: Binding(
                         get: { settingsManager.hideRightSidebar },
                         set: { settingsManager.hideRightSidebar = $0 }
                     ))

@@ -34,7 +34,7 @@ extension AppearancePreferencesPane {
                             Image(systemName: "trash")
                                 .foregroundStyle(.secondary)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.borderless)
                     }
                     .tag(preset.id as UUID?)
                 }

@@ -94,6 +94,36 @@ struct FinalFinalApp: App {
             .background { OpenExportPreferencesListener() }
             .onChange(of: appViewState) { oldState, newState in
                 DebugLog.log(.lifecycle, "[FinalFinalApp] State changed: \(oldState) -> \(newState)")
+                // Bug report (2026-09-06): the Outline sidebar's saved divider position didn't
+                // restore on project reopen, only after switching to a different app and back.
+                // Root cause -- AppDelegate.windowDidBecomeKey's own doc comment already
+                // documents the assumption this breaks: SplitViewAutosaveNaming.stabilize(for:)
+                // is retried "on every key-becomes event for the main window", relying on
+                // "windowDidBecomeKey fires again once editor content has loaded". That holds
+                // for the FIRST project of an app launch (the window becomes key once during
+                // launch), but reopening a project swaps `.editor`/`.picker` content inside the
+                // SAME already-key window (see the UX contract's "no second document window"
+                // rule) -- no new becomeKey event ever fires, so the retry this relies on never
+                // gets a second chance. `.editor`/`.gettingStarted` are exactly the states whose
+                // `rootView` case constructs a fresh ContentView -- and therefore a fresh
+                // NavigationSplitView/NSSplitView -- from scratch, so retry stabilization here
+                // too, the same guarded way windowDidBecomeKey already does.
+                //
+                // Deferred one tick (DispatchQueue.main.async): the same technique AppDelegate's
+                // own first `captureMainWindow` call already uses ("Use async to allow SwiftUI to
+                // create the window first") -- `.onChange` fires as part of the SwiftUI render
+                // pass that computes the new `rootView`, before that pass's resulting view diff
+                // has actually been committed into `window.contentView`'s AppKit subview tree, so
+                // stabilize(for:) would otherwise still find zero split views, same as the
+                // original too-early call this is patterned on.
+                if newState == .editor || newState == .gettingStarted {
+                    DispatchQueue.main.async {
+                        guard !TestMode.isTesting, let window = AppDelegate.shared?.mainWindow else { return }
+                        guard SplitViewAutosaveNaming.currentTopLevelAutosaveName(in: window)
+                                != SplitViewAutosaveNaming.stableName else { return }
+                        SplitViewAutosaveNaming.stabilize(for: window)
+                    }
+                }
             }
         }
         .defaultWindowPlacement { _, context in

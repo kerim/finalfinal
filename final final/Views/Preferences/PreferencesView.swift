@@ -364,7 +364,7 @@ struct AppearancePreferencesPane: View {
                     Image(systemName: "arrow.counterclockwise")
                         .font(.caption)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.borderless)
                 .help("Reset to theme default")
             } else {
                 // Invisible placeholder to maintain alignment

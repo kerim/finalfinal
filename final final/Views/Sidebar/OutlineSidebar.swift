@@ -666,8 +666,7 @@ struct OutlineSidebar: View {
                     statusFilter = nil
                     headerLevelFilter = nil
                 }
-                .buttonStyle(.plain)
-                .foregroundColor(themeManager.currentTheme.accentColor)
+                .buttonStyle(.borderless)
             } else if zoomedSectionId != nil {
                 Text("Section not found")
                     .font(.system(size: 13))
@@ -676,14 +675,13 @@ struct OutlineSidebar: View {
                 Button("Zoom Out") {
                     zoomedSectionId = nil
                 }
-                .buttonStyle(.plain)
-                .foregroundColor(themeManager.currentTheme.accentColor)
+                .buttonStyle(.borderless)
             } else {
                 Text("No sections yet")
                     .font(.system(size: 13))
                     .foregroundColor(themeManager.currentTheme.sidebarText.opacity(0.6))
 
-                Text("Add headings to create sections")
+                Text("Add headers in your document\nto create sections")
                     .font(.system(size: 11))
                     .foregroundColor(themeManager.currentTheme.sidebarText.opacity(0.4))
                     .multilineTextAlignment(.center)
