@@ -88,6 +88,66 @@ extension XCUIApplication {
     }
 }
 
+// MARK: - System Alert Interruption Handling
+
+extension XCTestCase {
+    /// Registers a UI interruption monitor that dismisses the macOS "<app> would like to find
+    /// and connect to devices on your local network" permission dialog (owned by
+    /// `com.apple.UserNotificationCenter`, not our app) if it ever appears mid-test.
+    ///
+    /// Belt-and-braces, not the real fix: this dialog's actual cause was a real `URLSession`
+    /// request `ZoteroService.fetchItemsForCitekeys`/`fetchItemsForCitekeysViaExport` made to
+    /// `127.0.0.1:23119` even under `FF_UI_TESTING_ZOTERO_MOCK` -- fixed at the source by giving
+    /// both a UI-testing mock short-circuit (see their doc comments). That fix should mean this
+    /// dialog never appears at all; this monitor exists so that if it ever does (a future call
+    /// site reintroducing a real Zotero network call under mock mode, or some other local-network
+    /// API), it gets dismissed immediately instead of sitting on screen and swallowing the next
+    /// test's clicks/keystrokes in the same shard -- confirmed live: this exact dialog surfacing
+    /// during `ProjectSwitchBibliographyE2ETests` was still on screen when
+    /// `SidebarRerenderCountE2ETests` (the next class in the shard) tried to click "Middle
+    /// Section", and XCTest's own BUILT-IN interruption handling ("Checking for user permission
+    /// dialogs...") did not recognize or dismiss it (xcodebuild.log: "No monitors handled UI
+    /// interruption... Did not handle the interruption, but will attempt to continue").
+    ///
+    /// Registered from `TestFixtureHelper.setupFixture(from:)` -- the one setup path essentially
+    /// every permanent e2e test class already calls from its own `setUpWithError()`, rather than
+    /// inventing a new shared base class this codebase doesn't have (every e2e test class here
+    /// subclasses `XCTestCase` directly).
+    ///
+    /// Matches on the dialog's own body text, per this task's instruction to check the
+    /// accessibility tree before hardcoding a button title: `staticTexts` containing "find
+    /// devices on local networks" (the standard macOS local-network-access prompt wording,
+    /// case-insensitive to tolerate any macOS-version wording drift), then clicks "Don't Allow"
+    /// -- the privacy-preserving choice, matching this app's own "decline non-essential" default
+    /// -- falling back to whatever button is present if "Don't Allow" isn't found verbatim, since
+    /// dismissing SOME way is strictly better than leaving the dialog to interrupt the next test.
+    @discardableResult
+    func installLocalNetworkPermissionInterruptionMonitor() -> NSObjectProtocol {
+        addUIInterruptionMonitor(withDescription: "Local network permission dialog") { alert in
+            let bodyMatches = alert.staticTexts.matching(
+                NSPredicate(
+                    format: "(label CONTAINS[c] %@) OR (value CONTAINS[c] %@)",
+                    "find devices on local networks", "find devices on local networks"
+                )
+            )
+            guard bodyMatches.count > 0 else { return false }
+
+            let dontAllow = alert.buttons["Don't Allow"]
+            if dontAllow.exists {
+                dontAllow.click()
+                return true
+            }
+            // Wording/localization drift fallback: dismissing via whichever button exists beats
+            // leaving the dialog on screen to interrupt whatever test runs next.
+            if alert.buttons.count > 0 {
+                alert.buttons.firstMatch.click()
+                return true
+            }
+            return false
+        }
+    }
+}
+
 // MARK: - Wait Helpers
 
 extension XCUIElement {
@@ -782,6 +842,11 @@ enum TestFixtureHelper {
     /// per-test path in the temp directory. Must be called in setUp before
     /// launching the app.
     static func setupFixture(from testCase: XCTestCase) throws {
+        // Belt-and-braces (see `installLocalNetworkPermissionInterruptionMonitor`'s doc
+        // comment): arm this before the app ever launches, so it's ready for the first
+        // interaction regardless of which test method runs.
+        testCase.installLocalNetworkPermissionInterruptionMonitor()
+
         let fm = FileManager.default
         let path = NSTemporaryDirectory() + "ff-test-fixture-\(UUID().uuidString).ff"
 

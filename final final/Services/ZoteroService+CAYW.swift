@@ -97,7 +97,15 @@ extension ZoteroService {
     /// with real fixture content, and greppable in a persisted `content.markdown`/
     /// `section.markdownContent` DB read -- the e2e suite's own ground-truth check for whether
     /// the mock citation actually landed (or, for the raced scenario, correctly did NOT land).
-    private static let mockCitekey = "ffe2emockcitation2026"
+    ///
+    /// Not `private`: `ZoteroService.fetchItemsForCitekeys`/`fetchItemsForCitekeysViaExport`
+    /// (a different file) match requested citekeys against this to decide whether their own
+    /// UI-testing mock branch can resolve them -- Swift's `private` doesn't extend to
+    /// extensions/types in other files. See those functions' doc comments for why they need a
+    /// mock branch at all (they're real network fetches `openCAYWPicker()`'s own mock bypasses,
+    /// but callers like `BibliographySyncService` and `handleResolveCitekeys` reach them
+    /// directly even when the citation was already cached via this file's mock `loadItem` call).
+    static let mockCitekey = "ffe2emockcitation2026"
 
     private static let mockCSLJSON = """
     [{"id":"\(mockCitekey)","type":"article-journal","title":"Mock Citation For E2E Testing",\
@@ -105,20 +113,28 @@ extension ZoteroService {
     "container-title":"Journal of Automated Testing"}]
     """
 
-    /// Canned CAYW result for the mock path above: one distinctive, resolvable citation. Built
-    /// via the SAME `parsePandocCitation`/`JSONDecoder` paths a real network response goes
-    /// through, not a hand-built struct literal -- `CSLItem` defines a custom
+    /// The canned mock CSL item, decoded via the SAME `JSONDecoder` path a real network
+    /// response goes through, not a hand-built struct literal -- `CSLItem` defines a custom
     /// `init(from decoder:)`, which suppresses Swift's synthesized memberwise initializer, so
     /// decoding from a literal CSL-JSON string is both the simplest and the most faithful way to
-    /// construct one here (it exercises the exact same decode path a real BBT response would).
+    /// construct one here. Not `private`: shared with `ZoteroService.fetchItemsForCitekeys`/
+    /// `fetchItemsForCitekeysViaExport`'s own mock branches (see `mockCitekey`'s doc comment).
+    static func mockCSLItem() throws -> CSLItem {
+        guard let data = mockCSLJSON.data(using: .utf8) else {
+            throw ZoteroError.invalidResponse("UI-testing Zotero mock: literal CSL-JSON was not valid UTF-8")
+        }
+        guard let item = try JSONDecoder().decode([CSLItem].self, from: data).first else {
+            throw ZoteroError.invalidResponse("UI-testing Zotero mock: canned CSL-JSON decoded to no items")
+        }
+        return item
+    }
+
+    /// Canned CAYW result for the mock path above: one distinctive, resolvable citation.
     private static func mockCAYWResult() throws -> (ParsedCitation, [CSLItem]) {
         guard let parsed = parsePandocCitation("[@\(mockCitekey)]") else {
             throw ZoteroError.invalidResponse("UI-testing Zotero mock: failed to build parsed citation")
         }
-        guard let data = mockCSLJSON.data(using: .utf8) else {
-            throw ZoteroError.invalidResponse("UI-testing Zotero mock: literal CSL-JSON was not valid UTF-8")
-        }
-        let items = try JSONDecoder().decode([CSLItem].self, from: data)
-        return (parsed, items)
+        let item = try mockCSLItem()
+        return (parsed, [item])
     }
 }

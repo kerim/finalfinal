@@ -406,6 +406,22 @@ final class ZoteroService {
         guard !citekeys.isEmpty else { return [] }
         let requested = Self.orderedUniqueCitekeys(citekeys)
 
+        // Phase D UI-testing seam (plan §8.2 "the Zotero seam") -- see `ping()`'s and
+        // `openCAYWPicker()`'s matching mock branches. This function is a REAL network fetch
+        // those two don't bypass, but callers reach it directly even when `isUITestingZoteroMockEnabled`
+        // is set: `BibliographySyncService.performBibliographyUpdate` calls it for any citekey
+        // not already in the in-memory cache (e.g. after `DocumentManager.closeProject()` clears
+        // that cache on a project switch), and `MilkdownCoordinator.handleResolveCitekeys` calls
+        // it for the web editor's own lazy citation resolution -- both independent of whatever
+        // `openCAYWPicker()`'s mock already cached via `loadItem`. Without this branch, a
+        // mock-enabled UI test could still trigger a real `URLSession` request to
+        // `127.0.0.1:23119`, which the vmtest guest has no Zotero listening on -- surfacing a
+        // macOS "find devices on local networks" permission dialog that swallows input from
+        // whatever test runs next in the same shard.
+        if TestMode.isUITestingZoteroMockEnabled {
+            return try mockFetchItemsForCitekeys(requested)
+        }
+
         let outcome: PandocFilterRawOutcome
         var items: [CSLItem] = []
         do {
@@ -446,6 +462,22 @@ final class ZoteroService {
     /// when `item.pandoc_filter` resolution (`resolveRawViaPandocFilter`) fails.
     private func fetchItemsForCitekeysViaExport(_ citekeys: [String]) async throws -> [CSLItem] {
         guard !citekeys.isEmpty else { return [] }
+
+        // Same UI-testing mock seam as `fetchItemsForCitekeys` above -- this fallback is only
+        // reached from there today (on a `resolveRawViaPandocFilter` failure), which already
+        // short-circuits before ever calling here under the mock. Guarded independently anyway
+        // so this function can never make a real network call while `FF_UI_TESTING_ZOTERO_MOCK`
+        // is set, even if a future caller reaches it directly.
+        if TestMode.isUITestingZoteroMockEnabled {
+            let matched = try Self.mockCSLItems(matching: citekeys)
+            cacheItems(matched, forRequestedCitekeys: citekeys)
+            isConnected = true
+            connectionError = nil
+            // `item.export` (the real path this mocks) has no ambiguity/not-found concept of
+            // its own -- unresolved keys are simply absent from the result, not an error.
+            return matched
+        }
+
         let request = try makeExportRequest(citekeys: citekeys)
 
         do {
@@ -489,6 +521,34 @@ final class ZoteroService {
         } catch {
             throw ZoteroError.networkError(error)
         }
+    }
+
+    /// UI-testing mock implementation of `fetchItemsForCitekeys` (see that function's own doc
+    /// comment for why it needs one). Resolves any requested citekey matching
+    /// `ZoteroService.mockCitekey` (case-insensitively, matching `getItem`/`cacheItems`'s own
+    /// convention) to the canned CSL item, and mirrors the real function's contract by throwing
+    /// `notFoundOrAmbiguousError` for anything else requested -- the only visible sign, in a
+    /// mock-enabled UI test, that it asked for a citekey the mock doesn't know about.
+    private func mockFetchItemsForCitekeys(_ requested: [String]) throws -> [CSLItem] {
+        let matched = try Self.mockCSLItems(matching: requested)
+        let unresolved = requested.filter { $0.lowercased() != Self.mockCitekey.lowercased() }
+        cacheItems(matched, forRequestedCitekeys: requested)
+        isConnected = true
+        connectionError = nil
+        if !unresolved.isEmpty {
+            throw Self.notFoundOrAmbiguousError(notFound: Set(unresolved), ambiguous: [])
+        }
+        return matched
+    }
+
+    /// The canned mock CSL item (`ZoteroService.mockCSLItem()`), wrapped in an array, if any of
+    /// `citekeys` matches `mockCitekey` case-insensitively -- otherwise empty. Shared by both
+    /// `fetchItemsForCitekeys`'s and `fetchItemsForCitekeysViaExport`'s mock branches above.
+    private static func mockCSLItems(matching citekeys: [String]) throws -> [CSLItem] {
+        guard citekeys.contains(where: { $0.lowercased() == mockCitekey.lowercased() }) else {
+            return []
+        }
+        return [try mockCSLItem()]
     }
 
     /// Build the `item.export` JSON-RPC request for `fetchItemsForCitekeysViaExport`. Runs
