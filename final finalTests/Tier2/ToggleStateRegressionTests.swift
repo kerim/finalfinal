@@ -76,7 +76,7 @@ private final class RealMilkdownHarness {
         // hitting an unregistered handler during the real didFinish flow.
         let controller = configuration.userContentController
         for name in [
-            "contentChanged", "sectionChanged", "errorHandler", "searchCitations",
+            "contentChanged", "sectionChanged", "errorHandler",
             "openCitationPicker", "resolveCitekeys", "paintComplete", "openURL",
             "spellcheck", "navigateToFootnote", "footnoteInserted", "pasteImage",
             "requestImagePicker", "updateImageMeta", "tableInsertTruncated",

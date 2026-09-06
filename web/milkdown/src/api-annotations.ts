@@ -283,13 +283,6 @@ export function addCitationItems(items: CSLItem[]): void {
   document.dispatchEvent(new CustomEvent('citation-library-updated'));
 }
 
-export function searchCitationsCallback(items: CSLItem[]): void {
-  // Legacy callback - update citeproc with items
-  const engine = getCiteprocEngine();
-  engine.addItems(items);
-  setCitationLibrary(items);
-}
-
 // CAYW picker callback delegates
 export function citationPickerCallback(data: CAYWCallbackData, items: CSLItem[]): void {
   handleCAYWCallback(data, items);
