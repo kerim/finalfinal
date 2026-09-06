@@ -137,6 +137,8 @@ declare global {
       // Lazy resolution API
       requestCitationResolution: (keys: string[]) => void;
       addCitationItems: (items: CSLItem[]) => void;
+      // Legacy search callback (kept for backwards compatibility)
+      searchCitationsCallback: (items: CSLItem[]) => void;
       // CAYW picker callbacks
       citationPickerCallback: (data: CAYWCallbackData, items: CSLItem[]) => void;
       citationPickerCancelled: (requestId: number) => void;

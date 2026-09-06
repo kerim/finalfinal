@@ -461,6 +461,15 @@ mark.ff-highlight {
   outline-offset: 1px;
 }
 
+/* Citation search popup results */
+.ff-citation-search-item:hover {
+  background: var(--editor-selection, rgba(0, 122, 255, 0.15));
+}
+
+.ff-citation-search-item.selected {
+  background: var(--editor-selection, #e8f0fe);
+}
+
 /* === Footnote Styles === */
 
 /* Footnote reference superscript */

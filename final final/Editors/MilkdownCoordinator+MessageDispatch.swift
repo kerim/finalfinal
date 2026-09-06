@@ -145,6 +145,13 @@ extension MilkdownEditor.Coordinator {
 
     nonisolated func handleCitationMessage(_ message: WKScriptMessage) -> Bool {
         switch message.name {
+        case "searchCitations":
+            guard let query = message.body as? String else { return true }
+            Task { @MainActor in
+                await self.handleCitationSearch(query)
+            }
+            return true
+
         case "openCitationPicker":
             guard let requestId = message.body as? Int else { return true }
             Task { @MainActor in

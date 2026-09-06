@@ -38,12 +38,12 @@ struct ProjectPickerView: View {
             .padding(.bottom, 16)
 
             // Recent projects section
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Recent Projects")
-                    .font(.headline)
-                    .foregroundColor(themeManager.currentTheme.editorTextSecondary)
+            if !documentManager.recentProjects.isEmpty {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Recent Projects")
+                        .font(.headline)
+                        .foregroundColor(themeManager.currentTheme.editorTextSecondary)
 
-                if !documentManager.recentProjects.isEmpty {
                     VStack(spacing: 4) {
                         ForEach(documentManager.recentProjects.prefix(5)) { entry in
                             RecentProjectRow(
@@ -54,20 +54,9 @@ struct ProjectPickerView: View {
                             )
                         }
                     }
-                } else {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("No recent projects")
-                            .font(.callout)
-                            .foregroundColor(themeManager.currentTheme.editorTextSecondary)
-                        Text("Create a new project or open an existing one.")
-                            .font(.footnote)
-                            .foregroundColor(themeManager.currentTheme.editorTextSecondary.opacity(0.7))
-                    }
-                    .accessibilityElement(children: .contain)
-                    .accessibilityIdentifier("recent-projects-empty")
                 }
+                .frame(maxWidth: 300)
             }
-            .frame(maxWidth: 300)
 
             // Action buttons
             HStack(spacing: 16) {

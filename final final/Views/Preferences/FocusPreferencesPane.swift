@@ -10,6 +10,7 @@ import SwiftUI
 
 struct FocusPreferencesPane: View {
     @State private var settingsManager = FocusModeSettingsManager.shared
+    @State private var showingResetConfirmation = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
@@ -49,9 +50,12 @@ struct FocusPreferencesPane: View {
 
             HStack {
                 Spacer()
-                Button("Reset to Defaults") {
-                    settingsManager.resetToDefaults()
+                Button("Reset Focus Settings") {
+                    showingResetConfirmation = true
                 }
+            }
+            .destructiveConfirmation(.resetPane(.focus), isPresented: $showingResetConfirmation) {
+                settingsManager.resetToDefaults()
             }
 
             Spacer()

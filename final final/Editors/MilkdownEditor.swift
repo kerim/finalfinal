@@ -51,6 +51,7 @@ private func registerMilkdownMessageHandlers(on controller: WKUserContentControl
     controller.add(coordinator, name: "contentChanged")
     controller.add(coordinator, name: "sectionChanged")
     controller.add(coordinator, name: "errorHandler")
+    controller.add(coordinator, name: "searchCitations")
     controller.add(coordinator, name: "openCitationPicker")
     controller.add(coordinator, name: "resolveCitekeys")
     controller.add(coordinator, name: "paintComplete")

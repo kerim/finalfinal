@@ -95,21 +95,27 @@ struct PreferencesView: View {
 /// Appearance preferences pane with theme and typography settings
 struct AppearancePreferencesPane: View {
     @Environment(ThemeManager.self) var themeManager
-    @State var appearanceManager = AppearanceSettingsManager.shared
+    @State internal var appearanceManager = AppearanceSettingsManager.shared
 
     // Local state for editing
-    @State var fontSize: CGFloat = AppearanceSettingsManager.defaultFontSize
-    @State var selectedLineHeight: LineHeightPreset = .normal
-    @State var selectedFontFamily: String = ""
-    @State var textColor: Color = .primary
-    @State var headerColor: Color = .primary
-    @State var accentColor: Color = .blue
-    @State var selectedColumnWidth: ColumnWidthPreset = .normal
+    @State internal var fontSize: CGFloat = AppearanceSettingsManager.defaultFontSize
+    @State internal var selectedLineHeight: LineHeightPreset = .normal
+    @State internal var selectedFontFamily: String = ""
+    @State internal var textColor: Color = .primary
+    @State internal var headerColor: Color = .primary
+    @State internal var accentColor: Color = .blue
+    @State internal var selectedColumnWidth: ColumnWidthPreset = .normal
 
     // Preset management
-    @State var showingSavePresetSheet = false
-    @State var newPresetName = ""
-    @State var selectedPresetId: UUID?
+    @State internal var showingSavePresetSheet = false
+    @State internal var newPresetName = ""
+    @State internal var selectedPresetId: UUID?
+
+    // Destructive-confirmation state (see DestructiveConfirmation.swift). Internal (not
+    // private) because PreferencesView+Presets.swift, an extension of this struct in a
+    // separate file, both reads and writes these.
+    @State internal var showingResetConfirmation = false
+    @State internal var presetPendingDeletion: AppearancePreset?
 
     // Available fonts
     let availableFonts: [String]

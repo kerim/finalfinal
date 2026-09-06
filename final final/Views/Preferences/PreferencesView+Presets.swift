@@ -26,15 +26,32 @@ extension AppearancePreferencesPane {
                         Text(preset.name)
                         Spacer()
                         Button {
-                            appearanceManager.deletePreset(preset)
-                            if selectedPresetId == preset.id {
-                                selectedPresetId = nil
-                            }
+                            presetPendingDeletion = preset
                         } label: {
                             Image(systemName: "trash")
                                 .foregroundStyle(.secondary)
                         }
-                        .buttonStyle(.borderless)
+                        .buttonStyle(.plain)
+                        .destructiveConfirmation(
+                            .deletePreset(named: preset.name),
+                            isPresented: Binding(
+                                get: { presetPendingDeletion?.id == preset.id },
+                                set: { isPresented in
+                                    if !isPresented { presetPendingDeletion = nil }
+                                }
+                            )
+                        ) {
+                            // Review round fix: clear the state driving `isPresented` FIRST.
+                            // `appearanceManager.deletePreset(preset)` removes the row from the
+                            // ForEach that hosts this Button/`.destructiveConfirmation` pair --
+                            // doing that before `presetPendingDeletion = nil` tore down the view
+                            // hosting the in-flight dialog presentation mid-presentation.
+                            presetPendingDeletion = nil
+                            if selectedPresetId == preset.id {
+                                selectedPresetId = nil
+                            }
+                            appearanceManager.deletePreset(preset)
+                        }
                     }
                     .tag(preset.id as UUID?)
                 }
@@ -66,11 +83,14 @@ extension AppearancePreferencesPane {
 
         Divider()
 
-        Button("Reset All to Theme Defaults") {
+        Button("Reset Appearance Settings") {
+            showingResetConfirmation = true
+        }
+        .disabled(!appearanceManager.settings.hasOverrides)
+        .destructiveConfirmation(.resetPane(.appearance), isPresented: $showingResetConfirmation) {
             appearanceManager.resetToDefaults()
             loadCurrentSettings()
         }
-        .disabled(!appearanceManager.settings.hasOverrides)
     }
 
     @ViewBuilder
