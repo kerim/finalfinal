@@ -156,8 +156,9 @@ struct ProofingPreferencesPane: View {
                                 name: .proofingSettingsChanged, object: nil)
                         } label: {
                             Image(systemName: "xmark.circle")
+                                .foregroundStyle(Color.accentColor)
                         }
-                        .buttonStyle(.borderless)
+                        .buttonStyle(.plain)
                         .help("Re-enable this rule")
                     }
                 }

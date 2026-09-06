@@ -55,22 +55,14 @@ struct EditorToolbar: ToolbarContent {
                 Button {
                     NotificationCenter.default.post(name: .insertCitation, object: nil)
                 } label: {
-                    Label {
-                        Text("Cite")
-                    } icon: {
-                        Text("\u{275D}").font(.system(size: 16, weight: .medium))
-                    }
+                    Label("Citation", systemImage: "text.book.closed")
                 }
                 .help("Insert citation (⌘⇧K)")
 
                 Button {
                     NotificationCenter.default.post(name: .insertFootnote, object: nil)
                 } label: {
-                    Label {
-                        Text("Footnote")
-                    } icon: {
-                        Text("‡").font(.system(size: 16, weight: .medium))
-                    }
+                    Label("Footnote", systemImage: "text.append")
                 }
                 .help("Insert footnote (⌘⇧N)")
             }
