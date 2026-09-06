@@ -23,6 +23,8 @@ struct GoalPreferencesPane: View {
     @State private var warningColor: Color = .orange
     @State private var notMetColor: Color = .red
 
+    @State private var showingResetConfirmation = false
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
@@ -230,11 +232,14 @@ struct GoalPreferencesPane: View {
     private var resetAllSection: some View {
         HStack {
             Spacer()
-            Button("Reset All to Defaults") {
-                goalManager.resetToDefaults()
-                loadCurrentSettings()
+            Button("Reset Goals Settings") {
+                showingResetConfirmation = true
             }
             Spacer()
+        }
+        .destructiveConfirmation(.resetPane(.goals), isPresented: $showingResetConfirmation) {
+            goalManager.resetToDefaults()
+            loadCurrentSettings()
         }
     }
 

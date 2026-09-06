@@ -140,7 +140,9 @@ struct RecentProjectsMenu: View {
             if !entries.isEmpty {
                 Divider()
                 Button("Clear Recent Projects") {
-                    DocumentManager.shared.clearRecentProjects()
+                    if FileOperations.confirmClearRecentProjects() {
+                        DocumentManager.shared.clearRecentProjects()
+                    }
                 }
             }
         }
@@ -448,5 +450,87 @@ struct FileOperations {
         alert.alertStyle = .warning
         alert.addButton(withTitle: "OK")
         alert.runModal()
+    }
+
+    /// Builds (but does not present) the Clear Recent Projects confirmation alert. Split out
+    /// from `confirmClearRecentProjects()` so the button wiring below is unit-testable without
+    /// ever calling `runModal()` (which would show a real, blocking modal window).
+    ///
+    /// "Clear Recent Projects" is a Commands-menu action, so SwiftUI cannot present a
+    /// `.confirmationDialog` here (see `.claude/rules/ux-contract.md` §3 and the
+    /// `.destructiveConfirmation` view modifier used by the SwiftUI sites) -- this uses
+    /// `NSAlert` instead, reading its wording from the same `DestructiveConfirmationCopy` the
+    /// SwiftUI sites use, so the two presentation mechanisms never drift.
+    ///
+    /// Button order matches every stock macOS destructive alert (review round finding):
+    /// the ACTION button is added FIRST, which NSAlert renders rightmost -- the standard
+    /// primary-button position -- and Cancel is added SECOND, rendering to its left. (The
+    /// previous round had this backwards: Cancel first/rightmost, action second/left.)
+    ///
+    /// That standard position is exactly why the key-equivalent wiring below can't be the
+    /// simple "first button -> Return" default: NSAlert auto-assigns Return to whichever
+    /// button is added first (here, the destructive one) and Escape to a button literally
+    /// titled "Cancel" -- but ONLY for a button whose `keyEquivalent` is still empty at
+    /// `layout()` time, and each `NSButton` has exactly one `keyEquivalent` slot. Per
+    /// ux-contract §3, Cancel -- never the destructive button -- must be the Return default,
+    /// so:
+    ///   1. `alert.layout()` forces NSAlert to wire each button's target/action now, while
+    ///      both are still untouched (needed for step 3).
+    ///   2. The destructive button's auto-assigned Return is explicitly cleared; Cancel's
+    ///      slot is explicitly given Return. This alone would leave Cancel's own slot with
+    ///      no room for Escape.
+    ///   3. A second, invisible button (`NSButton.isTransparent`, in a zero-size accessory
+    ///      view) carries the Escape key equivalent and shares Cancel's target/action/tag --
+    ///      NSAlert dispatches every button through the same private handler keyed by tag,
+    ///      so triggering the invisible button resolves `runModal()` with Cancel's own
+    ///      response code. This is the standard AppKit workaround for "one logical action,
+    ///      two key equivalents" (a single button object cannot hold both).
+    ///
+    /// This was verified against AppKit's documented auto-assignment behavior and the
+    /// community-established relay-button pattern for it -- see the `alert.layout()`-based
+    /// test in `DestructiveConfirmationCopyTests.swift`, which is a real assertion on runtime
+    /// state rather than a readback of what this function just set. e2e (`E2EScratchTests`)
+    /// has since confirmed this live: pressing Escape correctly dismisses the alert without
+    /// clearing recents.
+    static func makeClearRecentProjectsAlert() -> NSAlert {
+        let copy = DestructiveConfirmationCopy.clearRecentProjects
+        let alert = NSAlert()
+        alert.messageText = copy.title
+        alert.informativeText = copy.message
+        alert.alertStyle = .warning
+
+        let destructiveButton = alert.addButton(withTitle: copy.confirmTitle)
+        let cancelButton = alert.addButton(withTitle: "Cancel")
+        destructiveButton.hasDestructiveAction = true
+
+        alert.layout()
+
+        destructiveButton.keyEquivalent = ""
+        cancelButton.keyEquivalent = "\r"
+
+        let escapeRelay = NSButton(frame: .zero)
+        escapeRelay.target = cancelButton.target
+        escapeRelay.action = cancelButton.action
+        escapeRelay.tag = cancelButton.tag
+        escapeRelay.keyEquivalent = "\u{1b}"
+        escapeRelay.isTransparent = true
+        let accessory = NSView(frame: .zero)
+        accessory.addSubview(escapeRelay)
+        alert.accessoryView = accessory
+
+        return alert
+    }
+
+    /// Shows the Clear Recent Projects confirmation alert. Returns `true` only if the user chose
+    /// the destructive action.
+    ///
+    /// The destructive button is now added FIRST (review round: standard button order, see
+    /// `makeClearRecentProjectsAlert()`), so its response is `.alertFirstButtonReturn` --
+    /// this flipped from `.alertSecondButtonReturn` along with the button order and would
+    /// otherwise have silently inverted this method's result (Cancel would read as "clear",
+    /// and vice versa).
+    static func confirmClearRecentProjects() -> Bool {
+        let alert = makeClearRecentProjectsAlert()
+        return alert.runModal() == .alertFirstButtonReturn
     }
 }

@@ -116,8 +116,8 @@ Press **⌘⇧F** to enter focus mode for distraction-free writing. By default, 
 
 You can customize which elements are affected in **Preferences → Focus**:
 
-* **Hide Outline** — hides the left sidebar
-* **Hide Annotations** — hides the right sidebar and collapses annotations
+* **Hide Outline Sidebar** — hides the left sidebar
+* **Hide Annotation Panel** — hides the right sidebar and collapses annotations
 * **Hide Toolbar** — hides the window toolbar
 * **Hide Status Bar** — hides the bottom status bar
 * **Paragraph Highlighting** — dims all paragraphs except the one you're editing

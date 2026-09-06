@@ -33,28 +33,27 @@ extension ContentView {
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("editor-area")
 
-            // Annotation panel -- always mounted (not conditioned on isAnnotationPanelVisible):
-            // HSplitView doesn't honor a SwiftUI insertion `.transition` on a conditionally
-            // -mounted child, so AnnotationPanel itself animates its own width to/from zero
-            // for show/hide instead -- see its `animateToggle`/`widthObserver` doc comments.
-            AnnotationPanel(
-                editorState: editorState,
-                onScrollToAnnotation: { index, _ in
-                    editorState.scrollToAnnotationIndex = index
-                },
-                onToggleCompletion: { annotation in
-                    toggleAnnotationCompletion(annotation)
-                },
-                onUpdateAnnotationText: { annotation, newText in
-                    handleAnnotationTextUpdate(annotation, newText: newText)
-                },
-                onCreateDocumentAnnotation: { type in
-                    createDocumentAnnotation(type: type)
-                },
-                onDeleteDocumentAnnotation: { id in
-                    deleteDocumentAnnotation(id: id)
-                }
-            )
+            // Annotation panel (conditionally shown)
+            if editorState.isAnnotationPanelVisible {
+                AnnotationPanel(
+                    editorState: editorState,
+                    onScrollToAnnotation: { index, _ in
+                        editorState.scrollToAnnotationIndex = index
+                    },
+                    onToggleCompletion: { annotation in
+                        toggleAnnotationCompletion(annotation)
+                    },
+                    onUpdateAnnotationText: { annotation, newText in
+                        handleAnnotationTextUpdate(annotation, newText: newText)
+                    },
+                    onCreateDocumentAnnotation: { type in
+                        createDocumentAnnotation(type: type)
+                    },
+                    onDeleteDocumentAnnotation: { id in
+                        deleteDocumentAnnotation(id: id)
+                    }
+                )
+            }
         }
     }
 

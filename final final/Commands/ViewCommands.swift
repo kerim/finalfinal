@@ -12,17 +12,15 @@ struct ViewCommands: Commands {
         CommandGroup(after: .sidebar) {
             Divider()
 
-            Button(outlineToggleLabel) {
+            Button("Toggle Outline Sidebar") {
                 NotificationCenter.default.post(name: .toggleOutlineSidebar, object: nil)
             }
             .keyboardShortcut("[", modifiers: .command)
-            .disabled(editorState == nil)
 
-            Button(annotationsToggleLabel) {
+            Button("Toggle Annotations Sidebar") {
                 NotificationCenter.default.post(name: .toggleAnnotationSidebar, object: nil)
             }
             .keyboardShortcut("]", modifiers: .command)
-            .disabled(editorState == nil)
 
             Divider()
 
@@ -53,29 +51,6 @@ struct ViewCommands: Commands {
                 }
             }
         }
-    }
-
-    /// "Hide Outline" when the sidebar is currently visible, "Show Outline" otherwise --
-    /// the HIG-correct reading of the UX contract's "Show/Hide Outline" shorthand (§5), not a
-    /// literal static string with a slash in it. Tracks every way visibility can change --
-    /// the menu action itself, dragging the sidebar closed via its divider (`withSidebarSync`
-    /// in ViewNotificationModifiers.swift), and Focus Mode hiding it
-    /// (`EditorViewState+FocusMode.swift`) -- because all three write through the same
-    /// `editorState.isOutlineSidebarVisible`, which this reads live via `@FocusedValue`; no
-    /// separate plumbing is needed since that property already existed and was already kept
-    /// in sync with all three.
-    ///
-    /// `editorState == nil` (no document open, e.g. at the project picker): reads "Show
-    /// Outline" -- there is no sidebar to hide -- and the button above is disabled, so it
-    /// can't be actioned either way.
-    private var outlineToggleLabel: String {
-        (editorState?.isOutlineSidebarVisible ?? false) ? "Hide Outline" : "Show Outline"
-    }
-
-    /// See `outlineToggleLabel` -- identical rationale, for the Annotations panel's
-    /// `isAnnotationPanelVisible`.
-    private var annotationsToggleLabel: String {
-        (editorState?.isAnnotationPanelVisible ?? false) ? "Hide Annotations" : "Show Annotations"
     }
 }
 
