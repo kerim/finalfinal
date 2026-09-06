@@ -96,14 +96,14 @@ struct EditorToolbar: ToolbarContent {
             NativeToolbarButton(
                 systemSymbolName: "sidebar.right",
                 accessibilityLabel: editorState.isAnnotationPanelVisible
-                    ? "Hide annotations panel"
-                    : "Show annotations panel"
+                    ? "Hide Annotations"
+                    : "Show Annotations"
             ) {
                 editorState.toggleAnnotationPanel()
             }
             .help(editorState.isAnnotationPanelVisible
-                  ? "Hide annotations panel (⌘])"
-                  : "Show annotations panel (⌘])")
+                  ? "Hide Annotations (⌘])"
+                  : "Show Annotations (⌘])")
         }
     }
 }
