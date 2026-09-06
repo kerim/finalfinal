@@ -126,7 +126,7 @@ struct ExportPreferencesPane: View {
                     await checkPandocStatus()
                 }
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.bordered)
             .disabled(isCheckingPandoc)
         }
     }
@@ -182,7 +182,7 @@ struct ExportPreferencesPane: View {
             Button("Browse...") {
                 browseForPandoc()
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.bordered)
         }
     }
 
@@ -228,7 +228,7 @@ struct ExportPreferencesPane: View {
                 Button("Browse...") {
                     browseForLuaScript()
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(.bordered)
             }
 
             if !settingsManager.settings.isCustomLuaScriptValid {
@@ -254,7 +254,7 @@ struct ExportPreferencesPane: View {
                 Button("Browse...") {
                     browseForReferenceDoc()
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(.bordered)
             }
 
             if !settingsManager.settings.isCustomReferenceDocValid {
@@ -282,7 +282,7 @@ struct ExportPreferencesPane: View {
                 Button("Browse...") {
                     browseForCSLStyle()
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(.bordered)
             }
 
             if let caption = settingsManager.settings.customCSLStyleCaption {
