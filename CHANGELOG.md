@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.132] - 2026-09-06
+
+### Fixed
+
+- **The Outline sidebar could crash when scrolling it with a trackpad if its content overflowed the window** — fixed.
+- **Clicking a footnote number to jump back to it in the text could place your cursor just before the number instead of after it** — fixed, in both the formatted and source editors.
+- **Editing a caption, width, or alt text on an image or figure could occasionally apply the change to the wrong image, or to one that had already been deleted** — fixed.
+- **Zooming into or out of a section could briefly flash unstyled, raw-looking text before the section settled** — a background save or content refresh landing at the same moment could lift the cover the app holds over the editor during a zoom before the zoom had finished redrawing — fixed.
+
 ## [0.2.131] - 2026-09-04
 
 ### Added
