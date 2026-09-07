@@ -241,7 +241,7 @@ extension MilkdownEditor.Coordinator {
             Task { @MainActor in
                 let rows = body["rows"] as? Int ?? 0
                 let cols = body["cols"] as? Int ?? 0
-                self.presentTableTruncatedAlert(rows: rows, cols: cols)
+                self.presentTableTruncatedNotice(rows: rows, cols: cols)
             }
             return true
 
@@ -356,20 +356,16 @@ extension MilkdownEditor.Coordinator {
         }
     }
 
-    /// Shows the native "Table Truncated" alert for a paste that exceeded the
+    /// Shows the "Table Truncated" warning toast for a paste that exceeded the
     /// 1000 row × 100 col limit.
     @MainActor
-    func presentTableTruncatedAlert(rows: Int, cols: Int) {
-        let window = self.webView?.window ?? NSApp.keyWindow
-        if let window {
-            let alert = NSAlert()
-            alert.messageText = "Table Truncated"
-            alert.informativeText = "The pasted table was truncated to \(rows) rows × \(cols) columns."
-            alert.alertStyle = .informational
-            alert.addButton(withTitle: "OK")
-            alert.beginSheetModal(for: window) { [weak self] _ in
-                EditorFocusRestoration.restoreFocus(to: self?.webView, context: "MilkdownEditor table-truncated alert dismiss")
-            }
+    func presentTableTruncatedNotice(rows: Int, cols: Int) {
+        // Non-fading warning toast, not a sheet -- a toast never takes first responder, so the
+        // focus-restoration call the old sheet-dismissal handler needed is gone too (see the
+        // plan's coder note, t-15cb7dd8; CodeMirrorCoordinator+MessageDispatch's twin function
+        // loses the same call).
+        withAnimation {
+            ToastCenter.shared.show(ToastFactory.tableTruncated(rows: rows, cols: cols))
         }
     }
 

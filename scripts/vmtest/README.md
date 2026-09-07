@@ -20,7 +20,12 @@ This directory carries only what is final-final-specific:
   `VMTEST_SCRATCH_CLASS`, and the pointers below
 - `guest-prep.sh` — in-guest build steps before xcodebuild (web bundle,
   xcodegen, scheme verification)
-- `provision-warm.sh` — host-side pnpm-store warm during golden-image builds
+- `provision-warm.sh` — host-side warm during golden-image builds: the
+  pnpm store, and (since 2026-09-06) an Xcode build-for-testing into
+  `VMTEST_GUEST_DERIVED_DATA` so run clones compile incrementally instead of
+  from scratch. **Rebuild the image after a dependency change** — a stale
+  cache only costs one cold build, but it is the difference between a
+  scoped run fitting its budget or not
 - `known-flaky.txt` — test ids allowed to fail without accruing a retry-gate
   streak
 
