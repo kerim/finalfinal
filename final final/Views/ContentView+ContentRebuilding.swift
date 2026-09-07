@@ -365,14 +365,75 @@ extension ContentView {
         }
     }
 
-    /// Delete a document-level annotation (DB-only, no markdown rewrite)
+    /// Delete a document-level annotation (DB-only, no markdown rewrite). Tier 1: quiet, no
+    /// confirmation (UX contract §3/D3) -- routed through
+    /// `StructuralUndoController.performDocumentNoteDelete` so ⌘Z brings it back and ⇧⌘Z
+    /// removes it again (see docs/architecture/unified-undo.md's "Tracked entries for
+    /// DB-only mutations" subsection for why a tracked timeline entry, not a barrier, is the
+    /// correct mechanism for this DB-only mutation).
     func deleteDocumentAnnotation(id: String) {
-        guard let db = documentManager.projectDatabase else { return }
-        do {
-            try db.deleteAnnotation(id: id)
-        } catch {
-            DebugLog.log(.bib, "[ContentView] Error deleting document annotation: \(error.localizedDescription)")
+        Task {
+            await structuralUndoController.performDocumentNoteDelete(id: id)
+            // A SwiftUI Button (the card's ×) becomes first responder on click, which sends
+            // ⌘Z down the documented silent-no-op nil-target path (UndoRedoCommands.
+            // focusedWebView()) -- restore focus to the editor so ⌘Z immediately after this
+            // click routes to the just-recorded entry, same as every other panel-card delete.
+            EditorFocusRestoration.restoreFocus(
+                to: structuralUndoController.activeWebView,
+                context: "annotation-panel delete")
         }
+    }
+
+    /// Delete an inline annotation from its panel card (UX contract §3/D3: tier 1, quiet,
+    /// undoable). Dispatches the SAME transaction the popup's Delete button and the
+    /// Backspace/Delete keymap use (`buildAnnotationDeleteTransaction`, web-side), through the
+    /// live editor's own bridge -- it lands as a real editor transaction, so the editor's own
+    /// text-undo history undoes it, exactly like a citation delete.
+    ///
+    /// No `invalidateAll` call here: unlike `toggleAnnotationCompletion`/
+    /// `handleAnnotationTextUpdate`'s inline branches (which rewrite `editorState.content`
+    /// directly from Swift, outside the checkpoint machinery, and so must barrier), this route
+    /// never touches `editorState.content` -- the transaction lands inside the web editor,
+    /// where document-equality routing already governs safely on its own.
+    ///
+    /// Review round fix (must-fix 1): `index` alone is a STALE reference the instant it's
+    /// computed -- it comes from `editorState.annotations`, a DB-observed list synced via
+    /// `AnnotationSyncService` on a ~500ms debounce, while `window.FinalFinal.
+    /// deleteInlineAnnotation` re-scans the LIVE document positionally with no identity check.
+    /// Two quick deletes inside that debounce window can desync the panel's index from the
+    /// live document, silently deleting the WRONG annotation. `type`/`text` are threaded
+    /// through alongside the index (same identity fields `getAnnotations()` already returns on
+    /// both editors) so the JS side can verify the node at `index` actually matches before
+    /// deleting, and fall back to a unique type+text re-scan -- refusing rather than guessing --
+    /// on mismatch. Mirrors the verify-before-acting pattern `performDocumentNoteDelete`
+    /// already uses for Document Note deletes.
+    func deleteInlineAnnotation(_ annotation: AnnotationViewModel) {
+        // Review round fix (must-fix 2): every other document-mutating bridge call in
+        // `StructuralUndoController` is gated on `isPerforming` (H7's mutual-exclusion latch) --
+        // this one wasn't. A structural op mid-flight can swap the live document (checkpoint
+        // capture, content push, postOpDoc finalize) out from under a concurrent JS-side
+        // positional delete; refusing while an op is in flight matches every sibling call.
+        guard !structuralUndoController.isPerforming else { return }
+        guard let webView = structuralUndoController.activeWebView else { return }
+        // Index WITHIN the inline-only list -- matches the ordering the JS bridge functions
+        // (getAnnotations()/scrollToAnnotation()/deleteInlineAnnotation()) use, which never
+        // include Document Notes (DB-only rows, never part of the document text).
+        guard let index = editorState.annotations
+            .filter({ !$0.isDocumentLevel })
+            .firstIndex(where: { $0.id == annotation.id }) else { return }
+
+        let expectedType = annotation.type.rawValue.escapedForJSTemplateLiteral
+        let expectedText = annotation.text.escapedForJSTemplateLiteral
+        webView.evaluateJavaScript(
+            "window.FinalFinal.deleteInlineAnnotation(\(index), `\(expectedType)`, `\(expectedText)`)"
+        ) { result, error in
+            if let error {
+                DebugLog.log(.undo, "[ContentView] deleteInlineAnnotation JS call errored: \(error.localizedDescription)")
+            } else if (result as? Bool) != true {
+                DebugLog.log(.undo, "[ContentView] deleteInlineAnnotation refused -- index \(index) didn't match id=\(annotation.id) type=\(annotation.type.rawValue) and no unique type+text match was found")
+            }
+        }
+        EditorFocusRestoration.restoreFocus(to: webView, context: "annotation-panel delete")
     }
 
     // MARK: - Zoomed Footnote Insertion

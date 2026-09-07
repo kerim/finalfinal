@@ -64,6 +64,12 @@ declare global {
       getAnnotations: () => ParsedAnnotation[];
       scrollToAnnotation: (index: number) => void;
       insertAnnotation: (type: string) => void;
+      /** Deletes the inline annotation at `index` (same ordering as getAnnotations()),
+       * verified against `expectedType`/`expectedText` before acting (falls back to a unique
+       * type+text re-scan, refusing on a stale index with zero or multiple matches -- see
+       * api.ts's doc comment). A normal user transaction, so source mode's own text-undo
+       * history undoes it. */
+      deleteInlineAnnotation: (index: number, expectedType: string, expectedText: string) => boolean;
       // Highlight API
       toggleHighlight: () => boolean;
       // Formatting API
