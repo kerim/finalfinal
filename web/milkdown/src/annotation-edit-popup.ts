@@ -4,6 +4,7 @@
 
 import type { EditorView } from '@milkdown/kit/prose/view';
 import { positionPopup } from '../../shared/position-popup';
+import { ANNOTATION_NODE_NAME, buildAnnotationDeleteTransaction } from './annotation-delete';
 import type { AnnotationAttrs, AnnotationType } from './annotation-plugin';
 import { annotationMarkers, completedTaskMarker } from './annotation-plugin';
 
@@ -116,9 +117,70 @@ function createAnnotationEditPopup(): HTMLElement {
     text-align: center;
   `;
 
+  // Create "Delete Annotation" button -- same styling/hover convention as
+  // citation-edit-popup.ts's "Delete Citation" button (see that file's own comment for why
+  // these are hardcoded, non-theme-variable danger colors).
+  const deleteButton = document.createElement('button');
+  deleteButton.textContent = 'Delete Annotation';
+  deleteButton.className = 'ff-annotation-delete-button';
+  deleteButton.style.cssText = `
+    width: 100%;
+    margin-top: 6px;
+    padding: 6px 8px;
+    border: 1px solid #c00;
+    border-radius: 4px;
+    background: var(--bg-primary, #fff);
+    color: #c00;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 500;
+    user-select: none;
+    -webkit-user-select: none;
+  `;
+  deleteButton.addEventListener('mouseenter', () => {
+    deleteButton.style.background = '#c00';
+    deleteButton.style.color = '#fff';
+  });
+  deleteButton.addEventListener('mouseleave', () => {
+    deleteButton.style.background = 'var(--bg-primary, #fff)';
+    deleteButton.style.color = '#c00';
+  });
+  deleteButton.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    // Cancel any pending blur commit first -- clicking any button blurs the textarea and
+    // would otherwise schedule a competing commitAnnotationEdit() via its blur listener.
+    if (editPopupBlurTimeout) {
+      clearTimeout(editPopupBlurTimeout);
+      editPopupBlurTimeout = null;
+    }
+
+    // Capture before hideAnnotationEditPopup() nulls out the module-level editing state.
+    const pos = editingNodePos;
+    const view = editingView;
+
+    hideAnnotationEditPopup();
+
+    if (pos !== null && view) {
+      // Re-resolve the LIVE position at click time -- never a stale captured pos -- and
+      // confirm an annotation is still there before dispatching, mirroring commitAnnotation
+      // Edit()'s own live-node verification just below.
+      const currentNode = view.state.doc.nodeAt(pos);
+      if (currentNode && currentNode.type.name === ANNOTATION_NODE_NAME) {
+        const tr = buildAnnotationDeleteTransaction(view.state, pos);
+        if (tr) {
+          view.dispatch(tr);
+        }
+      }
+      view.focus();
+    }
+  });
+
   // Assemble popup
   popup.appendChild(typeRow);
   popup.appendChild(textarea);
+  popup.appendChild(deleteButton);
   popup.appendChild(hint);
 
   // Event handlers

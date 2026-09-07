@@ -17,6 +17,7 @@ import {
   citationPickerCallback,
   citationPickerCancelled,
   citationPickerError,
+  deleteInlineAnnotation,
   getAllCitekeys,
   getAnnotations,
   getBibliographyCitekeys,
@@ -616,6 +617,7 @@ window.FinalFinal = {
   getAnnotations,
   scrollToAnnotation,
   insertAnnotation,
+  deleteInlineAnnotation,
   setHideCompletedTasks,
   toggleHighlight,
   // Citation API

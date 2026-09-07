@@ -53,6 +53,9 @@ extension ContentView {
                 },
                 onDeleteDocumentAnnotation: { id in
                     deleteDocumentAnnotation(id: id)
+                },
+                onDeleteInlineAnnotation: { annotation in
+                    deleteInlineAnnotation(annotation)
                 }
             )
         }

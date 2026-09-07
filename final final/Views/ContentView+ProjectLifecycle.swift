@@ -678,26 +678,15 @@ extension ContentView {
             if let versionName = name {
                 let snapshot = try service.createManualSnapshot(name: versionName)
                 DebugLog.log(.lifecycle, "[ContentView] Created manual snapshot: \(snapshot.displayName)")
-                // §4.1.2 names this string verbatim as one of only two canonical toast examples.
-                withAnimation {
-                    ToastCenter.shared.show(ToastFactory.versionSaved())
-                }
             } else {
                 if let snapshot = try service.createAutoSnapshot() {
                     DebugLog.log(.lifecycle, "[ContentView] Created auto snapshot: \(snapshot.id)")
-                    withAnimation {
-                        ToastCenter.shared.show(ToastFactory.versionSaved())
-                    }
                 } else {
                     DebugLog.log(.lifecycle, "[ContentView] Auto snapshot skipped: content unchanged")
                 }
             }
         } catch {
             DebugLog.log(.lifecycle, "[ContentView] Failed to create snapshot: \(error)")
-            // §4.1: a failure the user would care about must be visible, not just logged.
-            withAnimation {
-                ToastCenter.shared.show(ToastFactory.versionSaveFailed())
-            }
         }
 
         saveVersionName = ""

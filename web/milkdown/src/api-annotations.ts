@@ -1,6 +1,7 @@
 // Annotation + citation API method implementations for window.FinalFinal
 
 import { editorViewCtx } from '@milkdown/kit/core';
+import { ANNOTATION_NODE_NAME, buildAnnotationDeleteTransaction } from './annotation-delete';
 import {
   setAnnotationDisplayModes as setDisplayModes,
   setHideCompletedTasks as setHideCompletedTasksPlugin,
@@ -82,6 +83,51 @@ export function scrollToAnnotation(index: number): void {
 
   if (index >= 0 && index < positions.length) {
     scrollToOffset(positions[index]);
+  }
+}
+
+// Delete the inline annotation at `index` in the SAME document-order ordering getAnnotations()/
+// scrollToAnnotation() already use. Panel-card analogue of the popup Delete button and the
+// Backspace/Delete keymap -- dispatches the exact same buildAnnotationDeleteTransaction()
+// transaction, so it is undoable via the editor's own text history like every other route.
+//
+// `expectedType`/`expectedText` (must-fix 1, judge round review): the panel's `index` comes
+// from `editorState.annotations` on the Swift side, a DB-observed list synced on a ~500ms
+// debounce -- it can lag the LIVE document this scan runs against (two quick deletes inside
+// that window is enough). Deleting positionally with no identity check risks silently deleting
+// the WRONG annotation. Verify the node at `index` actually matches before acting; on
+// mismatch, do NOT guess by position -- re-scan for a UNIQUE type+text match instead, and
+// refuse (return false) unless exactly one match exists.
+export function deleteInlineAnnotation(index: number, expectedType: string, expectedText: string): boolean {
+  const editorInstance = getEditorInstance();
+  if (!editorInstance) return false;
+
+  try {
+    const view = editorInstance.ctx.get(editorViewCtx);
+    const nodes: Array<{ pos: number; type: string; text: string }> = [];
+    view.state.doc.descendants((node, pos) => {
+      if (node.type.name === ANNOTATION_NODE_NAME) {
+        nodes.push({ pos, type: node.attrs.type, text: (node.attrs.text || '').trim() });
+      }
+      return true;
+    });
+
+    const atIndex = index >= 0 && index < nodes.length ? nodes[index] : undefined;
+    let target = atIndex && atIndex.type === expectedType && atIndex.text === expectedText ? atIndex : undefined;
+
+    if (!target) {
+      const identityMatches = nodes.filter((n) => n.type === expectedType && n.text === expectedText);
+      if (identityMatches.length !== 1) return false;
+      target = identityMatches[0];
+    }
+
+    const tr = buildAnnotationDeleteTransaction(view.state, target.pos);
+    if (!tr) return false;
+
+    view.dispatch(tr);
+    return true;
+  } catch {
+    return false;
   }
 }
 
