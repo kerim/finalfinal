@@ -33,17 +33,6 @@ VMTEST_GUEST_TEST_ENV="TEST_RUNNER_FF_E2E_SHOT_DIR=/tmp/vmtest-e2e-shots"
 # default matching by coincidence.
 VMTEST_E2E_SHOT_DIR="/tmp/vmtest-e2e-shots"
 
-# Guest-side Xcode build cache. provision-warm.sh fills it with a
-# build-for-testing of the whole scheme (GRDB and every other dependency
-# included) while the golden image is being built; every run clone then
-# inherits it and compiles only what its checkout changed. Without this each
-# clone built from scratch, and by 2026-09-06 that cold compile alone
-# exceeded VMTEST_TIMEOUT_SCOPED — three superdev worktrees timed out on it
-# in one batch. Rebuild the image (`vmtest image build`) after a dependency
-# change in project.yml / Package.resolved, or the warm cache goes stale and
-# the first run afterwards pays the cold build again (it still passes).
-VMTEST_GUEST_DERIVED_DATA="~/DerivedData-vmtest"
-
 VMTEST_GOLDEN="ff-golden"
 VMTEST_GOLDEN_PREV="ff-golden-prev"
 VMTEST_GOLDEN_CANDIDATE="ff-golden-candidate"

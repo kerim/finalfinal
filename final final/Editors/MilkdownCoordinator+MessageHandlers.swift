@@ -12,21 +12,6 @@ import WebKit
 
 extension MilkdownEditor.Coordinator {
 
-    /// Cooldown: last time the Zotero alert was shown (prevents spam from repeated resolution failures)
-    private static var lastZoteroAlertTime: Date = .distantPast
-
-    /// Show the Zotero "not running" alert if cooldown (60s) has elapsed.
-    /// Uses the same NSAlert as the CAYW picker path for consistency.
-    private func showZoteroAlertIfNeeded() {
-        let now = Date()
-        guard now.timeIntervalSince(Self.lastZoteroAlertTime) >= 60 else { return }
-        Self.lastZoteroAlertTime = now
-        showZoteroAlert(
-            title: "Zotero Not Running",
-            message: "Zotero is not running. Please open Zotero and try again."
-        )
-    }
-
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         isEditorReady = true
         applyPersistedToggleStates()
@@ -450,28 +435,6 @@ extension MilkdownEditor.Coordinator {
         }
     }
 
-    /// Show a native NSAlert for Zotero-related errors
-    /// JS alert() is silently swallowed in WKWebView (no WKUIDelegate), so we must use native alerts.
-    ///
-    /// App-modal (`runModal()`, not a sheet), fixed as part of the Phase C focus-restoration
-    /// audit's Tier 3 review: given a judge-directed negative control found AppKit does NOT
-    /// reliably restore both focus halves even for the more favorable separate-window case
-    /// (see `EditorFocusRestoration`'s doc comment and `docs/architecture/unified-undo.md`),
-    /// an app-modal alert over the SAME window (an even closer analogue to the already-
-    /// confirmed find-bar/EquationDialog gap) is treated as a real gap, not assumed safe.
-    /// `runModal()` blocks until dismissed and returns synchronously, so the restore call
-    /// right after it is guaranteed to run after the alert has actually closed.
-    @MainActor
-    private func showZoteroAlert(title: String, message: String) {
-        let alert = NSAlert()
-        alert.messageText = title
-        alert.informativeText = message
-        alert.alertStyle = .warning
-        alert.addButton(withTitle: "OK")
-        alert.runModal()
-        EditorFocusRestoration.restoreFocus(to: webView, context: "MilkdownEditor Zotero alert dismiss")
-    }
-
     /// Handle CAYW citation picker request from web editor
     /// Opens Zotero's native citation picker, returns parsed citation + CSL items
     @MainActor
@@ -486,10 +449,7 @@ extension MilkdownEditor.Coordinator {
         // Pre-check: ping Zotero before opening the picker
         let isRunning = await ZoteroService.shared.ping()
         if !isRunning {
-            showZoteroAlert(
-                title: "Zotero Not Running",
-                message: "Zotero is not running. Please open Zotero and try again."
-            )
+            CitationErrorPresenter.present(.notRunning, restoringFocusTo: webView, context: "MilkdownEditor Zotero alert dismiss")
             sendCitationPickerCancelled(webView: webView, requestId: requestId)
             return
         }
@@ -550,17 +510,15 @@ extension MilkdownEditor.Coordinator {
         } catch ZoteroError.notRunning {
             NSApp.activate(ignoringOtherApps: true)
             DebugLog.log(.zotero, "[MilkdownEditor] Zotero not running")
-            showZoteroAlert(
-                title: "Zotero Connection Lost",
-                message: "Zotero is not running. Please open Zotero and try again."
-            )
+            CitationErrorPresenter.present(.connectionLost, restoringFocusTo: webView, context: "MilkdownEditor Zotero alert dismiss")
             sendCitationPickerCancelled(webView: webView, requestId: requestId)
         } catch {
             NSApp.activate(ignoringOtherApps: true)
             DebugLog.log(.zotero, "[MilkdownEditor] CAYW error: \(error.localizedDescription)")
-            showZoteroAlert(
-                title: "Citation Error",
-                message: error.localizedDescription
+            CitationErrorPresenter.present(
+                .failed(error.localizedDescription),
+                restoringFocusTo: webView,
+                context: "MilkdownEditor Zotero alert dismiss"
             )
             sendCitationPickerCancelled(webView: webView, requestId: requestId)
         }
@@ -612,7 +570,7 @@ extension MilkdownEditor.Coordinator {
             // Confirm with a real ping before alerting (isConnected defaults to false at launch)
             let actuallyDown = !(await ZoteroService.shared.ping())
             if actuallyDown {
-                showZoteroAlertIfNeeded()
+                CitationErrorPresenter.presentThrottled(.notRunning, restoringFocusTo: webView, context: "MilkdownEditor Zotero alert dismiss")
             }
         } catch {
             DebugLog.log(.zotero, "[MilkdownEditor] Failed to resolve citekeys: \(error.localizedDescription)")

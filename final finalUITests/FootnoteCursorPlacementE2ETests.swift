@@ -543,11 +543,11 @@ extension FootnoteCursorPlacementE2ETests {
     }
 
     func switchToSourceMode() {
-        toggleEditorMode(to: "Markdown")
+        toggleEditorMode(to: "Source")
     }
 
     func switchToWysiwygMode() {
-        toggleEditorMode(to: "Rich Text")
+        toggleEditorMode(to: "WYSIWYG")
     }
 
     private func toggleEditorMode(to expectedLabel: String, file: StaticString = #filePath, line: UInt = #line) {

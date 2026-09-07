@@ -383,22 +383,22 @@ final class EditorModeSwitchUndoE2ETests: XCTestCase {
     private func toggleWysiwygToSource() {
         let editorMode = app.buttons["status-bar-editor-mode"]
         XCTAssertTrue(editorMode.waitForExistence(timeout: 10), "Editor mode button should appear")
-        XCTAssertTrue(editorMode.waitForLabel("== 'Rich Text'", timeout: 10), "Should start in Rich Text mode")
+        XCTAssertTrue(editorMode.waitForLabel("== 'WYSIWYG'", timeout: 10), "Should start in WYSIWYG mode")
 
         var toggleRegistered = false
         for _ in 1...5 {
-            if editorMode.label == "Markdown" {
+            if editorMode.label == "Source" {
                 toggleRegistered = true
                 break
             }
             app.activateAndWaitForForeground()
             app.typeKey("/", modifierFlags: .command)
-            if editorMode.waitForLabel("== 'Markdown'", timeout: 2) {
+            if editorMode.waitForLabel("== 'Source'", timeout: 2) {
                 toggleRegistered = true
                 break
             }
         }
-        XCTAssertTrue(toggleRegistered, "Editor-mode button should report Markdown after retrying the toggle keystroke")
+        XCTAssertTrue(toggleRegistered, "Editor-mode button should report Source after retrying the toggle keystroke")
 
         // Mount-completion gate: the label flip above is synchronous, but the actual
         // WYSIWYG->CodeMirror view swap runs through an async callback chain that can lag
@@ -418,22 +418,22 @@ final class EditorModeSwitchUndoE2ETests: XCTestCase {
     private func toggleSourceToWysiwyg() {
         let editorMode = app.buttons["status-bar-editor-mode"]
         XCTAssertTrue(editorMode.waitForExistence(timeout: 10), "Editor mode button should appear")
-        XCTAssertTrue(editorMode.waitForLabel("== 'Markdown'", timeout: 10), "Should be in Markdown mode before switching back")
+        XCTAssertTrue(editorMode.waitForLabel("== 'Source'", timeout: 10), "Should be in Source mode before switching back")
 
         var toggleRegistered = false
         for _ in 1...5 {
-            if editorMode.label == "Rich Text" {
+            if editorMode.label == "WYSIWYG" {
                 toggleRegistered = true
                 break
             }
             app.activateAndWaitForForeground()
             app.typeKey("/", modifierFlags: .command)
-            if editorMode.waitForLabel("== 'Rich Text'", timeout: 2) {
+            if editorMode.waitForLabel("== 'WYSIWYG'", timeout: 2) {
                 toggleRegistered = true
                 break
             }
         }
-        XCTAssertTrue(toggleRegistered, "Editor-mode button should report Rich Text after retrying the toggle keystroke")
+        XCTAssertTrue(toggleRegistered, "Editor-mode button should report WYSIWYG after retrying the toggle keystroke")
 
         // Mirror of the mount-completion gate in `toggleWysiwygToSource()`, for symmetry:
         // waits for the CodeMirror-only raw-markdown evidence to actually DISAPPEAR (proving
@@ -453,10 +453,10 @@ final class EditorModeSwitchUndoE2ETests: XCTestCase {
     private func clickModeBadge() {
         let editorMode = app.buttons["status-bar-editor-mode"]
         XCTAssertTrue(editorMode.waitForExistence(timeout: 10), "Editor mode button should appear")
-        XCTAssertTrue(editorMode.waitForLabel("== 'Rich Text'", timeout: 10), "Should start in Rich Text mode")
+        XCTAssertTrue(editorMode.waitForLabel("== 'WYSIWYG'", timeout: 10), "Should start in WYSIWYG mode")
         XCTAssertTrue(editorMode.isHittable, "status-bar-editor-mode button should be hittable for a plain click")
         editorMode.click()
-        XCTAssertTrue(editorMode.waitForLabel("== 'Markdown'", timeout: 5), "Editor-mode button should report Markdown after clicking the badge")
+        XCTAssertTrue(editorMode.waitForLabel("== 'Source'", timeout: 5), "Editor-mode button should report Source after clicking the badge")
 
         // Mount-completion gate, same rationale and technique as `toggleWysiwygToSource()`:
         // the label flip is synchronous with the click, but the actual WYSIWYG->CodeMirror

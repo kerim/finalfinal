@@ -114,12 +114,6 @@ declare global {
       getAnnotations: () => Array<{ type: string; text: string; offset: number; completed?: boolean }>;
       scrollToAnnotation: (index: number) => void;
       insertAnnotation: (type: string) => void;
-      /** Deletes the inline annotation at `index` (same ordering as getAnnotations()/
-       * scrollToAnnotation()), verified against `expectedType`/`expectedText` before acting
-       * (falls back to a unique type+text re-scan, refusing on a stale index with zero or
-       * multiple matches -- see api-annotations.ts's doc comment). Undoable via the editor's
-       * own text history. */
-      deleteInlineAnnotation: (index: number, expectedType: string, expectedText: string) => boolean;
       setHideCompletedTasks: (enabled: boolean) => void;
       // Highlight API
       toggleHighlight: () => boolean;

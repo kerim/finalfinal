@@ -29,7 +29,7 @@ enum ExportError: Error, LocalizedError {
         case .luaScriptNotFound(let path):
             return "Lua filter script not found: \(path)"
         case .referenceDocNotFound(let path):
-            return "Export template not found: \(path)"
+            return "Reference document not found: \(path)"
         case .tempFileCreationFailed:
             return "Failed to create temporary file for export"
         case .invalidOutputPath:

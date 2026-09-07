@@ -61,11 +61,10 @@ function applyLinePrefix(view: EditorView, from: number, to: number, prefix: str
   setPendingSlashUndo(true);
 }
 
-// Exported for slash-command-parity.test.ts, which compares this list against Milkdown's.
-export const slashCommands: SlashCommand[] = [
+const slashCommands: SlashCommand[] = [
   {
     label: '/break',
-    description: 'Insert Section Break',
+    description: 'Insert section break',
     apply: (view, from, to) => {
       view.dispatch({ changes: { from, to, insert: '<!-- ::break:: -->\n\n' } });
       setPendingSlashUndo(true);

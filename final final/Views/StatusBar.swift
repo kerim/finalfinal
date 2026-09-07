@@ -13,8 +13,6 @@ struct StatusBar: View {
     @AppStorage("isSmartQuotesEnabled") private var smartQuotesEnabled = true
     @State private var showProofingPopover = false
     @State private var showOutlinePopover = false
-    @State private var showEditorModeTooltip = false
-    @State private var editorModeTooltipTask: Task<Void, Never>?
 
     var body: some View {
         HStack {
@@ -124,7 +122,7 @@ struct StatusBar: View {
             Button {
                 editorState.requestEditorModeToggle()
             } label: {
-                Text(editorState.editorMode.displayName)
+                Text(editorState.editorMode.rawValue)
                     .font(.caption)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 2)
@@ -132,43 +130,7 @@ struct StatusBar: View {
                     .cornerRadius(4)
             }
             .buttonStyle(.plain)
-            // Plain `.help(...)` inherits AppKit's system-wide help-tag delay (~1-1.5s,
-            // not configurable per-view in SwiftUI), which read as sluggish for this
-            // frequently-hovered badge. Custom onHover + delayed overlay instead, same
-            // Task.sleep + cancel-on-new-hover pattern as
-            // OutlineSidebar.maybeShowSubtreeDragHint. `.accessibilityHint` replaces the
-            // VoiceOver description `.help(...)` used to provide.
-            .onHover { hovering in
-                editorModeTooltipTask?.cancel()
-                if hovering {
-                    editorModeTooltipTask = Task { @MainActor in
-                        try? await Task.sleep(for: .milliseconds(350))
-                        guard !Task.isCancelled else { return }
-                        showEditorModeTooltip = true
-                    }
-                } else {
-                    showEditorModeTooltip = false
-                }
-            }
-            .overlay(alignment: .top) {
-                if showEditorModeTooltip {
-                    Text("\(editorState.editorMode.switchToLabel) (⌘/)")
-                        .font(.caption)
-                        .foregroundColor(themeManager.currentTheme.tooltipText)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(
-                            RoundedRectangle(cornerRadius: 4)
-                                .fill(themeManager.currentTheme.tooltipBackground)
-                                .shadow(color: .black.opacity(0.2), radius: 4, y: 2)
-                        )
-                        .fixedSize()
-                        .offset(y: -28)
-                        .allowsHitTesting(false)
-                        .transition(.opacity)
-                }
-            }
-            .accessibilityHint(Text("\(editorState.editorMode.switchToLabel) (⌘/)"))
+            .help("Toggle editor mode (⌘/)")
             .accessibilityIdentifier("status-bar-editor-mode")
 
             if editorState.focusModeEnabled {

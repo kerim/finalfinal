@@ -110,7 +110,7 @@ extension XCUIElement {
     /// Waits for the element's accessibility value to match a predicate.
     /// SwiftUI `Text` views with explicit `.accessibilityIdentifier()` put their
     /// content in `value`, not `label`.
-    /// Example: `element.waitForValue("== 'Rich Text'")`
+    /// Example: `element.waitForValue("== 'WYSIWYG'")`
     /// Example: `element.waitForValue("CONTAINS 'words'")`
     ///
     /// `predicateFormat` is prefixed with `"value "`, so it must be an infix
@@ -145,7 +145,7 @@ extension XCUIElement {
 
     /// Waits for the element's accessibility label to match a predicate.
     /// SwiftUI `Button` elements expose their `Text` label content in `label`, not `value`.
-    /// Example: `element.waitForLabel("== 'Rich Text'")`
+    /// Example: `element.waitForLabel("== 'WYSIWYG'")`
     ///
     /// `predicateFormat` is prefixed with `"label "`, so it must be an infix
     /// comparison, not a NOT/AND/OR-prefixed expression — see `waitForValue(_:)`.
@@ -157,8 +157,8 @@ extension XCUIElement {
     }
 
     /// Waits for the element's accessibility label to NOT match a predicate.
-    /// Example: `element.waitForLabelNot("== 'Markdown'")` waits until the label
-    /// is no longer "Markdown", correctly building `NOT (label == 'Markdown')`.
+    /// Example: `element.waitForLabelNot("== 'Source'")` waits until the label
+    /// is no longer "Source", correctly building `NOT (label == 'Source')`.
     /// `predicateFormat` must still be an infix comparison, same as `waitForLabel(_:)`.
     ///
     /// Guarded with `exists == true`, same rationale as `waitForValueNot(_:)`:

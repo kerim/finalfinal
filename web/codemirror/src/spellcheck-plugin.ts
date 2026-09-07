@@ -8,10 +8,11 @@
 import { syntaxTree } from '@codemirror/language';
 import { type ChangeDesc, RangeSetBuilder } from '@codemirror/state';
 import { Decoration, type DecorationSet, type EditorView, ViewPlugin, type ViewUpdate } from '@codemirror/view';
+import { dismissMenu, showSpellcheckMenu } from '../../shared/spellcheck-menu';
+import { dismissPopover, isPopoverOpen, showProofingPopover } from '../../shared/spellcheck-popover';
 import { ALL_HIDDEN_MARKERS_REGEX } from './anchor-plugin';
 import { getEditorView } from './editor-state';
-import { dismissMenu, showSpellcheckMenu } from './spellcheck-menu';
-import { dismissPopover, isPopoverOpen, showProofingPopover } from './spellcheck-popover';
+import '../../shared/spellcheck.css';
 
 // --- Types ---
 

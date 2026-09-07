@@ -12,28 +12,6 @@ import WebKit
 
 extension CodeMirrorEditor.Coordinator {
 
-    /// Show a native NSAlert for Zotero-related errors
-    /// JS alert() is silently swallowed in WKWebView (no WKUIDelegate), so we must use native alerts.
-    ///
-    /// App-modal (`runModal()`, not a sheet), fixed as part of the Phase C focus-restoration
-    /// audit's Tier 3 review: given a judge-directed negative control found AppKit does NOT
-    /// reliably restore both focus halves even for the more favorable separate-window case
-    /// (see `EditorFocusRestoration`'s doc comment and `docs/architecture/unified-undo.md`),
-    /// an app-modal alert over the SAME window (an even closer analogue to the already-
-    /// confirmed find-bar/EquationDialog gap) is treated as a real gap, not assumed safe.
-    /// `runModal()` blocks until dismissed and returns synchronously, so the restore call
-    /// right after it is guaranteed to run after the alert has actually closed.
-    @MainActor
-    private func showZoteroAlert(title: String, message: String) {
-        let alert = NSAlert()
-        alert.messageText = title
-        alert.informativeText = message
-        alert.alertStyle = .warning
-        alert.addButton(withTitle: "OK")
-        alert.runModal()
-        EditorFocusRestoration.restoreFocus(to: webView, context: "CodeMirrorEditor Zotero alert dismiss")
-    }
-
     /// Handle CAYW citation picker request from web editor
     @MainActor
     func handleOpenCitationPicker(requestId: Int) async {
@@ -47,10 +25,7 @@ extension CodeMirrorEditor.Coordinator {
         // Pre-check: ping Zotero before opening the picker
         let isRunning = await ZoteroService.shared.ping()
         if !isRunning {
-            showZoteroAlert(
-                title: "Zotero Not Running",
-                message: "Zotero is not running. Please open Zotero and try again."
-            )
+            CitationErrorPresenter.present(.notRunning, restoringFocusTo: webView, context: "CodeMirrorEditor Zotero alert dismiss")
             sendCitationPickerCancelled(webView: webView, requestId: requestId)
             return
         }
@@ -110,17 +85,15 @@ extension CodeMirrorEditor.Coordinator {
         } catch ZoteroError.notRunning {
             NSApp.activate(ignoringOtherApps: true)
             DebugLog.log(.zotero, "[CodeMirrorEditor] Zotero not running")
-            showZoteroAlert(
-                title: "Zotero Connection Lost",
-                message: "Zotero is not running. Please open Zotero and try again."
-            )
+            CitationErrorPresenter.present(.connectionLost, restoringFocusTo: webView, context: "CodeMirrorEditor Zotero alert dismiss")
             sendCitationPickerCancelled(webView: webView, requestId: requestId)
         } catch {
             NSApp.activate(ignoringOtherApps: true)
             DebugLog.log(.zotero, "[CodeMirrorEditor] CAYW error: \(error.localizedDescription)")
-            showZoteroAlert(
-                title: "Citation Error",
-                message: error.localizedDescription
+            CitationErrorPresenter.present(
+                .failed(error.localizedDescription),
+                restoringFocusTo: webView,
+                context: "CodeMirrorEditor Zotero alert dismiss"
             )
             sendCitationPickerCancelled(webView: webView, requestId: requestId)
         }
