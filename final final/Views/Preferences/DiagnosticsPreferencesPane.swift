@@ -12,8 +12,19 @@ import AppKit
 struct DiagnosticsPreferencesPane: View {
     @State private var settings = DiagnosticsSettings.shared
     @State private var isGeneratingReport = false
-    @State private var reportFailureMessage: String?
-    @State private var savedReportURL: URL?
+    @State private var reportOutcome: ReportOutcome?
+
+    private enum ReportOutcome: Identifiable {
+        case success(URL)
+        case failure(String)
+
+        var id: String {
+            switch self {
+            case .success(let url): return "success:\(url.path)"
+            case .failure(let message): return "failure:\(message)"
+            }
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
@@ -54,13 +65,6 @@ struct DiagnosticsPreferencesPane: View {
                         generateReport()
                     }
                     .disabled(isGeneratingReport)
-                    .accessibilityIdentifier("diagnostics-generate-report-button")
-                    if let savedReportURL {
-                        Text("Saved to: \(savedReportURL.path)")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .accessibilityIdentifier("diagnostics-saved-report-text")
-                    }
                     if let lastReportGeneratedAt = settings.lastReportGeneratedAt {
                         Text("Last generated: \(lastReportGeneratedAt.formatted(date: .abbreviated, time: .shortened))")
                             .font(.caption)
@@ -74,16 +78,30 @@ struct DiagnosticsPreferencesPane: View {
         }
         .padding()
         .alert(
-            "Report Generation Failed",
+            reportAlertTitle,
             isPresented: Binding(
-                get: { reportFailureMessage != nil },
-                set: { if !$0 { reportFailureMessage = nil } }
+                get: { reportOutcome != nil },
+                set: { if !$0 { reportOutcome = nil } }
             ),
-            presenting: reportFailureMessage
+            presenting: reportOutcome
         ) { _ in
-            Button("OK") { reportFailureMessage = nil }
-        } message: { message in
-            Text(message)
+            Button("OK") { reportOutcome = nil }
+        } message: { outcome in
+            Text(reportAlertMessage(for: outcome))
+        }
+    }
+
+    private var reportAlertTitle: String {
+        if case .failure = reportOutcome { return "Report Generation Failed" }
+        return "Diagnostic Report Saved"
+    }
+
+    private func reportAlertMessage(for outcome: ReportOutcome) -> String {
+        switch outcome {
+        case .success(let url):
+            return "Saved to: \(url.path)"
+        case .failure(let message):
+            return message
         }
     }
 
@@ -103,17 +121,15 @@ struct DiagnosticsPreferencesPane: View {
         guard panel.runModal() == .OK, let destinationURL = panel.url else { return }
 
         isGeneratingReport = true
-        savedReportURL = nil
-        reportFailureMessage = nil
         Task {
             let result = await DiagnosticReportGenerator.generateReport(to: destinationURL)
             isGeneratingReport = false
             switch result {
             case .success(let url):
                 settings.lastReportGeneratedAt = Date()
-                savedReportURL = url
+                reportOutcome = .success(url)
             case .failure(let error):
-                reportFailureMessage = error.localizedDescription
+                reportOutcome = .failure(error.localizedDescription)
             }
         }
     }

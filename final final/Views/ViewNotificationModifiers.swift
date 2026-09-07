@@ -409,9 +409,7 @@ extension View {
                 onClosed()
             }
             .onReceive(NotificationCenter.default.publisher(for: .gettingStartedEdited)) { _ in
-                withAnimation {
-                    ToastCenter.shared.show(ToastFactory.gettingStartedNotSaved())
-                }
+                editorState.showGettingStartedToast = true
             }
     }
 
