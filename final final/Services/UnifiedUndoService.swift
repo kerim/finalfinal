@@ -34,13 +34,33 @@ struct StructuralEntry: Identifiable, Equatable {
         /// Sections" (unused in the actual menu; kept for parity/diagnostics
         /// with the other five, matching their plain-noun-phrase convention).
         case sectionReorder
+        /// Document Note delete (t-c683aa25, UX contract §3/D3) -- a seventh tracked kind,
+        /// but NOT a snapshot-based op like the other six: a Document Note is a DB row only
+        /// (`charOffset == -1`), invisible to `SnapshotService.restoreEntireProject` and to
+        /// document equality alike, so its inverse is the deleted row itself (`payload`
+        /// below), not a snapshot id. See docs/architecture/unified-undo.md's "Tracked
+        /// entries for DB-only mutations" subsection for the full reasoning and
+        /// `StructuralUndoController.performDocumentNoteDelete`/`performDocumentNoteUndo`/
+        /// `performDocumentNoteRedo` for the bespoke sequence (deliberately NOT
+        /// `performStructuralOp`).
+        case documentNoteDelete
+    }
+
+    /// Verbatim inverse material for a `.documentNoteDelete` entry -- the deleted row itself,
+    /// re-inserted whole on undo (same id/type/text/isCompleted/createdAt) rather than
+    /// restored from a snapshot. `nil` for the six snapshot-based kinds.
+    enum Payload: Equatable {
+        case documentNote(Annotation)
     }
 
     let id: UUID
     let kind: Kind
     let title: String
-    /// Snapshot to restore FROM when this entry is undone (the pre-op state).
-    let undoSnapshotId: String
+    /// Snapshot to restore FROM when this entry is undone (the pre-op state). Optional: `nil`
+    /// for `.documentNoteDelete`, whose inverse is `payload` (the deleted row) instead of a
+    /// snapshot -- approved as trivial/contained since every existing call site already
+    /// passes a concrete `String` (Optional-promotion), see B2 in the approved plan.
+    let undoSnapshotId: String?
     /// Snapshot to restore FROM when this entry is redone (the post-op state), captured at
     /// undo time (see docs/architecture/unified-undo.md's audited-sequences section) -- nil
     /// until this entry has actually been undone once.
@@ -48,14 +68,18 @@ struct StructuralEntry: Identifiable, Equatable {
     /// `StructuralUndoController`'s audited undo sequence captures the redo snapshot.
     var redoSnapshotId: String?
     let createdAt: Date
+    /// Verbatim inverse material for `.documentNoteDelete` (the deleted `Annotation` row).
+    /// `nil` for the six snapshot-based kinds.
+    let payload: Payload?
 
     init(
         id: UUID = UUID(),
         kind: Kind,
         title: String,
-        undoSnapshotId: String,
+        undoSnapshotId: String? = nil,
         redoSnapshotId: String? = nil,
-        createdAt: Date = Date()
+        createdAt: Date = Date(),
+        payload: Payload? = nil
     ) {
         self.id = id
         self.kind = kind
@@ -63,6 +87,7 @@ struct StructuralEntry: Identifiable, Equatable {
         self.undoSnapshotId = undoSnapshotId
         self.redoSnapshotId = redoSnapshotId
         self.createdAt = createdAt
+        self.payload = payload
     }
 }
 
@@ -171,7 +196,11 @@ final class UnifiedUndoService {
     /// snapshot). See `SnapshotService.pinUndoPointSnapshot`'s doc comment for why this is an
     /// in-memory set rather than a DB column.
     private func unpinSnapshots(of entry: StructuralEntry) {
-        SnapshotService.unpinUndoPointSnapshot(entry.undoSnapshotId)
+        // `.documentNoteDelete` entries carry no snapshot id (nil) -- nothing to unpin for
+        // them; their inverse lives in `payload`, unaffected by snapshot pin/prune.
+        if let undoSnapshotId = entry.undoSnapshotId {
+            SnapshotService.unpinUndoPointSnapshot(undoSnapshotId)
+        }
         if let redoSnapshotId = entry.redoSnapshotId {
             SnapshotService.unpinUndoPointSnapshot(redoSnapshotId)
         }

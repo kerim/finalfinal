@@ -62,6 +62,13 @@ export interface UndoRegistryEntry {
   postOpDoc: Text;
   /** Document immediately before the op -- the equality target for structural redo. */
   preOpDoc: Text;
+  /** True from `beginStructuralOp` until `finalizeStructuralOpPostOpDoc` (or
+   * `clearFailedStructuralOpEntry`, which removes the entry entirely) -- explicit mid-op
+   * marker, NOT inferred from `postOpDoc === preOpDoc` reference identity. Mirrors Milkdown's
+   * undo-coordinator.ts -- see that file's matching doc comment for why a zero-diff op (e.g.
+   * a Document Note delete) needs this. Optional (not every test-constructed entry sets it)
+   * -- `undefined` reads as `false` (not mid-op), the correct default for a finalized entry. */
+  midOp?: boolean;
 }
 
 /** Swift-pushed pointer to the top of each stack (see docs/architecture/unified-undo.md's
@@ -291,7 +298,7 @@ export function beginStructuralOp(opId: string): boolean {
   if (!view) return false;
   view.dispatch({ annotations: isolateHistory.of('full') });
   const preOpDoc = view.state.doc;
-  setRegistryEntry(opId, { checkpoint: view.state, postOpDoc: preOpDoc, preOpDoc });
+  setRegistryEntry(opId, { checkpoint: view.state, postOpDoc: preOpDoc, preOpDoc, midOp: true });
   return true;
 }
 
@@ -307,7 +314,7 @@ export function finalizeStructuralOpPostOpDoc(opId: string): boolean {
   if (!view) return false;
   const entry = registry.get(opId);
   if (!entry) return false;
-  registry.set(opId, { ...entry, postOpDoc: view.state.doc });
+  registry.set(opId, { ...entry, postOpDoc: view.state.doc, midOp: false });
   return true;
 }
 
@@ -340,13 +347,15 @@ export function finalizeStructuralOpPostOpDoc(opId: string): boolean {
  * undoing the restore.
  *
  * Fixed by widening the guard to the whole function: while ANY entry in the registry is
- * currently mid-op (same detector as before -- `postOpDoc === preOpDoc`; at most one entry can
- * be mid-op at a time, since `StructuralUndoController.isPerforming`'s latch prevents concurrent
- * structural op sequences), skip advancing EVERY entry for this transaction, not just the
- * mid-op one. This is the rule's actual documented intent: only genuine async derived-content
- * churn landing OUTSIDE of any active op's own sequence window should ever advance another
- * entry -- never a new op's own primary push or its own pre-finalize resyncs reaching back and
- * silently mutating a DIFFERENT, already-finalized entry's equality target.
+ * currently mid-op (tracked via the explicit `midOp` marker -- see `UndoRegistryEntry`'s doc
+ * comment for why reference identity, `postOpDoc === preOpDoc`, was retired as the detector; at
+ * most one entry can be mid-op at a time, since `StructuralUndoController.isPerforming`'s latch
+ * prevents concurrent structural op sequences), skip advancing EVERY entry for this
+ * transaction, not just the mid-op one. This is the rule's actual documented intent: only
+ * genuine async derived-content churn landing OUTSIDE of any active op's own sequence window
+ * should ever advance another entry -- never a new op's own primary push or its own
+ * pre-finalize resyncs reaching back and silently mutating a DIFFERENT, already-finalized
+ * entry's equality target.
  *
  * Deliberately disjoint from `maybeNotifyHistoryEdited`'s trigger condition (that one requires
  * the annotation `!== false`; this one requires `=== false`), so call order relative to it in
@@ -376,7 +385,7 @@ export function maybeAdvanceRegistryOnSyncOriginTx(tr: Transaction): void {
   // reaching back onto a DIFFERENT, already-finalized entry -- never advance anything until the
   // in-flight op has finalized. Exact, not a heuristic: at most one entry is ever mid-op at a
   // time (StructuralUndoController.isPerforming's latch).
-  const anyMidOp = [...registry.values()].some((entry) => entry.postOpDoc === entry.preOpDoc);
+  const anyMidOp = [...registry.values()].some((entry) => entry.midOp);
   if (anyMidOp) return;
 
   const before = tr.startState.doc;

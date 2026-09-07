@@ -113,12 +113,12 @@ extension UnifiedUndoE2ETests {
 
         var toggled = false
         for _ in 1...5 {
-            if editorMode.label == "Source" { toggled = true; break }
+            if editorMode.label == "Markdown" { toggled = true; break }
             app.activateAndWaitForForeground()
             app.typeKey("/", modifierFlags: .command)
-            if editorMode.waitForLabel("== 'Source'", timeout: 2) { toggled = true; break }
+            if editorMode.waitForLabel("== 'Markdown'", timeout: 2) { toggled = true; break }
         }
-        XCTAssertTrue(toggled, "Editor-mode button should report Source after retrying the toggle keystroke")
+        XCTAssertTrue(toggled, "Editor-mode button should report Markdown after retrying the toggle keystroke")
 
         // Mount-completion gate: this suite's own seeded canonical document opens with the
         // literal line "# Anchor Section" -- Milkdown's WYSIWYG rendering strips markdown syntax
