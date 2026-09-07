@@ -64,7 +64,9 @@ extension EditorViewState {
         focusModeEnabled = true
 
         // 7. Show toast notification
-        showFocusModeToast = true
+        withAnimation {
+            ToastCenter.shared.show(ToastFactory.focusModeHint())
+        }
     }
 
     /// Exit focus mode, restoring only the elements that were modified on entry

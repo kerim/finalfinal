@@ -284,7 +284,7 @@ struct AppearancePreferencesPane: View {
 
                 // Header Color
                 settingRow(
-                    label: "Header Color",
+                    label: "Heading Color",
                     isOverridden: appearanceManager.isHeaderColorOverridden(),
                     onReset: {
                         appearanceManager.clearHeaderColor()

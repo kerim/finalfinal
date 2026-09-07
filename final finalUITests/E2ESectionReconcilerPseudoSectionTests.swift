@@ -112,7 +112,7 @@
 //  KNOWN RISK, disclosed rather than hidden: SmokeTests.swift
 //  (EditorSmokeTests.testEditorModeToggle) and ListNumberingE2ETests.swift
 //  both document that the Source Mode toggle's accessibility LABEL flips to
-//  "Source" before the WYSIWYG->CodeMirror view swap's async cursor-save
+//  "Markdown" before the WYSIWYG->CodeMirror view swap's async cursor-save
 //  callback chain necessarily finishes. EditorSmokeTests.testEditorModeToggle
 //  proves the swap DOES complete reliably in XCUITest given the right
 //  technique -- retrying the toggle keystroke and polling for real on-screen
@@ -287,7 +287,7 @@ Intro paragraph for section A.
         XCTAssertTrue(editorMode.waitForExistence(timeout: 10), "Editor mode button should appear")
         app.activateAndWaitForForeground()
         app.typeKey("/", modifierFlags: .command)
-        XCTAssertTrue(editorMode.waitForLabel("== 'Source'", timeout: 10), "Editor-mode button should report Source")
+        XCTAssertTrue(editorMode.waitForLabel("== 'Markdown'", timeout: 10), "Editor-mode button should report Markdown")
 
         // KNOWN RISK (see file header "Trigger mechanism"): the label flips
         // before the async WYSIWYG->CodeMirror view swap necessarily

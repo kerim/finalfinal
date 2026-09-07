@@ -539,9 +539,9 @@ enum SnapshotError: Error, LocalizedError {
         case .noContent:
             return "No content found for project"
         case .snapshotNotFound:
-            return "Snapshot not found"
+            return "Version not found"
         case .sectionNotFound:
-            return "Snapshot section not found"
+            return "Section not found in this version"
         case .targetSectionNotFound:
             return "Target section not found in current project"
         }

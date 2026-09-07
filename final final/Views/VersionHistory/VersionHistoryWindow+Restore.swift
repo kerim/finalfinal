@@ -103,7 +103,6 @@ extension VersionHistoryWindow {
             }
         }
         .accessibilityIdentifier("version-history-full-restore-confirm")
-        Text("A restore point is created automatically.")
         Button("Cancel", role: .cancel) {}
             .accessibilityIdentifier("version-history-full-restore-cancel")
     }
@@ -298,8 +297,8 @@ extension VersionHistoryWindow {
     /// exists on every full restore regardless of what the toggle said. The judge's ruling:
     /// remove the toggle (and its now-unused `@State var createSafetyBackup` on
     /// `VersionHistoryWindow`) rather than leave misleading interactive UI in place; a static
-    /// line of text in the same spot ("A restore point is created automatically.") now states
-    /// the actual, unconditional behavior instead.
+    /// line of text in the same spot ("A version is saved automatically before restoring.") now
+    /// states the actual, unconditional behavior instead.
     func performFullRestore() async {
         guard let projectId = coordinator.projectId,
               let snapshotId = selectedSnapshotId,

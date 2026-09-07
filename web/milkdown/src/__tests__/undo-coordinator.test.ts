@@ -789,6 +789,96 @@ describe('undo-coordinator live wiring (real Milkdown editor, always-empty Phase
     expect(entry?.preOpDoc.eq(preOpDoc)).toBe(true);
   });
 
+  // === must-fix 3 (judge round review): explicit `midOp` marker coverage ===
+  // These exercise the `midOp` field directly (every existing test above only reaches it
+  // indirectly via beginStructuralOp/finalizeStructuralOpPostOpDoc) -- see UndoRegistryEntry's
+  // doc comment for why a zero-diff op (postOpDoc === preOpDoc by reference, e.g. a Document
+  // Note delete) needed this explicit marker in the first place.
+
+  it('a finalized entry (midOp: false) whose preOpDoc === postOpDoc by reference (zero-diff op, e.g. a Document Note delete) does NOT block advancing a DIFFERENT, unrelated entry', async () => {
+    const e = await makeEditor('Paragraph one.');
+    const view = e.ctx.get(editorViewCtx);
+
+    // Zero-diff entry: preOpDoc and postOpDoc are the SAME doc object, but explicitly
+    // finalized (midOp: false) -- exactly the shape midOp exists to disambiguate from
+    // "still mid-op", which the OLD `postOpDoc === preOpDoc` reference-identity detector could
+    // not tell apart.
+    const zeroDiffDoc = view.state.doc;
+    setRegistryEntry('op-zero-diff', {
+      checkpoint: view.state as any,
+      postOpDoc: zeroDiffDoc,
+      preOpDoc: zeroDiffDoc,
+      midOp: false,
+    });
+
+    // A second, unrelated, already-finalized entry with a genuinely distinct preOpDoc/postOpDoc.
+    view.dispatch(view.state.tr.insertText('RESTORED').setMeta('addToHistory', false));
+    const docB = view.state.doc;
+    setRegistryEntry('op-B', { checkpoint: view.state as any, postOpDoc: docB, preOpDoc: zeroDiffDoc, midOp: false });
+
+    // A later async derived-content resync (e.g. a delayed bibliography fetch) lands, matching
+    // op-B's postOpDoc.
+    const resyncTr = view.state.tr.insertText('BIB').setMeta('addToHistory', false);
+    view.dispatch(resyncTr);
+    maybeAdvanceRegistryOnSyncOriginTx(resyncTr);
+
+    // Without the midOp fix, op-zero-diff's reference-identical postOpDoc/preOpDoc would read
+    // as "mid-op" under the old detector, blocking advancement for EVERY entry -- including
+    // op-B here.
+    const entryB = getRegistry().get('op-B');
+    expect(entryB?.postOpDoc.eq(view.state.doc)).toBe(true);
+    expect(entryB?.postOpDoc.eq(docB)).toBe(false);
+  });
+
+  it('an entry with midOp: true DOES block advancing a different, unrelated entry', async () => {
+    const e = await makeEditor('Paragraph one.');
+    const view = e.ctx.get(editorViewCtx);
+
+    // Op A: finalized, with a distinct preOpDoc/postOpDoc pair.
+    const opAStart = view.state.doc;
+    view.dispatch(view.state.tr.insertText('RESTORED').setMeta('addToHistory', false));
+    const docA = view.state.doc;
+    setRegistryEntry('op-A', { checkpoint: view.state as any, postOpDoc: docA, preOpDoc: opAStart, midOp: false });
+
+    // Op B: explicitly mid-op (midOp: true) -- its own doc references don't matter here, only
+    // its presence in the registry while mid-op.
+    setRegistryEntry('op-B', { checkpoint: view.state as any, postOpDoc: docA, preOpDoc: docA, midOp: true });
+
+    // A sync-origin transaction whose "before" doc matches op-A's postOpDoc.
+    const resyncTr = view.state.tr.insertText('BIB').setMeta('addToHistory', false);
+    view.dispatch(resyncTr);
+    maybeAdvanceRegistryOnSyncOriginTx(resyncTr);
+
+    // op-A must be untouched: op-B being mid-op blocks advancement for the WHOLE registry.
+    const entryA = getRegistry().get('op-A');
+    expect(entryA?.postOpDoc.eq(docA)).toBe(true);
+    expect(entryA?.postOpDoc.eq(view.state.doc)).toBe(false);
+  });
+
+  it('an entry with midOp undefined/missing is treated as not-mid-op (defensive default) and does not block advancing a different entry', async () => {
+    const e = await makeEditor('Paragraph one.');
+    const view = e.ctx.get(editorViewCtx);
+
+    // Constructed WITHOUT the midOp field at all (e.g. an older test-constructed entry shape)
+    // -- must read as "not mid-op", the documented default for `undefined`.
+    const preOpDoc = view.state.doc;
+    setRegistryEntry('op-legacy', { checkpoint: view.state as any, postOpDoc: preOpDoc, preOpDoc });
+    expect(getRegistry().get('op-legacy')?.midOp).toBeUndefined();
+
+    // A second, unrelated, finalized entry.
+    view.dispatch(view.state.tr.insertText('RESTORED').setMeta('addToHistory', false));
+    const docB = view.state.doc;
+    setRegistryEntry('op-B', { checkpoint: view.state as any, postOpDoc: docB, preOpDoc, midOp: false });
+
+    const resyncTr = view.state.tr.insertText('BIB').setMeta('addToHistory', false);
+    view.dispatch(resyncTr);
+    maybeAdvanceRegistryOnSyncOriginTx(resyncTr);
+
+    const entryB = getRegistry().get('op-B');
+    expect(entryB?.postOpDoc.eq(view.state.doc)).toBe(true);
+    expect(entryB?.postOpDoc.eq(docB)).toBe(false);
+  });
+
   it('integration: postOpDoc captured at push-tr keeps tracking through RAF normalization / sync-origin resyncs, and equality routing recognizes the advanced state as reachable (plan §8)', async () => {
     const e = await makeEditor('Paragraph one.');
     const view = e.ctx.get(editorViewCtx);

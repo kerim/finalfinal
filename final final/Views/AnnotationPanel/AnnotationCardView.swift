@@ -99,7 +99,9 @@ struct AnnotationCardView: View {
 
                 Spacer()
 
-                // Delete button for document-level annotations (visible on hover)
+                // Delete button (visible on hover) -- serves both document-level AND inline
+                // annotation cards; the caller wires `onDelete` to the appropriate route
+                // (`onDeleteDocumentAnnotation`/`onDeleteInlineAnnotation` in AnnotationPanel.swift).
                 if let onDelete, isHovering {
                     Button(action: onDelete) {
                         Image(systemName: "xmark")

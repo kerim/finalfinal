@@ -32,8 +32,9 @@ interface SlashCommand {
   disabledInsideTable?: boolean; // If true, hidden when cursor is inside a table node
 }
 
-const slashCommands: SlashCommand[] = [
-  { label: '/break', replacement: '', description: 'Insert section break', isNodeInsertion: true },
+// Exported for slash-command-parity.test.ts, which compares this list against CodeMirror's.
+export const slashCommands: SlashCommand[] = [
+  { label: '/break', replacement: '', description: 'Insert Section Break', isNodeInsertion: true },
   { label: '/h1', replacement: '', description: 'Heading 1', headingLevel: 1 },
   { label: '/h2', replacement: '', description: 'Heading 2', headingLevel: 2 },
   { label: '/h3', replacement: '', description: 'Heading 3', headingLevel: 3 },
@@ -49,9 +50,9 @@ const slashCommands: SlashCommand[] = [
   { label: '/task', replacement: '', description: 'Insert task annotation', isNodeInsertion: true },
   { label: '/comment', replacement: '', description: 'Insert comment annotation', isNodeInsertion: true },
   { label: '/reference', replacement: '', description: 'Insert reference annotation', isNodeInsertion: true },
-  { label: '/cite', replacement: '', description: 'Insert citation', isNodeInsertion: true },
+  { label: '/cite', replacement: '', description: 'Insert citation from Zotero', isNodeInsertion: true },
   { label: '/footnote', replacement: '', description: 'Insert footnote', isNodeInsertion: true },
-  { label: '/image', replacement: '', description: 'Insert image', isNodeInsertion: true },
+  { label: '/image', replacement: '', description: 'Insert image from file', isNodeInsertion: true },
   { label: '/table', replacement: '', description: 'Insert table', isNodeInsertion: true, disabledInsideTable: true },
   { label: '/equation', replacement: '', description: 'Insert math equation', isNodeInsertion: true },
 ];

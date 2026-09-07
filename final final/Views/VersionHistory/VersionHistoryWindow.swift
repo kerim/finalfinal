@@ -13,28 +13,28 @@ struct VersionHistoryWindow: View {
     @Environment(ThemeManager.self) var themeManager
     @Environment(VersionHistoryCoordinator.self) var coordinator
 
-    @State var snapshots: [Snapshot] = []
-    @State var snapshotItems: [SnapshotListItem] = []
-    @State var selectedSnapshotId: String?
-    @State var selectedSnapshotSections: [SnapshotSection] = []
-    @State var showNamedOnly = false
-    @State var isLoading = true
-    @State var errorMessage: String?
-    @State var comparisonMode: ComparisonMode = .vsCurrent
-    @State var previousSnapshotSections: [SnapshotSection] = []
+    @State internal var snapshots: [Snapshot] = []
+    @State internal var snapshotItems: [SnapshotListItem] = []
+    @State internal var selectedSnapshotId: String?
+    @State internal var selectedSnapshotSections: [SnapshotSection] = []
+    @State private var showNamedOnly = false
+    @State internal var isLoading = true
+    @State internal var errorMessage: String?
+    @State private var comparisonMode: ComparisonMode = .vsCurrent
+    @State internal var previousSnapshotSections: [SnapshotSection] = []
 
     /// For section restore confirmation
-    @State var pendingRestoreSection: SnapshotSection?
-    @State var pendingRestoreMode: SectionRestoreMode?
-    @State var showRestoreConfirmation = false
-    @State var showSectionPicker = false
-    @State var targetSectionId: String?
+    @State internal var pendingRestoreSection: SnapshotSection?
+    @State internal var pendingRestoreMode: SectionRestoreMode?
+    @State internal var showRestoreConfirmation = false
+    @State internal var showSectionPicker = false
+    @State internal var targetSectionId: String?
 
     /// For full project restore confirmation
-    @State var showFullRestoreConfirmation = false
+    @State private var showFullRestoreConfirmation = false
 
     /// Track if the project was closed while window is open
-    @State var projectClosed = false
+    @State internal var projectClosed = false
 
     private var filteredSnapshots: [SnapshotListItem] {
         if showNamedOnly {
@@ -136,7 +136,7 @@ struct VersionHistoryWindow: View {
             restoreConfirmationButtons
         } message: {
             if let section = pendingRestoreSection {
-                Text("Restore \"\(section.title)\" from this backup?")
+                Text("Restore \"\(section.title)\" from this version?")
             }
         }
         .confirmationDialog(
@@ -146,7 +146,7 @@ struct VersionHistoryWindow: View {
         ) {
             fullRestoreConfirmationButtons
         } message: {
-            Text("This will replace all current content with the selected backup version.")
+            Text("This will replace all current content with the selected version. A version is saved automatically before restoring.")
         }
         .sheet(isPresented: $showSectionPicker) {
             sectionPickerSheet
@@ -218,7 +218,7 @@ struct VersionHistoryWindow: View {
 
                 // Middle: Current document (half of remaining)
                 DocumentPreviewView(
-                    title: "Current",
+                    title: "Current Version",
                     sections: coordinator.currentSections.map { SnapshotSectionViewModel(from: $0) },
                     highlightedSectionId: nil,
                     onSectionTap: nil,
@@ -232,7 +232,7 @@ struct VersionHistoryWindow: View {
                 if selectedSnapshot != nil {
                     let analysis = backupAnalysis
                     DocumentPreviewView(
-                        title: "Selected Backup",
+                        title: "Selected Version",
                         sections: selectedSnapshotSections.map { SnapshotSectionViewModel(from: $0) },
                         highlightedSectionId: nil,
                         onSectionTap: { section in
@@ -334,7 +334,7 @@ struct VersionHistoryWindow: View {
             Text("No Version History")
                 .font(.headline)
                 .foregroundStyle(themeManager.currentTheme.editorText)
-            Text("Version history will appear here when you save versions or when auto-backups are created.")
+            Text("Version history will appear here when you save versions or when versions are saved automatically.")
                 .foregroundStyle(themeManager.currentTheme.editorTextSecondary)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 300)

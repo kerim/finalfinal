@@ -190,9 +190,28 @@ extension Notification.Name {
     static let gettingStartedEdited = Notification.Name("gettingStartedEdited")
 }
 
+/// `rawValue` is the log token ONLY — never put it on screen. It is not the Swift↔web
+/// bridge token; that value is computed independently in
+/// `MilkdownCoordinator+Content.setEditorAppearanceMode(_:)`, a separate lowercased
+/// string literal. UX contract §5 retires "WYSIWYG" and "Source" from user-visible text.
+/// UI code uses `displayName` (current state) or `switchToLabel` (the destination).
 enum EditorMode: String, CaseIterable {
     case wysiwyg = "WYSIWYG"
     case source = "Source"
+
+    var displayName: String {
+        switch self {
+        case .wysiwyg: return "Rich Text"
+        case .source:  return "Markdown"
+        }
+    }
+
+    var switchToLabel: String {
+        switch self {
+        case .wysiwyg: return "Switch to Markdown"
+        case .source:  return "Switch to Rich Text"
+        }
+    }
 }
 
 /// Zoom mode for section navigation

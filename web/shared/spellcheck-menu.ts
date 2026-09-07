@@ -1,5 +1,5 @@
 /**
- * Spellcheck context menu for Milkdown editor
+ * Spellcheck context menu
  * Shows suggestions, learn, and ignore options for flagged words
  */
 
