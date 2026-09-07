@@ -67,7 +67,7 @@ extension FileOperations {
                         projectURL: projectURL,
                         outputURL: url
                     )
-                    showMarkdownExportSuccess(result: result)
+                    showMarkdownExportToast(result: result)
                 } catch {
                     showErrorAlert("Could Not Export File", error: error)
                 }
@@ -134,7 +134,7 @@ extension FileOperations {
                         content: content,
                         outputURL: url
                     )
-                    showMarkdownExportSuccess(result: result)
+                    showMarkdownExportToast(result: result)
                 } catch {
                     showErrorAlert("Could Not Export File", error: error)
                 }
@@ -211,7 +211,7 @@ extension FileOperations {
                         projectURL: projectURL,
                         outputURL: url
                     )
-                    showMarkdownExportSuccess(result: result)
+                    showMarkdownExportToast(result: result)
                 } catch {
                     showErrorAlert("Could Not Export File", error: error)
                 }
@@ -219,24 +219,15 @@ extension FileOperations {
         }
     }
 
-    private static func showMarkdownExportSuccess(result: ExportService.MarkdownExportResult) {
-        let alert = NSAlert()
-
-        if result.warnings.isEmpty {
-            alert.messageText = "Export Complete"
-            alert.informativeText = "Document exported successfully."
-            alert.alertStyle = .informational
-        } else {
-            alert.messageText = "Export Complete with Warnings"
-            alert.informativeText = result.warnings.joined(separator: "\n")
-            alert.alertStyle = .warning
-        }
-
-        alert.addButton(withTitle: "Show in Finder")
-        alert.addButton(withTitle: "OK")
-
-        if alert.runModal() == .alertFirstButtonReturn {
-            NSWorkspace.shared.selectFile(result.outputURL.path, inFileViewerRootedAtPath: "")
+    /// §4.1.2: "it worked" is a toast, never an alert -- the full pandoc-warnings text is still
+    /// reachable, via the warning toast's "Show Details" action (see `ToastFactory`).
+    private static func showMarkdownExportToast(result: ExportService.MarkdownExportResult) {
+        withAnimation {
+            ToastCenter.shared.show(
+                result.warnings.isEmpty
+                    ? ToastFactory.exportSucceeded(result: result)
+                    : ToastFactory.exportSucceededWithWarnings(result: result)
+            )
         }
     }
 

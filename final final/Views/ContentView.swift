@@ -27,31 +27,6 @@ struct CursorPosition: Equatable {
     static let start = CursorPosition(line: 1, column: 0, scrollFraction: 0, cursorIsVisible: true, topLine: 1.0)
 }
 
-/// Toast notification with a fixed message, auto-dismisses after 3 seconds.
-/// Shared by focus mode entry and the Getting Started first-edit notice.
-struct EditorToast: View {
-    let message: String
-    @Binding var isShowing: Bool
-
-    var body: some View {
-        if isShowing {
-            Text(message)
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 10)
-                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
-                .transition(.opacity.combined(with: .move(edge: .top)))
-                .task {
-                    try? await Task.sleep(nanoseconds: 3_000_000_000)
-                    withAnimation {
-                        isShowing = false
-                    }
-                }
-        }
-    }
-}
-
 struct ContentView: View {
     @Environment(ThemeManager.self) var themeManager
     @Environment(VersionHistoryCoordinator.self) private var versionHistoryCoordinator
@@ -314,18 +289,11 @@ struct ContentView: View {
                 editorState: editorState,
                 sidebarVisibility: $sidebarVisibility
             )
-            .overlay(alignment: .top) {
-                VStack(spacing: 8) {
-                    EditorToast(
-                        message: "Press Esc or Cmd+Shift+F to exit focus mode",
-                        isShowing: $editorState.showFocusModeToast
-                    )
-                    EditorToast(
-                        message: "Changes to the Getting Started guide aren't saved.",
-                        isShowing: $editorState.showGettingStartedToast
-                    )
+            .overlay(alignment: .bottom) {
+                if let toast = ToastCenter.shared.current {
+                    ToastView(toast: toast)
+                        .padding(.bottom, Spacing.s24)
                 }
-                .padding(.top, 60)
             }
     }
 
