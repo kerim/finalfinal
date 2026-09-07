@@ -20,11 +20,11 @@ struct FindBarView: View {
                 HStack(spacing: 4) {
                     Image(systemName: "magnifyingglass")
                         .foregroundStyle(.secondary)
-                        .font(.system(size: 12))
+                        .font(.system(size: TypeScale.caption))
 
                     TextField("Find", text: $state.searchQuery)
                         .textFieldStyle(.plain)
-                        .font(.system(size: 13))
+                        .font(.system(size: TypeScale.chromeLabel))
                         .focused($isSearchFieldFocused)
                         .accessibilityIdentifier("find-bar-search-field")
                         .onSubmit {
@@ -40,7 +40,7 @@ struct FindBarView: View {
                         } label: {
                             Image(systemName: "xmark.circle.fill")
                                 .foregroundStyle(.secondary)
-                                .font(.system(size: 12))
+                                .font(.system(size: TypeScale.caption))
                         }
                         .buttonStyle(.plain)
                     }
@@ -53,12 +53,12 @@ struct FindBarView: View {
                 // Match count
                 if state.totalMatches > 0 {
                     Text("\(state.currentMatch) of \(state.totalMatches)")
-                        .font(.system(size: 11))
+                        .font(.system(size: TypeScale.smallUI))
                         .foregroundStyle(.secondary)
                         .monospacedDigit()
                 } else if !state.searchQuery.isEmpty {
                     Text("No matches")
-                        .font(.system(size: 11))
+                        .font(.system(size: TypeScale.smallUI))
                         .foregroundStyle(.secondary)
                 }
 
@@ -68,7 +68,7 @@ struct FindBarView: View {
                         state.findPrevious()
                     } label: {
                         Image(systemName: "chevron.up")
-                            .font(.system(size: 12, weight: .medium))
+                            .font(.system(size: TypeScale.caption, weight: .medium))
                     }
                     .buttonStyle(.plain)
                     .disabled(state.searchQuery.isEmpty)
@@ -79,7 +79,7 @@ struct FindBarView: View {
                         state.findNext()
                     } label: {
                         Image(systemName: "chevron.down")
-                            .font(.system(size: 12, weight: .medium))
+                            .font(.system(size: TypeScale.caption, weight: .medium))
                     }
                     .buttonStyle(.plain)
                     .disabled(state.searchQuery.isEmpty)
@@ -96,7 +96,7 @@ struct FindBarView: View {
                     }
                 } label: {
                     Image(systemName: state.showReplace ? "chevron.down" : "chevron.right")
-                        .font(.system(size: 14))
+                        .font(.system(size: TypeScale.body))
                 }
                 .buttonStyle(.plain)
                 .help(state.showReplace ? "Hide Replace" : "Show Replace (⌘H)")
@@ -113,7 +113,7 @@ struct FindBarView: View {
                     }
                 } label: {
                     Image(systemName: "ellipsis.circle")
-                        .font(.system(size: 14))
+                        .font(.system(size: TypeScale.body))
                 }
                 .menuStyle(.borderlessButton)
                 .fixedSize()
@@ -124,7 +124,7 @@ struct FindBarView: View {
                     state.hide()
                 } label: {
                     Image(systemName: "xmark")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(.system(size: TypeScale.smallUI, weight: .semibold))
                         .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
@@ -141,11 +141,11 @@ struct FindBarView: View {
                     HStack(spacing: 4) {
                         Image(systemName: "arrow.triangle.2.circlepath")
                             .foregroundStyle(.secondary)
-                            .font(.system(size: 12))
+                            .font(.system(size: TypeScale.caption))
 
                         TextField("Replace", text: $state.replaceText)
                             .textFieldStyle(.plain)
-                            .font(.system(size: 13))
+                            .font(.system(size: TypeScale.chromeLabel))
                             .onSubmit {
                                 state.replaceCurrent()
                             }
@@ -175,7 +175,7 @@ struct FindBarView: View {
                     // Status message
                     if let message = state.statusMessage {
                         Text(message)
-                            .font(.system(size: 11))
+                            .font(.system(size: TypeScale.smallUI))
                             .foregroundStyle(.secondary)
                             .onAppear {
                                 // Auto-clear status after 3 seconds

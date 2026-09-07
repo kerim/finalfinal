@@ -36,9 +36,68 @@ enum TypeScale {
     static let annotationBody: CGFloat = 14    // was 12
     static let annotationMarker: CGFloat = 17  // was 14
 
-    /// Returns the size for a given header level (1-6)
+    // Chrome glyph sizes (SF Symbols in native/themed chrome, not text)
+    static let chromeGlyph: CGFloat = 40        // sidebar empty-state icon
+    static let chromeGlyphLarge: CGFloat = 48   // Version History + project-picker full-pane state icons
+
+    // Chrome label sizes.
+    // chromeMicro and chromeTiny sit deliberately BELOW TypeScale.minimum (11).
+    // They preserve the existing density of disclosure chevrons and card metadata.
+    //
+    // 9 call sites use these two tokens today. 5 are SF Symbol glyphs, not text — a
+    // text-size floor doesn't govern icon glyphs: StatusBar.swift:46 (the outline
+    // chevron), AnnotationPanel.swift:312 (disclosure chevron), ChevronButton.swift:42
+    // (chevron), and AnnotationCardView.swift:106/:164 (xmark, chevron). The other 4
+    // are genuinely below-floor readable TEXT — the actual debt — all in
+    // SectionCardView.swift's Word Goals popover (lines 292, 304, 313, 325: "Section
+    // Goal", "Current: N words", "Aggregate Goal", "Subtree: N words").
+    //
+    // Raising those 4 text sites to 11pt is a visual retune, not a token migration. A
+    // follow-up task should be filed (`todo`, not `deferred`) to decide whether to
+    // raise them and accept the density change.
+    //
+    // IMPORTANT for whoever writes call sites: reference these directly as
+    // `.system(size: TypeScale.chromeMicro)` / `TypeScale.chromeTiny` — do NOT route
+    // them through `Font.uiBody`/`.uiCaption`/either mono helper, all of which clamp
+    // via `max(size, TypeScale.minimum)` and would silently turn 9/10 into 11,
+    // defeating the point of this deviation.
+    static let chromeMicro: CGFloat = 9
+    static let chromeTiny: CGFloat = 10
+    static let chromeLabel: CGFloat = 13
+
+    // Monospaced LaTeX/code input in native dialogs (not a chrome text style).
+    // Covers EquationDialog's three sites. PrintCommands.swift:169's own
+    // monospacedSystemFont(ofSize: 11) is a separate, already-exempted case in
+    // RawFontSizeLiteralTests.swift's exemption list — its value differs (11, not 13)
+    // and it isn't screen chrome.
+    static let monoInput: CGFloat = 13
+
+    // Compact heading ladder for the Version History preview pane
+    // (Views/Sidebar/SectionTypography.swift's sectionTitleCompact — 6 literals inside
+    // one ladder function with a single caller, DocumentPreviewView.swift:341; not 6
+    // separate call sites.)
+    static let hCompact1: CGFloat = 20
+    static let hCompact2: CGFloat = 18
+    static let hCompact3: CGFloat = 16
+    static let hCompact4: CGFloat = 15
+    static let hCompact5: CGFloat = 14
+    static let hCompact6: CGFloat = 13
+
+    static func headingCompact(_ level: Int) -> CGFloat {
+        switch max(1, level) {
+        case 1: return hCompact1
+        case 2: return hCompact2
+        case 3: return hCompact3
+        case 4: return hCompact4
+        case 5: return hCompact5
+        default: return hCompact6
+        }
+    }
+
+    /// Returns the size for a given header level (1-6). Levels below 1 clamp to 1;
+    /// levels above 6 fall through to the `default` case (h6) below.
     static func heading(_ level: Int) -> CGFloat {
-        switch level {
+        switch max(1, level) {
         case 1: return h1
         case 2: return h2
         case 3: return h3
@@ -98,15 +157,16 @@ extension Font {
 extension TypeScale {
     /// NSFont matching Font.sectionTitle(level:) for text measurement
     static func sectionTitleNSFont(level: Int, isItalic: Bool = false) -> NSFont {
-        let font: NSFont
+        let weight: NSFont.Weight
         switch level {
-        case 0, 1: font = .systemFont(ofSize: h1, weight: .light)
-        case 2:    font = .systemFont(ofSize: h2, weight: .regular)
-        case 3:    font = .systemFont(ofSize: h3, weight: .regular)
-        case 4:    font = .systemFont(ofSize: h4, weight: .medium)
-        case 5:    font = .systemFont(ofSize: h5, weight: .semibold)
-        default:   font = .systemFont(ofSize: h6, weight: .bold)
+        case 0, 1: weight = .light
+        case 2:    weight = .regular
+        case 3:    weight = .regular
+        case 4:    weight = .medium
+        case 5:    weight = .semibold
+        default:   weight = .bold
         }
+        let font = NSFont.systemFont(ofSize: heading(level), weight: weight)
         if isItalic {
             return NSFontManager.shared.convert(font, toHaveTrait: .italicFontMask)
         }

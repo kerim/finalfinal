@@ -241,11 +241,11 @@ struct ExportPreferencesPane: View {
 
     @ViewBuilder
     private var referenceDocRow: some View {
-        Toggle("Use custom export template", isOn: $settingsManager.useCustomReferenceDoc)
+        Toggle("Use custom reference document", isOn: $settingsManager.useCustomReferenceDoc)
 
         if settingsManager.useCustomReferenceDoc {
             HStack {
-                TextField("Path to template file", text: Binding(
+                TextField("Path to reference.docx", text: Binding(
                     get: { settingsManager.customReferenceDocPath ?? "" },
                     set: { settingsManager.customReferenceDocPath = $0.isEmpty ? nil : $0 }
                 ))
@@ -255,7 +255,6 @@ struct ExportPreferencesPane: View {
                     browseForReferenceDoc()
                 }
                 .buttonStyle(.bordered)
-                .accessibilityIdentifier("export-template-browse")
             }
 
             if !settingsManager.settings.isCustomReferenceDocValid {
@@ -382,7 +381,7 @@ struct ExportPreferencesPane: View {
 
     private func browseForReferenceDoc() {
         let panel = NSOpenPanel()
-        panel.title = "Select Export Template"
+        panel.title = "Select Reference Document"
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
         panel.canChooseFiles = true

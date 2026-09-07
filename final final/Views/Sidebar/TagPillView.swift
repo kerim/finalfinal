@@ -60,12 +60,12 @@ struct TagPillsView: View {
     private var tagEditor: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Tags (comma-separated)")
-                .font(.system(size: 11, weight: .medium))
+                .font(.system(size: TypeScale.smallUI, weight: .medium))
                 .foregroundColor(themeManager.currentTheme.sidebarTextSecondary)
 
             TextField("research, draft, urgent", text: $editingText)
                 .textFieldStyle(.roundedBorder)
-                .font(.system(size: 12))
+                .font(.system(size: TypeScale.caption))
                 .frame(width: 200)
 
             HStack {

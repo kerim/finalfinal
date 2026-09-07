@@ -454,7 +454,7 @@ struct SectionPreviewRow: View {
             }
             .buttonStyle(.bordered)
             .controlSize(.small)
-            .help("Replace current section with this version")
+            .help("Replace current section with this backup")
 
             Button {
                 onRestore(.duplicate)

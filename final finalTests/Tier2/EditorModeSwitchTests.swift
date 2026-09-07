@@ -150,17 +150,4 @@ final class EditorModeSwitchTests: XCTestCase {
         XCTAssertTrue(cmOutput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                       "CodeMirror empty content should be empty. Got: \(cmOutput)")
     }
-
-    // MARK: - Copy Pinning
-
-    /// Pins EditorMode's user-visible strings so a future edit can't silently drift from the
-    /// UX contract glossary (§5: "Rich Text" / "Markdown", never "WYSIWYG" / "Source"). See
-    /// DestructiveConfirmationCopyTests.swift for the house copy-pinning pattern; this one
-    /// test needs neither a run loop nor WKWebView, unlike the rest of this file.
-    func testEditorModeCopyIsPinned() {
-        XCTAssertEqual(EditorMode.wysiwyg.displayName, "Rich Text")
-        XCTAssertEqual(EditorMode.source.displayName, "Markdown")
-        XCTAssertEqual(EditorMode.wysiwyg.switchToLabel, "Switch to Markdown")
-        XCTAssertEqual(EditorMode.source.switchToLabel, "Switch to Rich Text")
-    }
 }

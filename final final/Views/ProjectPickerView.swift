@@ -28,7 +28,7 @@ struct ProjectPickerView: View {
             // App icon or title area
             VStack(spacing: 8) {
                 Image(systemName: "doc.text")
-                    .font(.system(size: 48))
+                    .font(.system(size: TypeScale.chromeGlyphLarge))
                     .foregroundColor(themeManager.currentTheme.editorText.opacity(0.5))
                 Text("FINAL|FINAL")
                     .font(.title)

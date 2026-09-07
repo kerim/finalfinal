@@ -12,31 +12,31 @@ extension Font {
         switch level {
         case 0:
             // Pseudo-section: same as H1 but italic would be applied separately
-            return .system(size: 28, weight: .light)
+            return .system(size: TypeScale.heading(level), weight: .light)
         case 1:
-            return .system(size: 28, weight: .light)
+            return .system(size: TypeScale.heading(level), weight: .light)
         case 2:
-            return .system(size: 24, weight: .regular)
+            return .system(size: TypeScale.heading(level), weight: .regular)
         case 3:
-            return .system(size: 20, weight: .regular)
+            return .system(size: TypeScale.heading(level), weight: .regular)
         case 4:
-            return .system(size: 17, weight: .medium)
+            return .system(size: TypeScale.heading(level), weight: .medium)
         case 5:
-            return .system(size: 15, weight: .semibold)
+            return .system(size: TypeScale.heading(level), weight: .semibold)
         default:
-            return .system(size: 14, weight: .bold)
+            return .system(size: TypeScale.heading(level), weight: .bold)
         }
     }
     /// Compact variant for version history previews
     /// Smaller scale preserves hierarchy without dominating
     static func sectionTitleCompact(level: Int) -> Font {
         switch level {
-        case 0, 1: return .system(size: 20, weight: .light)
-        case 2: return .system(size: 18, weight: .regular)
-        case 3: return .system(size: 16, weight: .regular)
-        case 4: return .system(size: 15, weight: .medium)
-        case 5: return .system(size: 14, weight: .semibold)
-        default: return .system(size: 13, weight: .bold)
+        case 0, 1: return .system(size: TypeScale.headingCompact(max(1, level)), weight: .light)
+        case 2: return .system(size: TypeScale.headingCompact(max(1, level)), weight: .regular)
+        case 3: return .system(size: TypeScale.headingCompact(max(1, level)), weight: .regular)
+        case 4: return .system(size: TypeScale.headingCompact(max(1, level)), weight: .medium)
+        case 5: return .system(size: TypeScale.headingCompact(max(1, level)), weight: .semibold)
+        default: return .system(size: TypeScale.headingCompact(max(1, level)), weight: .bold)
         }
     }
 }

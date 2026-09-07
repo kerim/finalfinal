@@ -39,7 +39,17 @@ extension CodeMirrorEditor.Coordinator {
             insertImageBlock(src: relativePath, alt: suggestedName ?? "")
         } catch {
             DebugLog.log(.editor, "[CodeMirrorEditor] Image paste failed: \(error.localizedDescription)")
-            ImageImportErrorPresenter.present(error, restoringFocusTo: webView, context: "CodeMirrorEditor paste-image-error alert dismiss")
+            let window = webView?.window ?? NSApp.keyWindow
+            if let window {
+                let alert = NSAlert()
+                alert.messageText = "Image Import Failed"
+                alert.informativeText = error.localizedDescription
+                alert.alertStyle = .warning
+                alert.addButton(withTitle: "OK")
+                alert.beginSheetModal(for: window) { [weak self] _ in
+                    EditorFocusRestoration.restoreFocus(to: self?.webView, context: "CodeMirrorEditor paste-image-error alert dismiss")
+                }
+            }
         }
     }
 
@@ -67,7 +77,17 @@ extension CodeMirrorEditor.Coordinator {
             insertImageBlock(src: relativePath, alt: alt)
         } catch {
             DebugLog.log(.editor, "[CodeMirrorEditor] Image import failed: \(error.localizedDescription)")
-            ImageImportErrorPresenter.present(error, restoringFocusTo: webView, context: "CodeMirrorEditor image-picker-error alert dismiss")
+            let window = webView?.window ?? NSApp.keyWindow
+            if let window {
+                let alert = NSAlert()
+                alert.messageText = "Image Import Failed"
+                alert.informativeText = error.localizedDescription
+                alert.alertStyle = .warning
+                alert.addButton(withTitle: "OK")
+                alert.beginSheetModal(for: window) { [weak self] _ in
+                    EditorFocusRestoration.restoreFocus(to: self?.webView, context: "CodeMirrorEditor image-picker-error alert dismiss")
+                }
+            }
         }
     }
 

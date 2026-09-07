@@ -25,7 +25,7 @@ struct DragLevelBadge: View {
 
     var body: some View {
         Text(levelText)
-            .font(.system(size: 14, weight: .bold, design: .monospaced))
+            .font(.system(size: TypeScale.body, weight: .bold, design: .monospaced))
             .foregroundColor(.white)
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
@@ -106,7 +106,7 @@ struct SubtreeDragPreview: View {
             // Badge showing "+N" children count
             if childCount > 0 {
                 Text("+\(childCount)")
-                    .font(.system(size: 12, weight: .bold))
+                    .font(.system(size: TypeScale.caption, weight: .bold))
                     .foregroundColor(.white)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
@@ -126,9 +126,9 @@ struct SubtreeDragHint: View {
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: "option")
-                .font(.system(size: 14, weight: .medium))
+                .font(.system(size: TypeScale.body, weight: .medium))
             Text("Hold ⌥ while dragging to include child sections")
-                .font(.system(size: 12))
+                .font(.system(size: TypeScale.caption))
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
@@ -154,7 +154,7 @@ struct ZoomBreadcrumb: View {
                         Image(systemName: "chevron.left")
                         Text("All Sections")
                     }
-                    .font(.system(size: 11, weight: .medium))
+                    .font(.system(size: TypeScale.smallUI, weight: .medium))
                     .foregroundColor(themeManager.currentTheme.accentColor)
                 }
                 .buttonStyle(.plain)
@@ -163,7 +163,7 @@ struct ZoomBreadcrumb: View {
                     .foregroundColor(themeManager.currentTheme.sidebarText.opacity(0.4))
 
                 Text(section.title)
-                    .font(.system(size: 11, weight: .medium))
+                    .font(.system(size: TypeScale.smallUI, weight: .medium))
                     .foregroundColor(themeManager.currentTheme.sidebarText)
                     .lineLimit(1)
 

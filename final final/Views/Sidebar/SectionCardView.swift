@@ -126,7 +126,7 @@ struct SectionCardView: View {
     /// but this guards defensively in case an empty title ever reaches the view.
     private var accessibleTitle: String {
         guard !section.title.isEmpty else {
-            return section.isPseudoSection ? "Section Break" : "Untitled section"
+            return section.isPseudoSection ? "Section break" : "Untitled section"
         }
         return section.title
     }
@@ -157,7 +157,7 @@ struct SectionCardView: View {
             // Citation count badge (extracted from word count as proxy)
             let citationCount = estimateCitationCount()
             if citationCount > 0 {
-                Text("\(citationCount) citation\(citationCount == 1 ? "" : "s")")
+                Text("\(citationCount) refs")
                     .font(.system(size: TypeScale.smallUI, weight: .medium))
                     .foregroundColor(themeManager.currentTheme.sidebarText.opacity(0.6))
                     .padding(.horizontal, 6)
@@ -283,13 +283,13 @@ struct WordCountGoalPopover: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Word Goals")
-                .font(.system(size: 11, weight: .semibold))
+                .font(.system(size: TypeScale.smallUI, weight: .semibold))
                 .foregroundColor(themeManager.currentTheme.sidebarTextSecondary)
 
             // Section Goal
             VStack(alignment: .leading, spacing: 6) {
                 Text("Section Goal")
-                    .font(.system(size: 10, weight: .medium))
+                    .font(.system(size: TypeScale.chromeTiny, weight: .medium))
                     .foregroundColor(themeManager.currentTheme.sidebarTextSecondary)
 
                 HStack(spacing: 6) {
@@ -301,7 +301,7 @@ struct WordCountGoalPopover: View {
                 }
 
                 Text("Current: \(currentWordCount) words")
-                    .font(.system(size: 10))
+                    .font(.system(size: TypeScale.chromeTiny))
                     .foregroundColor(themeManager.currentTheme.sidebarTextSecondary)
             }
 
@@ -310,7 +310,7 @@ struct WordCountGoalPopover: View {
             // Aggregate Goal
             VStack(alignment: .leading, spacing: 6) {
                 Text("Aggregate Goal")
-                    .font(.system(size: 10, weight: .medium))
+                    .font(.system(size: TypeScale.chromeTiny, weight: .medium))
                     .foregroundColor(themeManager.currentTheme.sidebarTextSecondary)
 
                 HStack(spacing: 6) {
@@ -322,7 +322,7 @@ struct WordCountGoalPopover: View {
                 }
 
                 Text("Subtree: \(aggregateWordCount) words")
-                    .font(.system(size: 10))
+                    .font(.system(size: TypeScale.chromeTiny))
                     .foregroundColor(themeManager.currentTheme.sidebarTextSecondary)
             }
 
@@ -638,7 +638,7 @@ struct BibliographyIcon: View {
 
     var body: some View {
         Text("📚")
-            .font(.system(size: 14))
+            .font(.system(size: TypeScale.body))
     }
 }
 

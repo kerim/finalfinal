@@ -43,7 +43,17 @@ extension MilkdownEditor.Coordinator {
             insertImageBlock(src: relativePath, alt: suggestedName ?? "", origin: "clipboard")
         } catch {
             DebugLog.log(.editor, "[MilkdownEditor] Image paste failed: \(error.localizedDescription)")
-            ImageImportErrorPresenter.present(error, restoringFocusTo: webView, context: "MilkdownEditor paste-image-error alert dismiss")
+            let window = webView?.window ?? NSApp.keyWindow
+            if let window {
+                let alert = NSAlert()
+                alert.messageText = "Image Import Failed"
+                alert.informativeText = error.localizedDescription
+                alert.alertStyle = .warning
+                alert.addButton(withTitle: "OK")
+                alert.beginSheetModal(for: window) { [weak self] _ in
+                    EditorFocusRestoration.restoreFocus(to: self?.webView, context: "MilkdownEditor paste-image-error alert dismiss")
+                }
+            }
         }
     }
 
@@ -69,7 +79,17 @@ extension MilkdownEditor.Coordinator {
             insertImageBlock(src: relativePath, alt: alt, origin: "picker")
         } catch {
             DebugLog.log(.editor, "[MilkdownEditor] Image import failed: \(error.localizedDescription)")
-            ImageImportErrorPresenter.present(error, restoringFocusTo: webView, context: "MilkdownEditor image-picker-error alert dismiss")
+            let window = webView?.window ?? NSApp.keyWindow
+            if let window {
+                let alert = NSAlert()
+                alert.messageText = "Image Import Failed"
+                alert.informativeText = error.localizedDescription
+                alert.alertStyle = .warning
+                alert.addButton(withTitle: "OK")
+                alert.beginSheetModal(for: window) { [weak self] _ in
+                    EditorFocusRestoration.restoreFocus(to: self?.webView, context: "MilkdownEditor image-picker-error alert dismiss")
+                }
+            }
         }
     }
 

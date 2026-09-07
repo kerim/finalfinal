@@ -39,7 +39,7 @@ struct ChevronButton: View {
 
     private var chevronVisual: some View {
         Image(systemName: direction.systemName)
-            .font(.system(size: 10, weight: .semibold))
+            .font(.system(size: TypeScale.chromeTiny, weight: .semibold))
             .foregroundColor(.white)
             .frame(width: 20, height: 20)
             .background(

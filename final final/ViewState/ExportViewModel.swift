@@ -7,7 +7,6 @@
 //
 
 import Foundation
-import SwiftUI
 import AppKit
 import UniformTypeIdentifiers
 
@@ -431,15 +430,8 @@ final class ExportViewModel {
 
                     // `export()` above already folds `result.zoteroStatusWasProbed` into
                     // `ZoteroService.shared` itself now (it's the single call site every caller
-                    // funnels through) -- nothing left to do here but show success. §4.1.2:
-                    // "it worked" is a toast, never an alert.
-                    withAnimation {
-                        ToastCenter.shared.show(
-                            result.warnings.isEmpty
-                                ? ToastFactory.exportSucceeded(result: result)
-                                : ToastFactory.exportSucceededWithWarnings(result: result)
-                        )
-                    }
+                    // funnels through) -- nothing left to do here but show success.
+                    self.showExportSuccessAlert(result: result)
 
                 } catch ExportError.zoteroRequiredForCitations(let failedFormat, let zoteroStatus) {
                     // Defensive / future-proofing, not a live race in the current call graph:
@@ -531,6 +523,27 @@ final class ExportViewModel {
         alert.alertStyle = .warning
         alert.addButton(withTitle: "OK")
         alert.runModal()
+    }
+
+    private func showExportSuccessAlert(result: ExportResult) {
+        let alert = NSAlert()
+
+        if result.warnings.isEmpty {
+            alert.messageText = "Export Complete"
+            alert.informativeText = "Document exported successfully to \(result.format.displayName)."
+            alert.alertStyle = .informational
+        } else {
+            alert.messageText = "Export Complete with Warnings"
+            alert.informativeText = result.warnings.joined(separator: "\n\n")
+            alert.alertStyle = .warning
+        }
+
+        alert.addButton(withTitle: "Show in Finder")
+        alert.addButton(withTitle: "OK")
+
+        if alert.runModal() == .alertFirstButtonReturn {
+            NSWorkspace.shared.selectFile(result.outputURL.path, inFileViewerRootedAtPath: "")
+        }
     }
 
     /// Truncates `message` to (approximately) `limit` characters for display in an alert,

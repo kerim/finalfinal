@@ -883,77 +883,6 @@ final class StructuralUndoController {
         try db.reorderAllBlocks(sections: sections, projectId: pid, headingUpdates: headingUpdates)
     }
 
-    /// Document Note delete (t-c683aa25, plan §B3) -- tier 1: quiet, undoable (UX contract
-    /// §3/D3). Deliberately does NOT go through `performStructuralOp`: every step that shared
-    /// sequence exists for (zoom-out, mode-aware flush, `createUndoPointSnapshot`, the content
-    /// push, derived-content resync, hierarchy enforcement) makes a SNAPSHOT inverse correct
-    /// against a document that CHANGED. A Document Note delete changes no document text at all
-    /// (`charOffset == -1`, a DB row only) -- none of that applies. `preOpDoc`/`postOpDoc` are
-    /// both pinned to the LIVE (unchanged) document via `beginStructuralOp`/
-    /// `finalizeStructuralOpPostOpDoc`, which is what lets routing treat this as a real,
-    /// safely-fall-through-able entry (see docs/architecture/unified-undo.md's "Tracked
-    /// entries for DB-only mutations" subsection).
-    @discardableResult
-    func performDocumentNoteDelete(id: String) async -> StructuralOpOutcome {
-        guard !isPerforming else { return .refused }
-        guard let editorState, let unifiedUndoService,
-              let db = editorState.projectDatabase else { return .refused }
-
-        isPerforming = true
-        defer { isPerforming = false }
-        let epoch = unifiedUndoService.generation
-
-        guard let row = try? db.fetchAnnotation(id: id) else { return .refused }
-        // Judge round fix (must-fix 4): this whole path skips every step
-        // `performStructuralOp` runs FOR A REASON -- it's only safe because a Document Note
-        // delete is known to change no document text (`charOffset == -1`, see this function's
-        // doc comment). Verify that's actually true of the fetched row before treating it as
-        // the verbatim-invertible, zero-diff case: an inline annotation id reaching this call
-        // (a stale id, a caller mistake) would otherwise be deleted here WITHOUT any of the
-        // content push/resync/hierarchy-enforcement machinery real inline mutations require.
-        guard row.isDocumentLevel else { return .refused }
-
-        let opId = UUID()
-        guard await evalBool("window.FinalFinal.beginStructuralOp('\(opId.uuidString)')") else {
-            DebugLog.log(.undo, "[StructuralUndoController] performDocumentNoteDelete: beginStructuralOp failed for \(opId)")
-            return .refused
-        }
-        spy("beginStructuralOp")
-
-        do {
-            try db.deleteAnnotation(id: id)
-        } catch {
-            DebugLog.log(.undo, "[StructuralUndoController] performDocumentNoteDelete: deleteAnnotation failed: \(error)")
-            await evalVoid("window.FinalFinal.clearFailedStructuralOpEntry?.('\(opId.uuidString)')")
-            return .refused
-        }
-
-        // COMMIT POINT: the DB write above already landed. Any failure past this point is
-        // `.failedAfterCommit`, not `.refused` -- the delete genuinely happened even though it
-        // couldn't be recorded onto the undo timeline.
-        guard await evalBool("window.FinalFinal.finalizeStructuralOpPostOpDoc('\(opId.uuidString)')") else {
-            DebugLog.log(.undo, "[StructuralUndoController] performDocumentNoteDelete: finalizeStructuralOpPostOpDoc failed for \(opId) -- DB write already committed")
-            await evalVoid("window.FinalFinal.clearFailedStructuralOpEntry?.('\(opId.uuidString)')")
-            return .failedAfterCommit
-        }
-        spy("finalizeStructuralOpPostOpDoc")
-
-        guard unifiedUndoService.generation == epoch else {
-            DebugLog.log(.undo, "[StructuralUndoController] performDocumentNoteDelete: timeline generation changed mid-sequence for \(opId) -- a barrier invalidated the timeline")
-            return .failedAfterCommit
-        }
-
-        unifiedUndoService.record(StructuralEntry(
-            id: opId, kind: .documentNoteDelete, title: "Delete Document Note",
-            undoSnapshotId: nil, payload: .documentNote(row)
-        ))
-        await pushDescriptor()
-        // No `contentState` transition and no panel refresh call: the panel is driven by
-        // GRDB `observeAnnotations` (`EditorViewState.startObservingAnnotations`), which
-        // repaints on the row change by itself.
-        return .performed
-    }
-
     // MARK: - Undo / Redo sequence (plan §4.4)
 
     /// Entry point for the `structuralUndoRequested`/`structuralRedoRequested` WKScriptMessageHandler.
@@ -1072,14 +1001,6 @@ final class StructuralUndoController {
               let db = editorState.projectDatabase,
               let pid = editorState.currentProjectId,
               let entry = unifiedUndoService.undoStack.last, entry.id == opId else { return .fallback }
-
-        // B4: `.documentNoteDelete` is not a snapshot-based op -- its inverse is the deleted
-        // row itself (entry.payload), never `entry.undoSnapshotId` (nil for this kind). Branch
-        // out to the bespoke sequence before any of the snapshot-restore machinery below.
-        if entry.kind == .documentNoteDelete {
-            return await performDocumentNoteUndo(entry, db: db)
-        }
-        guard let undoSnapshotId = entry.undoSnapshotId else { return .fallback }
 
         isPerforming = true
         defer { isPerforming = false }
@@ -1202,7 +1123,7 @@ final class StructuralUndoController {
         // clean no-op failure, and .failed is safe in both cases -- it never touches the
         // editor, it only refuses to compound the problem with an extra text-undo.
         do {
-            try service.restoreEntireProject(from: undoSnapshotId, createSafetyBackup: false)
+            try service.restoreEntireProject(from: entry.undoSnapshotId, createSafetyBackup: false)
         } catch {
             DebugLog.log(.undo, "[StructuralUndoController] performUndo: restoreEntireProject failed: \(error) -- reporting .failed (not .fallback): the DB write is non-atomic, so a partial failure here may have already left the DB mid-restore")
             await resumeBlockSyncIfPaused(wysiwyg: isWYSIWYG)
@@ -1270,15 +1191,8 @@ final class StructuralUndoController {
         guard let editorState, let unifiedUndoService,
               let db = editorState.projectDatabase,
               let pid = editorState.currentProjectId,
-              let entry = unifiedUndoService.redoStack.last, entry.id == opId else { return .fallback }
-
-        // B4: `.documentNoteDelete` never sets `redoSnapshotId` (nil for this kind, since its
-        // inverse is `entry.payload`, not a snapshot) -- branch out before that guard below,
-        // which would otherwise always fail-fallback for this kind.
-        if entry.kind == .documentNoteDelete {
-            return await performDocumentNoteRedo(entry, db: db)
-        }
-        guard let redoSnapshotId = entry.redoSnapshotId else { return .fallback }
+              let entry = unifiedUndoService.redoStack.last, entry.id == opId,
+              let redoSnapshotId = entry.redoSnapshotId else { return .fallback }
 
         isPerforming = true
         defer { isPerforming = false }
@@ -1384,70 +1298,6 @@ final class StructuralUndoController {
         await pushDescriptor()
         await editorState.refreshSectionsAwaiting()
         editorState.contentState = .idle
-        return .performed
-    }
-
-    /// Undo for `.documentNoteDelete` (plan §B4): re-inserts the deleted row verbatim (same
-    /// id/type/text/isCompleted/createdAt, captured whole in `entry.payload` at delete time)
-    /// rather than restoring from a snapshot. No `contentState` transition, no checkpoint
-    /// swap, no `settleAfterDBRestore`, no derived-content resync -- the mutation touched no
-    /// document text, so none of that machinery applies. Safe against `AnnotationSyncService`:
-    /// `syncContent` filters `!$0.isDocumentLevel` before reconciling, so re-inserting a
-    /// document-level row is never clobbered behind the user's back.
-    private func performDocumentNoteUndo(_ entry: StructuralEntry, db: ProjectDatabase) async -> UndoResult {
-        guard let unifiedUndoService else { return .fallback }
-        guard case .documentNote(let row)? = entry.payload else { return .fallback }
-
-        isPerforming = true
-        defer { isPerforming = false }
-        let epoch = unifiedUndoService.generation
-
-        do {
-            try db.insertAnnotation(row)
-        } catch {
-            DebugLog.log(.undo, "[StructuralUndoController] performDocumentNoteUndo: insertAnnotation failed: \(error) -- reporting .failed (not .fallback): unknown whether a partial write landed")
-            return .failed
-        }
-
-        guard unifiedUndoService.generation == epoch else {
-            DebugLog.log(.undo, "[StructuralUndoController] performDocumentNoteUndo: timeline generation changed mid-sequence for \(entry.id) -- a barrier invalidated the timeline; reporting .failed")
-            return .failed
-        }
-        guard case .performed = unifiedUndoService.performUndo(opId: entry.id) else {
-            DebugLog.log(.undo, "[StructuralUndoController] performDocumentNoteUndo: stack move mismatch after DB insert for \(entry.id) -- timeline was cleared mid-sequence; reporting .failed")
-            return .failed
-        }
-        await pushDescriptor()
-        return .performed
-    }
-
-    /// Redo for `.documentNoteDelete` (plan §B4): re-deletes the row, mirroring the forward op
-    /// (`performDocumentNoteDelete`). Same "no content machinery applies" reasoning as
-    /// `performDocumentNoteUndo` above.
-    private func performDocumentNoteRedo(_ entry: StructuralEntry, db: ProjectDatabase) async -> UndoResult {
-        guard let unifiedUndoService else { return .fallback }
-        guard case .documentNote(let row)? = entry.payload else { return .fallback }
-
-        isPerforming = true
-        defer { isPerforming = false }
-        let epoch = unifiedUndoService.generation
-
-        do {
-            try db.deleteAnnotation(id: row.id)
-        } catch {
-            DebugLog.log(.undo, "[StructuralUndoController] performDocumentNoteRedo: deleteAnnotation failed: \(error) -- reporting .failed (not .fallback): unknown whether a partial write landed")
-            return .failed
-        }
-
-        guard unifiedUndoService.generation == epoch else {
-            DebugLog.log(.undo, "[StructuralUndoController] performDocumentNoteRedo: timeline generation changed mid-sequence for \(entry.id) -- a barrier invalidated the timeline; reporting .failed")
-            return .failed
-        }
-        guard case .performed = unifiedUndoService.performRedo(opId: entry.id) else {
-            DebugLog.log(.undo, "[StructuralUndoController] performDocumentNoteRedo: stack move mismatch after DB delete for \(entry.id) -- timeline was cleared mid-sequence; reporting .failed")
-            return .failed
-        }
-        await pushDescriptor()
         return .performed
     }
 

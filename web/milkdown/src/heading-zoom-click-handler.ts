@@ -18,8 +18,8 @@
 // some users because it used a bare `?.postMessage` optional-chain-to-nothing
 // when the Swift-side handler wasn't registered — see postZoomRequest below.
 
-import { dismissMenu } from '../../shared/spellcheck-menu';
 import { hideHoverTooltip } from './hover-tooltip';
+import { dismissMenu } from './spellcheck-menu';
 
 const HEADING_TAGS = new Set(['H1', 'H2', 'H3', 'H4', 'H5', 'H6']);
 

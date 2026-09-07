@@ -13,13 +13,9 @@ struct AnnotationPanel: View {
     let onUpdateAnnotationText: ((AnnotationViewModel, String) -> Void)?
     let onCreateDocumentAnnotation: ((AnnotationType) -> Void)?
     let onDeleteDocumentAnnotation: ((String) -> Void)?
-    /// Delete command for an INLINE annotation's panel card (UX contract §3/D3: every
-    /// in-document delete, inline annotations included, is tier 1 -- quiet and undoable via
-    /// ⌘Z). `nil` (existing previews/tests) simply omits the delete button, same as
-    /// `onUpdateAnnotationText`'s existing optionality.
-    let onDeleteInlineAnnotation: ((AnnotationViewModel) -> Void)?
 
     @Environment(ThemeManager.self) private var themeManager
+    @State private var showDeleteConfirmation: String?  // annotation ID to delete
 
     /// Drives `idealWidth` below -- seeded from the persisted width (or the shared default,
     /// see `AnnotationPanelWidth`), then kept in sync with genuine user drag-resizes by
@@ -113,6 +109,22 @@ struct AnnotationPanel: View {
         }
         .onChange(of: editorState.isAnnotationPanelVisible) { _, newValue in
             animateToggle(becomingVisible: newValue)
+        }
+        .alert("Delete Annotation", isPresented: Binding(
+            get: { showDeleteConfirmation != nil },
+            set: { if !$0 { showDeleteConfirmation = nil } }
+        )) {
+            Button("Delete", role: .destructive) {
+                if let id = showDeleteConfirmation {
+                    onDeleteDocumentAnnotation?(id)
+                }
+                showDeleteConfirmation = nil
+            }
+            Button("Cancel", role: .cancel) {
+                showDeleteConfirmation = nil
+            }
+        } message: {
+            Text("This document note will be permanently deleted. This action cannot be undone.")
         }
     }
 
@@ -274,10 +286,7 @@ struct AnnotationPanel: View {
                         onToggleCompletion: {
                             onToggleCompletion(annotation)
                         },
-                        onUpdateText: onUpdateAnnotationText,
-                        onDelete: onDeleteInlineAnnotation.map { callback in
-                            { callback(annotation) }
-                        }
+                        onUpdateText: onUpdateAnnotationText
                     )
                     if annotation.id != inlineAnnotations.last?.id {
                         Divider().padding(.leading, 30)
@@ -300,7 +309,7 @@ struct AnnotationPanel: View {
                 }
             } label: {
                 Image(systemName: editorState.isDocumentNotesCollapsed ? "chevron.right" : "chevron.down")
-                    .font(.system(size: 9, weight: .medium))
+                    .font(.system(size: TypeScale.chromeMicro, weight: .medium))
                     .foregroundColor(themeManager.currentTheme.sidebarText.opacity(0.6))
             }
             .buttonStyle(.plain)
@@ -320,7 +329,7 @@ struct AnnotationPanel: View {
                 Button("Reference") { onCreateDocumentAnnotation?(.reference) }
             } label: {
                 Image(systemName: "plus")
-                    .font(.system(size: 11, weight: .medium))
+                    .font(.system(size: TypeScale.smallUI, weight: .medium))
                     .foregroundColor(themeManager.currentTheme.sidebarText.opacity(0.5))
             }
             .menuStyle(.borderlessButton)
@@ -341,7 +350,7 @@ struct AnnotationPanel: View {
                     },
                     onUpdateText: onUpdateAnnotationText,
                     onDelete: {
-                        onDeleteDocumentAnnotation?(annotation.id)
+                        showDeleteConfirmation = annotation.id
                     },
                     pendingEditId: editorState.pendingEditAnnotationId,
                     onAutoEditStarted: {
@@ -413,8 +422,7 @@ struct AnnotationPanel: View {
         onToggleCompletion: { annotation in print("Toggle \(annotation.id)") },
         onUpdateAnnotationText: { annotation, newText in print("Update \(annotation.id): \(newText)") },
         onCreateDocumentAnnotation: { type in print("Create document annotation: \(type)") },
-        onDeleteDocumentAnnotation: { id in print("Delete document annotation: \(id)") },
-        onDeleteInlineAnnotation: { annotation in print("Delete inline annotation: \(annotation.id)") }
+        onDeleteDocumentAnnotation: { id in print("Delete document annotation: \(id)") }
     )
     .frame(height: 400)
     .environment(ThemeManager.shared)

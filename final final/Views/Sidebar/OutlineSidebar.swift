@@ -654,12 +654,12 @@ struct OutlineSidebar: View {
             Spacer()
 
             Image(systemName: "doc.text")
-                .font(.system(size: 40))
+                .font(.system(size: TypeScale.chromeGlyph))
                 .foregroundColor(themeManager.currentTheme.sidebarText.opacity(0.3))
 
             if statusFilter != nil || headerLevelFilter != nil {
                 Text("No sections match the filter")
-                    .font(.system(size: 13))
+                    .font(.system(size: TypeScale.chromeLabel))
                     .foregroundColor(themeManager.currentTheme.sidebarText.opacity(0.6))
 
                 Button("Clear Filter") {
@@ -670,7 +670,7 @@ struct OutlineSidebar: View {
                 .foregroundColor(themeManager.currentTheme.accentColor)
             } else if zoomedSectionId != nil {
                 Text("Section not found")
-                    .font(.system(size: 13))
+                    .font(.system(size: TypeScale.chromeLabel))
                     .foregroundColor(themeManager.currentTheme.sidebarText.opacity(0.6))
 
                 Button("Zoom Out") {
@@ -680,11 +680,11 @@ struct OutlineSidebar: View {
                 .foregroundColor(themeManager.currentTheme.accentColor)
             } else {
                 Text("No sections yet")
-                    .font(.system(size: 13))
+                    .font(.system(size: TypeScale.chromeLabel))
                     .foregroundColor(themeManager.currentTheme.sidebarText.opacity(0.6))
 
                 Text("Add headings to create sections")
-                    .font(.system(size: 11))
+                    .font(.system(size: TypeScale.smallUI))
                     .foregroundColor(themeManager.currentTheme.sidebarText.opacity(0.4))
                     .multilineTextAlignment(.center)
             }

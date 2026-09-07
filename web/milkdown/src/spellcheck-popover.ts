@@ -1,5 +1,5 @@
 /**
- * Proofing popover for grammar/style errors.
+ * Proofing popover for grammar/style errors in Milkdown editor.
  * Shows rule info, suggestions, ignore, and disable rule options.
  * Triggered on click (not right-click) of grammar/style decorations.
  */

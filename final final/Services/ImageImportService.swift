@@ -68,8 +68,18 @@ struct ImageImportService {
             throw ImportError.fileTooLarge(fileSize)
         }
 
-        if fileSize > warnSizeBytes, !confirmLargeImage(bytes: fileSize) {
-            throw ImportError.fileTooLarge(fileSize)
+        if fileSize > warnSizeBytes {
+            let mb = fileSize / (1024 * 1024)
+            let alert = NSAlert()
+            alert.messageText = "Large Image"
+            alert.informativeText = "This image is \(mb) MB. Large images may slow down the editor. Continue?"
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "Insert")
+            alert.addButton(withTitle: "Cancel")
+            let response = alert.runModal()
+            if response == .alertSecondButtonReturn {
+                throw ImportError.fileTooLarge(fileSize)
+            }
         }
 
         // Ensure media directory exists
@@ -117,8 +127,18 @@ struct ImageImportService {
             throw ImportError.fileTooLarge(data.count)
         }
 
-        if data.count > warnSizeBytes, !confirmLargeImage(bytes: data.count) {
-            throw ImportError.fileTooLarge(data.count)
+        if data.count > warnSizeBytes {
+            let mb = data.count / (1024 * 1024)
+            let alert = NSAlert()
+            alert.messageText = "Large Image"
+            alert.informativeText = "This image is \(mb) MB. Large images may slow down the editor. Continue?"
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "Insert")
+            alert.addButton(withTitle: "Cancel")
+            let response = alert.runModal()
+            if response == .alertSecondButtonReturn {
+                throw ImportError.fileTooLarge(data.count)
+            }
         }
 
         // Ensure media directory exists
@@ -140,31 +160,6 @@ struct ImageImportService {
     }
 
     // MARK: - Private Helpers
-
-    /// Confirm inserting an image over `warnSizeBytes`. Returns `true` if the user chose to
-    /// continue ("Insert"), `false` if they chose "Cancel" -- the caller throws
-    /// `.fileTooLarge` on `false`. Shared by `importFromURL` and `importFromData`, which
-    /// previously each built this identical alert inline.
-    ///
-    /// Does not `NSApp.activate()` before `runModal()`, unlike `CitationErrorPresenter`'s
-    /// no-window fallback: every call path here -- clipboard paste/drop's `pasteImage`
-    /// message, and the picker's `requestImagePicker` message / Insert > Image menu command
-    /// (see `handlePasteImage`/`handleImagePicker` in both `*Coordinator+Images.swift` files)
-    /// -- fires only as the direct, synchronous continuation of a user gesture that itself
-    /// required the app to already be frontmost (you cannot paste into or click a menu item
-    /// of a backgrounded app), so there is no background/timer path here to grow an invisible
-    /// modal the way the citekey-resolution retry could.
-    @MainActor
-    private static func confirmLargeImage(bytes: Int) -> Bool {
-        let mb = bytes / (1024 * 1024)
-        let alert = NSAlert()
-        alert.messageText = "Large Image"
-        alert.informativeText = "This image is \(mb) MB. Large images may slow down the editor. Continue?"
-        alert.alertStyle = .warning
-        alert.addButton(withTitle: "Insert")
-        alert.addButton(withTitle: "Cancel")
-        return alert.runModal() != .alertSecondButtonReturn
-    }
 
     /// Ensure the media directory exists (handles pre-v13 packages)
     private static func ensureMediaDir(_ mediaDir: URL) throws {

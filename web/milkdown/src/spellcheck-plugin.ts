@@ -10,10 +10,9 @@ import type { Node } from '@milkdown/kit/prose/model';
 import { Plugin, PluginKey, type Transaction } from '@milkdown/kit/prose/state';
 import { Decoration, DecorationSet, type EditorView } from '@milkdown/kit/prose/view';
 import { $prose } from '@milkdown/kit/utils';
-import { dismissMenu, showSpellcheckMenu } from '../../shared/spellcheck-menu';
-import { dismissPopover, isPopoverOpen, showProofingPopover } from '../../shared/spellcheck-popover';
 import { getEditorInstance } from './editor-state';
-import '../../shared/spellcheck.css';
+import { dismissMenu, showSpellcheckMenu } from './spellcheck-menu';
+import { dismissPopover, isPopoverOpen, showProofingPopover } from './spellcheck-popover';
 
 // --- Module state ---
 

@@ -46,7 +46,7 @@ enum EquationDialog {
 
         // Monospace text field for single-line (Inline) LaTeX input
         let textField = NSTextField(frame: .zero)
-        textField.font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
+        textField.font = NSFont.monospacedSystemFont(ofSize: TypeScale.monoInput, weight: .regular)
         textField.placeholderString = "e.g. x^2 + y^2 = r^2"
 
         // Scrollable monospace text view for multi-line (Display) LaTeX input
@@ -56,7 +56,7 @@ enum EquationDialog {
         scrollView.isHidden = true
         // scrollableTextView() always backs its scroll view with an NSTextView.
         guard let textView = scrollView.documentView as? NSTextView else { return }
-        textView.font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
+        textView.font = NSFont.monospacedSystemFont(ofSize: TypeScale.monoInput, weight: .regular)
         textView.isRichText = false
         // Explicit identifier so XCUITest can address this text view
         // unambiguously instead of relying on an unscoped `.firstMatch`
@@ -73,7 +73,7 @@ enum EquationDialog {
         placeholderField.isSelectable = false
         placeholderField.isBezeled = false
         placeholderField.drawsBackground = false
-        placeholderField.font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
+        placeholderField.font = NSFont.monospacedSystemFont(ofSize: TypeScale.monoInput, weight: .regular)
         placeholderField.textColor = .placeholderTextColor
         placeholderField.cell?.wraps = true
         placeholderField.cell?.usesSingleLineMode = false

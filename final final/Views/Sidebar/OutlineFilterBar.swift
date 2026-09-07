@@ -50,7 +50,7 @@ struct OutlineFilterBar: View {
                     Text(levelFilterLabel)
                         .lineLimit(1)
                 }
-                .font(.system(size: 12, weight: .medium))
+                .font(.system(size: TypeScale.caption, weight: .medium))
             }
             .menuStyle(.borderlessButton)
             .tint(themeManager.currentTheme.accentColor)
@@ -92,7 +92,7 @@ struct OutlineFilterBar: View {
                     Text(filterLabel)
                         .lineLimit(1)
                 }
-                .font(.system(size: 12, weight: .medium))
+                .font(.system(size: TypeScale.caption, weight: .medium))
             }
             .menuStyle(.borderlessButton)
             .tint(themeManager.currentTheme.accentColor)
@@ -220,7 +220,7 @@ struct DocumentGoalPopover: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Document Goal")
-                .font(.system(size: 11, weight: .semibold))
+                .font(.system(size: TypeScale.smallUI, weight: .semibold))
                 .foregroundColor(themeManager.currentTheme.sidebarTextSecondary)
 
             TextField("Goal (e.g., 5000)", text: $goalInput)
@@ -236,10 +236,10 @@ struct DocumentGoalPopover: View {
             .pickerStyle(.segmented)
 
             Toggle("Exclude Bibliography", isOn: $excludeBibliography)
-                .font(.system(size: 11))
+                .font(.system(size: TypeScale.smallUI))
 
             Text("Current: \(currentWordCount) words")
-                .font(.system(size: 11))
+                .font(.system(size: TypeScale.smallUI))
                 .foregroundColor(themeManager.currentTheme.sidebarTextSecondary)
 
             HStack {
