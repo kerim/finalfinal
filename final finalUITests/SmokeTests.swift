@@ -249,6 +249,35 @@ final class EditorSmokeTests: XCTestCase {
         let marker = "persistence-smoke-\(UUID().uuidString.prefix(8))"
         app.typeTextVerifyingLanded(marker)
 
+        // The save this test is actually about is asynchronous: BlockSyncService polls the
+        // WebView every 2s and only then writes the block rows to disk. typeTextVerifyingLanded
+        // above only proves the marker reached the DOM, not that it reached disk -- and the
+        // accessibility scan that helper uses to prove DOM landing keeps the app's main thread
+        // (the same thread the poll Timer and its evaluateJavaScript round-trip need) busy long
+        // enough that terminate() below could fire before the poll ever runs. Wait for the bytes
+        // on disk directly, so a failure here (a real save bug) is never conflated with a failure
+        // in the relaunch assertion below (a reload bug).
+        let persistDeadline = Date(timeIntervalSinceNow: 20)
+        var landedInDatabase = false
+        repeat {
+            let count = FixtureDatabase.read(
+                fixturePath: TestFixtureHelper.fixturePath,
+                sql: "SELECT count(*) FROM block WHERE markdownFragment LIKE '%\(marker)%';"
+            )
+            if Int(count.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0 > 0 {
+                landedInDatabase = true
+                break
+            }
+            // RunLoop.run(until:), not Thread.sleep -- keeps the main run loop alive so
+            // XCUITest's own internal event handling isn't starved during the poll, same
+            // pattern as FootnoteCursorPlacementE2ETests.swift's private waitFor helper.
+            RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.5))
+        } while Date() < persistDeadline
+        XCTAssertTrue(
+            landedInDatabase,
+            "Typed text should reach the block table within 20s of typing (BlockSyncService's 2s poll)"
+        )
+
         // The actual proof: terminate for real and relaunch against the same
         // (already-mutated) fixture path -- not just an in-memory check.
         app.terminate()
