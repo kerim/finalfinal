@@ -126,7 +126,7 @@ struct SectionCardView: View {
     /// but this guards defensively in case an empty title ever reaches the view.
     private var accessibleTitle: String {
         guard !section.title.isEmpty else {
-            return section.isPseudoSection ? "Section break" : "Untitled section"
+            return section.isPseudoSection ? "Section Break" : "Untitled section"
         }
         return section.title
     }
@@ -157,7 +157,7 @@ struct SectionCardView: View {
             // Citation count badge (extracted from word count as proxy)
             let citationCount = estimateCitationCount()
             if citationCount > 0 {
-                Text("\(citationCount) refs")
+                Text("\(citationCount) citation\(citationCount == 1 ? "" : "s")")
                     .font(.system(size: TypeScale.smallUI, weight: .medium))
                     .foregroundColor(themeManager.currentTheme.sidebarText.opacity(0.6))
                     .padding(.horizontal, 6)

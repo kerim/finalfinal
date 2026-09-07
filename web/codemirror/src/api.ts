@@ -653,18 +653,12 @@ export function setAnnotationDisplayModes(_modes: Record<string, string>): void 
   // Display modes don't visually change anything
 }
 
-interface AnnotationMatch extends ParsedAnnotation {
-  /** Length in characters of the whole matched `<!-- ::type:: ... -->` comment, so callers
-   * can delete exactly `[offset, offset + length)`. Not part of the public ParsedAnnotation
-   * shape (Swift/panel-card callers only need `offset`/`text`/`type`). */
-  length: number;
-}
+export function getAnnotations(): ParsedAnnotation[] {
+  const view = getEditorView();
+  if (!view) return [];
 
-/** Shared scan used by both getAnnotations() (public API) and deleteInlineAnnotation() (needs
- * each match's full length to delete the exact comment range). Keeping this in one place is
- * what guarantees both agree on the same document-order indexing. */
-function findAnnotationMatches(content: string): AnnotationMatch[] {
-  const matches: AnnotationMatch[] = [];
+  const content = view.state.doc.toString();
+  const annotations: ParsedAnnotation[] = [];
 
   // Parse annotation HTML comments: <!-- ::type:: content -->
   const annotationRegex = /<!--\s*::(\w+)::\s*(.+?)\s*-->/gs;
@@ -690,56 +684,15 @@ function findAnnotationMatches(content: string): AnnotationMatch[] {
       }
     }
 
-    matches.push({
+    annotations.push({
       type,
       text: text.trim(),
       offset: match.index,
       completed: type === 'task' ? isCompleted : undefined,
-      length: match[0].length,
     });
   }
 
-  return matches;
-}
-
-export function getAnnotations(): ParsedAnnotation[] {
-  const view = getEditorView();
-  if (!view) return [];
-
-  return findAnnotationMatches(view.state.doc.toString());
-}
-
-// Delete the inline annotation at `index` in the SAME document-order ordering getAnnotations()
-// already uses. Unlike Milkdown's atomic-node deletion, source mode has no node to delete --
-// this is a plain text-range delete via a normal user transaction (deliberately NOT
-// `addToHistory.of(false)`, unlike the silent-sync transactions elsewhere in this file), so
-// source-mode's own text-undo history undoes it like any other edit.
-//
-// `expectedType`/`expectedText` (must-fix 1, judge round review, mirrors Milkdown's
-// api-annotations.ts): the panel's `index` comes from `editorState.annotations` on the Swift
-// side, a DB-observed list synced on a ~500ms debounce -- it can lag the LIVE document this
-// scan runs against. Verify the match at `index` before acting; on mismatch, re-scan for a
-// UNIQUE type+text match rather than guessing by position, and refuse unless exactly one exists.
-export function deleteInlineAnnotation(index: number, expectedType: string, expectedText: string): boolean {
-  const view = getEditorView();
-  if (!view) return false;
-
-  const matches = findAnnotationMatches(view.state.doc.toString());
-
-  const atIndex = index >= 0 && index < matches.length ? matches[index] : undefined;
-  let target = atIndex && atIndex.type === expectedType && atIndex.text === expectedText ? atIndex : undefined;
-
-  if (!target) {
-    const identityMatches = matches.filter((m) => m.type === expectedType && m.text === expectedText);
-    if (identityMatches.length !== 1) return false;
-    target = identityMatches[0];
-  }
-
-  const { offset, length } = target;
-  view.dispatch({
-    changes: { from: offset, to: offset + length, insert: '' },
-  });
-  return true;
+  return annotations;
 }
 
 export function scrollToAnnotation(index: number): void {

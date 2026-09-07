@@ -100,7 +100,7 @@ Right-click sections to:
 
 ### Source View
 
-Press **⌘/** to toggle between WYSIWYG and source view. Source mode shows raw markdown for precise editing.
+Press **⌘/** to toggle between Rich Text and Markdown. Markdown mode shows raw markdown for precise editing.
 
 ### Citations
 

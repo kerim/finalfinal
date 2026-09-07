@@ -62,6 +62,15 @@ class EditorViewState {
         return FocusModeSettingsManager.shared.hideStatusBar
     }()
 
+    /// Controls visibility of the focus mode toast notification
+    var showFocusModeToast: Bool = false
+
+    /// Controls visibility of the Getting Started first-edit toast notification.
+    /// Set true on the .gettingStartedEdited notification (see EditorViewState+Types.swift),
+    /// posted by SectionSyncService rather than set directly through its existing weak
+    /// `editorState` back-reference -- keeping this UI-layer concern out of the sync service.
+    var showGettingStartedToast: Bool = false
+
     /// Must-fix 7 (judge round): `didSet` posts `.zoomStateCleared` on every non-nil -> nil
     /// transition, from WHICHEVER of the several code paths caused it -- see that
     /// notification's own doc comment (EditorViewState+Types.swift) for the full list of

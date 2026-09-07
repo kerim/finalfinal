@@ -5,12 +5,10 @@
 // Types: task (☐/☑), comment (◇), reference (▤)
 
 import type { Ctx, MilkdownPlugin } from '@milkdown/kit/ctx';
-import { keymap } from '@milkdown/kit/prose/keymap';
 import type { Node } from '@milkdown/kit/prose/model';
-import { $node, $prose, $remark, $view } from '@milkdown/kit/utils';
+import { $node, $remark, $view } from '@milkdown/kit/utils';
 import type { Root } from 'mdast';
 import { visit } from 'unist-util-visit';
-import { ANNOTATION_NODE_NAME, buildAnnotationDeleteTransaction } from './annotation-delete';
 import { getAnnotationDisplayModes } from './annotation-display-plugin';
 import { showAnnotationEditPopup } from './annotation-edit-popup';
 import { isSourceModeEnabled } from './source-mode-plugin';
@@ -647,48 +645,8 @@ const annotationNodeView = $view(annotationNode, (_ctx: Ctx) => {
   };
 });
 
-// Keymap for one-press annotation deletion with whitespace cleanup. Direct analogue of
-// citation-plugin.ts's citationDeleteKeymap -- a $prose-wrapped keymap() that only
-// intercepts Backspace/Delete when the adjacent node is an annotation atom, falling through
-// (return false) for every other case so normal editing is unaffected.
-const annotationDeleteKeymap = $prose(() => {
-  return keymap({
-    Backspace: (state, dispatch) => {
-      const { $from, empty } = state.selection;
-      if (!empty) return false;
-
-      const before = $from.nodeBefore;
-      if (!before || before.type.name !== ANNOTATION_NODE_NAME) return false;
-
-      const tr = buildAnnotationDeleteTransaction(state, $from.pos - before.nodeSize);
-      if (!tr) return false;
-
-      if (dispatch) dispatch(tr);
-      return true;
-    },
-    Delete: (state, dispatch) => {
-      const { $from, empty } = state.selection;
-      if (!empty) return false;
-
-      const after = $from.nodeAfter;
-      if (!after || after.type.name !== ANNOTATION_NODE_NAME) return false;
-
-      const tr = buildAnnotationDeleteTransaction(state, $from.pos);
-      if (!tr) return false;
-
-      if (dispatch) dispatch(tr);
-      return true;
-    },
-  });
-});
-
 // Export the plugin array
-export const annotationPlugin: MilkdownPlugin[] = [
-  remarkAnnotationPlugin,
-  annotationNode,
-  annotationNodeView,
-  annotationDeleteKeymap,
-].flat();
+export const annotationPlugin: MilkdownPlugin[] = [remarkAnnotationPlugin, annotationNode, annotationNodeView].flat();
 
 // Export node and helper for use in slash commands
 export { annotationNode };

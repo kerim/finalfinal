@@ -121,7 +121,7 @@ final class EditorSmokeTests: XCTestCase {
         XCTAssertTrue(editorMode.waitForExistence(timeout: 10), "Editor mode button should appear in status bar")
 
         // Verify default mode is WYSIWYG
-        XCTAssertTrue(editorMode.waitForLabel("== 'WYSIWYG'", timeout: 10), "Default editor mode should be WYSIWYG")
+        XCTAssertTrue(editorMode.waitForLabel("== 'Rich Text'", timeout: 10), "Default editor mode should be Rich Text")
 
         // Verify the button is interactive
         XCTAssertTrue(editorMode.isHittable, "Editor mode button should be hittable")
@@ -136,23 +136,23 @@ final class EditorSmokeTests: XCTestCase {
         // already proven in
         // `E2ESectionReconcilerPseudoSectionTests.selectAllAndPasteReplacement`.
         // Retrying is safe here specifically because we only re-send Cmd+/
-        // while the label still reads "WYSIWYG" -- once it flips we stop,
+        // while the label still reads "Rich Text" -- once it flips we stop,
         // since Cmd+/ is a toggle and a stray extra press would flip it
-        // straight back to WYSIWYG.
+        // straight back to Rich Text.
         var toggleRegistered = false
         for _ in 1...5 {
-            if editorMode.label == "Source" {
+            if editorMode.label == "Markdown" {
                 toggleRegistered = true
                 break
             }
             app.activateAndWaitForForeground()
             app.typeKey("/", modifierFlags: .command)
-            if editorMode.waitForLabel("== 'Source'", timeout: 2) {
+            if editorMode.waitForLabel("== 'Markdown'", timeout: 2) {
                 toggleRegistered = true
                 break
             }
         }
-        XCTAssertTrue(toggleRegistered, "Editor-mode button should report Source after retrying the toggle keystroke")
+        XCTAssertTrue(toggleRegistered, "Editor-mode button should report Markdown after retrying the toggle keystroke")
 
         // The label flips synchronously with the toggle request, but the
         // actual WYSIWYG->CodeMirror view swap runs through an async

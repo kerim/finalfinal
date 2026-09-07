@@ -31,7 +31,7 @@ struct ViewCommands: Commands {
             }
             .keyboardShortcut("f", modifiers: [.command, .shift])
 
-            Button("Toggle Editor Mode") {
+            Button(editorModeToggleLabel) {
                 editorState?.requestEditorModeToggle()
             }
             .keyboardShortcut("/", modifiers: .command)
@@ -76,6 +76,13 @@ struct ViewCommands: Commands {
     /// `isAnnotationPanelVisible`.
     private var annotationsToggleLabel: String {
         (editorState?.isAnnotationPanelVisible ?? false) ? "Hide Annotations" : "Show Annotations"
+    }
+
+    /// Names the destination (§5). `editorState == nil` (no doc open) falls back to
+    /// `.wysiwyg`'s reading, "Switch to Markdown" — the button is `.disabled` there anyway,
+    /// so this only prevents a blank render.
+    private var editorModeToggleLabel: String {
+        (editorState?.editorMode ?? .wysiwyg).switchToLabel
     }
 }
 

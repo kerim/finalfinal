@@ -127,7 +127,7 @@ enum DiagnosticReportGenerator {
         let appBuild = bundle.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown"
         return [
             "macOSVersion=\(info.operatingSystemVersionString)",
-            "hostname=\(localHostName())",
+            "hostname=\(info.hostName)",
             "locale=\(Locale.current.identifier)",
             "timeZone=\(TimeZone.current.identifier)",
             "appVersion=\(appVersion)",
@@ -135,13 +135,5 @@ enum DiagnosticReportGenerator {
             "generatedAt=\(ISO8601DateFormatter().string(from: Date()))",
             "loggingEnabledAtGeneration=\(DiagnosticLogFile.isEnabled)"
         ].joined(separator: "\n")
-    }
-
-    /// `ProcessInfo.hostName` resolves a fully-qualified name and can block on a
-    /// system/DNS lookup; `gethostname(2)` is a local syscall that cannot.
-    private static func localHostName() -> String {
-        var buffer = [CChar](repeating: 0, count: 256)
-        guard gethostname(&buffer, buffer.count) == 0 else { return "unknown" }
-        return String(cString: buffer)
     }
 }
