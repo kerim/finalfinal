@@ -59,7 +59,7 @@ enum LineHeightPreset: String, Codable, Sendable, CaseIterable, Identifiable {
         switch self {
         case .single: return "1.15 (Single)"
         case .tight: return "1.4 (Tight)"
-        case .normal: return "\(EditorTypeScale.decimalString(EditorTypeScale.lineHeightBody)) (Default)"
+        case .normal: return "1.75 (Default)"
         case .relaxed: return "2.0 (Relaxed)"
         case .loose: return "2.25 (Loose)"
         }
@@ -70,7 +70,7 @@ enum LineHeightPreset: String, Codable, Sendable, CaseIterable, Identifiable {
         switch self {
         case .single: return 1.15
         case .tight: return 1.4
-        case .normal: return EditorTypeScale.lineHeightBody
+        case .normal: return 1.75
         case .relaxed: return 2.0
         case .loose: return 2.25
         }
@@ -272,14 +272,11 @@ final class AppearanceSettingsManager {
 
     // MARK: - Effective Values (override or theme default)
 
-    /// Default font size when no override is set — the document body size,
-    /// `EditorTypeScale.body` (ux-contract D14: "the type scale crosses the bridge like
-    /// colours do"), not a separately-maintained literal.
-    static let defaultFontSize: CGFloat = EditorTypeScale.body
+    /// Default font size when no override is set
+    static let defaultFontSize: CGFloat = 18
 
-    /// Default line height when no override is set — `EditorTypeScale.lineHeightBody`
-    /// (ux-contract D14), not a separately-maintained literal.
-    static let defaultLineHeight: Double = EditorTypeScale.lineHeightBody
+    /// Default line height when no override is set
+    static let defaultLineHeight: Double = 1.75
 
     /// Default font family when no override is set
     static let defaultFontFamily = "-apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif"

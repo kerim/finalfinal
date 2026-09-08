@@ -325,7 +325,7 @@ struct SectionPreviewRow: View {
     @Environment(ThemeManager.self) private var themeManager
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: Spacing.s4) {
             // Header
             HStack(alignment: .firstTextBaseline) {
                 // Change dot indicator
@@ -368,19 +368,21 @@ struct SectionPreviewRow: View {
                     .foregroundStyle(themeManager.currentTheme.statusColors.deltaColor(for: delta))
             }
         }
-        .padding(.vertical, 6)
-        .padding(.horizontal, 4)
-        .padding(.leading, changeType != nil ? 4 : 0)
+        .padding(.vertical, Spacing.s8)
+        .padding(.horizontal, Spacing.s4)
+        .padding(.leading, Spacing.s4)
         .background(
-            RoundedRectangle(cornerRadius: 4)
+            // Selection/hover chrome, not a card surface — no elevation, no independent
+            // surface, same role as an AppKit list-row highlight — so .control, not .card.
+            RoundedRectangle(cornerRadius: CornerRadius.control)
                 .fill(backgroundColor)
         )
         .overlay(alignment: .leading) {
             if let change = changeType {
-                RoundedRectangle(cornerRadius: 1.5)
+                Capsule()
                     .fill(change == .new ? Color.green : themeManager.currentTheme.accentColor)
                     .frame(width: 3)
-                    .padding(.vertical, 2)
+                    .padding(.vertical, Spacing.s2)
             }
         }
         .contentShape(Rectangle())
@@ -445,7 +447,7 @@ struct SectionPreviewRow: View {
 
     @ViewBuilder
     private var restoreButtons: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: Spacing.s4) {
             Button {
                 onRestore(.replace)
             } label: {

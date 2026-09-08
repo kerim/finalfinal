@@ -21,7 +21,7 @@ body {
   background: var(--editor-bg);
   color: var(--editor-text);
   font-family: var(--font-body);
-  font-size: var(--font-size-body, 18px);
+  font-size: var(--font-size-body);
   line-height: var(--line-height-body, 1.75);
   font-weight: var(--weight-body, 400);
 }
@@ -83,7 +83,7 @@ body {
   color: var(--editor-heading-text, var(--editor-text));
   margin-top: 1.5em;
   margin-bottom: 0.5em;
-  line-height: var(--line-height-heading, 1.2);
+  line-height: var(--line-height-heading);
   font-weight: var(--weight-heading, 600);
   text-wrap: balance;
 }
@@ -104,37 +104,37 @@ body {
 
 .milkdown h1,
 .ProseMirror h1 {
-  font-size: var(--font-size-h1, 31px);
+  font-size: var(--font-size-h1);
   letter-spacing: var(--tracking-tight);
 }
 
 .milkdown h2,
 .ProseMirror h2 {
-  font-size: var(--font-size-h2, 26px);
+  font-size: var(--font-size-h2);
   letter-spacing: var(--tracking-tight);
 }
 
 .milkdown h3,
 .ProseMirror h3 {
-  font-size: var(--font-size-h3, 22px);
+  font-size: var(--font-size-h3);
 }
 .milkdown h4,
 .ProseMirror h4 {
-  font-size: var(--font-size-h4, 18px);
+  font-size: var(--font-size-h4);
 }
 .milkdown h5,
 .ProseMirror h5 {
-  font-size: var(--font-size-h5, 16px);
+  font-size: var(--font-size-h5);
 }
 .milkdown h6,
 .ProseMirror h6 {
-  font-size: var(--font-size-h6, 14px);
+  font-size: var(--font-size-h6);
 }
 
 .milkdown p,
 .ProseMirror p {
   margin: 0.75em 0;
-  line-height: var(--line-height-body, 1.75);
+  line-height: var(--line-height-body);
   /* Deliberately no `text-wrap` here (the `pretty` value used to be set).
      WebKit's "pretty" line-breaking optimizes the WHOLE paragraph at once to
      avoid a short orphan last line. While actively typing, a paragraph that
@@ -592,7 +592,7 @@ mark.ff-highlight {
      default root size — keeps this in sync with the user's actual font
      preference, and matches .ff-hover-tooltip--footnote below (which
      inherits this instead of declaring its own). */
-  font-size: calc(var(--font-size-body, 18px) * 0.85);
+  font-size: calc(var(--font-size-body) * 0.85);
   line-height: 1.4;
   border-radius: 6px;
   white-space: pre-wrap;
@@ -750,55 +750,55 @@ body.source-mode h6:not(.heading-source-mode)::before {
 
 body.source-mode h1,
 body.source-mode .heading-source-mode.heading-level-1 {
-  font-size: var(--font-size-h1, 31px);
+  font-size: var(--font-size-h1);
   font-weight: var(--weight-heading, 600);
   color: var(--editor-heading-text, var(--editor-text));
-  line-height: var(--line-height-heading, 1.2);
+  line-height: var(--line-height-heading);
   margin: 1em 0 0.5em 0;
 }
 
 body.source-mode h2,
 body.source-mode .heading-source-mode.heading-level-2 {
-  font-size: var(--font-size-h2, 26px);
+  font-size: var(--font-size-h2);
   font-weight: var(--weight-heading, 600);
   color: var(--editor-heading-text, var(--editor-text));
-  line-height: var(--line-height-heading, 1.2);
+  line-height: var(--line-height-heading);
   margin: 1em 0 0.5em 0;
 }
 
 body.source-mode h3,
 body.source-mode .heading-source-mode.heading-level-3 {
-  font-size: var(--font-size-h3, 22px);
+  font-size: var(--font-size-h3);
   font-weight: var(--weight-heading, 600);
   color: var(--editor-heading-text, var(--editor-text));
-  line-height: var(--line-height-heading, 1.2);
+  line-height: var(--line-height-heading);
   margin: 0.75em 0 0.5em 0;
 }
 
 body.source-mode h4,
 body.source-mode .heading-source-mode.heading-level-4 {
-  font-size: var(--font-size-h4, 18px);
+  font-size: var(--font-size-h4);
   font-weight: var(--weight-heading, 600);
   color: var(--editor-heading-text, var(--editor-text));
-  line-height: var(--line-height-heading, 1.2);
+  line-height: var(--line-height-heading);
   margin: 0.75em 0 0.5em 0;
 }
 
 body.source-mode h5,
 body.source-mode .heading-source-mode.heading-level-5 {
-  font-size: var(--font-size-h5, 16px);
+  font-size: var(--font-size-h5);
   font-weight: var(--weight-heading, 600);
   color: var(--editor-heading-text, var(--editor-text));
-  line-height: var(--line-height-heading, 1.2);
+  line-height: var(--line-height-heading);
   margin: 0.5em 0;
 }
 
 body.source-mode h6,
 body.source-mode .heading-source-mode.heading-level-6 {
-  font-size: var(--font-size-h6, 14px);
+  font-size: var(--font-size-h6);
   font-weight: var(--weight-heading, 600);
   color: var(--editor-heading-text, var(--editor-text));
-  line-height: var(--line-height-heading, 1.2);
+  line-height: var(--line-height-heading);
   margin: 0.5em 0;
 }
 
