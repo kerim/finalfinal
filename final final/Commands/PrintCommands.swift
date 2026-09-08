@@ -46,8 +46,22 @@ struct PrintOperations {
     /// (and Pandoc-availability check/alert) as "Export as PDF...", so formatted print
     /// output matches PDF export instead of going through a second renderer. Renders to
     /// a temp PDF, then hands that off to the standard macOS print panel via PDFKit.
+    ///
+    /// §4.2 / D7: the "Preparing to print…" progress toast/disabled-while-running window is
+    /// claimed by THIS method, right at the top -- BEFORE `loadContentForExport(...)` and the
+    /// Pandoc probe below, not just around the `export(...)` call's own inner layer (review fix:
+    /// both of those preflight steps used to run with the print menu items still enabled, so a
+    /// second click during either one started a second, concurrent print). `export(...)`'s own
+    /// `ExportActivity.run(...)` nests harmlessly inside this outer claim (see `ExportActivity`'s
+    /// depth-counting doc comment) using the same message, so the toast never visibly changes.
+    /// This method's own explicit `ExportActivity.shared.end()` -- not `export(...)`'s inner
+    /// one -- is what actually clears `isRunning`/the toast, and it still runs BEFORE
+    /// `printOperation.run()` below, so nothing spins under the print panel.
     static func handlePrintFormatted() async {
         let dm = DocumentManager.shared
+
+        ExportActivity.shared.begin(message: "Preparing to print…")
+
         // This path always renders through the PDF/citeproc-capable format (hardcodes
         // format: .pdf below), so the placeholder must always be requested here --
         // unconditionally true, unlike ExportCommands.swift's format-dependent choice.
@@ -55,6 +69,7 @@ struct PrintOperations {
         // (gated on hasCitations, zoteroStatus == .running, and a non-nil bibliography JSON
         // fetch -- see ExportService.swift's export()/citationArguments()).
         guard let content = try? await dm.loadContentForExport(bibliographyPlaceholder: true), !content.isEmpty else {
+            ExportActivity.shared.end()
             showNoContentAlert()
             return
         }
@@ -65,6 +80,7 @@ struct PrintOperations {
         // the shared ExportViewModel instance rather than duplicated here.
         await ExportOperations.exportViewModel.configure()
         guard ExportOperations.exportViewModel.isPandocAvailable else {
+            ExportActivity.shared.end()
             ExportOperations.exportViewModel.showPandocNotFoundAlert()
             return
         }
@@ -85,12 +101,16 @@ struct PrintOperations {
                 content: content,
                 to: tempURL,
                 format: .pdf,
-                projectURL: projectURL
+                projectURL: projectURL,
+                activityMessage: "Preparing to print…"
             )
         } catch {
+            ExportActivity.shared.end()
             showPrintErrorAlert(error: error)
             return
         }
+
+        ExportActivity.shared.end()
 
         guard let pdfDocument = PDFDocument(url: tempURL) else {
             showPrintErrorAlert(error: PrintError.pdfLoadFailed)
@@ -127,15 +147,18 @@ struct PrintOperations {
             return
         }
 
-        let blocks: [Block]
+        // No toast: disabled-while-running still applies (D7), but this is a database read +
+        // in-memory string join -- too fast for a spinner to mean anything.
+        let content: String
         do {
-            blocks = try await dm.exportBlocks()
+            content = try await ExportActivity.shared.run(nil) {
+                let blocks = try await dm.exportBlocks()
+                return BlockParser.assembleStandardMarkdownForExport(from: blocks)
+            }
         } catch {
             showPrintErrorAlert(error: error)
             return
         }
-
-        let content = BlockParser.assembleStandardMarkdownForExport(from: blocks)
         guard !content.isEmpty else {
             showNoContentAlert()
             return

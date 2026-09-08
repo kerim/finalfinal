@@ -18,20 +18,23 @@ final class ExportViewModel {
 
     // MARK: - State
 
-    /// Whether an export is currently in progress
-    private(set) var isExporting = false
-
     /// Re-entrancy guard for the whole export FLOW (preflight, alerts, save panel, export) --
-    /// as distinct from `isExporting`, which only covers the pandoc run itself.
+    /// as distinct from `ExportActivity.isRunning`, which covers the same span for the app-wide
+    /// menu-disabling/progress-toast feedback (§4.2 / D7).
     ///
     /// NOTE (deliberate): `ExportOperations.exportViewModel` is a static-let app-wide
     /// singleton, so this guard is GLOBAL, not per-document/per-window. Once one window's
     /// modeless save panel (or an earlier alert) is actually ON SCREEN, a second window's
     /// Export command is a silent no-op and the already-visible panel/alert IS the user's
-    /// feedback -- but that claim happens BEFORE `savePanelDecision`'s live Zotero preflight
-    /// runs (a real network round-trip that can take a couple of seconds), so a second Export
-    /// command that lands during that preflight window is a fully silent no-op with nothing
-    /// on screen yet to explain why nothing happened. That's a deliberate trade-off -- a rare
+    /// feedback. `showExportPanel` now also claims `ExportActivity` BEFORE `savePanelDecision`'s
+    /// live Zotero preflight runs (a real network round-trip that can take a couple of seconds --
+    /// review fix), so the export/print menu items are visibly disabled with a progress toast
+    /// for that whole window too, not just once the panel is up. This guard remains the
+    /// necessary backstop for a second Export command reaching this code some other way (e.g. a
+    /// notification posted directly, bypassing the disabled menu item) during that same window --
+    /// that narrower case is still a silent no-op with nothing NEW on screen (the existing
+    /// progress toast already explains why, but this guard's own rejection isn't separately
+    /// surfaced). That's a deliberate trade-off -- a rare
     /// double-trigger during a brief probe silently doing nothing, rather than adding a
     /// spinner or a second guard just to cover this narrow window -- not an oversight. The
     /// debug log line in `beginExportFlowIfIdle()`'s rejected-claim branch below is what makes
@@ -51,12 +54,6 @@ final class ExportViewModel {
     }
 
     func endExportFlow() { isExportFlowActive = false }
-
-    /// Current export progress message
-    private(set) var progressMessage: String?
-
-    /// Last error from export operation
-    private(set) var lastError: Error?
 
     /// Pandoc status (cached from last check)
     private(set) var pandocStatus: PandocStatus = .notFound
@@ -112,24 +109,30 @@ final class ExportViewModel {
     /// so on success it also folds any freshly-probed Zotero status into `ZoteroService.shared`
     /// (see `ExportResult.zoteroStatusWasProbed`) before returning, rather than leaving that
     /// write-back to each individual caller.
+    /// - Parameter activityMessage: The message shown on the §4.2 progress toast for the
+    ///   duration of this export, via `ExportActivity.shared.run(_:operation:)`. Defaults to a
+    ///   generic "Exporting <format>…" -- callers with a more specific moment to describe
+    ///   (e.g. `PrintOperations.handlePrintFormatted()`'s "Preparing to print…") pass their own.
+    ///
+    ///   This is only ONE layer of the claim, and often not the outermost: `showExportPanel(...)`
+    ///   and `PrintOperations.handlePrintFormatted()` both claim `ExportActivity` themselves
+    ///   BEFORE calling into this method (covering their own preflight -- the Zotero probe, the
+    ///   save panel, the Pandoc check), using this exact same default message so the toast never
+    ///   visibly changes when this method's own `begin` lands as a no-op nested claim (see
+    ///   `ExportActivity`'s depth-counting doc comment). Do not remove this method's own
+    ///   `ExportActivity.shared.run(...)` wrap on the assumption the outer callers already cover
+    ///   it -- a hypothetical future caller with no preflight of its own still needs this method
+    ///   to claim/disable on its own.
     /// - Returns: ExportResult on success
     func export(
         content: String,
         to url: URL,
         format: ExportFormat,
         projectURL: URL? = nil,
-        precomputedZoteroStatus: ZoteroStatus? = nil
+        precomputedZoteroStatus: ZoteroStatus? = nil,
+        activityMessage: String? = nil
     ) async throws -> ExportResult {
-        isExporting = true
-        progressMessage = "Exporting to \(format.displayName)..."
-        lastError = nil
-
-        defer {
-            isExporting = false
-            progressMessage = nil
-        }
-
-        do {
+        try await ExportActivity.shared.run(activityMessage ?? "Exporting to \(format.toastName)…") {
             let settings = ExportSettingsManager.shared.settings
             let result = try await exportService.export(
                 content: content,
@@ -149,9 +152,6 @@ final class ExportViewModel {
             }
 
             return result
-        } catch {
-            lastError = error
-            throw error
         }
     }
 
@@ -294,6 +294,17 @@ final class ExportViewModel {
         // ExportViewModel singleton), not per-document/per-window.
         guard beginExportFlowIfIdle() else { return }
 
+        // Claim `ExportActivity` here too -- BEFORE the async Zotero preflight below and BEFORE
+        // the save panel ever opens -- not just around the final pandoc call inside `export()`.
+        // Previously this only happened inside `export()`, so the whole (modeless) save-panel
+        // session plus any Zotero preflight ran with the export/print menu items still enabled
+        // (`.disabled(ExportActivity.shared.isRunning)` in `FileCommands.swift`), silently
+        // misleading the user that a second click would be safe (review fix). Uses the exact
+        // same default message `export()` itself would construct so the toast never visibly
+        // changes when `export()`'s own nested `begin` call lands as a no-op (see
+        // `ExportActivity`'s depth-counting doc comment).
+        ExportActivity.shared.begin(message: "Exporting to \(format.toastName)…")
+
         // See `savePanelDecision`'s doc comment: this asks the Service whether the export would
         // hit the Zotero-required hard stop (DOCX/ODT), the degraded-citations warning (PDF),
         // or a misconfigured resource path -- BEFORE the save panel ever appears, so a doomed
@@ -317,7 +328,12 @@ final class ExportViewModel {
             // Releases the flow claim above on every path that does NOT hand off to
             // `presentSavePanel` (which owns the claim from here on and releases it itself --
             // see its own doc comment). `handedOff` is flipped just before each such call so
-            // this defer never double-releases.
+            // this defer never double-releases `isExportFlowActive`.
+            //
+            // `ExportActivity` is released the same way, but explicitly in each non-handed-off
+            // branch below (right before that branch's alert), rather than from this defer --
+            // so the progress toast/disabled-menu state is already cleared by the time the alert
+            // appears, instead of lingering behind it until the Task's scope unwinds.
             var handedOff = false
             defer { if !handedOff { self.endExportFlow() } }
 
@@ -326,8 +342,10 @@ final class ExportViewModel {
                 // The probed status behind this decision is already folded into
                 // `ZoteroService.shared` inside `savePanelDecision` itself (right after its
                 // `zoteroPreflight` call) -- nothing left to do here but show the alert.
+                ExportActivity.shared.end()
                 self.showZoteroRequiredAlert(format: format, zoteroStatus: zoteroStatus)
             case .blockedByError(let error):
+                ExportActivity.shared.end()
                 self.showExportErrorAlert(error: error)
             case .warnDegraded(let zoteroStatus):
                 // Same as `.blockedByZotero` above -- already applied inside `savePanelDecision`.
@@ -340,6 +358,9 @@ final class ExportViewModel {
                         projectURL: projectURL,
                         precomputedZoteroStatus: nil
                     )
+                } else {
+                    // User declined "Continue Export" -- nothing is handed off, so release here.
+                    ExportActivity.shared.end()
                 }
             case .proceed(let precomputedZoteroStatus):
                 // For DOCX/ODT, a document with real citations that reaches `.proceed` (Zotero
@@ -374,6 +395,12 @@ final class ExportViewModel {
     /// `beginExportFlowIfIdle`): the panel's completion handler releases it on cancel/no-URL,
     /// and the export `Task` inside releases it via `defer` on every exit path (success or
     /// either catch arm) once the panel closes with `.OK`.
+    ///
+    /// Also owns releasing the `ExportActivity` claim `showExportPanel` made before this panel
+    /// ever appeared -- explicitly at each exit point below (cancel, success, both catch arms)
+    /// rather than via a wrapping `defer`, so the progress toast/disabled-menu state clears
+    /// exactly when each outcome is known instead of lingering behind a modal alert until the
+    /// Task's scope unwinds.
     private func presentSavePanel(
         content: String,
         format: ExportFormat,
@@ -397,8 +424,9 @@ final class ExportViewModel {
             guard let self else { return }
             guard response == .OK, let url = savePanel.url else {
                 // User cancelled, or dismissed without a URL -- no export `Task` will run to
-                // release the flow guard `showExportPanel` claimed, so release it here.
+                // release the flow guard `showExportPanel` claimed, so release both guards here.
                 self.endExportFlow()
+                ExportActivity.shared.end()
                 return
             }
 
@@ -433,6 +461,12 @@ final class ExportViewModel {
                     // `ZoteroService.shared` itself now (it's the single call site every caller
                     // funnels through) -- nothing left to do here but show success. §4.1.2:
                     // "it worked" is a toast, never an alert.
+                    //
+                    // `export()`'s own inner `ExportActivity.run(...)` only unwinds ITS layer of
+                    // the depth counter (see `ExportActivity`'s doc comment) -- this outer
+                    // `end()` is what actually clears `isRunning`/the progress toast, since it's
+                    // the layer `showExportPanel` claimed before the save panel ever opened.
+                    ExportActivity.shared.end()
                     withAnimation {
                         ToastCenter.shared.show(
                             result.warnings.isEmpty
@@ -449,8 +483,10 @@ final class ExportViewModel {
                     // this Task ever started; for PDF, `requiresZoteroForExport` never returns
                     // true at all. Kept so this arm still shows the right alert if a future
                     // change ever makes it reachable, without anyone needing to re-derive why.
+                    ExportActivity.shared.end()
                     self.showZoteroRequiredAlert(format: failedFormat, zoteroStatus: zoteroStatus)
                 } catch {
+                    ExportActivity.shared.end()
                     self.showExportErrorAlert(error: error)
                 }
             }

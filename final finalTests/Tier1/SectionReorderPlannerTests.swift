@@ -47,26 +47,6 @@ struct SectionReorderPlannerTests {
         sections.map(\.headerLevel)
     }
 
-    /// Maps `.plan` to its array and `.noOp`/`.failed` to `nil` -- mirrors `plan()`'s original
-    /// `[SectionViewModel]?` return for the many tests below that only care whether planning
-    /// produced a reorder, not which of the two non-plan outcomes it was.
-    private func planned(_ result: SectionReorderPlanner.PlanResult) -> [SectionViewModel]? {
-        if case .plan(let sections) = result {
-            return sections
-        }
-        return nil
-    }
-
-    private func isFailed(_ result: SectionReorderPlanner.PlanResult) -> Bool {
-        if case .failed = result { return true }
-        return false
-    }
-
-    private func isNoOp(_ result: SectionReorderPlanner.PlanResult) -> Bool {
-        if case .noOp = result { return true }
-        return false
-    }
-
     // MARK: - Validation guards (4 -- reorderSingleSection has 4 early returns, not the 3 the
     // plan's own prose miscounted: `plan()` absorbs reorderSection's 3 (self-parent,
     // section-not-found, self-drop no-op), and planSingleSection has a 4th of its own
@@ -74,7 +54,7 @@ struct SectionReorderPlannerTests {
     // through `plan()` in normal operation -- `plan()` already validates sectionId is present
     // before ever calling planSingleSection.
 
-    @Test("plan() returns .failed when newParentId equals sectionId (self-parent guard)")
+    @Test("plan() returns nil when newParentId equals sectionId (self-parent guard)")
     func planRejectsSelfParent() {
         let syncService = SectionSyncService()
         let a = makeSection(level: 1, title: "A")
@@ -84,10 +64,10 @@ struct SectionReorderPlannerTests {
 
         let result = SectionReorderPlanner.plan(request: request, in: sections, syncService: syncService)
 
-        #expect(isFailed(result), "a self-parent request is a genuine rejection, not a benign no-op")
+        #expect(result == nil)
     }
 
-    @Test("plan() returns .failed when sectionId is not found in sections")
+    @Test("plan() returns nil when sectionId is not found in sections")
     func planRejectsUnknownSectionId() {
         let syncService = SectionSyncService()
         let a = makeSection(level: 1, title: "A")
@@ -96,17 +76,10 @@ struct SectionReorderPlannerTests {
 
         let result = SectionReorderPlanner.plan(request: request, in: sections, syncService: syncService)
 
-        #expect(isFailed(result), "an unknown sectionId is a genuine rejection, not a benign no-op")
+        #expect(result == nil)
     }
 
-    // Acceptance-round fix: this used to return a bare `nil`, indistinguishable from the two
-    // genuine-rejection guards above -- the caller (ContentView.reorderSection) toasted on ALL
-    // THREE, including this one, so a user who dropped a section back exactly onto/immediately
-    // below itself got a spurious "Couldn't move the section" warning about a failure that never
-    // happened. Reachable from OutlineSidebar via `handleDropAtEnd` (dragging the current last
-    // section to the end) and `handleDrop`'s `.insertBefore(idx)` branch (dropping into the gap
-    // directly below itself) -- see PlanResult.noOp's doc comment.
-    @Test("plan() returns .noOp for a benign self-drop at the same position (targetSectionId == sectionId)")
+    @Test("plan() returns nil for a self-drop at the same position (targetSectionId == sectionId)")
     func planRejectsSelfDropNoOp() {
         let syncService = SectionSyncService()
         let a = makeSection(level: 1, title: "A")
@@ -116,7 +89,7 @@ struct SectionReorderPlannerTests {
 
         let result = SectionReorderPlanner.plan(request: request, in: sections, syncService: syncService)
 
-        #expect(isNoOp(result), "a self-drop is a benign no-op, not a failure -- must not toast")
+        #expect(result == nil)
     }
 
     // The real 4th early return: planSingleSection's own re-find-after-promotion guard,
@@ -147,7 +120,7 @@ struct SectionReorderPlannerTests {
         let sections = [a, b, cc]
         let request = SectionReorderRequest(sectionId: a.id, targetSectionId: cc.id, newLevel: 1, newParentId: nil)
 
-        let result = try #require(planned(SectionReorderPlanner.plan(request: request, in: sections, syncService: syncService)))
+        let result = try #require(SectionReorderPlanner.plan(request: request, in: sections, syncService: syncService))
 
         #expect(titles(result) == ["B", "C", "A"])
         let moved = try #require(result.first { $0.title == "A" })
@@ -163,7 +136,7 @@ struct SectionReorderPlannerTests {
         let sections = [a, b]
         let request = SectionReorderRequest(sectionId: b.id, targetSectionId: a.id, newLevel: 1, newParentId: nil)
 
-        let result = try #require(planned(SectionReorderPlanner.plan(request: request, in: sections, syncService: syncService)))
+        let result = try #require(SectionReorderPlanner.plan(request: request, in: sections, syncService: syncService))
         let moved = try #require(result.first { $0.title == "B" })
 
         #expect(moved.headerLevel == 1)
@@ -179,7 +152,7 @@ struct SectionReorderPlannerTests {
         let sections = [a, b, cc]
         let request = SectionReorderRequest(sectionId: b.id, targetSectionId: cc.id, newLevel: 0, newParentId: cc.id)
 
-        let result = try #require(planned(SectionReorderPlanner.plan(request: request, in: sections, syncService: syncService)))
+        let result = try #require(SectionReorderPlanner.plan(request: request, in: sections, syncService: syncService))
         let moved = try #require(result.first { $0.title == "B" })
 
         #expect(moved.headerLevel == 2, "newLevel: 0 must not overwrite the section's real header level")
@@ -196,7 +169,7 @@ struct SectionReorderPlannerTests {
         let sections = [a, b, cc]
         let request = SectionReorderRequest(sectionId: cc.id, targetSectionId: nil, newLevel: 1, newParentId: nil)
 
-        let result = try #require(planned(SectionReorderPlanner.plan(request: request, in: sections, syncService: syncService)))
+        let result = try #require(SectionReorderPlanner.plan(request: request, in: sections, syncService: syncService))
 
         #expect(titles(result) == ["C", "A", "B"])
     }
@@ -210,7 +183,7 @@ struct SectionReorderPlannerTests {
         // Move A to after B -- B is the only (and therefore last) section once A is removed.
         let request = SectionReorderRequest(sectionId: a.id, targetSectionId: b.id, newLevel: 1, newParentId: nil)
 
-        let result = try #require(planned(SectionReorderPlanner.plan(request: request, in: sections, syncService: syncService)))
+        let result = try #require(SectionReorderPlanner.plan(request: request, in: sections, syncService: syncService))
 
         #expect(titles(result) == ["B", "A"])
     }
@@ -226,7 +199,7 @@ struct SectionReorderPlannerTests {
         // it's orphaned and must be promoted to Parent's old level.
         let request = SectionReorderRequest(sectionId: parent.id, targetSectionId: target.id, newLevel: 1, newParentId: nil)
 
-        let result = try #require(planned(SectionReorderPlanner.plan(request: request, in: sections, syncService: syncService)))
+        let result = try #require(SectionReorderPlanner.plan(request: request, in: sections, syncService: syncService))
         let movedChild = try #require(result.first { $0.title == "Child" })
 
         #expect(movedChild.headerLevel == 1)
@@ -316,7 +289,7 @@ struct SectionReorderPlannerTests {
             isSubtreeDrag: true, childIds: [c1.id, c2.id]
         )
 
-        let result = try #require(planned(SectionReorderPlanner.plan(request: request, in: sections, syncService: syncService)))
+        let result = try #require(SectionReorderPlanner.plan(request: request, in: sections, syncService: syncService))
 
         #expect(titles(result) == ["Target", "P", "C1", "C2"])
         #expect(levels(result) == [1, 2, 3, 3])
@@ -335,7 +308,7 @@ struct SectionReorderPlannerTests {
             isSubtreeDrag: true, childIds: [c1.id]
         )
 
-        let result = try #require(planned(SectionReorderPlanner.plan(request: request, in: sections, syncService: syncService)))
+        let result = try #require(SectionReorderPlanner.plan(request: request, in: sections, syncService: syncService))
 
         #expect(levels(result) == [1, 1, 2])
         let movedParent = try #require(result.first { $0.title == "P" })
@@ -357,7 +330,7 @@ struct SectionReorderPlannerTests {
             isSubtreeDrag: true, childIds: [c1.id]
         )
 
-        let result = try #require(planned(SectionReorderPlanner.plan(request: request, in: sections, syncService: syncService)))
+        let result = try #require(SectionReorderPlanner.plan(request: request, in: sections, syncService: syncService))
 
         #expect(levels(result) == [2, 3, 4])
         let movedParent = try #require(result.first { $0.title == "P" })
@@ -382,7 +355,7 @@ struct SectionReorderPlannerTests {
             isSubtreeDrag: true, childIds: [c1.id]
         )
 
-        let result = try #require(planned(SectionReorderPlanner.plan(request: request, in: sections, syncService: syncService)))
+        let result = try #require(SectionReorderPlanner.plan(request: request, in: sections, syncService: syncService))
 
         #expect(titles(result) == ["Target", "P", "C1", "Tail"])
     }
@@ -399,7 +372,7 @@ struct SectionReorderPlannerTests {
             isSubtreeDrag: true, childIds: [c1.id, "does-not-exist"]
         )
 
-        let result = try #require(planned(SectionReorderPlanner.plan(request: request, in: sections, syncService: syncService)))
+        let result = try #require(SectionReorderPlanner.plan(request: request, in: sections, syncService: syncService))
 
         #expect(titles(result) == ["Target", "P", "C1"])
     }
@@ -417,7 +390,7 @@ struct SectionReorderPlannerTests {
             isSubtreeDrag: true, childIds: [c1.id]
         )
 
-        let result = try #require(planned(SectionReorderPlanner.plan(request: request, in: sections, syncService: syncService)))
+        let result = try #require(SectionReorderPlanner.plan(request: request, in: sections, syncService: syncService))
         let movedParent = try #require(result.first { $0.title == "P" })
         let movedChild = try #require(result.first { $0.title == "C1" })
 
@@ -441,7 +414,7 @@ struct SectionReorderPlannerTests {
             isSubtreeDrag: true, childIds: [b.id, a.id]
         )
 
-        let result = try #require(planned(SectionReorderPlanner.plan(request: request, in: sections, syncService: syncService)))
+        let result = try #require(SectionReorderPlanner.plan(request: request, in: sections, syncService: syncService))
 
         // sectionsToMove is built in allIdsToMove (request) order while indicesToRemove is
         // sorted by document index -- the reinserted block follows REQUEST order (P, B, A),
@@ -469,7 +442,7 @@ struct SectionReorderPlannerTests {
             isSubtreeDrag: true, childIds: []
         )
 
-        let result = try #require(planned(SectionReorderPlanner.plan(request: request, in: sections, syncService: syncService)))
+        let result = try #require(SectionReorderPlanner.plan(request: request, in: sections, syncService: syncService))
         let movedChild = try #require(result.first { $0.title == "Child" })
 
         #expect(movedChild.headerLevel == 1, "empty childIds must route through the single-section path, which promotes orphaned children")
@@ -486,7 +459,7 @@ struct SectionReorderPlannerTests {
         // B already directly follows A -- dropping B "after A" again is a structural no-op.
         let request = SectionReorderRequest(sectionId: b.id, targetSectionId: a.id, newLevel: 1, newParentId: nil)
 
-        let result = try #require(planned(SectionReorderPlanner.plan(request: request, in: sections, syncService: syncService)))
+        let result = try #require(SectionReorderPlanner.plan(request: request, in: sections, syncService: syncService))
 
         #expect(ContentView.sectionOrderUnchanged(result, from: sections))
     }

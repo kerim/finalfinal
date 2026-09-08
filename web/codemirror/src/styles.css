@@ -62,47 +62,47 @@ body {
  * These style the entire line, not individual tokens
  */
 .cm-heading-1-line {
-  font-size: var(--font-size-h1, 31px);
+  font-size: var(--font-size-h1);
   font-weight: var(--weight-heading, 600);
   color: var(--editor-heading-text, var(--editor-text, #1a1a1a));
   letter-spacing: var(--tracking-tight);
-  line-height: var(--line-height-heading, 1.2);
+  line-height: var(--line-height-heading);
 }
 
 .cm-heading-2-line {
-  font-size: var(--font-size-h2, 26px);
+  font-size: var(--font-size-h2);
   font-weight: var(--weight-heading, 600);
   color: var(--editor-heading-text, var(--editor-text, #1a1a1a));
   letter-spacing: var(--tracking-tight);
-  line-height: var(--line-height-heading, 1.2);
+  line-height: var(--line-height-heading);
 }
 
 .cm-heading-3-line {
-  font-size: var(--font-size-h3, 22px);
+  font-size: var(--font-size-h3);
   font-weight: var(--weight-heading, 600);
   color: var(--editor-heading-text, var(--editor-text, #1a1a1a));
-  line-height: var(--line-height-heading, 1.2);
+  line-height: var(--line-height-heading);
 }
 
 .cm-heading-4-line {
-  font-size: var(--font-size-h4, 18px);
+  font-size: var(--font-size-h4);
   font-weight: var(--weight-heading, 600);
   color: var(--editor-heading-text, var(--editor-text, #1a1a1a));
-  line-height: var(--line-height-heading, 1.2);
+  line-height: var(--line-height-heading);
 }
 
 .cm-heading-5-line {
-  font-size: var(--font-size-h5, 16px);
+  font-size: var(--font-size-h5);
   font-weight: var(--weight-heading, 600);
   color: var(--editor-heading-text, var(--editor-text, #1a1a1a));
-  line-height: var(--line-height-heading, 1.2);
+  line-height: var(--line-height-heading);
 }
 
 .cm-heading-6-line {
-  font-size: var(--font-size-h6, 14px);
+  font-size: var(--font-size-h6);
   font-weight: var(--weight-heading, 600);
   color: var(--editor-heading-text, var(--editor-text, #1a1a1a));
-  line-height: var(--line-height-heading, 1.2);
+  line-height: var(--line-height-heading);
 }
 
 /* Search highlighting */

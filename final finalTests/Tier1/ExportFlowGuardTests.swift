@@ -6,7 +6,8 @@
 //
 //  Coverage for the PURE STATE MACHINE behind `ExportViewModel`'s re-entrancy guard --
 //  `beginExportFlowIfIdle()` / `endExportFlow()` toggling the private `isExportFlowActive`
-//  flag -- as distinct from `isExporting`, which only covers the pandoc run itself. Before
+//  flag -- as distinct from `ExportActivity.isRunning`, which covers the whole claimed
+//  export/print flow (preflight, save panel, and the pandoc run). Before
 //  this guard existed, a second Export command fired while the first export's (modeless) save
 //  panel was still open could kick off a second, concurrent `savePanelDecision`/
 //  `presentSavePanel` flow from the same shared `ExportViewModel` singleton -- two save

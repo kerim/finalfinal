@@ -165,24 +165,21 @@ struct AppColorScheme: Identifiable, Equatable, Sendable {
         --tooltip-bg: \(tooltipBackground.cssHex);
         --tooltip-text: \(tooltipText.cssHex);
         --editor-muted: \(editorTextSecondary.cssHex);
-        \(EditorTypeScale.cssVariables)
         \(typographyCssVariables)
         """
     }
 
-    /// Typography CSS variables - adjusted weights for dark themes. Sizes and line heights
-    /// live in `EditorTypeScale.cssVariables` above; only weight is theme-dependent
-    /// (ux-contract D14).
+    /// Typography CSS variables - adjusted weights for dark themes
     var typographyCssVariables: String {
         if isDarkTheme {
             return """
-                --weight-heading: \(EditorTypeScale.weightHeadingDark);
-                --weight-body: \(EditorTypeScale.weightBodyDark);
+                --weight-heading: 500;
+                --weight-body: 300;
                 """
         }
         return """
-            --weight-heading: \(EditorTypeScale.weightHeadingLight);
-            --weight-body: \(EditorTypeScale.weightBodyLight);
+            --weight-heading: 600;
+            --weight-body: 400;
             """
     }
 

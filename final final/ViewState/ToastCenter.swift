@@ -16,8 +16,9 @@
 import SwiftUI
 import AppKit
 
-/// The four visual/behavioral kinds of toast. `.progress` exists for §4.2 (a spinner while a
-/// long operation runs) but has no call site yet — nothing in this task wires one up. `.info`
+/// The four visual/behavioral kinds of toast. `.progress` is §4.2's spinner shown while a long
+/// export/print operation runs — see `ExportActivity`, which is its only call site (via
+/// `ToastFactory.exportInProgress(message:)`) and the only thing that ever dismisses it. `.info`
 /// is a neutral hint (no outcome, nothing succeeded or failed) that behaves exactly like
 /// `.success` — fades on the same timer, queues the same way — but never shows a checkmark.
 enum ToastStyle: Equatable {
@@ -35,7 +36,11 @@ struct ToastAction {
 
 /// One toast's content. `fades` is `true` for `.success` and `.info` — a warning never fades on
 /// its own by default (§4.1.2: "does not fade... stays until dismissed"), and a `.progress`
-/// toast is expected to be replaced by its own result before fading would ever matter.
+/// toast is USUALLY replaced by its own result before fading would ever matter -- but not
+/// always: `PrintOperations`'s formatted- and raw-markdown print paths both dismiss their
+/// progress toast via `ExportActivity.end()` with no result toast to replace it (printing hands
+/// off to the system print panel instead of showing an outcome toast), an intentional exception,
+/// not a gap.
 ///
 /// `fadeDelayOverride` lets a specific toast deviate from `ToastView`'s plain-success default
 /// (3s): `ToastFactory.gettingStartedNotSaved()` uses it so that one warning auto-dismisses on
@@ -85,17 +90,24 @@ final class ToastCenter {
     /// Shows `toast`, applying the queue-with-cutoff rules (§0 above):
     /// 1. One toast at a time. A new **warning** always takes the slot, replacing whatever is
     ///    showing.
-    /// 2. A new **success/progress** replaces a showing success/progress.
-    /// 3. A new success/progress **never** evicts an undismissed warning — stored in a single
-    ///    **pending slot**, stamped with `now`. A newer pending replaces an older one.
+    /// 2. A new **progress** toast ALSO always takes the slot, even over an undismissed warning
+    ///    -- a live export/print operation's progress is at least as important as a standing
+    ///    warning, and `ExportActivity.begin(message:)` must never grey out the export/print
+    ///    menu items with zero visible explanation for why (review fix: a progress toast used
+    ///    to queue behind a warning in `pending` and simply never show). Like a new warning
+    ///    replacing an old one, the toast being replaced here is not preserved for later
+    ///    restoration -- only `pending` (untouched by this branch) survives past this call.
+    /// 3. A new **success/info** replaces a showing success/progress, but never evicts an
+    ///    undismissed warning — stored in a single **pending slot**, stamped with `now`. A newer
+    ///    pending replaces an older one.
     /// `now` is injected (defaulting to `Date()`) so tests can drive the cutoff deterministically
     /// without sleeping real time.
     func show(_ toast: Toast, now: Date = Date()) {
         switch toast.style {
-        case .warning:
+        case .warning, .progress:
             current = toast
             announceAccessibility(for: toast)
-        case .success, .progress, .info:
+        case .success, .info:
             if let current, current.style == .warning {
                 pending = (toast, now)
             } else {
@@ -107,7 +119,8 @@ final class ToastCenter {
     }
 
     /// Dismisses whatever is currently showing (✕, or a fading success's own `.task` timing
-    /// out). If a success/progress was pending behind it:
+    /// out). If a success/info was pending behind it (the only styles that ever queue -- see
+    /// rule 2 above, a `.progress` toast never sits in `pending`):
     /// 4. Promoted immediately if it was stamped within `pendingSuccessCutoff` seconds of `now`.
     /// 5. Otherwise discarded and logged via `DebugLog` — diagnostics only, never a user-facing
     ///    channel (a silently-vanished toast is the correct behavior here, not a bug to surface).
@@ -127,13 +140,21 @@ final class ToastCenter {
         }
     }
 
-    /// Dismisses `current` only if it is still the toast with this `id`. A no-op if some other
-    /// toast has since taken the slot — used by callers (e.g. `AutoBackupService`) that want to
-    /// retract a warning they showed earlier without clobbering a newer, unrelated toast that
-    /// has since taken the slot.
-    func dismissIfCurrent(id: UUID, now: Date = Date()) {
-        guard current?.id == id else { return }
-        dismissCurrent(now: now)
+    /// Dismisses one specific toast wherever it currently sits — used by `ExportActivity.end()`
+    /// so it tears down only its OWN progress toast, never whatever happens to be showing.
+    /// If `id` is `current`, this behaves exactly like `dismissCurrent(now:)` (including
+    /// promoting `pending`). If it is sitting in the `pending` slot (a success/info queued
+    /// behind an undismissed warning -- never a `.progress` toast, which always takes `current`
+    /// immediately per rule 2 in `show(_:now:)`), it is dropped from `pending` and `current` is
+    /// left untouched — that queued toast never got to show, so there's nothing to promote in
+    /// its place. If `id` matches neither slot (already replaced by a newer toast), this is a
+    /// no-op.
+    func dismiss(id: UUID, now: Date = Date()) {
+        if current?.id == id {
+            dismissCurrent(now: now)
+        } else if pending?.toast.id == id {
+            pending = nil
+        }
     }
 
     /// Additive VoiceOver announcement — never a substitute for the visual channel, which is
@@ -228,6 +249,15 @@ enum ToastFactory {
         }
     }
 
+    // MARK: Export Progress
+
+    /// The spinner toast shown for the duration of a long export/print operation (§4.2 / D7).
+    /// No `fadeDelayOverride` — this toast is dismissed explicitly by `ExportActivity.end()`
+    /// when the operation finishes, never on a timer.
+    static func exportInProgress(message: String) -> Toast {
+        Toast(style: .progress, message: message)
+    }
+
     // MARK: Save Version
 
     static func versionSaved() -> Toast {
@@ -281,35 +311,5 @@ enum ToastFactory {
     /// just a hint, so it never shows the success checkmark (review round 2, must-fix 6).
     static func focusModeHint() -> Toast {
         Toast(style: .info, message: "Press Esc or ⇧⌘F to exit Focus Mode.")
-    }
-
-    // MARK: Auto-Backup Failure
-
-    /// §4.3: "Auto-backup skipped or failed" -> "warning toast, persistent until the next
-    /// successful backup; detail in Diagnostics". Persistent (no `fadeDelayOverride`) like every
-    /// other warning -- a failed backup must not be missed by fading away unseen. Wording uses
-    /// the §5 glossary term "Version" (not "backup", which the glossary retires).
-    static func autoBackupFailed() -> Toast {
-        Toast(
-            style: .warning,
-            message: "Couldn't save an automatic version.",
-            action: ToastAction(title: "Open Diagnostics") {
-                NotificationCenter.default.post(name: .showDiagnosticsPreferences, object: nil)
-            }
-        )
-    }
-
-    // MARK: Section Reorder Bail-Out
-
-    /// §4.3: "Drag-reorder bailed out" -> "toast". Fades (unlike the persistent warnings above)
-    /// per the plan's judgment call: this one isn't the kind of outcome that needs to camp in
-    /// the app's one persistent-warning slot -- 9s matches `gettingStartedNotSaved()`'s
-    /// comfortably-under-`pendingSuccessCutoff` reasoning.
-    static func sectionReorderBailedOut() -> Toast {
-        Toast(
-            style: .warning,
-            message: "Couldn't move the section. Nothing was changed.",
-            fadeDelayOverride: .seconds(9)
-        )
     }
 }

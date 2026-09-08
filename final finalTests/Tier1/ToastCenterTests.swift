@@ -180,36 +180,6 @@ struct ToastCenterTests {
         #expect(center.pending == nil)
     }
 
-    // MARK: - dismissIfCurrent (AutoBackupService's own-toast retraction)
-
-    @Test("dismissIfCurrent clears the slot when the id matches the current toast")
-    @MainActor
-    func dismissIfCurrentClearsMatchingToast() {
-        let center = ToastCenter()
-        let toast = warning()
-        center.show(toast, now: epoch)
-
-        center.dismissIfCurrent(id: toast.id, now: epoch)
-
-        #expect(center.current == nil)
-    }
-
-    @Test("dismissIfCurrent is a no-op for a stale id once a different toast has taken the slot")
-    @MainActor
-    func dismissIfCurrentIgnoresStaleId() {
-        let center = ToastCenter()
-        let firstWarning = warning("first")
-        center.show(firstWarning, now: epoch)
-
-        let secondWarning = warning("second")
-        center.show(secondWarning, now: epoch)
-
-        // The id of the toast that no longer occupies the slot.
-        center.dismissIfCurrent(id: firstWarning.id, now: epoch)
-
-        #expect(center.current?.id == secondWarning.id, "a stale id must not touch a newer, unrelated toast")
-    }
-
     // MARK: - ToastFactory shape guarantees
 
     @Test("Every warning ToastFactory produces is style .warning, carries at most one action, and is actually dismissible")

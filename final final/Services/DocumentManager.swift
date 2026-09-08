@@ -285,15 +285,6 @@ final class DocumentManager {
         SpellCheckService.shared.openDocument()
 
         DebugLog.log(.lifecycle, "[DocumentManager] Opened project: \(project.title) at \(url.path)")
-
-        // §4.3 "Project integrity drift detected" -> the existing integrity alert, adapted for
-        // "opened with issues" rather than "couldn't open" (see IntegrityAlertModel.blockedOpen).
-        // Placed after every piece of state above has already been committed -- the project IS
-        // open at this point, unlike the report(_:url:) funnel used for a BLOCKED open.
-        if !report.isHealthy {
-            ProjectOpenErrorState.shared.reportDrift(report: report, url: url, projectId: project.id)
-        }
-
         return project.id
     }
 

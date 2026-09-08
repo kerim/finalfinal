@@ -17,18 +17,27 @@ extension FileOperations {
             return
         }
 
+        // Claimed here, BEFORE the block fetch and the save panel, not just around the final
+        // `exportService` call below -- otherwise the export/print menu items stay enabled
+        // (`.disabled(ExportActivity.shared.isRunning)` in `FileCommands.swift`) for the entire
+        // block-fetch + modeless-save-panel window, and a second click starts a second,
+        // concurrent export (review fix). Released exactly once on every exit path below.
+        ExportActivity.shared.begin(message: "Exporting to Markdown with images…")
+
         // Fetch blocks (flushing pending editor edits first), filter bibliography,
         // assemble standard markdown + extract image filenames
         let blocks: [Block]
         do {
             blocks = try await dm.exportBlocks()
         } catch {
+            ExportActivity.shared.end()
             showErrorAlert("Could Not Load Content", error: error)
             return
         }
 
         let content = BlockParser.assembleStandardMarkdownForExport(from: blocks)
         guard !content.isEmpty else {
+            ExportActivity.shared.end()
             showNoContentError()
             return
         }
@@ -48,7 +57,10 @@ extension FileOperations {
         savePanel.canCreateDirectories = true
 
         savePanel.begin { response in
-            guard response == .OK, var url = savePanel.url else { return }
+            guard response == .OK, var url = savePanel.url else {
+                ExportActivity.shared.end()
+                return
+            }
 
             // Ensure .md extension -- case-insensitive, so a user-typed "Notes.MD" is
             // recognized as already having the extension instead of becoming "Notes.MD.md".
@@ -67,8 +79,10 @@ extension FileOperations {
                         projectURL: projectURL,
                         outputURL: url
                     )
+                    ExportActivity.shared.end()
                     showMarkdownExportToast(result: result)
                 } catch {
+                    ExportActivity.shared.end()
                     showErrorAlert("Could Not Export File", error: error)
                 }
             }
@@ -82,12 +96,18 @@ extension FileOperations {
             return
         }
 
+        // Claimed here, BEFORE the block fetch and the save panel -- see
+        // `handleExportMarkdownWithImages()`'s matching comment for why. Released exactly once
+        // on every exit path below.
+        ExportActivity.shared.begin(message: "Exporting to Markdown…")
+
         // Fetch blocks (flushing pending editor edits first), then assemble plain markdown
         // with no image markup left behind by stripping it.
         let blocks: [Block]
         do {
             blocks = try await dm.exportBlocks()
         } catch {
+            ExportActivity.shared.end()
             showErrorAlert("Could Not Load Content", error: error)
             return
         }
@@ -103,6 +123,7 @@ extension FileOperations {
             // assembly of that same content came back empty, that content can only have been
             // images -- text content would have survived unstripped and made `content` above
             // non-empty too.
+            ExportActivity.shared.end()
             let documentHasContent = !BlockParser.assembleStandardMarkdownForExport(from: blocks).isEmpty
             if documentHasContent {
                 showImagesOnlyError()
@@ -122,7 +143,10 @@ extension FileOperations {
         savePanel.canCreateDirectories = true
 
         savePanel.begin { response in
-            guard response == .OK, let panelURL = savePanel.url else { return }
+            guard response == .OK, let panelURL = savePanel.url else {
+                ExportActivity.shared.end()
+                return
+            }
             let url = markdownExportURL(for: panelURL)
 
             savePanel.orderOut(nil)
@@ -134,8 +158,10 @@ extension FileOperations {
                         content: content,
                         outputURL: url
                     )
+                    ExportActivity.shared.end()
                     showMarkdownExportToast(result: result)
                 } catch {
+                    ExportActivity.shared.end()
                     showErrorAlert("Could Not Export File", error: error)
                 }
             }
@@ -165,18 +191,25 @@ extension FileOperations {
             return
         }
 
+        // Claimed here, BEFORE the block fetch and the save panel -- see
+        // `handleExportMarkdownWithImages()`'s matching comment for why. Released exactly once
+        // on every exit path below.
+        ExportActivity.shared.begin(message: "Exporting to TextBundle…")
+
         // Fetch blocks (flushing pending editor edits first), filter bibliography,
         // assemble standard markdown + extract image filenames
         let blocks: [Block]
         do {
             blocks = try await dm.exportBlocks()
         } catch {
+            ExportActivity.shared.end()
             showErrorAlert("Could Not Load Content", error: error)
             return
         }
 
         let content = BlockParser.assembleStandardMarkdownForExport(from: blocks)
         guard !content.isEmpty else {
+            ExportActivity.shared.end()
             showNoContentError()
             return
         }
@@ -198,7 +231,10 @@ extension FileOperations {
         savePanel.canCreateDirectories = true
 
         savePanel.begin { response in
-            guard response == .OK, let url = savePanel.url else { return }
+            guard response == .OK, let url = savePanel.url else {
+                ExportActivity.shared.end()
+                return
+            }
 
             savePanel.orderOut(nil)
 
@@ -211,8 +247,10 @@ extension FileOperations {
                         projectURL: projectURL,
                         outputURL: url
                     )
+                    ExportActivity.shared.end()
                     showMarkdownExportToast(result: result)
                 } catch {
+                    ExportActivity.shared.end()
                     showErrorAlert("Could Not Export File", error: error)
                 }
             }

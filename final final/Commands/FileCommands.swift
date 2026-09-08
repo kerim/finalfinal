@@ -70,14 +70,17 @@ struct FileCommands: Commands {
                 Button("Markdown with Images...") {
                     NotificationCenter.default.post(name: .exportMarkdownWithImages, object: nil)
                 }
+                .disabled(ExportActivity.shared.isRunning)
 
                 Button("Markdown Only...") {
                     NotificationCenter.default.post(name: .exportMarkdownOnly, object: nil)
                 }
+                .disabled(ExportActivity.shared.isRunning)
 
                 Button("TextBundle...") {
                     NotificationCenter.default.post(name: .exportTextBundle, object: nil)
                 }
+                .disabled(ExportActivity.shared.isRunning)
             }
 
             Divider()
@@ -89,6 +92,7 @@ struct FileCommands: Commands {
                     userInfo: ["format": ExportFormat.word]
                 )
             }
+            .disabled(ExportActivity.shared.isRunning)
 
             Button("Export as PDF...") {
                 NotificationCenter.default.post(
@@ -97,6 +101,7 @@ struct FileCommands: Commands {
                     userInfo: ["format": ExportFormat.pdf]
                 )
             }
+            .disabled(ExportActivity.shared.isRunning)
 
             Button("Export as ODT...") {
                 NotificationCenter.default.post(
@@ -105,6 +110,7 @@ struct FileCommands: Commands {
                     userInfo: ["format": ExportFormat.odt]
                 )
             }
+            .disabled(ExportActivity.shared.isRunning)
 
             Button("Export Preferences...") {
                 NotificationCenter.default.post(name: .showExportPreferences, object: nil)
@@ -117,10 +123,12 @@ struct FileCommands: Commands {
                     NotificationCenter.default.post(name: .printFormatted, object: nil)
                 }
                 .keyboardShortcut("p", modifiers: .command)
+                .disabled(ExportActivity.shared.isRunning)
 
                 Button("Raw Markdown...") {
                     NotificationCenter.default.post(name: .printRawMarkdown, object: nil)
                 }
+                .disabled(ExportActivity.shared.isRunning)
             }
         }
     }

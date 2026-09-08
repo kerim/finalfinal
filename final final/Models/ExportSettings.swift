@@ -25,6 +25,17 @@ enum ExportFormat: String, CaseIterable, Identifiable, Sendable, Codable {
         }
     }
 
+    /// Plain, user-facing name for progress/result toasts -- unlike `displayName`, this never
+    /// includes the file extension. §4.2's progress toast reads "Exporting to Word…", not the
+    /// confusing "Exporting to Word (.docx)…" `displayName` would produce.
+    var toastName: String {
+        switch self {
+        case .word: return "Word"
+        case .pdf: return "PDF"
+        case .odt: return "OpenDocument"
+        }
+    }
+
     /// File extension
     var fileExtension: String {
         rawValue

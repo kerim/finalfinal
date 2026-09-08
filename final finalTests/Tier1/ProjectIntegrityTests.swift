@@ -191,13 +191,12 @@ struct ProjectIntegrityTests {
 
         state.report(IntegrityError.corrupted(report), url: url)
 
-        guard case .integrity(let pendingReport, let pendingURL, let blockedOpen) = state.pending else {
+        guard case .integrity(let pendingReport, let pendingURL) = state.pending else {
             Issue.record("Expected .integrity, got \(String(describing: state.pending))")
             return
         }
         #expect(pendingReport.issues == report.issues)
         #expect(pendingURL == url)
-        #expect(blockedOpen, "report() is the BLOCKED-open funnel -- blockedOpen must be true")
     }
 
     @Test("report() routes a non-integrity error to .other, carrying localizedDescription")
@@ -279,35 +278,5 @@ struct ProjectIntegrityTests {
             return
         }
         #expect(pendingURL == urlB, "Second report() should replace, not stack")
-    }
-
-    // MARK: - §4.3 "Project integrity drift detected" -> the existing integrity alert (adapted)
-
-    /// Unlike `reportRoutesIntegrityError` above (which drives `ProjectOpenErrorState` in
-    /// isolation), this drives the real `DocumentManager.shared.openProject(at:)` funnel end to
-    /// end -- non-critical drift must NOT block the open (unlike a critical issue, which throws
-    /// `IntegrityError.corrupted` before ever reaching this point), and must surface through
-    /// `ProjectOpenErrorState.shared.reportDrift(report:url:projectId:)` as `.integrity(_, _, blockedOpen:
-    /// false)`, not the blocked-open `report(_:url:)` funnel.
-    @Test("openProject with non-critical drift opens successfully and reports drift, not a blocked open")
-    @MainActor
-    func openProjectWithNonCriticalDriftReportsDrift() throws {
-        ProjectOpenErrorState.shared.pending = nil
-        defer {
-            ProjectOpenErrorState.shared.pending = nil
-            DocumentManager.shared.closeProject()
-        }
-
-        let url = try createPackageWithOrphanedSections()
-        let projectId = try DocumentManager.shared.openProject(at: url)
-        #expect(!projectId.isEmpty, "a non-critical-drift project must still open successfully")
-
-        guard case .integrity(let report, let pendingURL, let blockedOpen) = ProjectOpenErrorState.shared.pending else {
-            Issue.record("Expected .integrity drift report, got \(String(describing: ProjectOpenErrorState.shared.pending))")
-            return
-        }
-        #expect(!blockedOpen, "drift on a SUCCESSFUL open must report blockedOpen == false")
-        #expect(pendingURL == url)
-        #expect(!report.isHealthy)
     }
 }

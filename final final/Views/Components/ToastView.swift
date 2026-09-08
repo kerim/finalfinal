@@ -39,20 +39,26 @@ struct ToastView: View {
                     .accessibilityIdentifier("toast-action")
             }
 
-            Button {
-                withAnimation {
-                    ToastCenter.shared.dismissCurrent()
+            // No ✕ on a `.progress` toast: it isn't cancellable (§4.2 -- Cancel appears only for
+            // an operation that can genuinely be stopped part-way, which none of today's
+            // exports/prints are), so dismissing it would hide the progress indicator while the
+            // operation keeps running with the menu still disabled and no visible explanation left at all.
+            if toast.style != .progress {
+                Button {
+                    withAnimation {
+                        ToastCenter.shared.dismissCurrent()
+                    }
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.uiCaption)
+                        .frame(width: 24, height: 24)
+                        .contentShape(Rectangle())
                 }
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.uiCaption)
-                    .frame(width: 24, height: 24)
-                    .contentShape(Rectangle())
+                .buttonStyle(.plain)
+                .foregroundStyle(theme.tooltipText)
+                .accessibilityIdentifier("toast-dismiss")
+                .accessibilityLabel("Dismiss")
             }
-            .buttonStyle(.plain)
-            .foregroundStyle(theme.tooltipText)
-            .accessibilityIdentifier("toast-dismiss")
-            .accessibilityLabel("Dismiss")
         }
         .padding(.horizontal, Spacing.s16)
         .padding(.vertical, Spacing.s12)
@@ -84,8 +90,11 @@ struct ToastView: View {
             Image(systemName: "exclamationmark.triangle.fill")
                 .foregroundStyle(theme.tooltipText)
         case .progress:
-            ProgressView()
-                .controlSize(.small)
+            // A static glyph, not an animated spinner: most exports (Markdown, TextBundle, even
+            // a short PDF) finish before an animated `ProgressView` could visibly draw even one
+            // rotation, so a spinner here never actually appears in practice.
+            Image(systemName: "arrow.triangle.2.circlepath")
+                .foregroundStyle(theme.tooltipText)
         case .info:
             // Neutral, not `EmptyView()` -- an absent icon would leave `HStack`'s spacing as an
             // unexplained gap before the message text.
