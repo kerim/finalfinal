@@ -181,7 +181,7 @@ struct VersionHistoryWindow: View {
             .keyboardShortcut(.escape, modifiers: [])
         }
         .padding(.horizontal)
-        .padding(.vertical, 6)
+        .padding(.vertical, Spacing.s8)
         .background(themeManager.currentTheme.sidebarBackground)
     }
 
@@ -282,7 +282,7 @@ struct VersionHistoryWindow: View {
     // MARK: - Project Closed View
 
     private var projectClosedView: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: Spacing.s16) {
             Spacer()
             Image(systemName: "exclamationmark.triangle")
                 .font(.system(size: TypeScale.chromeGlyphLarge))
@@ -305,7 +305,7 @@ struct VersionHistoryWindow: View {
     // MARK: - Invalid State View
 
     private var invalidStateView: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: Spacing.s16) {
             Spacer()
             Image(systemName: "questionmark.circle")
                 .font(.system(size: TypeScale.chromeGlyphLarge))
@@ -326,7 +326,7 @@ struct VersionHistoryWindow: View {
     // MARK: - Empty State
 
     private var emptyStateView: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: Spacing.s16) {
             Spacer()
             Image(systemName: "clock.arrow.circlepath")
                 .font(.system(size: TypeScale.chromeGlyphLarge))
@@ -346,7 +346,7 @@ struct VersionHistoryWindow: View {
     // MARK: - Error View
 
     private func errorView(_ message: String) -> some View {
-        VStack(spacing: 16) {
+        VStack(spacing: Spacing.s16) {
             Spacer()
             Image(systemName: "exclamationmark.triangle")
                 .font(.system(size: TypeScale.chromeGlyphLarge))

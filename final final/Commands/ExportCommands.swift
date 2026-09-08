@@ -15,6 +15,9 @@ extension Notification.Name {
     static let exportDocument = Notification.Name("exportDocument")
     /// Request to show export preferences
     static let showExportPreferences = Notification.Name("showExportPreferences")
+    /// Request to show Diagnostics preferences (e.g. from the auto-backup-failed toast's
+    /// "Open Diagnostics" action, ToastFactory.autoBackupFailed())
+    static let showDiagnosticsPreferences = Notification.Name("showDiagnosticsPreferences")
     /// Request to export plain markdown text, no images
     static let exportMarkdownOnly = Notification.Name("exportMarkdownOnly")
     /// Request to export markdown with images in a folder
