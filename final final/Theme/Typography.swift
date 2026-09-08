@@ -13,7 +13,11 @@ import SwiftUI
 /// Centralized type scale constants
 /// Minimum size of 11px ensures WCAG accessibility compliance
 enum TypeScale {
-    // Heading sizes (matches CSS custom properties)
+    // Heading sizes for app CHROME. These deliberately do NOT match the document
+    // type scale in Theme/EditorTypeScale.swift, which the editors use inside the
+    // document. Chrome copies the Mac's native text styles (ux-contract D13); the
+    // document uses its own reading-oriented scale. D14's "cannot drift" means
+    // each scale is declared once, in Swift — not that the two scales share numbers.
     static let h1: CGFloat = 28
     static let h2: CGFloat = 24
     static let h3: CGFloat = 20

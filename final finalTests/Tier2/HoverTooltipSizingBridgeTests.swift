@@ -38,6 +38,26 @@ final class HoverTooltipSizingBridgeTests: XCTestCase {
         try await super.setUp()
         helper = EditorTestHelper(editorType: .milkdown)
         try await helper.loadAndWaitForReady(timeout: 15)
+        try await establishBaselineTheme()
+    }
+
+    /// Pushes the same baseline document-typography CSS variables that Swift's real
+    /// `ThemeManager` sends to the editor on load (`AppColorScheme.cssVariables`, which
+    /// includes `EditorTypeScale.cssVariables` -- ux-contract D14). `EditorTestHelper` loads
+    /// the editor HTML directly via the `editor://` scheme without going through the app's
+    /// real `initialize()`/`setTheme()` call, so without this, `--font-size-body` and its
+    /// siblings would be entirely unset for every test in this file except the one that
+    /// calls `setBodyFontSize` -- `web/shared/typography.css` no longer declares stylesheet
+    /// defaults for them now that they're injected from Swift instead (see
+    /// EditorTypeScaleBridgeTests.swift), and several assertions below size the tooltip off
+    /// `--font-size-body` (`.ff-hover-tooltip`'s `font-size: calc(var(--font-size-body) *
+    /// 0.85)` has no fallback of its own).
+    @MainActor
+    private func establishBaselineTheme() async throws {
+        let css = EditorTypeScale.cssVariables +
+            "\n--weight-heading: \(EditorTypeScale.weightHeadingLight);" +
+            "\n--weight-body: \(EditorTypeScale.weightBodyLight);"
+        _ = try await helper.webView.evaluateJavaScript("window.FinalFinal.setTheme(\(jsString(css)))")
     }
 
     // MARK: - Fixtures
