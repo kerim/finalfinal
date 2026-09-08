@@ -127,6 +127,15 @@ final class ToastCenter {
         }
     }
 
+    /// Dismisses `current` only if it is still the toast with this `id`. A no-op if some other
+    /// toast has since taken the slot — used by callers (e.g. `AutoBackupService`) that want to
+    /// retract a warning they showed earlier without clobbering a newer, unrelated toast that
+    /// has since taken the slot.
+    func dismissIfCurrent(id: UUID, now: Date = Date()) {
+        guard current?.id == id else { return }
+        dismissCurrent(now: now)
+    }
+
     /// Additive VoiceOver announcement — never a substitute for the visual channel, which is
     /// `ToastView` itself. Silently does nothing if there's no main window to announce against
     /// (e.g. in a headless test run).
@@ -272,5 +281,35 @@ enum ToastFactory {
     /// just a hint, so it never shows the success checkmark (review round 2, must-fix 6).
     static func focusModeHint() -> Toast {
         Toast(style: .info, message: "Press Esc or ⇧⌘F to exit Focus Mode.")
+    }
+
+    // MARK: Auto-Backup Failure
+
+    /// §4.3: "Auto-backup skipped or failed" -> "warning toast, persistent until the next
+    /// successful backup; detail in Diagnostics". Persistent (no `fadeDelayOverride`) like every
+    /// other warning -- a failed backup must not be missed by fading away unseen. Wording uses
+    /// the §5 glossary term "Version" (not "backup", which the glossary retires).
+    static func autoBackupFailed() -> Toast {
+        Toast(
+            style: .warning,
+            message: "Couldn't save an automatic version.",
+            action: ToastAction(title: "Open Diagnostics") {
+                NotificationCenter.default.post(name: .showDiagnosticsPreferences, object: nil)
+            }
+        )
+    }
+
+    // MARK: Section Reorder Bail-Out
+
+    /// §4.3: "Drag-reorder bailed out" -> "toast". Fades (unlike the persistent warnings above)
+    /// per the plan's judgment call: this one isn't the kind of outcome that needs to camp in
+    /// the app's one persistent-warning slot -- 9s matches `gettingStartedNotSaved()`'s
+    /// comfortably-under-`pendingSuccessCutoff` reasoning.
+    static func sectionReorderBailedOut() -> Toast {
+        Toast(
+            style: .warning,
+            message: "Couldn't move the section. Nothing was changed.",
+            fadeDelayOverride: .seconds(9)
+        )
     }
 }

@@ -361,6 +361,13 @@ private struct OpenExportPreferencesListener: View {
                     NSApp.activate()
                 }
             }
+            .onReceive(NotificationCenter.default.publisher(for: .showDiagnosticsPreferences)) { _ in
+                openSettings()
+                // Ensure the Settings window comes to front (e.g. when main window is fullscreen)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    NSApp.activate()
+                }
+            }
     }
 }
 

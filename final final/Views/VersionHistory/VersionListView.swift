@@ -92,7 +92,7 @@ struct VersionListView: View {
             }
             .pickerStyle(.segmented)
             .labelsHidden()
-            .padding(Spacing.s8)
+            .padding(8)
 
             Divider()
 
@@ -208,7 +208,7 @@ struct SnapshotRowView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Spacing.s2) {
+        VStack(alignment: .leading, spacing: 2) {
             // Line 1: name or date-only
             if snapshot.isNamed {
                 Text(snapshot.name ?? "")
@@ -234,7 +234,7 @@ struct SnapshotRowView: View {
             }
 
             // Third line: always present for consistent row height
-            HStack(spacing: Spacing.s8) {
+            HStack(spacing: 6) {
                 if let delta = wordDelta, delta != 0 {
                     Text(delta > 0 ? "+\(delta) words" : "\(delta) words")
                         .font(.caption.weight(.medium))
@@ -257,10 +257,9 @@ struct SnapshotRowView: View {
                 }
             }
         }
-        .padding(.vertical, Spacing.s2)
+        .padding(.vertical, 2)
         .background(
-            // Named-version status tint on a list row — inline chrome, not a card surface, so .control, not .card.
-            RoundedRectangle(cornerRadius: CornerRadius.control)
+            RoundedRectangle(cornerRadius: 4)
                 .fill(snapshot.isNamed ? themeManager.currentTheme.accentColor.opacity(0.12) : .clear)
         )
         .onHover { hovering in

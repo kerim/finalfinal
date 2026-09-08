@@ -26,32 +26,57 @@ import Foundation
 
 @MainActor
 enum SectionReorderPlanner {
-    /// Validate a reorder request against `sections` and compute the resulting array, or
-    /// `nil` if the request is rejected. Absorbs `reorderSection`'s 3 validation guards
-    /// (newParentId == sectionId; section not found; targetSectionId == sectionId) -- each
-    /// returns `nil` here, exactly as it returned early with no dispatch before. A 4th
+    /// The outcome of validating and planning a reorder request.
+    ///
+    /// Distinguishing `.noOp` from `.failed` is the whole point of this type (see the diagnosis
+    /// this fixes): both look like "no plan was produced" to a naive caller, but only `.failed`
+    /// is a genuine problem worth telling the user about. Dropping a section back onto (or
+    /// immediately below) itself is not a failure -- it's the user picking a section up and
+    /// putting it back exactly where it was.
+    enum PlanResult {
+        /// A valid, structurally different reorder was computed.
+        case plan([SectionViewModel])
+        /// The request is a benign self-drop: the target position IS the dragged section's
+        /// current position, so there is nothing to reorder. Reachable from OutlineSidebar in
+        /// (at least) two ways -- `handleDropAtEnd` when the dragged section is already the last
+        /// one (its own id ends up as `targetSectionId`), and `handleDrop`'s `.insertBefore(idx)`
+        /// branch when the section immediately before `idx` IS the dragged section (dropping
+        /// into the gap directly below itself). Both compute `targetSectionId == sectionId`,
+        /// which is exactly the guard below.
+        case noOp
+        /// The request could not be turned into a valid plan -- a genuine "couldn't compute a
+        /// reorder" failure, not a benign no-op.
+        case failed
+    }
+
+    /// Validate a reorder request against `sections` and compute the resulting array. Absorbs
+    /// `reorderSection`'s 3 validation guards (newParentId == sectionId; section not found;
+    /// targetSectionId == sectionId) -- the first two are genuine rejections (`.failed`); the
+    /// third is the benign self-drop no-op (`.noOp`) described on `PlanResult.noOp`. A 4th
     /// early-return guard, `planSingleSection`'s own internal re-find-after-promotion check,
-    /// stays inside `planSingleSection` itself rather than here (see its doc comment), but has
-    /// the same nil-means-no-dispatch effect.
+    /// stays inside `planSingleSection` itself rather than here (see its doc comment), and maps
+    /// to `.failed` too -- it signals sections changed out from under the plan mid-computation,
+    /// not a benign no-op.
     static func plan(
         request: SectionReorderRequest,
         in sections: [SectionViewModel],
         syncService: SectionSyncService
-    ) -> [SectionViewModel]? {
+    ) -> PlanResult {
         // Validate
         if request.newParentId == request.sectionId {
-            return nil
+            return .failed
         }
         guard let fromIndex = sections.firstIndex(where: { $0.id == request.sectionId }) else {
-            return nil
+            return .failed
         }
 
         // Use the target section ID passed from OutlineSidebar (stable across zoom/filtering)
         let targetSectionId = request.targetSectionId
 
-        // Early return for self-drop at same position (no-op)
+        // Early return for self-drop at same position (no-op) -- see PlanResult.noOp's doc
+        // comment for the two concrete OutlineSidebar gestures that land here.
         if targetSectionId == request.sectionId {
-            return nil
+            return .noOp
         }
 
         let sectionToMove = sections[fromIndex]
@@ -59,11 +84,14 @@ enum SectionReorderPlanner {
 
         // Branch: Subtree drag vs single-card drag
         if request.isSubtreeDrag && !request.childIds.isEmpty {
-            return planSubtree(request: request, in: sections, oldLevel: oldLevel, syncService: syncService)
+            return .plan(planSubtree(request: request, in: sections, oldLevel: oldLevel, syncService: syncService))
         } else {
-            return planSingleSection(
+            guard let result = planSingleSection(
                 request: request, in: sections, oldLevel: oldLevel, syncService: syncService
-            )
+            ) else {
+                return .failed
+            }
+            return .plan(result)
         }
     }
 

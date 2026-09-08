@@ -359,6 +359,18 @@ class EditorViewState {
     /// even in production before a `Task`'s `defer` reads it back.
     var pendingSectionReorderRequest: SectionReorderRequest?
 
+    /// Retry budget for a refused drag-reorder (§4.3: "Drag-reorder bailed out" -> toast): one
+    /// retry per gesture. Cleared on EVERY terminal outcome of `dispatchSectionReorder`
+    /// (`.performed` and `.failedAfterCommit` included, not only when the give-up toast fires)
+    /// so a refusal that later succeeds doesn't poison the NEXT, unrelated drag's first refusal
+    /// into being misread as a second strike.
+    var sectionReorderRetryAttempted = false
+
+    /// Not `private` -- `.shared` is the one production entry point, but tests point this at an
+    /// isolated `ToastCenter()` instance instead of racing other parallel tests through the
+    /// shared singleton.
+    var toastCenter: ToastCenter = .shared
+
     /// Set when a `.bibliographySectionChanged` notification arrives while zoomed into a
     /// section (bibliography rebuilds only affect the full-document view). Drained on
     /// zoom-exit by `ContentView.handleZoomStateCleared()` -- see that method and
