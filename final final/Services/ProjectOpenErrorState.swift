@@ -13,15 +13,9 @@
 
 import Foundation
 
-/// What went wrong when a project failed to open -- or, for `.integrity` with `blockedOpen ==
-/// false`, what was noticed AFTER a project opened successfully (§4.3: "Project integrity drift
-/// detected" -> the existing integrity alert).
+/// What went wrong when a project failed to open.
 enum ProjectOpenFailure: Identifiable {
-    /// `blockedOpen`: `true` for every failure that actually prevented the project from
-    /// opening (the pre-existing behavior); `false` for non-critical drift noticed on an
-    /// otherwise-successful open (`reportDrift(report:url:projectId:)` below) -- the project is already
-    /// open, so the alert adapts (see `IntegrityAlertModel`) rather than offering to open it.
-    case integrity(report: IntegrityReport, url: URL, blockedOpen: Bool)
+    case integrity(report: IntegrityReport, url: URL)
     case other(message: String, url: URL)
 
     /// Derived from the failing project's URL alone -- not the case, not the
@@ -33,7 +27,7 @@ enum ProjectOpenFailure: Identifiable {
     /// treats an update as a new presentation when `id` itself changes.
     var id: String {
         switch self {
-        case .integrity(_, let url, _): url.path
+        case .integrity(_, let url): url.path
         case .other(_, let url): url.path
         }
     }
@@ -53,45 +47,15 @@ final class ProjectOpenErrorState {
     /// not just the explicit Cancel/OK button paths.
     var pending: ProjectOpenFailure?
 
-    /// Project ids `reportDrift(report:url:projectId:)` has already shown a drift alert for
-    /// during THIS app session (fix, review round): `DocumentManager.openProject` calls
-    /// `reportDrift` unconditionally whenever a project isn't perfectly healthy, so without this
-    /// a project with one benign, non-repairable issue would show this modal sheet on every
-    /// single future open of it, forever -- including app-launch restore. Deliberately
-    /// session-scoped only, not persisted across relaunches (the judge's call, not
-    /// over-engineered).
-    private var driftShownForProjectIds: Set<String> = []
-
     /// The single funnel every project-open failure (Finder double-click, File >
     /// Open, File > Open Recent, and the launch-time restore path) routes into.
     func report(_ error: Error, url: URL) {
         DebugLog.log(.lifecycle, "[ProjectOpenError] \(url.lastPathComponent): \(error)")
         if let report = (error as? IntegrityError)?.integrityReport {
-            pending = .integrity(report: report, url: url, blockedOpen: true)
+            pending = .integrity(report: report, url: url)
         } else {
             pending = .other(message: error.localizedDescription, url: url)
         }
-    }
-
-    /// The project opened successfully, but the integrity check found non-critical drift
-    /// (§4.3: "Project integrity drift detected" -> the existing integrity alert, adapted --
-    /// see `IntegrityAlertModel`'s `blockedOpen` for how the alert's wording/buttons differ).
-    ///
-    /// Shows at most once per project id per app session -- see `driftShownForProjectIds`'s doc
-    /// comment. On the already-shown-this-session path, this only logs and returns -- `pending`
-    /// is left untouched. On the FIRST call for a given project id, though, `pending` is set
-    /// unconditionally: if some other failure (e.g. a different project's blocked-open sheet) is
-    /// already `pending` at that moment, this replaces it. That window is narrow in practice (it
-    /// needs two project-open failures landing in the same session) and is accepted as-is, not
-    /// treated as a bug to fix.
-    func reportDrift(report: IntegrityReport, url: URL, projectId: String) {
-        guard !driftShownForProjectIds.contains(projectId) else {
-            DebugLog.log(.lifecycle, "[ProjectOpenError] drift on open, already shown this session, skipping: \(url.lastPathComponent)")
-            return
-        }
-        driftShownForProjectIds.insert(projectId)
-        DebugLog.log(.lifecycle, "[ProjectOpenError] drift on open: \(url.lastPathComponent)")
-        pending = .integrity(report: report, url: url, blockedOpen: false)
     }
 
     func clear() {

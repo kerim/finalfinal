@@ -144,49 +144,24 @@ extension ContentView {
         sectionSyncService.cancelPendingSync()
 
         // The 3 validation guards (newParentId == sectionId; section not found;
-        // targetSectionId == sectionId) live in SectionReorderPlanner.plan, which distinguishes
-        // a genuine failure (`.failed`) from a benign self-drop no-op (`.noOp` -- see
-        // `SectionReorderPlanner.PlanResult`'s doc comment). A 4th early return,
-        // planSingleSection's own internal re-find-after-promotion guard, lives inside
-        // planSingleSection itself rather than in plan(), but surfaces here as `.failed` too.
-        //
-        // Fix (review round): this early return previously left `sectionReorderRetryAttempted`
-        // and `sectionDropInFlight` untouched and produced no toast/alert at all -- three bugs:
-        // (1) when this is the retry dispatched from `dispatchSectionReorder`'s `defer` (the
-        // `.refused` case below sets `sectionDropInFlight = true` right before calling back in
-        // here), dying here left it stuck `true` forever, permanently blocking
-        // `ContentView.onDragEnded` and the block-sync poll it re-arms; (2) it also left
-        // `sectionReorderRetryAttempted` stuck `true`, silently poisoning the NEXT, unrelated
-        // drag's first refusal into being misread as a second strike and giving up instead of
-        // retrying; (3) it is itself a genuine "drag-reorder bailed out" case (§4.3) that was
-        // completely silent -- the literal bug this task exists to fix.
-        //
-        // Fix (acceptance round): that same toast was firing on `.noOp` too -- dropping a
-        // section back exactly where it started (see PlanResult.noOp) produced a spurious
-        // "Couldn't move the section" warning about a failure that never happened. `.noOp`
-        // resets the same per-drag state as `.failed` (it's still a terminal outcome for THIS
-        // drag) but shows no toast, exactly mirroring how `dispatchSectionReorder`'s own
-        // `sectionOrderUnchanged` no-op check below is already silent.
-        switch SectionReorderPlanner.plan(
+        // targetSectionId == sectionId) live in SectionReorderPlanner.plan, which returns nil
+        // for each -- matching every one of those early returns here doing nothing else (in
+        // particular, NOT clearing editorState.sectionDropInFlight; see
+        // dispatchSectionReorder's doc comment on that ownership transfer). A 4th early
+        // return, planSingleSection's own internal re-find-after-promotion guard, lives inside
+        // planSingleSection itself rather than in plan(), but returns nil the same way.
+        guard let sections = SectionReorderPlanner.plan(
             request: request, in: editorState.sections, syncService: sectionSyncService
-        ) {
-        case .plan(let sections):
-            // Dispatch into the audited structural-op sequence (Phase 7, plan §7) instead of
-            // the old synchronous finalizeSectionReorder, which unconditionally invalidated the
-            // whole unified-undo timeline. StructuralUndoController.performSectionReorder now
-            // owns everything downstream: sort-order/offset recompute, hierarchy fixup, and the
-            // single DB write, all inside the same audited sequence the other five op kinds use.
-            dispatchSectionReorder(sections: sections, request: request)
-        case .noOp:
-            editorState.sectionReorderRetryAttempted = false
-            editorState.sectionDropInFlight = false
-            editorState.contentState = .idle
-        case .failed:
-            editorState.sectionReorderRetryAttempted = false
-            editorState.sectionDropInFlight = false
-            editorState.contentState = .idle
-            editorState.toastCenter.show(ToastFactory.sectionReorderBailedOut())
+        ) else {
+            return
         }
+
+        // Dispatch into the audited structural-op sequence (Phase 7, plan §7) instead of
+        // the old synchronous finalizeSectionReorder, which unconditionally invalidated the
+        // whole unified-undo timeline. StructuralUndoController.performSectionReorder now
+        // owns everything downstream: sort-order/offset recompute, hierarchy fixup, and the
+        // single DB write, all inside the same audited sequence the other five op kinds use.
+        dispatchSectionReorder(sections: sections, request: request)
     }
 
     /// Dispatch a completed drag-drop reorder into `StructuralUndoController`'s audited
@@ -218,12 +193,6 @@ extension ContentView {
         // `OutlineSidebar.structuralSignature(of:)`'s identical criterion for "did anything
         // structural change"). No machinery touched: nothing is dispatched, no Task spawned.
         if Self.sectionOrderUnchanged(sections, from: editorState.sections) {
-            // Reset alongside the other terminal outcomes below (fix, review round): a no-op
-            // reorder is benign -- the document already matches the target, so no toast is
-            // needed here -- but it is still a terminal outcome for THIS drag, and must not
-            // leave `sectionReorderRetryAttempted` set, or the NEXT, unrelated drag's first
-            // refusal would be misread as a second strike.
-            editorState.sectionReorderRetryAttempted = false
             editorState.sectionDropInFlight = false
             editorState.contentState = .idle
             return
@@ -257,11 +226,6 @@ extension ContentView {
             let outcome = await structuralUndoController.performSectionReorder(sections: sections)
             switch outcome {
             case .performed:
-                // A drag that eventually succeeds must not poison the NEXT, unrelated drag's
-                // first refusal into being misread as a second strike (see
-                // `sectionReorderRetryAttempted`'s own doc comment) -- reset on every terminal
-                // outcome, not only on the give-up path below.
-                editorState.sectionReorderRetryAttempted = false
                 // performStructuralOp's own success path already returns contentState to
                 // .idle as its last step -- nothing to do here.
                 await persistReorderedBlocks_legacySections()
@@ -275,26 +239,13 @@ extension ContentView {
                 // .dragReorder for a refused reorder.
                 editorState.contentState = .idle
 
-                // §4.3 "Drag-reorder bailed out" -> toast: one retry per gesture (plan's
-                // judgment call). The FIRST refusal within a gesture still stashes-and-retries
-                // silently (MF-3's existing behavior, unchanged) -- only a SECOND consecutive
-                // refusal gives up and tells the user, rather than retrying forever.
-                if editorState.sectionReorderRetryAttempted {
-                    editorState.sectionReorderRetryAttempted = false
-                    DebugLog.log(.undo, "[ContentView] performSectionReorder: refused twice — giving up on this drag")
-                    editorState.toastCenter.show(ToastFactory.sectionReorderBailedOut())
-                } else {
-                    editorState.sectionReorderRetryAttempted = true
-
-                    // MF-3 (review round): stash the RAW request, not a retry of this now-stale
-                    // computed `sections` array -- the defer above re-derives a fresh target
-                    // order from editorState.sections as it stood at retry time, not from
-                    // whatever was true when this now-refused attempt was dispatched. Only safe
-                    // because `.refused` means nothing was written -- see the
-                    // `.failedAfterCommit` case below for why that outcome must NOT retry the
-                    // same way.
-                    editorState.pendingSectionReorderRequest = request
-                }
+                // MF-3 (review round): stash the RAW request, not a retry of this now-stale
+                // computed `sections` array -- the defer above re-derives a fresh target order
+                // from editorState.sections as it stood at retry time, not from whatever was
+                // true when this now-refused attempt was dispatched. Only safe because
+                // `.refused` means nothing was written -- see the `.failedAfterCommit` case
+                // below for why that outcome must NOT retry the same way.
+                editorState.pendingSectionReorderRequest = request
             case .failedAfterCommit:
                 // N2 (Phase B remediation plan): the DB reorder write already committed, but a
                 // later step in the audited sequence failed -- the new order is NOT undoable
@@ -302,18 +253,8 @@ extension ContentView {
                 // retry the way `.refused` does above: the document has ALREADY been
                 // reordered, so replaying the same (now stale) target order on top of it would
                 // misapply it a second time rather than safely retrying a no-op.
-                editorState.sectionReorderRetryAttempted = false
                 DebugLog.log(.undo, "[ContentView] performSectionReorder: DB write committed but the op failed to finish recording -- not undoable via Cmd-Z; not retrying (the reorder already happened)")
                 editorState.contentState = .idle
-                // §4.3 "a section delete or duplicate was refused, or its undo point was lost"
-                // -> modal alert: the operative fact here is the lost undo point, not that this
-                // particular structural op was a drag -- same treatment (and same
-                // `SectionOperationAlert` type/presentation path) as the delete/duplicate
-                // `.failedAfterCommit` cases in ContentView+SectionOperations.swift.
-                sectionOperationAlert = SectionOperationAlert(
-                    title: "Couldn't Undo This Change",
-                    message: "The sections were reordered, but the change couldn't be added to Undo history."
-                )
             }
         }
     }

@@ -40,15 +40,6 @@ final class AutoBackupService {
     /// auto-backup reads the block table. Weak: this service doesn't own the editor's lifecycle.
     weak var editorState: EditorViewState?
 
-    /// §4.3: "Auto-backup skipped or failed" -> persistent warning toast. Not `private` so
-    /// tests can point this at an isolated `ToastCenter()` instead of racing `.shared`.
-    var toastCenter: ToastCenter = .shared
-
-    /// The id of the warning toast currently shown for THIS project's backup failures, if any --
-    /// lets `clearBackupFailureToast()` retract only its own toast, never an unrelated one that
-    /// has since taken the slot.
-    private var backupWarningToastId: UUID?
-
     // MARK: - Configuration
 
     /// Configure the service for a specific project
@@ -82,9 +73,6 @@ final class AutoBackupService {
         projectId = nil
         hasUnsavedChanges = false
         lastBackupTime = nil
-        // Closing/switching a project retracts its own warning -- an "Open Diagnostics" button
-        // pointing at a no-longer-open project would be confusing.
-        clearBackupFailureToast()
     }
 
     // MARK: - Content Change Tracking
@@ -157,10 +145,6 @@ final class AutoBackupService {
     /// Actually create the auto-backup
     func createAutoBackup(reason: String, needsLiveFlush: Bool = false) async {
         guard let service = snapshotService else {
-            // A STATE condition (no project configured, e.g. between projects or in an
-            // unconfigured/test instance), not a write failure -- the persistent "Couldn't
-            // save an automatic version" warning belongs only to a genuine write failure,
-            // handled in the `catch` block below.
             DebugLog.log(.backup, "[AutoBackupService] No snapshot service configured")
             return
         }
@@ -180,30 +164,9 @@ final class AutoBackupService {
             // Update state regardless — content is genuinely unchanged or saved
             lastBackupTime = Date()
             hasUnsavedChanges = false
-            clearBackupFailureToast()
         } catch {
             DebugLog.log(.backup, "[AutoBackupService] Failed to create auto-backup: \(error)")
-            showBackupFailureToast()
         }
-    }
-
-    /// Shows (or re-shows) the persistent auto-backup-failed warning toast. Not gated on
-    /// `backupWarningToastId == nil`: `ToastCenter` holds one toast slot and cannot restore one
-    /// evicted by a later, unrelated warning, so re-showing on every failed attempt makes an
-    /// eviction self-heal at the next auto-backup attempt instead of silently staying gone.
-    private func showBackupFailureToast() {
-        let toast = ToastFactory.autoBackupFailed()
-        toastCenter.show(toast)
-        backupWarningToastId = toast.id
-    }
-
-    /// Retracts this service's own backup-failure warning, if it's still the one showing --
-    /// `ToastCenter.dismissIfCurrent(id:)` is a no-op if some other toast has since taken the
-    /// slot.
-    private func clearBackupFailureToast() {
-        guard let id = backupWarningToastId else { return }
-        backupWarningToastId = nil
-        toastCenter.dismissIfCurrent(id: id)
     }
 
     /// Start or restart the idle timer
