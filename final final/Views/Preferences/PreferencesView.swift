@@ -89,6 +89,9 @@ struct PreferencesView: View {
         .onReceive(NotificationCenter.default.publisher(for: .showExportPreferences)) { _ in
             selectedTab = .export
         }
+        .onReceive(NotificationCenter.default.publisher(for: .showDiagnosticsPreferences)) { _ in
+            selectedTab = .diagnostics
+        }
     }
 }
 

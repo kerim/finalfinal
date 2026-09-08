@@ -84,11 +84,11 @@ private struct ProjectOpenErrorSheetContent: View {
 
     var body: some View {
         switch failure {
-        case .integrity(let report, let url):
+        case .integrity(let report, let url, let blockedOpen):
             IntegrityAlertView(
-                model: IntegrityAlertModel(report: report),
+                model: IntegrityAlertModel(report: report, blockedOpen: blockedOpen),
                 onRepair: {
-                    Task { await handleRepair(report: report, url: url) }
+                    Task { await handleRepair(report: report, url: url, blockedOpen: blockedOpen) }
                 },
                 onOpenAnyway: {
                     handleOpenAnyway(url: url)
@@ -113,8 +113,8 @@ private struct ProjectOpenErrorSheetContent: View {
     /// only applies if the sheet is still showing the same failure this repair was
     /// launched against; a real side effect (the project actually opening) still
     /// gets reported regardless, since that already happened and is not undoable.
-    private func handleRepair(report: IntegrityReport, url: URL) async {
-        let expectedId = ProjectOpenFailure.integrity(report: report, url: url).id
+    private func handleRepair(report: IntegrityReport, url: URL, blockedOpen: Bool) async {
+        let expectedId = ProjectOpenFailure.integrity(report: report, url: url, blockedOpen: blockedOpen).id
         switch await IntegrityResolution.repair(report: report, url: url) {
         case .opened:
             if ProjectOpenErrorState.shared.pending?.id == expectedId {
@@ -123,7 +123,7 @@ private struct ProjectOpenErrorSheetContent: View {
             NotificationCenter.default.post(name: .projectDidOpen, object: nil)
         case .stillBroken(let newReport):
             if ProjectOpenErrorState.shared.pending?.id == expectedId {
-                ProjectOpenErrorState.shared.pending = .integrity(report: newReport, url: url)
+                ProjectOpenErrorState.shared.pending = .integrity(report: newReport, url: url, blockedOpen: blockedOpen)
             }
         case .failed(let error):
             // Surface the failure instead of discarding it silently (the old
