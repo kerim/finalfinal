@@ -23,17 +23,9 @@ extension ContentView {
                 }
 
                 editorView
-                // Hide status bar in focus mode for distraction-free writing -- EXCEPT while
-                // zoomed. Must-fix 3 (review-fix round): zoomed + Focus Mode hiding the status
-                // bar + the Outline sidebar also hidden left zero visible exits from zoom (the
-                // sidebar's ZoomBreadcrumb and this status bar's pill are the only two exit
-                // affordances, and Focus Mode can hide both at once). Keeping the status bar
-                // visible whenever zoomed guarantees the pill stays reachable without touching
-                // Focus Mode's own hide-status-bar policy (EditorViewState+FocusMode.swift).
-                if !editorState.focusModeHidesStatusBar || editorState.zoomedSectionId != nil {
-                    StatusBar(editorState: editorState, onExitZoom: {
-                        performUserZoomOut(reason: "user zoomed out (status bar)")
-                    })
+                // Hide status bar in focus mode for distraction-free writing
+                if !editorState.focusModeHidesStatusBar {
+                    StatusBar(editorState: editorState)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
