@@ -5,7 +5,8 @@
 //  Named spacing and corner-radius constants — UX contract §7/D12. New views use these
 //  instead of inline point literals; existing inline literals migrate journey by journey,
 //  not as one sweep (see the contract's §0). Introduced for the toast component (t-15cb7dd8);
-//  nothing existing is migrated onto it yet.
+//  first migrated journey: Version History (list and preview views — the restore-confirmation
+//  sheet is not yet migrated).
 //
 
 import CoreGraphics
