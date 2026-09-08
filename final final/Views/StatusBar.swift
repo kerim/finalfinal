@@ -8,6 +8,7 @@ import SwiftUI
 struct StatusBar: View {
     @Environment(ThemeManager.self) private var themeManager
     let editorState: EditorViewState
+    let onExitZoom: () -> Void
     @AppStorage("isSpellingEnabled") private var spellingEnabled = true
     @AppStorage("isGrammarEnabled") private var grammarEnabled = true
     @AppStorage("isSmartQuotesEnabled") private var smartQuotesEnabled = true
@@ -171,6 +172,45 @@ struct StatusBar: View {
             .accessibilityHint(Text("\(editorState.editorMode.switchToLabel) (⌘/)"))
             .accessibilityIdentifier("status-bar-editor-mode")
 
+            // Must-fix 2 (review-fix round): keyed on `zoomedSectionId`, not the id-based
+            // `zoomedSection` lookup below -- a structural op (section delete/duplicate/restore)
+            // can mint a fresh section id for the zoomed content, orphaning the old id from
+            // `editorState.sections` for one beat. The pill must stay visible through that beat
+            // regardless (that is the whole point of this affordance); `zoomPillLabel` degrades
+            // to a bare "Zoomed" label rather than this `if` hiding the pill outright.
+            if editorState.zoomedSectionId != nil {
+                Button {
+                    onExitZoom()
+                } label: {
+                    HStack(spacing: Spacing.s4) {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: TypeScale.chromeTiny))
+                        Text(zoomPillLabel)
+                            .font(.caption)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
+                    .frame(maxWidth: 180)
+                    .padding(.horizontal, Spacing.s8)
+                    .padding(.vertical, Spacing.s2)
+                    .background(themeManager.currentTheme.accentColor.opacity(0.2))
+                    .cornerRadius(CornerRadius.control)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                // Must-fix 1 (review-fix round): guards the re-entrant zoom-out race -- a click
+                // during the async zoom-out transition (contentState != .idle) must not fire a
+                // second, concurrent performUserZoomOut/zoomOut() call. Mirrors the identical
+                // guard on ZoomBreadcrumb's own exit button (OutlineSidebar+Components.swift)
+                // and HeadingZoomClickRouter.decide's contentState == .idle gate on the
+                // Cmd-click entry point.
+                .disabled(editorState.contentState != .idle)
+                .help("All Sections")
+                .accessibilityLabel(zoomAccessibilityLabel)
+                .accessibilityHint(Text("All Sections"))
+                .accessibilityIdentifier("status-bar-zoom")
+            }
+
             if editorState.focusModeEnabled {
                 Text("Focus")
                     .font(.caption)
@@ -197,6 +237,20 @@ struct StatusBar: View {
 
     private var displayTitle: String {
         editorState.currentSectionName.isEmpty ? "No section" : editorState.currentSectionName
+    }
+
+    /// Must-fix 2 (review-fix round): the zoom pill's visible label. Deliberately NOT `private`
+    /// -- `@testable import` needs this to assert the degrade-gracefully path directly (see
+    /// `ZoomExitPillTests`) without standing up SwiftUI's render pipeline.
+    var zoomPillLabel: String {
+        guard let section = editorState.zoomedSection else { return "Zoomed" }
+        return "Zoomed: \(section.title.isEmpty ? "Untitled" : section.title)"
+    }
+
+    /// VoiceOver counterpart to `zoomPillLabel` -- same degrade-gracefully rule.
+    var zoomAccessibilityLabel: String {
+        guard let section = editorState.zoomedSection else { return "Zoomed" }
+        return "Zoomed into \(section.title.isEmpty ? "Untitled" : section.title)"
     }
 
     // MARK: - Outline Popover
@@ -345,6 +399,6 @@ struct StatusBar: View {
 }
 
 #Preview {
-    StatusBar(editorState: EditorViewState())
+    StatusBar(editorState: EditorViewState(), onExitZoom: {})
         .environment(ThemeManager.shared)
 }
