@@ -142,6 +142,11 @@ struct SubtreeDragHint: View {
 struct ZoomBreadcrumb: View {
     let zoomedSection: SectionViewModel?
     let onZoomOut: () -> Void
+    /// Must-fix 1 (review-fix round): mirrors `StatusBar`'s identical zoom-exit pill --
+    /// disabled during the async zoom-out transition (`contentState != .idle`) so a click
+    /// there can't fire a second, concurrent `performUserZoomOut`/`zoomOut()` call. Defaults
+    /// to `false` so every existing call site not yet updated keeps its prior behavior.
+    var isZoomOutDisabled: Bool = false
     @Environment(ThemeManager.self) private var themeManager
 
     var body: some View {
@@ -158,6 +163,7 @@ struct ZoomBreadcrumb: View {
                     .foregroundColor(themeManager.currentTheme.accentColor)
                 }
                 .buttonStyle(.plain)
+                .disabled(isZoomOutDisabled)
 
                 Text("›")
                     .foregroundColor(themeManager.currentTheme.sidebarText.opacity(0.4))

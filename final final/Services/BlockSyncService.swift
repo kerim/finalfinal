@@ -863,6 +863,14 @@ extension BlockSyncService {
         cursorBoundaryEnd: Int? = nil,
         detectPausedEdits: Bool = false,
         expectedBlocks: [BlockParser.BlockAlignmentMeta] = [],
+        /// Ids of blocks flagged `isBibliography`/`isNotes` (Block.swift) in THIS push --
+        /// threaded to the JS side as `managedBlockIds` so block-id-plugin.ts can stamp
+        /// `data-managed` on those headings, which styles.css's ⌘-hover heading-zoom hint
+        /// excludes (bug: that hint used to show unconditionally on Bibliography/Notes, since
+        /// the CSS's old `.auto-bib-marker` exclusion never fired on this WYSIWYG push path).
+        /// Defaults to empty, matching every pre-existing call site (and the zoomed-body push,
+        /// which already excludes bibliography/Notes blocks before reaching here) unaffected.
+        managedBlockIds: Set<String> = [],
         zoomMode: Bool = false,
         /// Zoom-out: land on this block, in the restored document's own coordinate space,
         /// instead of re-applying the zoomed view's captured scroll position (which lands at
@@ -930,6 +938,16 @@ extension BlockSyncService {
                     .replacingOccurrences(of: "`", with: "\\`")
                     .replacingOccurrences(of: "${", with: "\\${")
                 optionParts.append("expected: JSON.parse(`\(escapedExpected)`)")
+            }
+        }
+        if !managedBlockIds.isEmpty {
+            if let managedData = try? JSONSerialization.data(withJSONObject: Array(managedBlockIds)),
+               let managedJson = String(data: managedData, encoding: .utf8) {
+                let escapedManaged = managedJson
+                    .replacingOccurrences(of: "\\", with: "\\\\")
+                    .replacingOccurrences(of: "`", with: "\\`")
+                    .replacingOccurrences(of: "${", with: "\\${")
+                optionParts.append("managedBlockIds: JSON.parse(`\(escapedManaged)`)")
             }
         }
         appendFlagOption(&optionParts, zoomMode, "zoomMode")
