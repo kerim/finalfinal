@@ -10,15 +10,6 @@
 //  proving a specific judge-round must-fix directly instead of assuming it follows from the
 //  code simply existing.
 //
-//  Bug-fix round (post-acceptance manual testing): the separate trailing "Zoomed: <heading>"
-//  pill this file originally covered was merged into the existing center outline/section
-//  indicator (StatusBar.swift) -- the two showed nearly the same text at once. `zoomPillLabel`/
-//  `zoomAccessibilityLabel` themselves are unchanged (still the degrade-gracefully text), so
-//  the tests below still hold; `centerIndicatorLabel`/`centerIndicatorAccessibilityLabel` are
-//  the new coverage for what the merged control actually renders. The exit affordance is now a
-//  separate leading glyph on that same control, identified `status-bar-zoom-exit` (was
-//  `status-bar-zoom` on the whole former pill).
-//
 
 import Testing
 @testable import final_final
@@ -65,38 +56,6 @@ struct ZoomExitPillTests {
         let statusBar = StatusBar(editorState: editorState, onExitZoom: {})
         #expect(statusBar.zoomPillLabel == "Zoomed: Chapter One")
         #expect(statusBar.zoomAccessibilityLabel == "Zoomed into Chapter One")
-    }
-
-    // MARK: - Merged center indicator (post-acceptance bug fix)
-
-    /// The merged center indicator shows the zoom label -- not the plain section name -- while
-    /// zoomed, reusing `zoomPillLabel`'s exact text (including its degrade-gracefully rule).
-    @Test("center indicator shows the zoom label while zoomed")
-    func centerIndicatorShowsZoomLabelWhileZoomed() {
-        let editorState = EditorViewState()
-        let block = Block(
-            id: "sec-1", projectId: "test-project", sortOrder: 1, blockType: .heading,
-            textContent: "Chapter One", markdownFragment: "# Chapter One", headingLevel: 1
-        )
-        editorState.sections = [SectionViewModel(from: block)]
-        editorState.zoomedSectionId = "sec-1"
-
-        let statusBar = StatusBar(editorState: editorState, onExitZoom: {})
-        #expect(statusBar.centerIndicatorLabel == "Zoomed: Chapter One")
-        #expect(statusBar.centerIndicatorAccessibilityLabel == "Zoomed into Chapter One")
-    }
-
-    /// Unzoomed, the merged control falls back to the ordinary section-name text -- unchanged
-    /// from what the center indicator showed before this control ever carried a zoom label.
-    @Test("center indicator falls back to the section name when not zoomed")
-    func centerIndicatorFallsBackWhenNotZoomed() {
-        let editorState = EditorViewState()
-        editorState.zoomedSectionId = nil
-        editorState.currentSectionName = "Chapter Two"
-
-        let statusBar = StatusBar(editorState: editorState, onExitZoom: {})
-        #expect(statusBar.centerIndicatorLabel == "Chapter Two")
-        #expect(statusBar.centerIndicatorAccessibilityLabel == "Chapter Two")
     }
 
     // MARK: - Must-fix 11: exit action is the undo barrier, not a raw property set

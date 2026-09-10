@@ -544,8 +544,7 @@ extension ContentView {
                     await blockSyncService.setContentWithBlockIds(
                         markdown: result.markdown, blockIds: result.blockIds,
                         imageMeta: result.imageMeta, detectPausedEdits: false,
-                        expectedBlocks: result.expectedBlocks,
-                        managedBlockIds: result.managedBlockIds)
+                        expectedBlocks: result.expectedBlocks)
                 }
                 editorState.isResettingContent = false
                 // End-of-switch point 1 of 3 (round 4): the WYSIWYG branch's own async

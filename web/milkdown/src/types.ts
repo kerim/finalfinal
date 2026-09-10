@@ -176,12 +176,6 @@ declare global {
           cursorBoundaryEnd?: number;
           detectPausedEdits?: boolean;
           expected?: ExpectedBlockMeta[];
-          // Ids Swift flagged isBibliography/isNotes for this push (Block.swift) -- the
-          // auto-generated Bibliography/Notes headings and their body content. Drives
-          // block-id-plugin's `data-managed` decoration attribute, which styles.css's
-          // ⌘-hover heading-zoom hint excludes via `h1[data-block-id]:not([data-managed])`
-          // (etc. for h2-h6) -- see api-content.ts's setContentWithBlockIds.
-          managedBlockIds?: string[];
           // Whether the pushed content represents a zoomed subset of the document
           // rather than the full document. Sets blockIdZoomMode SYNCHRONOUSLY,
           // in the same call that pushes the content — closing the race window
