@@ -250,6 +250,7 @@ extension ContentView {
                                         cursorBoundary: result.bibBoundaryIndex,
                                         cursorBoundaryEnd: result.bibBoundaryEndIndex,
                                         expectedBlocks: result.expectedBlocks,
+                                        managedBlockIds: result.managedBlockIds,
                                         zoomMode: editorState.zoomedSectionIds != nil)
                                     // Always sync editorState.content to DB-assembled markdown.
                                     // Without this, updateNSView sees editorState.content (e.g. 1748 chars)

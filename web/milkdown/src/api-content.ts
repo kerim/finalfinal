@@ -18,6 +18,7 @@ import {
   SYNC_DIAG_DETAIL,
   setBlockIdsForTopLevel,
   setBlockIdZoomMode,
+  setManagedBlockIds,
 } from './block-id-plugin';
 import {
   type BlockChanges,
@@ -541,6 +542,19 @@ export function setContent(markdown: string, options?: { scrollToStart?: boolean
       setSyncPaused(true);
       setIsSettingContent(true);
       try {
+        // Must-fix B (review-fix round): this is a plain, non-block-id push -- it carries no
+        // managed-section metadata of its own, so any managed-id set left over from an earlier
+        // setContentWithBlockIds() push must not survive onto this (now-empty) document. See
+        // setManagedBlockIds's and managedBlockIds's doc comments (block-id-plugin.ts).
+        //
+        // MUST run BEFORE view.dispatch() below, not after: blockIdPlugin's decorations(state)
+        // prop reads the module-level managedBlockIds variable synchronously while dispatch is
+        // recomputing decorations for the new state -- clearing it after dispatch has already
+        // run leaves the OLD (stale) managed set baked into the decorations that just rendered,
+        // and nothing later in this branch dispatches again to correct them (regression found
+        // 2026-09-10: this call used to sit after view.dispatch below, which is exactly why the
+        // "data-managed cleared by a later plain setContent() push" test failed).
+        setManagedBlockIds([]);
         const emptyParagraph = view.state.schema.nodes.paragraph.create();
         const emptyDoc = view.state.schema.nodes.doc.create(null, emptyParagraph);
         const tr = view.state.tr.replaceWith(0, view.state.doc.content.size, emptyDoc.content);
@@ -617,6 +631,21 @@ export function setContent(markdown: string, options?: { scrollToStart?: boolean
           `figures before replace: ${savedFigures.map((f) => `src=${f.src.split('/').pop()} w=${f.width}`).join(', ')}`
         );
       }
+
+      // Must-fix B (review-fix round): this is a plain, non-block-id push -- it carries no
+      // managed-section metadata of its own. Without this, block-id-plugin's assignBlockIds
+      // can (via ordinary position/type matching) re-attach a leftover managed id from an
+      // earlier setContentWithBlockIds() push onto unrelated content in THIS document, so
+      // `data-managed` (and the ⌘-hover hint it drives) lands on the wrong blocks or is
+      // wrongly absent. See setManagedBlockIds's and managedBlockIds's doc comments
+      // (block-id-plugin.ts).
+      //
+      // MUST run BEFORE view.dispatch() below, not after -- see the matching comment in this
+      // function's empty-content branch above for why (regression found 2026-09-10: this call
+      // used to sit after view.dispatch below, so the ⌘-hover hint's data-managed decoration
+      // was still computed from the stale managedBlockIds set that dispatch synchronously
+      // recomputes decorations against).
+      setManagedBlockIds([]);
 
       const { from } = view.state.selection;
       const docSize = view.state.doc.content.size;
@@ -882,6 +911,16 @@ export function applyBlocks(blocks: Block[]): void {
     try {
       const doc = parser(markdown);
       if (!doc) return;
+
+      // Must-fix B (review-fix round): applyBlocks() carries no managed-section metadata of
+      // its own either -- same reasoning as setContent()'s own setManagedBlockIds([]) calls.
+      // See setManagedBlockIds's and managedBlockIds's doc comments (block-id-plugin.ts).
+      //
+      // MUST run BEFORE view.dispatch() below, not after -- see the matching comment in
+      // setContent() above for why (regression found 2026-09-10: this call used to sit after
+      // view.dispatch below, so the stale managedBlockIds set was still what dispatch's
+      // synchronous decoration recomputation saw).
+      setManagedBlockIds([]);
 
       const { from } = view.state.selection;
       const docSize = view.state.doc.content.size;
@@ -1184,6 +1223,13 @@ export function setContentWithBlockIds(
     cursorBoundaryEnd?: number;
     detectPausedEdits?: boolean;
     expected?: ExpectedBlockMeta[];
+    // Ids Swift flagged isBibliography/isNotes for THIS push (Block.swift) -- the
+    // auto-generated Bibliography/Notes headings and their body content. Replaces
+    // block-id-plugin's managed-block-id set wholesale via setManagedBlockIds() below, which
+    // drives the `data-managed` decoration attribute styles.css's ⌘-hover hint selector
+    // excludes. Absent/empty means no managed content in this push (e.g. a zoomed-in body,
+    // which already excludes bibliography/Notes blocks before reaching here).
+    managedBlockIds?: string[];
     // Whether the pushed content is a zoomed subset of the document. See the
     // matching doc comment on window.FinalFinal.setContentWithBlockIds in
     // types.ts for the race this closes. Defaults to false (full-document load).
@@ -1238,6 +1284,7 @@ export function setContentWithBlockIds(
         const tr = view.state.tr.replaceWith(0, view.state.doc.content.size, emptyDoc.content);
         view.dispatch(tr.setMeta('addToHistory', false).setSelection(Selection.atStart(tr.doc)));
         clearBlockIds();
+        setManagedBlockIds(options?.managedBlockIds ?? []);
         redecorateBlockIds(view);
         // Also tells Swift's waitForContentAcknowledgement() (zoom in/out) the redraw is
         // actually done -- see signalPaintComplete's doc comment. Called with no `options`:
@@ -1347,6 +1394,7 @@ export function setContentWithBlockIds(
       if (blockIds.length > 0) {
         setBlockIdsForTopLevel(blockIds, view.state.doc, options?.expected);
       }
+      setManagedBlockIds(options?.managedBlockIds ?? []);
       redecorateBlockIds(view);
 
       // Inject image metadata (width, caption, blockId) into figure nodes

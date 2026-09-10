@@ -98,6 +98,24 @@ body {
    heading nested inside e.g. a blockquote never receives one and is correctly excluded
    from this hint too, matching the click handler's own reach.
 
+   `:not([data-managed])` excludes the auto-generated Bibliography and Notes headings:
+   HeadingZoomClickRouter.decide() (Swift) always drops a ⌘-click on one of these
+   ("managed section -- zoom would destroy it"), so the hint must not promise an action
+   that silently does nothing. `data-managed` is a block-id-plugin.ts decoration, driven by
+   Swift's isBibliography/isNotes flags (Block.swift) threaded through
+   setContentWithBlockIds's `managedBlockIds` option -- see that function's and
+   setManagedBlockIds's doc comments. This replaced an earlier `.auto-bib-marker`
+   sibling-combinator exclusion (`.auto-bib-marker + h1[data-block-id]:hover` etc.) that WAS
+   reachable on this exact WYSIWYG path -- bibliography-plugin.ts's `auto_bibliography` atom
+   node (`toDOM`: `div.auto-bib-marker`) renders as the Bibliography heading's
+   immediately-preceding DOM sibling here too, and BlockParser+Assembly.swift exists
+   specifically to keep that node out of the id-array walk so it can reach this path. It was
+   replaced because a sibling-combinator rule can only ever cover Bibliography (Notes headings
+   have no equivalent marker to combine against) and depends on brittle DOM adjacency, not
+   because the old rule was unreachable: `data-managed`, driven directly by Swift's own
+   isBibliography/isNotes flags, correctly covers both Bibliography and Notes and needs no
+   positional relationship in the DOM at all.
+
    Link-inside-heading check: a heading's inline link is always colored via
    --accent-color (see the `a`/`a:hover` rules below), so it already reads as a link
    independent of hover. This rule and the plain `.ProseMirror a:hover` rule below
@@ -109,42 +127,16 @@ body {
    rather than following the link, because the mousedown listener in
    heading-zoom-click-handler.ts intercepts in the capture phase before any link
    navigation runs. */
-body.ff-cmd-held h1[data-block-id]:hover,
-body.ff-cmd-held h2[data-block-id]:hover,
-body.ff-cmd-held h3[data-block-id]:hover,
-body.ff-cmd-held h4[data-block-id]:hover,
-body.ff-cmd-held h5[data-block-id]:hover,
-body.ff-cmd-held h6[data-block-id]:hover {
+body.ff-cmd-held h1[data-block-id]:not([data-managed]):hover,
+body.ff-cmd-held h2[data-block-id]:not([data-managed]):hover,
+body.ff-cmd-held h3[data-block-id]:not([data-managed]):hover,
+body.ff-cmd-held h4[data-block-id]:not([data-managed]):hover,
+body.ff-cmd-held h5[data-block-id]:not([data-managed]):hover,
+body.ff-cmd-held h6[data-block-id]:not([data-managed]):hover {
   cursor: pointer;
   text-decoration: underline;
   text-decoration-thickness: 1px;
   text-underline-offset: 3px;
-}
-
-/* Exception: the Bibliography heading. HeadingZoomClickRouter.decide() (Swift)
-   always drops a Cmd-click on a bibliography/Notes heading ("managed section --
-   zoom would destroy it"), so the hint above must not promise an action that
-   silently does nothing. Bibliography is excluded here; Notes is a separate
-   follow-up (task_d632958e) because it isn't identifiable client-side.
-
-   bibliography-plugin.ts's remark pass turns the `<!-- ::auto-bibliography:: -->`
-   marker that precedes "# Bibliography" in the source markdown into an
-   `auto_bibliography` node placed immediately before the heading node in the
-   ProseMirror doc's top-level child list. That node's toDOM (`div.auto-bib-marker`,
-   `display: none` below) renders as the heading's immediately-preceding DOM
-   sibling -- heading-nodeview-plugin.ts's WYSIWYG passthrough puts the heading
-   tag itself at the top level with no wrapper, so the adjacency holds all the way
-   into the DOM. `display: none` does not break sibling-combinator matching, so
-   this higher-specificity override (extra `.auto-bib-marker` class + element)
-   always wins over the rule above regardless of source order. */
-body.ff-cmd-held .auto-bib-marker + h1[data-block-id]:hover,
-body.ff-cmd-held .auto-bib-marker + h2[data-block-id]:hover,
-body.ff-cmd-held .auto-bib-marker + h3[data-block-id]:hover,
-body.ff-cmd-held .auto-bib-marker + h4[data-block-id]:hover,
-body.ff-cmd-held .auto-bib-marker + h5[data-block-id]:hover,
-body.ff-cmd-held .auto-bib-marker + h6[data-block-id]:hover {
-  cursor: default;
-  text-decoration: none;
 }
 
 /* Empty heading placeholder - shows ## when heading has no content (WYSIWYG mode only) */

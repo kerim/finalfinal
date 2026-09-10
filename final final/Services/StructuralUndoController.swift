@@ -483,7 +483,8 @@ final class StructuralUndoController {
                 imageMeta: result.imageMeta,
                 cursorBoundary: result.bibBoundaryIndex, cursorBoundaryEnd: result.bibBoundaryEndIndex,
                 detectPausedEdits: true,
-                expectedBlocks: result.expectedBlocks
+                expectedBlocks: result.expectedBlocks,
+                managedBlockIds: result.managedBlockIds
             )
         } else {
             // Source mode (review round #5): `blockSyncService`'s WebView is ALWAYS the
@@ -1730,10 +1731,11 @@ final class StructuralUndoController {
                 .map { ContentView.ImageBlockMeta(id: $0.id, width: $0.imageWidth, caption: $0.imageCaption, alt: $0.imageAlt, src: $0.imageSrc) }
             let bibBoundaryIndex = BlockParser.firstBibliographyNodeIndex(sorted)
             let bibBoundaryEndIndex = BlockParser.lastBibliographyNodeIndex(sorted)
+            let managedBlockIds = Set(sorted.filter { $0.isBibliography || $0.isNotes }.map { $0.id })
             return ContentView.BlockFetchResult(
                 markdown: markdown, blockIds: ids, imageMeta: imageMeta,
                 bibBoundaryIndex: bibBoundaryIndex, bibBoundaryEndIndex: bibBoundaryEndIndex,
-                expectedBlocks: expectedBlocks
+                expectedBlocks: expectedBlocks, managedBlockIds: managedBlockIds
             )
         } catch {
             DebugLog.log(.undo, "[StructuralUndoController] fetchFullBlocksWithIds failed: \(error)")

@@ -33,6 +33,13 @@ extension ContentView {
         /// `BlockParser.lastBibliographyNodeIndex`'s doc comment.
         let bibBoundaryEndIndex: Int?
         let expectedBlocks: [BlockParser.BlockAlignmentMeta]
+        /// Ids of every block flagged `isBibliography` or `isNotes` (Block.swift) — the
+        /// auto-generated Bibliography/Notes heading and its body content. Threaded through
+        /// `BlockSyncService.setContentWithBlockIds`'s `managedBlockIds` option so the web side
+        /// can mark those headings `data-managed`, which styles.css's ⌘-hover heading-zoom hint
+        /// then excludes — mirrors `HeadingZoomClickRouter.decide`'s own
+        /// `section.isBibliography || section.isNotes` "managed section" check.
+        let managedBlockIds: Set<String>
     }
 
     /// Fetch blocks from DB and return assembled markdown + ordered block IDs + image metadata
@@ -73,6 +80,7 @@ extension ContentView {
 
             let bibBoundaryIndex = BlockParser.firstBibliographyNodeIndex(sorted)
             let bibBoundaryEndIndex = BlockParser.lastBibliographyNodeIndex(sorted)
+            let managedBlockIds = Set(sorted.filter { $0.isBibliography || $0.isNotes }.map { $0.id })
 
             DebugLog.log(.bib, "[fetchBlocksWithIds] bibBoundaryIndex=\(String(describing: bibBoundaryIndex)) "
                 + "bibBoundaryEndIndex=\(String(describing: bibBoundaryEndIndex)) "
@@ -81,7 +89,7 @@ extension ContentView {
             return BlockFetchResult(
                 markdown: markdown, blockIds: ids, imageMeta: imageMeta,
                 bibBoundaryIndex: bibBoundaryIndex, bibBoundaryEndIndex: bibBoundaryEndIndex,
-                expectedBlocks: expectedBlocks)
+                expectedBlocks: expectedBlocks, managedBlockIds: managedBlockIds)
         } catch {
             return nil
         }
@@ -112,6 +120,7 @@ extension ContentView {
                 cursorBoundary: result.bibBoundaryIndex,
                 cursorBoundaryEnd: result.bibBoundaryEndIndex,
                 expectedBlocks: result.expectedBlocks,
+                managedBlockIds: result.managedBlockIds,
                 zoomMode: editorState.zoomedSectionIds != nil)
             editorState.isResettingContent = false
         }
