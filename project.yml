@@ -424,6 +424,10 @@ targets:
     platform: macOS
     sources:
       - path: final finalUITests
+        excludes:
+          - "**/.DS_Store"
+          - "**/.claude"
+          - "**/.ruff_cache"
       - path: final finalTests/Fixtures
         type: folder
         buildPhase: resources
