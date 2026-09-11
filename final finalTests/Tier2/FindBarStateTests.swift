@@ -40,6 +40,23 @@ struct FindBarStateTests {
         #expect(state.showReplace == true)
     }
 
+    @Test("show(withReplace: false) does not collapse an open Replace row (⌘F after ⌥⌘F)")
+    @MainActor
+    func showPlainFindDoesNotCollapseOpenReplace() {
+        let state = FindBarState()
+
+        // Simulate ⌥⌘F opening Replace first...
+        state.show(withReplace: true)
+        #expect(state.showReplace == true)
+
+        // ...then plain ⌘F (the show(withReplace:) call ⌘F's notification handler makes,
+        // with no userInfo, decodes to withReplace: false) must not force it closed.
+        state.show(withReplace: false)
+
+        #expect(state.isVisible == true)
+        #expect(state.showReplace == true)
+    }
+
     // MARK: - Hide
 
     @Test("hide() sets isVisible = false and clears match counts")

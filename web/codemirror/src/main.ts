@@ -6,12 +6,6 @@ import { languages } from '@codemirror/language-data';
 import { search } from '@codemirror/search';
 import { EditorState } from '@codemirror/state';
 import { EditorView, keymap } from '@codemirror/view';
-import { installEscapeLadder, registerWebPopupOpenCheck, setTestEscapeReportDelayMs } from '../../shared/escape-ladder';
-import { dismissMenu as dismissSpellcheckMenu, isMenuOpen as isSpellcheckMenuOpen } from '../../shared/spellcheck-menu';
-import {
-  dismissPopover as dismissSpellcheckPopover,
-  isPopoverOpen as isSpellcheckPopoverOpen,
-} from '../../shared/spellcheck-popover';
 import { anchorPlugin } from './anchor-plugin';
 import { annotationDecorationPlugin } from './annotation-decoration-plugin';
 import {
@@ -89,14 +83,13 @@ import {
 import { focusModePlugin, isFocusModeEnabled } from './focus-mode-plugin';
 import { footnoteDecorationPlugin } from './footnote-decoration-plugin';
 import { customHighlightStyle, headingDecorationPlugin, syntaxHighlighting } from './heading-plugin';
-import { cancelImageCaptionEditFromLadder, isImageCaptionPopupOpen } from './image-caption-popup';
 import { imagePreviewPlugin, setImageMeta } from './image-preview-plugin';
 import { installLineHeightFix } from './line-height-fix';
 import { noteTransactionForEditSpanTracking } from './recent-edit-span';
 import { scrollStabilizer } from './scroll-stabilizer';
 import { selectionStatsPlugin } from './selection-stats-plugin';
 import { selectionToolbarPlugin } from './selection-toolbar-plugin';
-import { dismissSlashMenu, isSlashMenuOpen, slashMenuPlugin } from './slash-completions';
+import { slashMenuPlugin } from './slash-completions';
 import {
   disableSmartQuotes,
   enableSmartQuotes,
@@ -177,19 +170,7 @@ function initEditor() {
       // for "Shift-Mod-" in the installed @codemirror/commands package returns only this entry
       // and the unrelated Shift-Mod-\\ bracket-match binding) -- this is an isolated collision,
       // not a broader pattern to keep hunting for.
-      //
-      // Filter out Escape too, for a different reason: @codemirror/commands' defaultKeymap
-      // binds Escape to simplifySelection, which returns true (and calls preventDefault)
-      // whenever there is an active selection, with no relation to any dismissible layer. Left
-      // unfiltered, this defeats the Esc ladder (UX contract §6, web/shared/escape-ladder.ts):
-      // Focus Mode on, text selected in Source mode, Esc collapses the selection and
-      // preventDefaults, the ladder's bubble-phase document listener sees `e.defaultPrevented`
-      // and reports "handled" to Swift, and Swift stands down -- Focus Mode never exits, with no
-      // dismissible layer having actually closed. Filtering the binding out here restores the
-      // event to being genuinely unhandled by CodeMirror, so the ladder correctly falls through
-      // to `dismissTopLayer` and then to Swift's native ladder when nothing in the web layer
-      // consumed the Escape.
-      ...defaultKeymap.filter((k) => k.key !== 'Mod-/' && k.key !== 'Shift-Mod-k' && k.key !== 'Escape'),
+      ...defaultKeymap.filter((k) => k.key !== 'Mod-/' && k.key !== 'Shift-Mod-k'),
       // Custom undo: after slash command, also removes the "/" trigger
       {
         key: 'Mod-z',
@@ -692,10 +673,6 @@ window.FinalFinal = {
       focusModeEnabled: isFocusModeEnabled(),
     };
   },
-
-  // Test-only hook (never called in production) -- see escape-ladder.ts's
-  // `setTestEscapeReportDelayMs` doc comment.
-  __testSetEscapeReportDelayMs: setTestEscapeReportDelayMs,
 };
 
 // Initialize on DOM ready
@@ -704,48 +681,3 @@ if (document.readyState === 'loading') {
 } else {
   initEditor();
 }
-
-/**
- * CodeMirror's ordered "close the innermost open thing" check for the Esc ladder (UX contract
- * §6). The image caption popup is defense-in-depth (its own input keydown handler already
- * dismisses itself via preventDefault + cancel, honored upstream through `e.defaultPrevented`
- * -- see web/shared/escape-ladder.ts's top-of-file doc comment). The slash menu genuinely
- * needs to be checked here: its old Escape handling lived in a document-level CAPTURE listener
- * that called stopPropagation(), which would otherwise stop this bubble-phase listener from
- * seeing the event at all (see slash-completions.ts).
- */
-function codeMirrorDismissTopLayer(): boolean {
-  if (isSlashMenuOpen()) {
-    dismissSlashMenu();
-    return true;
-  }
-  if (isImageCaptionPopupOpen()) {
-    cancelImageCaptionEditFromLadder();
-    return true;
-  }
-  if (isSpellcheckMenuOpen()) {
-    dismissSpellcheckMenu();
-    return true;
-  }
-  if (isSpellcheckPopoverOpen()) {
-    dismissSpellcheckPopover();
-    return true;
-  }
-  return false;
-}
-
-/**
- * CodeMirror's aggregate "is ANY web-owned popup/menu open" check for the new `webPopupOpen`
- * signal (t-784ff3aa fix round) -- the exact same OR of predicates `codeMirrorDismissTopLayer`
- * above checks, minus the dismiss side effects. Registered with the shared escape-ladder
- * module -- see Milkdown's `isAnyWebPopupOpen`/escape-ladder.ts's own doc comment for why.
- */
-function isAnyWebPopupOpen(): boolean {
-  return isSlashMenuOpen() || isImageCaptionPopupOpen() || isSpellcheckMenuOpen() || isSpellcheckPopoverOpen();
-}
-
-// Esc ladder (UX contract §6) -- one bubble-phase `document` listener owns Escape dismissal
-// for this editor. Not tied to editor readiness: it only adds a document-level listener, and
-// each dismiss-check above already guards on its own popup/menu being open.
-installEscapeLadder(codeMirrorDismissTopLayer);
-registerWebPopupOpenCheck(isAnyWebPopupOpen);

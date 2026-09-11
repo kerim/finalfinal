@@ -8,9 +8,6 @@ import SwiftUI
 /// Main annotation panel view with filter bar and grouped annotation list
 struct AnnotationPanel: View {
     @Bindable var editorState: EditorViewState
-    /// Esc-ladder live state for this window (UX contract §6). Optional so existing preview/
-    /// test call sites keep compiling unchanged.
-    var escapeLadder: EscapeLadderContext? = nil
     let onScrollToAnnotation: (Int, Int) -> Void  // (annotationIndex, charOffset)
     let onToggleCompletion: (AnnotationViewModel) -> Void
     let onUpdateAnnotationText: ((AnnotationViewModel, String) -> Void)?
@@ -97,12 +94,6 @@ struct AnnotationPanel: View {
             maxWidth: (editorState.isAnnotationPanelVisible || isAnimatingToggle) ? AnnotationPanelWidth.maxWidth : 0
         )
         .clipped()
-        // Scopes XCUITest queries to just this panel's own elements (e.g. its cards'
-        // TextEditor), so a query like `app.groups["annotations-panel"].textViews[...]`
-        // cannot accidentally match the web editor's own ProseMirror contenteditable, which
-        // XCUITest also exposes as a TextView elsewhere in the accessibility tree.
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("annotations-panel")
         .accessibilityHidden(!editorState.isAnnotationPanelVisible)
         .allowsHitTesting(editorState.isAnnotationPanelVisible)
         .background(themeManager.currentTheme.sidebarBackground)
@@ -119,49 +110,9 @@ struct AnnotationPanel: View {
             if !editorState.isAnnotationPanelVisible {
                 panelWidth = 0
             }
-            // t-784ff3aa: a stale instant-toggle flag set before this view existed (e.g. the
-            // window was rebuilt mid Focus Mode, same scenario the must-fix 2 comment above
-            // already accounts for) has no onChange left to consume it -- clear it defensively
-            // so it can't wrongly de-animate this fresh view's next, unrelated toggle.
-            editorState.isAnnotationPanelToggleInstant = false
         }
         .onChange(of: editorState.isAnnotationPanelVisible) { _, newValue in
-            if editorState.isAnnotationPanelToggleInstant {
-                editorState.isAnnotationPanelToggleInstant = false
-                snapToggle(becomingVisible: newValue)
-            } else {
-                animateToggle(becomingVisible: newValue)
-            }
-        }
-        .onChange(of: editorState.isAnnotationPanelVisible) { _, isVisible in
-            if !isVisible {
-                resetInProgressEdits()
-            }
-        }
-    }
-
-    /// Resets any annotation card left mid-edit when the panel becomes invisible WITHOUT ever
-    /// unmounting (judge review, 2026-09-10, t-784ff3aa) -- the case `AnnotationCardView`'s own
-    /// `.onDisappear` does NOT cover. Focus Mode hides this panel by animating `panelWidth`
-    /// down to zero and setting `.accessibilityHidden`/`.allowsHitTesting(false)` (see
-    /// `ContentView+EditorPresentation.swift`'s `detailView` doc comment for why: HSplitView
-    /// doesn't honor a SwiftUI insertion `.transition` on a conditionally-mounted child) --
-    /// none of that unmounts this view or its child `AnnotationCardView`s, so `.onDisappear`
-    /// never fires here. Without this handler, a card left mid-edit when Focus Mode hides the
-    /// panel would (a) reappear still showing as being edited with stale text, the same
-    /// data-staleness problem `.onDisappear` exists to prevent for the genuine-unmount case,
-    /// and (b) stay registered at the front of the escape ladder's `annotationEditOrder`
-    /// (UX contract §6) even though it's no longer visible or reachable -- so a single Esc
-    /// press while in Focus Mode would silently cancel that invisible edit instead of exiting
-    /// Focus Mode, requiring a second press to actually exit. Mirrors
-    /// `AnnotationCardView.onDisappear`'s own reset/unregister pair exactly, just triggered by
-    /// panel visibility instead of view unmount -- the two mechanisms cover genuinely
-    /// different triggers and neither subsumes the other, so both stay.
-    private func resetInProgressEdits() {
-        for annotation in editorState.annotations where annotation.isEditing {
-            annotation.isEditing = false
-            annotation.editText = ""
-            escapeLadder?.unregisterAnnotationEdit(id: annotation.id)
+            animateToggle(becomingVisible: newValue)
         }
     }
 
@@ -250,31 +201,6 @@ struct AnnotationPanel: View {
         }
     }
 
-    /// Snaps `panelWidth` straight to its final value with no animation -- the ONE transition
-    /// where Focus Mode itself drives `isAnnotationPanelVisible` (t-784ff3aa), gated by
-    /// `editorState.isAnnotationPanelToggleInstant`. Matches the release build's old behavior
-    /// of removing the panel from the view tree outright on Focus Mode entry/exit, rather than
-    /// `animateToggle`'s normal 250ms `.panelToggle` cross-fade (still used for every other
-    /// trigger: toolbar button, View menu, ⌘]). No `isAnimatingToggle` bookkeeping needed here
-    /// -- unlike `animateToggle`, this never leaves an intermediate width on screen for
-    /// `widthObserver` to (mis)sample.
-    ///
-    /// What actually makes this instant is NOT anything in this function: the `.frame(...)`
-    /// bounds above (`minWidth`/`maxWidth`) are driven directly by `editorState
-    /// .isAnnotationPanelVisible`, not by `panelWidth`, so setting `panelWidth` here has no
-    /// effect on them at all. The real fix lives in `EditorViewState+FocusMode.swift` --
-    /// `enterFocusMode()`/`exitFocusMode()` assign `isAnnotationPanelVisible` OUTSIDE their
-    /// `withAnimation(.easeInOut(duration: 0.3))` block for this specific transition, so there
-    /// is no ambient animation in scope for SwiftUI to apply to those frame bounds. This
-    /// function's own job is narrower: just land `panelWidth` on its final value with no
-    /// animation of its own, so it doesn't independently animate while the (now-unanimated)
-    /// frame bounds jump straight to their new values.
-    private func snapToggle(becomingVisible: Bool) {
-        panelWidth = becomingVisible
-            ? AnnotationPanelWidth.clamp(AnnotationPanelWidth.load(from: .standard))
-            : 0
-    }
-
     private var panelHeader: some View {
         HStack {
             Text("Annotations")
@@ -340,7 +266,6 @@ struct AnnotationPanel: View {
                 ForEach(inlineAnnotations) { annotation in
                     AnnotationCardView(
                         annotation: annotation,
-                        escapeLadder: escapeLadder,
                         onTap: {
                             if let index = editorState.annotations.firstIndex(where: { $0.id == annotation.id }) {
                                 onScrollToAnnotation(index, annotation.charOffset)
@@ -410,7 +335,6 @@ struct AnnotationPanel: View {
             ForEach(docAnnotations) { annotation in
                 AnnotationCardView(
                     annotation: annotation,
-                    escapeLadder: escapeLadder,
                     onTap: { /* No-op for document-level annotations */ },
                     onToggleCompletion: {
                         onToggleCompletion(annotation)

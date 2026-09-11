@@ -52,10 +52,18 @@ final class FindBarState {
 
     // MARK: - Actions
 
-    /// Show the find bar
+    /// Show the find bar and focus the search field.
+    ///
+    /// Does NOT touch `showReplace` -- plain Find (⌘F) must not collapse an already-open
+    /// Replace row as a side effect of (re-)opening the bar. Callers that want the Replace
+    /// row open pass `withReplace: true`, which only ever turns it on, never off; there is
+    /// no toggle-to-close behavior here by design (only Escape or the close button hide the
+    /// bar; repeated ⌘F/⌥⌘F presses are intentionally left alone).
     func show(withReplace: Bool = false) {
         isVisible = true
-        showReplace = withReplace
+        if withReplace {
+            showReplace = true
+        }
         // Increment to trigger focus (always changes, unlike boolean toggle)
         focusRequestCount += 1
     }

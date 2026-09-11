@@ -92,8 +92,7 @@ extension ContentView {
                 imageMeta: result.imageMeta,
                 cursorBoundary: result.bibBoundaryIndex,
                 cursorBoundaryEnd: result.bibBoundaryEndIndex,
-                expectedBlocks: result.expectedBlocks,
-                managedBlockIds: result.managedBlockIds)
+                expectedBlocks: result.expectedBlocks)
             editorState.isResettingContent = false
             editorState.contentState = .idle
 
@@ -257,8 +256,7 @@ extension ContentView {
                 imageMeta: result.imageMeta,
                 cursorBoundary: result.bibBoundaryIndex,
                 cursorBoundaryEnd: result.bibBoundaryEndIndex,
-                expectedBlocks: result.expectedBlocks,
-                managedBlockIds: result.managedBlockIds)
+                expectedBlocks: result.expectedBlocks)
             editorState.isResettingContent = false
             editorState.contentState = .idle
 
@@ -423,8 +421,7 @@ extension ContentView {
                 imageMeta: result.imageMeta,
                 cursorBoundary: result.bibBoundaryIndex,
                 cursorBoundaryEnd: result.bibBoundaryEndIndex,
-                expectedBlocks: result.expectedBlocks,
-                managedBlockIds: result.managedBlockIds)
+                expectedBlocks: result.expectedBlocks)
 
             editorState.isResettingContent = false
             editorState.contentState = .idle

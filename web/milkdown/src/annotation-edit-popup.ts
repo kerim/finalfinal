@@ -3,7 +3,6 @@
 // Singleton pattern modeled on citation-edit-popup.ts
 
 import type { EditorView } from '@milkdown/kit/prose/view';
-import { recomputeAndPushWebPopupState } from '../../shared/escape-ladder';
 import { positionPopup } from '../../shared/position-popup';
 import { ANNOTATION_NODE_NAME, buildAnnotationDeleteTransaction } from './annotation-delete';
 import type { AnnotationAttrs, AnnotationType } from './annotation-plugin';
@@ -260,7 +259,6 @@ export function showAnnotationEditPopup(pos: number, view: EditorView, attrs: An
   // Populate and show (set display before positioning so measurements are accurate)
   input.value = attrs.text || '';
   popup.style.display = 'block';
-  recomputeAndPushWebPopupState(); // t-784ff3aa: push the moment this popup opens
 
   // Position popup relative to the annotation
   const coords = view.coordsAtPos(pos);
@@ -306,14 +304,6 @@ function cancelAnnotationEdit(): void {
   view?.focus();
 }
 
-/** Cancels the annotation edit, discarding any in-progress change (never `hideAnnotationEditPopup`
- * or a commit path -- Esc must never save). Exported for dismissTopLayer, used alongside the
- * already-exported `isAnnotationEditPopupOpen` as a defense-in-depth fallback -- see
- * citation-edit-popup.ts's `isCitationEditPopupOpen` doc comment for why. */
-export function cancelAnnotationEditFromLadder(): void {
-  cancelAnnotationEdit();
-}
-
 /**
  * N4 boundary hygiene, judge round 2 fix (must-fix 4): commit-then-close, NOT
  * discard-then-close -- mirrors `commitAndCloseEditPopup` in citation-edit-popup.ts (see its
@@ -340,7 +330,6 @@ export function hideAnnotationEditPopup(): void {
   }
   editingNodePos = null;
   editingView = null;
-  recomputeAndPushWebPopupState(); // t-784ff3aa: push the moment this popup closes
 }
 
 // Check if popup is currently open

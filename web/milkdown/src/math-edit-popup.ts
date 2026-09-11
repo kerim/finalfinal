@@ -4,7 +4,6 @@
 
 import type { EditorView } from '@milkdown/kit/prose/view';
 import katex from 'katex';
-import { recomputeAndPushWebPopupState } from '../../shared/escape-ladder';
 import { positionPopup } from '../../shared/position-popup';
 
 // Module-level singleton state
@@ -159,7 +158,6 @@ export function showMathEditPopup(pos: number, view: EditorView, latex: string, 
 
   input.value = latex;
   popup.style.display = 'block';
-  recomputeAndPushWebPopupState(); // t-784ff3aa: push the moment this popup opens
   renderPreview(latex);
 
   // Position relative to the node (coordsAtPos can throw for out-of-bounds pos)
@@ -210,17 +208,6 @@ function cancelEdit(): void {
   view?.focus();
 }
 
-/** Whether the math edit popup is currently displayed -- see citation-edit-popup.ts's
- * `isCitationEditPopupOpen` doc comment for why this is a defense-in-depth fallback. */
-export function isMathEditPopupOpen(): boolean {
-  return !!editPopup && editPopup.style.display !== 'none';
-}
-
-/** Cancels the math edit, discarding any in-progress change. Exported for dismissTopLayer. */
-export function cancelMathEdit(): void {
-  cancelEdit();
-}
-
 function hidePopup(): void {
   if (editPopup) {
     editPopup.style.display = 'none';
@@ -232,5 +219,4 @@ function hidePopup(): void {
   editingNodePos = null;
   editingView = null;
   editingIsDisplay = false;
-  recomputeAndPushWebPopupState(); // t-784ff3aa: push the moment this popup closes
 }

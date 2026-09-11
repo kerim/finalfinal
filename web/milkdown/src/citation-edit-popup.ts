@@ -3,7 +3,6 @@
 
 import type { Node } from '@milkdown/kit/prose/model';
 import type { EditorView } from '@milkdown/kit/prose/view';
-import { recomputeAndPushWebPopupState } from '../../shared/escape-ladder';
 import { positionPopup } from '../../shared/position-popup';
 import { buildCitationDeleteTransaction, CITATION_NODE_NAME } from './citation-delete';
 import type { CitationAttrs } from './citation-types';
@@ -514,7 +513,6 @@ export function showCitationEditPopup(getPos: () => number | undefined, view: Ed
   // Populate and show (set display before positioning so measurements are accurate)
   input.value = rawSyntax;
   popup.style.display = 'block';
-  recomputeAndPushWebPopupState(); // t-784ff3aa: push the moment this popup opens
   updateEditPreview();
 
   // Position popup relative to the citation
@@ -576,20 +574,6 @@ function cancelEdit(): void {
   view?.focus();
 }
 
-/** Whether the citation edit popup is currently displayed -- read by the shared Esc ladder's
- * dismissTopLayer (UX contract §6) as a defense-in-depth fallback; in practice this popup's
- * own input keydown handler already preventDefault()s and calls cancelEdit() before the event
- * would ever reach dismissTopLayer, since the input holds focus while the popup is open. */
-export function isCitationEditPopupOpen(): boolean {
-  return !!editPopup && editPopup.style.display !== 'none';
-}
-
-/** Cancels the citation edit, discarding any in-progress change. Exported for dismissTopLayer;
- * see `isCitationEditPopupOpen`'s doc comment. */
-export function cancelCitationEdit(): void {
-  cancelEdit();
-}
-
 /**
  * N4 boundary hygiene, judge round 2 fix (must-fix 4): commit-then-close, NOT
  * discard-then-close. `hideEditPopup()` alone silently threw away whatever the user was
@@ -625,5 +609,4 @@ export function hideEditPopup(): void {
   editingGetPos = null;
   editingView = null;
   editingNode = null;
-  recomputeAndPushWebPopupState(); // t-784ff3aa: push the moment this popup closes
 }

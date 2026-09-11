@@ -24,7 +24,7 @@ struct EditorToolbar: ToolbarContent {
             } label: {
                 Label("Task", systemImage: "checkmark.circle")
             }
-            .help("Insert task annotation (⌘⇧T)")
+            .help("Insert task annotation (⇧⌘T)")
 
             Button {
                 NotificationCenter.default.post(
@@ -35,7 +35,7 @@ struct EditorToolbar: ToolbarContent {
             } label: {
                 Label("Comment", systemImage: "text.bubble")
             }
-            .help("Insert comment annotation (⌘⇧C)")
+            .help("Insert comment annotation (⇧⌘C)")
 
             Button {
                 NotificationCenter.default.post(
@@ -46,7 +46,7 @@ struct EditorToolbar: ToolbarContent {
             } label: {
                 Label("Reference", systemImage: "bookmark")
             }
-            .help("Insert reference annotation (⌘⇧R)")
+            .help("Insert reference annotation (⇧⌘R)")
         }
 
         ToolbarItemGroup(placement: .primaryAction) {
@@ -57,14 +57,14 @@ struct EditorToolbar: ToolbarContent {
                 } label: {
                     Label("Citation", systemImage: "text.book.closed")
                 }
-                .help("Insert citation (⌘⇧K)")
+                .help("Insert citation (⇧⌘K)")
 
                 Button {
                     NotificationCenter.default.post(name: .insertFootnote, object: nil)
                 } label: {
                     Label("Footnote", systemImage: "text.append")
                 }
-                .help("Insert footnote (⌘⇧N)")
+                .help("Insert footnote (⇧⌘N)")
             }
         }
 
@@ -74,21 +74,21 @@ struct EditorToolbar: ToolbarContent {
             } label: {
                 Label("Image", systemImage: "photo")
             }
-            .help("Insert image (⌘⇧I)")
+            .help("Insert image (⇧⌘I)")
 
             Button {
                 NotificationCenter.default.post(name: .requestInsertTable, object: nil)
             } label: {
                 Label("Table", systemImage: "tablecells")
             }
-            .help("Insert table (⌘⇧D)")
+            .help("Insert table (⇧⌘D)")
 
             Button {
                 NotificationCenter.default.post(name: .requestInsertEquation, object: nil)
             } label: {
                 Label("Math", systemImage: "function")
             }
-            .help("Insert equation (⌘⇧E)")
+            .help("Insert equation (⇧⌘E)")
         }
 
         ToolbarItemGroup(placement: .primaryAction) {
@@ -97,13 +97,15 @@ struct EditorToolbar: ToolbarContent {
                 systemSymbolName: "sidebar.right",
                 accessibilityLabel: editorState.isAnnotationPanelVisible
                     ? "Hide Annotations"
-                    : "Show Annotations"
+                    : "Show Annotations",
+                helpText: editorState.isAnnotationPanelVisible
+                    ? "Hide Annotations (⌘])"
+                    : "Show Annotations (⌘])",
+                accessibilityHint: "(⌘] to toggle)",
+                accessibilityIdentifier: "toolbar-annotations-toggle"
             ) {
                 editorState.toggleAnnotationPanel()
             }
-            .help(editorState.isAnnotationPanelVisible
-                  ? "Hide Annotations (⌘])"
-                  : "Show Annotations (⌘])")
         }
     }
 }

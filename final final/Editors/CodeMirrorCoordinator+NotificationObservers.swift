@@ -48,10 +48,6 @@ extension CodeMirrorEditor.Coordinator {
         controller.add(self, name: "structuralRedoRequested")
         controller.add(self, name: "historyEdited")
         controller.add(self, name: "structuralUndoRefused")
-        // Esc-ladder bridge (UX contract §6) -- see EscapeLadder.swift.
-        controller.add(self, name: "escapeLadder")
-        controller.add(self, name: "escapeComposition")
-        controller.add(self, name: "escapeWebPopupOpen")
     }
 
     /// Subscribe to all notifications this coordinator cares about.

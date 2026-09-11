@@ -27,12 +27,6 @@ extension CodeMirrorEditor.Coordinator {
         if handleMediaMessage(message) { return }
         if handleFootnoteMessage(message) { return }
         if handleUndoMessage(message) { return }
-        // `handleEscapeLadderMessage` is @MainActor (matching `routeStructuralRequest`'s
-        // isolation, and the actual runtime guarantee that WebKit delivers script messages on
-        // the main thread) -- `assumeIsolated` bridges the call from this nonisolated delegate
-        // method without a `Task` hop, preserving the synchronous return value the dispatch
-        // chain above relies on.
-        if MainActor.assumeIsolated({ handleEscapeLadderMessage(message) }) { return }
         _ = handleSpellcheckMessage(message)
     }
 

@@ -8,9 +8,6 @@ import SwiftUI
 /// Individual annotation card for the annotation panel
 struct AnnotationCardView: View {
     @Bindable var annotation: AnnotationViewModel
-    /// Esc-ladder live state for this window (UX contract §6). Optional so existing preview/
-    /// test call sites keep compiling unchanged.
-    var escapeLadder: EscapeLadderContext? = nil
     let onTap: () -> Void
     let onToggleCompletion: () -> Void
     let onUpdateText: ((AnnotationViewModel, String) -> Void)?
@@ -20,6 +17,8 @@ struct AnnotationCardView: View {
 
     @Environment(ThemeManager.self) private var themeManager
     @State private var isHovering = false
+    @State private var isEditing = false
+    @State private var editText = ""
     @State private var isExpanded = false
     @State private var isTruncated = false
     @State private var constrainedTextHeight: CGFloat = 0
@@ -36,17 +35,16 @@ struct AnnotationCardView: View {
 
                 // Content
                 VStack(alignment: .leading, spacing: 2) {
-                    if annotation.isEditing {
+                    if isEditing {
                         // Edit mode: TextEditor for multi-line support
                         VStack(alignment: .leading, spacing: 4) {
-                            TextEditor(text: $annotation.editText)
+                            TextEditor(text: $editText)
                                 .font(.system(size: TypeScale.annotationBody))
                                 .frame(minHeight: 60, maxHeight: 120)
                                 .padding(4)
                                 .background(themeManager.currentTheme.editorBackground.opacity(0.5))
                                 .cornerRadius(4)
                                 .focused($isTextEditorFocused)
-                                .accessibilityIdentifier("annotation-card-edit-field")
 
                             HStack {
                                 Button("Save") {
@@ -61,13 +59,7 @@ struct AnnotationCardView: View {
                                 }
                                 .buttonStyle(.bordered)
                                 .controlSize(.small)
-                                // No .keyboardShortcut(.escape) here (hygiene, not a behavior
-                                // change): this shortcut WAS load-bearing under the old code
-                                // outside Focus Mode (the removed AppDelegate monitor only
-                                // consumed Esc while Focus Mode was on) -- but the new escape
-                                // ladder now owns Esc for this surface in every case, Focus Mode
-                                // or not (UX contract §6), driving this exact cancelEdit() via
-                                // the registered annotation-edit entry below.
+                                .keyboardShortcut(.escape, modifiers: [])
                             }
                         }
                     } else {
@@ -128,7 +120,7 @@ struct AnnotationCardView: View {
                 startEditing()
             }
             .onTapGesture {
-                if !annotation.isEditing {
+                if !isEditing {
                     onTap()
                 }
             }
@@ -144,17 +136,10 @@ struct AnnotationCardView: View {
         .onChange(of: annotation.text) { _, _ in
             isExpanded = false
         }
-        .onChange(of: annotation.isEditing) { _, editing in
+        .onChange(of: isEditing) { _, editing in
             if editing {
                 isTextEditorFocused = true
             }
-        }
-        .onChange(of: isTextEditorFocused) { _, focused in
-            // Reports genuine native focus, not just "in edit mode" (UX contract §6, "where
-            // you're typing wins" -- see EscapeLadderSnapshot.focusedAnnotationEditId's doc
-            // comment). Distinct from the `annotationEditOrder` registration below, which
-            // tracks every card merely open for editing.
-            escapeLadder?.setAnnotationEditFocused(id: annotation.id, focused: focused)
         }
         .task(id: pendingEditId) {
             guard let pendingEditId, annotation.id == pendingEditId else { return }
@@ -162,32 +147,6 @@ struct AnnotationCardView: View {
             guard !Task.isCancelled else { return }
             startEditing()
             onAutoEditStarted?()
-        }
-        .onDisappear {
-            // A GENUINE SwiftUI unmount of this row -- e.g. scrolled out of the LazyVStack
-            // inside AnnotationPanel's ScrollView, or the document/project switching out from
-            // under it -- but `annotation` (AnnotationViewModel) is identity-preserved across
-            // remounts (EditorViewState+ObservableListDiff.swift's mergeAnnotations reuses the
-            // same instance by id) -- its `isEditing`/`editText` no longer reset on unmount the
-            // way SwiftUI @State would have. A card mid-edit when it disappears this way must
-            // not reappear still showing as being edited with stale text, so this discards the
-            // in-progress edit the same way `cancelEdit()` does on a user-initiated cancel, in
-            // addition to unregistering so the Esc ladder never holds a stale entry for a card
-            // that no longer exists.
-            //
-            // CORRECTED (judge review, 2026-09-10, t-784ff3aa): this does NOT cover Focus Mode
-            // hiding the Annotations panel, despite an earlier version of this comment claiming
-            // it did -- that claim was factually wrong. The panel is never actually unmounted
-            // when Focus Mode hides it: `ContentView+EditorPresentation.swift`'s `detailView`
-            // keeps `AnnotationPanel` "always mounted" and instead animates its own width down
-            // to zero (plus `.accessibilityHidden`/`.allowsHitTesting(false)`), none of which
-            // unmounts this subview or fires `.onDisappear`. That case -- a card left mid-edit
-            // when Focus Mode hides the panel -- is handled separately, by
-            // `AnnotationPanel`'s own `.onChange(of: editorState.isAnnotationPanelVisible)` ->
-            // `resetInProgressEdits()`, which performs the identical reset/unregister pair.
-            annotation.isEditing = false
-            annotation.editText = ""
-            escapeLadder?.unregisterAnnotationEdit(id: annotation.id)
         }
     }
 
@@ -237,46 +196,25 @@ struct AnnotationCardView: View {
 
     private func startEditing() {
         guard onUpdateText != nil else { return }
-        annotation.editText = annotation.text  // Copy full text (not preview)
-        annotation.isEditing = true
+        editText = annotation.text  // Copy full text (not preview)
+        isEditing = true
         isTextEditorFocused = true
-        // Register a cancel closure with the Esc ladder (UX contract §6) that captures the
-        // annotation VIEW MODEL -- a reference type identified by `id`, the same object
-        // regardless of which View struct instance is currently rendering it -- rather than
-        // this View struct itself. Capturing `self` here (e.g. a bound `cancelEdit` method
-        // reference) would capture the WHOLE struct, including its own `escapeLadder`
-        // reference: a retain cycle (escapeLadder -> this closure -> the struct ->
-        // escapeLadder again), and a risk of acting on a stale `@State` box if SwiftUI ever
-        // recycles this row (these cards live in a `LazyVStack` inside `AnnotationPanel`'s
-        // `ScrollView`). `model` and `ladder` are captured weakly so the closure itself never
-        // keeps either alive past its natural lifetime. Re-registering (e.g. a second
-        // startEditing() while already open) is safe: registerAnnotationEdit replaces the
-        // prior entry for this id, so a fresh registration always overwrites any stale one.
-        let model = annotation
-        let id = annotation.id
-        escapeLadder?.registerAnnotationEdit(id: id) { [weak model, weak ladder = escapeLadder] in
-            model?.isEditing = false
-            model?.editText = ""
-            ladder?.unregisterAnnotationEdit(id: id)
-        }
     }
 
     private func commitEdit() {
-        let trimmedText = annotation.editText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedText = editText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedText.isEmpty, trimmedText != annotation.text else {
             cancelEdit()
             return
         }
         onUpdateText?(annotation, trimmedText)
-        annotation.isEditing = false
-        annotation.editText = ""
-        escapeLadder?.unregisterAnnotationEdit(id: annotation.id)
+        isEditing = false
+        editText = ""
     }
 
     private func cancelEdit() {
-        annotation.isEditing = false
-        annotation.editText = ""
-        escapeLadder?.unregisterAnnotationEdit(id: annotation.id)
+        isEditing = false
+        editText = ""
     }
 
     @ViewBuilder

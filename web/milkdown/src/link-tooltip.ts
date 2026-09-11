@@ -7,7 +7,6 @@ import type { Mark } from '@milkdown/kit/prose/model';
 import { Plugin, PluginKey } from '@milkdown/kit/prose/state';
 import type { EditorView } from '@milkdown/kit/prose/view';
 import { $prose } from '@milkdown/kit/utils';
-import { recomputeAndPushWebPopupState } from '../../shared/escape-ladder';
 import { positionPopup } from '../../shared/position-popup';
 import { isSourceModeEnabled } from './source-mode-plugin';
 
@@ -329,7 +328,6 @@ function showEdit(view: EditorView, linkRange: LinkRange | null): void {
 
   input.value = linkRange?.href || '';
   popup.style.display = 'block';
-  recomputeAndPushWebPopupState(); // t-784ff3aa: push the moment this (edit, not preview) popup opens
 
   // Position below the link or cursor
   const pos = linkRange?.from ?? view.state.selection.from;
@@ -346,7 +344,6 @@ function hideEdit(): void {
     clearTimeout(blurTimeout);
     blurTimeout = null;
   }
-  recomputeAndPushWebPopupState(); // t-784ff3aa: push the moment this (edit, not preview) popup closes
 }
 
 function hideAll(): void {
@@ -406,17 +403,6 @@ function cancelLinkEdit(): void {
   hideEdit();
   view?.focus();
   activeLinkRange = null;
-}
-
-/** Whether the link edit popup is currently displayed -- see citation-edit-popup.ts's
- * `isCitationEditPopupOpen` doc comment for why this is a defense-in-depth fallback. */
-export function isLinkEditPopupOpen(): boolean {
-  return !!editEl && editEl.style.display !== 'none';
-}
-
-/** Cancels the link edit, discarding any in-progress change. Exported for dismissTopLayer. */
-export function cancelLinkEditFromLadder(): void {
-  cancelLinkEdit();
 }
 
 // --- ProseMirror Plugin ---

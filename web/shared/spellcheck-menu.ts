@@ -3,8 +3,6 @@
  * Shows suggestions, learn, and ignore options for flagged words
  */
 
-import { recomputeAndPushWebPopupState } from './escape-ladder';
-
 export interface SpellcheckMenuOptions {
   x: number;
   y: number;
@@ -25,22 +23,18 @@ export function dismissMenu() {
     activeMenu = null;
   }
   document.removeEventListener('click', handleOutsideClick);
+  document.removeEventListener('keydown', handleEscape);
   document.removeEventListener('scroll', dismissMenu, true);
-  recomputeAndPushWebPopupState(); // t-784ff3aa: push the moment this menu closes (or a no-op re-close)
-}
-
-/** Whether the spellcheck menu is currently displayed -- read by the shared Esc-ladder's
- * `dismissTopLayer` (UX contract §6), which now owns Escape dismissal for this menu instead of
- * this module's own standalone keydown listener (removed: it and the ladder's bubble-phase
- * `document` listener were both bound to `document`, and having both handle the same keydown
- * -- in registration order, not necessarily correctly -- was exactly the double-owner problem
- * the ladder redesign exists to remove). */
-export function isMenuOpen(): boolean {
-  return activeMenu !== null;
 }
 
 function handleOutsideClick(e: MouseEvent) {
   if (activeMenu && !activeMenu.contains(e.target as Node)) {
+    dismissMenu();
+  }
+}
+
+function handleEscape(e: KeyboardEvent) {
+  if (e.key === 'Escape') {
     dismissMenu();
   }
 }
@@ -134,7 +128,6 @@ export function showSpellcheckMenu(options: SpellcheckMenuOptions): void {
 
   document.body.appendChild(menu);
   activeMenu = menu;
-  recomputeAndPushWebPopupState(); // t-784ff3aa: push the moment this menu opens
 
   // Ensure menu is within viewport
   const rect = menu.getBoundingClientRect();
@@ -150,6 +143,7 @@ export function showSpellcheckMenu(options: SpellcheckMenuOptions): void {
   // requestAnimationFrame (~16ms) was too short and the release click would dismiss the menu.
   setTimeout(() => {
     document.addEventListener('click', handleOutsideClick);
+    document.addEventListener('keydown', handleEscape);
     document.addEventListener('scroll', dismissMenu, true);
   }, 150);
 }

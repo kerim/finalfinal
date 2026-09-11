@@ -56,9 +56,6 @@ struct ContentView: View {
     /// Find bar state
     @State internal var findBarState = FindBarState()
 
-    /// Esc-ladder live state for this window (UX contract §6) -- see EscapeLadder.swift.
-    @State internal var escapeLadder = EscapeLadderContext()
-
     // suppressBibliographyRebuildsDuringSwitch moved to EditorViewState -- round 4.1
     // (doc-open-blank-regression): a bare `@State Bool` here is correct for production (a
     // live SwiftUI view installs @State's storage normally) but is untestable in a unit
@@ -314,8 +311,6 @@ struct ContentView: View {
         .task {
             AppDelegate.shared?.editorState = editorState
             AppDelegate.shared?.autoBackupService = autoBackupService
-            escapeLadder.findBarState = findBarState
-            escapeLadder.editorState = editorState
             DocumentManager.shared.flushBeforeExport = { [weak editorState] in
                 guard let editorState else { return }
                 // See EditorViewState+Zoom.swift's flushLiveContentToDatabase(currentContent:)
