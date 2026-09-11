@@ -60,20 +60,25 @@ VMTEST_DEFAULT_OUT_SUBDIR=".claude/vmtest-runs"
 # 6 GB first: either restore 10 GB and drop back to 1 slot, or tune between.
 VMTEST_MAX_SLOTS=2
 
-# Per-shard watchdog for --suite full (shards each get this full budget, not
-# a divided one — see cmd__run_suite_full). Measured live 2026-09-04 on a
-# 2-slot sharded run of the real 16-class suite: slowest shard 1186s (19.8
-# min), other shard 1162s. 1560s gives that slowest shard ~31% headroom. The
-# unscoped whole-scheme legacy path (no --suite, transitional — see
-# README.md) also reads this value.
-VMTEST_TIMEOUT_FULLSUITE=1560
+# Watchdog (changed 2026-09-11). The engine now stops a guest when nothing
+# it writes to the shared out volume has changed for VMTEST_STALL_SEC — the
+# direct measure of a hang. The VMTEST_TIMEOUT_* values below are only an
+# outer HARD CAP on total elapsed time, a backstop against a guest that
+# keeps producing output forever. They are no longer calibrated to the
+# suite's runtime and must not be: the previous 1560s was measured against
+# a 16-class suite on 2026-09-04 and killed two healthy, progressing
+# 24-class release runs a week later. Raise the cap only if a run is ever
+# stopped with "hard cap ... reached while the guest was still producing
+# output"; a "stalled" stop is a real hang, and the cap is irrelevant to it.
+VMTEST_STALL_SEC=600
+VMTEST_TIMEOUT_FULLSUITE=5400
 VMTEST_TIMEOUT_SCOPED=600
 VMTEST_TIMEOUT_GUEST_AGENT=120
 
 # --suite smoke|full (test-tiers-ship plan, 2026-09-04). The merge gate runs
 # --suite smoke; the full UI suite moves to release time via `/ship`, sharded
-# across VMTEST_MAX_SLOTS clones. VMTEST_TIMEOUT_FULLSUITE above is a
-# starting guess until Phase 1's measured runs set it with headroom.
+# across VMTEST_MAX_SLOTS clones, balanced by a per-class duration ledger
+# the engine rebuilds from every previous full-suite run's shard logs.
 VMTEST_SMOKE_SCOPES=(
   "final finalUITests/LaunchSmokeTests"
   "final finalUITests/EditorSmokeTests"
