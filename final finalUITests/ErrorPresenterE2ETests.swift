@@ -310,12 +310,12 @@ final class ErrorPresenterE2ETests: XCTestCase {
 
         var toggled = false
         for _ in 1...5 {
-            if editorMode.label == "Source" { toggled = true; break }
+            if editorMode.label == "Markdown" { toggled = true; break }
             app.activateAndWaitForForeground()
             app.typeKey("/", modifierFlags: .command)
-            if editorMode.waitForLabel("== 'Source'", timeout: 2) { toggled = true; break }
+            if editorMode.waitForLabel("== 'Markdown'", timeout: 2) { toggled = true; break }
         }
-        XCTAssertTrue(toggled, "Editor-mode button should report Source after retrying the toggle keystroke")
+        XCTAssertTrue(toggled, "Editor-mode button should report Markdown after retrying the toggle keystroke")
 
         // Mount-completion gate -- same INTENT as UnifiedUndoE2ETests+Helpers.swift's own
         // switchToSourceMode(): the status-bar label flip above is synchronous, but the actual

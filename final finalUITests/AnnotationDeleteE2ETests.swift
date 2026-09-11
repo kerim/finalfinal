@@ -427,12 +427,12 @@ extension AnnotationDeleteE2ETests {
         XCTAssertTrue(editorMode.waitForExistence(timeout: 10), "Editor mode button should appear")
         var toggled = false
         for _ in 1...5 {
-            if editorMode.label == "Source" { toggled = true; break }
+            if editorMode.label == "Markdown" { toggled = true; break }
             app.activateAndWaitForForeground()
             app.typeKey("/", modifierFlags: .command)
-            if editorMode.waitForLabel("== 'Source'", timeout: 2) { toggled = true; break }
+            if editorMode.waitForLabel("== 'Markdown'", timeout: 2) { toggled = true; break }
         }
-        XCTAssertTrue(toggled, "Editor-mode button should report Source after retrying the toggle keystroke")
+        XCTAssertTrue(toggled, "Editor-mode button should report Markdown after retrying the toggle keystroke")
         // The status-bar label flip (already awaited above via waitForLabel) is synchronous,
         // but the actual WYSIWYG->CodeMirror view swap runs through an async callback chain
         // that can lag behind it; nothing this file queries exposes that mount completion as a

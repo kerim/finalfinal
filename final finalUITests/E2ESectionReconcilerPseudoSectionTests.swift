@@ -291,8 +291,15 @@ Intro paragraph for section A.
 
         // KNOWN RISK (see file header "Trigger mechanism"): the label flips
         // before the async WYSIWYG->CodeMirror view swap necessarily
-        // finishes. Generous settle wait as mitigation, not a guarantee.
-        Thread.sleep(forTimeInterval: 2.5)
+        // finishes. Real mount-readiness gate instead of a fixed sleep --
+        // same technique as ErrorPresenterE2ETests.swift's
+        // waitForSourceModeEvidence(): content-agnostic scan for a leading
+        // "#" (a raw markdown heading marker), which only CodeMirror ever
+        // exposes (Milkdown's WYSIWYG strips heading syntax).
+        XCTAssertTrue(
+            waitForSourceModeEvidence(),
+            "CodeMirror source editor should render raw markdown (a leading '#') after toggling, not just flip the status-bar label"
+        )
 
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(Self.replacementMarkdown, forType: .string)
@@ -305,13 +312,33 @@ Intro paragraph for section A.
         }
         selectAllAndPasteReplacement()
 
-        let escapedInitial = initialWordCountValue.replacingOccurrences(of: "'", with: "\\'")
-        var pasteLanded = wordCountAfterRestatus.waitForValue("!= '\(escapedInitial)'", timeout: 5)
+        // Gate on the EXACT post-paste total, not merely "changed from
+        // initial" (initialWordCountValue is kept above only for
+        // diagnostics): the Cmd-A in selectAllAndPasteReplacement() alone
+        // flips the status-bar string to the "X of Y words" selection
+        // format the instant the selection lands, regardless of whether
+        // the following Cmd-V paste actually reaches the editor -- so a
+        // bare "!= initial" check is satisfied by the selection alone and
+        // proves nothing about the paste. replacementMarkdown, stripped of
+        // markdown syntax the same way StatusBar/MarkdownUtils.wordCount
+        // strips it, is exactly 12 words ("A" + "Intro paragraph for
+        // section A." (5) + "gamma one" (2) + "gamma two" (2) + "gamma
+        // three" (2) = 12) -- distinct from seedMarkdown's 14 and from any
+        // "N of N words" selection-only string, so waiting for this exact
+        // plain total only succeeds once the paste has genuinely replaced
+        // the content and the selection has collapsed.
+        let expectedPostPasteWordCount = "12 words"
+        var pasteLanded = wordCountAfterRestatus.waitForValue("== '\(expectedPostPasteWordCount)'", timeout: 5)
         if !pasteLanded {
             selectAllAndPasteReplacement()
-            pasteLanded = wordCountAfterRestatus.waitForValue("!= '\(escapedInitial)'", timeout: 15)
+            pasteLanded = wordCountAfterRestatus.waitForValue("== '\(expectedPostPasteWordCount)'", timeout: 15)
         }
-        XCTAssertTrue(pasteLanded, "Word count never changed after the replacement paste -- it likely never reached the editor")
+        XCTAssertTrue(
+            pasteLanded,
+            "Word count should read \"\(expectedPostPasteWordCount)\" once the replacement paste actually lands " +
+            "(was \"\(initialWordCountValue)\" before, now \"\((wordCountAfterRestatus.value as? String) ?? "<unknown>")\") " +
+            "-- it likely never reached the editor"
+        )
 
         // Let SectionSyncService's 500ms debounce (on top of the editor's own
         // content-polling bridge to Swift) settle and write the reconciled
@@ -413,6 +440,26 @@ Intro paragraph for section A.
         Thread.sleep(forTimeInterval: 1.5)
         let survivorAfterReopen = try Self.queryPseudoSections(fixturePath: TestFixtureHelper.fixturePath)
         XCTAssertEqual(survivorAfterReopen.count, 1, "Exactly one pseudo-section should still exist after relaunch. Got: \(survivorAfterReopen)")
+    }
+
+    /// Local copy of ErrorPresenterE2ETests.swift's `waitForSourceModeEvidence()`: a
+    /// content-agnostic scan for a leading "#" (a raw markdown heading marker), which only
+    /// CodeMirror ever exposes (Milkdown's WYSIWYG strips heading syntax) regardless of
+    /// whatever text follows that "#". Manual Swift-side scan rather than an NSPredicate
+    /// CONTAINS against staticTexts, since heading containers can carry a non-String value
+    /// (the heading level, an NSNumber), which throws under a substring predicate.
+    private func waitForSourceModeEvidence(timeout: TimeInterval = 10) -> Bool {
+        let editorArea = app.groups["editor-area"]
+        let deadline = Date(timeIntervalSinceNow: timeout)
+        repeat {
+            for element in editorArea.descendants(matching: .any).allElementsBoundByIndex {
+                guard element.exists else { continue }
+                if let value = element.value as? String, value.hasPrefix("#") { return true }
+                if element.label.hasPrefix("#") { return true }
+            }
+            RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.25))
+        } while Date() < deadline
+        return false
     }
 
     // MARK: - Fixture doctoring (always with the app terminated -- see file header)
