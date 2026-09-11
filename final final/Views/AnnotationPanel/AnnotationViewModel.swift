@@ -19,6 +19,22 @@ class AnnotationViewModel: Identifiable {
     var highlightStart: Int?
     var highlightEnd: Int?
 
+    /// True while `AnnotationCardView` is showing this annotation's inline edit `TextEditor`.
+    /// Lives here (a reference type persistently identified by `id`, not on the View's own
+    /// `@State`) so the Esc ladder's registered cancel closure (UX contract §6, see
+    /// `AnnotationCardView.startEditing`) can capture THIS model directly instead of the View
+    /// struct: capturing the View struct would (a) create a retain cycle -- the struct holds
+    /// `escapeLadder`, which would then hold the closure, which holds the struct, which holds
+    /// `escapeLadder` again -- and (b) risk acting on a stale `@State` box if SwiftUI ever
+    /// recycles the row (these cards live in a `LazyVStack` inside `AnnotationPanel`'s
+    /// `ScrollView`). Capturing this model instead has neither problem: it never references
+    /// `escapeLadder`, and it's the same object for this annotation regardless of which View
+    /// struct instance is currently rendering it.
+    var isEditing = false
+    /// Scratch buffer for the in-progress edit, separate from `text` until `commitEdit()`
+    /// saves it. Lives alongside `isEditing` for the same reason.
+    var editText = ""
+
     init(from annotation: Annotation) {
         self.id = annotation.id
         self.contentId = annotation.contentId

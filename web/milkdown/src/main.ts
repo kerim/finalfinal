@@ -10,7 +10,6 @@ import { gfm, remarkGFMPlugin } from '@milkdown/kit/preset/gfm';
 import { isHistoryTransaction } from '@milkdown/kit/prose/history';
 import { Plugin, PluginKey } from '@milkdown/kit/prose/state';
 import { $prose, getMarkdown } from '@milkdown/kit/utils';
-import { installCmdHeldTracking } from '../../shared/cmd-hover-class';
 import { annotationDisplayPlugin } from './annotation-display-plugin';
 import { annotationPlugin } from './annotation-plugin';
 import {
@@ -118,6 +117,7 @@ import {
   setPendingBlockContent,
   setZoomFootnoteState,
 } from './editor-state';
+import { escapePassthroughPlugin } from './escape-passthrough-plugin';
 import { focusModePlugin, isFocusModeEnabled } from './focus-mode-plugin';
 import {
   focusFootnoteDefinition,
@@ -156,8 +156,17 @@ import {
 } from './undo-coordinator';
 import './heading-zoom-click-handler';
 import './link-click-handler';
+import { installEscapeLadder, registerWebPopupOpenCheck, setTestEscapeReportDelayMs } from '../../shared/escape-ladder';
+import { dismissMenu as dismissSpellcheckMenu, isMenuOpen as isSpellcheckMenuOpen } from '../../shared/spellcheck-menu';
+import {
+  dismissPopover as dismissSpellcheckPopover,
+  isPopoverOpen as isSpellcheckPopoverOpen,
+} from '../../shared/spellcheck-popover';
+import { cancelAnnotationEditFromLadder, isAnnotationEditPopupOpen } from './annotation-edit-popup';
 import { insertEquation, insertEquationDialog } from './api-math';
-import { linkTooltipPlugin, openLinkEdit } from './link-tooltip';
+import { cancelCitationEdit, isCitationEditPopupOpen } from './citation-edit-popup';
+import { cancelLinkEditFromLadder, isLinkEditPopupOpen, linkTooltipPlugin, openLinkEdit } from './link-tooltip';
+import { cancelMathEdit, isMathEditPopupOpen } from './math-edit-popup';
 import { mathPlugin } from './math-plugin';
 import { orderedListOrderPlugin } from './ordered-list-order-plugin';
 import { noteTransactionForEditSpanTracking } from './recent-edit-span';
@@ -165,7 +174,7 @@ import { searchPlugin } from './search-plugin';
 import { sectionBreakPlugin } from './section-break-plugin';
 import { selectionStatsPlugin } from './selection-stats-plugin';
 import { selectionToolbarPlugin } from './selection-toolbar-plugin';
-import { configureSlash, slash } from './slash-commands';
+import { configureSlash, dismissSlashMenu, isSlashMenuOpen, slash } from './slash-commands';
 import {
   disableSmartQuotes as disableSmartQuotesImpl,
   enableSmartQuotes as enableSmartQuotesImpl,
@@ -193,12 +202,6 @@ import 'prosemirror-tables/style/tables.css';
 // Import types to ensure declare global is included in the bundle
 import { syncLog } from './sync-debug';
 import './types';
-
-// ⌘-hover hint for Cmd-click-to-zoom (UX contract §2, D2). Toggles CMD_HELD_CLASS on
-// document.body while ⌘ is held; styles.css uses that class to underline headings on
-// hover. One-shot install alongside heading-zoom-click-handler.ts/link-click-handler.ts
-// above -- unlike those, this module doesn't self-install on import, so it's called here.
-installCmdHeldTracking();
 
 // Backtick with selected text wraps selection as inline code.
 // Uses ProseMirror's handleKeyDown (not DOM events) because WKWebView's
@@ -306,6 +309,7 @@ async function initEditor() {
       .use(annotationDisplayPlugin) // Controls annotation visibility
       .use(headingNodeViewPlugin) // Custom heading rendering for source mode # selection
       .use(backtickWrapPlugin) // Backtick wraps selection as inline code (ProseMirror-level)
+      .use(escapePassthroughPlugin) // Claims Escape via handleDOMEvents before PM's own captureKeyDown can preventDefault() it, so shared/escape-ladder.ts sees it unhandled (see escape-passthrough-plugin.ts; CodeMirror's counterpart is defaultKeymap.filter(...'Escape') in codemirror/src/main.ts)
       .use(inlineCodeCursorPlugin) // Two-stop cursor at inline-code edges: escape by default, arrow keys step in/out
       .use(linkCursorPlugin) // Self-healing boundary fix: clears a fresh/stray link mark at the cursor so typing after a link stays plain
       // citationNodeView is now included in citationPlugin (same file = correct atom identity)
@@ -780,9 +784,82 @@ window.FinalFinal = {
       .sort((a, b) => a[0] - b[0])
       .map(([offset, id]) => ({ offset, id }));
   },
+
+  // Test-only hook (never called in production) -- see escape-ladder.ts's
+  // `setTestEscapeReportDelayMs` doc comment. Only a UI-testing-gated Swift call site
+  // (MilkdownCoordinator.performBatchInitialize) ever invokes this.
+  __testSetEscapeReportDelayMs: setTestEscapeReportDelayMs,
 };
+
+/**
+ * Milkdown's ordered "close the innermost open thing" check for the Esc ladder (UX contract
+ * §6). Most of these entries are defense-in-depth: citation/math/link/annotation edit popups
+ * already dismiss themselves via their own input's keydown handler (preventDefault + cancel),
+ * which this module's shared listener already honors through `e.defaultPrevented` before ever
+ * calling this function -- see web/shared/escape-ladder.ts's top-of-file doc comment. Only the
+ * slash menu genuinely NEEDS to be checked here: its old Escape handling lived in a
+ * document-level CAPTURE listener that called stopPropagation(), which would otherwise stop
+ * this bubble-phase listener from seeing the event at all (see slash-commands.ts).
+ */
+function milkdownDismissTopLayer(): boolean {
+  if (isSlashMenuOpen()) {
+    dismissSlashMenu();
+    return true;
+  }
+  if (isCitationEditPopupOpen()) {
+    cancelCitationEdit();
+    return true;
+  }
+  if (isMathEditPopupOpen()) {
+    cancelMathEdit();
+    return true;
+  }
+  if (isLinkEditPopupOpen()) {
+    cancelLinkEditFromLadder();
+    return true;
+  }
+  if (isAnnotationEditPopupOpen()) {
+    cancelAnnotationEditFromLadder();
+    return true;
+  }
+  if (isSpellcheckMenuOpen()) {
+    dismissSpellcheckMenu();
+    return true;
+  }
+  if (isSpellcheckPopoverOpen()) {
+    dismissSpellcheckPopover();
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Milkdown's aggregate "is ANY web-owned popup/menu open" check for the new `webPopupOpen`
+ * signal (t-784ff3aa fix round) -- the exact same OR of predicates `milkdownDismissTopLayer`
+ * above checks, minus the dismiss side effects. Registered with the shared escape-ladder
+ * module (`registerWebPopupOpenCheck`) so any popup's own show/hide function can trigger a
+ * recompute via `recomputeAndPushWebPopupState()` without importing this file -- see
+ * escape-ladder.ts's own doc comment for why that indirection exists.
+ */
+function isAnyWebPopupOpen(): boolean {
+  return (
+    isSlashMenuOpen() ||
+    isCitationEditPopupOpen() ||
+    isMathEditPopupOpen() ||
+    isLinkEditPopupOpen() ||
+    isAnnotationEditPopupOpen() ||
+    isSpellcheckMenuOpen() ||
+    isSpellcheckPopoverOpen()
+  );
+}
 
 // Initialize editor
 initEditor().catch((e) => {
   console.error('[Milkdown] Init failed:', e);
 });
+
+// Esc ladder (UX contract §6) -- one bubble-phase `document` listener owns Escape dismissal
+// for this editor. Not tied to editor readiness: it only adds a document-level listener, and
+// each dismiss-check above already guards on its own popup/menu being open.
+installEscapeLadder(milkdownDismissTopLayer);
+registerWebPopupOpenCheck(isAnyWebPopupOpen);

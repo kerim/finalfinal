@@ -10,8 +10,12 @@ import SwiftUI
 /// Find and replace bar following Apple's design standards
 struct FindBarView: View {
     @Bindable var state: FindBarState
+    /// Esc-ladder live state for this window (UX contract §6). Optional so existing preview/
+    /// test call sites keep compiling unchanged.
+    var escapeLadder: EscapeLadderContext?
     @Environment(ThemeManager.self) private var themeManager
     @FocusState private var isSearchFieldFocused: Bool
+    @FocusState private var isReplaceFieldFocused: Bool
 
     var body: some View {
         VStack(spacing: 0) {
@@ -128,7 +132,12 @@ struct FindBarView: View {
                         .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
-                .keyboardShortcut(.escape, modifiers: [])
+                // No .keyboardShortcut(.escape) here (hygiene, not a behavior change): this
+                // shortcut WAS load-bearing under the old code outside Focus Mode (the removed
+                // AppDelegate monitor only consumed Esc while Focus Mode was on) -- but the new
+                // escape ladder now owns Esc for this surface in every case, Focus Mode or not
+                // (UX contract §6), so a separate SwiftUI shortcut here would be redundant, not
+                // load-bearing.
                 .help("Close (Esc)")
             }
             .padding(.horizontal, 12)
@@ -146,6 +155,7 @@ struct FindBarView: View {
                         TextField("Replace", text: $state.replaceText)
                             .textFieldStyle(.plain)
                             .font(.system(size: TypeScale.chromeLabel))
+                            .focused($isReplaceFieldFocused)
                             .onSubmit {
                                 state.replaceCurrent()
                             }
@@ -201,6 +211,22 @@ struct FindBarView: View {
         }
         .onChange(of: state.focusRequestCount) { _, _ in
             isSearchFieldFocused = true
+        }
+        // Both handlers report the OR of the two fields (not just their own `focused` value):
+        // when focus moves from one find-bar field directly to the other, computing the OR at
+        // the moment each fires keeps `findBarFieldFocused` continuously true across the
+        // transition instead of ever dropping to false in between. Reporting only the field's
+        // own value on the false branch (fixed from an earlier bug where the false branch was
+        // missing entirely) would otherwise latch `findBarFieldFocused` true forever the first
+        // time either field was ever focused.
+        .onChange(of: isSearchFieldFocused) { _, _ in
+            escapeLadder?.setFindBarFieldFocused(isSearchFieldFocused || isReplaceFieldFocused)
+        }
+        .onChange(of: isReplaceFieldFocused) { _, _ in
+            escapeLadder?.setFindBarFieldFocused(isSearchFieldFocused || isReplaceFieldFocused)
+        }
+        .onDisappear {
+            escapeLadder?.clearFindBarFocus()
         }
     }
 }

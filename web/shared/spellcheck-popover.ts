@@ -4,6 +4,8 @@
  * Triggered on click (not right-click) of grammar/style decorations.
  */
 
+import { recomputeAndPushWebPopupState } from './escape-ladder';
+
 export interface PopoverOptions {
   x: number;
   y: number;
@@ -103,6 +105,7 @@ export function showProofingPopover(options: PopoverOptions): void {
   popover.style.top = `${options.y}px`;
   document.body.appendChild(popover);
   activePopover = popover;
+  recomputeAndPushWebPopupState(); // t-784ff3aa: push the moment this popover opens
 
   // Ensure popover is within viewport
   const rect = popover.getBoundingClientRect();
@@ -116,7 +119,6 @@ export function showProofingPopover(options: PopoverOptions): void {
   // Dismiss on click outside (delayed to avoid immediate dismiss)
   setTimeout(() => {
     document.addEventListener('click', handleOutsideClick);
-    document.addEventListener('keydown', handleEscape);
   }, 150);
 }
 
@@ -125,23 +127,20 @@ export function dismissPopover(): void {
     activePopover.remove();
     activePopover = null;
     document.removeEventListener('click', handleOutsideClick);
-    document.removeEventListener('keydown', handleEscape);
+    recomputeAndPushWebPopupState(); // t-784ff3aa: push the moment this popover closes
   }
 }
 
-/** Whether a proofing popover is currently displayed. */
+/** Whether a proofing popover is currently displayed -- read by the shared Esc-ladder's
+ * `dismissTopLayer` (UX contract §6), which now owns Escape dismissal for this popover instead
+ * of this module's own standalone keydown listener (removed for the same one-owner reasoning
+ * as `spellcheck-menu.ts`'s `isMenuOpen`). */
 export function isPopoverOpen(): boolean {
   return activePopover !== null;
 }
 
 function handleOutsideClick(e: MouseEvent): void {
   if (activePopover && !activePopover.contains(e.target as Node)) {
-    dismissPopover();
-  }
-}
-
-function handleEscape(e: KeyboardEvent): void {
-  if (e.key === 'Escape') {
     dismissPopover();
   }
 }

@@ -106,6 +106,21 @@ enum TestMode {
         isUITesting && ProcessInfo.processInfo.environment["FF_UI_TESTING_EXERCISE_RESTORE_LAST_PROJECT"] == "1"
     }
 
+    /// UI-test-only artificial delay (milliseconds), applied to the WEB layer's own Escape
+    /// -report path via `window.FinalFinal.__testSetEscapeReportDelayMs` (see
+    /// `web/shared/escape-ladder.ts`'s `setTestEscapeReportDelayMs` doc comment) -- exists ONLY
+    /// to prove the t-784ff3aa fix is genuinely timing-independent (EscapeLadderE2ETests.swift),
+    /// not a production behavior switch. `nil`/unset/unparseable/<= 0 leaves the web layer's
+    /// real (zero-delay) Escape reporting untouched. Same `isUITesting &&` guard as every
+    /// sibling flag here, for the same reason: without it, a value left in a shell profile for
+    /// unrelated testing would silently delay Escape handling outside any UI test too.
+    static var uiTestingEscapeReportDelayMilliseconds: Int {
+        guard isUITesting,
+              let raw = ProcessInfo.processInfo.environment["FF_UI_TESTING_ESCAPE_REPORT_DELAY_MS"],
+              let value = Int(raw), value > 0 else { return 0 }
+        return value
+    }
+
     /// Clears UserDefaults keys that could interfere with test isolation.
     ///
     /// Operates on `AppDefaults.store` — an isolated suite while testing, never the real

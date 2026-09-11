@@ -19,25 +19,18 @@ extension ContentView {
             VStack(spacing: 0) {
                 // Find bar (shown above editor)
                 if findBarState.isVisible {
-                    FindBarView(state: findBarState)
+                    FindBarView(state: findBarState, escapeLadder: escapeLadder)
                 }
 
                 editorView
-                // Hide status bar in focus mode for distraction-free writing -- EXCEPT while
-                // zoomed. Must-fix 3 (review-fix round): zoomed + Focus Mode hiding the status
-                // bar + the Outline sidebar also hidden left zero visible exits from zoom (the
-                // sidebar's ZoomBreadcrumb and this status bar's pill are the only two exit
-                // affordances, and Focus Mode can hide both at once). Keeping the status bar
-                // visible whenever zoomed guarantees the pill stays reachable without touching
-                // Focus Mode's own hide-status-bar policy (EditorViewState+FocusMode.swift).
-                if !editorState.focusModeHidesStatusBar || editorState.zoomedSectionId != nil {
-                    StatusBar(editorState: editorState, onExitZoom: {
-                        performUserZoomOut(reason: "user zoomed out (status bar)")
-                    })
+                // Hide status bar in focus mode for distraction-free writing
+                if !editorState.focusModeHidesStatusBar {
+                    StatusBar(editorState: editorState)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(themeManager.currentTheme.editorBackground)
+            .background(EscapeLadderHost(context: escapeLadder))
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("editor-area")
 
@@ -47,6 +40,7 @@ extension ContentView {
             // for show/hide instead -- see its `animateToggle`/`widthObserver` doc comments.
             AnnotationPanel(
                 editorState: editorState,
+                escapeLadder: escapeLadder,
                 onScrollToAnnotation: { index, _ in
                     editorState.scrollToAnnotationIndex = index
                 },
@@ -228,6 +222,13 @@ extension ContentView {
                     onWebViewReady: { webView in
                         findBarState.activeWebView = webView
                         structuralUndoController.activeWebView = webView
+                        escapeLadder.activeWebView = webView
+                        // A WebView swap (project switch, editor-mode toggle, zoom-mode content
+                        // reset) can happen mid-IME-composition, before the old WebView's own
+                        // `compositionend` ever fires -- without this reset, `isComposing` would
+                        // stay stuck `true` forever on this (longer-lived) context, making Esc a
+                        // total no-op for the rest of the window's life with no visible cause.
+                        escapeLadder.isComposing = false
                         restoreEditorFocus(webView)
                         // Sync current annotation display state - see annotationDisplayModesJSON's
                         // doc comment for why this fresh WebView wouldn't otherwise learn it.
@@ -250,7 +251,6 @@ extension ContentView {
                                         cursorBoundary: result.bibBoundaryIndex,
                                         cursorBoundaryEnd: result.bibBoundaryEndIndex,
                                         expectedBlocks: result.expectedBlocks,
-                                        managedBlockIds: result.managedBlockIds,
                                         zoomMode: editorState.zoomedSectionIds != nil)
                                     // Always sync editorState.content to DB-assembled markdown.
                                     // Without this, updateNSView sees editorState.content (e.g. 1748 chars)
@@ -334,6 +334,13 @@ extension ContentView {
                     onWebViewReady: { webView in
                         findBarState.activeWebView = webView
                         structuralUndoController.activeWebView = webView
+                        escapeLadder.activeWebView = webView
+                        // A WebView swap (project switch, editor-mode toggle, zoom-mode content
+                        // reset) can happen mid-IME-composition, before the old WebView's own
+                        // `compositionend` ever fires -- without this reset, `isComposing` would
+                        // stay stuck `true` forever on this (longer-lived) context, making Esc a
+                        // total no-op for the rest of the window's life with no visible cause.
+                        escapeLadder.isComposing = false
                         restoreEditorFocus(webView)
                         // Sync current annotation display state - see annotationDisplayModesJSON's
                         // doc comment for why this fresh WebView wouldn't otherwise learn it.

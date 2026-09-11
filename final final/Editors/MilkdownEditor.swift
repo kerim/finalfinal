@@ -71,6 +71,10 @@ private func registerMilkdownMessageHandlers(on controller: WKUserContentControl
     controller.add(coordinator, name: "structuralRedoRequested")
     controller.add(coordinator, name: "historyEdited")
     controller.add(coordinator, name: "structuralUndoRefused")
+    // Esc-ladder bridge (UX contract §6) -- see EscapeLadder.swift.
+    controller.add(coordinator, name: "escapeLadder")
+    controller.add(coordinator, name: "escapeComposition")
+    controller.add(coordinator, name: "escapeWebPopupOpen")
 }
 
 struct MilkdownEditor: NSViewRepresentable {
