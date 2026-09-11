@@ -28,6 +28,12 @@ enum DebugLog {
                          // from inside NSViewRepresentable.updateNSView (Milkdown/CodeMirror editors)
         case undo        // [UnifiedUndoService] unified chronological undo: routing decisions,
                           // refusals, degradations, barriers (docs/architecture/unified-undo.md)
+        case escape       // [Escape] [EscapeWatchdog] Esc-key layer-order ladder (UX contract §6,
+                           // EscapeLadder.swift): candidate dedup, watchdog arm/fire/resolve, and
+                           // the rung applied. Deliberately NOT added to `enabled` below -- it
+                           // exists so a future VM log capture can confirm a duplicate-monitor-
+                           // entry-per-press bug if it ever resurfaces, not to print on every Esc
+                           // in normal development use.
         case viewUpdates  // [ContentViewBody] [SidebarBody] [WordCountLabel] body-invocation counters
                           // for the sidebar re-render investigation (bt t-ef411da3), plus
                           // [ContentSyncObserved] marking each `.onChange(of: editorState.content)`

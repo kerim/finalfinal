@@ -9,6 +9,7 @@ import type { EditorView, NodeView as ProsemirrorNodeView } from '@milkdown/kit/
 import { $node, $prose, $remark } from '@milkdown/kit/utils';
 import type { Root } from 'mdast';
 import { visit } from 'unist-util-visit';
+import { postEscapeLadder } from '../../shared/escape-ladder';
 import {
   escapeAltAttr,
   extractAltAttrValue,
@@ -476,6 +477,20 @@ class FigureNodeView implements ProsemirrorNodeView {
     if (e.key === 'Enter') {
       e.preventDefault();
       this.captionEl?.blur();
+    } else if (e.key === 'Escape') {
+      // This handler calls stopPropagation() on every key below (to keep ProseMirror from
+      // handling them), which means Escape never reaches the shared Esc ladder's bubble-phase
+      // `document` listener -- report directly instead. Caption editing here has no separate
+      // edit/view mode to revert out of (a plain contentEditable div, always committing on
+      // blur), so "cancel" means reverting the text to the node's last-committed caption before
+      // blurring -- Esc must never save a change, matching the annotation/citation/math/link
+      // popups' own cancel behavior.
+      e.preventDefault();
+      if (this.captionEl) {
+        this.captionEl.textContent = this.node.attrs.caption || '';
+      }
+      this.captionEl?.blur();
+      postEscapeLadder(true);
     }
     // Prevent ProseMirror from handling these keys
     e.stopPropagation();

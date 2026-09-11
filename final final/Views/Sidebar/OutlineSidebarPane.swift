@@ -48,7 +48,8 @@ struct OutlineSidebarPane: View {
             if let zoomedSection = editorState.zoomedSection {
                 ZoomBreadcrumb(
                     zoomedSection: zoomedSection,
-                    onZoomOut: onZoomOutFromBreadcrumb
+                    onZoomOut: onZoomOutFromBreadcrumb,
+                    isZoomOutDisabled: editorState.contentState != .idle
                 )
                 Divider()
             }

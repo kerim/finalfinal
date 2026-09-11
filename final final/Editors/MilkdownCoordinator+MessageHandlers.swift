@@ -304,6 +304,23 @@ extension MilkdownEditor.Coordinator {
 
         DebugLog.log(.editor, "[MilkdownEditor] Initialize with content length: \(content.count) chars")
 
+        // t-784ff3aa fix round: UI-test-only artificial delay on the web layer's own
+        // Escape-report path (see `TestMode.uiTestingEscapeReportDelayMilliseconds`'s doc
+        // comment and `web/shared/escape-ladder.ts`'s `setTestEscapeReportDelayMs`) -- this is
+        // what `EscapeLadderE2ETests.swift`'s timing-independence proof test sets, to prove the
+        // native ladder never fires while a web-owned popup is genuinely open, no matter how
+        // slow the web layer's own report turns out to be. A no-op call (`?.()`, guarding
+        // against a build with a stale/pre-fix web bundle) whenever the flag is unset -- which
+        // is always true outside that one test.
+        let escapeReportDelayMs = TestMode.uiTestingEscapeReportDelayMilliseconds
+        if escapeReportDelayMs > 0 {
+            webView.evaluateJavaScript("window.FinalFinal.__testSetEscapeReportDelayMs?.(\(escapeReportDelayMs))") { _, error in
+                if let error {
+                    DebugLog.log(.editor, "[MilkdownEditor] __testSetEscapeReportDelayMs failed: \(error.localizedDescription)")
+                }
+            }
+        }
+
         // Pass JSON directly - JSON is valid JavaScript object literal syntax
         let script = "window.FinalFinal.initialize(\(jsonString))"
 

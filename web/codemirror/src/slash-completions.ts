@@ -4,6 +4,7 @@
 import { type EditorView, ViewPlugin, type ViewUpdate } from '@codemirror/view';
 import '../../shared/slash-menu.css';
 import { insertEquationDialog } from '../../shared/equation-dialog';
+import { recomputeAndPushWebPopupState } from '../../shared/escape-ladder';
 import { insertFootnoteReplacingRange, openCAYWPicker } from './api';
 import { setPendingSlashUndo } from './editor-state';
 
@@ -198,6 +199,20 @@ export const slashCommands: SlashCommand[] = [
 
 // === Custom slash menu ViewPlugin ===
 
+/** See `SlashMenuPlugin`'s constructor/destroy for how this is kept current. */
+let activeSlashMenuInstance: SlashMenuPlugin | null = null;
+
+/** Whether the slash-command menu is currently open with items to act on -- read by
+ * dismissTopLayer (codemirror/src/main.ts) as the innermost check in the Esc ladder. */
+export function isSlashMenuOpen(): boolean {
+  return activeSlashMenuInstance?.isOpenForLadder ?? false;
+}
+
+/** Dismisses the slash-command menu. Called from dismissTopLayer when `isSlashMenuOpen()`. */
+export function dismissSlashMenu(): void {
+  activeSlashMenuInstance?.dismissForLadder();
+}
+
 class SlashMenuPlugin {
   private menuEl: HTMLElement | null = null;
   private selectedIndex = 0;
@@ -210,6 +225,21 @@ class SlashMenuPlugin {
     slashLog('[SlashMenu] Plugin constructed');
     this.handleKeydown = this.handleKeydown.bind(this);
     document.addEventListener('keydown', this.handleKeydown, true);
+    // Module-level singleton reference for the shared Esc ladder's dismissTopLayer (UX
+    // contract §6) -- see `isSlashMenuOpen`/`dismissSlashMenu` below. In practice exactly one
+    // CodeMirror instance exists per WebView, mirroring Milkdown's own module-level
+    // slashMenuElement/slashProviderInstance singletons.
+    activeSlashMenuInstance = this;
+  }
+
+  /** Whether the menu is open with items to act on -- read by `isSlashMenuOpen()`. */
+  get isOpenForLadder(): boolean {
+    return this.isVisible && this.filteredCommands.length > 0;
+  }
+
+  /** Dismisses the menu -- called by `dismissSlashMenu()`. */
+  dismissForLadder(): void {
+    this.hide();
   }
 
   update(update: ViewUpdate) {
@@ -275,6 +305,9 @@ class SlashMenuPlugin {
       this.menuEl.remove();
       this.menuEl = null;
     }
+    if (activeSlashMenuInstance === this) {
+      activeSlashMenuInstance = null;
+    }
   }
 
   private ensureMenu(): HTMLElement {
@@ -296,6 +329,7 @@ class SlashMenuPlugin {
     const menu = this.ensureMenu();
     menu.setAttribute('data-show', 'true');
     this.isVisible = true;
+    recomputeAndPushWebPopupState(); // t-784ff3aa: push the moment this menu opens
   }
 
   private hide() {
@@ -305,6 +339,7 @@ class SlashMenuPlugin {
     this.isVisible = false;
     this.selectedIndex = 0;
     this.filteredCommands = [];
+    recomputeAndPushWebPopupState(); // t-784ff3aa: push the moment this menu closes
   }
 
   private renderItems() {
@@ -385,11 +420,12 @@ class SlashMenuPlugin {
       e.preventDefault();
       e.stopPropagation();
       this.executeCommand(this.selectedIndex);
-    } else if (e.key === 'Escape') {
-      e.preventDefault();
-      e.stopPropagation();
-      this.hide();
     }
+    // Escape is deliberately NOT handled here (moved to dismissSlashMenu, called from the
+    // shared Esc ladder's dismissTopLayer -- UX contract §6): this handler is a document-level
+    // CAPTURE listener, and preventDefault()+stopPropagation() here would stop the event from
+    // ever reaching the ladder's bubble-phase `document` listener, leaving Swift's watchdog
+    // with no report to resolve.
   }
 
   private scrollToSelected() {

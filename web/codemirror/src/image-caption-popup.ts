@@ -13,6 +13,7 @@
  */
 
 import type { EditorView } from '@codemirror/view';
+import { recomputeAndPushWebPopupState } from '../../shared/escape-ladder';
 import { escapeAltAttr } from '../../shared/image-caption-attrs';
 import { positionPopup } from '../../shared/position-popup';
 import { parseImageLine } from './image-line-parser';
@@ -191,6 +192,14 @@ function cancelEdit(): void {
   v?.focus();
 }
 
+/** Cancels the caption edit, discarding any in-progress change. Exported for dismissTopLayer,
+ * used alongside the already-exported `isImageCaptionPopupOpen` as a defense-in-depth
+ * fallback -- see milkdown/src/citation-edit-popup.ts's `isCitationEditPopupOpen` doc comment
+ * for why. */
+export function cancelImageCaptionEditFromLadder(): void {
+  cancelEdit();
+}
+
 // --- Public API ---
 
 export function showImageCaptionPopup(
@@ -216,6 +225,7 @@ export function showImageCaptionPopup(
 
   input.value = currentCaption;
   el.style.display = 'block';
+  recomputeAndPushWebPopupState(); // t-784ff3aa: push the moment this popup opens
 
   // Position below the clicked caption element
   positionPopup(el, rect);
@@ -253,6 +263,7 @@ export function dismissImageCaptionPopup(): void {
   editingView = null;
   editingImageLineNumber = null;
   editingCaptionLineNumber = null;
+  recomputeAndPushWebPopupState(); // t-784ff3aa: push the moment this popup closes
 }
 
 export function isImageCaptionPopupOpen(): boolean {

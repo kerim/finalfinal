@@ -5,7 +5,7 @@ import { commonmark } from '@milkdown/kit/preset/commonmark';
 import { gfm } from '@milkdown/kit/preset/gfm';
 import { undoDepth } from '@milkdown/kit/prose/history';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { confirmBlockIdsApi, setContentWithBlockIds, syncBlockIds } from '../api-content';
+import { confirmBlockIdsApi, setContent, setContentWithBlockIds, syncBlockIds } from '../api-content';
 import { blockIdPlugin, getAllBlockIds, resetBlockIdState, setBlockIdZoomMode } from '../block-id-plugin';
 import { blockSyncPlugin, resetBlockSyncState, setSyncPaused } from '../block-sync-plugin';
 import { setEditorInstance } from '../editor-state';
@@ -148,5 +148,46 @@ describe('data-block-id decoration stays in sync with the block-ID map', () => {
 
     expect(mapIds()).toEqual(['sync-heading-id', 'sync-body-id']);
     expect(domIds(view)).toEqual(['sync-heading-id', 'sync-body-id']);
+  });
+
+  // Must-fix G (review-fix round): proves the `data-managed` mechanism itself -- applied on a
+  // managed push, REMOVED on a later push that no longer flags the same block as managed. This
+  // is the test that would have caught must-fix B: setContent() (a plain, non-block-id push)
+  // used to leave block-id-plugin's managedBlockIds set untouched, so a `data-managed` flag
+  // minted by an earlier setContentWithBlockIds() push could survive stale onto content
+  // setContent() itself never flagged as managed. See setContent()'s and applyBlocks()'s own
+  // setManagedBlockIds([]) calls (api-content.ts) and setManagedBlockIds's doc comment
+  // (block-id-plugin.ts).
+  it('data-managed is applied on a managed push and cleared by a later plain setContent() push', async () => {
+    const ed = await makeEditor('Placeholder.');
+    setEditorInstance(ed);
+    const view = ed.ctx.get(editorViewCtx);
+
+    const isManaged = (id: string): boolean =>
+      view.dom.querySelector(`[data-block-id="${id}"]`)?.hasAttribute('data-managed') ?? false;
+
+    vi.useFakeTimers();
+    try {
+      // Authoritative push: Swift flags the heading (but not the body) as managed.
+      setContentWithBlockIds('# Bibliography\n\nRef A.', ['bib-id', 'body-id'], {
+        managedBlockIds: ['bib-id'],
+      });
+      expect(isManaged('bib-id')).toBe(true);
+      expect(isManaged('body-id')).toBe(false);
+
+      // A later plain, non-block-id push (the MilkdownEditor.setContent -> api-content.setContent
+      // path every content-binding change short of a full block-id push goes through) reclaims
+      // the SAME heading id via ordinary position/type matching -- the heading text is
+      // unchanged, only the body differs, so block count and structure are unchanged and
+      // block-id-plugin's phase1CanClaim reattaches 'bib-id' to the same heading node -- but
+      // this push carries no managed-id information of its own. `data-managed` must not survive
+      // stale on that id.
+      setContent('# Bibliography\n\nRef B.');
+      expect(isManaged('bib-id')).toBe(false);
+
+      await vi.runOnlyPendingTimersAsync();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

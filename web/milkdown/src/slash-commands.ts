@@ -6,6 +6,7 @@ import { redo, undo } from '@milkdown/kit/prose/history';
 import type { Node } from '@milkdown/kit/prose/model';
 import { Selection } from '@milkdown/kit/prose/state';
 import { SlashProvider, slashFactory } from '@milkdown/plugin-slash';
+import { recomputeAndPushWebPopupState } from '../../shared/escape-ladder';
 import { showAnnotationEditPopup } from './annotation-edit-popup';
 import type { AnnotationAttrs } from './annotation-plugin';
 import { type AnnotationType, annotationNode } from './annotation-plugin';
@@ -129,6 +130,13 @@ function updateSlashMenu(filter: string) {
     if (insideTable && cmd.disabledInsideTable) return false;
     return true;
   });
+  // t-784ff3aa fix round: no recompute call here -- see `configureSlash`'s `onShow`/`onHide`
+  // hooks' doc comment for why a push from inside this function always raced the menu
+  // element's own `data-show` flip (which happens later, back in `SlashProvider`'s internal
+  // `#onUpdate`, after `shouldShow` -- and this function is only ever called from
+  // `shouldShow` -- returns). `filteredCommands` above is what `shouldShow`'s own return
+  // value (and therefore the subsequent `.show()`/`.hide()` call that fires the correct hook)
+  // is based on, so the two hooks always run after this function returns, never before.
 
   if (filteredCommands.length === 0) {
     const noResults = document.createElement('div');
@@ -300,6 +308,9 @@ function executeSlashCommand(index: number) {
         slashProviderInstance.hide();
       }
       filteredCommands = [];
+      // t-784ff3aa: no recompute call here -- `slashProviderInstance.hide()` above always
+      // fires the `onHide` hook registered in `configureSlash`, which pushes the closed state
+      // at the exact moment `data-show` flips. See that hook's doc comment.
       requestAnimationFrame(() => {
         suppressSlashMenu = false;
       });
@@ -316,6 +327,9 @@ function executeSlashCommand(index: number) {
       // Hide menu and return early — table insert is not undoable via slash undo
       if (slashProviderInstance) slashProviderInstance.hide();
       filteredCommands = [];
+      // t-784ff3aa: no recompute call here -- `slashProviderInstance.hide()` above always
+      // fires the `onHide` hook registered in `configureSlash`, which pushes the closed state
+      // at the exact moment `data-show` flips. See that hook's doc comment.
       requestAnimationFrame(() => {
         suppressSlashMenu = false;
       });
@@ -328,6 +342,9 @@ function executeSlashCommand(index: number) {
       // Hide menu and return early — equation dialog is async, not undoable via slash undo
       if (slashProviderInstance) slashProviderInstance.hide();
       filteredCommands = [];
+      // t-784ff3aa: no recompute call here -- `slashProviderInstance.hide()` above always
+      // fires the `onHide` hook registered in `configureSlash`, which pushes the closed state
+      // at the exact moment `data-show` flips. See that hook's doc comment.
       requestAnimationFrame(() => {
         suppressSlashMenu = false;
       });
@@ -349,6 +366,9 @@ function executeSlashCommand(index: number) {
         slashProviderInstance.hide();
       }
       filteredCommands = [];
+      // t-784ff3aa: no recompute call here -- `slashProviderInstance.hide()` above always
+      // fires the `onHide` hook registered in `configureSlash`, which pushes the closed state
+      // at the exact moment `data-show` flips. See that hook's doc comment.
       // Re-enable slash menu after picker closes (handled by callback)
       requestAnimationFrame(() => {
         suppressSlashMenu = false;
@@ -365,6 +385,9 @@ function executeSlashCommand(index: number) {
         slashProviderInstance.hide();
       }
       filteredCommands = [];
+      // t-784ff3aa: no recompute call here -- `slashProviderInstance.hide()` above always
+      // fires the `onHide` hook registered in `configureSlash`, which pushes the closed state
+      // at the exact moment `data-show` flips. See that hook's doc comment.
       requestAnimationFrame(() => {
         suppressSlashMenu = false;
       });
@@ -384,6 +407,8 @@ function executeSlashCommand(index: number) {
     slashProviderInstance.hide();
   }
   filteredCommands = [];
+  // t-784ff3aa: no recompute call here either -- see the early-return branches above for why
+  // `slashProviderInstance.hide()`'s own `onHide` hook already covers this.
 
   // Re-enable slash menu after transaction settles
   requestAnimationFrame(() => {
@@ -553,13 +578,53 @@ function handleSlashKeydown(e: KeyboardEvent): boolean {
     executeSlashCommand(selectedIndex);
     return true;
   }
-  if (e.key === 'Escape') {
-    e.preventDefault();
-    e.stopPropagation();
-    slashProviderInstance.hide();
-    return true;
-  }
+  // Escape is deliberately NOT handled here (moved to dismissSlashMenu, called from the shared
+  // Esc ladder's dismissTopLayer -- UX contract §6): this function is a document-level CAPTURE
+  // listener, and preventDefault()+stopPropagation() here would stop the event from ever
+  // reaching the ladder's bubble-phase `document` listener, leaving Swift's watchdog with no
+  // report to resolve.
   return false;
+}
+
+/** Whether the slash-command menu is currently open with items to act on -- read by
+ * dismissTopLayer (each editor's main.ts) as the innermost check in the Esc ladder. */
+export function isSlashMenuOpen(): boolean {
+  return (
+    !!slashMenuElement &&
+    !!slashProviderInstance &&
+    slashMenuElement.getAttribute('data-show') !== 'false' &&
+    filteredCommands.length > 0
+  );
+}
+
+/** Dismisses the slash-command menu. Called from dismissTopLayer when `isSlashMenuOpen()`.
+ *
+ * Unlike every other way of leaving the menu (picking a command, via `executeSlashCommand`),
+ * this used to only hide the popup UI and leave the "/" (and any filter text typed after it)
+ * in the document. Fixed to delete that trigger range too, using the same
+ * `computeSlashCmdStart` + `tr.delete(cmdStart, from)` pattern `executeSlashCommand` already
+ * establishes -- a pure cancel, so nothing is inserted in its place. */
+export function dismissSlashMenu(): void {
+  const editorInstance = getEditorInstance();
+  const view = editorInstance?.ctx.get(editorViewCtx);
+
+  if (view) {
+    const { from } = view.state.selection;
+    const cmdStart = computeSlashCmdStart(view.state.doc, from);
+    if (cmdStart >= 0) {
+      view.dispatch(view.state.tr.delete(cmdStart, from));
+    }
+  }
+
+  slashProviderInstance?.hide();
+  // Matches every other hide site in this file (executeSlashCommand's several early returns):
+  // `isSlashMenuOpen()` checks both `data-show` and `filteredCommands.length`, so leaving this
+  // non-empty here would leave `isSlashMenuOpen()` still reporting true after an Esc dismissal,
+  // which is now load-bearing for the Swift bridge as well as this file's own internal checks.
+  filteredCommands = [];
+  // t-784ff3aa: no recompute call here -- `.hide()` above's own `onHide` hook (registered in
+  // `configureSlash`) already pushes the closed state synchronously, at the exact point
+  // `data-show` flips, which is this very call (not some later transaction).
 }
 
 // === Slash plugin setup ===
@@ -597,6 +662,36 @@ export function configureSlash(ctx: Ctx) {
     },
     offset: 8,
   });
+
+  // t-784ff3aa fix round, bug found in the FIX round's own re-verification: `SlashProvider`
+  // (@milkdown/plugin-slash) debounces its internal update by 200ms by default (no `debounce`
+  // option is passed above) -- `slashProviderInstance.update()` merely (re)schedules that
+  // debounced call; it does NOT synchronously run `shouldShow`/`updateSlashMenu` or flip the
+  // menu element's `data-show` attribute. A `recomputeAndPushWebPopupState()` call placed
+  // right after `slashProviderInstance.update()` (as this code briefly did) or inside
+  // `updateSlashMenu` itself therefore always reads STALE `data-show` -- `.show()`/`.hide()`
+  // (which is what actually flips it) run strictly AFTER `shouldShow` returns, on the SAME
+  // debounced firing, with nothing re-running the recompute afterward. Net effect: the very
+  // first time the menu opens, `ctx.webPopupOpen` could get stuck `false` forever (until some
+  // later, unrelated transaction happened to recompute it again) even while the menu was
+  // genuinely visible on screen -- exactly the state Swift's `handleEscapeCandidate` treats as
+  // "nothing web-owned is open," making it apply the native ladder immediately instead of
+  // leaving Escape for the web layer.
+  //
+  // `SlashProvider` exposes `onShow`/`onHide` (public instance callbacks, default no-op) for
+  // precisely this: they run synchronously from inside `this.show()`/`this.hide()`, i.e. the
+  // exact moment `data-show` changes, regardless of whether that call was triggered by the
+  // library's own debounced internal update OR by this file's own direct `.hide()` calls
+  // (`executeSlashCommand`'s early returns, `dismissSlashMenu`) -- one hook covers every site
+  // that can change visibility, with no staleness window. Recompute calls that used to be
+  // scattered after each of those `.hide()` calls, and the one inside `updateSlashMenu`, are
+  // removed below in favor of these two hooks being the single source of truth.
+  slashProviderInstance.onShow = () => {
+    recomputeAndPushWebPopupState();
+  };
+  slashProviderInstance.onHide = () => {
+    recomputeAndPushWebPopupState();
+  };
 
   ctx.set(slash.key, {
     view: () => ({
