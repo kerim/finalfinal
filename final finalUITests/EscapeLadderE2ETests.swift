@@ -108,6 +108,16 @@ final class EscapeLadderE2ETests: XCTestCase {
     }
 
     override func tearDownWithError() throws {
+        // Several tests in this class deliberately end in Focus Mode (real native full
+        // screen), and `continueAfterFailure = false` means a failing test can abort
+        // mid-full-screen too -- left uncleaned, the polluted full-screen/menu-bar-hidden
+        // state contaminates every later test in the same shard that needs the menu bar
+        // (confirmed: LaunchSmokeTests/testPrintMenuItemsExist, all three PrintE2ETests
+        // tests, ProjectOpenErrorE2ETests/testOpenRecentOnDeletedProjectShowsErrorSheetWhileAppRunning,
+        // and very likely FirstProjectOpenBlankMarginsE2ETests/testFirstOpenIsBlankThenWrongMarginsThenReopenIsCorrect).
+        // Must run before terminate() -- once the process is gone there's nothing left to
+        // exit full screen on.
+        exitFullScreenIfNeeded()
         app.terminate()
         TestFixtureHelper.cleanupFixture()
     }
@@ -862,6 +872,37 @@ final class EscapeLadderE2ETests: XCTestCase {
         app.typeKey(.downArrow, modifierFlags: .command)
         app.typeKey(.return, modifierFlags: [])
         app.activateAndWaitForForeground()
+
+        // Verify the click above actually claimed keyboard focus before relying on
+        // `typeTextVerifyingLanded`'s own retry loop -- that helper only retries when
+        // something resembling the target text landed (exact OR partial-prefix); if focus
+        // never landed at all, NOTHING appears, which makes it fail loud on its very first
+        // attempt instead of getting the retries it was designed for (confirmed live: 1/1
+        // failed here). Type one throwaway probe character and confirm it lands; if not,
+        // retry the click itself (not just the typing) up to 3 times.
+        var focusConfirmed = false
+        for attempt in 1...3 {
+            let probe = "FocusProbe\(attempt)"
+            app.typeText(probe)
+            if app.editorContainsText(probe, timeout: 3) {
+                focusConfirmed = true
+                // Clear the probe text via the same current-line clear
+                // `typeTextVerifyingLanded` uses, so the caret is left on its own,
+                // otherwise-empty line -- that method's own documented precondition.
+                app.typeKey(.leftArrow, modifierFlags: .command)
+                app.typeKey(.rightArrow, modifierFlags: [.command, .shift])
+                app.typeKey(.delete, modifierFlags: [])
+                break
+            }
+            if attempt < 3 {
+                clickIntoEditor()
+                app.typeKey(.downArrow, modifierFlags: .command)
+                app.typeKey(.return, modifierFlags: [])
+                app.activateAndWaitForForeground()
+            }
+        }
+        XCTAssertTrue(focusConfirmed, "Click into the editor should claim keyboard focus within 3 attempts")
+
         let settleMarker = "FindBarSettleMarker"
         app.typeTextVerifyingLanded(settleMarker)
 
@@ -1095,26 +1136,44 @@ final class EscapeLadderE2ETests: XCTestCase {
         // `searchField.waitForExistenceOrFail(...)` genuinely polls -- incidentally giving the
         // full-screen transition's layout reflow several extra seconds to settle before the click
         // lands. This test deliberately has no find bar (to match the user's real repro, see
-        // comment below), so it loses that incidental cushion. enterFocusModeAndWait()'s own doc
-        // comment already admits its flat 1.0s post-transition sleep is a guess ("nothing
-        // observable distinguishes 'still transitioning' from 'settled'") -- without the find
-        // bar's extra wait, the click below can land mid-reflow and the slash menu never opens.
-        // Test-local extra settle time closes that gap; enterFocusModeAndWait() itself and every
-        // other test stay untouched.
-        // e2e-lint: allow sleep -- no AX signal distinguishes "full-screen reflow settled" from
-        // "still transitioning"; see comment above.
-        Thread.sleep(forTimeInterval: 2.0)
+        // comment below), so it loses that incidental cushion. A flat 2.0s sleep here never
+        // passed (3/3 runs failed) -- replaced with a real settle gate: poll until the window's
+        // native full-screen geometry reads true AND is stable across two reads ~250ms apart
+        // (`waitForFullScreenReflowSettled` above -- the reflow has genuinely finished, not
+        // merely "reads full-screen-sized for one instant mid-transition"), then re-confirm the
+        // editor's own seeded content is still live before clicking into it.
+        // enterFocusModeAndWait() itself and every other test stay untouched.
+        waitForFullScreenReflowSettled(timeout: 10)
+        XCTAssertTrue(
+            app.editorContainsText(bodyText, timeout: 10),
+            "Seeded paragraph should still be rendered and live once the full-screen reflow has settled"
+        )
 
         // Click into the editor and open the slash menu (web layer) -- deliberately NO find bar
         // here, unlike the item-6/6b combo tests above, to match the user's actual repro as
         // closely as possible (this bug reproduced with the slash menu as the only other layer
-        // open).
-        clickIntoEditor()
-        app.typeKey(.downArrow, modifierFlags: .command)
-        app.typeKey(.return, modifierFlags: [])
-        app.activateAndWaitForForeground()
-        app.typeText("/")
-        XCTAssertTrue(app.editorContainsText("Insert task annotation", timeout: 10), "Slash menu should open with its command list")
+        // open). Bounded retry (up to 3 attempts, mirroring this suite's other keystroke-retry
+        // helpers -- e.g. `typeTextVerifyingLanded`, `toggleWysiwygToSource`): if the trigger
+        // doesn't land, press Esc to clear any partial "/" state and re-click before trying
+        // again, rather than failing on the very first miss.
+        var slashMenuOpened = false
+        for attempt in 1...3 {
+            clickIntoEditor()
+            app.typeKey(.downArrow, modifierFlags: .command)
+            app.typeKey(.return, modifierFlags: [])
+            app.activateAndWaitForForeground()
+            app.typeText("/")
+            if app.editorContainsText("Insert task annotation", timeout: 10) {
+                slashMenuOpened = true
+                break
+            }
+            if attempt < 3 {
+                app.activateAndWaitForForeground()
+                app.typeKey(.escape, modifierFlags: [])
+                Thread.sleep(forTimeInterval: 0.5)
+            }
+        }
+        XCTAssertTrue(slashMenuOpened, "Slash menu should open with its command list within 3 attempts")
 
         // The one Esc press under test -- matches the user's exact repro.
         app.activateAndWaitForForeground()
@@ -1300,5 +1359,55 @@ extension EscapeLadderE2ETests {
         let windowFrame = app.windows.firstMatch.frame
         return abs(windowFrame.width - screenFrame.width) <= tolerance
             && abs(windowFrame.height - screenFrame.height) <= tolerance
+    }
+
+    /// Polls until the main window's native full-screen geometry (`isMainWindowNativeFullScreen()`)
+    /// reads true AND is stable across two reads ~250ms apart -- i.e. the full-screen
+    /// transition's own layout reflow has genuinely finished, not merely "reads
+    /// full-screen-sized for one instant mid-transition". Deadline ~10s. Best-effort: returns
+    /// whether it settled before the deadline, but callers should still assert their own
+    /// preconditions afterward rather than trust this alone.
+    @discardableResult
+    func waitForFullScreenReflowSettled(timeout: TimeInterval = 10) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            guard isMainWindowNativeFullScreen() else {
+                Thread.sleep(forTimeInterval: 0.25)
+                continue
+            }
+            let firstFrame = app.windows.firstMatch.frame
+            Thread.sleep(forTimeInterval: 0.25)
+            guard isMainWindowNativeFullScreen() else { continue }
+            let secondFrame = app.windows.firstMatch.frame
+            if firstFrame == secondFrame {
+                return true
+            }
+        }
+        return false
+    }
+
+    /// Best-effort teardown cleanup (see `tearDownWithError()` above): if the main window is
+    /// still in genuine native full screen -- whether this test intentionally left it that way
+    /// or aborted mid-Focus-Mode after a failure -- exit via the same Focus Mode toggle
+    /// shortcut (⇧⌘F) every other helper in this file uses, then poll
+    /// `isMainWindowNativeFullScreen()` until it clears or ~10s elapses.
+    ///
+    /// Deliberately never XCTFails and never calls `activateAndWaitForForeground()` (which
+    /// does): a failure in cleanup must not mask -- or get reported instead of -- the test's
+    /// own real failure, which is exactly what tearDown exists to preserve here. If activation
+    /// or the toggle doesn't take, this just falls through to termination below with full
+    /// screen still on; the NEXT test's own launch (a fresh window) still starts clean of this
+    /// one's content, and only the coarser menu-bar-visibility contamination this fix targets
+    /// would persist in that unlikely case.
+    func exitFullScreenIfNeeded() {
+        guard isMainWindowNativeFullScreen() else { return }
+        app.activate()
+        _ = app.wait(for: .runningForeground, timeout: 5)
+        app.typeKey("f", modifierFlags: [.command, .shift])
+        let deadline = Date().addingTimeInterval(10)
+        while Date() < deadline {
+            if !isMainWindowNativeFullScreen() { break }
+            Thread.sleep(forTimeInterval: 0.25)
+        }
     }
 }

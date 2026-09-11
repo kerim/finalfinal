@@ -80,6 +80,12 @@ extension EditorViewState {
     /// Request editor mode toggle - posts notification for current editor to save cursor first.
     /// Gates on debounce interval and blocks during data-sensitive transitions.
     func requestEditorModeToggle() {
+        // Diagnostic (bug-fix round, ship-fix/fullsuite-round2): records that the request
+        // reached this handler at all, plus the two values that decide whether either guard
+        // below rejects it -- so a future regression (e.g. a click silently swallowed before it
+        // ever reaches here) is distinguishable in the log from a guard genuinely rejecting a
+        // request that did arrive.
+        DebugLog.log(.editor, "[EditorModeToggle] requestEditorModeToggle called: canToggle=\(canToggleEditorMode) contentState=\(contentState)")
         guard canToggleEditorMode else { return }
         // Don't start the save chain during data-sensitive transitions. .structuralUndo
         // added in the Phase 3 review round: a mode toggle mid-sequence would reassign the

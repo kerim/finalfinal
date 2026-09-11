@@ -81,37 +81,24 @@ struct StatusBar: View {
                 } label: {
                     HStack(spacing: Spacing.s4) {
                         ZStack {
-                            // Hidden sizer: all titles overlap, ZStack gets width of widest.
-                            // Must-fix A (review-fix round): also measures each title's
-                            // "Zoomed: " variant -- the visible zoomed text (centerIndicatorLabel)
-                            // is longer than the plain title -- so the pill's width stays stable
-                            // across zoom in/out instead of visibly growing on zoom-in.
-                            //
-                            // Bug-fix round (post-acceptance): must measure against
-                            // `editorState.sections` (the whole document), never
-                            // `editorState.outlineSections` -- the latter is zoom-filtered to just
-                            // the zoomed subtree (EditorViewState+Sections.swift), so the moment
-                            // the user zooms in, the candidate set collapses to a smaller set of
-                            // (typically shorter) titles at the exact same moment the visible
-                            // label grows by the "Zoomed: " prefix -- the pill would shrink and
-                            // its own label would truncate. Measuring the unfiltered list keeps
-                            // the widest-title candidate (and the widest "Zoomed: " variant)
-                            // available regardless of zoom state, so the sizer's ideal width is
-                            // constant across zoom in/out rather than jumping.
-                            ZStack {
-                                ForEach(editorState.sections) { section in
-                                    Text(section.title.isEmpty ? "Untitled" : section.title)
-                                        .font(.caption)
-                                        .lineLimit(1)
-                                }
-                                ForEach(editorState.sections) { section in
-                                    Text("Zoomed: \(section.title.isEmpty ? "Untitled" : section.title)")
-                                        .font(.caption)
-                                        .lineLimit(1)
-                                }
-                            }
-                            .hidden()
-                            .accessibilityHidden(true)
+                            // Hidden sizer, isolated into its own `CenterIndicatorSizer` subview
+                            // (bug-fix round, ship-fix/fullsuite-round2): `editorState.sections`
+                            // churns right when `requestEditorModeToggle()`/mode switching
+                            // remounts the editor, and reading it directly here would make it a
+                            // dependency of THIS view's -- i.e. all of `StatusBar`'s, including
+                            // the `status-bar-editor-mode` mode-badge Button below in the same
+                            // body -- Observation tracking, not just of this small sizer.
+                            // Swift's Observation invalidates and re-runs the WHOLE view whose
+                            // body read a changed property, not just the expression that read
+                            // it; a SwiftUI re-render landing between that Button's mouse-down
+                            // and mouse-up (its `.buttonStyle(.plain)`) can silently cancel the
+                            // click -- confirmed as the regression behind
+                            // EditorModeSwitchUndoE2ETests.testUndoAfterWysiwygToSourceViaStatusBarBadge
+                            // (three straight passes, then three straight fails once this sizer
+                            // was added). Passing `editorState` itself down (not the extracted
+                            // `.sections` array) means only `CenterIndicatorSizer.body` -- not
+                            // this one -- subscribes to `.sections` changes.
+                            CenterIndicatorSizer(editorState: editorState)
                             // Visible current title -- "Zoomed: <heading>" while zoomed.
                             Text(centerIndicatorLabel)
                                 .font(.caption)
@@ -218,6 +205,10 @@ struct StatusBar: View {
                     .cornerRadius(4)
             }
             .buttonStyle(.plain)
+            // Stable identity for this Button independent of any dynamic content elsewhere in
+            // the status bar (bug-fix round, ship-fix/fullsuite-round2) -- belt-and-braces
+            // alongside the `CenterIndicatorSizer` extraction above.
+            .id("status-bar-editor-mode-badge")
             // Plain `.help(...)` inherits AppKit's system-wide help-tag delay (~1-1.5s,
             // not configurable per-view in SwiftUI), which read as sluggish for this
             // frequently-hovered badge. Custom onHover + delayed overlay instead, same
@@ -466,6 +457,42 @@ struct StatusBar: View {
             return "\(total)/\(goal) words"
         }
         return "\(total) words"
+    }
+}
+
+/// Hidden width-measurement sizer for the merged center section indicator (see `StatusBar.body`'s
+/// own doc comment where this is used). Extracted into its own `View` so `editorState.sections`
+/// is an Observation dependency of ONLY this small subview's `body`, not of the whole `StatusBar`
+/// view -- see the call site's doc comment for the full regression this isolates.
+///
+/// All titles overlap in the `ZStack`, which gets the width of the widest. Also measures each
+/// title's "Zoomed: " variant -- the visible zoomed text (`centerIndicatorLabel`) is longer than
+/// the plain title -- so the pill's width stays stable across zoom in/out instead of visibly
+/// growing on zoom-in. Measures against `editorState.sections` (the whole document), never
+/// `editorState.outlineSections` -- the latter is zoom-filtered to just the zoomed subtree
+/// (`EditorViewState+Sections.swift`), so the moment the user zooms in, the candidate set would
+/// collapse to a smaller set of (typically shorter) titles at the exact same moment the visible
+/// label grows by the "Zoomed: " prefix, shrinking the pill and truncating its own label.
+/// Measuring the unfiltered list keeps the widest-title candidate (and the widest "Zoomed: "
+/// variant) available regardless of zoom state.
+private struct CenterIndicatorSizer: View {
+    let editorState: EditorViewState
+
+    var body: some View {
+        ZStack {
+            ForEach(editorState.sections) { section in
+                Text(section.title.isEmpty ? "Untitled" : section.title)
+                    .font(.caption)
+                    .lineLimit(1)
+            }
+            ForEach(editorState.sections) { section in
+                Text("Zoomed: \(section.title.isEmpty ? "Untitled" : section.title)")
+                    .font(.caption)
+                    .lineLimit(1)
+            }
+        }
+        .hidden()
+        .accessibilityHidden(true)
     }
 }
 

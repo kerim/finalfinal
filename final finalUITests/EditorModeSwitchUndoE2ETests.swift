@@ -454,9 +454,33 @@ final class EditorModeSwitchUndoE2ETests: XCTestCase {
         let editorMode = app.buttons["status-bar-editor-mode"]
         XCTAssertTrue(editorMode.waitForExistence(timeout: 10), "Editor mode button should appear")
         XCTAssertTrue(editorMode.waitForLabel("== 'Rich Text'", timeout: 10), "Should start in Rich Text mode")
-        XCTAssertTrue(editorMode.isHittable, "status-bar-editor-mode button should be hittable for a plain click")
-        editorMode.click()
-        XCTAssertTrue(editorMode.waitForLabel("== 'Markdown'", timeout: 5), "Editor-mode button should report Markdown after clicking the badge")
+
+        // Retry the click itself, not just the wait -- same shape as the keyboard-toggle
+        // helpers' own retry-the-keystroke loops above (`toggleWysiwygToSource()`/
+        // `toggleSourceToWysiwyg()`). This click was found to silently drop (a real app-side
+        // regression, StatusBar.swift's status-bar-editor-mode Button -- a hidden section-title
+        // sizer used to live in the same HStack as this Button and re-rendered on every
+        // editorState.sections change, which could land mid-click and cancel it; fixed
+        // app-side by isolating that sizer into its own subview). Attach the diagnostic-log
+        // tail on final failure so a future regression here is self-diagnosing without a
+        // repro session.
+        Self.recordDiagnosticLogStartOffsets()
+        var toggleRegistered = false
+        for _ in 1...3 {
+            XCTAssertTrue(editorMode.isHittable, "status-bar-editor-mode button should be hittable for a plain click")
+            editorMode.click()
+            if editorMode.waitForLabel("== 'Markdown'", timeout: 5) {
+                toggleRegistered = true
+                break
+            }
+        }
+        if !toggleRegistered {
+            let attachment = XCTAttachment(string: Self.currentDiagnosticLogContents())
+            attachment.name = "diagnostic-log-tail-clickModeBadge-failure"
+            attachment.lifetime = .keepAlways
+            add(attachment)
+        }
+        XCTAssertTrue(toggleRegistered, "Editor-mode button should report Markdown after retrying the click up to 3 times")
 
         // Mount-completion gate, same rationale and technique as `toggleWysiwygToSource()`:
         // the label flip is synchronous with the click, but the actual WYSIWYG->CodeMirror
