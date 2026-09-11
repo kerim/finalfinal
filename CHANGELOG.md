@@ -6,6 +6,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.133] - 2026-09-11
+
+### Added
+
+- **Confirmations for things like exporting, saving a version, or generating a diagnostic report now appear as a brief message that fades on its own**, instead of a popup you had to click to dismiss.
+- **Deleting a saved preset, clearing your recent-projects list, or resetting a Preferences pane back to its defaults now asks you to confirm first**, since none of those can be undone.
+- **You can now delete a single comment, task marker, or reference note directly** — from its right-click menu, its popup, or its card in the side panel. Like everything else in the document, this can be undone with ⌘Z. Deleting a Document Note no longer warns that it "cannot be undone," since it now can be.
+- **Exporting or printing (Word, PDF, ODT, Markdown, or Print) now shows a brief on-screen message while it's working**, and the menu item you used is temporarily grayed out so you can't start the same export twice by accident. The message updates to "Exported. Show in Finder." when it's done.
+- **Hovering over a heading with ⌘ held down now shows a small hint that Cmd-clicking will zoom into that section**, and a button to zoom back out is now always visible at the bottom of the window while you're zoomed in. The hint is correctly left off the Bibliography and Notes headings, which can't be zoomed into.
+- **A few problems that used to happen silently now tell you about them**: if an automatic version save fails, you'll see a warning with a link to more detail; if dragging a section to reorder it doesn't go through, you'll see a message (and, on rare occasions where the undo step for it is lost, a clearer alert); and opening a project with a small, non-blocking data inconsistency now shows a one-time notice instead of staying quiet about it.
+- **The Citation and Footnote toolbar buttons now use standard icon glyphs instead of custom text symbols**, and every toolbar button now looks and behaves consistently.
+- **Toolbar buttons' tooltips now spell their keyboard shortcuts the way macOS does**, and the Annotations-panel toggle button, which had no tooltip at all, now has one.
+- **The project picker now shows a "No recent projects" message when you have none**, instead of an empty space.
+
+### Fixed
+
+- **Showing or hiding the Outline and side-notes panels now behaves consistently between the two** — same animation, and each remembers its width the way you left it, across app relaunches too. Fixes a bug where the side-notes panel could be dragged open even while it was supposed to be hidden.
+- **Pressing Esc to close the slash-command menu while in Focus Mode no longer also exits Focus Mode** — previously both happened on the same keypress. Fixes two things this same bug could cause: Focus Mode's on/off state getting out of sync (so the next toggle did the opposite of what you expected), and the side-notes panel failing to hide when entering Focus Mode. Also, canceling the slash-command menu with Esc now removes the "/" you typed to open it, matching every other way of closing that menu.
+- **The Find bar's Replace-toggle tooltip appears much faster now**, and is positioned correctly. Also fixes a bug where pressing ⌘F while Replace was already showing would close Replace instead of just refocusing Find.
+- **Wording throughout the app is now more consistent** — for example, "Rich Text" and "Markdown" are used instead of "WYSIWYG" and "Source," and "citations" instead of "refs." Fixes a bug where part of the explanation text in the Version History restore-confirmation dialog was silently never showing up. Also fixes the editor-mode indicator's tooltip in the status bar, which used to take over a second to appear — it now appears almost instantly.
+- **The app window could jump to the front on its own** — a background retry, such as a citation lookup, could pull the window forward even though nothing needed your attention — fixed.
+- **The little outline arrow in the status bar was nearly invisible** — it's bigger and easier to see now.
+- **Generating a diagnostic report could hang for a long time before producing anything** — fixed.
+
 ## [0.2.132] - 2026-09-06
 
 ### Fixed
