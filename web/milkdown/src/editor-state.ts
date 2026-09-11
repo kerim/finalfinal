@@ -36,6 +36,12 @@ export interface PendingBlockContent {
     cursorBoundaryEnd?: number;
     detectPausedEdits?: boolean;
     expected?: ExpectedBlockMeta[];
+    // Must-fix I (review-fix round): matches setContentWithBlockIds's own options type
+    // (api-content.ts) -- the stash below carries whatever `options` object the caller passed
+    // in verbatim (including this field, when present), so the type must list it too or it
+    // silently drifts out of sync with what actually replays through main.ts's
+    // replayPendingPreMountContent().
+    managedBlockIds?: string[];
     zoomMode?: boolean;
     scrollToBlockId?: string;
   };

@@ -81,6 +81,41 @@ let currentBlockIds: Map<number, string> = new Map();
 let currentBlockTypes: Map<number, string> = new Map();
 const pendingConfirmations: Map<string, string> = new Map();
 
+// Block ids Swift has flagged as "managed" (auto-generated Bibliography/Notes headings and
+// their body content — see Block.swift's isBibliography/isNotes). Driven wholesale by
+// setManagedBlockIds() from api-content.ts's setContentWithBlockIds() on every content push,
+// mirroring how currentBlockIds itself is wholesale-replaced via clearBlockIds() +
+// setBlockIdsForTopLevel() on each push -- never mutated incrementally. Consumed by this
+// plugin's own decorations() prop below to stamp `data-managed` onto managed block nodes, which
+// styles.css's ⌘-hover hint selector then excludes via `:not([data-managed])` -- the WYSIWYG
+// replacement for the earlier `.auto-bib-marker` sibling-combinator exclusion
+// (`.auto-bib-marker + h1[data-block-id]:hover` etc.). That old rule WAS reachable here --
+// bibliography-plugin.ts's `auto_bibliography` atom node (`toDOM`: `div.auto-bib-marker`) renders
+// as the Bibliography heading's immediately-preceding DOM sibling on this exact WYSIWYG path
+// (BlockParser+Assembly.swift excludes it from the id-array walk specifically so it reaches
+// here) -- it was replaced not because it was unreachable, but because it could only ever cover
+// Bibliography (Notes headings have no equivalent marker node to combine against) and depended
+// on brittle DOM sibling adjacency. `data-managed`, driven directly by Swift's
+// isBibliography/isNotes flags, covers both and needs no positional relationship at all.
+let managedBlockIds: Set<string> = new Set();
+
+/**
+ * Replace the managed-block-id set wholesale (not merged) -- called once per content push from
+ * api-content.ts's setContentWithBlockIds(), with the ids Swift flagged isBibliography/isNotes
+ * for THIS push. Every other content-push caller -- plain setContent(), applyBlocks() -- calls
+ * this itself with an empty argument (see each function's own setManagedBlockIds([]) call in
+ * api-content.ts), correctly clearing it to empty, since neither path carries managed-section
+ * metadata of its own.
+ */
+export function setManagedBlockIds(ids: Iterable<string>): void {
+  managedBlockIds = new Set(ids);
+}
+
+/** Exported for tests — introspects the current managed-block-id set. */
+export function getManagedBlockIds(): Set<string> {
+  return new Set(managedBlockIds);
+}
+
 // Ids of nodes that were just created empty by a document split (Enter making
 // a new empty paragraph) in a structural pass, but have not yet been filled
 // with content. Lets a later structural pass recognize a legitimate
@@ -120,6 +155,7 @@ export function resetBlockIdState(): void {
   currentBlockTypes.clear();
   pendingConfirmations.clear();
   recentlySplitEmptyIds.clear();
+  managedBlockIds.clear();
 }
 
 /**
@@ -994,7 +1030,10 @@ export const blockIdPlugin = $prose(() => {
 
         const decorations: Decoration[] = [];
 
-        // Add data-block-id attributes to top-level block nodes only
+        // Add data-block-id attributes to top-level block nodes only. A block whose id is in
+        // managedBlockIds (auto-generated Bibliography/Notes content) also gets `data-managed`
+        // -- styles.css's ⌘-hover hint selector excludes managed headings via
+        // `h1[data-block-id]:not([data-managed])` etc.
         state.doc.forEach((node, offset) => {
           if (isBlockType(node)) {
             const blockId = pluginState.blockIds.get(offset);
@@ -1002,6 +1041,7 @@ export const blockIdPlugin = $prose(() => {
               decorations.push(
                 Decoration.node(offset, offset + node.nodeSize, {
                   'data-block-id': blockId,
+                  ...(managedBlockIds.has(blockId) ? { 'data-managed': 'true' } : {}),
                 })
               );
             }

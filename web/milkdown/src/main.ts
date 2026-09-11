@@ -10,6 +10,7 @@ import { gfm, remarkGFMPlugin } from '@milkdown/kit/preset/gfm';
 import { isHistoryTransaction } from '@milkdown/kit/prose/history';
 import { Plugin, PluginKey } from '@milkdown/kit/prose/state';
 import { $prose, getMarkdown } from '@milkdown/kit/utils';
+import { installCmdHeldTracking } from '../../shared/cmd-hover-class';
 import { annotationDisplayPlugin } from './annotation-display-plugin';
 import { annotationPlugin } from './annotation-plugin';
 import {
@@ -202,6 +203,12 @@ import 'prosemirror-tables/style/tables.css';
 // Import types to ensure declare global is included in the bundle
 import { syncLog } from './sync-debug';
 import './types';
+
+// ⌘-hover hint for Cmd-click-to-zoom (UX contract §2, D2). Toggles CMD_HELD_CLASS on
+// document.body while ⌘ is held; styles.css uses that class to underline headings on
+// hover. One-shot install alongside heading-zoom-click-handler.ts/link-click-handler.ts
+// above -- unlike those, this module doesn't self-install on import, so it's called here.
+installCmdHeldTracking();
 
 // Backtick with selected text wraps selection as inline code.
 // Uses ProseMirror's handleKeyDown (not DOM events) because WKWebView's

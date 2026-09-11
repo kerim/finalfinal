@@ -305,6 +305,10 @@ extension EditorViewState {
             let allPairs = BlockParser.alignmentPairs(allBlocks)
             let allBlockIds = allPairs.map { $0.id }
             let allExpectedBlocks = allPairs.map { $0.meta }
+            // Restored (unzoomed) document includes Bibliography/Notes headings again -- flag
+            // them managed so the ⌘-hover zoom hint excludes them (see BlockSyncService.
+            // setContentWithBlockIds's managedBlockIds doc comment).
+            let allManagedBlockIds = Set(allBlocks.filter { $0.isBibliography || $0.isNotes }.map { $0.id })
 
             // Clear zoom footnote state BEFORE pushing full document content
             NotificationCenter.default.post(
@@ -320,6 +324,7 @@ extension EditorViewState {
             await blockSyncService?.setContentWithBlockIds(
                 markdown: mergedContent, blockIds: allBlockIds,
                 imageMeta: allImageMeta, expectedBlocks: allExpectedBlocks,
+                managedBlockIds: allManagedBlockIds,
                 scrollToBlockId: restoreScrollToSectionId)
             content = mergedContent
             pendingImageMeta = allImageMeta
