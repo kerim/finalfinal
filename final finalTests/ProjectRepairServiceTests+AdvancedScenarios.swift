@@ -170,6 +170,7 @@ extension ProjectRepairServiceTests {
         // Create temp copy to test against (don't modify the backup)
         let tempDir = URL(fileURLWithPath: "/tmp/claude/RealBackupTest-\(UUID().uuidString)")
         try FileManager.default.copyItem(at: backupPath, to: tempDir)
+        TestFixtureCleanup.register(tempDir)
         defer { try? FileManager.default.removeItem(at: tempDir) }
 
         // Run integrity check
@@ -211,6 +212,7 @@ extension ProjectRepairServiceTests {
         // Create temp copy to test against
         let tempDir = URL(fileURLWithPath: "/tmp/claude/RealBackupTest-\(UUID().uuidString)")
         try FileManager.default.copyItem(at: backupPath, to: tempDir)
+        TestFixtureCleanup.register(tempDir)
         defer { try? FileManager.default.removeItem(at: tempDir) }
 
         // Run integrity check

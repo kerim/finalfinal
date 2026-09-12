@@ -29,6 +29,7 @@ struct SnapshotBackupFlushTests {
     private func makeTempDir() throws -> URL {
         let dir = URL(fileURLWithPath: "/tmp/claude/SnapshotBackupFlushTests-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        TestFixtureCleanup.register(dir)
         return dir
     }
 
