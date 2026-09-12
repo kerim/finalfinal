@@ -82,9 +82,6 @@ final class ShortcutTooltipE2ETests: XCTestCase {
         attachment.name = "replace-row-after-second-plain-find"
         attachment.lifetime = .keepAlways
         add(attachment)
-        try? screenshot.pngRepresentation.write(
-            to: E2EShotDir.url.appendingPathComponent("replace-row-after-second-plain-find.png")
-        )
 
         // waitForExistenceOrFail has no message parameter (it self-describes via
         // debugDescription) — assert separately so a failure names the actual regression.
@@ -174,9 +171,6 @@ final class ShortcutTooltipE2ETests: XCTestCase {
         earlyAttachment.name = "replace-toggle-hover-tooltip"
         earlyAttachment.lifetime = .keepAlways
         add(earlyAttachment)
-        try? earlyScreenshot.pngRepresentation.write(
-            to: E2EShotDir.url.appendingPathComponent("replace-toggle-hover-tooltip.png")
-        )
 
         // Geometric proof, not just existence/text. A prior round's implementation passed
         // both checks above while the tooltip actually rendered overlapping the toggle
@@ -261,8 +255,5 @@ final class ShortcutTooltipE2ETests: XCTestCase {
         // XCTAssert on the tooltip's text.
         attachment.lifetime = .keepAlways
         add(attachment)
-        try? screenshot.pngRepresentation.write(
-            to: E2EShotDir.url.appendingPathComponent("annotations-toggle-hover-native-tooltip.png")
-        )
     }
 }

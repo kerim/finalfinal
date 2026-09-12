@@ -146,6 +146,24 @@ extension XCTestCase {
             return false
         }
     }
+
+    /// Attach a screenshot as e2e evidence. THE way to produce screenshot
+    /// evidence in this suite.
+    ///
+    /// A plain `FileManager` write from a UI-test method cannot work: Xcode's
+    /// own RunnerEntitlements.plist sandboxes every macOS XCUITest runner
+    /// (app-sandbox=true, read-only "/"), so writes outside the runner's
+    /// container fail with "Operation not permitted" — silently, wherever the
+    /// call site uses `try?`. Confirmed live, two instrumented VM runs,
+    /// 2026-09-12. XCTAttachment goes through XCTest's own privileged export
+    /// path and is unaffected; vmtest exports attachments after every run,
+    /// pass or fail.
+    func attachEvidenceScreenshot(_ screenshot: XCUIScreenshot, name: String) {
+        let attachment = XCTAttachment(screenshot: screenshot)
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
 }
 
 // MARK: - Wait Helpers
@@ -231,33 +249,56 @@ extension XCUIElement {
     }
 }
 
-// MARK: - Screenshot Evidence Helpers
+// MARK: - Screenshot Evidence Plumbing (E2EShotDir)
 
 enum E2EShotDir {
-    /// Where a disposable e2e test should write its screenshot evidence.
+    /// The `FF_E2E_SHOT_DIR` env-var contract — NOT itself a route for a
+    /// disposable e2e test to write its screenshot evidence; see the next
+    /// paragraph. Screenshot evidence goes through
+    /// `attachEvidenceScreenshot(_:name:)` (above) instead.
+    ///
+    /// This type's WRITE path (a plain `FileManager`/`Data.write(to:)` call
+    /// from inside a UI test method) works only when the resolved path sits
+    /// inside the runner's own sandbox container — it fails whenever the
+    /// target is outside it. Xcode's own RunnerEntitlements.plist sandboxes
+    /// every macOS XCUITest runner (app-sandbox=true, read-only "/"), so the
+    /// runner process can write to `NSHomeDirectory()`/`NSTemporaryDirectory()`
+    /// (inside its own container) but nowhere outside that. `vmtest`'s
+    /// `/tmp/vmtest-e2e-shots` (below) sits outside the container, which is
+    /// why a write there fails — not because the path happens to be
+    /// absolute; an absolute path under the container (e.g.
+    /// `NSTemporaryDirectory()` itself) writes successfully. Confirmed live,
+    /// two instrumented VM runs, 2026-09-12. Screenshot evidence goes
+    /// through `attachEvidenceScreenshot(_:name:)` (above) instead, which
+    /// uses XCTest's own privileged `XCTAttachment` export path.
+    /// `FF_E2E_SHOT_DIR`/`E2EShotDir` remains the contract only for writers
+    /// that are NOT the sandboxed runner process (e.g. host-side tooling).
     ///
     /// Reads `FF_E2E_SHOT_DIR` from the process environment — set by
     /// `vmtest` (as `TEST_RUNNER_FF_E2E_SHOT_DIR`, which xcodebuild forwards
-    /// to the runner process with the prefix stripped) or directly by the
-    /// `e2e-verify` skill for a host run.
+    /// to the runner process with the prefix stripped).
     ///
     /// Two cases, deliberately distinct:
     /// - Unset → `NSTemporaryDirectory()`, which the runner can always write
-    ///   to (already relied on by `TestFixtureHelper.fixturePath` above).
-    ///   This is the safe default when nobody wired anything up.
-    /// - Set to an absolute path (starts with "/") → used as-is. Both the
-    ///   host case (`e2e-verify`/superdev pass an explicit run-notes folder)
-    ///   and the VM-guest case go through this branch: `vmtest` sets it to
-    ///   an absolute path under `/tmp/` (e.g. `/tmp/vmtest-e2e-shots`),
-    ///   which sits outside any app sandbox — the same convention its
-    ///   video-recording feature already uses, which the exporter reads
-    ///   back over SSH/SCP reliably. An earlier convention had `vmtest`
-    ///   pass a bare relative name for the runner to resolve against its
-    ///   own sandboxed `NSHomeDirectory()`; that landed screenshots inside
-    ///   the XCUITest runner's App Sandbox container, which an external SSH
-    ///   session generally cannot read into (a macOS permission boundary),
-    ///   so evidence export silently found nothing on every run. Superseded
-    ///   by the absolute-path convention above.
+    ///   to because it sits inside the runner's own container (already
+    ///   relied on by `TestFixtureHelper.fixturePath` above). This is the
+    ///   safe default when nobody wired anything up.
+    /// - Set to an absolute path (starts with "/") → used as-is. `vmtest`
+    ///   sets it to an absolute path under `/tmp/` (e.g.
+    ///   `/tmp/vmtest-e2e-shots`), the same convention its video-recording
+    ///   feature already uses. That particular path sits OUTSIDE the
+    ///   runner's container, so a write to it from the runner process fails
+    ///   — see this type's opening paragraph; what determines success is
+    ///   inside-vs-outside the container, not the path's form. An earlier
+    ///   convention had `vmtest` pass a bare relative name for the runner to
+    ///   resolve against its own sandboxed `NSHomeDirectory()` — that write
+    ///   actually succeeded (`NSHomeDirectory()` is inside the container),
+    ///   but still produced no usable evidence, for a different reason: an
+    ///   external SSH session cannot read into another app's sandboxed
+    ///   container over SSH, so nothing could be pulled back out afterward.
+    ///   Both conventions end up with no usable evidence reaching the host,
+    ///   but for two different reasons — the old one wrote successfully and
+    ///   failed on read-back, today's fails to write at all.
     ///
     /// A bare relative value (no leading "/") still resolves against
     /// `NSHomeDirectory()` rather than silently falling back to the temp

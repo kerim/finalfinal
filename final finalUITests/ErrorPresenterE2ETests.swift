@@ -436,7 +436,7 @@ final class ErrorPresenterE2ETests: XCTestCase {
                       "Spellcheck context menu's \"Learn Spelling\" item should appear for a spelling error (\(context))")
 
         if captureScreenshot {
-            Self.attachScreenshot(app.screenshot(), name: "\(context)-spellcheck-menu", to: self)
+            attachEvidenceScreenshot(app.screenshot(), name: "\(context)-spellcheck-menu")
         }
 
         app.typeKey(.escape, modifierFlags: [])
@@ -585,17 +585,5 @@ final class ErrorPresenterE2ETests: XCTestCase {
                       "Oversized test PNG must land between warnSizeBytes and blockSizeBytes; got \(png.count) bytes")
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setData(png, forType: .png)
-    }
-
-    private static func attachScreenshot(_ screenshot: XCUIScreenshot, name: String, to testCase: XCTestCase) {
-        let attachment = XCTAttachment(screenshot: screenshot)
-        attachment.name = name
-        attachment.lifetime = .keepAlways
-        testCase.add(attachment)
-
-        // Also write to the shared evidence directory (see e2e-verify skill's "Screenshot
-        // evidence" section) so a human/reviewer can browse the PNGs directly, not just via the
-        // .xcresult attachment.
-        try? screenshot.pngRepresentation.write(to: E2EShotDir.url.appendingPathComponent("\(name).png"))
     }
 }

@@ -375,6 +375,7 @@ final class EscapeLadderE2ETests: XCTestCase {
         // native fired in the meantime regardless -- the exact window where the OLD
         // fixed-watchdog design would have incorrectly fired and exited Focus Mode (or closed
         // the find bar) before the web side's own (now-delayed) report ever arrived.
+        // e2e-lint: allow sleep -- this 1.2s wait IS the assertion, not a delay before one: it deliberately stops well short of the web layer's artificially-delayed 3s `setTimeout` report so the two absence checks below are asking "has the report definitely NOT landed yet" -- a deterministic negative-timing check with nothing to poll for. Replacing it with a poll, or shortening it, would let the delayed report race in before the checks run and produce a false pass. Do not "optimize" this wait away or shorten it.
         Thread.sleep(forTimeInterval: 1.2)
         let logShortlyAfterEscape = attachDiagnosticLog()
         XCTAssertFalse(
@@ -792,7 +793,6 @@ final class EscapeLadderE2ETests: XCTestCase {
                 .filter { line in signalPatterns.contains { line.contains($0) } }
                 .joined(separator: "\n")
         } ?? ""
-        try? (found ?? report).write(to: E2EShotDir.url.appendingPathComponent("diagnostic-log-full.txt"), atomically: true, encoding: .utf8)
         return (report, found, filtered)
     }
 
@@ -833,6 +833,7 @@ final class EscapeLadderE2ETests: XCTestCase {
             if filtered.contains(substring) || Date() >= deadline {
                 return filtered
             }
+            // e2e-lint: allow sleep -- sampling interval of the bounded poll loop above (already re-checks a file read via `readDiagnosticLog()` each iteration and is bounded by `deadline`), keeping it from spinning the CPU between reads. Polls a file read, not an XCUIElement attribute, which is why it can't use this codebase's element-based `waitFor*` helpers.
             Thread.sleep(forTimeInterval: 0.25)
         }
     }
@@ -1170,6 +1171,7 @@ final class EscapeLadderE2ETests: XCTestCase {
             if attempt < 3 {
                 app.activateAndWaitForForeground()
                 app.typeKey(.escape, modifierFlags: [])
+                // e2e-lint: allow sleep -- fixed back-off between retries of this 3-attempt slash-menu loop, not a wait for a condition: after pressing Escape to clear partial "/" state, nothing observable marks that teardown as "done" before the next click/keystroke attempt, so there is nothing here to poll for.
                 Thread.sleep(forTimeInterval: 0.5)
             }
         }
@@ -1203,6 +1205,7 @@ final class EscapeLadderE2ETests: XCTestCase {
         while Date() < pollDeadline {
             stillNativeFullScreen = isMainWindowNativeFullScreen()
             if !stillNativeFullScreen { break }
+            // e2e-lint: allow sleep -- sampling interval of this bounded poll loop over computed window geometry (`isMainWindowNativeFullScreen()`), not an XCUIElement attribute, which is why it can't use this codebase's element-based `waitFor*` helpers. Kept short (0.1s) so the elapsed time reported in the failure message below is precise rather than rounded to a coarse step.
             Thread.sleep(forTimeInterval: 0.1)
         }
         let elapsed = Date().timeIntervalSince(pollStart)
@@ -1372,10 +1375,12 @@ extension EscapeLadderE2ETests {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
             guard isMainWindowNativeFullScreen() else {
+                // e2e-lint: allow sleep -- sampling interval of this bounded wait: full screen isn't on yet, so re-check after a short pause rather than spinning. Polls `isMainWindowNativeFullScreen()`, computed window geometry rather than an XCUIElement attribute, which is why it can't use this codebase's element-based `waitFor*` helpers.
                 Thread.sleep(forTimeInterval: 0.25)
                 continue
             }
             let firstFrame = app.windows.firstMatch.frame
+            // e2e-lint: allow sleep -- this is NOT a sampling gap, it IS the measurement: this function defines "settled" as two window-frame reads ~250ms apart (`firstFrame` above, `secondFrame` below) coming back identical, so removing or shortening this gap would let a single mid-transition frame be misread as stable. This sleep is load-bearing to the test's correctness, not incidental polling -- do not remove or shorten it.
             Thread.sleep(forTimeInterval: 0.25)
             guard isMainWindowNativeFullScreen() else { continue }
             let secondFrame = app.windows.firstMatch.frame
@@ -1407,6 +1412,7 @@ extension EscapeLadderE2ETests {
         let deadline = Date().addingTimeInterval(10)
         while Date() < deadline {
             if !isMainWindowNativeFullScreen() { break }
+            // e2e-lint: allow sleep -- sampling interval of this bounded teardown poll loop over computed window geometry (not an XCUIElement attribute), so it can't use this codebase's element-based `waitFor*` helpers. Deliberately a plain loop rather than an XCTest wait helper: teardown code must never assert or fail.
             Thread.sleep(forTimeInterval: 0.25)
         }
     }

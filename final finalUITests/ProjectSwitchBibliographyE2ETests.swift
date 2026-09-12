@@ -147,9 +147,6 @@ final class ProjectSwitchBibliographyE2ETests: XCTestCase {
         immediateAfterSwitchShot.name = "project-switch-immediate-after-block-parse"
         immediateAfterSwitchShot.lifetime = .keepAlways
         add(immediateAfterSwitchShot)
-        if let pngData = app.screenshot().pngRepresentation as Data? {
-            try? pngData.write(to: E2EShotDir.url.appendingPathComponent("switch-immediate.png"))
-        }
 
         // Editor JS re-settling on B is itself a signal the WYSIWYG branch's async content-push
         // Task (end-of-switch point 1 of 3, the same Task that clears the suppression window)
@@ -167,9 +164,6 @@ final class ProjectSwitchBibliographyE2ETests: XCTestCase {
         settledShot.name = "project-switch-settled"
         settledShot.lifetime = .keepAlways
         add(settledShot)
-        if let pngData = app.screenshot().pngRepresentation as Data? {
-            try? pngData.write(to: E2EShotDir.url.appendingPathComponent("switch-settled.png"))
-        }
 
         app.activateAndWaitForForeground()
         editorArea.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.3)).click()
