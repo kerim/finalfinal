@@ -84,28 +84,4 @@ extension EditorViewState {
         annotations.filter { $0.type == .task && !$0.isCompleted }.count
     }
 
-    /// `annotation`'s position within the INLINE-only ordering -- the numbering the JS bridge
-    /// functions (`getAnnotations()`/`scrollToAnnotation()`/`deleteInlineAnnotation()`) use on
-    /// both web editors. Document Notes are DB-only rows (`charOffset < 0`, sorted first in
-    /// `annotations`) that are never written into the document's markdown/nodes, so those JS
-    /// functions never see or count them; any index computed against the FULL `annotations`
-    /// array is therefore off by however many Document Notes exist, landing on the wrong
-    /// annotation. This filters them out before indexing so callers land on the annotation the
-    /// user actually clicked.
-    ///
-    /// Panel-display filters (`annotationTypeFilters`, `hideCompletedTasks`) deliberately do
-    /// NOT enter this index: they only hide cards from the panel's own list, they never remove
-    /// the corresponding node from the document, so the bridge's inline ordering is unaffected
-    /// by them. Only Document Notes -- which really are absent from the document -- are
-    /// excluded here.
-    ///
-    /// Returns `nil` if `annotation` is itself document-level (it has no inline index) or is
-    /// not present in `annotations` at all.
-    func inlineAnnotationIndex(of annotation: AnnotationViewModel) -> Int? {
-        guard !annotation.isDocumentLevel else { return nil }
-        return annotations
-            .filter { !$0.isDocumentLevel }
-            .firstIndex(where: { $0.id == annotation.id })
-    }
-
 }

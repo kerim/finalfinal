@@ -426,12 +426,10 @@ extension ContentView {
         guard let webView = structuralUndoController.activeWebView else { return }
         // Index WITHIN the inline-only list -- matches the ordering the JS bridge functions
         // (getAnnotations()/scrollToAnnotation()/deleteInlineAnnotation()) use, which never
-        // include Document Notes (DB-only rows, never part of the document text). Routed
-        // through the shared `inlineAnnotationIndex(of:)` helper (EditorViewState+Annotations
-        // .swift) rather than duplicating the filter here, so the tap-to-scroll path
-        // (AnnotationPanel.swift) and this delete path can never drift apart on how the index
-        // is computed.
-        guard let index = editorState.inlineAnnotationIndex(of: annotation) else { return }
+        // include Document Notes (DB-only rows, never part of the document text).
+        guard let index = editorState.annotations
+            .filter({ !$0.isDocumentLevel })
+            .firstIndex(where: { $0.id == annotation.id }) else { return }
 
         let expectedType = annotation.type.rawValue.escapedForJSTemplateLiteral
         let expectedText = annotation.text.escapedForJSTemplateLiteral
