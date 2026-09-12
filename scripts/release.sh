@@ -353,7 +353,7 @@ rm -f "$TMPFILE"
 echo -e "${YELLOW}Publishing appcast to finalfinalapp.cc...${NC}"
 (
     cd "$HOMEPAGE_DIR"
-    git pull --rebase
+    git pull --rebase --autostash
     cp "$RELEASES_DIR/appcast.xml" public/appcast.xml
     git add public/appcast.xml
     git diff --cached --quiet || git commit -m "Update appcast for v${VERSION}"
