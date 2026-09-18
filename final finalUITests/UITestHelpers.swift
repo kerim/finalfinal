@@ -499,15 +499,41 @@ extension XCUIApplication {
     /// and `E2EAsyncImageCorruptionTests.swift`'s lesson block) -- a `label CONTAINS` query
     /// against editor content matches nothing, so it was dropped rather than paying for a
     /// full-tree scan that can never succeed.
+    ///
+    /// Batched via `XCUIElement.snapshot()`, not a per-element `descendants(matching: .any)`
+    /// walk: fetching each of the 500+ elements under `editor-area` individually round-trips to
+    /// the AX server once per element (~0.1s each), so a single "not found" poll of the old
+    /// per-element scan cost roughly 50s regardless of `timeout` -- the deadline was only
+    /// checked once that whole pass finished, so it always overshot short timeouts by a wide
+    /// margin. `snapshot()` fetches the entire subtree in one round trip; the tree is then
+    /// walked in-process (`snapshotDescendantsContainText` below), over exactly the same element
+    /// set `descendants(matching: .any)` produced (every descendant, self excluded), checking
+    /// each node's `value as? String` exactly as the old predicate did.
     func editorContainsText(_ text: String, timeout: TimeInterval = 5) -> Bool {
         let deadline = Date(timeIntervalSinceNow: timeout)
         repeat {
-            for element in editorArea.descendants(matching: .any).allElementsBoundByIndex {
-                guard element.exists else { continue }
-                if let value = element.value as? String, value.contains(text) { return true }
+            do {
+                let root = try editorArea.snapshot()
+                if Self.snapshotDescendantsContainText(root, text) { return true }
+            } catch {
+                // Loud on purpose (must-fix from plan review): a `snapshot()` failure --
+                // truncation, an AX-server timeout, etc. -- must show up directly in a failing
+                // run's output, not be inferred later from "the text was never found."
+                print("[editorContainsText] snapshot() of editor-area failed this poll: \(error)")
             }
             RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.25))
         } while Date() < deadline
+        return false
+    }
+
+    /// Recursively checks every descendant of `snapshot` (the root itself excluded, matching
+    /// `descendants(matching: .any)`'s own semantics) for a `value` containing `text`. Used only
+    /// by `editorContainsText` above to batch what used to be a per-element live AX fetch.
+    private static func snapshotDescendantsContainText(_ snapshot: XCUIElementSnapshot, _ text: String) -> Bool {
+        for child in snapshot.children {
+            if let value = child.value as? String, value.contains(text) { return true }
+            if snapshotDescendantsContainText(child, text) { return true }
+        }
         return false
     }
 
@@ -573,7 +599,7 @@ extension XCUIApplication {
             typeText(text)
             Thread.sleep(forTimeInterval: 1.0)
 
-            if editorContainsText(text) {
+            if editorContainsText(text, timeout: 15) {
                 return
             }
 
