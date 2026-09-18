@@ -44,7 +44,6 @@ struct ContentView: View {
     @State internal var bibliographySyncService = BibliographySyncService()
     @State internal var footnoteSyncService = FootnoteSyncService()
     @State internal var autoBackupService = AutoBackupService()
-    @State private var sidebarVisibility: NavigationSplitViewVisibility = .all
 
     /// Version history dialog state
     @State internal var showSaveVersionDialog = false
@@ -283,15 +282,11 @@ struct ContentView: View {
 
     @ViewBuilder
     private var mainContentView: some View {
-        navigationSplitViewContent
+        editorSplitViewContent
             .focusedSceneValue(\.editorState, editorState)
             .focusedSceneValue(\.unifiedUndoService, unifiedUndoService)
             .withContentStateRecovery(editorState: editorState)
             .withResettingContentRecovery(editorState: editorState)
-            .withSidebarSync(
-                editorState: editorState,
-                sidebarVisibility: $sidebarVisibility
-            )
             .overlay(alignment: .bottom) {
                 if let toast = ToastCenter.shared.current {
                     ToastView(toast: toast)
@@ -300,14 +295,26 @@ struct ContentView: View {
             }
     }
 
+    /// The main window's split container. Previously a `NavigationSplitView` with a
+    /// `columnVisibility` binding; now an `HSplitView` whose sidebar pane stays mounted at all
+    /// times (see `OutlineSidebarPane`, which animates its own width and never writes
+    /// `isOutlineSidebarVisible`) -- the user's decision, so that dragging the Outline divider
+    /// narrows the editor instead of growing the window, and so a divider drag or window resize
+    /// can never silently hide the sidebar. There is deliberately NO `.withSidebarSync` here
+    /// any more: with the pane always mounted there is no native chevron/visibility state left
+    /// to sync.
     @ViewBuilder
-    private var navigationSplitViewContent: some View {
-        NavigationSplitView(columnVisibility: $sidebarVisibility) {
+    private var editorSplitViewContent: some View {
+        HSplitView {
             sidebarView
-        } detail: {
             detailView
         }
         .navigationTitle(documentManager.projectTitle ?? "Untitled")
+        // Backstop for the title, NOT a replacement for the `.navigationTitle` above: this
+        // container is no longer a navigation container, so SwiftUI may stop routing that value
+        // to `NSWindow.title`, and nothing else in the app sets the title. Both carry the same
+        // string, so they cannot disagree while both are active -- see `WindowTitleHost`.
+        .background(WindowTitleHost(title: documentManager.projectTitle ?? "Untitled"))
         .toolbar { EditorToolbar(editorState: editorState) }
         // Hide window toolbar in focus mode for distraction-free writing
         .toolbar(editorState.focusModeHidesToolbar ? .hidden : .visible, for: .windowToolbar)

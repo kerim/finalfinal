@@ -101,7 +101,10 @@ struct OutlineSidebar: View {
                 sectionsList(visible: visible, levelInfos: levelInfos, structuralSignature: structuralSignature)
             }
         }
-        .frame(minWidth: 250, idealWidth: 300, maxWidth: 400)
+        // No `.frame(minWidth:idealWidth:maxWidth:)` here: `OutlineSidebarPane` is the single
+        // owner of the sidebar's width bounds (see its `.frame(...)` and `OutlineSidebarWidth`).
+        // An inner frame here would re-reserve 250pt while the pane is hidden and fight a
+        // restored width.
         .background(themeManager.currentTheme.sidebarBackground)
     }
 

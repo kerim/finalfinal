@@ -191,8 +191,12 @@ final class EditorSmokeTests: XCTestCase {
         XCTAssertTrue(sidebar.waitForExistence(timeout: 10), "Sidebar should appear initially")
 
         // Toggle sidebar off with Cmd+[
-        // Note: On macOS, NavigationSplitView may keep the element in hierarchy
-        // even when collapsed, so we check isHittable instead of exists
+        // Note: the pane stays MOUNTED while hidden (OutlineSidebarPane animates its own width
+        // to zero rather than being removed from the HSplitView), but `.accessibilityHidden(true)`
+        // does take it out of the accessibility tree -- so `exists` is expected to go false, and
+        // an `exists == false` assertion would pass for a reason that is about accessibility
+        // rather than about the toggle. `isHittable` is what this asserts instead: it is false
+        // both when the pane is hidden from AX and while it is genuinely not interactive.
         app.activateAndWaitForForeground()
         app.typeKey("[", modifierFlags: .command)
 

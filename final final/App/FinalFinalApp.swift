@@ -106,7 +106,9 @@ struct FinalFinalApp: App {
                 // rule) -- no new becomeKey event ever fires, so the retry this relies on never
                 // gets a second chance. `.editor`/`.gettingStarted` are exactly the states whose
                 // `rootView` case constructs a fresh ContentView -- and therefore a fresh
-                // NavigationSplitView/NSSplitView -- from scratch, so retry stabilization here
+                // NSSplitView (the window's `HSplitView`; this read
+                // "NavigationSplitView/NSSplitView" before the Outline sidebar's container swap)
+                // -- from scratch, so retry stabilization here
                 // too, the same guarded way windowDidBecomeKey already does.
                 //
                 // Deferred one tick (DispatchQueue.main.async): the same technique AppDelegate's
@@ -159,6 +161,16 @@ struct FinalFinalApp: App {
                 x: visible.midX - size.width / 2,
                 y: visible.midY - size.height / 2
             )
+
+            // UI-test-only deterministic window width (see TestMode.uiTestingWindowWidthOverride):
+            // a divider-drag assertion needs a known starting window width, and the saved-frame
+            // branch above is deliberately skipped while testing. Placed AFTER it so it applies in
+            // every non-testing-saved-frame case.
+            if let overrideWidth = TestMode.uiTestingWindowWidthOverride {
+                let overrideOrigin = CGPoint(x: visible.midX - overrideWidth / 2, y: origin.y)
+                return WindowPlacement(overrideOrigin, size: CGSize(width: overrideWidth, height: size.height))
+            }
+
             return WindowPlacement(origin, size: size)
         }
         .commands {
