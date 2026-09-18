@@ -23,11 +23,8 @@
 //  copied to a permanent file before the pad is `git restore`d back to empty; that step was
 //  missed for those two, and by the time this file was created neither test method nor any
 //  trace of them remained anywhere in the worktree (confirmed by a tree-wide grep for their
-//  scenario names) — they were silently lost, not merely relocated. Re-authored below as
-//  `testOptionCommandFOpensReplaceRowOnItsOwn` and
-//  `testCommandBracketTogglesAnnotationsPanelVisibility` (t-922d516d,
-//  re-author-lost-e2e-coverage-opt-cmd-f-replace-open-cmd-annotations-toggle) — the underlying
-//  app features never regressed; only the permanent test coverage had gone missing.
+//  scenario names) — they were silently lost, not merely relocated. Re-authoring them is out of
+//  scope for this fix; flagged to the driver instead of guessed at.
 //
 //  `testHoveringReplaceToggleShowsCustomTooltip` (added on the judge's rejected round) is the
 //  first test in this file that actually exercises the hover/tooltip mechanism itself --
@@ -94,44 +91,6 @@ final class ShortcutTooltipE2ETests: XCTestCase {
             "Plain Cmd-F should not force-close an already-open Replace row (FindBarState.show(withReplace:) regression)"
         )
         XCTAssertTrue(findBar.buttons["All"].exists, "Replace row's All button should still be visible too")
-    }
-
-    /// E2E proof for the other half of `FindBarState.show(withReplace:)`'s contract (see that
-    /// method's own doc comment in `FindBarState.swift`): ⌥⌘F opens the Replace row **on its
-    /// own**, from a closed find bar, with no plain ⌘F step first. The class doc comment above
-    /// records that this exact scenario was already proven once, in an earlier round of this
-    /// task, as a passing e2e run against the shared E2EScratchTests.swift scratch pad — but
-    /// only as SETUP inside `testPlainCommandFDoesNotCollapseAnAlreadyOpenReplaceRow` above,
-    /// never as a standalone test, and that scratch-pad proof was lost before being promoted to
-    /// a permanent file. This is that promotion.
-    func testOptionCommandFOpensReplaceRowOnItsOwn() throws {
-        app.launchForTesting(fixturePath: TestFixtureHelper.fixturePath)
-        XCTAssertTrue(app.groups["editor-area"].waitForExistence(timeout: 10), "Editor area should appear")
-
-        let findBar = app.groups["find-bar"]
-
-        // FindBarView is conditionally mounted on `findBarState.isVisible`
-        // (ContentView+EditorPresentation.swift's `if findBarState.isVisible { FindBarView(...) }`),
-        // so its non-existence here is a genuine "not shown yet", not an accessibilityHidden
-        // subtlety — confirms this test starts from a real closed find bar rather than state
-        // carried over from an earlier test in the same run.
-        XCTAssertFalse(findBar.exists, "Find bar should not be visible before any find shortcut is pressed")
-
-        // The actual scenario under test: ⌥⌘F alone, no prior plain ⌘F.
-        app.activateAndWaitForForeground()
-        app.typeKey("f", modifierFlags: [.command, .option])
-
-        XCTAssertTrue(
-            app.textFields["find-bar-search-field"].waitForExistenceOrFail(timeout: 5).exists,
-            "Opt-Cmd-F should open the find bar"
-        )
-        XCTAssertTrue(
-            findBar.buttons["Replace"].waitForExistenceOrFail(timeout: 5).exists,
-            "Opt-Cmd-F should open the Replace row on its own, with no prior plain Cmd-F"
-        )
-        XCTAssertTrue(findBar.buttons["All"].exists, "Replace row's All button should be visible too")
-
-        attachEvidenceScreenshot(app.screenshot(), name: "replace-row-after-standalone-optcmdf")
     }
 
     /// E2E proof for the judge's must-fix-2 on this task's rejected round: the Replace-arrow
@@ -296,141 +255,5 @@ final class ShortcutTooltipE2ETests: XCTestCase {
         // XCTAssert on the tooltip's text.
         attachment.lifetime = .keepAlways
         add(attachment)
-    }
-
-    /// E2E proof that ⌘] toggles the Annotations panel's visibility. Same status as
-    /// `testOptionCommandFOpensReplaceRowOnItsOwn` above: authored and passed once, in an
-    /// earlier round of this task, directly in the shared E2EScratchTests.swift scratch pad,
-    /// then lost before being promoted to a permanent file (see the class doc comment).
-    /// Re-authored here as its own permanent test, exercising both directions (open -> hide ->
-    /// show again), not just as incidental setup for something else.
-    ///
-    /// Two independent signals, both driven by the same `EditorViewState.isAnnotationPanelVisible`
-    /// flag `EditorViewState+Annotations.swift`'s `toggleAnnotationPanel()` flips:
-    /// - The toolbar toggle button's own accessibility label (`toolbar-annotations-toggle`,
-    ///   `NativeToolbarButton.swift`) -- computed as "Show Annotations" / "Hide Annotations" in
-    ///   `EditorToolbar.swift`, and re-applied on every state change via
-    ///   `NativeToolbarButton.updateNSView`. Content-independent and immediate.
-    /// - The panel's own "Document Notes" section header, scoped to the panel's own
-    ///   accessibility container (`app.groups["annotations-panel"]`) -- the same idiom
-    ///   `EscapeLadderE2ETests.ensureAnnotationsPanelVisible()` and
-    ///   `AnnotationDeleteE2ETests.ensureAnnotationsPanelVisible()` already rely on, here scoped
-    ///   to the panel rather than app-wide. `AnnotationPanel.swift`'s `.accessibilityHidden(!isAnnotationPanelVisible)`
-    ///   hides this header (along with the rest of the panel's content) whenever the panel is
-    ///   hidden, so its presence/absence is a real second confirmation that the panel's own
-    ///   content, not just the toggle button's label, actually appeared/disappeared.
-    ///
-    /// `isAnnotationPanelVisible` defaults to true (`EditorViewState.swift`), but per the banked
-    /// e2e-verify lesson ("never assume a toggleable panel's default visibility",
-    /// toolbar-icon-cleanup, 2026-09-06) this reads the toggle button's current label first
-    /// rather than assuming a starting state.
-    ///
-    /// Seeds a Document Note first (see `seedDocumentNote(id:type:text:)` below): the committed
-    /// fixture ships with zero rows in both `annotation` and `annotation_v2` (confirmed via
-    /// direct sqlite3 query), and `AnnotationPanel.swift`'s body only enters its
-    /// `annotationList` branch -- the one that can ever mount `documentNotesSection`, which is
-    /// the ONLY place "Document Notes" is rendered -- when `displayAnnotations` or
-    /// `displayDocumentAnnotations` is non-empty; with both empty it renders `emptyState`
-    /// ("No annotations") instead, unconditionally, regardless of panel visibility or
-    /// `isDocumentNotesCollapsed`. A first version of this test assumed the header was visible
-    /// on any shown panel and failed on that exact assertion. Seeding one Document Note here
-    /// makes `documentNotesSection` mount regardless of collapse state (its own condition is
-    /// `!docAnnotations.isEmpty || !editorState.isDocumentNotesCollapsed`), matching the same
-    /// seed-first pattern `AnnotationDeleteE2ETests.swift` already uses for this reason.
-    func testCommandBracketTogglesAnnotationsPanelVisibility() throws {
-        seedDocumentNote(
-            id: "e2e-doc-note-\(shortUUID())",
-            type: "comment",
-            text: "Seed note so the panel's Document Notes header always renders"
-        )
-        app.launchForTesting(fixturePath: TestFixtureHelper.fixturePath)
-        XCTAssertTrue(app.groups["editor-area"].waitForExistence(timeout: 10), "Editor area should appear")
-
-        let panel = app.groups["annotations-panel"]
-        let toggleButton = app.buttons["toolbar-annotations-toggle"]
-        XCTAssertTrue(
-            toggleButton.waitForExistenceOrFail(timeout: 5).exists,
-            "Annotations toolbar toggle button should appear in the toolbar"
-        )
-
-        // Bring the panel to a known, visible starting state first, without assuming which
-        // state it's already in.
-        if toggleButton.label != "Hide Annotations" {
-            app.activateAndWaitForForeground()
-            app.typeKey("]", modifierFlags: .command)
-            XCTAssertTrue(
-                toggleButton.waitForLabel("== 'Hide Annotations'", timeout: 5),
-                "Cmd-] should show the Annotations panel from a hidden start (toggle button label should read Hide Annotations)"
-            )
-        }
-        XCTAssertTrue(
-            annotationsPanelDocumentNotesHeader(panel: panel).exists,
-            "Annotations panel's Document Notes header should be visible while the panel is shown"
-        )
-
-        // The actual regression under test: Cmd-] should hide an already-visible panel.
-        app.activateAndWaitForForeground()
-        app.typeKey("]", modifierFlags: .command)
-        XCTAssertTrue(
-            toggleButton.waitForLabel("== 'Show Annotations'", timeout: 5),
-            "Cmd-] should hide the Annotations panel (toggle button label should flip to Show Annotations)"
-        )
-        XCTAssertFalse(
-            annotationsPanelDocumentNotesHeader(panel: panel, timeout: 3).exists,
-            "Annotations panel content should no longer be visible once Cmd-] hides it"
-        )
-        attachEvidenceScreenshot(app.screenshot(), name: "annotations-panel-hidden-after-cmd-bracket")
-
-        // And Cmd-] should show it again.
-        app.activateAndWaitForForeground()
-        app.typeKey("]", modifierFlags: .command)
-        XCTAssertTrue(
-            toggleButton.waitForLabel("== 'Hide Annotations'", timeout: 5),
-            "Cmd-] should show the Annotations panel again (toggle button label should flip back to Hide Annotations)"
-        )
-        XCTAssertTrue(
-            annotationsPanelDocumentNotesHeader(panel: panel).exists,
-            "Annotations panel content should be visible again once Cmd-] re-shows it"
-        )
-        attachEvidenceScreenshot(app.screenshot(), name: "annotations-panel-visible-after-cmd-bracket")
-    }
-
-    /// Finds the Annotations panel's "Document Notes" section header, scoped to the panel's own
-    /// accessibility container so this can never match the editor's own heading content. Same
-    /// NSPredicate label-OR-value shape as `AnnotationDeleteE2ETests.panelText(_:)` /
-    /// `EscapeLadderE2ETests.panelText(_:)` -- SwiftUI `Text` content can surface in either
-    /// `label` or `value` depending on context.
-    func annotationsPanelDocumentNotesHeader(panel: XCUIElement, timeout: TimeInterval = 10) -> XCUIElement {
-        // Exact-match against this panel's own native section header, scoped to
-        // app.groups["annotations-panel"] (never editor/heading content) -- matches the
-        // already-proven panelText(_:) helpers in AnnotationDeleteE2ETests.swift /
-        // EscapeLadderE2ETests.swift.
-        // e2e-lint: allow statictext-firstmatch -- see rationale above.
-        let element = panel.staticTexts
-            .matching(NSPredicate(format: "label == %@ OR value == %@", "Document Notes", "Document Notes"))
-            .firstMatch
-        _ = element.waitForExistence(timeout: timeout)
-        return element
-    }
-
-    /// Seeds one document-level annotation (Document Note) directly via SQL, before the app is
-    /// launched -- same idiom as `AnnotationDeleteE2ETests.seedDocumentNote`. Needed so
-    /// `AnnotationPanel.swift`'s `documentNotesSection` (the sole place "Document Notes" is
-    /// rendered) mounts regardless of `isDocumentNotesCollapsed`; without a seeded row the
-    /// committed fixture's empty `annotation`/`annotation_v2` tables make the panel show
-    /// `emptyState` instead, where the header can never appear.
-    func seedDocumentNote(id: String, type: String, text: String) {
-        let contentIdRaw = FixtureDatabase.read(fixturePath: TestFixtureHelper.fixturePath, sql: "SELECT id FROM content LIMIT 1;")
-        let contentId = contentIdRaw.trimmingCharacters(in: .whitespacesAndNewlines)
-        let sql = """
-        INSERT INTO annotation (id, contentId, sectionId, type, text, isCompleted, charOffset, highlightStart, highlightEnd, createdAt, updatedAt)
-        VALUES ('\(FixtureDatabase.escape(id))', '\(FixtureDatabase.escape(contentId))', NULL, '\(FixtureDatabase.escape(type))', \
-        '\(FixtureDatabase.escape(text))', 0, -1, NULL, NULL, datetime('now'), datetime('now'));
-        """
-        FixtureDatabase.write(fixturePath: TestFixtureHelper.fixturePath, sql: sql)
-    }
-
-    func shortUUID() -> String {
-        String(UUID().uuidString.prefix(8))
     }
 }

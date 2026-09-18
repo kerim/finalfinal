@@ -712,8 +712,13 @@ final class EscapeLadderE2ETests: XCTestCase {
         // before the WKWebView has actually finished painting the seeded content). Checking the
         // final paragraph's distinctive text is the only one of the 300 that is guaranteed not
         // to exist in the tree until the whole document has painted.
+        // 30s, not the default: this is the slowest-to-render gate in the suite, chosen
+        // specifically because paragraph 299 is the last thing to paint in a 300-paragraph
+        // Milkdown mount, and the old, un-batched `editorContainsText` polling loop's ~50s-per-
+        // poll overshoot was quietly giving it far more real settle time than its stated timeout
+        // ever promised.
         XCTAssertTrue(
-            app.editorContainsText("Body padding paragraph 299 for", timeout: 10),
+            app.editorContainsText("Body padding paragraph 299 for", timeout: 30),
             "Seeded large document should render before this test's first interaction"
         )
 
