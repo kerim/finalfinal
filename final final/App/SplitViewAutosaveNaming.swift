@@ -2,17 +2,12 @@
 //  SplitViewAutosaveNaming.swift
 //  final final
 //
-//  Assigns a stable AppKit autosave name to the NSSplitView backing ContentView's `HSplitView`
-//  (this said "NavigationSplitView" before the Outline sidebar's container swap), so the sidebar
-//  divider position persists under a name this app controls rather than a SwiftUI-derived one.
-//  There is no SwiftUI-level persistence API for a split view's divider position, and no other
-//  `NSSplitView` reference in the codebase — the AppKit-level `NSSplitView.autosaveName` is the
-//  only thing actually saving the divider position (see ContentView.swift's `editorSplitViewContent`).
-//  That is load-bearing again, not merely historical: a `UserDefaults` width pair for the Outline
-//  pane was tried and withdrawn, because `HSplitView` does not honour the pane's `idealWidth` at
-//  first layout, so a stored width could be written and never applied (see
-//  `OutlineSidebarWidth`'s doc comment). This mechanism is therefore the ONLY thing that restores
-//  the user's sidebar width across launches.
+//  Attempts to assign a stable AppKit autosave name to the NSSplitView backing
+//  ContentView's NavigationSplitView, so the sidebar divider position persists under a name
+//  this app controls rather than a SwiftUI-derived one. There is no SwiftUI-level
+//  `navigationSplitViewColumnWidth`/persistence API and no other `NSSplitView` reference in
+//  the codebase — the AppKit-level `NSSplitView.autosaveName` is the only thing actually
+//  saving the divider position (see ContentView.swift's `NavigationSplitView(columnVisibility:)`).
 //
 //  Whether this stabilization actually "sticks" (survives SwiftUI re-asserting its own derived
 //  name) is verified empirically at call sites, not assumed. Regardless of outcome,
@@ -86,73 +81,5 @@ enum SplitViewAutosaveNaming {
 
         topLevel[0].splitView.autosaveName = stableName
         DebugLog.log(.lifecycle, "[SplitViewAutosaveNaming] Set autosaveName='\(stableName)' on top-level split view")
-    }
-
-    // MARK: - Divider positioning
-    //
-    // Why this exists: `HSplitView` does not apply the Outline pane's `idealWidth` at first layout,
-    // so with no autosaved divider position AppKit gives the leading pane its maximum width
-    // (measured: the pane opens at 400pt on a fresh launch). `idealWidth` therefore cannot express
-    // either the 300pt default or "come back at the width I dragged to"; the divider has to be
-    // positioned explicitly. These are the only two operations that need, both keyed off the same
-    // top-level split view `stabilize(for:)` names.
-
-    /// The single top-level (no-`NSSplitView`-ancestor) split view in `window`'s tree, or `nil`
-    /// when there is not exactly one — the same ambiguity refusal `stabilize(for:)` applies.
-    static func topLevelSplitView(in window: NSWindow) -> NSSplitView? {
-        let topLevel = allSplitViews(in: window).filter { !$0.hasSplitViewAncestor }
-        guard topLevel.count == 1 else { return nil }
-        return topLevel[0].splitView
-    }
-
-    /// Whether AppKit has a divider position saved for the top-level split view that is worth
-    /// honouring: the split view carries a non-empty `autosaveName` AND the corresponding
-    /// `NSSplitView Subview Frames <name>` default is present. `false` also covers "no window /
-    /// no unambiguous top-level split view yet", which callers should treat as "nothing saved" —
-    /// positioning the divider at the default is the correct action in that state too.
-    ///
-    /// Deliberately only a PRESENCE check, not a value read: AppKit's stored frame format is not a
-    /// contract this app should parse, and when the key is present AppKit's own restore is the
-    /// authority. The key shape comes from `AutosaveKeySweep.splitViewPrefix`, so this cannot
-    /// drift from the sweep's own understanding of `NSSplitView Subview Frames ` keys.
-    static func hasAutosavedDividerPosition(in window: NSWindow) -> Bool {
-        guard let name = currentTopLevelAutosaveName(in: window) else { return false }
-        return UserDefaults.standard.object(forKey: AutosaveKeySweep.splitViewPrefix + name) != nil
-    }
-
-    /// The leading pane's current width in the top-level split view — the divider's position, as
-    /// `setPosition(_:ofDividerAt:)` defines it. `nil` when there is no unambiguous top-level
-    /// split view or it does not have two arranged panes to divide.
-    static func topLevelDividerPosition(in window: NSWindow) -> CGFloat? {
-        guard let splitView = topLevelSplitView(in: window),
-              splitView.arrangedSubviews.count >= 2 else { return nil }
-        return splitView.arrangedSubviews[0].frame.width
-    }
-
-    /// Positions the top-level split view's first divider, i.e. sets the leading pane's width.
-    /// Returns whether the split view was found and the call made; no-ops when the split view is
-    /// absent or has fewer than two arranged panes.
-    ///
-    /// `animated: true` uses the split view's animator proxy; the Outline pane passes `false` and
-    /// steps the position itself instead, because `NSSplitView`'s animator proxy is not documented
-    /// to animate `setPosition(_:ofDividerAt:)` and the pane's animation must be observable.
-    @discardableResult
-    static func setTopLevelDividerPosition(
-        _ position: CGFloat,
-        in window: NSWindow,
-        animated: Bool
-    ) -> Bool {
-        guard let splitView = topLevelSplitView(in: window),
-              splitView.arrangedSubviews.count >= 2 else { return false }
-
-        if animated {
-            NSAnimationContext.runAnimationGroup { context in
-                context.duration = PanelToggleTiming.duration
-                splitView.animator().setPosition(position, ofDividerAt: 0)
-            }
-        } else {
-            splitView.setPosition(position, ofDividerAt: 0)
-        }
-        return true
     }
 }

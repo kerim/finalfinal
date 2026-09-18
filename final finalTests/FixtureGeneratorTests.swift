@@ -33,9 +33,7 @@ final class FixtureGeneratorTests: XCTestCase {
         try? FileManager.default.removeItem(at: fixtureURL)
 
         // Create fixture using ProjectDatabase APIs (runs all migrations)
-        // register: false — this is the stable, committed, reused fixture and
-        // must never be swept by TestFixtureCleanup.
-        try TestFixtureFactory.createFixture(at: fixtureURL, register: false)
+        try TestFixtureFactory.createFixture(at: fixtureURL)
 
         // Verify it was created
         XCTAssertTrue(FileManager.default.fileExists(atPath: fixtureURL.path))
@@ -58,9 +56,7 @@ final class FixtureGeneratorTests: XCTestCase {
         let fixtureURL = URL(fileURLWithPath: outputPath)
         try? FileManager.default.removeItem(at: fixtureURL)
 
-        // register: false — this is the stable, committed, reused fixture and
-        // must never be swept by TestFixtureCleanup.
-        let db = try TestFixtureFactory.createRichFixture(at: fixtureURL, register: false)
+        let db = try TestFixtureFactory.createRichFixture(at: fixtureURL)
 
         // Verify fixture was created
         XCTAssertTrue(FileManager.default.fileExists(atPath: fixtureURL.path))

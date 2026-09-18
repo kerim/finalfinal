@@ -117,5 +117,8 @@ final class FirstProjectOpenBlankMarginsE2ETests: XCTestCase {
         shot.name = name
         shot.lifetime = .keepAlways
         add(shot)
+        if let pngData = app.screenshot().pngRepresentation as Data? {
+            try? pngData.write(to: E2EShotDir.url.appendingPathComponent("\(name).png"))
+        }
     }
 }

@@ -149,7 +149,6 @@ struct BibliographyRenameGraceNameTests {
         // behind; clean this test's own up rather than adding to the pile.
         defer { try? FileManager.default.removeItem(at: url) }
         let package = try ProjectPackage.create(at: url, title: "Test Project")
-        TestFixtureCleanup.register(package.packageURL)
         let db = try ProjectDatabase.create(package: package, title: "Test Project", initialContent: markdown)
         let projectId = try TestFixtureFactory.getProjectId(from: db)
         let parsedBlocks = BlockParser.parse(

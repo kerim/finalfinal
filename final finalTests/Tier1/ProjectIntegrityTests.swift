@@ -29,7 +29,6 @@ struct ProjectIntegrityTests {
     private func createEmptyPackage() throws -> URL {
         let url = URL(fileURLWithPath: "/tmp/claude/integrity-empty-\(UUID().uuidString).ff")
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-        TestFixtureCleanup.register(url)
         return url
     }
 
@@ -37,7 +36,6 @@ struct ProjectIntegrityTests {
     private func createPackageWithoutProjectRecord() throws -> URL {
         let url = URL(fileURLWithPath: "/tmp/claude/integrity-noproj-\(UUID().uuidString).ff")
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-        TestFixtureCleanup.register(url)
         let dbPath = url.appendingPathComponent("content.sqlite").path
         let dbQueue = try DatabaseQueue(path: dbPath)
         try dbQueue.write { db in

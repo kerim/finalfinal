@@ -676,4 +676,21 @@ extension View {
                 }
             }
     }
+
+    /// Adds sidebar visibility sync observers
+    @MainActor
+    func withSidebarSync(
+        editorState: EditorViewState,
+        sidebarVisibility: Binding<NavigationSplitViewVisibility>
+    ) -> some View {
+        self
+            .onChange(of: editorState.isOutlineSidebarVisible) { _, newValue in
+                // Sync editorState -> NavigationSplitView (from keyboard shortcut/menu)
+                sidebarVisibility.wrappedValue = newValue ? .all : .detailOnly
+            }
+            .onChange(of: sidebarVisibility.wrappedValue) { _, newValue in
+                // Sync NavigationSplitView -> editorState (from native chevron)
+                editorState.isOutlineSidebarVisible = (newValue != .detailOnly)
+            }
+    }
 }

@@ -348,10 +348,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         escapeEventOrdinal += 1
         let ordinal = escapeEventOrdinal
-        DebugLog.log(
-            .escape,
-            "[Escape#\(ordinal)] keydown timestamp=\(event.timestamp) isARepeat=\(event.isARepeat) windowNumber=\(event.windowNumber)"
-        )
+        DebugLog.log(.escape, "[Escape#\(ordinal)] keydown timestamp=\(event.timestamp) isARepeat=\(event.isARepeat) windowNumber=\(event.windowNumber)")
 
         // Auto-repeat guard, now extended with physical-event-identity dedup (see
         // EscapeLadder.shouldConsiderCandidate's doc comment for why both are needed: WebKit
@@ -439,9 +436,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func focusIsInWebView(_ ctx: EscapeLadderContext) -> Bool {
         guard let web = ctx.activeWebView, let first = ctx.window?.firstResponder as? NSView else { return false }
         var node: NSView? = first
-        while let currentNode = node {
-            if currentNode === web { return true }
-            node = currentNode.superview
+        while let n = node {
+            if n === web { return true }
+            node = n.superview
         }
         return false
     }
@@ -679,12 +676,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     /// Retries `SplitViewAutosaveNaming.stabilize(for:)` on every key-becomes event for the main
     /// window, until it succeeds. The first attempt (at window-capture time, alongside
-    /// `disableFrameAutosave`) runs while `appViewState` is still `.loading` — before the
-    /// window's `HSplitView` is anywhere in the view hierarchy (this said
-    /// `NavigationSplitView` before the Outline sidebar's container swap) — so it reliably finds
-    /// zero split views and no-ops. `windowDidBecomeKey` fires again once editor content has
-    /// loaded and the user is actually interacting with the window, by which point the split view
-    /// exists. Once
+    /// `disableFrameAutosave`) runs while `appViewState` is still `.loading` — before
+    /// `NavigationSplitView` is anywhere in the view hierarchy — so it reliably finds zero split
+    /// views and no-ops. `windowDidBecomeKey` fires again once editor content has loaded and the
+    /// user is actually interacting with the window, by which point the split view exists. Once
     /// stabilization has taken effect (current name already equals `stableName`), this is a
     /// cheap no-op read on every subsequent call.
     func windowDidBecomeKey(_ notification: Notification) {

@@ -17,23 +17,13 @@ VMTEST_PROVISION_WARM_SCRIPT="provision-warm.sh"
 # required for anything the XCUITest runner process must see — xcodebuild
 # forwards only that prefix, stripping it on arrival. Absolute path under
 # /tmp/ (per E2EShotDir's documented contract in UITestHelpers.swift, an
-# absolute value is used as-is), the same convention the video-recording
-# feature already uses — this path and its wiring below are still correct
-# and unchanged. As of 2026-09-12 the confirmed reason this path still comes
-# back empty for screenshot evidence on this project is narrower than "path
-# form doesn't matter": Xcode's own XCUITest runner process is sandboxed
-# (app-sandbox=true, read-only "/", per Xcode's shipped RunnerEntitlements.plist
-# template) and can write ONLY inside its own container (NSHomeDirectory(),
-# NSTemporaryDirectory()) — never outside it. /tmp/vmtest-e2e-shots sits
-# outside that container, so the write fails there specifically; an absolute
-# path under the container would succeed, and the bare-relative convention
-# this project tried earlier (resolving inside NSHomeDirectory()) DID write
-# successfully — it just produced no usable evidence for a different reason,
-# because SSH could not read back into the runner's own sandboxed container
-# afterward. Screenshot evidence now comes from `XCTAttachment` (see
-# `attachEvidenceScreenshot` in `UITestHelpers.swift`), which goes through
-# XCTest's own privileged export path and is unaffected by the runner
-# sandbox, instead of a plain write to this path from inside a test.
+# absolute value is used as-is) so screenshots land outside any app
+# sandbox — the same location the video-recording feature already uses and
+# reliably reads back over SSH/SCP. A bare relative name used to resolve
+# against the runner's own sandboxed home instead, which put screenshots
+# inside the XCUITest runner's App Sandbox container that an external SSH
+# session generally cannot read into — the root cause of evidence export
+# silently finding nothing on every run.
 VMTEST_GUEST_TEST_ENV="TEST_RUNNER_FF_E2E_SHOT_DIR=/tmp/vmtest-e2e-shots"
 
 # Where the vmtest tool's export side (evidence.sh) looks for exported

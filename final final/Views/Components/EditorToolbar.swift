@@ -13,33 +13,6 @@ struct EditorToolbar: ToolbarContent {
     let editorState: EditorViewState
 
     var body: some ToolbarContent {
-        // Outline sidebar toggle, in the LEADING section of the title bar (left of the window
-        // title) -- the position the native sidebar chevron held before the Outline's container
-        // became an `HSplitView`. `.navigation` is the placement for that leading section on
-        // macOS; a `.primaryAction` item (where this started) belongs to the trailing cluster,
-        // which is right of the title and therefore the wrong end of the bar. Semantics: this is a
-        // navigation control over the window's leading pane, so `.navigation` is also the
-        // honest description of it, not just the leading slot. Deliberately a bare `ToolbarItem`
-        // rather than a group: it is a single standalone control, matching how the chevron it
-        // replaces appeared. `NativeToolbarButton` supplies the label, tooltip and accessibility
-        // identifier exactly as before (UX contract §5/§8: one icon-button style, matching
-        // "Show/Hide Outline" wording and a tooltip carrying the shortcut).
-        ToolbarItem(placement: .navigation) {
-            NativeToolbarButton(
-                systemSymbolName: "sidebar.left",
-                accessibilityLabel: editorState.isOutlineSidebarVisible
-                    ? "Hide Outline"
-                    : "Show Outline",
-                helpText: editorState.isOutlineSidebarVisible
-                    ? "Hide Outline (⌘[)"
-                    : "Show Outline (⌘[)",
-                accessibilityHint: "(⌘[ to toggle)",
-                accessibilityIdentifier: "toolbar-outline-toggle"
-            ) {
-                editorState.toggleOutlineSidebar()
-            }
-        }
-
         ToolbarItemGroup(placement: .primaryAction) {
             // Annotations group
             Button {

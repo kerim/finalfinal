@@ -55,7 +55,6 @@ struct ProjectSwitchStaleContentPushTests {
     private func makeTempDir() throws -> URL {
         let dir = URL(fileURLWithPath: "/tmp/claude/ProjectSwitchStaleContentPushTests-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        TestFixtureCleanup.register(dir)
         return dir
     }
 

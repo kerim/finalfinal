@@ -48,20 +48,13 @@ final class ChromeTypographyE2ETests: XCTestCase {
         // identifier -- SwiftUI doesn't expose the inner Image separately.
         let outlineButton = app.buttons["status-bar-outline"]
         XCTAssertTrue(outlineButton.waitForExistence(timeout: 10), "Status-bar outline button (chevron) should appear")
-
-        // Existence and hittability can resolve at different times (see
-        // SmokeTests.swift's testSidebarToggles comment on the same race) --
-        // poll isHittable rather than reading it once, since this test's
-        // whole purpose is proving the enlarged chevron is a genuinely
-        // hittable target and a transient false reading would defeat that.
-        let hittablePredicate = NSPredicate(format: "isHittable == true")
-        let hittableExpectation = XCTNSPredicateExpectation(predicate: hittablePredicate, object: outlineButton)
-        let hittableResult = XCTWaiter().wait(for: [hittableExpectation], timeout: 5)
-        XCTAssertEqual(hittableResult, .completed, "Status-bar outline button (chevron) should be hittable, not near-invisible at 7pt")
+        XCTAssertTrue(outlineButton.isHittable, "Status-bar outline button (chevron) should be hittable, not near-invisible at 7pt")
 
         // Screenshot evidence for the human/design-reviewer visual pass this
         // task's plan calls for in place of an automated font-size assertion.
-        attachEvidenceScreenshot(app.screenshot(), name: "status-bar-chevron")
+        let shotDir = E2EShotDir.url
+        try? app.screenshot().pngRepresentation
+            .write(to: shotDir.appendingPathComponent("status-bar-chevron.png"))
 
         // Drive it for real: clicking should open the outline popover, proving
         // the enlarged chevron sits over a genuinely functional hit target,

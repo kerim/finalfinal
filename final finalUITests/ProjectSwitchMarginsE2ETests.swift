@@ -154,6 +154,7 @@ final class ProjectSwitchMarginsE2ETests: XCTestCase {
         attachment.name = "diagnostic-log-tail"
         attachment.lifetime = .keepAlways
         add(attachment)
+        try? (found ?? report).write(to: E2EShotDir.url.appendingPathComponent("diagnostic-log-full.txt"), atomically: true, encoding: .utf8)
     }
 
     private func snap(_ name: String) {
@@ -161,6 +162,9 @@ final class ProjectSwitchMarginsE2ETests: XCTestCase {
         shot.name = name
         shot.lifetime = .keepAlways
         add(shot)
+        if let pngData = app.screenshot().pngRepresentation as Data? {
+            try? pngData.write(to: E2EShotDir.url.appendingPathComponent("\(name).png"))
+        }
     }
 
     private func waitUntilInt(

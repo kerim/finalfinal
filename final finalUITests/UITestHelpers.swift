@@ -146,24 +146,6 @@ extension XCTestCase {
             return false
         }
     }
-
-    /// Attach a screenshot as e2e evidence. THE way to produce screenshot
-    /// evidence in this suite.
-    ///
-    /// A plain `FileManager` write from a UI-test method cannot work: Xcode's
-    /// own RunnerEntitlements.plist sandboxes every macOS XCUITest runner
-    /// (app-sandbox=true, read-only "/"), so writes outside the runner's
-    /// container fail with "Operation not permitted" — silently, wherever the
-    /// call site uses `try?`. Confirmed live, two instrumented VM runs,
-    /// 2026-09-12. XCTAttachment goes through XCTest's own privileged export
-    /// path and is unaffected; vmtest exports attachments after every run,
-    /// pass or fail.
-    func attachEvidenceScreenshot(_ screenshot: XCUIScreenshot, name: String) {
-        let attachment = XCTAttachment(screenshot: screenshot)
-        attachment.name = name
-        attachment.lifetime = .keepAlways
-        add(attachment)
-    }
 }
 
 // MARK: - Wait Helpers
@@ -249,56 +231,33 @@ extension XCUIElement {
     }
 }
 
-// MARK: - Screenshot Evidence Plumbing (E2EShotDir)
+// MARK: - Screenshot Evidence Helpers
 
 enum E2EShotDir {
-    /// The `FF_E2E_SHOT_DIR` env-var contract — NOT itself a route for a
-    /// disposable e2e test to write its screenshot evidence; see the next
-    /// paragraph. Screenshot evidence goes through
-    /// `attachEvidenceScreenshot(_:name:)` (above) instead.
-    ///
-    /// This type's WRITE path (a plain `FileManager`/`Data.write(to:)` call
-    /// from inside a UI test method) works only when the resolved path sits
-    /// inside the runner's own sandbox container — it fails whenever the
-    /// target is outside it. Xcode's own RunnerEntitlements.plist sandboxes
-    /// every macOS XCUITest runner (app-sandbox=true, read-only "/"), so the
-    /// runner process can write to `NSHomeDirectory()`/`NSTemporaryDirectory()`
-    /// (inside its own container) but nowhere outside that. `vmtest`'s
-    /// `/tmp/vmtest-e2e-shots` (below) sits outside the container, which is
-    /// why a write there fails — not because the path happens to be
-    /// absolute; an absolute path under the container (e.g.
-    /// `NSTemporaryDirectory()` itself) writes successfully. Confirmed live,
-    /// two instrumented VM runs, 2026-09-12. Screenshot evidence goes
-    /// through `attachEvidenceScreenshot(_:name:)` (above) instead, which
-    /// uses XCTest's own privileged `XCTAttachment` export path.
-    /// `FF_E2E_SHOT_DIR`/`E2EShotDir` remains the contract only for writers
-    /// that are NOT the sandboxed runner process (e.g. host-side tooling).
+    /// Where a disposable e2e test should write its screenshot evidence.
     ///
     /// Reads `FF_E2E_SHOT_DIR` from the process environment — set by
     /// `vmtest` (as `TEST_RUNNER_FF_E2E_SHOT_DIR`, which xcodebuild forwards
-    /// to the runner process with the prefix stripped).
+    /// to the runner process with the prefix stripped) or directly by the
+    /// `e2e-verify` skill for a host run.
     ///
     /// Two cases, deliberately distinct:
     /// - Unset → `NSTemporaryDirectory()`, which the runner can always write
-    ///   to because it sits inside the runner's own container (already
-    ///   relied on by `TestFixtureHelper.fixturePath` above). This is the
-    ///   safe default when nobody wired anything up.
-    /// - Set to an absolute path (starts with "/") → used as-is. `vmtest`
-    ///   sets it to an absolute path under `/tmp/` (e.g.
-    ///   `/tmp/vmtest-e2e-shots`), the same convention its video-recording
-    ///   feature already uses. That particular path sits OUTSIDE the
-    ///   runner's container, so a write to it from the runner process fails
-    ///   — see this type's opening paragraph; what determines success is
-    ///   inside-vs-outside the container, not the path's form. An earlier
-    ///   convention had `vmtest` pass a bare relative name for the runner to
-    ///   resolve against its own sandboxed `NSHomeDirectory()` — that write
-    ///   actually succeeded (`NSHomeDirectory()` is inside the container),
-    ///   but still produced no usable evidence, for a different reason: an
-    ///   external SSH session cannot read into another app's sandboxed
-    ///   container over SSH, so nothing could be pulled back out afterward.
-    ///   Both conventions end up with no usable evidence reaching the host,
-    ///   but for two different reasons — the old one wrote successfully and
-    ///   failed on read-back, today's fails to write at all.
+    ///   to (already relied on by `TestFixtureHelper.fixturePath` above).
+    ///   This is the safe default when nobody wired anything up.
+    /// - Set to an absolute path (starts with "/") → used as-is. Both the
+    ///   host case (`e2e-verify`/superdev pass an explicit run-notes folder)
+    ///   and the VM-guest case go through this branch: `vmtest` sets it to
+    ///   an absolute path under `/tmp/` (e.g. `/tmp/vmtest-e2e-shots`),
+    ///   which sits outside any app sandbox — the same convention its
+    ///   video-recording feature already uses, which the exporter reads
+    ///   back over SSH/SCP reliably. An earlier convention had `vmtest`
+    ///   pass a bare relative name for the runner to resolve against its
+    ///   own sandboxed `NSHomeDirectory()`; that landed screenshots inside
+    ///   the XCUITest runner's App Sandbox container, which an external SSH
+    ///   session generally cannot read into (a macOS permission boundary),
+    ///   so evidence export silently found nothing on every run. Superseded
+    ///   by the absolute-path convention above.
     ///
     /// A bare relative value (no leading "/") still resolves against
     /// `NSHomeDirectory()` rather than silently falling back to the temp
@@ -499,41 +458,15 @@ extension XCUIApplication {
     /// and `E2EAsyncImageCorruptionTests.swift`'s lesson block) -- a `label CONTAINS` query
     /// against editor content matches nothing, so it was dropped rather than paying for a
     /// full-tree scan that can never succeed.
-    ///
-    /// Batched via `XCUIElement.snapshot()`, not a per-element `descendants(matching: .any)`
-    /// walk: fetching each of the 500+ elements under `editor-area` individually round-trips to
-    /// the AX server once per element (~0.1s each), so a single "not found" poll of the old
-    /// per-element scan cost roughly 50s regardless of `timeout` -- the deadline was only
-    /// checked once that whole pass finished, so it always overshot short timeouts by a wide
-    /// margin. `snapshot()` fetches the entire subtree in one round trip; the tree is then
-    /// walked in-process (`snapshotDescendantsContainText` below), over exactly the same element
-    /// set `descendants(matching: .any)` produced (every descendant, self excluded), checking
-    /// each node's `value as? String` exactly as the old predicate did.
     func editorContainsText(_ text: String, timeout: TimeInterval = 5) -> Bool {
         let deadline = Date(timeIntervalSinceNow: timeout)
         repeat {
-            do {
-                let root = try editorArea.snapshot()
-                if Self.snapshotDescendantsContainText(root, text) { return true }
-            } catch {
-                // Loud on purpose (must-fix from plan review): a `snapshot()` failure --
-                // truncation, an AX-server timeout, etc. -- must show up directly in a failing
-                // run's output, not be inferred later from "the text was never found."
-                print("[editorContainsText] snapshot() of editor-area failed this poll: \(error)")
+            for element in editorArea.descendants(matching: .any).allElementsBoundByIndex {
+                guard element.exists else { continue }
+                if let value = element.value as? String, value.contains(text) { return true }
             }
             RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.25))
         } while Date() < deadline
-        return false
-    }
-
-    /// Recursively checks every descendant of `snapshot` (the root itself excluded, matching
-    /// `descendants(matching: .any)`'s own semantics) for a `value` containing `text`. Used only
-    /// by `editorContainsText` above to batch what used to be a per-element live AX fetch.
-    private static func snapshotDescendantsContainText(_ snapshot: XCUIElementSnapshot, _ text: String) -> Bool {
-        for child in snapshot.children {
-            if let value = child.value as? String, value.contains(text) { return true }
-            if snapshotDescendantsContainText(child, text) { return true }
-        }
         return false
     }
 
@@ -599,7 +532,7 @@ extension XCUIApplication {
             typeText(text)
             Thread.sleep(forTimeInterval: 1.0)
 
-            if editorContainsText(text, timeout: 15) {
+            if editorContainsText(text) {
                 return
             }
 

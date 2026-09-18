@@ -122,35 +122,6 @@ enum DebugLog {
     /// Do NOT use for routine error logging — use log() instead.
     @inline(__always)
     static func always(_ message: @autoclosure () -> String) {
-        let text = message()
-        print(text)
-        #if DEBUG
-        // A18: copy the sink under the lock and invoke it AFTER unlocking. Holding
-        // the lock across the call meant a sink that (directly or indirectly) touched
-        // `DebugLog` could deadlock, and it made the sink's own re-entrancy contract
-        // load-bearing.
-        alwaysSinkLock.lock()
-        let sink = _alwaysSink
-        alwaysSinkLock.unlock()
-        sink?(text)
-        #endif
+        print(message())
     }
-
-    #if DEBUG
-    private static let alwaysSinkLock = NSLock()
-    /// `nonisolated(unsafe)`: every read and write goes through `alwaysSinkLock`
-    /// (`always` above copies it under the lock; the accessor below locks for get and
-    /// set). The annotation is what tells the compiler that this mutable global is
-    /// guarded externally rather than actor-isolated.
-    nonisolated(unsafe) private static var _alwaysSink: ((String) -> Void)?
-    /// Test-only sink: every always(...) line is forwarded here too, under the same
-    /// lock that guards the assignment. Only tests asserting on unconditional lines
-    /// (e.g. the poll-watchdog timeout line's literal text) install it; tests that
-    /// only need to observe a condition should prefer an instance-scoped seam, since
-    /// this one is process-global and shared with concurrently running suites.
-    static var alwaysSink: ((String) -> Void)? {
-        get { alwaysSinkLock.lock(); defer { alwaysSinkLock.unlock() }; return _alwaysSink }
-        set { alwaysSinkLock.lock(); defer { alwaysSinkLock.unlock() }; _alwaysSink = newValue }
-    }
-    #endif
 }

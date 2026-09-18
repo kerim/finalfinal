@@ -162,29 +162,15 @@ enum TestFixtureFactory {
     ///   - url: Directory URL where the .ff package will be created
     ///   - title: Project title (defaults to "Test Project")
     ///   - content: Markdown content (defaults to testContent)
-    ///   - register: Whether to register the fixture with `TestFixtureCleanup`
-    ///     for automatic teardown. Defaults to true; pass false only for the
-    ///     stable, reused fixtures that must never be swept.
     /// - Returns: The created ProjectDatabase
     @discardableResult
     static func createFixture(
         at url: URL,
         title: String = "Test Project",
-        content: String? = nil,
-        register: Bool = true
+        content: String? = nil
     ) throws -> ProjectDatabase {
         let markdown = content ?? testContent
         let package = try ProjectPackage.create(at: url, title: title)
-
-        // Register as soon as the package directory exists on disk, before
-        // anything below can throw and leak it — and register the package's
-        // actual on-disk URL (which ProjectPackage.create may have amended
-        // with a `.ff` extension), not the caller's input `url`, in case a
-        // future caller ever passes an extensionless URL.
-        if register {
-            TestFixtureCleanup.register(package.packageURL)
-        }
-
         let db = try ProjectDatabase.create(
             package: package,
             title: title,
@@ -205,19 +191,18 @@ enum TestFixtureFactory {
     @discardableResult
     static func createRichFixture(
         at url: URL,
-        title: String = "Rich Test Project",
-        register: Bool = true
+        title: String = "Rich Test Project"
     ) throws -> ProjectDatabase {
-        return try createFixture(at: url, title: title, content: richTestContent, register: register)
+        return try createFixture(at: url, title: title, content: richTestContent)
     }
 
     // MARK: - Shared Test Helpers
 
     /// Create a temporary test database at a unique path under /tmp/claude/.
     @discardableResult
-    static func createTemporary(content: String? = nil, register: Bool = true) throws -> ProjectDatabase {
+    static func createTemporary(content: String? = nil) throws -> ProjectDatabase {
         let url = URL(fileURLWithPath: "/tmp/claude/test-\(UUID().uuidString).ff")
-        return try createFixture(at: url, content: content, register: register)
+        return try createFixture(at: url, content: content)
     }
 
     /// Fetch all blocks for the single project in a test database, ordered by sortOrder.

@@ -21,7 +21,6 @@ struct CorruptedDatabaseFactory {
         // Use /tmp/claude/ for sandbox compatibility
         tempDir = URL(fileURLWithPath: "/tmp/claude/RepairTests-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
-        TestFixtureCleanup.register(tempDir)
     }
 
     var databaseURL: URL {

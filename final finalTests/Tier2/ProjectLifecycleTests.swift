@@ -23,9 +23,7 @@ struct ProjectLifecycleTests {
     }
 
     private func tempProjectURL() -> URL {
-        let url = URL(fileURLWithPath: "/tmp/claude/project-lifecycle-\(UUID().uuidString).ff")
-        TestFixtureCleanup.register(url)
-        return url
+        URL(fileURLWithPath: "/tmp/claude/project-lifecycle-\(UUID().uuidString).ff")
     }
 
     // MARK: - New Project

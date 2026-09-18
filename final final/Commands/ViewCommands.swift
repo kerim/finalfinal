@@ -58,12 +58,12 @@ struct ViewCommands: Commands {
     /// "Hide Outline" when the sidebar is currently visible, "Show Outline" otherwise --
     /// the HIG-correct reading of the UX contract's "Show/Hide Outline" shorthand (§5), not a
     /// literal static string with a slash in it. Tracks every way visibility can change --
-    /// the menu action itself, cmd-[, the toolbar toggle, and Focus Mode hiding it
-    /// (`EditorViewState+FocusMode.swift`) -- because all of those write through the same
+    /// the menu action itself, dragging the sidebar closed via its divider (`withSidebarSync`
+    /// in ViewNotificationModifiers.swift), and Focus Mode hiding it
+    /// (`EditorViewState+FocusMode.swift`) -- because all three write through the same
     /// `editorState.isOutlineSidebarVisible`, which this reads live via `@FocusedValue`; no
-    /// separate plumbing is needed. Dragging the divider is deliberately NOT one of them: it
-    /// no longer collapses the sidebar (it stops at the pane's 250pt floor), so it never
-    /// touches this flag.
+    /// separate plumbing is needed since that property already existed and was already kept
+    /// in sync with all three.
     ///
     /// `editorState == nil` (no document open, e.g. at the project picker): reads "Show
     /// Outline" -- there is no sidebar to hide -- and the button above is disabled, so it

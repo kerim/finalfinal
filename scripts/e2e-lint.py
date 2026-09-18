@@ -72,31 +72,16 @@ SINGLE = [
         "error",
         r"NSHomeDirectory\(\)",
         "The runner's home is containerized — NSHomeDirectory() points at "
-        "the xctrunner container, not the app's home. Use AppFileHelper to "
-        "read app files, and attachEvidenceScreenshot(_:name:) to attach "
-        "screenshots — both in UITestHelpers.swift.",
+        "the xctrunner container, not the app's home. Use AppFileReader / "
+        "E2EShotDir from UITestHelpers.swift.",
     ),
     (
         "abs-path",
         "error",
         r'"/Users/(?!\\\(NSUserName)',
         "Hardcoded host paths don't exist inside the VM guest. Read app "
-        "files via AppFileHelper; attach screenshots with "
-        "attachEvidenceScreenshot(_:name:). "
+        "files via AppFileReader; write screenshots via E2EShotDir. "
         '(The portable "/Users/\\(NSUserName())" idiom is allowed.)',
-    ),
-    (
-        "shotdir-write",
-        "error",
-        r"\bE2EShotDir\s*\.\s*(?:url|path)\b",
-        "A test's own write through E2EShotDir cannot work: the macOS "
-        "XCUITest runner is sandboxed (app-sandbox=true, read-only \"/\") "
-        "and vmtest's shot dir sits outside its container, so the write "
-        "fails and a `try?` swallows it — the evidence never reaches the "
-        "host. Use attachEvidenceScreenshot(_:name:) in UITestHelpers.swift, "
-        "which goes through XCTAttachment's privileged export path. "
-        "(E2EShotDir remains the env-var contract for host-side tooling "
-        "only; see its doc comment.)",
     ),
     (
         "cmd-w",
@@ -113,7 +98,7 @@ SINGLE = [
         "warn",
         r"homeDirectoryForCurrentUser",
         "homeDirectoryForCurrentUser resolves to the xctrunner container "
-        "in the guest. Prefer AppFileHelper from UITestHelpers.swift, "
+        "in the guest. Prefer AppFileReader from UITestHelpers.swift, "
         "which already tries the correct roots.",
     ),
     (
