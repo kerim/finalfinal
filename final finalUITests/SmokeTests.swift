@@ -234,12 +234,17 @@ final class EditorSmokeTests: XCTestCase {
 
         let editorArea = app.groups["editor-area"]
         XCTAssertTrue(editorArea.waitForExistence(timeout: 10), "Editor area should appear after seeding")
-        // 10s, not editorContainsText's 5s default -- found live in a sharded
-        // --suite full run (two VMs contending for the same host): the
-        // editor-area container existed well before the WebView had actually
-        // rendered the seeded content, and 5s wasn't always enough margin for
-        // that render to catch up under VM/host contention.
-        XCTAssertTrue(app.editorContainsText("Seed paragraph", timeout: 10), "Seeded content should render before typing")
+        // Widened 5s -> 10s -> 30s. The 10s step (found live in a sharded --suite full run: the
+        // editor-area container existed well before the WebView had actually rendered the seeded
+        // content) was itself not enough margin: the 2026-09-12 run-1789176950-2627 investigation
+        // (shard-1) found this call has the SAME defect as the post-relaunch call below --
+        // editorContainsText only checks its deadline BETWEEN complete accessibility passes, never
+        // during one -- and it nearly failed in that very run. Two passes started at t=6.23 and
+        // t=8.10 against this call's own ~16.2s deadline (start + the old timeout:10), yet the
+        // seed paragraph wasn't actually found until t=20.87 -- a pass already running when the
+        // deadline lapsed was allowed to finish rather than being cut off. It only happened to
+        // succeed that time under contention; 30 buys real margin instead of relying on luck.
+        XCTAssertTrue(app.editorContainsText("Seed paragraph", timeout: 30), "Seeded content should render before typing")
 
         // Click at the end of the seed paragraph and open a fresh, empty
         // line -- typeTextVerifyingLanded's documented precondition.
@@ -285,14 +290,79 @@ final class EditorSmokeTests: XCTestCase {
         // The actual proof: terminate for real and relaunch against the same
         // (already-mutated) fixture path -- not just an in-memory check.
         app.terminate()
+
+        // Confirm persistence survived the real termination above, independent of whatever the
+        // post-relaunch rendering check further down finds -- so a rendering/timing bug there is
+        // never conflated with a real save/reload bug. FixtureDatabase.read is a direct `sqlite3`
+        // query against the fixture, not a UI action, so it produces no xcodebuild.log entry of
+        // its own; per the 2026-09-12 run-1789176950-2627 investigation, what IS in that log
+        // around this point is a ~0.25s gap between the last accessibility action and Terminate,
+        // and the fact that the save itself was already confirmed fine before terminate (the
+        // block row was on disk, 26 elements found pre-terminate) -- this assertion is a second,
+        // independent check of the same fact after a real process termination, not a new claim.
+        let countAfterTerminate = FixtureDatabase.read(
+            fixturePath: TestFixtureHelper.fixturePath,
+            sql: "SELECT count(*) FROM block WHERE markdownFragment LIKE '%\(marker)%';"
+        )
+        XCTAssertTrue(
+            (Int(countAfterTerminate.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0) > 0,
+            "Typed text should still be on disk after a real terminate, before any relaunch/render check runs"
+        )
+
         app.launchForTesting(fixturePath: TestFixtureHelper.fixturePath)
 
         let editorAreaAfterRelaunch = app.groups["editor-area"]
         XCTAssertTrue(editorAreaAfterRelaunch.waitForExistence(timeout: 10), "Editor area should reappear after relaunch")
-        XCTAssertTrue(
-            app.editorContainsText(marker, timeout: 10),
-            "Typed text should survive a real terminate + relaunch, not just in-memory state"
-        )
+
+        // Widened 10s -> 30s (2026-09-12 run-1789176950-2627 investigation, shard-1, against the
+        // actual xcodebuild.log). The save itself was fine -- the disk check right after
+        // terminate() above, and the block row already confirmed on disk pre-terminate (26
+        // elements found then), prove that independently. The failure was entirely in THIS check:
+        // editorContainsText only checks its deadline BETWEEN complete accessibility passes, never
+        // during one, and under two-shard host contention a single pass cost 8.6s in that run --
+        // so timeout: 10 bought at most 2 passes while the relaunched WKWebView was still
+        // hydrating (7 elements found on pass 1, 16 on pass 2 -- still short of the pre-terminate
+        // 26). That the element count was still growing across passes, and never reached its
+        // pre-terminate size before the old deadline, is the stronger evidence of
+        // hydration-in-progress; the 8.6s-per-pass cost is what explains why 10s wasn't enough
+        // passes to let it finish.
+        let foundAfterRelaunch = app.editorContainsText(marker, timeout: 30)
+        if !foundAfterRelaunch {
+            // Self-diagnose rather than just failing blind: a non-zero count here means the
+            // marker is still on disk and this is a render/timing bug (rendering hadn't caught up
+            // within the widened 30s deadline); a zero count means a genuine reload/persistence
+            // bug (the write from before terminate didn't actually stick). Dump the block table
+            // and every post-relaunch editor accessibility element's value/label alongside it, so
+            // a failure carries enough evidence to tell the two apart without re-running anything.
+            let countAfterRelaunch = FixtureDatabase.read(
+                fixturePath: TestFixtureHelper.fixturePath,
+                sql: "SELECT count(*) FROM block WHERE markdownFragment LIKE '%\(marker)%';"
+            )
+            let stillOnDisk = (Int(countAfterRelaunch.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0) > 0
+            let blockDump = FixtureDatabase.read(
+                fixturePath: TestFixtureHelper.fixturePath,
+                sql: "SELECT id, blockType, substr(markdownFragment, 1, 80) FROM block ORDER BY sortOrder;"
+            )
+            let elementDump = editorAreaAfterRelaunch.descendants(matching: .any).allElementsBoundByIndex
+                .compactMap { element -> String? in
+                    guard element.exists else { return nil }
+                    let value = (element.value as? String) ?? ""
+                    let label = element.label
+                    guard !value.isEmpty || !label.isEmpty else { return nil }
+                    return "value=\"\(value)\" label=\"\(label)\""
+                }
+                .joined(separator: "\n")
+            XCTFail("""
+                Typed text should survive a real terminate + relaunch, not just in-memory state. \
+                \(stillOnDisk
+                    ? "Marker IS still on disk -- render/timing bug, not a reload bug."
+                    : "Marker is NOT on disk -- genuine reload/persistence bug.")
+                Block table (id, blockType, markdownFragment prefix):
+                \(blockDump)
+                Post-relaunch editor accessibility elements (value/label):
+                \(elementDump)
+                """)
+        }
     }
 
     func testFocusModeToggle() {
