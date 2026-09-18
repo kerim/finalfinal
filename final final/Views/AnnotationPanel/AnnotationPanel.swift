@@ -343,7 +343,7 @@ struct AnnotationPanel: View {
                         annotation: annotation,
                         escapeLadder: escapeLadder,
                         onTap: {
-                            if let index = editorState.annotations.firstIndex(where: { $0.id == annotation.id }) {
+                            if let index = editorState.inlineAnnotationIndex(of: annotation) {
                                 onScrollToAnnotation(index, annotation.charOffset)
                             }
                         },

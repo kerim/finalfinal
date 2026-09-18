@@ -317,7 +317,12 @@ class EditorViewState {
     /// parameter (BlockSyncService.swift) -- that one lands synchronously, in-push, during the
     /// zoom-out content replace itself. The two happen to share a name; they do not share code.
     var scrollToBlockId: String?
-    /// Index into `annotations` array — triggers scroll to nth annotation in editor
+    /// Index into the INLINE-only annotation ordering (Document Notes excluded) — triggers
+    /// scroll to the nth inline annotation in the editor. Matches the ordering the JS bridge
+    /// functions (getAnnotations()/scrollToAnnotation()) use, computed via
+    /// `EditorViewState.inlineAnnotationIndex(of:)` (EditorViewState+Annotations.swift), NOT
+    /// an index into the full `annotations` array below (which also holds Document Notes,
+    /// sorted first).
     var scrollToAnnotationIndex: Int?
 
     // MARK: - Sidebar State (Phase 1.6)

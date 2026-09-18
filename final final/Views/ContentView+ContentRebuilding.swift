@@ -426,10 +426,12 @@ extension ContentView {
         guard let webView = structuralUndoController.activeWebView else { return }
         // Index WITHIN the inline-only list -- matches the ordering the JS bridge functions
         // (getAnnotations()/scrollToAnnotation()/deleteInlineAnnotation()) use, which never
-        // include Document Notes (DB-only rows, never part of the document text).
-        guard let index = editorState.annotations
-            .filter({ !$0.isDocumentLevel })
-            .firstIndex(where: { $0.id == annotation.id }) else { return }
+        // include Document Notes (DB-only rows, never part of the document text). Routed
+        // through the shared `inlineAnnotationIndex(of:)` helper (EditorViewState+Annotations
+        // .swift) rather than duplicating the filter here, so the tap-to-scroll path
+        // (AnnotationPanel.swift) and this delete path can never drift apart on how the index
+        // is computed.
+        guard let index = editorState.inlineAnnotationIndex(of: annotation) else { return }
 
         let expectedType = annotation.type.rawValue.escapedForJSTemplateLiteral
         let expectedText = annotation.text.escapedForJSTemplateLiteral
@@ -439,7 +441,9 @@ extension ContentView {
             if let error {
                 DebugLog.log(.undo, "[ContentView] deleteInlineAnnotation JS call errored: \(error.localizedDescription)")
             } else if (result as? Bool) != true {
-                DebugLog.log(.undo, "[ContentView] deleteInlineAnnotation refused -- index \(index) didn't match id=\(annotation.id) type=\(annotation.type.rawValue) and no unique type+text match was found")
+                let reason = "[ContentView] deleteInlineAnnotation refused -- index \(index) didn't match "
+                    + "id=\(annotation.id) type=\(annotation.type.rawValue) and no unique type+text match was found"
+                DebugLog.log(.undo, reason)
             }
         }
         EditorFocusRestoration.restoreFocus(to: webView, context: "annotation-panel delete")
