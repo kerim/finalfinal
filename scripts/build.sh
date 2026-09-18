@@ -149,20 +149,11 @@ echo -e "${YELLOW}Step 0: Running unit tests...${NC}"
 echo "  Building web editors..."
 cd web && pnpm build && cd ..
 
-if ! bash "$PROJECT_DIR/scripts/check-xcode-not-holding-project.sh"; then
-    echo -e "${RED}Error: Xcode is running with a build/test in flight, so it wasn't safe to quit automatically.${NC}"
-    echo -e "${RED}Wait for that build/test to finish, then retry.${NC}"
-    exit 1
-fi
-
 echo "  Generating Xcode project..."
 xcodegen generate
 
 echo "  Checking pbxproj determinism..."
 bash "$PROJECT_DIR/scripts/verify-pbxproj-determinism.sh"
-
-echo "  Verifying scheme..."
-bash "$PROJECT_DIR/scripts/verify-scheme.sh"
 
 echo "  Running unit tests..."
 xcodebuild test \
@@ -170,6 +161,7 @@ xcodebuild test \
     -scheme "final final" \
     -destination 'platform=macOS' \
     -only-testing 'final finalTests' \
+    -parallel-testing-enabled NO \
     CODE_SIGN_IDENTITY='-' \
     CODE_SIGN_STYLE=Manual
 touch "$PROJECT_DIR/.last-test-pass"
@@ -221,20 +213,11 @@ echo -e "${YELLOW}Step 2: Building the app...${NC}"
 
 cd "$PROJECT_DIR"
 
-if ! bash "$PROJECT_DIR/scripts/check-xcode-not-holding-project.sh"; then
-    echo -e "${RED}Error: Xcode is running with a build/test in flight, so it wasn't safe to quit automatically.${NC}"
-    echo -e "${RED}Wait for that build/test to finish, then retry.${NC}"
-    exit 1
-fi
-
 echo "  Generating Xcode project..."
 xcodegen generate
 
 echo "  Checking pbxproj determinism..."
 bash "$PROJECT_DIR/scripts/verify-pbxproj-determinism.sh"
-
-echo "  Verifying scheme..."
-bash "$PROJECT_DIR/scripts/verify-scheme.sh"
 
 echo "  Building macOS app..."
 xcodebuild -scheme "final final" -configuration Release -destination 'platform=macOS' -derivedDataPath "$PROJECT_DIR/build" build

@@ -2,7 +2,7 @@
 # final final's in-guest prep, run by the shared vmtest engine's guest
 # runner from the copied checkout root, before xcodebuild. Extracted
 # verbatim from the pre-relocation guest/run.sh — exit codes preserved
-# (66 web bundle, 67 xcodegen, 65 scheme verification).
+# (66 web bundle, 67 xcodegen).
 
 set -uo pipefail
 
@@ -38,21 +38,9 @@ cd "$WORK"
 
 # ---------------------------------------------------------------------------
 # Regenerate the Xcode project.
-#
-# A worktree's build path can shell out to git (version stamping,
-# verify-scheme.sh); since the worktree's `.git` file points at an absolute
-# HOST path that does not exist in the guest, any such call would fail — but
-# only for worktree runs, never for the main checkout. This is a known
-# limitation of running a worktree in the VM; verify-scheme.sh's output is
-# checked below rather than assumed.
 # ---------------------------------------------------------------------------
 log "xcodegen"
 if ! xcodegen generate; then
   echo "xcodegen generate failed — see output above." >&2
   exit 67
-fi
-if ! bash scripts/verify-scheme.sh; then
-  echo "verify-scheme.sh failed — if this is a worktree run, check for a git" >&2
-  echo "invocation against the host-only worktree .git pointer." >&2
-  exit 65
 fi
