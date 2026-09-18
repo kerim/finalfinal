@@ -126,33 +126,6 @@ final finalUITests/EditorModeSwitchUndoE2ETests/testUndoAfterHeadingBreakingEdit
 # changes again.
 final finalUITests/FootnoteCursorPlacementE2ETests/testDeletingLastFootnoteReferencePreservesUserProseUnderNotes
 
-# Added 2026-09-12 during /ship for v0.2.133 (ux-contract rollout). The full-suite
-# gate had never actually run to completion before this release -- a vmtest watchdog
-# bug (fixed the same day, see git history for scripts/vmtest/config.sh) always
-# killed the slower shard before it reached these classes. Running it to completion
-# for the first time surfaced that EscapeLadderE2ETests (new this release) can leave
-# the app in native full screen: several of its tests deliberately enter Focus Mode,
-# and tearDown's exitFullScreenIfNeeded() sends Cmd-Shift-F and polls up to 10s for
-# full screen to clear before terminating -- but that poll was confirmed live
-# (run-1789148375-51504) to run the full 10s without success, so the app terminates
-# still full-screen. Every one of these 7 tests runs later in the same process and
-# needs the menu bar, which is hidden in full screen -- they fail with "timed out
-# while waiting for menu open notification" (the two below with a different
-# symptom -- JS re-settle timeout, missing editor-area AX node -- but in the same
-# position right after EscapeLadderE2ETests, same suspected family).
-#
-# A fix attempt for the teardown itself did not resolve it -- see t-e54f3d44 for the
-# real root cause and fix. Quarantined rather than continuing to debug inside the
-# release pipeline (user decision). None of these represent a user-facing defect --
-# nothing in the shipping app runs 30 automated UI tests back-to-back in one process.
-final finalUITests/PrintE2ETests/testPrintFormattedShowsPrintPanel
-final finalUITests/PrintE2ETests/testPrintRawMarkdownShowsPrintPanel
-final finalUITests/PrintE2ETests/testPrintWithNoProjectOpenShowsAlert
-final finalUITests/LaunchSmokeTests/testPrintMenuItemsExist
-final finalUITests/ProjectOpenErrorE2ETests/testOpenRecentOnDeletedProjectShowsErrorSheetWhileAppRunning
-final finalUITests/FirstProjectOpenBlankMarginsE2ETests/testFirstOpenIsBlankThenWrongMarginsThenReopenIsCorrect
-final finalUITests/ProjectSwitchBibliographyE2ETests/testBibliographyRebuildResumesAfterProjectSwitchWindowCloses
-
 # Added 2026-09-12 during /ship for v0.2.133. EscapeLadderE2ETests/
 # testEscInFocusModeWithSlashMenuOpenDoesNotSilentlyExitNativeFullScreen has never
 # passed. CORRECTION 2026-09-18 (inbox triage, evidence on t-9d4b2323): an earlier
