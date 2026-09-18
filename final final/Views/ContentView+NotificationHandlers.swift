@@ -379,7 +379,12 @@ extension ContentView {
             // we get here. fetchBlocksWithIds reads block text straight from the DB, so if
             // that read raced ahead of this flush it would silently rebuild the document
             // from stale (pre-edit) text and stomp the user's edit when the result is pushed
-            // back to the editor below. Awaiting the flush first guarantees the read sees it.
+            // back to the editor below. Awaiting the flush makes the read see that edit in
+            // every healthy cycle (the drain waits out an in-flight cycle, then runs a fresh
+            // one), but it is BEST-EFFORT, not a guarantee: a cycle whose WebKit call never
+            // returns times out (8s) and this caller then proceeds WITHOUT its own edit in
+            // the DB (L8 in the poll-watchdog plan's loss-path table), which the
+            // unconditional timeout log states explicitly.
             await blockSyncService.pollBlockChangesNow()
             DebugLog.log(.footnotes, "[ContentView] handleFootnoteInsertedImmediate: fresh flush guaranteed " +
                 "complete for label=\(label), reading blocks from DB")
