@@ -19,6 +19,9 @@ web/codemirror/node_modules/
 web/milkdown/dist/
 web/codemirror/dist/
 
+# Python (ruff lint cache)
+.ruff_cache/
+
 # SQLite WAL/SHM files (transient, not part of package)
 *.sqlite-shm
 *.sqlite-wal
@@ -41,6 +44,7 @@ temp/
 .claude/settings.local.json
 .claude/settings.json.bak.*
 .claude/debug/
+.claude/.cc-writes/
 docs/plans/
 docs/course/
 

@@ -26,6 +26,16 @@ import SwiftUI
 /// this file exists to remove. `ThemeManager` comes from `@Environment` here (already injected
 /// app-wide via `.environment(ThemeManager.shared)` in `FinalFinalApp.swift`; `StatusBar.swift`
 /// does the identical lookup), not a parameter, for the same reason.
+///
+/// This pane is also the single owner of the sidebar's width in the window: its min/ideal/max
+/// bounds, the observed-width bookkeeping, and the show/hide animation all live here (see
+/// `widthObserver`/`animateToggle` below), so `OutlineSidebar.swift` -- already the largest file in
+/// this area -- carries none of it. What it does NOT own is where the divider actually sits while
+/// the app is not animating: `HSplitView` ignores this pane's `idealWidth`, so the pane asks
+/// `SplitViewAutosaveNaming` to position the top-level split view's divider (see
+/// `OutlineSidebarWidth`'s doc comment) both on first layout and on every show/hide transition.
+/// `ContentView`'s `HSplitView` mounts this pane unconditionally and never removes it from the
+/// layout.
 struct OutlineSidebarPane: View {
     @Bindable var editorState: EditorViewState
 
@@ -41,6 +51,49 @@ struct OutlineSidebarPane: View {
     let onDeleteSection: (String) -> Void
 
     @Environment(ThemeManager.self) private var themeManager
+
+    /// The pane's in-session width: starts at the shared default (`OutlineSidebarWidth.idealWidth`),
+    /// tracks genuine drag-resizes via `widthObserver`, and is driven to the show/hide target by
+    /// `animateToggle`. Feeds the frame's `idealWidth`, which is a hint only -- `HSplitView` does
+    /// not apply it (see `OutlineSidebarWidth`), so the DIVIDER is what actually determines this
+    /// pane's width and is positioned explicitly by `SplitViewAutosaveNaming` from this view.
+    @State private var sidebarWidth: CGFloat = OutlineSidebarWidth.idealWidth
+
+    /// The width to come back to when the pane is re-shown: the last width observed while the pane
+    /// was visible and above the floor. Seeded with the default so a show before any observation
+    /// (or before first layout) still has a sane target. Kerim's decision: the app guarantees the
+    /// re-show width itself rather than relying on AppKit happening to remember the divider.
+    @State private var lastVisibleWidth: CGFloat = OutlineSidebarWidth.idealWidth
+
+    /// True once the first layout after launch has been reconciled (see `reconcileWidth`). Guards
+    /// the one-time "position the divider" step so it cannot run on every layout pass.
+    @State private var hasReconciledFirstLayout = false
+
+    /// Snapshot of `SplitViewAutosaveNaming.hasAutosavedDividerPosition` taken at `onAppear`, i.e.
+    /// before this launch has laid the split view out. `nil` means the check could not be taken
+    /// then, in which case it is retried at first layout. The snapshot exists because AppKit writes
+    /// the autosave key as soon as it lays the split view out: a check taken after that would
+    /// describe THIS launch's own default layout rather than what a previous session saved, and
+    /// would wrongly suppress the 300pt default positioning.
+    @State private var launchHadSavedDividerPosition: Bool?
+
+    /// The in-flight divider animation, so a newer toggle can cancel a running one.
+    @State private var dividerAnimationTask: Task<Void, Never>?
+
+    /// True only while the show/hide width animation (`.panelToggle`) is in flight. Gates
+    /// `widthObserver`: without this, the animation's own pass through every width between the
+    /// default and zero would each get sampled by the geometry observer below and adopted as if
+    /// the user had dragged there, so the pane would end its collapse on whatever intermediate
+    /// width happened to be sampled last instead of on zero. Also temporarily relaxes
+    /// `minWidth`/`maxWidth` in `.frame(...)` below so the pane can actually reach zero and can be
+    /// positioned back out -- the pane's real drag-resize floor stays `minWidth` from
+    /// `OutlineSidebarWidth` whenever this is false.
+    @State private var isAnimatingToggle = false
+
+    /// Identifies the most recently started toggle animation, so a stale completion callback
+    /// from an EARLIER toggle (rapid show/hide/show clicks) can't clear `isAnimatingToggle`
+    /// while a NEWER toggle's animation is still actually in flight.
+    @State private var toggleAnimationToken = UUID()
 
     var body: some View {
         VStack(spacing: 0) {
@@ -102,9 +155,202 @@ struct OutlineSidebarPane: View {
             // to, not its container.
             .equatable()
         }
-        .frame(minWidth: 250)
+        .frame(
+            // Floors at OutlineSidebarWidth.minWidth ONLY in the steady visible state (real
+            // drag-resize needs that floor). Both while animating AND in the steady HIDDEN
+            // state, the floor must be 0 -- if it snapped back to minWidth the instant a
+            // hide animation's completion callback clears isAnimatingToggle, the pane would
+            // immediately re-expand to 250pt right after finishing its collapse to 0, since
+            // idealWidth (0) would then be fighting a 250pt floor every frame.
+            minWidth: editorState.isOutlineSidebarVisible && !isAnimatingToggle ? OutlineSidebarWidth.minWidth : 0,
+            idealWidth: sidebarWidth,
+            // Ceiling pinned to 0 in the steady HIDDEN state: leaving it at maxWidth (400) would
+            // give the HSplitView divider slack to travel while the pane is meant to be gone, and
+            // a drag there would never have updated isOutlineSidebarVisible. Pinning min AND max
+            // to 0 together gives the pane a fixed 0pt size while hidden. Relaxed back to the real
+            // ceiling whenever visible OR animating (both directions need room for `sidebarWidth`
+            // to travel between 0 and the real width), matching the floor's own
+            // animating-relaxation above.
+            maxWidth: editorState.isOutlineSidebarVisible || isAnimatingToggle ? OutlineSidebarWidth.maxWidth : 0
+        )
+        .clipped()
         .background(themeManager.currentTheme.sidebarBackground)
+        // Scopes XCUITest queries to just this pane's own elements (e.g. its section cards),
+        // so a query like `app.groups["outline-sidebar"].textViews[...]` cannot accidentally
+        // match the web editor's own ProseMirror contenteditable, which XCUITest also exposes
+        // as a TextView elsewhere in the accessibility tree. Health-checked by
+        // `SmokeTests.testSidebarToggles`: this must keep resolving as a Group with a ScrollView
+        // child, so no other accessibility modifier may be layered onto this view.
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("outline-sidebar")
+        .accessibilityHidden(!editorState.isOutlineSidebarVisible)
+        .allowsHitTesting(editorState.isOutlineSidebarVisible)
+        .background(widthObserver)
+        .onAppear {
+            // `sidebarWidth` starts at `OutlineSidebarWidth.idealWidth` -- but this view can be
+            // constructed while isOutlineSidebarVisible is ALREADY false (e.g. a window rebuilt
+            // mid Focus Mode, where EditorViewState+FocusMode.swift sets
+            // isOutlineSidebarVisible = false before this view exists). Nothing fires an
+            // onChange for a property that was already false at seed time, so without this the
+            // pane would render at its ideal width with only the (now pinned-to-0) max width
+            // silently clipping it -- reconcile the state itself instead of relying on that side
+            // effect.
+            if !editorState.isOutlineSidebarVisible {
+                sidebarWidth = 0
+            }
+            // Snapshot whether this launch has an autosaved divider position to honour, BEFORE
+            // this launch's own layout can write that key (see the property's doc comment).
+            if let window = AppDelegate.shared?.mainWindow {
+                launchHadSavedDividerPosition = SplitViewAutosaveNaming.hasAutosavedDividerPosition(in: window)
+            }
+        }
+        .onChange(of: editorState.isOutlineSidebarVisible) { _, newValue in
+            animateToggle(becomingVisible: newValue)
+        }
+    }
+
+    /// Adopts the pane's own rendered width as the in-session width -- the only way to see a
+    /// divider drag, since HSplitView resizes the view's frame directly rather than through any
+    /// SwiftUI binding this view owns. `.onGeometryChange` rather than a `GeometryReader` +
+    /// `.onChange`: unlike `.onChange`, this form reports the INITIAL size too, which is what makes
+    /// the one-time first-layout step below possible.
+    ///
+    /// By the user's decision this is the observer's ONLY branch: there is no collapse branch and
+    /// it never writes `isOutlineSidebarVisible` in either direction, so a window resize, a
+    /// divider drag, or a Focus Mode exit can never silently hide or un-hide the pane.
+    private var widthObserver: some View {
+        Color.clear
+            .onGeometryChange(for: CGFloat.self) { proxy in
+                proxy.size.width
+            } action: { newWidth in
+                reconcileWidth(newWidth)
+            }
+    }
+
+    /// Adopts an observed width only when it is a genuine, in-range pane width, and runs the
+    /// one-time first-layout step.
+    ///
+    /// A width below `minWidth` is the split view's own layout clamp (a window too narrow to honour
+    /// the pane's floor, or a sample taken mid-resize), not a width the pane should treat as its
+    /// own -- so it is ignored rather than adopted. The other two guards are equally load-bearing:
+    /// while the show/hide animation is in flight every intermediate width is a transient of that
+    /// animation, and while the pane is hidden the only width it can report is its pinned 0.
+    ///
+    /// Nothing here persists anything, and nothing here runs on every pass beyond the two
+    /// assignments: the divider is positioned only on first layout and on the show/hide
+    /// transitions, never while the user is dragging.
+    private func reconcileWidth(_ newWidth: CGFloat) {
+        guard !isAnimatingToggle else { return }
+        guard editorState.isOutlineSidebarVisible else { return }
+
+        // One-time launch step. Deliberately only consumed when the window is actually reachable:
+        // if the app delegate has not captured it yet, a later observation retries rather than
+        // leaving the pane at whatever AppKit's default layout produced.
+        if !hasReconciledFirstLayout, AppDelegate.shared?.mainWindow != nil {
+            hasReconciledFirstLayout = true
+            if positionDividerAtLaunchWidthIfUnsaved() {
+                // The divider has just been moved to the launch width, so this pass's `newWidth`
+                // is the PRE-move layout (AppKit's maximum). Do not adopt it.
+                return
+            }
+        }
+
+        guard newWidth >= OutlineSidebarWidth.minWidth else { return }
+        sidebarWidth = OutlineSidebarWidth.clamp(newWidth)
+        lastVisibleWidth = sidebarWidth
+    }
+
+    /// First-layout step: give the divider an explicit position for this launch.
+    ///
+    /// `HSplitView` does not apply the pane's `idealWidth`, so with nothing saved AppKit gives the
+    /// leading pane its maximum (400pt) instead of the 300pt default. When AppKit does have a saved
+    /// divider position to honour, that restore is authoritative and this does nothing. Uses the
+    /// `onAppear` snapshot when it exists, and re-checks otherwise. Returns whether it positioned
+    /// the divider.
+    private func positionDividerAtLaunchWidthIfUnsaved() -> Bool {
+        guard let window = AppDelegate.shared?.mainWindow else { return false }
+        let hadSavedPosition = launchHadSavedDividerPosition
+            ?? SplitViewAutosaveNaming.hasAutosavedDividerPosition(in: window)
+        guard !hadSavedPosition else { return false }
+
+        let launchWidth = OutlineSidebarWidth.idealWidth
+        guard SplitViewAutosaveNaming.setTopLevelDividerPosition(launchWidth, in: window, animated: false) else {
+            return false
+        }
+        sidebarWidth = launchWidth
+        lastVisibleWidth = launchWidth
+        return true
+    }
+
+    /// The current divider position, or `nil` when the split view cannot be reached yet.
+    private func currentDividerPosition() -> CGFloat? {
+        guard let window = AppDelegate.shared?.mainWindow else { return nil }
+        return SplitViewAutosaveNaming.topLevelDividerPosition(in: window)
+    }
+
+    /// Moves the divider to `position`. False when the split view cannot be reached.
+    @discardableResult
+    private func setDividerPosition(_ position: CGFloat) -> Bool {
+        guard let window = AppDelegate.shared?.mainWindow else { return false }
+        return SplitViewAutosaveNaming.setTopLevelDividerPosition(position, in: window, animated: false)
+    }
+
+    /// Width-animation for the Outline sidebar's show/hide. HSplitView does not honor a SwiftUI
+    /// insertion `.transition` on a conditionally-mounted child and does not apply this pane's
+    /// `idealWidth`, so the pane stays mounted at all times and the SPLIT VIEW'S DIVIDER is what is
+    /// animated: out to 0 on hide, back to `lastVisibleWidth` (the width the user last dragged to)
+    /// on show. This is the pane's ONLY animation point, and the app -- not AppKit happening to
+    /// remember the divider -- guarantees the re-show width.
+    ///
+    /// The divider is stepped here rather than handed to `NSAnimationContext`/the animator proxy,
+    /// because `NSSplitView`'s animator proxy is not documented to animate
+    /// `setPosition(_:ofDividerAt:)`; stepping on `PanelToggleTiming.duration` with a quadratic
+    /// ease-out matches `.panelToggle` (Theme/Animations.swift, the Annotations panel's curve) and
+    /// is deterministically observable. `sidebarWidth` still rides `withAnimation(.panelToggle)`
+    /// so the frame hint moves with the divider.
+    ///
+    /// Known follow-up, NOT fixed here: Focus Mode drives `isOutlineSidebarVisible` from inside
+    /// its own `.easeInOut(duration: 0.3)` transaction, while this method animates over
+    /// `.panelToggle` (0.25s easeOut) -- so those two transitions nest with different curves.
+    /// Each animates a different property and neither double-animates the other, but unifying the
+    /// two curves is a post-merge cleanup; the animation behaviour is deliberately left as is.
+    private func animateToggle(becomingVisible: Bool) {
+        isAnimatingToggle = true
+        let token = UUID()
+        toggleAnimationToken = token
+
+        let target = becomingVisible ? lastVisibleWidth : 0
+        withAnimation(.panelToggle) {
+            sidebarWidth = target
+        }
+        animateDivider(to: target, token: token)
+    }
+
+    /// Steps the divider to `target` over `PanelToggleTiming.duration`, clearing
+    /// `isAnimatingToggle` when the LAST step of the current animation lands (a superseded
+    /// animation's loop is cancelled and returns without touching the flag).
+    private func animateDivider(to target: CGFloat, token: UUID) {
+        dividerAnimationTask?.cancel()
+        let start = currentDividerPosition() ?? target
+
+        dividerAnimationTask = Task { @MainActor in
+            let steps = 15
+            let stepDuration = PanelToggleTiming.duration / Double(steps)
+            for step in 1...steps {
+                if Task.isCancelled { return }
+                let fraction = Double(step) / Double(steps)
+                // Quadratic ease-out by hand: no `pow` import needed, and it matches the shape of
+                // `Animation.easeOut` closely enough to read as the same motion.
+                let eased = 1 - (1 - fraction) * (1 - fraction)
+                setDividerPosition(start + (target - start) * CGFloat(eased))
+                if step < steps {
+                    try? await Task.sleep(for: .seconds(stepDuration))
+                }
+            }
+            // A newer toggle (rapid show/hide/show) already superseded this one -- let ITS own
+            // loop be the one that clears isAnimatingToggle.
+            guard toggleAnimationToken == token else { return }
+            isAnimatingToggle = false
+        }
     }
 }

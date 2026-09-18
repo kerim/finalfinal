@@ -117,6 +117,7 @@ targets:
       - path: final final
         excludes:
           - "**/.DS_Store"
+          - "**/.ruff_cache"
           - "Resources/Export"
           - "Resources/editor"
           - "Resources/TinyTeX"
@@ -353,6 +354,7 @@ targets:
       - path: QuickLook Extension
         excludes:
           - "**/.DS_Store"
+          - "**/.ruff_cache"
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.kerim.final-final.quicklook
@@ -404,6 +406,7 @@ targets:
       - path: final finalTests
         excludes:
           - "**/.DS_Store"
+          - "**/.ruff_cache"
           - "**/*.sqlite-wal"
           - "**/*.sqlite-shm"
           - "Fixtures"

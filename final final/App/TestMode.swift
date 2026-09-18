@@ -121,6 +121,21 @@ enum TestMode {
         return value
     }
 
+    /// UI-test-only deterministic main-window width, consumed by
+    /// `FinalFinalApp.defaultWindowPlacement`. Exists because the Outline sidebar's
+    /// divider-drag regression test has to assert against a KNOWN starting window width, and the
+    /// saved-frame branch of that placement closure is deliberately skipped while testing (so
+    /// otherwise the default 1400x900/min(visible) size would apply, which varies with the
+    /// display). `nil` (unset, unparseable, <= 0, or `isUITesting` false) leaves the real
+    /// placement untouched -- read fresh on every access like every sibling flag here, so it can
+    /// never silently latch a stale value.
+    static var uiTestingWindowWidthOverride: CGFloat? {
+        guard isUITesting,
+              let raw = ProcessInfo.processInfo.environment["FF_UI_TESTING_WINDOW_WIDTH"],
+              let value = Double(raw), value > 0 else { return nil }
+        return CGFloat(value)
+    }
+
     /// Clears UserDefaults keys that could interfere with test isolation.
     ///
     /// Operates on `AppDefaults.store` — an isolated suite while testing, never the real

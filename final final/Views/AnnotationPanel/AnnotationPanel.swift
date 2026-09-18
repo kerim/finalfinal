@@ -189,9 +189,10 @@ struct AnnotationPanel: View {
                         // is false can only mean a genuine drag got through, and the one thing
                         // that must never happen is treating that drag as if it didn't occur
                         // (discarding it, as the write-back guard alone used to do) -- so make
-                        // the visibility flag catch up to what the user actually did, the same
-                        // way `withSidebarSync` (ViewNotificationModifiers.swift) already does
-                        // for the Outline sidebar's own native-chevron drag.
+                        // the visibility flag catch up to what the user actually did. NOTE: the
+                        // Outline sidebar's observer deliberately has no equivalent branch --
+                        // drag-to-collapse there is gone by the user's decision, and its
+                        // divider stops at its own 250pt floor (see OutlineSidebarPane).
                         guard newWidth > 1 else { return }
                         let clamped = AnnotationPanelWidth.clamp(newWidth)
                         panelWidth = clamped
@@ -224,10 +225,10 @@ struct AnnotationPanel: View {
     /// hook -- so this panel stays mounted at all times (see `ContentView+EditorPresentation
     /// .swift`'s `detailView`, which no longer conditions its inclusion on
     /// `isAnnotationPanelVisible`) and animates its OWN `idealWidth` down to, or up from, zero
-    /// instead. `.panelToggle` (Theme/Animations.swift) approximates the AppKit divider
-    /// animation the Outline sidebar gets for free from NavigationSplitView -- it is NOT
-    /// shared code between the two panels; matching their look is a by-eye call, not a
-    /// guarantee this animation curve provides on its own.
+    /// instead. `.panelToggle` (Theme/Animations.swift) is now the same animation the Outline
+    /// sidebar's pane uses for its own show/hide, so the two panels deliberately read alike even
+    /// though their containers differ (UX contract §10/D1); matching their look remains a by-eye
+    /// call this curve cannot guarantee on its own.
     private func animateToggle(becomingVisible: Bool) {
         isAnimatingToggle = true
         let token = UUID()

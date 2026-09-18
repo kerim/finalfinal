@@ -117,9 +117,21 @@ final class EscapeLadderE2ETests: XCTestCase {
         // and very likely FirstProjectOpenBlankMarginsE2ETests/testFirstOpenIsBlankThenWrongMarginsThenReopenIsCorrect).
         // Must run before terminate() -- once the process is gone there's nothing left to
         // exit full screen on.
-        exitFullScreenIfNeeded()
+        //
+        // `exitFullScreenIfNeeded()` no longer swallows a failure to clear full screen: it
+        // returns a failure message instead of calling XCTFail itself. That message is only
+        // raised here, AFTER `app.terminate()` and `TestFixtureHelper.cleanupFixture()` have
+        // already run -- with `continueAfterFailure = false` (set in `setUpWithError`), an
+        // XCTFail raised any earlier could abort the rest of this method, leaving a live
+        // full-screen process AND an uncleaned fixture for the next test, which is worse than
+        // the original bug this file exists to fix. By the time `XCTFail` below can abort
+        // anything, there's nothing left in this method for it to skip.
+        let fullScreenFailure = exitFullScreenIfNeeded()
         app.terminate()
         TestFixtureHelper.cleanupFixture()
+        if let fullScreenFailure {
+            XCTFail(fullScreenFailure)
+        }
     }
 
     // MARK: - Item 6 (REQUIRED): web layer + native layer open together in the same window
@@ -375,6 +387,7 @@ final class EscapeLadderE2ETests: XCTestCase {
         // native fired in the meantime regardless -- the exact window where the OLD
         // fixed-watchdog design would have incorrectly fired and exited Focus Mode (or closed
         // the find bar) before the web side's own (now-delayed) report ever arrived.
+        // e2e-lint: allow sleep -- this 1.2s wait IS the assertion, not a delay before one: it deliberately stops well short of the web layer's artificially-delayed 3s `setTimeout` report so the two absence checks below are asking "has the report definitely NOT landed yet" -- a deterministic negative-timing check with nothing to poll for. Replacing it with a poll, or shortening it, would let the delayed report race in before the checks run and produce a false pass. Do not "optimize" this wait away or shorten it.
         Thread.sleep(forTimeInterval: 1.2)
         let logShortlyAfterEscape = attachDiagnosticLog()
         XCTAssertFalse(
@@ -711,8 +724,13 @@ final class EscapeLadderE2ETests: XCTestCase {
         // before the WKWebView has actually finished painting the seeded content). Checking the
         // final paragraph's distinctive text is the only one of the 300 that is guaranteed not
         // to exist in the tree until the whole document has painted.
+        // 30s, not the default: this is the slowest-to-render gate in the suite, chosen
+        // specifically because paragraph 299 is the last thing to paint in a 300-paragraph
+        // Milkdown mount, and the old, un-batched `editorContainsText` polling loop's ~50s-per-
+        // poll overshoot was quietly giving it far more real settle time than its stated timeout
+        // ever promised.
         XCTAssertTrue(
-            app.editorContainsText("Body padding paragraph 299 for", timeout: 10),
+            app.editorContainsText("Body padding paragraph 299 for", timeout: 30),
             "Seeded large document should render before this test's first interaction"
         )
 
@@ -792,7 +810,6 @@ final class EscapeLadderE2ETests: XCTestCase {
                 .filter { line in signalPatterns.contains { line.contains($0) } }
                 .joined(separator: "\n")
         } ?? ""
-        try? (found ?? report).write(to: E2EShotDir.url.appendingPathComponent("diagnostic-log-full.txt"), atomically: true, encoding: .utf8)
         return (report, found, filtered)
     }
 
@@ -833,6 +850,7 @@ final class EscapeLadderE2ETests: XCTestCase {
             if filtered.contains(substring) || Date() >= deadline {
                 return filtered
             }
+            // e2e-lint: allow sleep -- sampling interval of the bounded poll loop above (already re-checks a file read via `readDiagnosticLog()` each iteration and is bounded by `deadline`), keeping it from spinning the CPU between reads. Polls a file read, not an XCUIElement attribute, which is why it can't use this codebase's element-based `waitFor*` helpers.
             Thread.sleep(forTimeInterval: 0.25)
         }
     }
@@ -1170,6 +1188,7 @@ final class EscapeLadderE2ETests: XCTestCase {
             if attempt < 3 {
                 app.activateAndWaitForForeground()
                 app.typeKey(.escape, modifierFlags: [])
+                // e2e-lint: allow sleep -- fixed back-off between retries of this 3-attempt slash-menu loop, not a wait for a condition: after pressing Escape to clear partial "/" state, nothing observable marks that teardown as "done" before the next click/keystroke attempt, so there is nothing here to poll for.
                 Thread.sleep(forTimeInterval: 0.5)
             }
         }
@@ -1203,6 +1222,7 @@ final class EscapeLadderE2ETests: XCTestCase {
         while Date() < pollDeadline {
             stillNativeFullScreen = isMainWindowNativeFullScreen()
             if !stillNativeFullScreen { break }
+            // e2e-lint: allow sleep -- sampling interval of this bounded poll loop over computed window geometry (`isMainWindowNativeFullScreen()`), not an XCUIElement attribute, which is why it can't use this codebase's element-based `waitFor*` helpers. Kept short (0.1s) so the elapsed time reported in the failure message below is precise rather than rounded to a coarse step.
             Thread.sleep(forTimeInterval: 0.1)
         }
         let elapsed = Date().timeIntervalSince(pollStart)
@@ -1354,11 +1374,52 @@ extension EscapeLadderE2ETests {
     /// links AppKit elsewhere in this suite (see this file's own `import AppKit` and its
     /// precedent in e.g. ProjectOpenErrorE2ETests.swift), and it only reads screen geometry --
     /// it never touches the app process's own state.
+    ///
+    /// Uses `mainWindow()` (below) rather than an index-based `app.windows.firstMatch`: this
+    /// class's own tests open secondary windows (Version History, Settings), and a
+    /// `firstMatch` can resolve to one of those instead of the real main window, silently
+    /// checking the wrong window's geometry.
     func isMainWindowNativeFullScreen(tolerance: CGFloat = 4.0) -> Bool {
         guard let screenFrame = NSScreen.main?.frame else { return false }
-        let windowFrame = app.windows.firstMatch.frame
+        let windowFrame = mainWindow().frame
         return abs(windowFrame.width - screenFrame.width) <= tolerance
             && abs(windowFrame.height - screenFrame.height) <= tolerance
+    }
+
+    /// Resolves the actual main editor window by finding the window CONTAINING the
+    /// "editor-area" accessibility element, rather than:
+    /// - an index-based `app.windows.firstMatch` -- wrong, because a second window (Version
+    ///   History, Settings) can shadow the real one; or
+    /// - a query for "any window whose frame matches the screen size" -- also wrong, because a
+    ///   secondary window could itself happen to be full-screen-sized, which would weaken
+    ///   `testEscInFocusModeWithSlashMenuOpenDoesNotSilentlyExitNativeFullScreen`'s whole
+    ///   purpose: catching a SILENT full-screen exit on the MAIN window specifically.
+    ///
+    /// There's no reliable accessibility identifier on the main window itself to look up
+    /// directly either: `SceneID.mainWindow`'s rawValue is `"AppWindow"`, but the real SwiftUI
+    /// window's own accessibility identifier is shaped like `"...-1-AppWindow-1"`, so an exact
+    /// `app.windows["AppWindow"]` lookup never matches. `"editor-area"` (`UITestHelpers.swift`'s
+    /// `editorArea`) is unique to the main window and already relied on throughout this suite,
+    /// so this instead asks for the window that CONTAINS it.
+    func mainWindow() -> XCUIElement {
+        let match = app.windows.containing(.group, identifier: "editor-area").firstMatch
+        // If there ARE windows but none of them carry "editor-area" (a test aborted mid-teardown,
+        // or the window genuinely isn't there for some other reason), `match` silently resolves to
+        // a zero-frame element: its `.frame` reads `.zero`, `isMainWindowNativeFullScreen()` then
+        // reads false (`.zero` never matches a screen size), and `exitFullScreenIfNeeded()` takes
+        // its early-exit guard -- skipping cleanup entirely with no log, no evidence, nothing. Make
+        // that failure mode show up in a failing run's log instead of vanishing silently, without
+        // changing the guard's actual behavior (still fine to treat "no main window found" as
+        // "nothing to clean up" for a test that's already terminating).
+        let windowCount = app.windows.count
+        if !match.exists && windowCount > 0 {
+            print(
+                "[EscapeLadderE2ETests] mainWindow(): no window with editor-area found among "
+                    + "\(windowCount) window(s) -- treating as not full screen, but this may be "
+                    + "masking a real problem"
+            )
+        }
+        return match
     }
 
     /// Polls until the main window's native full-screen geometry (`isMainWindowNativeFullScreen()`)
@@ -1372,10 +1433,12 @@ extension EscapeLadderE2ETests {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
             guard isMainWindowNativeFullScreen() else {
+                // e2e-lint: allow sleep -- sampling interval of this bounded wait: full screen isn't on yet, so re-check after a short pause rather than spinning. Polls `isMainWindowNativeFullScreen()`, computed window geometry rather than an XCUIElement attribute, which is why it can't use this codebase's element-based `waitFor*` helpers.
                 Thread.sleep(forTimeInterval: 0.25)
                 continue
             }
             let firstFrame = app.windows.firstMatch.frame
+            // e2e-lint: allow sleep -- this is NOT a sampling gap, it IS the measurement: this function defines "settled" as two window-frame reads ~250ms apart (`firstFrame` above, `secondFrame` below) coming back identical, so removing or shortening this gap would let a single mid-transition frame be misread as stable. This sleep is load-bearing to the test's correctness, not incidental polling -- do not remove or shorten it.
             Thread.sleep(forTimeInterval: 0.25)
             guard isMainWindowNativeFullScreen() else { continue }
             let secondFrame = app.windows.firstMatch.frame
@@ -1386,28 +1449,142 @@ extension EscapeLadderE2ETests {
         return false
     }
 
-    /// Best-effort teardown cleanup (see `tearDownWithError()` above): if the main window is
-    /// still in genuine native full screen -- whether this test intentionally left it that way
-    /// or aborted mid-Focus-Mode after a failure -- exit via the same Focus Mode toggle
-    /// shortcut (⇧⌘F) every other helper in this file uses, then poll
-    /// `isMainWindowNativeFullScreen()` until it clears or ~10s elapses.
+    /// Teardown cleanup (see `tearDownWithError()` above): if the main window is still in
+    /// genuine native full screen -- whether this test intentionally left it that way or
+    /// aborted mid-Focus-Mode after a failure -- escalate up to 5 rounds of Esc, each followed
+    /// by a real settle check, before falling back to AppKit's native "Exit Full Screen" key
+    /// equivalent once and then giving up and reporting the failure.
     ///
-    /// Deliberately never XCTFails and never calls `activateAndWaitForForeground()` (which
-    /// does): a failure in cleanup must not mask -- or get reported instead of -- the test's
-    /// own real failure, which is exactly what tearDown exists to preserve here. If activation
-    /// or the toggle doesn't take, this just falls through to termination below with full
-    /// screen still on; the NEXT test's own launch (a fresh window) still starts clean of this
-    /// one's content, and only the coarser menu-bar-visibility contamination this fix targets
-    /// would persist in that unlikely case.
-    func exitFullScreenIfNeeded() {
-        guard isMainWindowNativeFullScreen() else { return }
+    /// **Corrected root cause (diagnostician round, 2026-09-18):** an earlier version of this
+    /// method escalated with ⌃⌘F (Control-Command-F) instead of Esc. That was wrong: this app
+    /// has never bound Ctrl-Cmd-F to anything -- only Shift-Cmd-F, for Focus Mode (see
+    /// `ViewCommands.swift:29-32`). A key equivalent only does anything if a menu item is bound
+    /// to it; with no binding, pressing Ctrl-Cmd-F is a complete no-op. Screenshot evidence from
+    /// all 3 failing runs of `testVersionHistoryWindowEscOnlyClosesThatWindowMainWindowFocus-
+    /// ModeUnaffected` confirmed the window really was stuck full screen the whole time -- ⌃⌘F
+    /// never once succeeded, because it was never wired to anything in the first place. No
+    /// other test in this file ever exercises this code path either: every other test exits
+    /// Focus Mode via Esc in its own test body, before teardown's ladder would ever run, which
+    /// is why the bug went unnoticed for 5 other tests that "worked" (they never reached this
+    /// method with full screen still on).
+    ///
+    /// This also REFUTES the previous theory recorded here (Space nudge): that
+    /// `testVersionHistoryWindowEscOnlyClosesThatWindowMainWindowFocusModeUnaffected` opens a
+    /// secondary window (Version History) on a different Space than the main window's
+    /// full-screen Space, and nothing reclaims the original Space once the secondary window
+    /// closes. That confound was real -- it IS the only test in the file that opens a second
+    /// window while full screen -- but it was confounded with "the only test that reaches this
+    /// code path at all"; the Space theory was never actually confirmed, and a no-op key
+    /// equivalent is a complete explanation on its own with no Spaces involved.
+    ///
+    /// Esc is this app's own PROVEN working exit mechanism: `testFocusModeEscWithNothingElse-
+    /// OpenExits` (same file) exits full screen with a single Esc and passes reliably in all 3
+    /// runs. Esc routes through a local `NSEvent` monitor -> `handleEscapeCandidate` ->
+    /// `exitFocusMode()` -> `FullScreenManager.request(.windowed)` -- independent of menu
+    /// dispatch, of which window is key, and of which Space is displayed.
+    ///
+    /// 5 rounds, not 3: Esc may need to walk down multiple ladder rungs (slash menu, find bar,
+    /// annotation popup, Focus Mode) -- one rung cleared per press -- so more rounds are needed
+    /// than a single toggle required. Each round re-activates the app (in case a previous
+    /// round's press left focus elsewhere), presses Esc, then waits for a SETTLED clear -- not
+    /// a single sample -- via `waitForNativeFullScreenClearedAndSettled()` below: a single
+    /// instant where the geometry check reads "not full screen" mid-transition is not good
+    /// enough evidence to stop escalating.
+    ///
+    /// Deleted entirely (this round): the `spaceOffset` tracking and `moveSpace(to:)` helper
+    /// that nudged the displayed Space with Mission Control's Ctrl-Arrow shortcut between
+    /// rounds. It targeted the now-refuted Spaces theory and added ~4.5s of blind Ctrl-Arrow
+    /// presses per failure for no benefit this investigation could find.
+    ///
+    /// ⌃⌘F is kept as a LAST-RESORT fallback only, tried once after all 5 Esc rounds fail, with
+    /// a longer 10s settle timeout -- in case a genuinely different stuck-window scenario needs
+    /// it -- before falling through to the loud-failure path below.
+    ///
+    /// The evidence dump on total failure now also records the app's own Focus Mode flag
+    /// (`status-bar` group) and window count: if Focus Mode's flag still reads "on" while the
+    /// window is stuck full screen, that means Esc genuinely isn't reaching the main window
+    /// (support for a Spaces/key-window theory after all); if the flag reads "off" while the
+    /// window is still full-screen-sized, the app's internal flag and the real window state
+    /// have desynced (an app-side bug). Neither of the 3 failing runs analyzed this round had
+    /// this instrumentation, which is part of why the prior round's theory couldn't be checked.
+    ///
+    /// Returns a failure message describing the stuck state (and has already attached a
+    /// screenshot + geometry dump as test evidence) if full screen never clears, or `nil` if it
+    /// cleared (or was never on to begin with). Deliberately does NOT call `XCTFail` itself:
+    /// `tearDownWithError()` must still run `app.terminate()` and
+    /// `TestFixtureHelper.cleanupFixture()` before any failure is raised (`continueAfterFailure
+    /// = false` means an earlier XCTFail could abort the rest of teardown) -- see that
+    /// method's own doc comment.
+    @discardableResult
+    func exitFullScreenIfNeeded() -> String? {
+        guard isMainWindowNativeFullScreen() else { return nil }
+        for round in 1...5 {
+            app.activate()
+            _ = app.wait(for: .runningForeground, timeout: 5)
+            app.typeKey(.escape, modifierFlags: [])
+            if waitForNativeFullScreenClearedAndSettled(timeout: 5) {
+                return nil
+            }
+            print("[EscapeLadderE2ETests] exitFullScreenIfNeeded Esc round \(round)/5 did not clear full screen")
+        }
+
+        // Last-resort fallback only (see doc comment above): all 5 Esc rounds failed, so try
+        // the native "Exit Full Screen" key equivalent once more with a longer settle timeout,
+        // in case a genuinely different stuck-window scenario needs it.
         app.activate()
         _ = app.wait(for: .runningForeground, timeout: 5)
-        app.typeKey("f", modifierFlags: [.command, .shift])
-        let deadline = Date().addingTimeInterval(10)
-        while Date() < deadline {
-            if !isMainWindowNativeFullScreen() { break }
-            Thread.sleep(forTimeInterval: 0.25)
+        app.typeKey("f", modifierFlags: [.control, .command])
+        if waitForNativeFullScreenClearedAndSettled(timeout: 10) {
+            return nil
         }
+        print("[EscapeLadderE2ETests] exitFullScreenIfNeeded last-resort \u{2303}\u{2318}F fallback did not clear full screen")
+
+        // Capture evidence BEFORE anything else: once `app.terminate()` runs (right after this
+        // method returns, in `tearDownWithError()`), there is nothing left to screenshot or
+        // measure.
+        attachEvidenceScreenshot(app.screenshot(), name: "escape-ladder-teardown-stuck-fullscreen")
+        let windowFrame = mainWindow().frame
+        let screenFrame = NSScreen.main?.frame ?? .zero
+        add(XCTAttachment(string: """
+            exitFullScreenIfNeeded: main window still reads native-full-screen after 5 rounds \
+            of Esc plus a last-resort \u{2303}\u{2318}F (Control-Command-F, AppKit's native \
+            "Exit Full Screen" shortcut) fallback.
+            Main window frame: \(windowFrame)
+            Screen frame: \(screenFrame)
+            Focus Mode flag (status-bar absent == on): \(!app.groups["status-bar"].exists)
+            Window count: \(app.windows.count)
+            """))
+
+        return "exitFullScreenIfNeeded: main window still native-full-screen after 5 rounds of "
+            + "Esc plus a last-resort \u{2303}\u{2318}F fallback -- see attached "
+            + "screenshot/geometry-dump evidence. This test's own full-screen state (not "
+            + "necessarily its assertions) failed to clean up before teardown; later tests in "
+            + "this shard may still be contaminated if this happens on the LAST test that runs "
+            + "in a given process."
+    }
+
+    /// Polls until the main window's native full-screen geometry
+    /// (`isMainWindowNativeFullScreen()`) reads FALSE AND is stable across two reads ~250ms
+    /// apart -- the mirror image of `waitForFullScreenReflowSettled()` above, applied to
+    /// confirm a full-screen EXIT has actually settled rather than merely sampling "not
+    /// full-screen-sized" for one instant mid-transition (which a bare inverse of that method's
+    /// polling loop could otherwise misread as done). Deadline ~10s by default. Best-effort:
+    /// returns whether it settled before the deadline; the caller (`exitFullScreenIfNeeded()`)
+    /// escalates to another round rather than trusting a single failed read.
+    @discardableResult
+    func waitForNativeFullScreenClearedAndSettled(timeout: TimeInterval = 10) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            guard !isMainWindowNativeFullScreen() else {
+                // e2e-lint: allow sleep -- sampling interval of this bounded wait: full screen hasn't cleared yet, so re-check after a short pause rather than spinning. Polls `isMainWindowNativeFullScreen()`, computed window geometry rather than an XCUIElement attribute, which is why it can't use this codebase's element-based `waitFor*` helpers.
+                Thread.sleep(forTimeInterval: 0.25)
+                continue
+            }
+            // e2e-lint: allow sleep -- this is NOT a sampling gap, it IS the measurement: this function defines "settled" as two reads of `isMainWindowNativeFullScreen()` ~250ms apart both coming back false, matching `waitForFullScreenReflowSettled()`'s own discipline above (mirrored, not shared, since that one confirms frame EQUALITY across two full-screen reads, while this one only needs both reads to agree the window is no longer full-screen-sized). This sleep is load-bearing to the test's correctness, not incidental polling -- do not remove or shorten it.
+            Thread.sleep(forTimeInterval: 0.25)
+            guard !isMainWindowNativeFullScreen() else { continue }
+            return true
+        }
+        return false
     }
 }

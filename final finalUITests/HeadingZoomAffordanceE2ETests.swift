@@ -97,9 +97,8 @@ final class HeadingZoomAffordanceE2ETests: XCTestCase {
     /// substitution proves the status-bar behavior end to end regardless of which gesture set
     /// `zoomedSectionId`.
     /// Screenshot evidence, same pattern as `ProjectSwitchMarginsE2ETests.snap(_:)` /
-    /// `ErrorPresenterE2ETests.attachScreenshot(_:name:to:)`: attach to the .xcresult
-    /// (so a reviewer sees it inline in the test report) AND write the PNG to the
-    /// shared `E2EShotDir` evidence folder the e2e-verify skill browses directly.
+    /// `attachEvidenceScreenshot(_:name:)` in `UITestHelpers.swift`: attach to the
+    /// .xcresult so a reviewer sees it inline in the test report.
     /// This task's original complaint was purely visual (a cramped, duplicated-
     /// looking control); the previous run of this suite produced zero attachments,
     /// so nothing ever put that visual state in front of a reviewer.
@@ -108,9 +107,6 @@ final class HeadingZoomAffordanceE2ETests: XCTestCase {
         shot.name = name
         shot.lifetime = .keepAlways
         add(shot)
-        if let pngData = app.screenshot().pngRepresentation as Data? {
-            try? pngData.write(to: E2EShotDir.url.appendingPathComponent("\(name).png"))
-        }
     }
 
     private func zoomIntoMiddleSection() {
