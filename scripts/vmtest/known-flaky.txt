@@ -155,13 +155,18 @@ final finalUITests/ProjectSwitchBibliographyE2ETests/testBibliographyRebuildResu
 
 # Added 2026-09-12 during /ship for v0.2.133. EscapeLadderE2ETests/
 # testEscInFocusModeWithSlashMenuOpenDoesNotSilentlyExitNativeFullScreen has never
-# passed (3/3 runs). A fix round replaced a flat 2s sleep with a real settle gate and
-# got the test further -- the slash menu now reliably opens -- but it now fails on a
-# different, later assertion: the "/" trigger character is not deleted after Esc in
-# this specific Focus-Mode-plus-slash-menu-plus-no-find-bar combination (every
-# sibling test that opens the find bar first passes and correctly clears the
-# trigger). Not yet determined whether this is app-side or test-side. See t-9d4b2323
-# for the real investigation. Quarantined rather than guessing a third fix.
+# passed. CORRECTION 2026-09-18 (inbox triage, evidence on t-9d4b2323): an earlier
+# version of this note claimed the test fails because the "/" trigger is not deleted
+# after Esc. No recorded run has ever failed on that assertion -- the app-side fix
+# (dismissSlashMenu deleting the trigger range, commit 6553c988) works, and the three
+# sibling tests asserting the same thing pass. What actually fails: typing "/" right
+# after entering Focus Mode with no find bar usually opens no slash menu at all (4 of
+# 5 runs fail at "Slash menu should open"; the editor's accessibility tree never
+# grows), and in the one run where a retry did open it, the retry loop's own "clear
+# partial state" Esc had already walked the native ladder and exited Focus Mode -- so
+# the later "Focus Mode still on" assertion fails for a cause the Esc under test never
+# produced. Test-side, same click-doesn't-claim-focus family as the find-bar test
+# below. See t-9d4b2323 for the fix plan. Quarantined until then.
 final finalUITests/EscapeLadderE2ETests/testEscInFocusModeWithSlashMenuOpenDoesNotSilentlyExitNativeFullScreen
 
 # Added 2026-09-12 during /ship for v0.2.133. EscapeLadderE2ETests/
