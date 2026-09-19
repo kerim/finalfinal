@@ -130,3 +130,23 @@ final finalUITests/EscapeLadderE2ETests/testEscInFocusModeWithSlashMenuOpenDoesN
 # dedicated diagnostician round with real screen-recording/AX evidence, not another
 # blind retry. See t-f4c9e968.
 final finalUITests/EscapeLadderE2ETests/testFindBarFieldFocusedEscClosesFindBarReturnsToEditor
+
+# Added 2026-09-19 (t-72173959). ShortcutTooltipE2ETests/
+# testHoveringReplaceToggleShowsCustomTooltip failed once on a tooltip-position
+# assertion (tooltip rendered at 650.0, needed <= 526.5 relative to the Replace
+# toggle), then passed cleanly on an immediate re-run in the same worktree with
+# nothing in between that could plausibly have moved it. A concurrent
+# e2e-authoring change happening in the same file at the time was ruled out as
+# the cause -- the relevant state is in-memory-only panel-visibility state, with
+# no persistence across launches. Cause unknown; quarantined rather than
+# root-caused. Leading hypothesis, UNCONFIRMED (not re-verified by a re-run):
+# the test captures `replaceToggleFrameBeforeTooltip` before the tooltip renders
+# specifically because, once the tooltip exists, AppKit reports the button's
+# frame as inflated to include the tooltip's own `.overlay`-attached bounds (see
+# the test's own doc comment above that capture) -- so if that early capture
+# lost its race against the tooltip's 350ms show delay, `minX` would already be
+# the tooltip's own left edge rather than the button's, and the observed
+# numbers fit: a ~526.5 bound against `tooltipFrame.maxX = 650` is a ~119.5pt
+# span, tooltip-width-sized rather than toolbar-button-sized. Revisit if it
+# starts failing consistently or this hypothesis is confirmed or ruled out.
+final finalUITests/ShortcutTooltipE2ETests/testHoveringReplaceToggleShowsCustomTooltip
