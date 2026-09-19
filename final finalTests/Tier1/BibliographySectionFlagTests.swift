@@ -269,9 +269,11 @@ struct BibliographySectionFlagTests {
 
         // An ordinary section, edited beyond recognition (no title or content overlap with
         // the bibliography header), left unmatched at the SAME sortOrder the bibliography
-        // header now occupies -- exactly the shape that would satisfy findMatch's Tier-3
-        // pure-proximity fallback (`related.isEmpty -> inRange`) if the reconciler reused
-        // findMatch unmodified for bibliography headers.
+        // header now occupies -- exactly the shape the ordinary tier-3 passes would claim:
+        // the related-proximity pass (`passesMatchGate` over the ±3 window) finds no
+        // evidence, and the gate-free fallback beside it would take the row on position
+        // alone, relabeling an unrelated section as the bibliography, if the reconciler
+        // routed bibliography headers through the ordinary proximity passes.
         let unrelatedId = UUID().uuidString
         let unrelatedSection = Section(
             id: unrelatedId, projectId: projectId, sortOrder: 0, headerLevel: 2,

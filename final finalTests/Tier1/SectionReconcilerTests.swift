@@ -182,7 +182,7 @@ struct SectionReconcilerTests {
     }
 
     @Test("Proximity cascade with dense headings — no systematic metadata reassignment")
-    func proximityCascadeWithDenseHeadings() {
+    func proximityCascadeWithDenseHeadings() throws {
         // 3 adjacent H2s, insert 2 new sections between them
         // This is the scenario where proximity matching can reassign metadata wrong
         let dbSections = [
@@ -207,28 +207,145 @@ struct SectionReconcilerTests {
             if case .update(let id, let updates) = change { return (id, updates) }
             return nil
         }
-        let inserts = changes.filter { if case .insert = $0 { return true }; return false }
-        let deletes = changes.filter { if case .delete = $0 { return true }; return false }
-
-        #expect(inserts.count == 2, "Should insert exactly 2 new sections")
-        #expect(deletes.isEmpty, "Should not delete any original sections")
-
-        // Verify s1 matched (by position or title)
-        let s1Update = updates.first { $0.0 == "s1" }
-        // s1 at position 0 should match header at position 0 — no title change needed
-        if let update = s1Update {
-            #expect(update.1.title == nil, "Alpha should keep its title")
+        let inserts = changes.compactMap { change -> Section? in
+            if case .insert(let section) = change { return section }
+            return nil
+        }
+        let deletedIds = changes.compactMap { change -> String? in
+            switch change {
+            case .delete(let id): return id
+            case .deleteDuplicate(let loserId, _, _): return loserId
+            default: return nil
+            }
         }
 
+        #expect(inserts.count == 2, "Should insert exactly 2 new sections")
+        #expect(inserts.map(\.title) == ["New Section", "Another New"], "Both new sections insert, in header order")
+        #expect(inserts.map(\.sortOrder) == [1, 3], "Each insert lands at its own header index")
+        #expect(deletedIds.isEmpty, "Should not delete any original sections")
+
         // Verify s2 matched (by title since position shifted)
-        let s2Matched = updates.contains { $0.0 == "s2" } ||
-                        !changes.contains { if case .delete(let id) = $0 { return id == "s2" }; return false }
-        #expect(s2Matched, "Beta should match by title, preserving status=review and tags")
+        let s2Update = try #require(updates.first { $0.0 == "s2" }, "Beta must match its own row")
+        #expect(s2Update.1.title == nil, "s2 must never be relabeled")
+        #expect(s2Update.1.sortOrder == 2, "s2 moves to Beta's index")
 
         // Verify s3 matched (by title since position shifted)
-        let s3Matched = updates.contains { $0.0 == "s3" } ||
-                        !changes.contains { if case .delete(let id) = $0 { return id == "s3" }; return false }
-        #expect(s3Matched, "Gamma should match by title, preserving status=final and tags")
+        let s3Update = try #require(updates.first { $0.0 == "s3" }, "Gamma must match its own row")
+        #expect(s3Update.1.title == nil, "s3 must never be relabeled")
+        #expect(s3Update.1.sortOrder == 4, "s3 moves to Gamma's index")
+
+        // Matched-but-unchanged s1 emits nothing, so the emitted changes enumerate
+        // exactly the two inserts and the two moves — in HEADER order, not tier order.
+        let order = changes.compactMap { change -> String? in
+            switch change {
+            case .insert(let section):    return "insert:\(section.title)"
+            case .update(let id, _):      return "update:\(id)"
+            case .delete, .deleteDuplicate: return nil
+            }
+        }
+        #expect(order == ["insert:New Section", "update:s2", "insert:Another New", "update:s3"],
+                "changes must be emitted in header order, not tier order")
+    }
+
+    // MARK: - Tier-Major Precedence Pins
+
+    @Test("Later header's exact-position match beats an earlier header's proximity grab")
+    func laterHeaderExactPositionBeatsEarlierHeaderProximityGrab() throws {
+        // Outcome this pins: the later header must end up owning `s2` and the earlier header
+        // must NOT steal it on a proximity guess — the reverse of what the old header-major
+        // loop did (the earlier header grabbed `s2` in Tier 3 first, and the later header,
+        // finding no row left, was the one that inserted).
+        //
+        // Deliberate fixture decoupling (C7): the headers' `position` is NOT their array
+        // index — `[0]` sits at position 1 and `[1]` at position 2, while `s2` lives at
+        // sortOrder 2. Production always has `position == index`, so this shape is synthetic.
+        // It is kept because it is what makes the earlier header proximity-eligible for `s2`
+        // (|2 − 1| = 1, inside ±3) while the later header still arrives via Pass 2's
+        // title+level match rather than Pass 1. NOTE: this pin therefore does NOT isolate
+        // Pass 1 from Pass 2 — with the positions made contiguous the later header would win
+        // in Pass 1 instead, and deleting Pass 1 entirely would still leave it winning in
+        // Pass 2 with byte-identical changes. What it discriminates is the old header-major
+        // loop, which let the earlier header's Tier-3 proximity grab claim `s2` first.
+        let headers = [
+            makeHeader(position: 1, title: "Gamma"),
+            makeHeader(position: 2, title: "Beta")
+        ]
+        let dbSections = [
+            makeSection(id: "s2", sortOrder: 2, title: "Beta")
+        ]
+
+        let changes = reconciler.reconcile(headers: headers, dbSections: dbSections, projectId: projectId)
+
+        let inserts = changes.compactMap { change -> Section? in
+            if case .insert(let section) = change { return section }
+            return nil
+        }
+        let updates = changes.compactMap { change -> (String, SectionUpdates)? in
+            if case .update(let id, let update) = change { return (id, update) }
+            return nil
+        }
+        let deletedIds = changes.compactMap { change -> String? in
+            switch change {
+            case .delete(let id): return id
+            case .deleteDuplicate(let loserId, _, _): return loserId
+            default: return nil
+            }
+        }
+
+        #expect(inserts.map(\.title) == ["Gamma"], "The unmatched earlier header inserts; it must not steal Beta's row")
+        #expect(inserts.map(\.sortOrder) == [0], "The insert lands at the earlier header's array index")
+
+        let s2Update = updates.first { $0.0 == "s2" }
+        #expect(s2Update != nil, "Beta must claim its own row in Pass 1")
+        #expect(s2Update?.1.title == nil, "s2 must never be relabeled to Gamma")
+        #expect(s2Update?.1.sortOrder == 1, "s2 moves to Beta's array index")
+        #expect(deletedIds.isEmpty, "No row should be deleted")
+    }
+
+    @Test("Related proximity beats an earlier header's gate-free fallback proximity")
+    func relatedProximityBeatsEarlierFallbackProximity() throws {
+        // Fixture note (B4): `[1]`'s level (3) deliberately differs from `sE`'s (2) and its
+        // title from `sE`'s, which is what blocks Pass 2 (title+level) and forces this match
+        // down into Pass 3a on content evidence alone. That is the point — the later header
+        // wins by 3a evidence, so this pins the 3a/3b split itself rather than title matching.
+        // Pre-fix, the earlier header ran first and claimed `sE` in its own Tier-3 content
+        // pass; the later header was then the one left inserting.
+        let headers = [
+            makeHeader(position: 0, title: "Totally Different", markdownContent: ""),
+            makeHeader(position: 1, title: "Beta", level: 3, markdownContent: "## Beta\nBeta body.")
+        ]
+        let dbSections = [
+            makeSection(id: "sE", sortOrder: 2, title: "Beta", headerLevel: 2,
+                        markdownContent: "## Beta\nBeta body.")
+        ]
+
+        let changes = reconciler.reconcile(headers: headers, dbSections: dbSections, projectId: projectId)
+
+        let inserts = changes.compactMap { change -> Section? in
+            if case .insert(let section) = change { return section }
+            return nil
+        }
+        let updates = changes.compactMap { change -> (String, SectionUpdates)? in
+            if case .update(let id, let update) = change { return (id, update) }
+            return nil
+        }
+        let deletedIds = changes.compactMap { change -> String? in
+            switch change {
+            case .delete(let id): return id
+            case .deleteDuplicate(let loserId, _, _): return loserId
+            default: return nil
+            }
+        }
+
+        #expect(inserts.map(\.title) == ["Totally Different"],
+                "The evidence-free earlier header must insert, leaving sE for the related later header")
+        #expect(inserts.map(\.sortOrder) == [0], "The insert lands at the earlier header's index")
+
+        let sEUpdate = try #require(updates.first { $0.0 == "sE" },
+                                    "Beta must reattach to sE by content evidence in Pass 3a")
+        #expect(sEUpdate.1.title == nil, "sE must never be relabeled to the earlier header's title")
+        #expect(sEUpdate.1.sortOrder == 1, "sE moves to Beta's index")
+        #expect(deletedIds.isEmpty, "No row should be deleted")
     }
 
     // MARK: - Tier 1 Content-Relatedness Gate

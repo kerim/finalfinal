@@ -32,8 +32,6 @@ PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 SCHEME="final final"
 DESTINATION='platform=macOS'
 
-bash "$PROJECT_DIR/scripts/ensure-xcodeproj.sh"
-
 pass_count=0
 fail_count=0
 skip_count=0
@@ -52,13 +50,13 @@ print_result() {
     local duration="$3"
     if [ "$status" = "pass" ]; then
         echo -e "  ${GREEN}PASS${NC}  $name  ${YELLOW}(${duration})${NC}"
-        pass_count=$((pass_count + 1))
+        ((pass_count++))
     elif [ "$status" = "skip" ]; then
         echo -e "  ${YELLOW}SKIP${NC}  $name  ${YELLOW}(${duration})${NC}"
-        skip_count=$((skip_count + 1))
+        ((skip_count++))
     else
         echo -e "  ${RED}FAIL${NC}  $name  ${YELLOW}(${duration})${NC}"
-        fail_count=$((fail_count + 1))
+        ((fail_count++))
         failures+=("$name")
     fi
 }
@@ -126,7 +124,6 @@ if xcodebuild test \
     -scheme "$SCHEME" \
     -destination "$DESTINATION" \
     -only-testing "final finalTests" \
-    -parallel-testing-enabled NO \
     CODE_SIGN_IDENTITY="-" CODE_SIGN_STYLE=Manual \
     -quiet \
     2>&1 | tail -5; then

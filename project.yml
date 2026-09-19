@@ -26,9 +26,7 @@ schemes:
         QuickLook Extension: all
         final finalTests: [test]
         final finalUITests: [test]
-      # Documents intent for the generated (untracked) .xcscheme's
-      # BuildAction/@runPostActionsOnFailure="NO" — Xcode's rewrite drops
-      # this attribute since absent already means "NO".
+      # Mirrors the committed .xcscheme's BuildAction/@runPostActionsOnFailure="NO".
       runPostActionsOnFailure: false
     run:
       config: Debug
@@ -50,10 +48,7 @@ schemes:
       targets:
         # parallelizable: false is pinned explicitly (xcodegen's own default) —
         # a dropped/flipped value here previously caused flaky isHittable UI
-        # test failures. The generated .xcscheme is no longer tracked in git;
-        # every xcodebuild test invocation also passes
-        # -parallel-testing-enabled NO on the command line, which is what
-        # actually enforces this now.
+        # test failures. scripts/verify-scheme.sh guards the generated output.
         - name: final finalTests
           parallelizable: false
         - name: final finalUITests

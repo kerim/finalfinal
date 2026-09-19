@@ -257,7 +257,7 @@ struct SectionReconciler: Sendable {
     /// `findBibliographyMatch` and `findNotesMatch`'s "already flagged" branch.
     ///
     /// This is a PREFERENCE among flagged candidates, never an admission gate — it mirrors
-    /// `findMatch`'s Tier 3 tiebreak design (title/evidence as a `.min` tiebreak, never a
+    /// the ordinary Tier 3 tiebreak design (title/evidence as a `.min` tiebreak, never a
     /// filter that can reject every candidate and return nil). With exactly one flagged
     /// candidate — the overwhelmingly common case, and every existing call site before this
     /// function existed — `min` over a single-element array returns that element
@@ -296,7 +296,7 @@ struct SectionReconciler: Sendable {
     /// (alongside `contentRelated`), so title equality is covered at both distances without
     /// a separate unbounded tier. An earlier version of this function additionally had an
     /// unbounded, ungated "same title anywhere in the document" tier between these two --
-    /// deliberately removed: unlike Tier 2 in `findMatch` (real user headings, where a title
+    /// deliberately removed: unlike the ordinary title+level pass (real user headings, where a title
     /// match away from its old position is ordinary drag-drop reordering), a bibliography
     /// heading's title is drawn from a small, user-configurable, often-reused vocabulary
     /// ("References", "Bibliography", "Works Cited"). An unbounded title match could
@@ -304,9 +304,9 @@ struct SectionReconciler: Sendable {
     /// titled "References" in an edited volume, far from the actual bibliography -- into the
     /// flagged bibliography row, silently swapping their content's identity. Position
     /// continuity (exact or ±3) is required before title is trusted as corroborating
-    /// evidence, exactly as it already is for every other section via `findMatch`'s Tier 1
-    /// and Tier 3. Deliberately does NOT fall back further to `findMatch`'s final
-    /// `related.isEmpty ? inRange : related` pure-proximity behavior either: that would let
+    /// evidence, exactly as it already is for every other section via the ordinary Tier 1
+    /// and Tier 3 passes. Deliberately does NOT fall back further to the ordinary
+    /// pure-proximity fallback either: that would let
     /// an ordinary, unrelated section left unmatched elsewhere in the document (no title/
     /// content evidence, edited beyond recognition) get silently reclassified as the
     /// bibliography merely for sitting at an adjacent sortOrder -- the same role-swap risk
@@ -347,7 +347,7 @@ struct SectionReconciler: Sendable {
     /// title than a bibliography header name, so an unbounded title match could permanently
     /// convert a user's real, distant, same-titled section into the flagged Notes row.
     ///
-    /// (c) No further fallback to `findMatch`'s pure-proximity behavior either -- same
+    /// (c) No further fallback to the ordinary pure-proximity behavior either -- same
     /// role-swap risk through a different path. When no evidence-bearing candidate exists,
     /// returning `nil` here routes the caller to insert a fresh row instead.
     func findNotesMatch(
@@ -372,78 +372,134 @@ struct SectionReconciler: Sendable {
         return inRange.first(where: { passesMatchGate(header, $0) })
     }
 
-    /// Three-tier matching strategy for robust section identification
-    /// - Parameters:
-    ///   - header: The parsed header to match
-    ///   - sections: Available database sections (sorted by sortOrder)
-    ///   - excluding: IDs already matched (to prevent double-matching)
-    /// - Returns: Matching section, or nil if no match found
-    func findMatch(
+    /// The database rows an ordinary tier may still claim: everything not already matched
+    /// this pass, and neither flagged row.
+    ///
+    /// Filter out already-matched IDs and bibliography sections.
+    /// Bibliography exclusion is needed because:
+    /// 1. OutlineParser markers prevent parsed headers FROM the bibliography
+    /// 2. But we also need to prevent parsed headers from matching TO the bibliography
+    ///    section via Tier 3 proximity matching. BibliographySyncService owns this section.
+    private func availableRows(in sections: [Section], excluding: Set<String>) -> [Section] {
+        sections.filter { !excluding.contains($0.id) && !$0.isBibliography && !$0.isNotes }
+    }
+
+    /// Tier 1: Exact position match (most common - edits within a section)
+    /// Only honored when there's actual evidence the parsed header and the DB
+    /// row are the SAME logical section — not just co-located by sortOrder.
+    /// Without this gate, deleting a section's header+body causes whatever
+    /// follows to slide into the deleted section's old sortOrder slot and
+    /// silently inherit its identity (see meaningfulTextOverlap() in
+    /// web/milkdown/src/block-id-plugin.ts for the analogous fix on the
+    /// ProseMirror side of this exact bug).
+    func findExactPositionMatch(
         _ header: ParsedHeader,
         in sections: [Section],
         excluding: Set<String>
     ) -> Section? {
-        // Filter out already-matched IDs and bibliography sections.
-        // Bibliography exclusion is needed because:
-        // 1. OutlineParser markers prevent parsed headers FROM the bibliography
-        // 2. But we also need to prevent parsed headers from matching TO the bibliography
-        //    section via Tier 3 proximity matching. BibliographySyncService owns this section.
-        let available = sections.filter { !excluding.contains($0.id) && !$0.isBibliography && !$0.isNotes }
-
-        // Tier 1: Exact position match (most common - edits within a section)
-        // Only honored when there's actual evidence the parsed header and the DB
-        // row are the SAME logical section — not just co-located by sortOrder.
-        // Without this gate, deleting a section's header+body causes whatever
-        // follows to slide into the deleted section's old sortOrder slot and
-        // silently inherit its identity (see meaningfulTextOverlap() in
-        // web/milkdown/src/block-id-plugin.ts for the analogous fix on the
-        // ProseMirror side of this exact bug).
+        let available = availableRows(in: sections, excluding: excluding)
         if let match = available.first(where: { $0.sortOrder == header.position }),
            passesMatchGate(header, match) {
             return match
         }
+        return nil
+    }
 
-        // Tier 2: Same title anywhere (handles drag-drop reordering)
-        // Skip for pseudo-sections which all have similar generated titles
-        if !header.isPseudoSection,
-           let match = available.first(where: { $0.title == header.title && $0.headerLevel == header.level }) {
-            return match
-        }
+    /// Tier 2: Same title anywhere (handles drag-drop reordering)
+    /// Skip for pseudo-sections which all have similar generated titles
+    ///
+    /// Picks the FIRST title+level row in `sortedDB` (sortOrder) order, not the row
+    /// closest to the header's position. Pre-existing behavior, unchanged by the
+    /// tier-major reorder — but the reorder widened its inputs, so the failure it can
+    /// now produce is new and concrete: a header whose title+level appears on TWO
+    /// rows anywhere in the document always claims the lower-`sortOrder` one, and the
+    /// other is left unclaimed, so if no later pass reaches it the sweep hard-deletes
+    /// it (see `deleteSweepChanges`). Picking the closest same-titled row instead
+    /// would need a position tiebreak on the already-unbounded candidate set; not done
+    /// here, because the unbounded title tier must stay title-only evidence.
+    func findTitleMatch(
+        _ header: ParsedHeader,
+        in sections: [Section],
+        excluding: Set<String>
+    ) -> Section? {
+        guard !header.isPseudoSection else { return nil }
+        return availableRows(in: sections, excluding: excluding)
+            .first(where: { $0.title == header.title && $0.headerLevel == header.level })
+    }
 
-        // Tier 3: Closest position within ±3 (handles batch deletes/inserts)
-        // Prefer a candidate with title/content evidence (the same identity gate
-        // used by Tier 1) over a merely-closer unrelated one. Without this, a header
-        // that lands within ±3 of an unrelated row (e.g. two sections deleted and a
-        // third renamed in the same edit) can steal that row's identity while the
-        // row that actually matches, now slightly farther away but still in range,
-        // is left to be hard-deleted. Pseudo-sections rely on this exclusively,
-        // since Tier 2 explicitly skips them (their titles are too generic to
-        // trust). For pseudo headers, `passesMatchGate` drops the title clause
-        // entirely, requires the candidate to ALSO be a pseudo-section, and compares
-        // content with the leading break-marker line stripped from both sides —
-        // pseudo titles collapse to the same generic "§ Section Break" whenever no
-        // distinguishing paragraph follows the marker, so two unrelated breaks can
-        // and do share a title; trusting it here (or comparing a pseudo header's
-        // stripped body against a real heading's raw, unstripped content) is exactly
-        // the bug this gate exists to close. If NO candidate in range has any
-        // evidence at all, fall back to the original pure-proximity behavior — Tier
-        // 3 exists specifically as a last resort when a section's title AND content
-        // have both changed and only position continuity remains as a signal (see
-        // closestPositionMatch).
-        //
-        // Within whichever candidate set wins (`related` or the `inRange` fallback),
-        // title equality is used as a TIEBREAK preference, never as an admission
-        // gate: a row that failed the filtering above never reaches this `.min` call
-        // at all, but among rows that did, one whose title also matches the header
-        // is preferred over a merely-closer one. This recovers the common case where
-        // a pseudo-section's auto-derived title is stable (it only depends on a
-        // paragraph's opening ~30 characters) but the rest of the paragraph was
-        // heavily edited, breaking `contentRelated`'s prefix/suffix check — without
-        // the tiebreak, that legitimate match could lose the `related.isEmpty`
-        // proximity fallback to a coincidentally closer, title-mismatched row.
+    /// Tier 3's evidence-bearing half: the closest position within ±3 among the candidates
+    /// that DO clear the identity gate. Returns nil — handing the header on to
+    /// `findFallbackProximityMatch` — when nothing in range has any evidence at all.
+    ///
+    /// Prefer a candidate with title/content evidence (the same identity gate
+    /// used by Tier 1) over a merely-closer unrelated one. Without this, a header
+    /// that lands within ±3 of an unrelated row (e.g. two sections deleted and a
+    /// third renamed in the same edit) can steal that row's identity while the
+    /// row that actually matches, now slightly farther away but still in range,
+    /// is left to be hard-deleted. Pseudo-sections rely on this exclusively,
+    /// since Tier 2 explicitly skips them (their titles are too generic to
+    /// trust). For pseudo headers, `passesMatchGate` drops the title clause
+    /// entirely, requires the candidate to ALSO be a pseudo-section, and compares
+    /// content with the leading break-marker line stripped from both sides —
+    /// pseudo titles collapse to the same generic "§ Section Break" whenever no
+    /// distinguishing paragraph follows the marker, so two unrelated breaks can
+    /// and do share a title; trusting it here (or comparing a pseudo header's
+    /// stripped body against a real heading's raw, unstripped content) is exactly
+    /// the bug this gate exists to close. Tier 3 exists specifically as a last
+    /// resort when a section's title AND content have both changed and only
+    /// position continuity remains as a signal; that last resort is
+    /// `findFallbackProximityMatch`, which runs gate-free once this finder returns
+    /// nil.
+    ///
+    /// Within this candidate set, title equality is used as a TIEBREAK preference,
+    /// never as an admission gate: a row that failed the gate above never reaches
+    /// this `.min` call at all, but among rows that did, one whose title also
+    /// matches the header is preferred over a merely-closer one. This recovers the
+    /// common case where a pseudo-section's auto-derived title is stable (it only
+    /// depends on a paragraph's opening ~30 characters) but the rest of the
+    /// paragraph was heavily edited, breaking `contentRelated`'s prefix/suffix
+    /// check — without the tiebreak, that legitimate match could lose to
+    /// `findFallbackProximityMatch`'s gate-free pick of a coincidentally closer,
+    /// title-mismatched row.
+    func findRelatedProximityMatch(
+        _ header: ParsedHeader,
+        in sections: [Section],
+        excluding: Set<String>
+    ) -> Section? {
+        let available = availableRows(in: sections, excluding: excluding)
         let inRange = available.filter { abs($0.sortOrder - header.position) <= 3 }
-        let related = inRange.filter { passesMatchGate(header, $0) }
-        let candidates = related.isEmpty ? inRange : related
+        let candidates = inRange.filter { passesMatchGate(header, $0) }
+        guard !candidates.isEmpty else { return nil }
+        return candidates.min { lhs, rhs in
+            let lhsTitleMatches = lhs.title == header.title
+            let rhsTitleMatches = rhs.title == header.title
+            if lhsTitleMatches != rhsTitleMatches { return lhsTitleMatches }
+            return abs(lhs.sortOrder - header.position) < abs(rhs.sortOrder - header.position)
+        }
+    }
+
+    /// Tier 3's gate-free last resort: the closest position within ±3 among ALL available
+    /// rows, whether or not they show any title/content evidence. Reached only by headers
+    /// `findRelatedProximityMatch` left unmatched — i.e. a section whose title AND content
+    /// have both changed, leaving position continuity as the only signal.
+    ///
+    /// Within this candidate set, title equality is only a `.min` TIEBREAK, never an
+    /// admission gate — because this finder applies NO gate at all. Every in-range
+    /// available row is a candidate here, whether or not it shows any title or
+    /// content evidence (that is the whole point of the gate-free last resort:
+    /// `findRelatedProximityMatch` already returned nil for this header). Adding a
+    /// gate below would both contradict this function's contract and silently
+    /// restore the role-swap split this pair of finders exists to enforce — a row
+    /// that fails `passesMatchGate` MUST still be able to reach this `.min` and be
+    /// claimed. Title equality only orders rows that are already candidates.
+    func findFallbackProximityMatch(
+        _ header: ParsedHeader,
+        in sections: [Section],
+        excluding: Set<String>
+    ) -> Section? {
+        let available = availableRows(in: sections, excluding: excluding)
+        let candidates = available.filter { abs($0.sortOrder - header.position) <= 3 }
+        guard !candidates.isEmpty else { return nil }
         return candidates.min { lhs, rhs in
             let lhsTitleMatches = lhs.title == header.title
             let rhsTitleMatches = rhs.title == header.title
@@ -459,8 +515,9 @@ struct SectionReconciler: Sendable {
     /// added to Tier 2 and never propagated to either copy.
     ///
     /// Named for what it does, not for what it proves: `false` means "no evidence
-    /// found", NOT "definitely a different section" — Tier 3's `related.isEmpty`
-    /// fallback exists for exactly that difference.
+    /// found", NOT "definitely a different section" — Tier 3's related ∩ in-range
+    /// candidate set, and the gate-free in-range fallback beside it, exist for exactly
+    /// that difference.
     ///
     /// Pseudo-sections get no title clause, AND may only match a DB row that is
     /// ALSO a pseudo-section. Their titles are derived from the first paragraph

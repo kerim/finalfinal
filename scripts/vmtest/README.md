@@ -19,7 +19,7 @@ This directory carries only what is final-final-specific:
   `VMTEST_SMOKE_SCOPES`, `VMTEST_UI_TEST_DIR`/`MODULE`,
   `VMTEST_SCRATCH_CLASS`, and the pointers below
 - `guest-prep.sh` — in-guest build steps before xcodebuild (web bundle,
-  xcodegen)
+  xcodegen, scheme verification)
 - `provision-warm.sh` — host-side warm during golden-image builds: the
   pnpm store, and (since 2026-09-06) an Xcode build-for-testing into
   `VMTEST_GUEST_DERIVED_DATA` so run clones compile incrementally instead of

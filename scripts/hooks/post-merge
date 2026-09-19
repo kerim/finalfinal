@@ -16,9 +16,6 @@ set -uo pipefail
 echo "Post-merge: Rebuilding web editors..."
 
 REPO_ROOT="$(git rev-parse --show-toplevel)" || exit 0
-
-[ -f "$REPO_ROOT/scripts/ensure-xcodeproj.sh" ] && "$REPO_ROOT/scripts/ensure-xcodeproj.sh"
-
 cd "$REPO_ROOT/web" || exit 0
 
 if ! command -v pnpm >/dev/null 2>&1; then

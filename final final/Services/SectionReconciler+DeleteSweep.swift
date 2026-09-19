@@ -5,8 +5,9 @@
 //  Header-matching dispatch and delete-sweep orchestration for SectionReconciler, split out
 //  of SectionReconciler.swift to stay under swiftlint's type_body_length limit (same fix
 //  applied to Database+BlocksReplace.swift for the same rule). `reconcile()` itself, plus the
-//  shared three-tier matching/content-comparison helpers these call into (findMatch,
-//  passesMatchGate, buildUpdates, isExemptFromDeleteSweep, duplicateSurvivor,
+//  shared matching/content-comparison helpers these call into (findExactPositionMatch,
+//  findTitleMatch, findRelatedProximityMatch, findFallbackProximityMatch, passesMatchGate,
+//  buildUpdates, isExemptFromDeleteSweep, duplicateSurvivor,
 //  mergeSurvivorUpdates, etc.), stay in SectionReconciler.swift; several of those helpers were
 //  bumped from `private` to internal (module-default) access so this file's extension can call
 //  them -- Swift's `private` doesn't cross files, only `internal` and above do.
@@ -56,163 +57,175 @@ extension SectionReconciler {
     }
 
     /// Matches every parsed header to a database section (or queues an insert for a brand-new
-    /// one), in header order. Three-way dispatch mirrors `reconcile()`'s original inline
-    /// `if header.isBibliography { ... continue } / if header.isNotes { ... continue } / else`
-    /// structure exactly -- each header produces at most one change.
+    /// one) through five ordered, tier-major passes, then emits the resulting changes in
+    /// **header order**. A header advances from pass to pass only on failure, so it matches at
+    /// most once; a match is recorded in `matchedRow` (and `matchedDBIds`) the moment it is
+    /// found, never during emission.
+    ///
+    /// PASS ORDER — load-bearing, chosen so a later header's stronger evidence can never be
+    /// pre-empted by an earlier header's weaker evidence:
+    ///
+    ///     ordinary Pass 1 — exact position + identity gate
+    ///     ordinary Pass 2 — title + level anywhere
+    ///     flagged block — (a) any already-flagged unmatched row, (b) exact-position + gate,
+    ///                      (c) ±3 + gate; atomic per header, internal order preserved,
+    ///                      headers in index order
+    ///     ordinary Pass 3a — proximity ∩ content-relatedness
+    ///     ordinary Pass 3b — pure-proximity fallback
+    ///     emission — header index order
+    ///
+    /// The flagged-header block's step (a) stays unconditionally first and still suppresses (b)/(c);
+    /// its placement relative to the ordinary passes is unobservable, because `availableRows`
+    /// excludes flagged rows, so no ordinary pass can contend for one. Only the flagged
+    /// headers' (b)/(c) move relative to the old header-major loop: they now run after every
+    /// ordinary header's Pass 2 title+level match.
     func changesForHeaders(
         _ headers: [ParsedHeader],
         sortedDB: [Section],
         projectId: String,
         matchedDBIds: inout Set<String>
     ) -> [SectionChange] {
-        var changes: [SectionChange] = []
+        var slots = [SectionChange?](repeating: nil, count: headers.count)
+        var matchedRow = [Section?](repeating: nil, count: headers.count)
+        var ordinary: [(index: Int, header: ParsedHeader)] = []
+        var flagged: [(index: Int, header: ParsedHeader)] = []
         for (index, header) in headers.enumerated() {
-            let change: SectionChange?
-            if header.isBibliography {
-                change = changeForBibliographyHeader(
-                    header, index: index, projectId: projectId, sortedDB: sortedDB, matchedDBIds: &matchedDBIds
-                )
-            } else if header.isNotes {
-                change = changeForNotesHeader(
-                    header, index: index, projectId: projectId, sortedDB: sortedDB, matchedDBIds: &matchedDBIds
-                )
+            if header.isBibliography || header.isNotes {
+                flagged.append((index, header))
             } else {
-                change = changeForOrdinaryHeader(
-                    header, index: index, projectId: projectId, sortedDB: sortedDB, matchedDBIds: &matchedDBIds
-                )
-            }
-            if let change {
-                changes.append(change)
+                ordinary.append((index, header))
             }
         }
-        return changes
+
+        // Pass 1 — ordinary exact position + identity gate.
+        //
+        // Pass 1/Pass 2 precedence, and the sweep consequence of it. This site is
+        // load-bearing for a destructive outcome, not just for which card is relabeled:
+        // because a later header's stronger match can now claim a row an EARLIER header
+        // would have taken, the earlier header can be left with no candidate at all and
+        // reach emission as an insert — and the row the old header-major order matched for
+        // it is then unmatched, so `deleteSweepChanges` hard-deletes it. That is a real,
+        // accepted behavior change (a row the old order kept by a weaker claim can now
+        // lose its `status`/`tags`/`wordGoal` and have its annotations detached), and a
+        // reconciler-driven delete is NOT on the unified undo timeline: undoing the text
+        // edit brings the heading back, but as a NEW row with default metadata. Pinned by
+        // the two spillover-row precedence tests.
+        let after1 = ordinary.filter { item in
+            if let match = findExactPositionMatch(item.header, in: sortedDB, excluding: matchedDBIds) {
+                matchedDBIds.insert(match.id)
+                matchedRow[item.index] = Optional(match)
+                return false
+            }
+            return true
+        }
+
+        // Pass 2 — ordinary title + level anywhere.
+        let after2 = after1.filter { item in
+            if let match = findTitleMatch(item.header, in: sortedDB, excluding: matchedDBIds) {
+                matchedDBIds.insert(match.id)
+                matchedRow[item.index] = Optional(match)
+                return false
+            }
+            return true
+        }
+
+        // Flagged block — atomic per flagged header, in index order. Step (a) inside
+        // findBibliographyMatch/findNotesMatch is unconditionally first and suppresses
+        // (b)/(c) exactly as before.
+        for item in flagged {
+            let match = item.header.isBibliography
+                ? findBibliographyMatch(item.header, in: sortedDB, excluding: matchedDBIds)
+                : findNotesMatch(item.header, in: sortedDB, excluding: matchedDBIds)
+            if let match {
+                matchedDBIds.insert(match.id)
+                matchedRow[item.index] = Optional(match)
+            }
+        }
+
+        // Pass 3a — ordinary proximity ∩ content-relatedness.
+        let after3a = after2.filter { item in
+            if let match = findRelatedProximityMatch(item.header, in: sortedDB, excluding: matchedDBIds) {
+                matchedDBIds.insert(match.id)
+                matchedRow[item.index] = Optional(match)
+                return false
+            }
+            return true
+        }
+
+        // Pass 3b — ordinary pure-proximity fallback, for whatever 3a left unmatched.
+        _ = after3a.filter { item in
+            if let match = findFallbackProximityMatch(item.header, in: sortedDB, excluding: matchedDBIds) {
+                matchedDBIds.insert(match.id)
+                matchedRow[item.index] = Optional(match)
+                return false
+            }
+            return true
+        }
+
+        // Emission — header order. A non-nil `matchedRow[index]` routes through `updateChange`,
+        // whose nil return (matched but nothing actually changed) leaves the slot nil so
+        // NOTHING is emitted for it; it must never fall through to `insertChange`, which would
+        // queue a duplicate insert for every already-correct row.
+        for (index, header) in headers.enumerated() {
+            if let match = matchedRow[index] {
+                slots[index] = updateChange(header: header, match: match, index: index)
+            } else {
+                slots[index] = insertChange(header: header, index: index, projectId: projectId)
+            }
+        }
+        return slots.compactMap { $0 }
     }
 
-    /// Dedicated match/insert/update logic for a header flagged `isBibliography`, extracted
-    /// verbatim from `reconcile()`'s former inline branch. Returns `nil` on the steady-state
-    /// no-change case (MUST-FIX 2: `buildUpdates` alone returns nil when title/level/content/
-    /// position already match, which is exactly the case the self-heal exists to repair when
-    /// only the flag itself needs flipping -- seeding with an empty `SectionUpdates()` keeps
-    /// that flip from being silently dropped, but a change is only emitted when something
-    /// actually differs). `matchedDBIds.insert(match.id)` happens unconditionally whenever a
-    /// match is found, even on this no-change path -- dropping it would let a matched-but-
-    /// unchanged row be swept as an orphan by the delete sweep below.
-    private func changeForBibliographyHeader(
-        _ header: ParsedHeader,
-        index: Int,
-        projectId: String,
-        sortedDB: [Section],
-        matchedDBIds: inout Set<String>
+    /// Builds the `.update` change for a header whose row one of the five match sites claimed,
+    /// or `nil` when nothing about that row actually differs. A `nil` return means "matched,
+    /// but already correct" — the caller emits nothing for it, which is what keeps a
+    /// steady-state reconcile a no-op.
+    ///
+    /// `matchedDBIds.insert(match.id)` is the caller's job at each match site, never here: a
+    /// matched-but-unchanged row must still count as matched, or the delete sweep below would
+    /// treat it as an orphan. The bibliography/Notes flag flip mirrors the old dedicated
+    /// branches — `buildUpdates` alone returns nil when title/level/content/position already
+    /// match, which is exactly the case the self-heal exists to repair when only the flag
+    /// itself needs flipping, so seeding with an empty `SectionUpdates()` keeps that flip from
+    /// being silently dropped.
+    private func updateChange(
+        header: ParsedHeader,
+        match: Section,
+        index: Int
     ) -> SectionChange? {
-        // Dedicated match path for the machine-managed bibliography heading -- see
-        // findBibliographyMatch's doc comment for why this must NOT reuse findMatch
-        // unmodified (MUST-FIX 1: no pure-proximity fallback).
-        if let match = findBibliographyMatch(header, in: sortedDB, excluding: matchedDBIds) {
-            matchedDBIds.insert(match.id)
-
-            var updates = buildUpdates(header: header, existing: match, newPosition: index)
-            if !match.isBibliography {
-                if updates == nil { updates = SectionUpdates() }
-                updates?.isBibliography = true
-            }
-            if let updates {
-                return .update(id: match.id, updates: updates)
-            }
-            return nil
-        } else {
-            let newSection = Section(
-                projectId: projectId,
-                sortOrder: index,
-                headerLevel: header.level,
-                isPseudoSection: header.isPseudoSection,
-                isBibliography: true,
-                title: header.title,
-                markdownContent: header.markdownContent,
-                wordCount: header.wordCount,
-                startOffset: header.startOffset
-            )
-            return .insert(newSection)
+        var updates = buildUpdates(header: header, existing: match, newPosition: index)
+        if header.isBibliography && !match.isBibliography {
+            if updates == nil { updates = SectionUpdates() }
+            updates?.isBibliography = true
         }
+        if header.isNotes && !match.isNotes {
+            if updates == nil { updates = SectionUpdates() }
+            updates?.isNotes = true
+        }
+        guard let updates else { return nil }
+        return .update(id: match.id, updates: updates)
     }
 
-    /// Dedicated match/insert/update logic for a header flagged `isNotes`, extracted verbatim
-    /// from `reconcile()`'s former inline branch. Mirrors `changeForBibliographyHeader` exactly
-    /// -- see its doc comment for the steady-state no-change and `matchedDBIds.insert` details,
-    /// both of which apply here identically.
-    private func changeForNotesHeader(
-        _ header: ParsedHeader,
+    /// Builds the `.insert` change for a header no pass could match — a brand-new section at
+    /// the header's own index, carrying whichever flagged role the header itself has.
+    private func insertChange(
+        header: ParsedHeader,
         index: Int,
-        projectId: String,
-        sortedDB: [Section],
-        matchedDBIds: inout Set<String>
-    ) -> SectionChange? {
-        // Dedicated match path for the machine-managed Notes heading -- mirrors
-        // findBibliographyMatch exactly (see findNotesMatch's doc comment for why this
-        // must not reuse findMatch unmodified).
-        if let match = findNotesMatch(header, in: sortedDB, excluding: matchedDBIds) {
-            matchedDBIds.insert(match.id)
-
-            var updates = buildUpdates(header: header, existing: match, newPosition: index)
-            if !match.isNotes {
-                if updates == nil { updates = SectionUpdates() }
-                updates?.isNotes = true
-            }
-            if let updates {
-                return .update(id: match.id, updates: updates)
-            }
-            return nil
-        } else {
-            let newSection = Section(
-                projectId: projectId,
-                sortOrder: index,
-                headerLevel: header.level,
-                isPseudoSection: header.isPseudoSection,
-                isNotes: true,
-                title: header.title,
-                markdownContent: header.markdownContent,
-                wordCount: header.wordCount,
-                startOffset: header.startOffset
-            )
-            return .insert(newSection)
-        }
-    }
-
-    /// Dedicated match/insert/update logic for an ordinary (non-bibliography, non-Notes)
-    /// header, extracted verbatim from `reconcile()`'s former inline `else` branch.
-    /// `matchedDBIds.insert(match.id)` happens unconditionally whenever `findMatch` finds a
-    /// match, even when `buildUpdates` returns nil (no field actually changed) -- dropping it
-    /// on that no-change path would let a matched-but-unchanged row be swept as an orphan by
-    /// the delete sweep below.
-    private func changeForOrdinaryHeader(
-        _ header: ParsedHeader,
-        index: Int,
-        projectId: String,
-        sortedDB: [Section],
-        matchedDBIds: inout Set<String>
-    ) -> SectionChange? {
-        if let match = findMatch(header, in: sortedDB, excluding: matchedDBIds) {
-            matchedDBIds.insert(match.id)
-
-            // Check if section needs updating
-            let updates = buildUpdates(header: header, existing: match, newPosition: index)
-            if updates != nil {
-                return .update(id: match.id, updates: updates!)
-            }
-            return nil
-        } else {
-            // New section - create with new UUID
-            let newSection = Section(
-                projectId: projectId,
-                sortOrder: index,
-                headerLevel: header.level,
-                isPseudoSection: header.isPseudoSection,
-                title: header.title,
-                markdownContent: header.markdownContent,
-                wordCount: header.wordCount,
-                startOffset: header.startOffset
-            )
-            return .insert(newSection)
-        }
+        projectId: String
+    ) -> SectionChange {
+        let newSection = Section(
+            projectId: projectId,
+            sortOrder: index,
+            headerLevel: header.level,
+            isPseudoSection: header.isPseudoSection,
+            isBibliography: header.isBibliography,
+            isNotes: header.isNotes,
+            title: header.title,
+            markdownContent: header.markdownContent,
+            wordCount: header.wordCount,
+            startOffset: header.startOffset
+        )
+        return .insert(newSection)
     }
 
     // MARK: - Private Delete-Sweep Logic
@@ -259,6 +272,18 @@ extension SectionReconciler {
         let notesRowMatched = !flaggedRows.matchedNotesRows.isEmpty
 
         var changes: [SectionChange] = []
+        // Unmatched-row delete path. The tier-major pass order changes WHICH rows reach this
+        // branch: a row the old header-major order kept alive via a weaker (often
+        // pure-proximity) claim can now be claimed by a different header instead, leaving it
+        // unmatched here and hard-deleted — with no migration, since the `.deleteDuplicate`
+        // sibling branch below requires a flagged survivor. What that costs is exactly what
+        // this branch destroys: `status`, `tags`, `wordGoal`, and the row's id (its
+        // annotations survive as rows but their `sectionId` is nulled by the FK). Unlike a
+        // text edit, this is NOT recoverable from the unified undo timeline: undoing the
+        // edit that removed the heading re-inserts a row at defaults with a new id, and the
+        // detached annotations are not reattached. Deliberate (a row with no matching heading
+        // is what the sweep is for), decided in orphan-delete-decision.md, and pinned by the
+        // spillover-row precedence tests.
         for section in sortedDB where !matchedDBIds.contains(section.id) {
             if isExemptFromDeleteSweep(
                 section,

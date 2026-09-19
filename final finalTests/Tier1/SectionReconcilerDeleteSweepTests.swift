@@ -13,6 +13,7 @@ import Foundation
 @testable import final_final
 
 @Suite("Section Reconciler — Orphaned Duplicate Delete-Sweep (Tier 1: Silent Killers)")
+// swiftlint:disable:next type_body_length
 struct SectionReconcilerDeleteSweepTests {
 
     let reconciler = SectionReconciler()
@@ -304,6 +305,160 @@ struct SectionReconcilerDeleteSweepTests {
         if let liveUpdate {
             #expect(liveUpdate.1.title == nil, "Live row's title is unchanged — no spurious title update")
         }
+    }
+
+    // MARK: - Flagged-Row Precedence and Sweep Invariants
+
+    @Test("Bibliography and Notes rows in range are neither stolen nor swept")
+    func bibliographyAndNotesRowsInRangeAreNeitherStolenNorSwept() {
+        // NON-DISCRIMINATING, and traced as such: pre-fix `[0]` claims bRow via (a), `[1]`
+        // finds no candidate because flagged rows are excluded from the ordinary pool, and
+        // `[2]` claims nRow via (a) — `insert("Middle", 1)` only, zero updates, zero deletes,
+        // in both worlds. Its value is pinning the sweep invariants under the new pass order:
+        // no flagged row deleted, no flag flip, no spurious update. No change is emitted for
+        // either flagged row because the headers are byte-identical to their rows and neither
+        // flag needs flipping.
+        let bibContent = "## References\nReal references."
+        let notesContent = "## Notes\nReal notes."
+        let headers = [
+            makeHeader(position: 0, title: "References", level: 1, markdownContent: bibContent,
+                       isBibliography: true),
+            makeHeader(position: 1, title: "Middle", markdownContent: "## Middle\nMiddle body."),
+            makeHeader(position: 2, title: "Notes", level: 1, markdownContent: notesContent,
+                       isNotes: true)
+        ]
+        let dbSections = [
+            makeSection(id: "bRow", sortOrder: 0, title: "References", headerLevel: 1,
+                        isBibliography: true, markdownContent: bibContent),
+            makeSection(id: "nRow", sortOrder: 2, title: "Notes", headerLevel: 1,
+                        isNotes: true, markdownContent: notesContent)
+        ]
+
+        let changes = reconciler.reconcile(headers: headers, dbSections: dbSections, projectId: projectId)
+
+        let inserts = changes.compactMap { change -> Section? in
+            if case .insert(let section) = change { return section }
+            return nil
+        }
+        let updates = changes.compactMap { change -> (String, SectionUpdates)? in
+            if case .update(let id, let update) = change { return (id, update) }
+            return nil
+        }
+        let deletedIds = changes.compactMap { change -> String? in
+            switch change {
+            case .delete(let id): return id
+            case .deleteDuplicate(let loserId, _, _): return loserId
+            default: return nil
+            }
+        }
+
+        #expect(updates.isEmpty, "Both flagged rows already byte-match, and no flag flip occurred")
+        #expect(deletedIds.isEmpty, "No flagged row may be swept")
+        #expect(inserts.map(\.title) == ["Middle"], "Only the ordinary header inserts")
+        #expect(inserts.map(\.sortOrder) == [1], "Its insert lands at its own index")
+    }
+
+    @Test("Flagged proximity grab no longer pre-empts an ordinary title match")
+    func flaggedProximityGrabNoLongerPreemptsOrdinaryTitleMatch() throws {
+        // Pre-fix the flagged header at index 0 ran first in the header-major loop: (a) found
+        // no flagged row, (b) no row at position 0, (c) `|3 - 0| == 3` → rUser gate-passed by
+        // title, so it claimed the row AND flipped the flag. Post-fix every ordinary header's
+        // Pass 2 title+level match runs before the flagged block's (b)/(c), so the ordinary
+        // header wins. `[1]`'s position (5) is deliberately decoupled from its array index so
+        // it must arrive through Pass 2 rather than Pass 1.
+        //
+        // Deliberate fixture decoupling (C7): production always has `position == index`, so the
+        // `[1]`-at-position-5 shape is synthetic. It is kept because it is what forces the
+        // ordinary header's claim through Pass 2 — the pass whose ordering relative to the
+        // flagged block is the behavior this pin exists to disclose. With contiguous positions
+        // the ordinary header would sit at position 1, no row would be there either, and the
+        // test would still exercise Pass 2; the decoupling makes the intent unambiguous.
+        let sharedContent = "## References\nReal references chapter."
+        let headers = [
+            makeHeader(position: 0, title: "References", level: 1, markdownContent: sharedContent,
+                       isBibliography: true),
+            makeHeader(position: 5, title: "References", level: 1, markdownContent: sharedContent)
+        ]
+        let dbSections = [
+            makeSection(id: "rUser", sortOrder: 3, title: "References", headerLevel: 1,
+                        markdownContent: sharedContent)
+        ]
+
+        let changes = reconciler.reconcile(headers: headers, dbSections: dbSections, projectId: projectId)
+
+        let inserts = changes.compactMap { change -> Section? in
+            if case .insert(let section) = change { return section }
+            return nil
+        }
+        let updates = changes.compactMap { change -> (String, SectionUpdates)? in
+            if case .update(let id, let update) = change { return (id, update) }
+            return nil
+        }
+        let deletedIds = changes.compactMap { change -> String? in
+            switch change {
+            case .delete(let id): return id
+            case .deleteDuplicate(let loserId, _, _): return loserId
+            default: return nil
+            }
+        }
+
+        let rUserUpdate = try #require(updates.first { $0.0 == "rUser" },
+                                       "The ordinary header must claim rUser in Pass 2")
+        #expect(rUserUpdate.1.isBibliography == nil, "rUser must NOT be flipped into the bibliography row")
+        #expect(rUserUpdate.1.title == nil, "rUser keeps its own title")
+        #expect(rUserUpdate.1.sortOrder == 1, "rUser moves to the ordinary header's index")
+        #expect(inserts.first?.isBibliography == true, "The flagged header inserts a real bibliography row")
+        #expect(deletedIds.isEmpty, "No row should be deleted")
+    }
+
+    @Test("Flagged title grab within range beats an earlier ordinary content match")
+    func flaggedTitleGrabWithinRangeBeatsEarlierOrdinaryContentMatch() throws {
+        // The production-visible consequence of the binding pass order: the flagged header's
+        // (c) has the SAME evidence shape as ordinary Pass 3a, so the flagged header wins the
+        // ±3 tie and converts the nearby ordinary row into the machine bibliography row while
+        // the ordinary header inserts a duplicate. The old array order gave no protection here
+        // anyway — the flagged heading is normally last in the document, so it ran last.
+        //
+        // `[0]` cannot title-match r (so Pass 2 cannot take it and it must reach 3a on
+        // content evidence), while `[1]`'s (c) gate-passes on title inside ±3: a genuine tie.
+        let sharedContent = "## References\nOriginal references body."
+        let headers = [
+            makeHeader(position: 0, title: "Different Title", level: 1, markdownContent: sharedContent),
+            makeHeader(position: 1, title: "References", level: 1, markdownContent: sharedContent,
+                       isBibliography: true)
+        ]
+        let dbSections = [
+            makeSection(id: "r", sortOrder: 2, title: "References", headerLevel: 1,
+                        markdownContent: sharedContent)
+        ]
+
+        let changes = reconciler.reconcile(headers: headers, dbSections: dbSections, projectId: projectId)
+
+        let inserts = changes.compactMap { change -> Section? in
+            if case .insert(let section) = change { return section }
+            return nil
+        }
+        let updates = changes.compactMap { change -> (String, SectionUpdates)? in
+            if case .update(let id, let update) = change { return (id, update) }
+            return nil
+        }
+        let deletedIds = changes.compactMap { change -> String? in
+            switch change {
+            case .delete(let id): return id
+            case .deleteDuplicate(let loserId, _, _): return loserId
+            default: return nil
+            }
+        }
+
+        let rUpdate = try #require(updates.first { $0.0 == "r" },
+                                   "r must be claimed by the flagged header's in-range title match")
+        #expect(rUpdate.1.isBibliography == true, "r is converted into the bibliography row")
+        #expect(rUpdate.1.title == nil, "r keeps its own title")
+        #expect(rUpdate.1.sortOrder == 1, "r moves to the flagged header's index")
+        #expect(inserts.map(\.title) == ["Different Title"],
+                "The ordinary header inserts — it lost the ±3 tie on evidence shape")
+        #expect(inserts.map(\.sortOrder) == [0], "Its insert lands at its own index")
+        #expect(deletedIds.isEmpty, "No row should be deleted")
     }
 
 }

@@ -5,16 +5,8 @@
 VMTEST_SCHEME="final final"
 VMTEST_DESTINATION='platform=macOS'
 
-# Extra xcodebuild flags the engine splices into every guest test invocation
-# (scalar — see scripts/vmtest engine's guest/run.sh; a bash array would
-# silently never arrive over the guest-config.sh serialization). Pins the
-# same "no parallel UI testing" behaviour the host-side xcodebuild call
-# sites pin on their own command lines, now that the scheme itself is
-# untracked and Xcode-rewritten on load.
-VMTEST_XCODEBUILD_ARGS="-parallel-testing-enabled NO"
-
 # In-guest prep run from the copied checkout root before xcodebuild (web
-# bundle, xcodegen). Project-relative path.
+# bundle, xcodegen, scheme verification). Project-relative path.
 VMTEST_GUEST_PREP="scripts/vmtest/guest-prep.sh"
 
 # Host-side cache-warm script sourced by the engine's provision.sh while the
