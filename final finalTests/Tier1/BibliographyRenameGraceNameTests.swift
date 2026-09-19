@@ -18,7 +18,7 @@
 //  concurrently). That race, once only documented as latent, was actually reproduced by a
 //  full-suite run against `staleReparseAfterRenameKeepsBibliographyFlags` below -- so both of
 //  this file's swap sites acquire `exportSettingsTestLock` (see `ExportSettingsTestLock.swift`)
-//  around the entire swap-to-restore window, shared with the three other suites that swap the
+//  around the entire swap-to-restore window, shared with the two other suites that swap the
 //  same process-wide `ExportSettings.userDefaults` static.
 //
 //  Both tests below reach `ExportSettingsManager.shared` -- a process-wide singleton that

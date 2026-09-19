@@ -287,8 +287,7 @@ final class ShortcutTooltipE2ETests: XCTestCase {
 
         // AppKit's system tooltip has no fixed, queryable appearance signal from XCUITest, so
         // wait past the native delay (~1-1.5s) plus a safety margin before capturing.
-        // e2e-lint: allow sleep -- no AX element for an AppKit NSView.toolTip; nothing observable to poll, see comment above
-        Thread.sleep(forTimeInterval: 2.0)
+        Thread.sleep(forTimeInterval: 2.0) // e2e-lint: allow sleep -- no AX element for an AppKit NSView.toolTip; nothing observable to poll, see comment above
 
         let screenshot = app.screenshot()
         let attachment = XCTAttachment(screenshot: screenshot)
@@ -326,7 +325,7 @@ final class ShortcutTooltipE2ETests: XCTestCase {
     /// toolbar-icon-cleanup, 2026-09-06) this reads the toggle button's current label first
     /// rather than assuming a starting state.
     ///
-    /// Seeds a Document Note first (see `seedDocumentNote(id:type:text:)` in `UITestHelpers.swift`): the committed
+    /// Seeds a Document Note first (see `seedDocumentNote(id:type:text:)` below): the committed
     /// fixture ships with zero rows in both `annotation` and `annotation_v2` (confirmed via
     /// direct sqlite3 query), and `AnnotationPanel.swift`'s body only enters its
     /// `annotationList` branch -- the one that can ever mount `documentNotesSection`, which is
@@ -414,4 +413,24 @@ final class ShortcutTooltipE2ETests: XCTestCase {
         return element
     }
 
+    /// Seeds one document-level annotation (Document Note) directly via SQL, before the app is
+    /// launched -- same idiom as `AnnotationDeleteE2ETests.seedDocumentNote`. Needed so
+    /// `AnnotationPanel.swift`'s `documentNotesSection` (the sole place "Document Notes" is
+    /// rendered) mounts regardless of `isDocumentNotesCollapsed`; without a seeded row the
+    /// committed fixture's empty `annotation`/`annotation_v2` tables make the panel show
+    /// `emptyState` instead, where the header can never appear.
+    func seedDocumentNote(id: String, type: String, text: String) {
+        let contentIdRaw = FixtureDatabase.read(fixturePath: TestFixtureHelper.fixturePath, sql: "SELECT id FROM content LIMIT 1;")
+        let contentId = contentIdRaw.trimmingCharacters(in: .whitespacesAndNewlines)
+        let sql = """
+        INSERT INTO annotation (id, contentId, sectionId, type, text, isCompleted, charOffset, highlightStart, highlightEnd, createdAt, updatedAt)
+        VALUES ('\(FixtureDatabase.escape(id))', '\(FixtureDatabase.escape(contentId))', NULL, '\(FixtureDatabase.escape(type))', \
+        '\(FixtureDatabase.escape(text))', 0, -1, NULL, NULL, datetime('now'), datetime('now'));
+        """
+        FixtureDatabase.write(fixturePath: TestFixtureHelper.fixturePath, sql: sql)
+    }
+
+    func shortUUID() -> String {
+        String(UUID().uuidString.prefix(8))
+    }
 }

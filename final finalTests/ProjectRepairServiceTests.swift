@@ -262,6 +262,10 @@ struct ProjectRepairServiceTests {
 
         let knownProjectId = "KNOWN-PROJECT-ID-12345"
         let dbQueue = try factory.createMissingProjectRecord(projectId: knownProjectId)
+        // Declared after `defer { try? factory.cleanup() }` above, so it runs FIRST
+        // (Swift defers execute LIFO) -- the connection closes before the directory
+        // is removed.
+        defer { TestDatabaseTeardown.close(dbQueue) }
 
         // Verify setup: sections exist, project record doesn't
         let sectionCount = try #require(try dbQueue.read { db in
@@ -313,6 +317,10 @@ struct ProjectRepairServiceTests {
 
         // Create database with content but no project record and no sections
         let dbQueue = try DatabaseQueue(path: factory.databaseURL.path)
+        // Declared after `defer { try? factory.cleanup() }` above, so it runs FIRST
+        // (Swift defers execute LIFO) -- the connection closes before the directory
+        // is removed.
+        defer { TestDatabaseTeardown.close(dbQueue) }
         try dbQueue.write { db in
             try db.execute(sql: "PRAGMA foreign_keys = OFF")
 
@@ -387,6 +395,10 @@ struct ProjectRepairServiceTests {
 
         // Create database with empty tables
         let dbQueue = try DatabaseQueue(path: factory.databaseURL.path)
+        // Declared after `defer { try? factory.cleanup() }` above, so it runs FIRST
+        // (Swift defers execute LIFO) -- the connection closes before the directory
+        // is removed.
+        defer { TestDatabaseTeardown.close(dbQueue) }
         try dbQueue.write { db in
             try db.execute(sql: """
                 CREATE TABLE project (
@@ -467,6 +479,10 @@ struct ProjectRepairServiceTests {
 
         // Verify table was created
         let dbQueue = try DatabaseQueue(path: factory.databaseURL.path)
+        // Declared after `defer { try? factory.cleanup() }` above, so it runs FIRST
+        // (Swift defers execute LIFO) -- the connection closes before the directory
+        // is removed.
+        defer { TestDatabaseTeardown.close(dbQueue) }
         let hasProjectTable = try dbQueue.read { db in
             try db.tableExists("project")
         }
@@ -502,6 +518,10 @@ struct ProjectRepairServiceTests {
 
         let projectId = "ORPHAN-TEST-PROJECT"
         let dbQueue = try factory.createOrphanedSections(projectId: projectId)
+        // Declared after `defer { try? factory.cleanup() }` above, so it runs FIRST
+        // (Swift defers execute LIFO) -- the connection closes before the directory
+        // is removed.
+        defer { TestDatabaseTeardown.close(dbQueue) }
 
         // Verify orphaned section exists
         let orphanCountBefore = try #require(try dbQueue.read { db in
