@@ -33,6 +33,11 @@ struct SnapshotBackupFlushTests {
         return dir
     }
 
+    /// Clean up temp directory
+    private func cleanup(_ dir: URL) {
+        try? FileManager.default.removeItem(at: dir)
+    }
+
     /// Markdown before the simulated in-editor drag: heading, paragraph, image, paragraph.
     private let preMoveMarkdown = "# Title\n\nPara A.\n\n![alt](media/img.png)\n\nPara B."
 
@@ -87,12 +92,9 @@ struct SnapshotBackupFlushTests {
     @MainActor
     func createManualSnapshotReflectsBlockMoveNotRecordedByIncrementalDiff() async throws {
         let dir = try makeTempDir()
+        defer { cleanup(dir) }
 
         let (db, projectId, editorState) = try makeStaleMoveFixture(in: dir, name: "ManualSnapshotMove")
-        defer {
-            editorState.projectDatabase = nil
-            TestDatabaseTeardown.closeThenCleanUp(dir, db)
-        }
 
         // Drives the SAME production method handleSaveVersion() now calls before creating
         // a snapshot -- EditorViewState+Zoom.swift's
@@ -109,12 +111,9 @@ struct SnapshotBackupFlushTests {
     @MainActor
     func createAutoSnapshotReflectsBlockMoveNotRecordedByIncrementalDiff() async throws {
         let dir = try makeTempDir()
+        defer { cleanup(dir) }
 
         let (db, projectId, editorState) = try makeStaleMoveFixture(in: dir, name: "AutoSnapshotMove")
-        defer {
-            editorState.projectDatabase = nil
-            TestDatabaseTeardown.closeThenCleanUp(dir, db)
-        }
 
         await editorState.flushLiveContentToDatabase { postMoveMarkdown }
 
@@ -127,12 +126,9 @@ struct SnapshotBackupFlushTests {
     @MainActor
     func autoBackupIdleTimeoutFlushesLiveContentBeforeSnapshotting() async throws {
         let dir = try makeTempDir()
+        defer { cleanup(dir) }
 
         let (db, projectId, editorState) = try makeStaleMoveFixture(in: dir, name: "IdleBackupMove")
-        defer {
-            editorState.projectDatabase = nil
-            TestDatabaseTeardown.closeThenCleanUp(dir, db)
-        }
 
         // Stand-in for a settled live WebView edit: editorState.content holds the
         // post-move markdown. blockSyncService is left unconfigured, so
@@ -159,12 +155,9 @@ struct SnapshotBackupFlushTests {
     @MainActor
     func autoBackupIdleTimeoutWithoutLiveFlushKeepsStaleDatabaseOrder() async throws {
         let dir = try makeTempDir()
+        defer { cleanup(dir) }
 
         let (db, projectId, editorState) = try makeStaleMoveFixture(in: dir, name: "IdleBackupNoFlushMove")
-        defer {
-            editorState.projectDatabase = nil
-            TestDatabaseTeardown.closeThenCleanUp(dir, db)
-        }
 
         // Same post-move editor content as the positive case above, but this time the
         // caller passes needsLiveFlush: false, so it's never read.

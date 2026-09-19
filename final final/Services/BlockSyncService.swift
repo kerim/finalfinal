@@ -166,18 +166,6 @@ class BlockSyncService {
     /// (race between JS debounce and Swift confirmBlockIds).
     private var confirmedTempIds: [String: String] = [:]
 
-    /// The fetch stamp of the last SUCCESSFUL apply that wrote each block id: the
-    /// updates and deletes of the RESOLVED batch, plus each insert's permanent id
-    /// (falling back to its editor temp id when the DB write returned no mapping).
-    ///
-    /// This is the ONLY source for "this id is superseded" — never inferred from
-    /// batch age. On the `chainNode.isAbandoned` path in `doPollBlockChanges` an id
-    /// is kept only when no NEWER batch has written it, so shared ids keep the
-    /// newer text while the abandoned batch's own blocks still land. Cleared in
-    /// `configure`/`reconfigure` next to `confirmedTempIds`; like the fetch stamps
-    /// it deliberately does NOT reset on a mere `cancelPendingSync()`.
-    private var lastWriterStampByBlockId: [String: UInt64] = [:]
-
     /// Whether a `checkForChanges` JS failure has already been logged since the last
     /// success (A8). Reset on the next successful call; without it the failure line
     /// fires every 2s against a broken/wedged WebView.
@@ -264,21 +252,44 @@ class BlockSyncService {
     /// toggle destroys and recreates the WebView WITHOUT calling `stopPolling()`
     /// first, so this CAN in fact run while this same service instance's timer/
     /// poll from the OLD WebView is still live -- out of scope for this fix, see
-    /// the block-sync-poll-races review), but because it's harmless regardless:
+    /// the block-sync-poll-races review), but because it is safe regardless:
     /// this reassigns `self.webView` to the fresh reference, and `doPollBlockChanges`
     /// captures `webView` into a local at the top of each cycle (before any
     /// `await`) -- so an old cycle already past that point holds its OWN local
     /// reference to the PREVIOUS WebView and runs to completion against it,
-    /// unaffected by this reassignment. It writes to the same `database`/
-    /// `projectId` either way (those are unchanged across a mode toggle), so its
-    /// write still lands correctly; it just does so via a WebView reference this
-    /// function no longer points to.
+    /// unaffected by this reassignment.
+    ///
+    /// That old cycle's write does NOT land. The `bumpBlockWriteEpoch` call below
+    /// advances the persisted epoch, so the batch the old cycle already fetched
+    /// carries a stale epoch and is refused WHOLESALE (inserts included) by the
+    /// epoch check inside the write transaction. Nothing the old editor typed is
+    /// lost by that: the text it had already pushed to Swift survives because the
+    /// mode-toggle paths call `flushContentToDatabase` first.
+    ///
+    /// The limit of that guarantee: a cycle reads the epoch only AFTER two pre-fetch
+    /// awaits (`flushPendingJSChanges`, `checkForChanges`), against a
+    /// `webView`/`database`/`projectId` snapshot taken BEFORE them. A WebView swap
+    /// that lands inside that window is therefore caught by the content-generation
+    /// guards (pre- and post-fetch), not by the epoch check alone.
     func configure(database: ProjectDatabase, projectId: String, webView: WKWebView) {
         self.projectDatabase = database
         self.projectId = projectId
         self.webView = webView
         self.confirmedTempIds.removeAll()
-        self.lastWriterStampByBlockId.removeAll()
+        // A fresh WebView means every batch still in flight from the OLD editor was fetched
+        // against a coordinate space this new editor does not share. Bump the persisted
+        // epoch so those batches are refused wholesale in the write transaction - the
+        // durable replacement for the in-memory reset that used to sit here and could not
+        // see a native rewrite at all. `needsEpochBump` is set on EVERY attempt (false on
+        // success, true on failure) so a failed bump is retried by the next poll rather
+        // than left failed open - see `needsEpochBump`.
+        do {
+            _ = try database.bumpBlockWriteEpoch(projectId: projectId)
+            needsEpochBump = false
+        } catch {
+            needsEpochBump = true
+            DebugLog.always("[BlockSync] configure: could not bump blockWriteEpoch (\(error)) - the next poll will retry it")
+        }
         // A6: a fresh WebView means any node still on the chain belongs to the OLD
         // editor, so a new cycle must not adopt it and wait out its valve. The fetch
         // stamps (`fetchSequence`/`lastAppliedFetchSequence`) stay monotonic on
@@ -317,8 +328,21 @@ class BlockSyncService {
         await drainInFlightPoll()
         self.projectDatabase = database
         self.projectId = projectId
+        // A fresh project means every batch still in flight from the OLD project was
+        // fetched against a coordinate space this project does not share. Bump the
+        // persisted epoch so those batches are refused wholesale in the write
+        // transaction - the durable replacement for the in-memory reset that used to
+        // sit here and could not see a native rewrite at all. `needsEpochBump` is set on
+        // EVERY attempt, so a failed bump for the previous project cannot leak into this
+        // one, and a failed bump for this one is retried by the next poll.
+        do {
+            _ = try database.bumpBlockWriteEpoch(projectId: projectId)
+            needsEpochBump = false
+        } catch {
+            needsEpochBump = true
+            DebugLog.always("[BlockSync] reconfigure: could not bump blockWriteEpoch (\(error)) - the next poll will retry it")
+        }
         self.confirmedTempIds.removeAll()
-        self.lastWriterStampByBlockId.removeAll()
         // A6: a project switch must not let the first cycle of the NEW project adopt
         // the previous project's chain tail and wait out its valve. The fetch stamps
         // stay monotonic on purpose — see `fetchSequence`.
@@ -460,6 +484,21 @@ class BlockSyncService {
     /// anti-cascade valve letting two applies overlap cannot make it non-monotonic.
     /// The belt-and-braces sequence guard in `doPollBlockChanges` compares against it.
     private var lastAppliedFetchSequence: UInt64 = 0
+
+    /// True when the last `bumpBlockWriteEpoch` attempt in `configure`/`reconfigure`
+    /// FAILED. Set on every attempt (false on success), never left over from an earlier
+    /// project.
+    ///
+    /// Why this exists: with the bump failed, the persisted epoch is still the previous
+    /// session's while `fetchSequence` restarts low. Rows already edited last session
+    /// carry stamps like `(E, 300)`, so every update/delete this session's low-sequence
+    /// batches sent to those rows would be dropped as "superseded" until the in-memory
+    /// counter caught up -- silent loss of the user's typing. `doPollBlockChanges` retries
+    /// the bump at the top of the cycle, BEFORE it reads the epoch and before anything is
+    /// fetched, and defers the whole poll while the retry keeps failing. That trades a
+    /// silent-drop failure for a no-write failure, which is lossless: nothing has been
+    /// consumed JS-side yet, so the batch stays queued and is re-offered next tick.
+    private var needsEpochBump = false
 
     /// How long a cycle waits for its chain predecessor's apply before assuming it
     /// is wedged, marking it abandoned and proceeding. A wait bounded only by the
@@ -1018,6 +1057,28 @@ class BlockSyncService {
         // place to bail out losslessly.
         try Task.checkCancellation()
 
+        // A `configure`/`reconfigure` epoch bump that FAILED is retried here, on THIS
+        // cycle's own `database`/`projectId`, before the epoch is read below - otherwise
+        // this session's low fetch sequences would be measured against the previous
+        // session's persisted row stamps and silently drop real edits (see
+        // `needsEpochBump`). Synchronous (no `await`), and placed before the chain node
+        // is installed: an early `return` AFTER installation and before `finish()` would
+        // wedge every successor. If the retry fails too, return WITHOUT fetching - lossless,
+        // because nothing has been consumed JS-side yet, so the batch stays queued and is
+        // re-offered next tick. Logged unconditionally every time, since a persistently
+        // failing bump means nothing is being written.
+        if needsEpochBump {
+            do {
+                _ = try database.bumpBlockWriteEpoch(projectId: projectId)
+                needsEpochBump = false
+            } catch {
+                DebugLog.always(
+                    "[BlockSync] write-stamp: retry of the deferred blockWriteEpoch bump failed (\(error)) - "
+                    + "deferring this poll BEFORE the fetch; the batch stays queued JS-side")
+                return
+            }
+        }
+
         // --- apply-chain install (synchronous: no `await` between the tail
         // capture, the install, the stamp and the JS call issued by
         // getBlockChanges() below, so chain order IS stamp order IS fetch order
@@ -1025,10 +1086,26 @@ class BlockSyncService {
         // strictly lower stamp, which is what makes the sequence guard below
         // incapable of discarding newer text).
         let predecessor = applyChainTail
+        // (epoch, sequence) write stamp. The epoch is read HERE - synchronously, before
+        // the JS fetch and before the chain install - for three reasons: it lands in the
+        // same no-await region as `fetchSequence &+= 1` below, so chain order IS stamp
+        // order; nothing has been consumed JS-side yet, so a read failure can still
+        // return LOSSLESSLY; and there is no cleanup to unwind, because `chainNode` is
+        // not installed yet.
+        let myWriteEpoch: Int64
+        do {
+            myWriteEpoch = try database.currentBlockWriteEpoch(projectId: projectId)
+        } catch {
+            DebugLog.always(
+                "[BlockSync] write-stamp: could not read blockWriteEpoch (\(error)) - "
+                + "abandoning this poll BEFORE the fetch; the batch stays queued JS-side")
+            return
+        }
         let chainNode = ApplyChainNode()
         applyChainTail = chainNode
         fetchSequence &+= 1
         let myFetchSequence = fetchSequence
+        let myStamp = BlockWriteStamp(epoch: myWriteEpoch, sequence: Int64(clamping: myFetchSequence))
         // Released when THIS cycle's apply step ends — on every path below.
         // Deliberately NOT in runPollCycle: that returns at the watchdog while
         // this work task is still running, and a successor must wait for the real
@@ -1090,37 +1167,11 @@ class BlockSyncService {
                 )
             }
         }
-        // Did a SUCCESSOR give up on THIS cycle? Then our batch is strictly older
-        // than the one it is applying. Do NOT drop the whole batch: MERGE it per
-        // block. An id is SUPERSEDED iff a newer batch already WROTE it — tracked
-        // exactly in `lastWriterStampByBlockId`, never inferred from batch age —
-        // and only superseded ids are dropped, so shared ids keep the newer text
-        // while this batch's own (not-written-by-anyone-newer) blocks still land.
-        var batchToApply = resolvedChanges
-        if chainNode.isAbandoned {
-            let isSuperseded: (String) -> Bool = { id in
-                (self.lastWriterStampByBlockId[id] ?? 0) > myFetchSequence
-            }
-            let supersededUpdateCount = resolvedChanges.updates.filter { isSuperseded($0.id) }.count
-            let supersededDeleteCount = resolvedChanges.deletes.filter { isSuperseded($0) }.count
-            batchToApply.updates = resolvedChanges.updates.filter { !isSuperseded($0.id) }
-            // A newer batch already owns a superseded delete's block, so deleting it
-            // here would destroy newer text.
-            batchToApply.deletes = resolvedChanges.deletes.filter { !isSuperseded($0) }
-            // Inserts are kept in full: editor temp ids are unique per batch, so no
-            // newer batch can have written one of this batch's new blocks.
-            let merged = batchToApply.updates.count + batchToApply.inserts.count + batchToApply.deletes.count
-            let superseded = supersededUpdateCount + supersededDeleteCount
-            DebugLog.always(
-                "[BlockSync] apply chain: own batch arrived after a successor applied — "
-                + "merged=\(merged) superseded=\(superseded) (fetchSeq=\(myFetchSequence))"
-            )
-            #if DEBUG
-            testOwnBatchAbandonCount += 1
-            #endif
-            // Nothing this batch still owns that was not superseded: nothing to write.
-            if merged == 0 { return }
-        }
+        // A successor gave up on THIS cycle, so our batch is strictly older than the one
+        // it applied. Do NOT drop the batch: the persisted (epoch, sequence) stamp in the
+        // write transaction now decides, per row, which of its blocks a newer batch has
+        // already written - the same merge the removed `lastWriterStampByBlockId` used to
+        // compute here, but from the DB, where the answer is atomic with the write.
         // Belt-and-braces (defense-in-depth): for a cycle that did NOT take the merge
         // path this is unreachable today. The reason is the CHAIN INVARIANT, not the
         // two checks' adjacency: a successor cannot pass its `predecessor.wait()`
@@ -1135,10 +1186,10 @@ class BlockSyncService {
         // The MERGE path is deliberately exempt: a merged batch is by construction
         // OLDER than the successor that advanced lastAppliedFetchSequence, so this
         // stamp-level guard would always drop it — defeating the merge entirely. It
-        // is safe to skip precisely because `batchToApply` was already filtered block
-        // by block against `lastWriterStampByBlockId`: every id it still carries is
-        // one NO newer apply wrote, so landing it cannot resurrect newer text — the
-        // only hazard this guard exists to catch.
+        // is safe to skip precisely because `resolvedChanges` is already filtered row by
+        // row in the write transaction against the persisted stamp: every id it still
+        // carries is one NO newer apply wrote, so landing it cannot resurrect newer text —
+        // the only hazard this guard exists to catch.
         guard chainNode.isAbandoned || myFetchSequence > lastAppliedFetchSequence else {
             DebugLog.always(
                 "[BlockSync] apply chain: ABANDONED batch from an older fetch "
@@ -1160,7 +1211,8 @@ class BlockSyncService {
             return
         }
 
-        let idMapping = await applyAndConfirm(batchToApply, database: database, projectId: projectId, webView: webView)
+        let result = await applyAndConfirm(resolvedChanges, database: database, projectId: projectId,
+                                           webView: webView, stamp: myStamp)
         // Written ONLY after a SUCCESSFUL apply (A10) — the DB write, not the intent.
         // A failed write must not publish its stamp, or a later, genuinely newer batch
         // would be rejected as "older" against a stamp that never landed. `max` keeps
@@ -1168,8 +1220,16 @@ class BlockSyncService {
         // still right for a MERGED apply: `lastAppliedFetchSequence` already holds the
         // successor's newer stamp, so `max` deliberately keeps that newer value rather
         // than moving it back to this (older) cycle's stamp.
-        if let idMapping {
-            recordLastWriterStamps(for: batchToApply, idMapping: idMapping, fetchSequence: myFetchSequence)
+        if let result {
+            if chainNode.isAbandoned {
+                DebugLog.always(
+                    "[BlockSync] apply chain: own batch arrived after a successor applied - "
+                    + "merged=\(result.writtenCount) superseded=\(result.droppedCount) "
+                    + "(fetchSeq=\(myFetchSequence))")
+                #if DEBUG
+                testOwnBatchAbandonCount += 1
+                #endif
+            }
             lastAppliedFetchSequence = max(lastAppliedFetchSequence, myFetchSequence)
         }
         #if DEBUG
@@ -1297,41 +1357,23 @@ class BlockSyncService {
     /// for every interleaving — but a future reader should not conclude force-mode polls
     /// are now fully immune to this class of race.
     ///
-    /// Applies `changes` in one DB transaction and returns the temp→permanent block
-    /// id mapping that write produced (empty when the batch contained no inserts).
-    /// The caller records it in `lastWriterStampByBlockId` alongside the batch, so
-    /// the mapping must be THIS apply's own — never the shared, cumulative
-    /// `pendingConfirmations`, which overlapping applies append to.
+    /// Applies `changes` in one DB transaction, under the (epoch, sequence) write
+    /// guard, and returns what that write actually did — including the temp→permanent
+    /// block id mapping (empty when the batch contained no inserts, or when the whole
+    /// batch was rejected for a stale epoch).
     @discardableResult
-    private func applyChanges(_ changes: BlockChanges, database: ProjectDatabase, projectId: String) async throws -> [String: String] {
-        let idMapping = try await Task.detached(priority: .utility) {
-            try database.applyBlockChangesFromEditor(changes, for: projectId)
+    private func applyChanges(
+        _ changes: BlockChanges, database: ProjectDatabase, projectId: String, stamp: BlockWriteStamp
+    ) async throws -> EditorApplyResult {
+        let result = try await Task.detached(priority: .utility) {
+            try database.applyBlockChangesFromEditor(changes, for: projectId, stamp: stamp)
         }.value
 
         // Back on MainActor — store the mapping for sending back to the editor
-        for (tempId, permanentId) in idMapping {
+        for (tempId, permanentId) in result.idMapping {
             self.pendingConfirmations[tempId] = permanentId
         }
-        return idMapping
-    }
-
-    /// Records `fetchSequence` as the last writer of every block id `appliedBatch`
-    /// actually wrote: its updates and deletes (from the batch that was APPLIED — the
-    /// resolved/merged one, so stale temp ids are already resolved), plus each
-    /// insert's permanent id from `idMapping`, falling back to its editor temp id
-    /// when the DB write produced no mapping for it (e.g. the insert was folded into
-    /// an existing block). Read back only on the `chainNode.isAbandoned` merge path,
-    /// where a higher stamp for an id means a newer batch owns it.
-    private func recordLastWriterStamps(for appliedBatch: BlockChanges, idMapping: [String: String], fetchSequence: UInt64) {
-        for update in appliedBatch.updates {
-            lastWriterStampByBlockId[update.id] = fetchSequence
-        }
-        for insert in appliedBatch.inserts {
-            lastWriterStampByBlockId[idMapping[insert.tempId] ?? insert.tempId] = fetchSequence
-        }
-        for id in appliedBatch.deletes {
-            lastWriterStampByBlockId[id] = fetchSequence
-        }
+        return result
     }
 
     /// Send ID confirmations back to the editor
@@ -1759,19 +1801,23 @@ extension BlockSyncService {
         return resolvedChanges
     }
 
-    /// Apply changes to database: writes the resolved changes, merges the resulting
-    /// pending confirmations into the cumulative `confirmedTempIds` tracker, and — if
-    /// any inserts produced temp→permanent ID mappings — pushes those ID confirmations
-    /// back to the editor via `confirmBlockIds`.
+    /// Apply changes to database: writes the resolved changes under the stamped write
+    /// guard, merges the resulting pending confirmations into the cumulative
+    /// `confirmedTempIds` tracker, and — if any inserts produced temp→permanent ID
+    /// mappings — pushes those ID confirmations back to the editor via
+    /// `confirmBlockIds`.
     ///
-    /// Returns the temp→permanent block id mapping the DB write produced when it
-    /// SUCCEEDED (empty when the batch contained no inserts), or `nil` when the write
-    /// FAILED (A10). This is the old `Bool` success signal widened to carry the ids
-    /// the write actually touched — the caller feeds both into
-    /// `recordLastWriterStamps`, and still advances `lastAppliedFetchSequence` only on
-    /// a non-nil result: a failed write must not publish its stamp, or a later,
-    /// genuinely newer batch would be rejected as "older" against a stamp that never
-    /// landed.
+    /// Returns what the DB write actually did when it SUCCEEDED, or `nil` when the
+    /// write FAILED (A10). This is the old `Bool` success signal widened to carry the
+    /// full `EditorApplyResult` — the caller still advances `lastAppliedFetchSequence`
+    /// only on a non-nil result: a failed write must not publish its stamp, or a
+    /// later, genuinely newer batch would be rejected as "older" against a stamp that
+    /// never landed. On the batch-level-rejected path, `idMapping` is empty by
+    /// construction (the transaction returns before `processEditorInserts` runs), so
+    /// no upstream check is needed — `pendingConfirmations`/`confirmedTempIds` simply
+    /// gets nothing added. This function does NOT suppress the `pendingConfirmations`
+    /// push based on rejection — that dictionary is shared across concurrent applies
+    /// (an existing, separate fix) and suppressing it would regress that.
     ///
     /// Window widened by the apply chain (M1/A1): this function runs only after
     /// `doPollBlockChanges`'s `predecessor.wait()` valve, which can park the cycle for
@@ -1784,10 +1830,11 @@ extension BlockSyncService {
         _ resolvedChanges: BlockChanges,
         database: ProjectDatabase,
         projectId: String,
-        webView: WKWebView
-    ) async -> [String: String]? {
+        webView: WKWebView,
+        stamp: BlockWriteStamp
+    ) async -> EditorApplyResult? {
         do {
-            let idMapping = try await applyChanges(resolvedChanges, database: database, projectId: projectId)
+            let result = try await applyChanges(resolvedChanges, database: database, projectId: projectId, stamp: stamp)
 
             // Merge new mappings into cumulative tracker
             for (tempId, permanentId) in pendingConfirmations {
@@ -1811,7 +1858,7 @@ extension BlockSyncService {
                     pendingConfirmations.removeValue(forKey: key)
                 }
             }
-            return idMapping
+            return result
         } catch {
             DebugLog.log(.blockPoll, "[SYNC-DIAG:BlockPoll] Error applying changes: \(error)")
             return nil

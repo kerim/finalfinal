@@ -41,10 +41,6 @@ extension ProjectRepairServiceTests {
 
         // Create database with full schema but NO DATA (like eraseDatabaseOnSchemaChange did)
         let dbQueue = try DatabaseQueue(path: factory.databaseURL.path)
-        // Declared after `defer { try? factory.cleanup() }` above, so it runs FIRST
-        // (Swift defers execute LIFO) -- the connection closes before the directory
-        // is removed.
-        defer { TestDatabaseTeardown.close(dbQueue) }
         try dbQueue.write { db in
             // Create all tables matching the actual corrupted database schema
             try db.execute(sql: """
@@ -196,9 +192,6 @@ extension ProjectRepairServiceTests {
 
             // Verify project exists after repair
             let dbQueue = try DatabaseQueue(path: tempDir.appendingPathComponent("content.sqlite").path)
-            // Scoped to this `if` block, so it runs when the block exits -- before the
-            // enclosing function's `defer { removeItem }` ever runs.
-            defer { TestDatabaseTeardown.close(dbQueue) }
             let projectCount = try #require(try dbQueue.read { db in
                 try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM project")
             })
@@ -245,10 +238,6 @@ extension ProjectRepairServiceTests {
 
         // Create database missing both project table and content table
         let dbQueue = try DatabaseQueue(path: factory.databaseURL.path)
-        // Declared after `defer { try? factory.cleanup() }` above, so it runs FIRST
-        // (Swift defers execute LIFO) -- the connection closes before the directory
-        // is removed.
-        defer { TestDatabaseTeardown.close(dbQueue) }
         try dbQueue.write { db in
             // Create section table only
             try db.execute(sql: """

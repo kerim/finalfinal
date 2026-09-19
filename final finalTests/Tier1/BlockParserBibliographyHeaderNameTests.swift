@@ -35,28 +35,17 @@
 //  to a fourth kind of test: one that only ever READS via `BlockParser.isBibliographyHeading`'s
 //  default-argument `ExportSettings.load()` fallback without itself swapping the pointer --
 //  such a reader never acquires the lock, so it could still transiently observe one of these
-//  suites' throwaway stores while it holds the lock. That narrower risk is unchanged by this
-//  fix. Precisely: `BlockParser.isBibliographyHeading`'s `titles` array always includes the
-//  literal "Bibliography" unconditionally (see `BlockParser.swift`), regardless of the stored
-//  setting, so an unlocked reader parsing an ordinary `# Bibliography` heading is never
-//  affected -- but a reader parsing a heading that matches a swapper's custom/grace name CAN
-//  get a false POSITIVE while that swapper's throwaway store is installed. The durable fix --
-//  threading settings through `BlockParser.parse`'s existing explicit parameters at the
-//  remaining swap sites -- is deliberately out of scope here; it should be filed as a separate
-//  task rather than left as only a comment.
+//  3 suites' throwaway stores while it holds the lock. That narrower risk is unchanged by
+//  this fix and, as before, is only safe today because no such reader test happens to use
+//  the literal header names these 3 suites write.
 //
 //  SCOPE -- this seam only reaches `BlockParser.isBibliographyHeading`, which calls
-//  `ExportSettings.load()` directly. `withIsolatedStore` below ALSO reaches
-//  `ExportSettingsManager.shared`: it snapshots the singleton's current settings BEFORE
-//  swapping `ExportSettings.userDefaults`, so the singleton's lazy init (`private init` calls
-//  `ExportSettings.load()`) reads the real store, never the throwaway one, and restores that
-//  snapshot via `manager.update` in the `defer` (mirroring
-//  `BibliographyRenameGraceNameTests.staleReparseAfterRenameKeepsBibliographyFlags`'s ordering
-//  in this same file tree). This suite's own test bodies still only exercise
-//  `BlockParser.isBibliographyHeading` directly, not the manager. Of the production call sites
-//  this task changed to read `effectiveBibliographyHeaderName`, only
-//  `BlockParser.isBibliographyHeading` goes through the `ExportSettings.load()` seam;
-//  `BibliographySyncService`'s two bibliography-generation call sites
+//  `ExportSettings.load()` directly. It does NOT reach `ExportSettingsManager.shared`,
+//  which caches the whole settings struct at `init()` and only refreshes it on
+//  `.update()`/`.resetToDefaults()` -- swapping `ExportSettings.userDefaults` underneath it
+//  does not invalidate that cache. Of the production call sites this task changed to read
+//  `effectiveBibliographyHeaderName`, only `BlockParser.isBibliographyHeading` goes through
+//  this seam; `BibliographySyncService`'s two bibliography-generation call sites
 //  (`generateBibliographyMarkdown`, `updateBibliographyBlock`), `SectionSyncService`'s three
 //  `fallbackBibTitle` call sites, and `SectionSyncService+Anchors.injectBibliographyMarker`
 //  all read via `ExportSettingsManager.shared` and are untouched by this seam. Do not write
@@ -74,7 +63,6 @@ struct BlockParserBibliographyHeaderNameTests {
     /// `headerName` as the stored `bibliographyHeaderName` into it, runs `body`, then
     /// restores the previous store and deletes the throwaway suite's persistent domain.
     /// Never touches the real `UserDefaults.standard` domain.
-    @MainActor
     private static func withIsolatedStore(headerName: String, _ body: () -> Void) {
         let suiteName = "com.kerim.final-final.tests.blockParserBibHeader.\(UUID().uuidString)"
         guard let suite = UserDefaults(suiteName: suiteName) else {
@@ -86,26 +74,11 @@ struct BlockParserBibliographyHeaderNameTests {
         // held until it is fully restored -- this closes the "KNOWN, CURRENTLY-LATENT RISK"
         // this file's own doc comment above previously only documented rather than fixed.
         exportSettingsTestLock.lock()
-
-        // Snapshot the singleton BEFORE the store pointer is swapped, and under the lock --
-        // mirroring `BibliographyRenameGraceNameTests.staleReparseAfterRenameKeepsBibliographyFlags`.
-        // `ExportSettingsManager` builds `settings` lazily on first access (`private init` calls
-        // `ExportSettings.load()`), so a first touch taken AFTER the swap would initialise it
-        // from this throwaway suite -- and teardown would then "restore" that throwaway value
-        // into the process for every test that runs afterwards.
-        let manager = ExportSettingsManager.shared
-        let previousManagerSettings = manager.settings
-
         let previousStore = ExportSettings.userDefaults
         ExportSettings.userDefaults = suite
         defer {
-            // Restore the manager's cache FIRST, while `ExportSettings.userDefaults` still
-            // points at `suite`, so the `save()` inside `update` lands in the throwaway store
-            // and never the real one.
-            manager.update { $0 = previousManagerSettings }
             ExportSettings.userDefaults = previousStore
             suite.removePersistentDomain(forName: suiteName)
-            // Release LAST, after both restores above have fully landed.
             exportSettingsTestLock.unlock()
         }
 
@@ -117,7 +90,6 @@ struct BlockParserBibliographyHeaderNameTests {
     }
 
     @Test("Custom header name is recognized at both # and ## levels")
-    @MainActor
     func customHeaderNameRecognizedAtBothLevels() {
         Self.withIsolatedStore(headerName: "Works Cited") {
             #expect(BlockParser.isBibliographyHeading("# Works Cited"))
@@ -126,7 +98,6 @@ struct BlockParserBibliographyHeaderNameTests {
     }
 
     @Test("Custom header name stored with surrounding whitespace still matches the generated heading")
-    @MainActor
     func customHeaderNameWithSurroundingWhitespaceStillMatches() {
         // This is the case that failed before BlockParser read effectiveBibliographyHeaderName:
         // the raw stored value ("  Works Cited  ") never equals the actual generated heading
@@ -138,7 +109,6 @@ struct BlockParserBibliographyHeaderNameTests {
     }
 
     @Test("An unrelated heading is never matched")
-    @MainActor
     func unrelatedHeadingIsNeverMatched() {
         Self.withIsolatedStore(headerName: "Works Cited") {
             #expect(!BlockParser.isBibliographyHeading("# Introduction"))

@@ -386,6 +386,10 @@ final class ProjectDatabase: Sendable {
             }
         }
 
+        // Persisted (epoch, sequence) block-write stamp -- the migration body and its
+        // rationale live with the rest of the stamp code, in Database+BlockWriteStamp.swift.
+        migrator.registerMigration("v17_block_write_stamp") { db in try ProjectDatabase.addBlockWriteStampColumnsAtV17(db: db) }
+
         try migrator.migrate(dbWriter)
     }
 

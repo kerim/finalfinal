@@ -290,40 +290,22 @@ extension ProjectDatabase {
 
     // MARK: - Bulk Operations
 
-    /// Apply changes from editor (BlockChanges struct)
-    /// Returns a mapping of temporary IDs to permanent IDs for newly inserted blocks
+    /// Legacy, UNGUARDED entry point. Kept verbatim in signature and behaviour for the
+    /// existing test call sites that apply a hand-built batch with no poll pipeline
+    /// behind it. Production never reaches this: `BlockSyncService` is the only
+    /// production caller and always passes a real stamp.
+    @discardableResult
     func applyBlockChangesFromEditor(_ changes: BlockChanges, for projectId: String) throws -> [String: String] {
-        var idMapping: [String: String] = [:]
-
-        try write { db in
-            // Query max sort order ONCE for the entire transaction
-            var nextSortOrder = (try Double.fetchOne(db,
-                sql: "SELECT MAX(sortOrder) FROM block WHERE projectId = ?",
-                arguments: [projectId]) ?? 0) + 1.0
-
-            // Process deletes first
-            try processEditorDeletes(db: db, deletes: changes.deletes)
-
-            // Process inserts BEFORE updates — so idMapping is populated when
-            // a temp-ID update arrives for a block that was also inserted
-            try processEditorInserts(db: db, inserts: changes.inserts, projectId: projectId, nextSortOrder: &nextSortOrder, idMapping: &idMapping)
-
-            // Process updates (after inserts so idMapping is available for temp-ID lookups)
-            try processEditorUpdates(db: db, updates: changes.updates, idMapping: idMapping)
-
-            // An editor diff can change heading levels/text (which can shift which heading
-            // precedes which) and insert/delete headings outright -- re-persist
-            // sectionParentId to match. See Database+BlockParents.swift.
-            try Self.recomputeSectionParents(db: db, projectId: projectId)
-        }
-
-        return idMapping
+        try applyBlockChangesFromEditor(changes, for: projectId, stamp: .unguarded).idMapping
     }
 
     // MARK: - applyBlockChangesFromEditor Helpers
 
     /// Deletes editor-diff-requested blocks, rejecting stale deletes of machine-managed rows.
-    private func processEditorDeletes(db: Database, deletes: [String]) throws {
+    /// Returns the ids actually deleted (a refused bibliography/notes delete is excluded).
+    @discardableResult
+    func processEditorDeletes(db: Database, deletes: [String]) throws -> [String] {
+        var deleted: [String] = []
         for id in deletes {
             // Safety net: Notes and Bibliography rows are machine-managed by their sync
             // services (FootnoteSyncService / BibliographySyncService), which perform their
@@ -335,7 +317,9 @@ extension ProjectDatabase {
                 continue
             }
             try Block.deleteOne(db, key: id)
+            deleted.append(id)
         }
+        return deleted
     }
 
     // Editor-insert placement helpers (processEditorInserts, InsertPlacement,
@@ -343,26 +327,36 @@ extension ProjectDatabase {
     // split out to keep this file under the project's file-length limit.
 
     /// Applies editor-diff updates: existing blocks are patched, temp-ID blocks are resolved via idMapping, and unmatched updates are logged.
-    private func processEditorUpdates(db: Database, updates: [BlockUpdate], idMapping: [String: String]) throws {
+    /// Returns the ids actually written (a refused bibliography/notes-label update is excluded).
+    @discardableResult
+    func processEditorUpdates(db: Database, updates: [BlockUpdate], idMapping: [String: String]) throws -> [String] {
+        var written: [String] = []
         for update in updates {
             if var block = try Block.fetchOne(db, key: update.id) {
-                try applyUpdateToExistingBlock(db: db, block: &block, update: update)
+                if try applyUpdateToExistingBlock(db: db, block: &block, update: update) {
+                    written.append(update.id)
+                }
             } else if update.id.hasPrefix("temp-") {
                 try applyUpdateToTempIdBlock(db: db, update: update, idMapping: idMapping)
+                if let resolved = idMapping[update.id] { written.append(resolved) }
             } else {
                 DebugLog.log(.data, "[Database+Blocks] Warning: Block not found for update: \(update.id)")
             }
         }
+        return written
     }
 
     /// Applies an editor update to an already-fetched block: rejects bibliography/notes
     /// safety-net updates, then patches text content, type transitions, and heading level.
-    private func applyUpdateToExistingBlock(db: Database, block: inout Block, update: BlockUpdate) throws {
+    /// Returns `true` when the update was actually written, `false` when a safety net
+    /// refused it.
+    @discardableResult
+    func applyUpdateToExistingBlock(db: Database, block: inout Block, update: BlockUpdate) throws -> Bool {
         // Safety net: never overwrite bibliography blocks via editor sync
         // Bibliography content is machine-generated by BibliographySyncService
         if block.isBibliography {
             DebugLog.log(.data, "[Database+Blocks] Rejecting update to bibliography block: \(update.id.prefix(8))")
-            return
+            return false
         }
         // Safety net: never let a stale editor diff revert or destroy a Notes row's
         // footnote label. Legitimate definition-text edits (label unchanged) are allowed —
@@ -386,7 +380,7 @@ extension ProjectDatabase {
                     "[Database+Blocks] Rejecting label-changing update to notes block: " +
                     "\(update.id.prefix(8)) (\(currentLabel ?? "nil")→\(incomingLabel ?? "nil"))"
                 )
-                return
+                return false
             }
         }
         // Block found - apply updates
@@ -405,6 +399,7 @@ extension ProjectDatabase {
 
         block.updatedAt = Date()
         try block.update(db)
+        return true
     }
 
     /// Applies the block-type transition implied by an updated fragment (new heading/section

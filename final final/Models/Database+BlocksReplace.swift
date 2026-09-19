@@ -267,6 +267,10 @@ extension ProjectDatabase {
                 try insertDeferredContinuations(db: db, projectId: projectId, deferredByOwner: notesState.deferredNewContinuations)
 
                 try renumberSortOrders(db: db, projectId: projectId, now: Date())
+                // Wholesale rewrite of this project's block coordinate space -- see
+                // Database+BlockWriteStamp.swift. Any editor-diff batch fetched before
+                // this point now belongs to a document that no longer exists.
+                try Self.stampWholeProjectForRewrite(db: db, projectId: projectId)
                 try Self.recomputeSectionParents(db: db, projectId: projectId)
                 return
             }
@@ -369,6 +373,10 @@ extension ProjectDatabase {
                 try block.insert(db)
             }
 
+            // Wholesale rewrite of this project's block coordinate space -- see
+            // Database+BlockWriteStamp.swift. Any editor-diff batch fetched before
+            // this point now belongs to a document that no longer exists.
+            try Self.stampWholeProjectForRewrite(db: db, projectId: projectId)
             try Self.recomputeSectionParents(db: db, projectId: projectId)
         }
     }
@@ -534,6 +542,11 @@ extension ProjectDatabase {
             // Database+BlocksReorder.swift — see renumberSortOrders for why they must stay
             // separate (a single hoisted `now` here vs. a fresh Date() per row there).
             try renumberSortOrders(db: db, projectId: projectId, now: Date())
+
+            // Wholesale rewrite of this project's block coordinate space (zoomed re-parse) --
+            // see Database+BlockWriteStamp.swift. Any editor-diff batch fetched before this
+            // point now belongs to a document that no longer exists.
+            try Self.stampWholeProjectForRewrite(db: db, projectId: projectId)
 
             try Self.recomputeSectionParents(db: db, projectId: projectId)
         }

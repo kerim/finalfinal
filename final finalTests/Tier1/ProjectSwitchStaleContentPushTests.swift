@@ -59,6 +59,10 @@ struct ProjectSwitchStaleContentPushTests {
         return dir
     }
 
+    private func cleanup(_ dir: URL) {
+        try? FileManager.default.removeItem(at: dir)
+    }
+
     /// Content standing in for the OLD project's settled document -- already matches
     /// what's in the DB fixture, exactly like `editorState.content` would at the moment
     /// a project switch begins (before any fetch has occurred).
@@ -114,19 +118,13 @@ struct ProjectSwitchStaleContentPushTests {
 
     // MARK: - (a) Real regression assertion -- drives flushAllPendingContent itself
 
-    @Test("""
-    flushAllPendingContent (the real project-switch flush) persists fresh WebView content to the \
-    database but never publishes it to editorState.content
-    """)
+    @Test("flushAllPendingContent (the real project-switch flush) persists fresh WebView content to the database but never publishes it to editorState.content")
     @MainActor
     func flushAllPendingContentPersistsWithoutPublishing() async throws {
         let dir = try makeTempDir()
+        defer { cleanup(dir) }
 
         let (db, _, view) = try makeContentViewFixture(in: dir, name: "FlushAllPendingContentNoPublish")
-        defer {
-            view.editorState.projectDatabase = nil
-            TestDatabaseTeardown.closeThenCleanUp(dir, db)
-        }
 
         // Drives the ACTUAL call site the regression lived in
         // (ContentView.flushAllPendingContent), not just
@@ -175,12 +173,9 @@ struct ProjectSwitchStaleContentPushTests {
     @MainActor
     func overrideContentPersistsToDatabaseWithoutPublishingToEditorState() async throws {
         let dir = try makeTempDir()
+        defer { cleanup(dir) }
 
         let (db, _, editorState) = try makeFixture(in: dir, name: "OverrideContentNoPublish")
-        defer {
-            editorState.projectDatabase = nil
-            TestDatabaseTeardown.closeThenCleanUp(dir, db)
-        }
 
         // Simulates what ContentView.flushAllPendingContent now does: pass the freshly
         // fetched (possibly belonging-to-a-project-mid-switch) content straight into
@@ -218,12 +213,9 @@ struct ProjectSwitchStaleContentPushTests {
     @MainActor
     func liveFlushSiblingPublishesAndIsUnsafeForProjectSwitch() async throws {
         let dir = try makeTempDir()
+        defer { cleanup(dir) }
 
         let (db, _, editorState) = try makeFixture(in: dir, name: "LiveFlushSiblingPublishes")
-        defer {
-            editorState.projectDatabase = nil
-            TestDatabaseTeardown.closeThenCleanUp(dir, db)
-        }
 
         await editorState.flushLiveContentToDatabase { freshFetchedContent }
 
@@ -242,10 +234,7 @@ struct ProjectSwitchStaleContentPushTests {
         // to prevent.
         #expect(
             editorState.content == freshFetchedContent,
-            """
-            flushLiveContentToDatabase is expected to publish fetched content to editorState.content \
-            -- this is why it must never back the project-switch flush
-            """
+            "flushLiveContentToDatabase is expected to publish fetched content to editorState.content -- this is why it must never back the project-switch flush"
         )
 
         let dbContent = try assembledDatabaseContent(from: db)
@@ -290,20 +279,13 @@ struct ProjectSwitchStaleContentPushTests {
     /// `BibliographySourceModeFlushTests.debounceFiringMidSwitchUsesSwitchInProgressContentNotStaleEditorState`
     /// for the test proving the STAGED value actually wins over stale `editorState.content`
     /// once it's in place -- this test instead pins that the real call site does the staging.
-    @Test("""
-    flushAllPendingContent stages the flushed content as switchInProgressContent (so a mid-switch \
-    debounce firing with no override is protected), and returns nil rather than "" when there is \
-    nothing to flush
-    """)
+    @Test("flushAllPendingContent stages the flushed content as switchInProgressContent (so a mid-switch debounce firing with no override is protected), and returns nil rather than \"\" when there is nothing to flush")
     @MainActor
     func flushAllPendingContentStagesSwitchInProgressContentAndReturnsNilWhenEmpty() async throws {
         let dir = try makeTempDir()
+        defer { cleanup(dir) }
 
-        let (db, _, view) = try makeContentViewFixture(in: dir, name: "FlushAllPendingContentStaging")
-        defer {
-            view.editorState.projectDatabase = nil
-            TestDatabaseTeardown.closeThenCleanUp(dir, db)
-        }
+        let (_, _, view) = try makeContentViewFixture(in: dir, name: "FlushAllPendingContentStaging")
 
         let flushed = await view.flushAllPendingContent(fetchContent: { self.freshFetchedContent })
         #expect(flushed == freshFetchedContent)
@@ -358,10 +340,7 @@ struct ProjectSwitchStaleContentPushTests {
     // already lived on `EditorViewState`, a plain `@Observable` class -- which is exactly why
     // THEIR mutations already worked reliably here while the `@State` one didn't.
 
-    @Test("""
-    handleBibliographySectionChanged treats the project-switch suppression as a WINDOW, not a \
-    one-shot consumed flag -- two notifications during the same switch are BOTH suppressed
-    """)
+    @Test("handleBibliographySectionChanged treats the project-switch suppression as a WINDOW, not a one-shot consumed flag -- two notifications during the same switch are BOTH suppressed")
     @MainActor
     func bibliographyRebuildSuppressionIsAWindowNotAOneShotFlag() {
         var view = ContentView()

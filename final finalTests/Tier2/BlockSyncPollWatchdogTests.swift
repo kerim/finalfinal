@@ -37,6 +37,11 @@ import WebKit
 
 // MARK: - Scripted JS evaluator
 
+// NOTE: `ScriptedJSEvaluator`, `CountGate`, `AlwaysLogCapture`, `TestStack`, `makeStack` and
+// `blockChangesJSON` are internal, not private, because the epoch-barrier tests in
+// BlockSyncPollWatchdogTests+EpochBarrier.swift (an extension of this suite, split out for
+// SwiftLint's file/type length limits) share them. The rest stay private to this file.
+
 /// Stands in for the four poll-path `webView.evaluateJavaScript` calls routed
 /// through `BlockSyncService.evaluateJS(_:in:)`. Answers are keyed by a
 /// substring of the script (the call's own name), so the match rules are
@@ -54,7 +59,7 @@ import WebKit
 /// back": the call has been entered (visible in `callCount`) and the cycle is
 /// suspended inside it, exactly the shape the poll watchdog exists to bound.
 @MainActor
-private final class ScriptedJSEvaluator {
+final class ScriptedJSEvaluator {
     private var answers: [String: [Any?]] = [:]
     private var callCounts: [String: Int] = [:]
     private(set) var scripts: [String] = []
@@ -132,7 +137,7 @@ private final class ScriptedJSEvaluator {
 /// Counts completed applies (`testAfterApplyHook`) and lets a test await the nth.
 /// `value` is readable so a test can assert that an abandoned cycle did NOT apply.
 @MainActor
-private final class CountGate {
+final class CountGate {
     private(set) var value = 0
     private var continuations: [(target: Int, continuation: CheckedContinuation<Void, Never>)] = []
 
@@ -213,7 +218,7 @@ private final class StartSignal {
 /// `@unchecked Sendable`. Kept ONLY for T2's literal-line-text assertions (M5): tests
 /// synchronize on instance-scoped seams (`testPollTimeoutHandler`), never on this
 /// process-global sink.
-private final class AlwaysLogCapture: @unchecked Sendable {
+final class AlwaysLogCapture: @unchecked Sendable {
     private let lock = NSLock()
     private var lines: [String] = []
 
@@ -245,7 +250,7 @@ private func waitUntil(_ condition: @MainActor () -> Bool, iterations: Int = 100
 
 // MARK: - Stack
 
-private struct TestStack {
+struct TestStack {
     let db: ProjectDatabase
     let pid: String
     let webView: WKWebView
@@ -254,7 +259,7 @@ private struct TestStack {
 }
 
 @MainActor
-private func makeStack(content: String = "# Alpha\n\none two three.\n\n# Beta\n\nfour five six.\n")
+func makeStack(content: String = "# Alpha\n\none two three.\n\n# Beta\n\nfour five six.\n")
     throws -> TestStack {
     let db = try TestFixtureFactory.createTemporary(content: content)   // auto-registered
     let pid = try TestFixtureFactory.getProjectId(from: db)
@@ -276,8 +281,9 @@ private func makeStack(content: String = "# Alpha\n\none two three.\n\n# Beta\n\
 /// Single-update batches with `markdownFragment`/`headingLevel` nil and inserts/deletes
 /// empty keep `shouldRejectStaleSnapshot` (which early-returns unless deletes or inserts
 /// are non-empty) off the path and never call `confirmBlockIds` — no temp→permanent ID
-/// mapping to confirm. `inserts` is used only by the wire-contract test.
-private func blockChangesJSON(updates: [BlockUpdate] = [], inserts: [BlockInsert] = []) throws -> String {
+/// mapping to confirm. `inserts` is used only by the wire-contract test and the epoch-barrier
+/// tests (BlockSyncPollWatchdogTests+EpochBarrier.swift).
+func blockChangesJSON(updates: [BlockUpdate] = [], inserts: [BlockInsert] = []) throws -> String {
     let changes = BlockChanges(updates: updates, inserts: inserts, deletes: [])
     let data = try JSONEncoder().encode(changes)
     guard let json = String(data: data, encoding: .utf8) else {
@@ -553,10 +559,17 @@ struct BlockSyncPollWatchdogTests {
                 "cycle 2 must still apply its own newer batch after abandoning cycle 1 — got \(String(describing: yText[blockA.id]))")
 
         // Release the abandoned predecessor and watch the MERGE: it resumes with X,
-        // sees `isAbandoned`, drops only the id a newer batch WROTE (block A — Y's) and
-        // applies the rest (block B, which only X touched). The sink is installed for
-        // just this window to capture the unconditional merge line; the suite is
-        // `.serialized`, so no sibling test's line can interleave in this window.
+        // and the persisted (epoch, sequence) write guard drops only the id a newer
+        // batch WROTE (block A — Y's) inside the write transaction, applying the rest
+        // (block B, which only X touched). The sink is installed for just this window
+        // to capture the unconditional merge line; the suite is `.serialized`, so no
+        // sibling test's line can interleave in this window.
+        //
+        // This test is ALSO the end-to-end proof that `BlockSyncService` threads its
+        // own real `fetchSequence` through to the DB write as the stamp's sequence
+        // half (no hand-built stamp anywhere in it) — the merge counts below (merged=1
+        // superseded=1) only come out right if the service's real stamps, not a stub,
+        // drove the guard's per-row decision.
         let capture = AlwaysLogCapture()
         DebugLog.alwaysSink = { capture.append($0) }
         defer { DebugLog.alwaysSink = nil }
@@ -564,8 +577,10 @@ struct BlockSyncPollWatchdogTests {
         let merged = await waitUntil { sync.testOwnBatchAbandonCount == 1 }
         #expect(merged,
                 "cycle 1 must observe that it was abandoned and merge its batch — got \(sync.testOwnBatchAbandonCount)")
-        // The counter is bumped BEFORE the merged apply runs, so wait for that extra
-        // apply: cycle 2's Y plus cycle 1's filtered X.
+        // The counter is now bumped AFTER the merged apply runs (it reads the write
+        // transaction's own result) rather than before, but `waitUntil` above polls
+        // until it is set either way, so wait for that extra apply the same way:
+        // cycle 2's Y plus cycle 1's filtered X.
         await applies.waitFor(2)
         #expect(applies.value == 2,
                 "the abandoned predecessor must apply its MERGED batch (block B only), not drop it — got \(applies.value) applies")

@@ -28,6 +28,11 @@ struct ExportFlushTests {
         return dir
     }
 
+    /// Clean up temp directory
+    private func cleanup(_ dir: URL) {
+        try? FileManager.default.removeItem(at: dir)
+    }
+
     // MARK: - Tests
 
     @Test("loadContentForExport awaits flushBeforeExport before reading blocks")
@@ -35,8 +40,9 @@ struct ExportFlushTests {
     func loadContentForExportAwaitsFlushBeforeReadingBlocks() async throws {
         let dir = try makeTempDir()
         defer {
+            cleanup(dir)
             DocumentManager.shared.flushBeforeExport = nil
-            TestDatabaseTeardown.closeProjectThenCleanUp(dir)
+            DocumentManager.shared.closeProject()
         }
 
         // Open a fixture with no footnotes yet — matches the DB state before the
@@ -107,8 +113,9 @@ struct ExportFlushTests {
     func exportBlocksAwaitsFlushBeforeFetching() async throws {
         let dir = try makeTempDir()
         defer {
+            cleanup(dir)
             DocumentManager.shared.flushBeforeExport = nil
-            TestDatabaseTeardown.closeProjectThenCleanUp(dir)
+            DocumentManager.shared.closeProject()
         }
 
         let fixtureURL = dir.appendingPathComponent("FlushTest2.ff")
@@ -153,8 +160,9 @@ struct ExportFlushTests {
     func exportBlocksReflectsBlockMoveNotRecordedByIncrementalDiff() async throws {
         let dir = try makeTempDir()
         defer {
+            cleanup(dir)
             DocumentManager.shared.flushBeforeExport = nil
-            TestDatabaseTeardown.closeProjectThenCleanUp(dir)
+            DocumentManager.shared.closeProject()
         }
 
         // Seed a fixture with 4 blocks in a known order: heading, paragraph, image, paragraph.
