@@ -190,6 +190,13 @@ final class FixtureGeneratorTests: XCTestCase {
         try db.dbWriter.writeWithoutTransaction { database in
             try database.checkpoint(.truncate)
         }
+
+        // Deterministically close the pool's connections rather than relying on
+        // ARC to deallocate `db`/`package` when they go out of scope below — the
+        // ARC-timing dependence this doc comment used to describe is exactly what
+        // TestDatabaseTeardown (see final finalTests/Helpers/TestDatabaseTeardown.swift)
+        // exists to replace elsewhere.
+        TestDatabaseTeardown.close(db.dbWriter)
     }
 
     /// Validates the committed fixture can be opened and has expected content.
@@ -220,11 +227,16 @@ final class FixtureGeneratorTests: XCTestCase {
         let tempFixture = FileManager.default.temporaryDirectory
             .appendingPathComponent("fixture-validation-\(UUID().uuidString).ff")
         try FileManager.default.copyItem(at: url, to: tempFixture)
+        // Unconditional fallback: registered immediately after the copy so the
+        // temp fixture is removed even if either throwing call below fails
+        // (exactly the failure this test exists to catch). Harmless to run
+        // twice — removing an already-removed directory via try? is a no-op.
         defer { try? FileManager.default.removeItem(at: tempFixture) }
 
         // Open the copy — this will run migrations and validate schema
         let package = try ProjectPackage.open(at: tempFixture)
         let db = try ProjectDatabase(package: package)
+        defer { TestDatabaseTeardown.closeThenCleanUp(tempFixture, db) }
 
         // Verify content exists
         let content = try db.dbWriter.read { database in

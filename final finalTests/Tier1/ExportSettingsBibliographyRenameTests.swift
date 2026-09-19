@@ -44,12 +44,17 @@ struct ExportSettingsBibliographyRenameTests {
     /// `body`, then restores both the manager's cache and the previous store to exactly what
     /// they held before this call. Mirrors `ExportSettingsResetNotificationTests`' inline setup.
     private func withIsolatedManager(_ body: (ExportSettingsManager) -> Void) {
-        let manager = ExportSettingsManager.shared
-        let previousManagerSettings = manager.settings
-
         let suiteName = "com.kerim.final-final.tests.exportSettingsManagerBibRename.\(UUID().uuidString)"
         let testDefaults = UserDefaults(suiteName: suiteName)!
         exportSettingsTestLock.lock()
+
+        // Snapshot the singleton BEFORE the store pointer is swapped, and while the lock is
+        // held -- a first touch taken after the swap would initialise
+        // `ExportSettingsManager.shared` from this throwaway suite, and teardown would then
+        // "restore" that throwaway value into the process for every test that runs afterwards.
+        let manager = ExportSettingsManager.shared
+        let previousManagerSettings = manager.settings
+
         let previousStore = ExportSettings.userDefaults
         ExportSettings.userDefaults = testDefaults
         defer {
@@ -77,7 +82,7 @@ struct ExportSettingsBibliographyRenameTests {
 
             var received: [String: String]?
             let observer = NotificationCenter.default.addObserver(
-                forName: .bibliographyHeaderNameChanged, object: nil, queue: .main
+                forName: .bibliographyHeaderNameChanged, object: nil, queue: nil
             ) { note in
                 if let old = note.userInfo?["oldName"] as? String, let new = note.userInfo?["newName"] as? String {
                     received = ["oldName": old, "newName": new]
@@ -86,7 +91,6 @@ struct ExportSettingsBibliographyRenameTests {
             defer { NotificationCenter.default.removeObserver(observer) }
 
             let result = manager.setBibliographyHeaderName("")
-            RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.1))
 
             #expect(result == nil, "an empty submission must succeed, not be rejected")
             #expect(manager.effectiveBibliographyHeaderName == "Bibliography")
@@ -132,12 +136,11 @@ struct ExportSettingsBibliographyRenameTests {
 
             var received: [String: Any]?
             let observer = NotificationCenter.default.addObserver(
-                forName: .bibliographyHeaderNameChanged, object: nil, queue: .main
+                forName: .bibliographyHeaderNameChanged, object: nil, queue: nil
             ) { note in received = note.userInfo as? [String: Any] }
             defer { NotificationCenter.default.removeObserver(observer) }
 
             let result = manager.setBibliographyHeaderName("")
-            RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.1))
 
             #expect(result == nil)
             #expect(manager.previousBibliographyHeaderNames.isEmpty, "a true no-op must not touch the grace list")
@@ -167,7 +170,7 @@ struct ExportSettingsBibliographyRenameTests {
 
             var received: [String: String]?
             let observer = NotificationCenter.default.addObserver(
-                forName: .bibliographyHeaderNameChanged, object: nil, queue: .main
+                forName: .bibliographyHeaderNameChanged, object: nil, queue: nil
             ) { note in
                 if let old = note.userInfo?["oldName"] as? String, let new = note.userInfo?["newName"] as? String {
                     received = ["oldName": old, "newName": new]
@@ -176,7 +179,6 @@ struct ExportSettingsBibliographyRenameTests {
             defer { NotificationCenter.default.removeObserver(observer) }
 
             let result = manager.setBibliographyHeaderName("Bibliography")
-            RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.1))
 
             #expect(result == nil, "no rejection message -- \"Bibliography\" is not a reserved name")
             #expect(manager.effectiveBibliographyHeaderName == "Bibliography")
