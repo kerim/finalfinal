@@ -204,7 +204,8 @@ final class AnnotationDeleteE2ETests: XCTestCase {
         waitUntil(probe: { self.queryAnnotationTextExists(sourceText) }, predicate: { $0 })
         XCTAssertTrue(
             queryAnnotationTextExists(sourceText),
-            "⌘Z should restore the DB row in Markdown mode (CodeMirror's own text history -- A4's deliberate choice not to use addToHistory.of(false))"
+            "⌘Z should restore the DB row in Markdown mode "
+                + "(CodeMirror's own text history -- A4's deliberate choice not to use addToHistory.of(false))"
         )
         XCTAssertTrue(panelText(sourceText).waitForExistenceOrFail(timeout: 10).exists, "⌘Z should restore the panel card in Markdown mode")
     }
@@ -484,29 +485,8 @@ extension AnnotationDeleteE2ETests {
         return last
     }
 
-    func shortUUID() -> String {
-        String(UUID().uuidString.prefix(8))
-    }
-
     // MARK: - DB ground-truth queries (see UITestHelpers.swift's FixtureDatabase doc comment --
     // safe to run while the app is open, WAL mode; no forced checkpoint needed).
-
-    /// Inserts a Document Note (charOffset == Annotation.documentLevelOffset, DB-only, never
-    /// part of content.markdown) directly into the fixture, mirroring
-    /// `Database+Annotations.swift`'s `insertDocumentAnnotation`. Caller must ensure the app is
-    /// terminated first (FixtureDatabase's own established contract). `datetime('now')` matches
-    /// GRDB's default Date column format closely enough for round-trip decoding (yyyy-MM-dd
-    /// HH:mm:ss, which GRDB's lenient Date parser accepts).
-    func seedDocumentNote(id: String, type: String, text: String) {
-        let contentIdRaw = FixtureDatabase.read(fixturePath: TestFixtureHelper.fixturePath, sql: "SELECT id FROM content LIMIT 1;")
-        let contentId = contentIdRaw.trimmingCharacters(in: .whitespacesAndNewlines)
-        let sql = """
-        INSERT INTO annotation (id, contentId, sectionId, type, text, isCompleted, charOffset, highlightStart, highlightEnd, createdAt, updatedAt)
-        VALUES ('\(FixtureDatabase.escape(id))', '\(FixtureDatabase.escape(contentId))', NULL, '\(FixtureDatabase.escape(type))', \
-        '\(FixtureDatabase.escape(text))', 0, -1, NULL, NULL, datetime('now'), datetime('now'));
-        """
-        FixtureDatabase.write(fixturePath: TestFixtureHelper.fixturePath, sql: sql)
-    }
 
     func queryAnnotationCount(id: String) -> Int {
         let sql = "SELECT count(*) FROM annotation WHERE id = '\(FixtureDatabase.escape(id))';"

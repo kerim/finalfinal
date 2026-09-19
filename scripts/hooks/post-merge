@@ -33,13 +33,7 @@ fi
 # isn't in perfect sync with the workspace manifests — exactly the state a
 # merge can produce — which would trip the failure path below with no
 # auto-recovery. Plain install reconciles and proceeds instead.
-#
-# --config.confirmModulesPurge=false: when pnpm decides node_modules must be
-# wiped and rebuilt (after a pnpm upgrade or a settings change) it asks a
-# yes/no question first. Git hooks have no terminal, so pnpm would abort with
-# ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY and the web editors would go
-# stale. Answering "yes" up front keeps every non-interactive merge working.
-if ! pnpm install --config.confirmModulesPurge=false; then
+if ! pnpm install; then
     echo "Post-merge: ERROR - 'pnpm install' failed; web editors NOT rebuilt."
     echo "Recover with: cd web && pnpm install && pnpm build"
     exit 0
