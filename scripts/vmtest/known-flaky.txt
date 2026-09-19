@@ -8,26 +8,6 @@
 # Widening this file mid-crisis (any streak non-zero) is refused by `vmtest`
 # and by the uitest-ready-gate hook — see the plan's §3 and §4.
 
-# Re-added 2026-08-06 after test-isolation fixes (t-2d6b4898) ruled out
-# fixture pollution as the cause: a 4th full-suite validation run reproduced
-# a genuine failure with a real block-id dump attached (headings instead of
-# an ordered_list, IDs never seen before -- not stale/leftover state). This
-# is believed to be the app-level race filed as t-3904c457 (mode-toggle
-# flush not paired with pushBlockIds), not a test-infrastructure bug. Keep
-# this quarantined until that root cause is fixed, or it will keep re-arming
-# the circuit breaker (see t-5f48547e).
-#
-# UPDATE 2026-08-28: t-3904c457's researched root cause (a straddling poll's
-# stale insert appended at document end with a brand-new id) is now guarded
-# against in Database+BlocksInsert.swift's processEditorInserts — a non-temp
-# insert anchor that no longer resolves in the DB rejects the insert instead
-# of falling through to append-at-end (unit-tested in
-# BlockInsertAnchorTests.staleAnchorInsertIsRejected). The task note left one
-# alternative open (typing-flakiness: the test file itself documents dropped
-# keystrokes), so keep this entry until a few full-suite runs come back with
-# no absorption recorded for it (`vmtest stats` shows the count), then remove.
-final finalUITests/ListNumberingE2ETests/testDeliberateNewListRestartsAtOne
-
 # Added 2026-08-07 after a full-suite wrap-up run (superdev batch:
 # codemirror-teardown-observers, sidebar-heading-numbers,
 # zotero-export-decode-error) failed on "Status bar should reappear after
@@ -95,8 +75,8 @@ final finalUITests/UnifiedUndoE2ETests/testEvictionCapEvictsOldestEntryAndStaysC
 # reproduced this touches heading-hierarchy auto-correction or undo/eviction code, and
 # both times an immediate scoped re-run of just this test passed cleanly. Reads as the
 # same suite-order/state-pollution class already documented for
-# testDeliberateNewListRestartsAtOne and testFocusModeToggle above. Quarantined rather
-# than root-caused; revisit t-e006ebc5 if it starts failing in isolation too.
+# testFocusModeToggle above. Quarantined rather than root-caused; revisit
+# t-e006ebc5 if it starts failing in isolation too.
 final finalUITests/EditorModeSwitchUndoE2ETests/testUndoAfterHeadingBreakingEditInWysiwyg
 
 # Added 2026-09-02 during sd-wrap-up for the notes-heading-scanner-unify batch
@@ -150,23 +130,3 @@ final finalUITests/EscapeLadderE2ETests/testEscInFocusModeWithSlashMenuOpenDoesN
 # dedicated diagnostician round with real screen-recording/AX evidence, not another
 # blind retry. See t-f4c9e968.
 final finalUITests/EscapeLadderE2ETests/testFindBarFieldFocusedEscClosesFindBarReturnsToEditor
-
-# Added 2026-09-19 (t-72173959). ShortcutTooltipE2ETests/
-# testHoveringReplaceToggleShowsCustomTooltip failed once on a tooltip-position
-# assertion (tooltip rendered at 650.0, needed <= 526.5 relative to the Replace
-# toggle), then passed cleanly on an immediate re-run in the same worktree with
-# nothing in between that could plausibly have moved it. A concurrent
-# e2e-authoring change happening in the same file at the time was ruled out as
-# the cause -- the relevant state is in-memory-only panel-visibility state, with
-# no persistence across launches. Cause unknown; quarantined rather than
-# root-caused. Leading hypothesis, UNCONFIRMED (not re-verified by a re-run):
-# the test captures `replaceToggleFrameBeforeTooltip` before the tooltip renders
-# specifically because, once the tooltip exists, AppKit reports the button's
-# frame as inflated to include the tooltip's own `.overlay`-attached bounds (see
-# the test's own doc comment above that capture) -- so if that early capture
-# lost its race against the tooltip's 350ms show delay, `minX` would already be
-# the tooltip's own left edge rather than the button's, and the observed
-# numbers fit: a ~526.5 bound against `tooltipFrame.maxX = 650` is a ~119.5pt
-# span, tooltip-width-sized rather than toolbar-button-sized. Revisit if it
-# starts failing consistently or this hypothesis is confirmed or ruled out.
-final finalUITests/ShortcutTooltipE2ETests/testHoveringReplaceToggleShowsCustomTooltip
