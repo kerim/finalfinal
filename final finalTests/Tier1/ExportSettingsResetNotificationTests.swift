@@ -33,10 +33,15 @@
 //  duration -- `resetToDefaults()` calls `settings.save()` unconditionally, same as every
 //  other settings mutation. `.serialized` orders this suite's own tests only (Swift Testing
 //  runs suites concurrently by default); that pointer swap is guarded across suites by
-//  `exportSettingsTestLock` (see `ExportSettingsTestLock.swift`), shared with the two other
-//  suites that swap the same process-wide static -- `BibliographyRenameGraceNameTests` and
-//  `BlockParserBibliographyHeaderNameTests` -- closing a race between any two of the three
-//  that was previously only documented as latent, then actually reproduced.
+//  `exportSettingsTestLock` (see `ExportSettingsTestLock.swift`), shared with the other suites
+//  that swap the same process-wide static -- `BibliographyRenameGraceNameTests`,
+//  `BlockParserBibliographyHeaderNameTests`, and `ExportSettingsBibliographyRenameTests` --
+//  closing a race between any two that was previously only documented as latent, then actually
+//  reproduced. Each `defer` below restores
+//  `manager.settings` FIRST, while the throwaway store is still installed -- `manager.update`
+//  calls `save()` internally, and restoring it only after `ExportSettings.userDefaults` is
+//  already back to the real store would persist that restore into the user's REAL
+//  `UserDefaults` domain instead of the throwaway one.
 //
 
 import Testing
@@ -49,9 +54,6 @@ struct ExportSettingsResetNotificationTests {
 
     @Test("resetToDefaults() posts .citationStyleChanged, matching the individual CSL-style setters")
     func resetToDefaultsPostsCitationStyleChanged() {
-        let manager = ExportSettingsManager.shared
-        let previousSettings = manager.settings
-
         let suiteName = "com.kerim.final-final.tests.exportSettingsManagerReset.\(UUID().uuidString)"
         let testDefaults = UserDefaults(suiteName: suiteName)!
         // Cross-suite lock (see ExportSettingsTestLock.swift): must be acquired before the
@@ -59,12 +61,23 @@ struct ExportSettingsResetNotificationTests {
         // held until it -- and the manager cache restored just below -- are fully restored,
         // or another suite's concurrently-running test could observe this throwaway store.
         exportSettingsTestLock.lock()
+
+        // Snapshot the singleton BEFORE the store pointer is swapped, and while the lock is
+        // held -- a first touch taken after the swap would initialise
+        // `ExportSettingsManager.shared` from this throwaway suite, and teardown would then
+        // "restore" that throwaway value into the process for every test that runs afterwards.
+        let manager = ExportSettingsManager.shared
+        let previousSettings = manager.settings
+
         let previousStore = ExportSettings.userDefaults
         ExportSettings.userDefaults = testDefaults
         defer {
+            // Restore the manager's cache FIRST, while `ExportSettings.userDefaults` still
+            // points at `testDefaults`, so the `save()` inside `update` lands in the throwaway
+            // store and never the real one.
+            manager.update { $0 = previousSettings }
             ExportSettings.userDefaults = previousStore
             testDefaults.removePersistentDomain(forName: suiteName)
-            manager.update { $0 = previousSettings }
             // Release LAST, after both restores above have fully landed.
             exportSettingsTestLock.unlock()
         }
@@ -78,18 +91,18 @@ struct ExportSettingsResetNotificationTests {
 
         var notificationCount = 0
         let observer = NotificationCenter.default.addObserver(
-            forName: .citationStyleChanged, object: nil, queue: .main
+            forName: .citationStyleChanged, object: nil, queue: nil
         ) { _ in
             notificationCount += 1
         }
         defer { NotificationCenter.default.removeObserver(observer) }
 
+        // `queue: nil` above delivers the observer block SYNCHRONOUSLY on the posting thread,
+        // and `resetToDefaults()` posts from the main thread already -- so the observer has
+        // already run by the time this call returns. No run-loop pump needed (and pumping one
+        // here, while `exportSettingsTestLock` is held, risked a deadlock: see
+        // `ExportSettingsTestLock.swift`'s doc comment).
         manager.resetToDefaults()
-
-        // Drain the main run loop to process the posted notification -- addObserver(queue:)
-        // schedules its block asynchronously even when posted from the main thread (same
-        // pattern as DocumentManagerOpenTests.swift's notification test).
-        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.1))
 
         #expect(
             notificationCount == 1,
@@ -108,18 +121,26 @@ struct ExportSettingsResetNotificationTests {
     /// rename would retitle it).
     @Test("resetToDefaults() folds the outgoing bibliography heading name into the grace list and notifies")
     func resetToDefaultsPreservesBibliographyGraceList() {
-        let manager = ExportSettingsManager.shared
-        let previousSettings = manager.settings
-
         let suiteName = "com.kerim.final-final.tests.exportSettingsManagerReset.\(UUID().uuidString)"
         let testDefaults = UserDefaults(suiteName: suiteName)!
         exportSettingsTestLock.lock()
+
+        // Snapshot the singleton BEFORE the store pointer is swapped, and while the lock is
+        // held -- a first touch taken after the swap would initialise
+        // `ExportSettingsManager.shared` from this throwaway suite, and teardown would then
+        // "restore" that throwaway value into the process for every test that runs afterwards.
+        let manager = ExportSettingsManager.shared
+        let previousSettings = manager.settings
+
         let previousStore = ExportSettings.userDefaults
         ExportSettings.userDefaults = testDefaults
         defer {
+            // Restore the manager's cache FIRST, while `ExportSettings.userDefaults` still
+            // points at `testDefaults`, so the `save()` inside `update` lands in the throwaway
+            // store and never the real one.
+            manager.update { $0 = previousSettings }
             ExportSettings.userDefaults = previousStore
             testDefaults.removePersistentDomain(forName: suiteName)
-            manager.update { $0 = previousSettings }
             exportSettingsTestLock.unlock()
         }
 
@@ -132,7 +153,7 @@ struct ExportSettingsResetNotificationTests {
 
         var received: [String: String]?
         let observer = NotificationCenter.default.addObserver(
-            forName: .bibliographyHeaderNameChanged, object: nil, queue: .main
+            forName: .bibliographyHeaderNameChanged, object: nil, queue: nil
         ) { note in
             if let old = note.userInfo?["oldName"] as? String, let new = note.userInfo?["newName"] as? String {
                 received = ["oldName": old, "newName": new]
@@ -140,8 +161,10 @@ struct ExportSettingsResetNotificationTests {
         }
         defer { NotificationCenter.default.removeObserver(observer) }
 
+        // `queue: nil` delivers the observer synchronously on the posting (main) thread, so no
+        // run-loop pump is needed -- see the first test's comment above for why pumping one
+        // here would risk a deadlock.
         manager.resetToDefaults()
-        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.1))
 
         #expect(manager.effectiveBibliographyHeaderName == "Bibliography", "reset must actually revert to the bundled default")
         #expect(
@@ -156,18 +179,26 @@ struct ExportSettingsResetNotificationTests {
     /// notification -- matching `setBibliographyHeaderName`'s own no-op-must-not-notify rule.
     @Test("resetToDefaults() does not post .bibliographyHeaderNameChanged when already at the default")
     func resetToDefaultsNoOpDoesNotPostBibliographyChange() {
-        let manager = ExportSettingsManager.shared
-        let previousSettings = manager.settings
-
         let suiteName = "com.kerim.final-final.tests.exportSettingsManagerReset.\(UUID().uuidString)"
         let testDefaults = UserDefaults(suiteName: suiteName)!
         exportSettingsTestLock.lock()
+
+        // Snapshot the singleton BEFORE the store pointer is swapped, and while the lock is
+        // held -- a first touch taken after the swap would initialise
+        // `ExportSettingsManager.shared` from this throwaway suite, and teardown would then
+        // "restore" that throwaway value into the process for every test that runs afterwards.
+        let manager = ExportSettingsManager.shared
+        let previousSettings = manager.settings
+
         let previousStore = ExportSettings.userDefaults
         ExportSettings.userDefaults = testDefaults
         defer {
+            // Restore the manager's cache FIRST, while `ExportSettings.userDefaults` still
+            // points at `testDefaults`, so the `save()` inside `update` lands in the throwaway
+            // store and never the real one.
+            manager.update { $0 = previousSettings }
             ExportSettings.userDefaults = previousStore
             testDefaults.removePersistentDomain(forName: suiteName)
-            manager.update { $0 = previousSettings }
             exportSettingsTestLock.unlock()
         }
 
@@ -179,12 +210,14 @@ struct ExportSettingsResetNotificationTests {
 
         var notificationCount = 0
         let observer = NotificationCenter.default.addObserver(
-            forName: .bibliographyHeaderNameChanged, object: nil, queue: .main
+            forName: .bibliographyHeaderNameChanged, object: nil, queue: nil
         ) { _ in notificationCount += 1 }
         defer { NotificationCenter.default.removeObserver(observer) }
 
+        // `queue: nil` delivers the observer synchronously on the posting (main) thread, so no
+        // run-loop pump is needed -- see the first test's comment above for why pumping one
+        // here would risk a deadlock.
         manager.resetToDefaults()
-        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.1))
 
         #expect(notificationCount == 0, "must not notify when the reset didn't actually change the effective bibliography heading name")
     }
