@@ -866,46 +866,6 @@ enum FixtureDatabase {
     }
 }
 
-// MARK: - Document Note Seeding
-//
-// Hoisted out of `ShortcutTooltipE2ETests.swift`/`AnnotationDeleteE2ETests.swift`, which each
-// carried an identical copy (flagged as duplicated-but-correct during the
-// e2e-replace-annotations-coverage review, 2026-09-18). Free functions, not XCTestCase
-// extension methods: neither uses `self` -- both work entirely off `TestFixtureHelper`/
-// `FixtureDatabase`, which are already global. Other e2e classes
-// (`EditorModeSwitchUndoE2ETests.swift`, `FootnoteCursorPlacementE2ETests.swift`,
-// `SidebarRerenderCountE2ETests.swift`, `UnifiedUndoE2ETests+Helpers.swift`) keep their own
-// separate `shortUUID()` -- out of scope here; an unqualified call inside those classes still
-// resolves to their own local declaration first, so this shared one never shadows them.
-
-/// A short (8-character) unique suffix for building unique per-test identifiers/markers, e.g.
-/// `"e2e-doc-note-\(shortUUID())"`.
-func shortUUID() -> String {
-    String(UUID().uuidString.prefix(8))
-}
-
-/// Inserts a Document Note (charOffset == Annotation.documentLevelOffset, DB-only, never part
-/// of content.markdown) directly into the fixture, mirroring `Database+Annotations.swift`'s
-/// `insertDocumentAnnotation`. Caller must ensure the app is terminated first (FixtureDatabase's
-/// own established contract). `datetime('now')` matches GRDB's default Date column format
-/// closely enough for round-trip decoding (yyyy-MM-dd HH:mm:ss, which GRDB's lenient Date parser
-/// accepts).
-///
-/// Needed so `AnnotationPanel.swift`'s `documentNotesSection` (the sole place "Document Notes"
-/// is rendered) mounts regardless of `isDocumentNotesCollapsed`; without a seeded row the
-/// committed fixture's empty `annotation`/`annotation_v2` tables make the panel show
-/// `emptyState` instead, where the header can never appear.
-func seedDocumentNote(id: String, type: String, text: String) {
-    let contentIdRaw = FixtureDatabase.read(fixturePath: TestFixtureHelper.fixturePath, sql: "SELECT id FROM content LIMIT 1;")
-    let contentId = contentIdRaw.trimmingCharacters(in: .whitespacesAndNewlines)
-    let sql = """
-    INSERT INTO annotation (id, contentId, sectionId, type, text, isCompleted, charOffset, highlightStart, highlightEnd, createdAt, updatedAt)
-    VALUES ('\(FixtureDatabase.escape(id))', '\(FixtureDatabase.escape(contentId))', NULL, '\(FixtureDatabase.escape(type))', \
-    '\(FixtureDatabase.escape(text))', 0, -1, NULL, NULL, datetime('now'), datetime('now'));
-    """
-    FixtureDatabase.write(fixturePath: TestFixtureHelper.fixturePath, sql: sql)
-}
-
 // MARK: - Fixture Helpers
 
 enum TestFixtureHelper {
