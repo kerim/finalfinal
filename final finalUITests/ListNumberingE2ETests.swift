@@ -170,13 +170,32 @@ final class ListNumberingE2ETests: XCTestCase {
         // ordered list -- no paste/split involved. This is the control case:
         // the fix must NOT force a continuation value onto a genuinely new list.
         app.typeKey(.return, modifierFlags: [])
-        app.typeText("Some prose before a fresh list.")
+        app.typeTextVerifyingLanded("Some prose before a fresh list.")
         app.typeKey(.return, modifierFlags: [])
-        app.typeText("1. Alpha item")
+        // "1. " itself is consumed by Milkdown's ordered-list input rule and
+        // never remains as literal text -- confirmed by
+        // testImagePasteMidListContinuesNumbering() above, which locates list
+        // items by their bare text (e.g. staticTexts["Second item"]), with no
+        // "N. " prefix. It can't be handed to typeTextVerifyingLanded, which
+        // verifies its own argument landed byte-for-byte in the editor; only
+        // the visible item text that survives the transform is verified.
+        app.typeText("1. ")
+        app.typeTextVerifyingLanded("Alpha item")
         app.typeKey(.return, modifierFlags: [])
-        app.typeText("Beta item")
+        app.typeTextVerifyingLanded("Beta item")
         app.typeKey(.return, modifierFlags: [])
-        app.typeText("Gamma item")
+        app.typeTextVerifyingLanded("Gamma item")
+
+        // Direct proof that the typing above actually reached the editor
+        // before anything downstream (the DB flush, the ordered_list
+        // assertions) runs -- distinguishes "typing/focus never landed" from
+        // "list formed with the wrong shape" up front, rather than only
+        // inferring it later from an empty ordered_list dump (see file header
+        // for the flake this guards against).
+        XCTAssertTrue(
+            app.editorContainsText("Gamma item", timeout: 10),
+            "\"Gamma item\" never appeared in the editor after typing -- typing or focus was lost, not a list-numbering bug"
+        )
 
         // Quiesce before triggering the flush below. This is a REAL
         // quiescence check on data that already exists, not a wait for the
@@ -219,6 +238,29 @@ final class ListNumberingE2ETests: XCTestCase {
         // header) to land and settle rather than assuming a fixed delay is
         // always long enough.
         let allBlocks = try Self.waitForStableOrderedList(fixturePath: TestFixtureHelper.fixturePath)
+
+        // Fail fast with an unambiguous message when NO ordered_list block
+        // ever formed. The focus probe in focusEditorAndGoToDocumentEnd()
+        // already rules out the simple "the initial click missed keyboard
+        // focus" case, but that still leaves two distinct possibilities open
+        // for a zero-row result: a typing/focus miss further downstream
+        // (between the probe and the list-forming keystrokes above), or a
+        // genuine app regression (the ordered-list input rule never firing,
+        // or the flush race filed as t-3904c457) -- the probe cannot
+        // distinguish those two. Left unguarded, this case used to fall
+        // through to the generic count-mismatch assertion below, which reads
+        // as "the list numbering is wrong" rather than "no list ever formed"
+        // -- see the file header for the flake this distinguishes, and the
+        // attached block dump below to tell the two remaining causes apart.
+        guard allBlocks.contains(where: { $0.contains("ordered_list") }) else {
+            XCTFail(
+                "No ordered_list block ever appeared after typing + flush. This is either a typing/focus "
+                    + "miss downstream of the focus probe, or the list genuinely never formed as an app "
+                    + "regression (see file header) -- check the block dump below to tell which. All blocks:\n"
+                    + allBlocks.joined(separator: "\n---\n")
+            )
+            return
+        }
 
         let fragments = try Self.queryBlockMarkdownFragments(
             fixturePath: TestFixtureHelper.fixturePath,
@@ -297,6 +339,48 @@ final class ListNumberingE2ETests: XCTestCase {
         endOfLastParagraph.click()
         app.activateAndWaitForForeground()
         Thread.sleep(forTimeInterval: 0.5)
+
+        // Verify the click above actually claimed keyboard focus before any
+        // caller starts typing real content. A missed/misdirected click here
+        // and a dropped keystroke later are indistinguishable downstream --
+        // both leave zero ordered_list rows -- and previously surfaced only
+        // as a misleading numbering-failure message instead of a focus
+        // failure (see the file header). Type a disposable probe string,
+        // confirm it actually landed in the editor's accessibility tree,
+        // then remove it so it doesn't pollute the fixture's last paragraph
+        // for what follows.
+        let focusProbe = "FOCUSPROBE"
+        app.typeText(focusProbe)
+        let probeLanded = app.editorContainsText(focusProbe, timeout: 5)
+        XCTAssertTrue(
+            probeLanded,
+            "Focus probe \"\(focusProbe)\" did not land after clicking the end of \"More content here.\" "
+                + "-- the click likely missed keyboard focus"
+        )
+        // Stop here on a failed probe instead of running the delete loop
+        // below into unknown state -- a probe that never landed means the
+        // deletes that follow have nothing reliable to delete, and letting
+        // them run anyway only compounds one clear failure (missed focus)
+        // into a confusing downstream one.
+        guard probeLanded else { return }
+
+        for _ in focusProbe {
+            app.typeKey(.delete, modifierFlags: [])
+        }
+
+        // Confirm the deletes above actually landed. This whole file exists
+        // because keystrokes get dropped; a dropped delete here would leave
+        // probe residue silently appended to the fixture's last paragraph,
+        // corrupting the very anchor text (`app.staticTexts["More content
+        // here."]`) that later calls of this helper -- and this test's own
+        // typing -- rely on. `staticTexts[identifier]` matches the
+        // accessibility label exactly, so "More content here.FOCUSPROBE" (or
+        // any partial leftover) will NOT satisfy this lookup.
+        XCTAssertTrue(
+            lastParagraph.waitForExistence(timeout: 5),
+            "Fixture's last paragraph \"More content here.\" was not restored exactly after deleting the "
+                + "focus probe -- a delete keystroke was likely dropped, leaving probe residue behind"
+        )
     }
 
     /// Puts a small solid-color PNG on the real system pasteboard, explicitly
