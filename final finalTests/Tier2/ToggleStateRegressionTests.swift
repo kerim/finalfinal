@@ -67,7 +67,8 @@ private final class RealMilkdownHarness {
             onSectionChange: { _ in },
             onCursorPositionSaved: { _ in },
             onContentAcknowledged: nil,
-            onWebViewReady: nil
+            onWebViewReady: nil,
+            windowToken: UUID()
         )
 
         // Same message-handler names as registerMilkdownMessageHandlers() in
@@ -129,7 +130,8 @@ private final class RealCodeMirrorHarness {
             onStatsChange: { _, _ in },
             onSectionChange: { _ in },
             onCursorPositionSaved: { _ in },
-            onWebViewReady: nil
+            onWebViewReady: nil,
+            windowToken: UUID()
         )
 
         // Same message-handler names as CodeMirrorEditor.makeNSView()'s fresh-view path.

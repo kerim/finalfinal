@@ -27,7 +27,13 @@ struct FocusModeSnapshot: Sendable {
     let wasInFullScreen: Bool
     let outlineSidebarVisible: Bool?  // nil if not modified by focus mode
     let annotationPanelVisible: Bool? // nil if not modified by focus mode
-    let annotationDisplayModes: [AnnotationType: AnnotationDisplayMode]? // nil if not modified
+    // `var` (not `let`) only so setAnnotationDisplayMode can fold a change the user makes
+    // INSIDE Focus Mode into the snapshot, letting that explicit choice survive exit.
+    var annotationDisplayModes: [AnnotationType: AnnotationDisplayMode]? // nil if not modified
+    // The user's own Panel Only value before Focus Mode forced it on (Inline Annotations =
+    // Hide). `var` for the same reason as above: setPanelOnlyMode folds a change the user
+    // makes INSIDE Focus Mode into it. nil if Focus Mode did not force the hide.
+    var annotationPanelOnly: Bool?
 }
 
 /// Mutable box a `.willResetEditorForProjectSwitch` observer flips to `true` to confirm it
@@ -62,8 +68,8 @@ extension Notification.Name {
     static let didSaveCursorPosition = Notification.Name("didSaveCursorPosition")
     /// Posted when sidebar requests scroll to a section
     static let scrollToSection = Notification.Name("scrollToSection")
-    /// Posted when annotation display modes change - editors should update rendering
-    static let annotationDisplayModesChanged = Notification.Name("annotationDisplayModesChanged")
+    // (The annotation display modes notification lives in AnnotationDisplayBroadcast, where its
+    // name is private: it is window-scoped, so it can only be posted and observed through that type.)
     /// Posted to insert an annotation at the current cursor position (for keyboard shortcuts Cmd+Shift+T/C/R)
     static let insertAnnotation = Notification.Name("insertAnnotation")
     /// Posted to toggle highlight mark on selected text (Cmd+Shift+H)
@@ -74,6 +80,10 @@ extension Notification.Name {
     /// toggle or path edited) — editors should re-push the effective style (custom or
     /// bundled) to the live in-editor citeproc engine.
     static let citationStyleChanged = Notification.Name("citationStyleChanged")
+    /// Posted when the Focus preferences' "Inline Annotations" choice actually changes (a Focus
+    /// pane change or "Reset Focus Settings"), so a project already in Focus Mode can re-arm the
+    /// override. Posted only from preference changes -- a project switch never posts it.
+    static let focusInlineAnnotationsChanged = Notification.Name("focusInlineAnnotationsChanged")
     /// Posted when bibliography section content changes in the database
     static let bibliographySectionChanged = Notification.Name("bibliographySectionChanged")
     /// Posted when the configured bibliography heading name changes (Export preferences).

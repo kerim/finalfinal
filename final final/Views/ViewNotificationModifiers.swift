@@ -443,7 +443,8 @@ extension View {
                 postAnnotationDisplayModes(
                     modes: newModes,
                     isPanelOnly: editorState.isPanelOnlyMode,
-                    hideCompletedTasks: editorState.hideCompletedTasks
+                    hideCompletedTasks: editorState.hideCompletedTasks,
+                    windowToken: editorState.windowToken
                 )
             }
             .onChange(of: editorState.isPanelOnlyMode) { _, newValue in
@@ -451,7 +452,8 @@ extension View {
                 postAnnotationDisplayModes(
                     modes: editorState.annotationDisplayModes,
                     isPanelOnly: newValue,
-                    hideCompletedTasks: editorState.hideCompletedTasks
+                    hideCompletedTasks: editorState.hideCompletedTasks,
+                    windowToken: editorState.windowToken
                 )
             }
             .onChange(of: editorState.hideCompletedTasks) { _, newValue in
@@ -459,8 +461,15 @@ extension View {
                 postAnnotationDisplayModes(
                     modes: editorState.annotationDisplayModes,
                     isPanelOnly: editorState.isPanelOnlyMode,
-                    hideCompletedTasks: newValue
+                    hideCompletedTasks: newValue,
+                    windowToken: editorState.windowToken
                 )
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .focusInlineAnnotationsChanged)) { _ in
+                // The Focus pane's "Inline Annotations" choice changed (or was reset): if Focus
+                // Mode is on, undo the armed override and re-arm for the new choice. Never
+                // written; a no-op when Focus Mode is off.
+                editorState.reconcileFocusInlineOverride()
             }
     }
 
@@ -483,21 +492,22 @@ extension View {
             }
     }
 
-    /// Posts the annotationDisplayModesChanged notification with explicit values.
+    /// Posts the annotationDisplayModesChanged notification with explicit values, scoped to the
+    /// window that owns `windowToken` (see `AnnotationDisplayBroadcast`). `fileprivate`: the
+    /// `.onChange` observers above are the only View-level poster; ContentView's explicit
+    /// project-open pushes go through `AnnotationDisplayBroadcast.post` directly.
     @MainActor
-    private func postAnnotationDisplayModes(
+    fileprivate func postAnnotationDisplayModes(
         modes: [AnnotationType: AnnotationDisplayMode],
         isPanelOnly: Bool,
-        hideCompletedTasks: Bool
+        hideCompletedTasks: Bool,
+        windowToken: UUID
     ) {
-        NotificationCenter.default.post(
-            name: .annotationDisplayModesChanged,
-            object: nil,
-            userInfo: [
-                "modes": modes,
-                "isPanelOnly": isPanelOnly,
-                "hideCompletedTasks": hideCompletedTasks
-            ]
+        AnnotationDisplayBroadcast.post(
+            modes: modes,
+            isPanelOnly: isPanelOnly,
+            hideCompletedTasks: hideCompletedTasks,
+            windowToken: windowToken
         )
     }
 

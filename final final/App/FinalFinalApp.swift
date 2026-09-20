@@ -225,31 +225,7 @@ struct FinalFinalApp: App {
 
         // UI test mode: skip normal flow, open fixture directly
         if TestMode.isUITesting {
-            TestMode.clearTestState(preservingLastProjectBookmark: TestMode.shouldExerciseRestoreLastProject)
-            if let fixturePath = TestMode.testFixturePath {
-                let url = URL(fileURLWithPath: fixturePath)
-                do {
-                    try documentManager.openProject(at: url)
-                    appViewState = .editor
-                } catch {
-                    DebugLog.log(.lifecycle, "[TestMode] Failed to open fixture: \(error)")
-                    appViewState = .picker
-                }
-            } else if TestMode.shouldExerciseRestoreLastProject {
-                // Exercises the real cold-launch restore path -- see
-                // TestMode.shouldExerciseRestoreLastProject's doc comment.
-                do {
-                    if try documentManager.restoreLastProject() {
-                        appViewState = .editor
-                        return
-                    }
-                } catch {
-                    DebugLog.log(.lifecycle, "[TestMode] Failed to restore last project during test: \(error)")
-                }
-                appViewState = .picker
-            } else {
-                appViewState = .picker
-            }
+            determineUITestingInitialState()
             return
         }
 
@@ -301,6 +277,39 @@ struct FinalFinalApp: App {
 
         // Show project picker
         appViewState = .picker
+    }
+
+    /// The UI-test-mode branch of `determineInitialState()`: clear leftover test state, then
+    /// open the fixture directly (or exercise the real cold-launch restore path), falling back
+    /// to the picker on any failure. Extracted verbatim -- same statements, same order -- to
+    /// keep `determineInitialState()` under SwiftLint's cyclomatic-complexity limit.
+    @MainActor
+    private func determineUITestingInitialState() {
+        TestMode.clearTestState(preservingLastProjectBookmark: TestMode.shouldExerciseRestoreLastProject)
+        if let fixturePath = TestMode.testFixturePath {
+            let url = URL(fileURLWithPath: fixturePath)
+            do {
+                try documentManager.openProject(at: url)
+                appViewState = .editor
+            } catch {
+                DebugLog.log(.lifecycle, "[TestMode] Failed to open fixture: \(error)")
+                appViewState = .picker
+            }
+        } else if TestMode.shouldExerciseRestoreLastProject {
+            // Exercises the real cold-launch restore path -- see
+            // TestMode.shouldExerciseRestoreLastProject's doc comment.
+            do {
+                if try documentManager.restoreLastProject() {
+                    appViewState = .editor
+                    return
+                }
+            } catch {
+                DebugLog.log(.lifecycle, "[TestMode] Failed to restore last project during test: \(error)")
+            }
+            appViewState = .picker
+        } else {
+            appViewState = .picker
+        }
     }
 
     /// Handle project opened notification - sync state
@@ -358,7 +367,12 @@ struct FinalFinalApp: App {
 
 // MARK: - Open Export Preferences Helper
 
-/// Invisible view that opens the Settings window when .showExportPreferences is posted.
+/// Invisible view that opens the Settings window when .showExportPreferences (File menu's
+/// "Export Preferences...") or .showDiagnosticsPreferences (the auto-backup warning toast's
+/// "Open Diagnostics") is posted. Each records the requested tab in PreferencesTabRouter
+/// BEFORE opening the window: on a cold launch the Settings view doesn't exist yet, so the
+/// request has to be stored for the view to read when it appears (an already-open view picks
+/// the same stored request up by observing it).
 /// Uses @Environment(\.openSettings) — the official SwiftUI API (macOS 14+).
 private struct OpenExportPreferencesListener: View {
     @Environment(\.openSettings) private var openSettings
@@ -367,6 +381,7 @@ private struct OpenExportPreferencesListener: View {
         Color.clear
             .frame(width: 0, height: 0)
             .onReceive(NotificationCenter.default.publisher(for: .showExportPreferences)) { _ in
+                PreferencesTabRouter.shared.request(.export)
                 openSettings()
                 // Ensure the Settings window comes to front (e.g. when main window is fullscreen)
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
@@ -374,6 +389,7 @@ private struct OpenExportPreferencesListener: View {
                 }
             }
             .onReceive(NotificationCenter.default.publisher(for: .showDiagnosticsPreferences)) { _ in
+                PreferencesTabRouter.shared.request(.diagnostics)
                 openSettings()
                 // Ensure the Settings window comes to front (e.g. when main window is fullscreen)
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {

@@ -55,7 +55,8 @@ final class CursorRestoreIdempotenceTests: XCTestCase {
             onSectionChange: { _ in },
             onCursorPositionSaved: { _ in },
             onContentAcknowledged: nil,
-            onWebViewReady: nil
+            onWebViewReady: nil,
+            windowToken: UUID()
         )
 
         coordinator.restoreCursorPositionIfNeeded()
@@ -97,7 +98,8 @@ final class CursorRestoreIdempotenceTests: XCTestCase {
             onSectionChange: { _ in },
             onCursorPositionSaved: { _ in },
             onContentAcknowledged: nil,
-            onWebViewReady: nil
+            onWebViewReady: nil,
+            windowToken: UUID()
         )
 
         coordinator.restoreCursorPositionIfNeeded()
@@ -138,7 +140,8 @@ final class CursorRestoreIdempotenceTests: XCTestCase {
             onStatsChange: { _, _ in },
             onSectionChange: { _ in },
             onCursorPositionSaved: { _ in },
-            onWebViewReady: nil
+            onWebViewReady: nil,
+            windowToken: UUID()
         )
 
         coordinator.restoreCursorPositionIfNeeded()

@@ -338,6 +338,33 @@ enum ToastFactory {
         )
     }
 
+    // MARK: Annotation Display Settings (per-project save/load failure)
+
+    /// §4.3: a write of an annotation display choice to the project's database failed, so what
+    /// the user sees no longer matches what is stored. Fades after 9s rather than staying
+    /// until dismissed: a settings write can fail on every click while the cause persists, and
+    /// a persistent warning would hold the app's one warning slot and make the success toasts
+    /// queued behind it (Save Version, export) age past `ToastCenter.pendingSuccessCutoff` and
+    /// be discarded -- the same reasoning as `gettingStartedNotSaved()`, whose 9s this matches.
+    static func annotationDisplaySettingsNotSaved() -> Toast {
+        Toast(
+            style: .warning,
+            message: "Couldn't save this project's annotation display settings.",
+            fadeDelayOverride: .seconds(9)
+        )
+    }
+
+    /// §4.3: reading a project's saved annotation display settings failed, so the defaults are
+    /// showing instead of what the project saved. Fades after 9s for the same reason as
+    /// `annotationDisplaySettingsNotSaved()`.
+    static func annotationDisplaySettingsNotLoaded() -> Toast {
+        Toast(
+            style: .warning,
+            message: "Couldn't load this project's annotation display settings. Showing the defaults.",
+            fadeDelayOverride: .seconds(9)
+        )
+    }
+
     // MARK: Section Reorder Bail-Out
 
     /// §4.3: "Drag-reorder bailed out" -> "toast". Fades (unlike the persistent warnings above)

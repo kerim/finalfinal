@@ -44,7 +44,15 @@ enum PreferencesTab: String, CaseIterable, Identifiable {
 
 /// Main preferences window view
 struct PreferencesView: View {
-    @State private var selectedTab: PreferencesTab = .export
+    /// Where a caller's request for a specific tab ("Export Preferences...", the toast's
+    /// "Open Diagnostics") is held -- see PreferencesTabRouter for why it is stored, not
+    /// just broadcast.
+    @State private var router = PreferencesTabRouter.shared
+
+    /// Starts on the requested tab if one is already waiting (cold launch: the request that
+    /// opened this window was made before this view existed), else Export. Reading the
+    /// request here does not clear it; `applyPendingTab()` does, on appear.
+    @State private var selectedTab: PreferencesTab = PreferencesTabRouter.shared.initialTab
 
     var body: some View {
         TabView(selection: $selectedTab) {
@@ -86,11 +94,16 @@ struct PreferencesView: View {
         }
         .frame(width: 700, height: 550)
         .padding()
-        .onReceive(NotificationCenter.default.publisher(for: .showExportPreferences)) { _ in
-            selectedTab = .export
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .showDiagnosticsPreferences)) { _ in
-            selectedTab = .diagnostics
+        // Both entry routes read the same stored request: on appear (a window created by the
+        // request itself), and on change (a window that was already open).
+        .onAppear { applyPendingTab() }
+        .onChange(of: router.pendingTab) { _, _ in applyPendingTab() }
+    }
+
+    /// Switch to the requested tab, if any, and clear the request so it applies exactly once.
+    private func applyPendingTab() {
+        if let requested = router.consumePendingTab() {
+            selectedTab = requested
         }
     }
 }

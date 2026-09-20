@@ -12,7 +12,11 @@ extension ContentView {
     func initializeProject() async {
         // Check if a project is already open (opened by FinalFinalApp)
         if documentManager.hasOpenProject {
-            await configureForCurrentProject()
+            // The same sequence a project switch runs, minus the reset (EditorViewState.runProjectOpenSequence).
+            await editorState.runProjectOpenSequence(kind: .launch, publish: annotationDisplayPublisher) { publishAfterContent in
+                await configureForCurrentProject()
+                publishAfterContent()
+            }
             return
         }
 
@@ -511,10 +515,19 @@ extension ContentView {
             ) { _, _ in }
         }
 
-        // Reset all project-specific state (content, sourceContent, zoom, tasks, etc.)
-        editorState.resetForProjectSwitch()
+        // Reset project-specific state (content, zoom, tasks, ...), load and publish the new project's
+        // annotation display settings, configure + push content, publish again: one shared sequence
+        // (EditorViewState.runProjectOpenSequence, which the tests call too).
+        await editorState.runProjectOpenSequence(kind: .projectSwitch, publish: annotationDisplayPublisher) { publishAfterContent in
+            await configureAndPushContentAfterProjectSwitch(publishAfterContent: publishAfterContent)
+        }
+    }
 
-        // Configure for new project
+    /// The view-only middle of a project switch, between the sequence's two publishes. Returns as
+    /// soon as the content push has been STARTED (as before the sequence existed: the push is a
+    /// separate un-awaited task); `publishAfterContent` is called as that task's last step, or at
+    /// the end of the Source-mode branch.
+    private func configureAndPushContentAfterProjectSwitch(publishAfterContent: @escaping @MainActor () -> Void) async {
         await configureForCurrentProject()
 
         // editorState.suppressBibliographyRebuildsDuringSwitch is armed at the very top of
@@ -560,6 +573,8 @@ extension ContentView {
                 findBarState.activeWebView?.evaluateJavaScript(
                     "window.scrollTo({top: 0, behavior: 'instant'})"
                 ) { _, _ in }
+                // Last step: the new content is in, so tell the editors the final display state.
+                publishAfterContent()
             }
             // Watchdog: ensure isResettingContent is cleared even if JS call hangs
             Task {
@@ -594,6 +609,7 @@ extension ContentView {
                 // push, in the same pass, once isResettingContent flips back to false above.
                 editorState.scrollToOffset = 0
             }
+            publishAfterContent()  // no asynchronous push on this branch
         }
     }
 

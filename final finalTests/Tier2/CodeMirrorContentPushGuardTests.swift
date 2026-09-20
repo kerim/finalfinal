@@ -46,7 +46,8 @@ final class CodeMirrorContentPushGuardTests: XCTestCase {
             onStatsChange: { _, _ in },
             onSectionChange: { _ in },
             onCursorPositionSaved: { _ in },
-            onWebViewReady: nil
+            onWebViewReady: nil,
+            windowToken: UUID()
         )
     }
 

@@ -18,7 +18,7 @@
 //  `UserDefaults.standard` directly. In production this is `.standard`, unchanged. While any
 //  kind of test is running (`TestMode.isTesting`), it's a separate, resettable
 //  `UserDefaults(suiteName:)` instance instead, so `clearTestState()` — and everything that
-//  reads/writes one of its nine keys (the eight `clearTestState()` manages directly, plus
+//  reads/writes one of its ten keys (the nine `clearTestState()` manages directly, plus
 //  `ExportService.userDefaults`'s `exportDiagnosticCaptureEnabled`, which also defaults to
 //  this store so it shares a domain with `DiagnosticsSettings.userDefaults`) — only ever
 //  touches that isolated domain.
@@ -29,7 +29,7 @@ import Foundation
 enum AppDefaults {
     private static let testSuiteName = "com.kerim.final-final.testing"
 
-    /// Isolated backing store used for the nine `AppDefaults.store`-routed keys while any kind
+    /// Isolated backing store used for the ten `AppDefaults.store`-routed keys while any kind
     /// of test is running. Created once per process and shared by every property that reads
     /// through `store`, so `clearTestState()` clears the exact same store every one of those
     /// properties sees.
@@ -51,7 +51,7 @@ enum AppDefaults {
         return suite
     }()
 
-    /// The UserDefaults domain the nine test-isolated keys should go through: `.standard` in
+    /// The UserDefaults domain the ten test-isolated keys should go through: `.standard` in
     /// production, an isolated per-process suite under any kind of test run.
     static var store: UserDefaults {
         TestMode.isTesting ? testStore : .standard

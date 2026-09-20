@@ -13,9 +13,11 @@ export type AnnotationDisplayMode = 'inline' | 'collapsed';
 
 export const annotationDisplayPluginKey = new PluginKey('annotation-display');
 
-// Current display modes per type
-// NOTE: These defaults MUST match Swift's defaults in EditorViewState.swift
-// Swift's onChange only fires when values change, not on initialization
+// Current display modes per type.
+// NOTE: these defaults are only a pre-load placeholder. Swift overwrites them through
+// setAnnotationDisplayModes() -- the catch-up push when the WebView becomes ready, and the
+// publishes made when a project opens or its display state changes -- so they need not match
+// Swift's fallback (which is the user's default display mode, and can be 'collapsed').
 const displayModes: Record<AnnotationType, AnnotationDisplayMode> = {
   task: 'inline',
   comment: 'inline',

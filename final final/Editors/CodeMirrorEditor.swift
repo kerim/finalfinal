@@ -33,6 +33,11 @@ struct CodeMirrorEditor: NSViewRepresentable {
 
     var pollCacheResetGeneration: Int = 0  // bumped by EditorViewState.resetForProjectSwitch()
 
+    /// `EditorViewState.windowToken` of the window this editor belongs to. REQUIRED (no default):
+    /// handed to the Coordinator so it receives only its own window's annotation display posts
+    /// (see `AnnotationDisplayBroadcast`); a creation site that omits it does not compile.
+    var windowToken: UUID
+
     /// Bumped by every INTENTIONAL `sourceContent` replacement (zoom, project switch,
     /// structural undo/redo) -- see `EditorViewState.forcedPushGeneration`'s doc comment.
     /// Threaded into the coordinator every `updateNSView` cycle; `shouldPushContent`
@@ -243,7 +248,8 @@ struct CodeMirrorEditor: NSViewRepresentable {
             onStatsChange: onStatsChange,
             onSectionChange: onSectionChange,
             onCursorPositionSaved: onCursorPositionSaved,
-            onWebViewReady: onWebViewReady
+            onWebViewReady: onWebViewReady,
+            windowToken: windowToken
         )
     }
 

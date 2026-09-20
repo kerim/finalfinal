@@ -61,9 +61,17 @@ struct AnnotationPanel: View {
             // Filter bar
             AnnotationFilterBar(
                 typeFilters: $editorState.annotationTypeFilters,
-                displayModes: $editorState.annotationDisplayModes,
-                isPanelOnlyMode: $editorState.isPanelOnlyMode,
-                hideCompletedTasks: $editorState.hideCompletedTasks
+                displayModes: editorState.annotationDisplayModes,
+                isPanelOnlyMode: editorState.isPanelOnlyMode,
+                userPanelOnlyChoice: editorState.userPanelOnlyChoice,
+                hideCompletedTasks: editorState.hideCompletedTasks,
+                // Route through the EditorViewState setters -- they save the choice to the
+                // project; writing the properties directly would not.
+                onSetDisplayMode: { type, mode in editorState.setAnnotationDisplayMode(mode, for: type) },
+                onSetPanelOnly: { editorState.setPanelOnlyMode($0) },
+                onSetHideCompleted: { editorState.setHideCompletedTasks($0) },
+                onSetAsDefault: { editorState.saveCurrentAnnotationDisplayAsDefault() },
+                isFocusModeOverridingDisplay: editorState.focusModeAltersAnnotationDisplay
             )
 
             Divider()
@@ -178,42 +186,37 @@ struct AnnotationPanel: View {
         GeometryReader { geo in
             Color.clear
                 .onChange(of: geo.size.width) { _, newWidth in
-                    guard !isAnimatingToggle else { return }
-                    guard editorState.isAnnotationPanelVisible else {
-                        // Defense in depth for must-fix 1 (review round 2): the `.frame` above
-                        // pins BOTH minWidth and maxWidth to exactly 0 in this steady hidden
-                        // state, specifically so the HSplitView divider has no slack left to
-                        // drag through -- that is the primary fix. This branch is the backstop
-                        // in case some HSplitView edge case still lets the pane grow anyway: a
-                        // meaningfully non-zero observed width while `isAnnotationPanelVisible`
-                        // is false can only mean a genuine drag got through, and the one thing
-                        // that must never happen is treating that drag as if it didn't occur
-                        // (discarding it, as the write-back guard alone used to do) -- so make
-                        // the visibility flag catch up to what the user actually did. NOTE: the
-                        // Outline sidebar's observer deliberately has no equivalent branch --
-                        // drag-to-collapse there is gone by the user's decision, and its
-                        // divider stops at its own 250pt floor (see OutlineSidebarPane).
-                        guard newWidth > 1 else { return }
-                        let clamped = AnnotationPanelWidth.clamp(newWidth)
-                        panelWidth = clamped
-                        AnnotationPanelWidth.save(clamped, to: .standard)
-                        editorState.isAnnotationPanelVisible = true
+                    let action = AnnotationPanelWidth.sampleAction(
+                        newWidth: newWidth, isVisible: editorState.isAnnotationPanelVisible,
+                        isAnimating: isAnimatingToggle, panelWidth: panelWidth
+                    )
+                    switch action {
+                    case .ignore:
                         return
-                    }
-                    guard newWidth > 0 else { return }
-                    let clamped = AnnotationPanelWidth.clamp(newWidth)
-                    panelWidth = clamped
-                    // Debounced write-back (should-fix 6, review round 2): `panelWidth` above
-                    // still updates synchronously every frame so the divider tracks the mouse
-                    // with no lag; only the UserDefaults write is coalesced, since a live drag
-                    // fires this onChange on every pixel of mouse movement and persisting on
-                    // every one of those is needless disk I/O for a value nobody reads until
-                    // the next launch or panel toggle.
-                    widthSaveTask?.cancel()
-                    widthSaveTask = Task { @MainActor in
-                        try? await Task.sleep(for: .milliseconds(150))
-                        guard !Task.isCancelled else { return }
-                        AnnotationPanelWidth.save(clamped, to: .standard)
+                    case .ignoreUnsettled:
+                        DebugLog.log(
+                            .lifecycle,
+                            "[AnnotationPanel] ignored width \(newWidth): "
+                                + "visible=\(editorState.isAnnotationPanelVisible) but panelWidth=\(panelWidth) "
+                                + "(layout ahead of the panel)"
+                        )
+                    case .reshow(let width):
+                        // Backstop: the `.frame` above pins a hidden panel to 0, so a settled hidden panel
+                        // wider than 1pt means a drag got through; make the flag catch up.
+                        DebugLog.log(.lifecycle, "[AnnotationPanel] hidden panel dragged open to \(width)")
+                        panelWidth = width
+                        AnnotationPanelWidth.save(width, to: .standard)
+                        editorState.isAnnotationPanelVisible = true
+                    case .persist(let width):
+                        panelWidth = width
+                        // Debounced write-back: `panelWidth` tracks every frame of a live drag, only the UserDefaults write is coalesced.
+                        widthSaveTask?.cancel()
+                        widthSaveTask = Task { @MainActor in
+                            try? await Task.sleep(for: .milliseconds(150))
+                            guard !Task.isCancelled else { return }
+                            DebugLog.log(.lifecycle, "[AnnotationPanel] saved panel width \(width)")
+                            AnnotationPanelWidth.save(width, to: .standard)
+                        }
                     }
                 }
         }

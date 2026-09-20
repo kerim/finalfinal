@@ -81,9 +81,12 @@ extension XCUIApplication {
         let realUserHome = FileManager.default.homeDirectoryForCurrentUser.path
         let realUserPath = realUserHome + "/" + bundleState
 
-        try? FileManager.default.removeItem(atPath: testRunnerPath)
-        if realUserPath != testRunnerPath {
-            try? FileManager.default.removeItem(atPath: realUserPath)
+        for path in Set([testRunnerPath, realUserPath]) {
+            do { try FileManager.default.removeItem(atPath: path) } catch {
+                // Was a silent `try?`: a failed delete leaves saved window state (e.g. full screen) for the next launch.
+                guard ![NSFileNoSuchFileError, NSFileReadNoSuchFileError].contains((error as NSError).code) else { continue }
+                XCTContext.runActivity(named: "Could not remove saved state \(path)") { $0.add(XCTAttachment(string: "\(error)")) }
+            }
         }
     }
 }

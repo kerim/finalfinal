@@ -42,7 +42,8 @@ final class MilkdownEditorMountCloakTests: XCTestCase {
             onSectionChange: { _ in },
             onCursorPositionSaved: { _ in },
             onContentAcknowledged: nil,
-            onWebViewReady: nil
+            onWebViewReady: nil,
+            windowToken: UUID()
         )
     }
 

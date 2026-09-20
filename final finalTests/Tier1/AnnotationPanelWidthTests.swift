@@ -81,4 +81,60 @@ struct AnnotationPanelWidthTests {
         defaults.set(-40.0, forKey: AnnotationPanelWidth.defaultsKey)
         #expect(AnnotationPanelWidth.load(from: defaults) == AnnotationPanelWidth.defaultWidth)
     }
+
+    // MARK: - sampleAction: what the panel does with a sampled rendered width
+
+    @Test("The reported race: a width read after the flag hid the panel but before the panel applied it is ignored")
+    func hiddenPanelSampleBeforeTheHideIsAppliedIsIgnored() {
+        // Values from the user's diagnostic log at 11:56:34.654: rendered width 232, flag already hidden, panelWidth still 200.
+        #expect(
+            AnnotationPanelWidth.sampleAction(newWidth: 232, isVisible: false, isAnimating: false, panelWidth: 200) == .ignoreUnsettled
+        )
+    }
+
+    @Test("A settled hidden panel wider than 1pt still counts as dragged open (the backstop keeps working)")
+    func settledHiddenPanelDraggedOpenIsReshown() {
+        #expect(AnnotationPanelWidth.sampleAction(newWidth: 232, isVisible: false, isAnimating: false, panelWidth: 0) == .reshow(232))
+        #expect(AnnotationPanelWidth.sampleAction(newWidth: 999, isVisible: false, isAnimating: false, panelWidth: 0) == .reshow(320))
+        #expect(AnnotationPanelWidth.sampleAction(newWidth: 90, isVisible: false, isAnimating: false, panelWidth: 0) == .reshow(200))
+    }
+
+    @Test("A settled hidden panel at or under 1pt is just its divider: ignored")
+    func settledHiddenPanelAtRestIsIgnored() {
+        for width: CGFloat in [0, 0.5, 1] {
+            #expect(AnnotationPanelWidth.sampleAction(newWidth: width, isVisible: false, isAnimating: false, panelWidth: 0) == .ignore)
+        }
+    }
+
+    @Test("The mirror gap: a width read after the flag showed the panel but before the panel applied it is ignored")
+    func visiblePanelSampleBeforeTheShowIsAppliedIsIgnored() {
+        // The minimum width forced by the frame bounds (200) must never be saved over the user's real width.
+        #expect(AnnotationPanelWidth.sampleAction(newWidth: 200, isVisible: true, isAnimating: false, panelWidth: 0) == .ignoreUnsettled)
+    }
+
+    @Test("A settled visible panel's width is tracked and clamped, whatever moved it")
+    func settledVisiblePanelWidthIsPersistedClamped() {
+        #expect(AnnotationPanelWidth.sampleAction(newWidth: 275, isVisible: true, isAnimating: false, panelWidth: 260) == .persist(275))
+        #expect(AnnotationPanelWidth.sampleAction(newWidth: 999, isVisible: true, isAnimating: false, panelWidth: 260) == .persist(320))
+        #expect(AnnotationPanelWidth.sampleAction(newWidth: 150, isVisible: true, isAnimating: false, panelWidth: 260) == .persist(200))
+    }
+
+    @Test("A zero-width read of a visible panel is never persisted")
+    func visiblePanelZeroWidthIsIgnored() {
+        #expect(AnnotationPanelWidth.sampleAction(newWidth: 0, isVisible: true, isAnimating: false, panelWidth: 260) == .ignore)
+        #expect(AnnotationPanelWidth.sampleAction(newWidth: 0, isVisible: true, isAnimating: false, panelWidth: 0) == .ignore)
+    }
+
+    @Test("Nothing is acted on while a show/hide animation runs")
+    func animatingIsAlwaysIgnored() {
+        for isVisible in [true, false] {
+            for panelWidth: CGFloat in [0, 200, 260] {
+                for width: CGFloat in [0, 1, 232, 999] {
+                    #expect(
+                        AnnotationPanelWidth.sampleAction(newWidth: width, isVisible: isVisible, isAnimating: true, panelWidth: panelWidth) == .ignore
+                    )
+                }
+            }
+        }
+    }
 }

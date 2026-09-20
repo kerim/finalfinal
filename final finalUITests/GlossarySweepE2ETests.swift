@@ -123,7 +123,7 @@ final class GlossarySweepE2ETests: XCTestCase {
                 in: confirmationSurface,
                 containing: [
                     "replace all current content with the selected version",
-                    "A version is saved automatically before restoring",
+                    "A version is saved automatically before restoring"
                 ]
             ),
             "Confirmation should combine both sentences into one message: what happens, and that a version is saved automatically"
@@ -144,8 +144,20 @@ final class GlossarySweepE2ETests: XCTestCase {
 
     // MARK: - Plan item 9: Preferences wording
 
+    /// A tab button in the Settings window's tab bar. Settings tab buttons come from `TabView`'s
+    /// `.tabItem { Label(...) }` (PreferencesView.swift) and expose their text as the AX *title*,
+    /// never a label -- confirmed in the failure-time hierarchy dump -- so this matches either.
+    /// Title matching is this suite's established pattern for AppKit-backed elements
+    /// (UnifiedUndoE2ETests.swift:641). Used for every tab lookup in this file, so the predicate
+    /// is written once.
+    private func settingsTabButton(_ name: String, in settingsWindow: XCUIElement) -> XCUIElement {
+        settingsWindow.toolbars.buttons
+            .matching(NSPredicate(format: "title == %@ OR label == %@", name, name))
+            .firstMatch
+    }
+
     /// "Heading Color" (Appearance pane), "Use custom export template" toggle + "Select Export
-    /// Template" open-panel title (Export pane, the default tab).
+    /// Template" open-panel title (Export pane).
     func testPreferencesWording() throws {
         app.launchForTesting(fixturePath: TestFixtureHelper.fixturePath)
         waitForEditorReady()
@@ -158,7 +170,12 @@ final class GlossarySweepE2ETests: XCTestCase {
         let settingsWindow = app.windows["com_apple_SwiftUI_Settings_window"]
         XCTAssertTrue(settingsWindow.waitForExistence(timeout: 10), "Settings window should appear")
 
-        // Export is the default tab (PreferencesView.swift: `selectedTab: PreferencesTab = .export`).
+        // Settings opens on Export (`PreferencesTabRouter.defaultTab`). The click is kept anyway: harmless,
+        // and it keeps this test independent of which tab is the default.
+        let exportTab = settingsTabButton("Export", in: settingsWindow)
+        XCTAssertTrue(exportTab.waitForExistence(timeout: 10), "Settings window should have an Export tab")
+        exportTab.click()
+
         let exportTemplateToggle = settingsWindow.descendants(matching: .any)
             .matching(NSPredicate(format: "label == %@", "Use custom export template"))
             .firstMatch
@@ -200,16 +217,13 @@ final class GlossarySweepE2ETests: XCTestCase {
 
         app.typeKey(.escape, modifierFlags: []) // dismiss the panel without picking a file
 
-        XCTAssertEqual(panelTitle, "Select Export Template", "The open panel should be titled 'Select Export Template', not 'Select Reference Document'")
+        XCTAssertEqual(
+            panelTitle,
+            "Select Export Template",
+            "The open panel should be titled 'Select Export Template', not 'Select Reference Document'"
+        )
 
-        // Settings tab buttons come from `TabView`'s `.tabItem { Label(...) }`
-        // (PreferencesView.swift:50-86) and expose their text as the AX *title*, never a
-        // label -- confirmed in the failure-time hierarchy dump. Title matching is this
-        // suite's established pattern for AppKit-backed elements
-        // (UnifiedUndoE2ETests.swift:641).
-        let appearanceTab = settingsWindow.toolbars.buttons
-            .matching(NSPredicate(format: "title == %@ OR label == %@", "Appearance", "Appearance"))
-            .firstMatch
+        let appearanceTab = settingsTabButton("Appearance", in: settingsWindow)
         XCTAssertTrue(appearanceTab.waitForExistence(timeout: 10), "Appearance tab should be selectable")
         appearanceTab.click()
 
@@ -279,7 +293,10 @@ final class GlossarySweepE2ETests: XCTestCase {
         let citationBadge = sidebarScrollView.descendants(matching: .staticText)
             .matching(NSPredicate(format: "label == %@ OR value == %@", "3 citations", "3 citations"))
             .firstMatch
-        XCTAssertTrue(citationBadge.waitForExistence(timeout: 10), "Citation count badge should read '3 citations' (plural, post-glossary-sweep wording)")
+        XCTAssertTrue(
+            citationBadge.waitForExistence(timeout: 10),
+            "Citation count badge should read '3 citations' (plural, post-glossary-sweep wording)"
+        )
 
         let refsBadge = sidebarScrollView.descendants(matching: .staticText)
             .matching(NSPredicate(format: "label == %@ OR value == %@", "3 refs", "3 refs"))

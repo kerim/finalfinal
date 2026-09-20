@@ -8,6 +8,9 @@ import SwiftUI
 @MainActor
 @Observable
 class EditorViewState {
+    /// Identity of this window's editor state; the annotation display broadcast is scoped by it.
+    let windowToken = UUID()
+
     var editorMode: EditorMode = .wysiwyg
 
     /// Timestamp of last editor mode toggle request — used for debounce

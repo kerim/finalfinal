@@ -23,6 +23,10 @@ extension CodeMirrorEditor {
     class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
         weak var webView: WKWebView?
 
+        /// The window this coordinator's editor belongs to (`EditorViewState.windowToken`); its
+        /// annotation display observer receives only that window's posts.
+        let windowToken: UUID
+
         var contentBinding: Binding<String>
         var cursorPositionToRestoreBinding: Binding<CursorPosition?>
         var scrollToOffsetBinding: Binding<Int?>
@@ -138,9 +142,6 @@ extension CodeMirrorEditor {
         /// Active spellcheck task (cancelled on new check or cleanup)
         var spellcheckTask: Task<Void, Never>?
 
-        /// Last sent annotation display modes (to avoid redundant calls)
-        var lastAnnotationDisplayModes: [AnnotationType: AnnotationDisplayMode] = [:]
-
         /// Pending cursor position that is being restored (set before JS call, cleared after)
         var pendingCursorRestore: CursorPosition?
 
@@ -201,8 +202,10 @@ extension CodeMirrorEditor {
             onStatsChange: @escaping (Int, Int) -> Void,
             onSectionChange: @escaping (String) -> Void,
             onCursorPositionSaved: @escaping (CursorPosition) -> Void,
-            onWebViewReady: ((WKWebView) -> Void)?
+            onWebViewReady: ((WKWebView) -> Void)?,
+            windowToken: UUID
         ) {
+            self.windowToken = windowToken
             self.contentBinding = content
             self.cursorPositionToRestoreBinding = cursorPositionToRestore
             self.scrollToOffsetBinding = scrollToOffset

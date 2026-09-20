@@ -384,11 +384,10 @@ struct ContentView: View {
             // whichever runs first, the requested full-screen intent survives (see
             // FullScreenManager.request(_:)'s "no window yet" path), so no artificial delay
             // is needed here.
-            if editorState.focusModeEnabled && editorState.preFocusModeState == nil {
-                // Re-enter focus mode to capture fresh pre-state and apply full screen
-                editorState.focusModeEnabled = false  // Reset first
-                editorState.enterFocusMode()
-            }
+            // Re-enter focus mode to capture fresh pre-state and apply full screen. The project-open
+            // sequence (initializeProject() above) has normally done this already, before its first
+            // publish; this is then a no-op (a snapshot exists), and covers a launch with no project.
+            editorState.reenterFocusModeIfRestored()
         }
     }
 

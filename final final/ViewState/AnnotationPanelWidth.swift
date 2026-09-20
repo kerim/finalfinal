@@ -39,4 +39,32 @@ enum AnnotationPanelWidth {
     static func save(_ width: CGFloat, to defaults: UserDefaults) {
         defaults.set(Double(clamp(width)), forKey: defaultsKey)
     }
+
+    /// What the panel does with one sampled rendered width.
+    enum SampleAction: Equatable {
+        /// Not a user resize (a show/hide animation is running).
+        case ignore
+        /// The visibility flag and the panel's own width disagree: layout is still catching up.
+        case ignoreUnsettled
+        /// A hidden panel wider than nothing: the user dragged it open.
+        case reshow(CGFloat)
+        /// A visible panel whose width changed: track and save it.
+        case persist(CGFloat)
+    }
+
+    /// Classifies a sampled width. `panelWidth` is the panel's own target: 0 once a hide has been applied,
+    /// above 0 once a show has. While it disagrees with `isVisible`, the flag has flipped but the panel has
+    /// not applied it yet, so a width read then is layout, not the user. No input-device test: a drag by
+    /// any means takes the same path.
+    static func sampleAction(newWidth: CGFloat, isVisible: Bool, isAnimating: Bool, panelWidth: CGFloat) -> SampleAction {
+        guard !isAnimating else { return .ignore }
+        if isVisible {
+            guard newWidth > 0 else { return .ignore }
+            guard panelWidth != 0 else { return .ignoreUnsettled }
+            return .persist(clamp(newWidth))
+        }
+        guard newWidth > 1 else { return .ignore }
+        guard panelWidth == 0 else { return .ignoreUnsettled }
+        return .reshow(clamp(newWidth))
+    }
 }

@@ -158,6 +158,10 @@ enum TestMode {
         defaults.removeObject(forKey: "hasSeenSubtreeDragHint")
         defaults.removeObject(forKey: DiagnosticLogFile.loggingEnabledDefaultsKey)
         defaults.removeObject(forKey: "com.kerim.final-final.diagnosticsLastReportGeneratedAt")
+        // The app-wide annotation display default ("Set as Default"). The isolated suite is a plist
+        // on disk shared by every unit-test RUN, so a run cut short between a test setting one
+        // and restoring it must not leave the next run starting from a non-neutral default.
+        defaults.removeObject(forKey: AnnotationDisplayDefaults.defaultsKey)
         // Must come AFTER the removeObject above -- invalidating first would leave a window
         // where a concurrent isEnabled read on another thread could repopulate the cache with
         // the pre-removal value. See DiagnosticLogFile.invalidateEnabledCache's doc comment.

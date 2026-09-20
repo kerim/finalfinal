@@ -176,6 +176,7 @@ extension ContentView {
                     isZoomingContent: editorState.isZoomingContent,
                     contentGeneration: editorState.contentGeneration,
                     pollCacheResetGeneration: editorState.pollCacheResetGeneration,
+                    windowToken: editorState.windowToken,
                     themeCSS: currentThemeCSS,
                     onContentChange: { newContent, wasUndo in
                         // Content change handling - could trigger outline parsing here.
@@ -286,6 +287,7 @@ extension ContentView {
                     isZoomingContent: editorState.isZoomingContent,
                     contentGeneration: editorState.contentGeneration,
                     pollCacheResetGeneration: editorState.pollCacheResetGeneration,
+                    windowToken: editorState.windowToken,
                     forcedPushGeneration: editorState.forcedPushGeneration,
                     themeCSS: currentThemeCSS,
                     onContentChange: { newContent, wasUndo in

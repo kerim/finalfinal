@@ -113,6 +113,11 @@ struct MilkdownEditor: NSViewRepresentable {
     /// `EditorViewState.pollCacheResetGeneration`'s doc comment for why.
     var pollCacheResetGeneration: Int = 0
 
+    /// `EditorViewState.windowToken` of the window this editor belongs to. REQUIRED (no default):
+    /// handed to the Coordinator so it receives only its own window's annotation display posts
+    /// (see `AnnotationDisplayBroadcast`); a creation site that omits it does not compile.
+    var windowToken: UUID
+
     /// CSS variables for theming - when this changes, updateNSView is called
     var themeCSS: String = ThemeManager.shared.cssVariables
 
@@ -306,8 +311,7 @@ struct MilkdownEditor: NSViewRepresentable {
             onStatsChange: onStatsChange,
             onSectionChange: onSectionChange,
             onCursorPositionSaved: onCursorPositionSaved,
-            onContentAcknowledged: onContentAcknowledged,
-            onWebViewReady: onWebViewReady
+            onContentAcknowledged: onContentAcknowledged, onWebViewReady: onWebViewReady, windowToken: windowToken
         )
     }
 
@@ -322,6 +326,10 @@ struct MilkdownEditor: NSViewRepresentable {
     @MainActor
     class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
         weak var webView: WKWebView?
+
+        /// The window this coordinator's editor belongs to (`EditorViewState.windowToken`); its
+        /// annotation display observer receives only that window's posts.
+        let windowToken: UUID
 
         var contentBinding: Binding<String>
         var cursorPositionToRestoreBinding: Binding<CursorPosition?>
@@ -470,9 +478,6 @@ struct MilkdownEditor: NSViewRepresentable {
         /// placement) can cancel a still-pending stale restore before it fires.
         var cursorRestoreWorkItem: DispatchWorkItem?
 
-        /// Last sent annotation display modes (to avoid redundant calls)
-        var lastAnnotationDisplayModes: [AnnotationType: AnnotationDisplayMode] = [:]
-
         /// Tracks previous isResettingContent state to detect reset→idle transition
         var wasResettingContent = false
 
@@ -525,8 +530,9 @@ struct MilkdownEditor: NSViewRepresentable {
             onSectionChange: @escaping (String) -> Void,
             onCursorPositionSaved: @escaping (CursorPosition) -> Void,
             onContentAcknowledged: (() -> Void)?,
-            onWebViewReady: ((WKWebView) -> Void)?
+            onWebViewReady: ((WKWebView) -> Void)?, windowToken: UUID
         ) {
+            self.windowToken = windowToken
             self.contentBinding = content
             self.cursorPositionToRestoreBinding = cursorPositionToRestore
             self.scrollToOffsetBinding = scrollToOffset

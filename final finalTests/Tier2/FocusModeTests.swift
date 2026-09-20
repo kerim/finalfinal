@@ -11,7 +11,7 @@ import Testing
 import Foundation
 @testable import final_final
 
-@Suite("Focus Mode — Tier 2: Visible Breakage")
+@Suite("Focus Mode — Tier 2: Visible Breakage", .serialized)
 struct FocusModeTests {
 
     // MARK: - Helpers
@@ -21,8 +21,11 @@ struct FocusModeTests {
     /// because focusModeEnabled reads UserDefaults at property init time.
     /// Also resets FullScreenManager's static state so no observer/watchdog/pending
     /// intent leaks in from a previous test.
+    /// (Internal, not private: FocusModeTests+InlineAnnotations.swift, an extension of this
+    /// suite in another file, shares it. The suite is `.serialized` because those tests
+    /// change the process-wide FocusModeSettingsManager singleton.)
     @MainActor
-    private func makeSUT() -> EditorViewState {
+    func makeSUT() -> EditorViewState {
         TestMode.clearTestState()
         FullScreenManager.resetForTesting()
         return EditorViewState()
@@ -129,8 +132,10 @@ struct FocusModeTests {
 
         #expect(sut.isOutlineSidebarVisible == true, "Left sidebar should be restored")
         // Right sidebar was already hidden, focus mode should not have captured it
-        // (FocusModeSettingsManager.shared.hideRightSidebar is true by default,
-        // so it captures annotationPanelVisible = false)
+        // (FocusModeSettingsManager.shared.hideRightSidebar -- "Hide Annotations Panel" --
+        // is true by default, so the panel's visibility is captured: annotationPanelVisible
+        // = false. That setting concerns the PANEL only; what happens to the annotations in
+        // the text is the separate inlineAnnotations preference)
         #expect(sut.isAnnotationPanelVisible == false, "Right sidebar should remain hidden")
     }
 

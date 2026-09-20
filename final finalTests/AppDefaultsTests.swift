@@ -32,7 +32,7 @@ import Foundation
 @Suite(.serialized)
 struct AppDefaultsTests {
 
-    /// All eight keys `TestMode.clearTestState()` manages — kept in sync with that
+    /// All nine keys `TestMode.clearTestState()` manages — kept in sync with that
     /// function's own list so this suite fails loudly if a key is added there without also
     /// being covered here.
     private static let clearTestStateKeys: [String] = [
@@ -43,7 +43,8 @@ struct AppDefaultsTests {
         "com.kerim.final-final.focusModeSettings",
         "hasSeenSubtreeDragHint",
         DiagnosticLogFile.loggingEnabledDefaultsKey,
-        "com.kerim.final-final.diagnosticsLastReportGeneratedAt"
+        "com.kerim.final-final.diagnosticsLastReportGeneratedAt",
+        AnnotationDisplayDefaults.defaultsKey
     ]
 
     /// Compares two `UserDefaults.object(forKey:)` results for equality without assuming
@@ -94,7 +95,7 @@ struct AppDefaultsTests {
 
     // MARK: - clearTestState() Never Touches the Real Domain
 
-    @Test("clearTestState() never removes any of its eight keys from UserDefaults.standard")
+    @Test("clearTestState() never removes any of its nine keys from UserDefaults.standard")
     func clearTestStateDoesNotTouchStandardDomain() {
         // Deliberately never seeds sentinel values into these production keys on the real
         // `UserDefaults.standard` domain — see the file-level comment above for why. Instead
@@ -131,7 +132,7 @@ struct AppDefaultsTests {
         }
     }
 
-    @Test("clearTestState() does remove all eight keys from the isolated AppDefaults.store")
+    @Test("clearTestState() does remove all nine keys from the isolated AppDefaults.store")
     func clearTestStateRemovesFromIsolatedStore() {
         let keys = Self.clearTestStateKeys
 

@@ -45,6 +45,7 @@ struct ExportPreferencesPane: View {
                 }
                 .padding(8)
             }
+            .accessibilityIdentifier("exportPandocGroup")
 
             // Zotero Integration
             GroupBox("Zotero Integration") {

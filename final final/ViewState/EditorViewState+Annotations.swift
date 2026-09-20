@@ -52,9 +52,117 @@ extension EditorViewState {
         }
     }
 
-    /// Set display mode for an annotation type
+    /// Set display mode for an annotation type -- a USER action, so it is saved to the open
+    /// project (see AnnotationDisplaySettings.swift for the persist-on-user-intent rule).
+    ///
+    /// The save is deliberately synchronous, in the same MainActor turn as the assignment
+    /// (no `Task`, no `await`): nothing can switch projects between the change and its write,
+    /// so the value can never be written into the wrong project's database.
+    ///
+    /// Write rule (mirrored from EditorViewState+FocusMode.swift): Focus Mode's own assignments
+    /// are always direct and are never written to disk — they are a temporary layer over the
+    /// project's saved values. A change the USER makes while Focus Mode is on goes through the
+    /// saving setter instead: it is written to the project AND folded into the pre-Focus
+    /// snapshot, so their explicit choice survives leaving Focus Mode. Do not "tidy" Focus
+    /// Mode's assignments into the setters. So Focus Mode's forced collapse and its restore on
+    /// exit do NOT come through here.
     func setAnnotationDisplayMode(_ mode: AnnotationDisplayMode, for type: AnnotationType) {
         annotationDisplayModes[type] = mode
+
+        // A change made inside Focus Mode also updates the pre-Focus snapshot, so the explicit
+        // choice survives exiting Focus Mode (a no-op when there is no snapshot or it captured
+        // no modes, so this never creates one).
+        preFocusModeState?.annotationDisplayModes?[type] = mode
+
+        persistAnnotationDisplaySetting("\(type.rawValue) display mode = \(mode.rawValue)") {
+            try DocumentManager.shared.saveAnnotationDisplayMode(mode, for: type)
+        }
+    }
+
+    /// Set the global "Panel Only" checkbox -- a USER action, saved synchronously to the
+    /// open project (see `setAnnotationDisplayMode` for why).
+    ///
+    /// Write rule (mirrored from EditorViewState+FocusMode.swift): Focus Mode's own assignments
+    /// are always direct and are never written to disk — they are a temporary layer over the
+    /// project's saved values. A change the USER makes while Focus Mode is on goes through the
+    /// saving setter instead: it is written to the project AND folded into the pre-Focus
+    /// snapshot, so their explicit choice survives leaving Focus Mode. Do not "tidy" Focus
+    /// Mode's assignments into the setters. (Inline Annotations = Hide forces Panel Only on as
+    /// a Focus Mode assignment; a user who unticks it inside Focus Mode makes it their own
+    /// choice: persisted, folded into the snapshot, kept after exit.)
+    func setPanelOnlyMode(_ isPanelOnly: Bool) {
+        isPanelOnlyMode = isPanelOnly
+
+        // Fold a change made inside Focus Mode into the snapshot -- only when it already holds
+        // a Panel Only value (Hide is armed), so this never creates one.
+        if preFocusModeState?.annotationPanelOnly != nil {
+            preFocusModeState?.annotationPanelOnly = isPanelOnly
+        }
+
+        persistAnnotationDisplaySetting("panel only = \(isPanelOnly)") {
+            try DocumentManager.shared.saveAnnotationPanelOnly(isPanelOnly)
+        }
+    }
+
+    /// Set the "Hide Completed" checkbox -- a USER action, saved synchronously to the open
+    /// project (see `setAnnotationDisplayMode` for why).
+    func setHideCompletedTasks(_ hideCompleted: Bool) {
+        hideCompletedTasks = hideCompleted
+        persistAnnotationDisplaySetting("hide completed = \(hideCompleted)") {
+            try DocumentManager.shared.saveAnnotationHideCompleted(hideCompleted)
+        }
+    }
+
+    /// Apply a project's loaded annotation display settings to the in-memory state.
+    ///
+    /// `nil` (no project open, or the load threw) means "use the app-wide default display
+    /// settings" (`.fallback`): every value is STILL assigned -- never skipped -- so nothing from
+    /// a previous project can survive a failed or empty load (`resetForProjectSwitch()` also
+    /// resets these three properties, and this is the second line of defence).
+    ///
+    /// Assigns the properties directly, never through the setters above, so loading can never
+    /// write to the database. See `loadAndApplyAnnotationDisplaySettings()` for the caller
+    /// that loads and reports a failed load.
+    func applyAnnotationDisplaySettings(_ settings: AnnotationDisplaySettings?) {
+        let resolved = settings ?? .fallback
+        annotationDisplayModes = resolved.modes
+        isPanelOnlyMode = resolved.isPanelOnlyMode
+        hideCompletedTasks = resolved.hideCompletedTasks
+    }
+
+    /// "Set as Default" in the display popover: store the user's OWN current five values as the
+    /// app-wide defaults, which seed every project that has not saved that option.
+    ///
+    /// Writes NOTHING to any project database -- it never calls a DocumentManager save… method,
+    /// so the open project's own rows are unchanged. The popover disables this while Focus Mode
+    /// is actually changing what it shows (focusModeAltersAnnotationDisplay); reading
+    /// userAnnotationDisplaySettings rather than the live properties is the second line of
+    /// defence, so a forced collapse or forced Panel Only can never become the user's default.
+    ///
+    /// Cannot fail: the writer encodes only strings and booleans and `UserDefaults` reports no
+    /// failure, so there is no failed-write outcome to surface and no failure toast is needed.
+    /// Shows no success toast either: the popover's footer button confirms it itself, relabelling
+    /// in place (see AnnotationFilterBar), and that is the ONLY success channel -- a toast can be
+    /// swallowed behind a standing warning toast (ToastCenter rule 3), which would leave the
+    /// action reporting nothing.
+    /// Synchronous on the main actor, like the Focus Mode functions it reads from: no interleaving.
+    func saveCurrentAnnotationDisplayAsDefault() {
+        AnnotationDisplayDefaults.setSettings(userAnnotationDisplaySettings)
+    }
+
+    /// Run a save. On failure, log it and tell the user with a warning toast -- never throw:
+    /// the in-memory change has already taken effect, and a failed save must not undo or block
+    /// what the user just chose, but it must not go unnoticed either (the screen and the
+    /// project would silently disagree).
+    private func persistAnnotationDisplaySetting(_ label: String, save: () throws -> Void) {
+        do {
+            try save()
+        } catch {
+            DebugLog.log(.lifecycle, "[AnnotationDisplay] Failed to save \(label): \(error)")
+            withAnimation {
+                ToastCenter.shared.show(ToastFactory.annotationDisplaySettingsNotSaved())
+            }
+        }
     }
 
     /// Get display mode for an annotation type

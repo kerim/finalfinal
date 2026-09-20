@@ -77,16 +77,14 @@ extension CodeMirrorEditor.Coordinator {
     }
 
     func subscribeToAnnotationNotifications() {
-        // Subscribe to annotation display modes changes
-        annotationDisplayModesObserver = NotificationCenter.default.addObserver(
-            forName: .annotationDisplayModesChanged,
-            object: nil,
-            queue: .main
-        ) { [weak self] notification in
-            if let modes = notification.userInfo?["modes"] as? [AnnotationType: AnnotationDisplayMode] {
-                let isPanelOnly = notification.userInfo?["isPanelOnly"] as? Bool ?? false
-                let hideCompletedTasks = notification.userInfo?["hideCompletedTasks"] as? Bool ?? false
-                self?.setAnnotationDisplayModes(modes, isPanelOnly: isPanelOnly, hideCompletedTasks: hideCompletedTasks)
+        // Window-scoped: only display posts from the window whose EditorViewState this coordinator
+        // was created for reach it (AnnotationDisplayBroadcast applies the token guard itself).
+        annotationDisplayModesObserver = AnnotationDisplayBroadcast.addObserver(for: windowToken, queue: .main) { [weak self] display in
+            // `queue: .main`: this runs on the main thread, so main-actor isolation is assumed.
+            MainActor.assumeIsolated {
+                self?.setAnnotationDisplayModes(
+                    display.modes, isPanelOnly: display.isPanelOnly, hideCompletedTasks: display.hideCompletedTasks
+                )
             }
         }
 
