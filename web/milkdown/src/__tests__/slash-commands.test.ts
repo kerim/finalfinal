@@ -3,13 +3,13 @@ import { defaultValueCtx, Editor, editorViewCtx, rootCtx } from '@milkdown/kit/c
 import { commonmark } from '@milkdown/kit/preset/commonmark';
 import { gfm } from '@milkdown/kit/preset/gfm';
 import { Schema } from '@milkdown/kit/prose/model';
-import { TextSelection } from '@milkdown/kit/prose/state';
+import { EditorState, TextSelection } from '@milkdown/kit/prose/state';
 import { getMarkdown } from '@milkdown/kit/utils';
 import { afterEach, describe, expect, it } from 'vitest';
 import { citationPlugin } from '../citation-plugin';
 import { footnotePlugin, getFootnoteDefinitions, insertFootnoteWithDelete } from '../footnote-plugin';
 import { sectionBreakPlugin } from '../section-break-plugin';
-import { applyBreakCommand, applyHeadingCommand, computeSlashCmdStart } from '../slash-commands';
+import { applyBreakCommand, applyHeadingCommand, computeSlashCmdStart, isNoOpSlashUpdate } from '../slash-commands';
 
 // Minimal schema: doc > paragraph > (citation atom | text). Mirrors the
 // essential shape of the real citation node (inline, atom, leaf — no content)
@@ -41,6 +41,35 @@ function docWithAtomThenText(trailingText: string) {
 function docTextOnly(trailingText: string) {
   return schema.node('doc', null, [schema.node('paragraph', null, [schema.text(trailingText)])]);
 }
+
+describe('isNoOpSlashUpdate', () => {
+  // The plugin-view guard behind the "slash menu never opens" race: SlashProvider debounces to the
+  // LAST update, so a same-doc/same-selection update landing after the "/" update (Swift's
+  // confirmBlockIds repaint) used to replace it and lose the open. See isNoOpSlashUpdate's comment.
+  const startState = () => EditorState.create({ schema, doc: docTextOnly('a/') });
+
+  it('is a no-op when neither document nor selection changed (a bare repaint transaction)', () => {
+    const before = startState();
+    const after = before.apply(before.tr.setMeta('repaint', true));
+    expect(isNoOpSlashUpdate(before, after)).toBe(true);
+  });
+
+  it('is not a no-op when the document changed (typing "/")', () => {
+    const before = startState();
+    const after = before.apply(before.tr.insertText('b', 3));
+    expect(isNoOpSlashUpdate(before, after)).toBe(false);
+  });
+
+  it('is not a no-op when only the selection moved (leaving the "/" must be able to hide the menu)', () => {
+    const before = startState();
+    const after = before.apply(before.tr.setSelection(TextSelection.create(before.doc, 3)));
+    expect(isNoOpSlashUpdate(before, after)).toBe(false);
+  });
+
+  it('is not a no-op with no previous state (the provider treats that as a real update)', () => {
+    expect(isNoOpSlashUpdate(undefined, startState())).toBe(false);
+  });
+});
 
 describe('computeSlashCmdStart', () => {
   it('finds the "/" correctly when a prior inline atom (citation) precedes the text — regression for the reported bug', () => {

@@ -4,7 +4,7 @@ import '../../shared/slash-menu.css';
 import { type Ctx, editorViewCtx } from '@milkdown/kit/core';
 import { redo, undo } from '@milkdown/kit/prose/history';
 import type { Node } from '@milkdown/kit/prose/model';
-import { Selection } from '@milkdown/kit/prose/state';
+import { type EditorState, Selection } from '@milkdown/kit/prose/state';
 import { SlashProvider, slashFactory } from '@milkdown/plugin-slash';
 import { recomputeAndPushWebPopupState } from '../../shared/escape-ladder';
 import { showAnnotationEditPopup } from './annotation-edit-popup';
@@ -630,6 +630,24 @@ export function dismissSlashMenu(): void {
 // === Slash plugin setup ===
 export const slash = slashFactory('main');
 
+/**
+ * Whether a plugin-view update changed neither the document nor the selection.
+ *
+ * Such updates (e.g. the repaint `confirmBlockIdsApi` dispatches when Swift confirms a new
+ * block's permanent id) must NOT reach `SlashProvider.update`. The provider debounces by 200ms
+ * and, when the timer fires, runs with the arguments of the LAST call only. If a no-op update
+ * is that last call, the provider's own "same doc, same selection" check makes it return
+ * without ever running `shouldShow`, so the update that typed the "/" is lost and the menu
+ * never opens -- and nothing later reopens it, because the caret is not moving. Reproduced in
+ * a browser with the built bundle: type "/" on a fresh paragraph, then land a
+ * `confirmBlockIds` repaint inside the 200ms window and the menu stays closed; without the
+ * repaint it opens. Dropping the no-op update loses nothing, since the provider would have
+ * ignored it anyway.
+ */
+export function isNoOpSlashUpdate(prevState: EditorState | undefined, state: EditorState): boolean {
+  return !!prevState && prevState.doc.eq(state.doc) && prevState.selection.eq(state.selection);
+}
+
 export function configureSlash(ctx: Ctx) {
   slashMenuElement = createSlashMenu();
   document.body.appendChild(slashMenuElement);
@@ -696,6 +714,7 @@ export function configureSlash(ctx: Ctx) {
   ctx.set(slash.key, {
     view: () => ({
       update: (view: any, prevState: any) => {
+        if (isNoOpSlashUpdate(prevState, view.state)) return;
         slashProviderInstance!.update(view, prevState);
       },
       destroy: () => {
