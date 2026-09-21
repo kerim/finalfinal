@@ -24,6 +24,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **If the editor stopped responding for a moment, the app's background saving could stall for good**, so footnote inserts, bibliography and Notes rebuilds, exports, and quitting could wait indefinitely or go ahead without your newest text — fixed; the app now gives up on the stuck check after a short wait and carries on.
 - **In rare timing, an older automatic save finishing after a newer one could put older text back into a paragraph you had just edited** — fixed; the app now refuses an older save that arrives late.
 - **Editing headings could sometimes attach one section's status, tags, or word-count goal to a different section** — fixed; the outline now matches sections to their saved details more carefully.
+- **Typing "/" on a fresh line could occasionally fail to open the slash-command menu**, if the app's background bookkeeping for the new line landed within about a fifth of a second of your keystroke — the menu stayed closed and nothing reopened it until you typed something else — fixed.
 
 ## [0.2.133] - 2026-09-11
 
