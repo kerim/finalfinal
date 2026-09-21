@@ -34,9 +34,10 @@ struct AnnotationPanel: View {
     /// through every width between the stored value and zero would each get sampled by the
     /// GeometryReader below and persisted as if the user had dragged there, permanently
     /// corrupting the saved width (down to 0, the worst case) the moment anyone toggles the
-    /// panel. Also temporarily relaxes `minWidth` to 0 in `.frame(...)` below so the animation
-    /// can actually reach zero -- the panel's real drag-resize floor stays `minWidth` from
-    /// `AnnotationPanelWidth` (must-fix 2) whenever this is false.
+    /// panel. Also feeds `AnnotationPanelWidth.frameBounds`, which relaxes the floor to 0 (and
+    /// grants the full ceiling) while this is set so the animation can actually reach zero --
+    /// the panel's real drag-resize floor stays `minWidth` from `AnnotationPanelWidth`
+    /// (must-fix 2) whenever this is false.
     @State private var isAnimatingToggle = false
 
     /// Identifies the most recently started toggle animation, so a stale completion callback
@@ -50,6 +51,23 @@ struct AnnotationPanel: View {
     /// used for layout (`panelWidth`) still updates synchronously on every frame; only the
     /// persistence is coalesced until the drag pauses.
     @State private var widthSaveTask: Task<Void, Never>?
+
+    /// The previous rendered width `widthObserver` saw -- the evidence `sampleAction` needs to tell a
+    /// drag-open (grows from a settled zero) from the tail of a hide animation (shrinks from a wider
+    /// reading, possibly delivered after the completion has cleared `isAnimatingToggle`). Recorded for
+    /// every reading, including the ones ignored while animating; cleared by both toggle paths so a stale
+    /// frame from a superseded animation has nothing to grow from. `.onChange` does not fire for a view's
+    /// initial value, so the first reading a fresh panel delivers has `previous == nil` and is swallowed:
+    /// harmless, since `.reshow` is only a backstop and a settled hidden panel reports 0 on settle, which
+    /// re-arms the history.
+    @State private var lastSampledWidth: CGFloat?
+
+    /// The pane's `.frame` width bounds for the current visibility and animation state.
+    private var frameBounds: (min: CGFloat, max: CGFloat) {
+        AnnotationPanelWidth.frameBounds(
+            isVisible: editorState.isAnnotationPanelVisible, isAnimating: isAnimatingToggle
+        )
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -84,25 +102,12 @@ struct AnnotationPanel: View {
             }
         }
         .frame(
-            // Floors at AnnotationPanelWidth.minWidth ONLY in the steady visible state (real
-            // drag-resize needs that floor, must-fix 2). Both while animating AND in the
-            // steady HIDDEN state, the floor must be 0 -- if it snapped back to minWidth the
-            // instant a close animation's completion callback clears isAnimatingToggle, the
-            // panel would immediately re-expand to 200pt right after finishing its collapse
-            // to 0, since idealWidth (0) would then be fighting a 200pt floor every frame.
-            minWidth: (editorState.isAnnotationPanelVisible && !isAnimatingToggle) ? AnnotationPanelWidth.minWidth : 0,
+            // The floor/ceiling rules -- and why each relaxes while animating or pins to 0 while
+            // hidden (must-fix 2, review round 2 must-fix 1) -- live with the pure function that
+            // computes them, `AnnotationPanelWidth.frameBounds`, so they can be unit tested.
+            minWidth: frameBounds.min,
             idealWidth: panelWidth,
-            // Ceiling pinned to 0 in the steady HIDDEN state (review round 2, must-fix 1):
-            // previously this stayed at AnnotationPanelWidth.maxWidth (320) even while hidden,
-            // so the "hidden" panel was really just a 0-width panel whose HSplitView divider
-            // still had 320pt of slack to be dragged into -- exactly the parity violation the
-            // task exists to prevent, since a resulting drag-open never updated
-            // isAnnotationPanelVisible. Pinning min AND max to 0 together gives the pane a
-            // fixed 0pt size while hidden, so there is no slack left for the divider to move
-            // through at all. Relaxed back to the real ceiling whenever visible OR animating
-            // (both directions need room for `panelWidth` to travel between 0 and the real
-            // width), matching the floor's own animating-relaxation above.
-            maxWidth: (editorState.isAnnotationPanelVisible || isAnimatingToggle) ? AnnotationPanelWidth.maxWidth : 0
+            maxWidth: frameBounds.max
         )
         .clipped()
         // Scopes XCUITest queries to just this panel's own elements (e.g. its cards'
@@ -182,27 +187,40 @@ struct AnnotationPanel: View {
     /// true, every width the show/hide animation passes through -- including 0 -- would
     /// otherwise look identical to a drag and get persisted, which is worse than today's bug
     /// (today the width is simply never persisted; this would actively corrupt it to 0).
+    ///
+    /// Also maintains `lastSampledWidth`, the reading history `sampleAction` needs to tell a
+    /// drag-open from a hide animation's tail: every reading is recorded, animating or not,
+    /// before it is classified.
     private var widthObserver: some View {
         GeometryReader { geo in
             Color.clear
                 .onChange(of: geo.size.width) { _, newWidth in
+                    // Recorded unconditionally -- including while animating -- so a hide animation's
+                    // tail always has a wider predecessor on record (see `lastSampledWidth`).
+                    let previous = lastSampledWidth
+                    lastSampledWidth = newWidth
                     let action = AnnotationPanelWidth.sampleAction(
-                        newWidth: newWidth, isVisible: editorState.isAnnotationPanelVisible,
+                        newWidth: newWidth, previousWidth: previous, isVisible: editorState.isAnnotationPanelVisible,
                         isAnimating: isAnimatingToggle, panelWidth: panelWidth
                     )
                     switch action {
                     case .ignore:
                         return
                     case .ignoreUnsettled:
+                        let previousText = previous.map { "\($0)" } ?? "nil"
                         DebugLog.log(
                             .lifecycle,
-                            "[AnnotationPanel] ignored width \(newWidth): "
-                                + "visible=\(editorState.isAnnotationPanelVisible) but panelWidth=\(panelWidth) "
-                                + "(layout ahead of the panel)"
+                            "[AnnotationPanel] ignored width \(newWidth): previous=\(previousText) "
+                                + "visible=\(editorState.isAnnotationPanelVisible) panelWidth=\(panelWidth) "
+                                + "(layout out of step with the panel)"
                         )
                     case .reshow(let width):
                         // Backstop: the `.frame` above pins a hidden panel to 0, so a settled hidden panel
-                        // wider than 1pt means a drag got through; make the flag catch up.
+                        // wider than `AnnotationPanelWidth.hiddenSettledThreshold` that grew from a reading at
+                        // or under it means a drag got through; make the flag catch up.
+                        // A `.persist` write still pending would land AFTER this save and overwrite it with
+                        // the stale width, so retire it first (the `.persist` branch does the same).
+                        widthSaveTask?.cancel()
                         DebugLog.log(.lifecycle, "[AnnotationPanel] hidden panel dragged open to \(width)")
                         panelWidth = width
                         AnnotationPanelWidth.save(width, to: .standard)
@@ -234,6 +252,9 @@ struct AnnotationPanel: View {
     /// call this curve cannot guarantee on its own.
     private func animateToggle(becomingVisible: Bool) {
         isAnimatingToggle = true
+        // Drop the reading history so nothing from before this toggle is read as this animation's
+        // predecessor (see `lastSampledWidth`).
+        lastSampledWidth = nil
         let token = UUID()
         toggleAnimationToken = token
         // `completion:` ties clearing isAnimatingToggle to the animation SwiftUI actually ran,
@@ -248,8 +269,12 @@ struct AnnotationPanel: View {
             // own completion callback be the one that clears isAnimatingToggle.
             guard toggleAnimationToken == token else { return }
             isAnimatingToggle = false
-            if becomingVisible {
-                panelWidth = AnnotationPanelWidth.clamp(panelWidth)
+            if let settledWidth = AnnotationPanelWidth.widthAfterToggleCompletion(
+                becomingVisible: becomingVisible,
+                isVisible: editorState.isAnnotationPanelVisible,
+                panelWidth: panelWidth
+            ) {
+                panelWidth = settledWidth
             }
         }
     }
@@ -259,9 +284,19 @@ struct AnnotationPanel: View {
     /// `editorState.isAnnotationPanelToggleInstant`. Matches the release build's old behavior
     /// of removing the panel from the view tree outright on Focus Mode entry/exit, rather than
     /// `animateToggle`'s normal 250ms `.panelToggle` cross-fade (still used for every other
-    /// trigger: toolbar button, View menu, ⌘]). No `isAnimatingToggle` bookkeeping needed here
-    /// -- unlike `animateToggle`, this never leaves an intermediate width on screen for
-    /// `widthObserver` to (mis)sample.
+    /// trigger: toolbar button, View menu, ⌘]). Unlike `animateToggle`, this never leaves an
+    /// intermediate width on screen of its own -- but it can interrupt an animation already in
+    /// flight (t-c86ccc4c), so it retires that animation's bookkeeping first; see the note above
+    /// the three resets below.
+    ///
+    /// Known, accepted interleaving, same as `OutlineSidebarPane`'s: this covers ONLY the
+    /// show-interrupt case (a ⌘] show in flight when Focus Mode entry flips the flag to hidden).
+    /// `enterFocusMode()` arms the instant-toggle flag only when `hideRightSidebar &&
+    /// isAnnotationPanelVisible`, so in the reported ⌘]-then-⇧⌘F repro -- a hide already in
+    /// flight, the flag already false -- nothing arms, `false = false` fires no `.onChange`, and
+    /// this function never runs: the hide animation simply finishes and that entry is not instant
+    /// (the final state is still correct). That repro is closed by `sampleAction`'s `previousWidth`
+    /// guard alone.
     ///
     /// What actually makes this instant is NOT anything in this function: the `.frame(...)`
     /// bounds above (`minWidth`/`maxWidth`) are driven directly by `editorState
@@ -274,6 +309,33 @@ struct AnnotationPanel: View {
     /// animation of its own, so it doesn't independently animate while the (now-unanimated)
     /// frame bounds jump straight to their new values.
     private func snapToggle(becomingVisible: Bool) {
+        // t-c86ccc4c: retire any toggle animation this snap interrupts. What is the same as
+        // `OutlineSidebarPane.snapToggle`: the animation's token is retired and the animating flag
+        // cleared. What differs: the Outline first cancels a `dividerAnimationTask`; this panel
+        // animates through `withAnimation` and has no cancellable task, so the reading-history
+        // reset takes that slot. The order matters:
+        //  - A fresh token makes the interrupted animation's completion fail its token guard, so it
+        //    can no longer write `clamp(0) == 200` into a panel this snap just hid.
+        //  - `isAnimatingToggle = false` stops the frame bounds granting a just-hidden panel the
+        //    animating 320pt ceiling, and with it real divider slack, for the rest of that animation.
+        //  - `lastSampledWidth = nil` is LOAD-BEARING, not belt-and-braces. Clearing
+        //    `isAnimatingToggle` leaves `widthObserver` live through the snap, so a residual frame from
+        //    the interrupted animation can still reach `sampleAction`. The PRIMARY protection against
+        //    such a frame re-opening the hidden panel is the pinned `maxWidth: 0` (from `frameBounds`):
+        //    with no slack the divider cannot be dragged, so a residual frame is not a drag. The
+        //    predecessor rule is the backstop: `nil` swallows the first residual, and any later one has a
+        //    >1pt predecessor. That argument holds only while `.panelToggle` is a monotonic curve (a
+        //    hide only ever shrinks, so each frame's predecessor is wider) -- `.easeOut`
+        //    (`Theme/Animations.swift`) is; an overshooting curve would break it.
+        // Also live now: `.persist`, on a snap to visible (Focus Mode exit, bounds back to 200/320), so a
+        // transient reading from the interrupted animation can reach `sampleAction`. The 150 ms debounce
+        // on `widthSaveTask` coalesces only the UserDefaults write, NOT the `panelWidth` write, which
+        // lands immediately -- so the protection is `sampleAction`'s floor guard, not the debounce: a
+        // reading below `minWidth` is `.ignoreUnsettled`, never clamped up and persisted as the user's
+        // width.
+        toggleAnimationToken = UUID()
+        isAnimatingToggle = false
+        lastSampledWidth = nil
         panelWidth = becomingVisible
             ? AnnotationPanelWidth.clamp(AnnotationPanelWidth.load(from: .standard))
             : 0
