@@ -6,6 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.134] - 2026-09-21
+
+### Added
+
+- **Each project now remembers how you like its annotations shown** — whether Task, Comment, and Reference notes appear inline or collapsed, whether they show in the side panel only, and whether completed ones are hidden. The eye menu's Set as Default button saves your choices as the starting point for any project that doesn't have its own yet. The old General pane in Settings is gone, so Settings now opens on Export.
+- **Focus Mode has a new Inline Annotations setting** — leave annotations as they are, collapse them, or hide them while Focus Mode is on, without changing what each project has saved. It also applies to a project you open while Focus Mode is already on. The Focus preferences now say "Hide Outline Panel" and "Hide Annotations Panel."
+
+### Changed
+
+- **The Outline sidebar's divider no longer makes the whole window grow when you drag it wider.** Dragging the divider all the way to collapse the sidebar no longer works (it stops at its minimum width); to hide the sidebar, use the new button at the left of the toolbar, the View menu, or ⌘[. Whether the sidebar is hidden or shown is not remembered between launches.
+
+### Fixed
+
+- **The side-notes panel could re-open itself right after being hidden**, which showed up as it staying open in Focus Mode — fixed.
+- **Clicking a note card in the Annotations panel could scroll the editor to the wrong annotation** — one that came after the one you clicked, by as many places as you had Document Notes — fixed.
+- **If the editor stopped responding for a moment, the app's background saving could stall for good**, so footnote inserts, bibliography and Notes rebuilds, exports, and quitting could wait indefinitely or go ahead without your newest text — fixed; the app now gives up on the stuck check after a short wait and carries on.
+- **In rare timing, an older automatic save finishing after a newer one could put older text back into a paragraph you had just edited** — fixed; the app now refuses an older save that arrives late.
+- **Editing headings could sometimes attach one section's status, tags, or word-count goal to a different section** — fixed; the outline now matches sections to their saved details more carefully.
+
 ## [0.2.133] - 2026-09-11
 
 ### Added
