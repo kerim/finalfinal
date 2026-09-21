@@ -65,17 +65,38 @@ struct OutlineSidebarPane: View {
     /// re-show width itself rather than relying on AppKit happening to remember the divider.
     @State private var lastVisibleWidth: CGFloat = OutlineSidebarWidth.idealWidth
 
-    /// True once the first layout after launch has been reconciled (see `reconcileWidth`). Guards
-    /// the one-time "position the divider" step so it cannot run on every layout pass.
+    /// True once the launch step (see `positionDividerAtLaunchWidthIfUnsaved`) has been RESOLVED:
+    /// the divider was positioned, a saved position was left to AppKit, or the launch poll gave
+    /// up. Until then `reconcileWidth` adopts nothing, so AppKit's default width can never be
+    /// written into `sidebarWidth`/`lastVisibleWidth`, and an unresolved flag makes it return
+    /// early forever. It is set through `resolveLaunchStep()`, which every exit of the launch poll
+    /// uses except two that write nothing: `.onDisappear`, where the view is going away and nothing
+    /// reads the flag again, and a poll that was cancelled from outside -- its canceller either is
+    /// `.onDisappear` or (`endLaunchPositioningPoll`) has already resolved the step itself.
     @State private var hasReconciledFirstLayout = false
 
-    /// Snapshot of `SplitViewAutosaveNaming.hasAutosavedDividerPosition` taken at `onAppear`, i.e.
-    /// before this launch has laid the split view out. `nil` means the check could not be taken
-    /// then, in which case it is retried at first layout. The snapshot exists because AppKit writes
-    /// the autosave key as soon as it lays the split view out: a check taken after that would
-    /// describe THIS launch's own default layout rather than what a previous session saved, and
-    /// would wrongly suppress the 300pt default positioning.
-    @State private var launchHadSavedDividerPosition: Bool?
+    /// The active retry for the launch step, started at `onAppear`. `reconcileWidth` alone cannot
+    /// retry it: it only runs when the pane's width CHANGES, and a pane stuck at AppKit's default
+    /// never reports another change (bt t-218cac62).
+    @State private var launchPositioningTask: Task<Void, Never>?
+
+    /// Attempt count and last-logged outcome, so the `[OutlineLaunchWidth]` diagnostic line is
+    /// throttled instead of written once per poll tick. A reference box on purpose: mutating a
+    /// value-type `@State` on every attempt would invalidate this pane's body up to 30 times
+    /// during a slow launch, and a box's contents changing invalidates nothing.
+    @State private var launchPositioningProgress = LaunchPositioningProgress()
+
+    /// The launch poll's budget: 30 ticks 100 ms apart, about 3 s. That full budget is spent only
+    /// WAITING (no window, name unreadable, stabilization pending, split view not laid out yet).
+    /// A reachable split view that `setPosition` ran against but that did not land is capped at
+    /// `launchPositioningMaxNotLanded` consecutive ticks instead (10, about 1 s, which leaves about
+    /// 2 s of the budget for the other waits). A landing is believed only once
+    /// `launchPositioningConfirmingLandings` consecutive attempts have read it back, or on the
+    /// final attempt.
+    private static let launchPositioningMaxTicks = 30
+    private static let launchPositioningMaxNotLanded = 10
+    private static let launchPositioningConfirmingLandings = 2
+    private static let launchPositioningInterval: Duration = .milliseconds(100)
 
     /// The in-flight divider animation, so a newer toggle can cancel a running one.
     @State private var dividerAnimationTask: Task<Void, Never>?
@@ -198,16 +219,21 @@ struct OutlineSidebarPane: View {
             if !editorState.isOutlineSidebarVisible {
                 sidebarWidth = 0
             }
-            // Snapshot whether this launch has an autosaved divider position to honour, BEFORE
-            // this launch's own layout can write that key (see the property's doc comment).
-            if let window = AppDelegate.shared?.mainWindow {
-                launchHadSavedDividerPosition = SplitViewAutosaveNaming.hasAutosavedDividerPosition(in: window)
-            }
+            startLaunchPositioningPoll()
             // t-784ff3aa: a stale instant-toggle flag set before this view existed (e.g. the
             // window was rebuilt mid Focus Mode, the same scenario the comment above already
             // accounts for) has no onChange left to consume it -- clear it defensively so it
             // can't wrongly de-snap this fresh pane's next, unrelated toggle.
             editorState.isOutlineSidebarToggleInstant = false
+        }
+        .onDisappear {
+            // The one exit that cancels the launch poll WITHOUT resolving the launch step: the view
+            // is going away, so nothing reads `hasReconciledFirstLayout` again, and neither the poll
+            // nor a divider animation may outlive the window and touch
+            // `AppDelegate.shared?.mainWindow` after teardown.
+            launchPositioningTask?.cancel()
+            launchPositioningTask = nil
+            dividerAnimationTask?.cancel()
         }
         .onChange(of: editorState.isOutlineSidebarVisible) { _, newValue in
             if editorState.isOutlineSidebarToggleInstant {
@@ -253,46 +279,28 @@ struct OutlineSidebarPane: View {
         guard !isAnimatingToggle else { return }
         guard editorState.isOutlineSidebarVisible else { return }
 
-        // One-time launch step. Deliberately only consumed when the window is actually reachable:
-        // if the app delegate has not captured it yet, a later observation retries rather than
-        // leaving the pane at whatever AppKit's default layout produced.
-        if !hasReconciledFirstLayout, AppDelegate.shared?.mainWindow != nil {
-            hasReconciledFirstLayout = true
-            if positionDividerAtLaunchWidthIfUnsaved() {
-                // The divider has just been moved to the launch width, so this pass's `newWidth`
-                // is the PRE-move layout (AppKit's maximum). Do not adopt it.
-                return
-            }
+        // One-time launch step (the fast path; the launch poll is its retry). Only a saved position
+        // falls through to adoption. A positioned divider returns because this pass's `newWidth` is
+        // the PRE-move layout (AppKit's maximum), and an unresolved attempt returns because adopting
+        // now would write AppKit's default width into `sidebarWidth`/`lastVisibleWidth`.
+        if !hasReconciledFirstLayout {
+            guard attemptLaunchPositioning(isFinalAttempt: false) == .savedPositionWins else { return }
         }
 
-        guard newWidth >= OutlineSidebarWidth.minWidth else { return }
-        #if DEBUG
-        DebugLog.log(.viewUpdates, "[OutlineWidth] adopt \(newWidth)")
-        #endif
-        sidebarWidth = OutlineSidebarWidth.clamp(newWidth)
-        lastVisibleWidth = sidebarWidth
+        adoptObservedWidth(newWidth)
     }
 
-    /// First-layout step: give the divider an explicit position for this launch.
-    ///
-    /// `HSplitView` does not apply the pane's `idealWidth`, so with nothing saved AppKit gives the
-    /// leading pane its maximum (400pt) instead of the 300pt default. When AppKit does have a saved
-    /// divider position to honour, that restore is authoritative and this does nothing. Uses the
-    /// `onAppear` snapshot when it exists, and re-checks otherwise. Returns whether it positioned
-    /// the divider.
-    private func positionDividerAtLaunchWidthIfUnsaved() -> Bool {
-        guard let window = AppDelegate.shared?.mainWindow else { return false }
-        let hadSavedPosition = launchHadSavedDividerPosition
-            ?? SplitViewAutosaveNaming.hasAutosavedDividerPosition(in: window)
-        guard !hadSavedPosition else { return false }
-
-        let launchWidth = OutlineSidebarWidth.idealWidth
-        guard SplitViewAutosaveNaming.setTopLevelDividerPosition(launchWidth, in: window, animated: false) else {
-            return false
-        }
-        sidebarWidth = launchWidth
-        lastVisibleWidth = launchWidth
-        return true
+    /// Adopts `width` as the in-session width, ignoring one below `minWidth` (see
+    /// `reconcileWidth`). Shared with the launch poll's exits, because no geometry callback follows
+    /// a poll that resolves without moving the divider, so nothing else would adopt the width AppKit
+    /// left there.
+    private func adoptObservedWidth(_ width: CGFloat) {
+        guard width >= OutlineSidebarWidth.minWidth else { return }
+        #if DEBUG
+        DebugLog.log(.viewUpdates, "[OutlineWidth] adopt \(width)")
+        #endif
+        sidebarWidth = OutlineSidebarWidth.clamp(width)
+        lastVisibleWidth = sidebarWidth
     }
 
     /// The current divider position, or `nil` when the split view cannot be reached yet.
@@ -333,6 +341,9 @@ struct OutlineSidebarPane: View {
     /// (toolbar button, View menu, ⌘[) keeps this method and its stepped divider unchanged, and
     /// `.panelToggle` remains its only curve.
     private func animateToggle(becomingVisible: Bool) {
+        // A toggle inside the launch poll's first ~3 s takes over the divider: end the poll, and
+        // resolve the launch step so it does not compete with `animateDivider` below.
+        endLaunchPositioningPoll()
         isAnimatingToggle = true
         let token = UUID()
         toggleAnimationToken = token
@@ -408,6 +419,9 @@ struct OutlineSidebarPane: View {
     /// the pane ends up at AppKit's 250pt floor rather than `lastVisibleWidth` -- acceptable,
     /// since nothing could have positioned the divider anyway.
     private func snapToggle(becomingVisible: Bool) {
+        // Same as `animateToggle`: the snap takes over the divider from the launch poll, and the
+        // launch step is resolved on the way out.
+        endLaunchPositioningPoll()
         let restore = lastVisibleWidth
         #if DEBUG
         DebugLog.log(.viewUpdates, "[OutlineSnap] read lastVisibleWidth \(restore) becomingVisible \(becomingVisible)")
@@ -430,5 +444,355 @@ struct OutlineSidebarPane: View {
             DebugLog.log(.viewUpdates, "[OutlineSnap] move ok \(moved) target 0")
             #endif
         }
+    }
+}
+
+// MARK: - Launch positioning
+// The Outline's launch-width step (bt t-218cac62), in an extension so the view struct stays inside
+// the type-body limit; the state it works on stays in the struct.
+
+extension OutlineSidebarPane {
+    /// First-layout step: give the divider an explicit position for this launch.
+    ///
+    /// `HSplitView` does not apply the pane's `idealWidth`, so with nothing saved AppKit gives the
+    /// leading pane its maximum (400pt) instead of the 300pt default. When a previous session saved
+    /// a divider position, AppKit's restore is authoritative and this does nothing. The outcome is
+    /// explicit so "AppKit's restore wins", "not decidable yet" and "moved but did not land" are
+    /// never the same answer.
+    ///
+    /// The rule itself is `SplitViewAutosaveNaming.launchDecision`, a pure function; this method
+    /// only gathers what AppKit can tell it (`reading`) and acts on the answer. The launch snapshot
+    /// is consumed HERE, and only on a path where it answered and the step resolved (a saved
+    /// position left to AppKit, or the divider positioned and confirmed) -- never on a wait, and
+    /// never by the hidden-pane, toggle or exhaustion exits, which resolve without consulting it.
+    /// Landing and its confirmation are in `positionDivider(atLaunchWidthIn:isFinalAttempt:)`.
+    private func positionDividerAtLaunchWidthIfUnsaved(
+        _ reading: LaunchPositioningReading,
+        isFinalAttempt: Bool
+    ) -> LaunchPositioningOutcome {
+        let liveKeyPresent = reading.snapshotKeys == nil
+            && (reading.window.map { SplitViewAutosaveNaming.hasAutosavedDividerPosition(in: $0) } ?? false)
+        let inputs = SplitViewAutosaveNaming.LaunchInputs(
+            snapshotKeys: reading.snapshotKeys,
+            hasWindow: reading.window != nil,
+            liveName: reading.liveName,
+            liveKeyPresent: liveKeyPresent,
+            currentPosition: reading.dividerPosition,
+            paneIsVisible: editorState.isOutlineSidebarVisible,
+            isFinalAttempt: isFinalAttempt
+        )
+        switch SplitViewAutosaveNaming.launchDecision(inputs) {
+        case .wait(let reason):
+            return .waiting(reason)
+        case .savedPositionWins:
+            SplitViewAutosaveNaming.consumeLaunchSplitViewFrameKeys()
+            return .savedPositionWins
+        case .positionAtLaunchWidth:
+            return reading.window.map {
+                positionDivider(atLaunchWidthIn: $0, isFinalAttempt: isFinalAttempt)
+            } ?? .waiting(.noWindow)
+        }
+    }
+
+    /// Sets the divider to the launch width and reports whether it landed and whether that landing
+    /// is believed. On any landing it adopts the READ-BACK position (not the target) into
+    /// `sidebarWidth`/`lastVisibleWidth`, so a divider AppKit clamped to the floor is adopted where
+    /// it is. Only a CONFIRMED landing -- the second consecutive one (`launchPositioningConfirmingLandings`),
+    /// or the final attempt -- returns `.positioned`, which resolves the step and retires the launch
+    /// snapshot. The first is `.landedUnconfirmed`: a single synchronous read-back can be true while
+    /// `HSplitView` has not yet run its own first layout, which would then apply AppKit's 400pt to a
+    /// step already resolved and no longer watched. `.notLanded` (reachable, set, read back elsewhere)
+    /// is capped at `launchPositioningMaxNotLanded` consecutive attempts; `.splitViewNotReady`
+    /// (`setPosition` refused: not laid out) keeps the full poll budget.
+    ///
+    /// `outcome=positioned landed=250.0` beside a failing width assertion means window and panel
+    /// geometry (a constrained Outline legitimately sits at its floor), not the decision rule.
+    private func positionDivider(atLaunchWidthIn window: NSWindow, isFinalAttempt: Bool) -> LaunchPositioningOutcome {
+        let launchWidth = OutlineSidebarWidth.idealWidth
+        guard SplitViewAutosaveNaming.setTopLevelDividerPosition(launchWidth, in: window, animated: false) else {
+            return .splitViewNotReady
+        }
+        let readBack = SplitViewAutosaveNaming.topLevelDividerPosition(in: window)
+        guard let landed = SplitViewAutosaveNaming.landedPosition(
+            readBack, target: launchWidth, floor: OutlineSidebarWidth.minWidth
+        ) else {
+            return .notLanded(readBack)
+        }
+        sidebarWidth = OutlineSidebarWidth.clamp(landed)
+        lastVisibleWidth = sidebarWidth
+        let landings = launchPositioningProgress.landedStreak + 1
+        guard isFinalAttempt || landings >= Self.launchPositioningConfirmingLandings else {
+            return .landedUnconfirmed(landed)
+        }
+        SplitViewAutosaveNaming.consumeLaunchSplitViewFrameKeys()
+        return .positioned(landed)
+    }
+
+    /// Everything one attempt can read, gathered BEFORE it acts. The diagnostic line reports this
+    /// rather than re-reading afterwards, because acting can consume the launch snapshot and move
+    /// the divider, and the line is the only evidence the manual verification steps have.
+    private func readLaunchPositioningState() -> LaunchPositioningReading {
+        let window = AppDelegate.shared?.mainWindow
+        return LaunchPositioningReading(
+            window: window,
+            liveName: window.flatMap { SplitViewAutosaveNaming.currentTopLevelAutosaveName(in: $0) },
+            snapshotKeys: SplitViewAutosaveNaming.launchSplitViewFrameKeys,
+            dividerPosition: window.flatMap { SplitViewAutosaveNaming.topLevelDividerPosition(in: $0) }
+        )
+    }
+
+    /// One attempt at the launch step, called from BOTH `reconcileWidth` (the fast path) and the
+    /// launch poll; `isFinalAttempt` is true only for the poll's last tick. Resolves the step only
+    /// on a resolved outcome (`.positioned` once confirmed, or `.savedPositionWins`): resolving
+    /// before the outcome is known is what let a reachable window with an unreachable split view
+    /// burn the one-time step. An unconfirmed landing leaves the step open for the poll, on the
+    /// fast path too; the `launchPositioningMaxNotLanded`th consecutive `.notLanded` gives up (see
+    /// `giveUpLaunchPositioning`). Both callers run on the main actor and are gated by
+    /// `hasReconciledFirstLayout`, so the divider is never moved twice.
+    fileprivate func attemptLaunchPositioning(isFinalAttempt: Bool) -> LaunchPositioningOutcome {
+        let reading = readLaunchPositioningState()
+        let outcome = positionDividerAtLaunchWidthIfUnsaved(reading, isFinalAttempt: isFinalAttempt)
+        if launchPositioningProgress.recordAttempt(outcome) {
+            DebugLog.log(
+                .lifecycle,
+                launchPositioningLogLine(reading, outcome: outcome.label, landed: outcome.readBackPosition)
+            )
+        }
+        if outcome.isResolved {
+            resolveLaunchStep()
+        } else if launchPositioningProgress.notLandedStreak >= Self.launchPositioningMaxNotLanded {
+            giveUpLaunchPositioning(
+                outcome: "notLandedCap", detail: "streak=\(launchPositioningProgress.notLandedStreak)"
+            )
+        }
+        return outcome
+    }
+
+    /// Resolves the launch step: `reconcileWidth` may now adopt widths. It does ONLY that, and
+    /// deliberately does not consume the launch snapshot: it is reached from exits that never
+    /// consulted it (the hidden-pane gate, `endLaunchPositioningPoll` on every toggle), and consuming
+    /// there would leave the next pane a live check that can only see this launch's own autosave.
+    private func resolveLaunchStep() {
+        hasReconciledFirstLayout = true
+    }
+
+    /// Retries the launch step actively, because `reconcileWidth` cannot: it only runs when the
+    /// pane's width changes, and a pane stuck at AppKit's default never reports another change.
+    /// Started from `onAppear`; polls up to `launchPositioningMaxTicks` times, stopping at the
+    /// first resolved outcome. Every way out resolves the step through `resolveLaunchStep` (a
+    /// resolved outcome, a tick that finds the poll no longer applicable, exhaustion), except a
+    /// cancelled poll, which writes nothing (see `hasReconciledFirstLayout`): an unresolved flag
+    /// would make `reconcileWidth` return early forever.
+    ///
+    /// The last tick is the FINAL attempt: a launch still waiting for `stabilize(for:)` then
+    /// positions the divider at the launch width and adopts where it read back. So exhaustion moves
+    /// nothing only when the window, the split view or its autosave name stayed unreadable (or the
+    /// split view never laid out) for all `launchPositioningMaxTicks` ticks; it then adopts the
+    /// width the divider is at and resolves the step.
+    fileprivate func startLaunchPositioningPoll() {
+        guard launchPositioningTask == nil else { return }
+        launchPositioningTask = Task { @MainActor in
+            // Only a poll that ran to its own end clears the handle. A cancelled one was already
+            // cleared by its canceller, and a poll started since must not lose ITS handle to this
+            // one draining late.
+            defer { if !Task.isCancelled { launchPositioningTask = nil } }
+            for tick in 1...Self.launchPositioningMaxTicks {
+                guard !Task.isCancelled else { return }
+                if launchPositioningTickIsFinal(isFinalAttempt: tick == Self.launchPositioningMaxTicks) { return }
+                if tick < Self.launchPositioningMaxTicks {
+                    try? await Task.sleep(for: Self.launchPositioningInterval)
+                }
+            }
+            giveUpLaunchPositioning(outcome: "exhausted", detail: "ticks=\(Self.launchPositioningMaxTicks)")
+        }
+    }
+
+    /// One poll tick; true when the poll is over (the step is resolved, however -- an attempt can
+    /// resolve it by giving up on a `.notLanded` streak). The gate is re-evaluated on EVERY tick: an
+    /// in-flight toggle ends the poll rather than competing with `animateDivider`/`snapToggle`, and
+    /// a pane hidden at launch has nothing to position. A poll-side `.savedPositionWins` adopts the
+    /// width AppKit restored, because no geometry callback follows to do it.
+    private func launchPositioningTickIsFinal(isFinalAttempt: Bool) -> Bool {
+        guard launchPollCanRun else {
+            resolveLaunchStep()
+            return true
+        }
+        if attemptLaunchPositioning(isFinalAttempt: isFinalAttempt) == .savedPositionWins {
+            adoptLiveDividerWidth()
+        }
+        return hasReconciledFirstLayout
+    }
+
+    /// Whether the launch poll may still act; see `launchPositioningTickIsFinal`.
+    private var launchPollCanRun: Bool {
+        !hasReconciledFirstLayout && !isAnimatingToggle && editorState.isOutlineSidebarVisible
+    }
+
+    /// Adopts wherever the divider currently sits, when it can be read.
+    private func adoptLiveDividerWidth() {
+        if let live = currentDividerPosition() {
+            adoptObservedWidth(live)
+        }
+    }
+
+    /// Ends the launch poll because a toggle took over the divider (as opposed to the view going
+    /// away, which is `.onDisappear`'s plain cancel). Resolves the launch step synchronously,
+    /// before cancelling, so `reconcileWidth` is handed back to normal width adoption instead of
+    /// returning early forever -- nothing depends on the cancelled poll's own drain to do it. It
+    /// does not consume the launch snapshot (see `resolveLaunchStep`).
+    fileprivate func endLaunchPositioningPoll() {
+        resolveLaunchStep()
+        launchPositioningTask?.cancel()
+        launchPositioningTask = nil
+    }
+
+    /// Gives up on positioning the divider: the poll ran out (`exhausted`) or the divider stayed
+    /// reachable but never landed (`notLandedCap`). Resolves the step and adopts the width the
+    /// divider is at, since no geometry callback is guaranteed. Not "AppKit's layout stands" in
+    /// general: a launch only waiting for stabilization was already positioned by the final
+    /// attempt. It does not consume the launch snapshot, which it never consulted.
+    private func giveUpLaunchPositioning(outcome: String, detail: String) {
+        DebugLog.log(
+            .lifecycle,
+            launchPositioningLogLine(readLaunchPositioningState(), outcome: outcome, detail: detail)
+        )
+        resolveLaunchStep()
+        adoptLiveDividerWidth()
+    }
+
+    /// The `[OutlineLaunchWidth]` diagnostic line, from what the attempt READ before it acted
+    /// (`reading`), joined from an array so the type checker is not handed one long `+` chain.
+    /// `name` is the live autosave name (nil while unreadable), `launchKeys` the launch snapshot's
+    /// key count (nil once consumed or never captured), `divider` the leading pane's width before
+    /// the attempt acted, `landed` where it read back afterwards (nil when nothing was set).
+    private func launchPositioningLogLine(
+        _ reading: LaunchPositioningReading,
+        outcome: String,
+        landed: CGFloat? = nil,
+        detail: String? = nil
+    ) -> String {
+        var fields = [
+            "[OutlineLaunchWidth] attempt=\(launchPositioningProgress.attempts)",
+            "window=\(reading.window != nil)",
+            "name=\(describe(reading.liveName))",
+            "launchKeys=\(describe(reading.snapshotKeys?.count))",
+            "divider=\(describe(reading.dividerPosition))",
+            "landed=\(describe(landed))",
+            "target=\(OutlineSidebarWidth.idealWidth)",
+            "outcome=\(outcome)"
+        ]
+        if let detail { fields.append(detail) }
+        return fields.joined(separator: " ")
+    }
+
+    /// An Optional as plain text -- `nil`, or the value without `Optional(...)` around it.
+    private func describe<T>(_ value: T?) -> String {
+        value.map { "\($0)" } ?? "nil"
+    }
+}
+
+/// What one attempt at the launch positioning step concluded. `positioned` and `savedPositionWins`
+/// RESOLVE the step; the rest leave it open. They are kept apart because they mean different things
+/// to whoever debugs a 400pt launch (each `label` is what the log's `outcome=` field prints).
+private enum LaunchPositioningOutcome: Equatable {
+    /// The divider was moved to the launch width and read back there (the payload), and the landing
+    /// is CONFIRMED: this is the second consecutive landing, or the final attempt.
+    case positioned(CGFloat)
+    /// The divider read back at the launch width (the payload) for the first time in a row. Not
+    /// believed yet, so it resolves and consumes nothing; the poll re-sets the divider to confirm.
+    case landedUnconfirmed(CGFloat)
+    /// A previous session saved a divider position, so AppKit's own restore is authoritative.
+    case savedPositionWins
+    /// Not decidable yet: no window, the split view's autosave name unreadable, or stabilization
+    /// still pending. Retried on the full poll budget; consumes nothing.
+    case waiting(SplitViewAutosaveNaming.LaunchWaitReason)
+    /// The decision was to position, but `setPosition` was refused: the split view is not laid out
+    /// yet (or does not have two panes). Retried on the full poll budget.
+    case splitViewNotReady
+    /// `setPosition` ran against a reachable split view but the divider read back elsewhere (the
+    /// payload). Capped at `launchPositioningMaxNotLanded` consecutive attempts.
+    case notLanded(CGFloat?)
+
+    /// Whether this outcome resolves the launch step.
+    var isResolved: Bool {
+        switch self {
+        case .positioned, .savedPositionWins: return true
+        case .landedUnconfirmed, .waiting, .splitViewNotReady, .notLanded: return false
+        }
+    }
+
+    /// The `outcome=` text: the case, with the wait reason spelled out.
+    var label: String {
+        switch self {
+        case .positioned: return "positioned"
+        case .landedUnconfirmed: return "landedUnconfirmed"
+        case .savedPositionWins: return "savedPositionWins"
+        case .waiting(let reason): return "waiting(\(reason.rawValue))"
+        case .splitViewNotReady: return "splitViewNotReady"
+        case .notLanded: return "notLanded"
+        }
+    }
+
+    /// Where the divider read back after `setPosition`, for the diagnostic line.
+    var readBackPosition: CGFloat? {
+        switch self {
+        case .positioned(let landed), .landedUnconfirmed(let landed): return landed
+        case .notLanded(let readBack): return readBack
+        case .savedPositionWins, .waiting, .splitViewNotReady: return nil
+        }
+    }
+
+    /// Whether `setPosition` ran and the divider read back at the launch width, confirmed or not.
+    var isLanding: Bool {
+        switch self {
+        case .positioned, .landedUnconfirmed: return true
+        case .savedPositionWins, .waiting, .splitViewNotReady, .notLanded: return false
+        }
+    }
+}
+
+/// What one launch attempt could read, gathered before it acted (see
+/// `OutlineSidebarPane.readLaunchPositioningState`).
+private struct LaunchPositioningReading {
+    let window: NSWindow?
+    /// The top-level split view's live autosave name; nil when it cannot be read.
+    let liveName: String?
+    /// The launch snapshot as it stood BEFORE this attempt could consume it.
+    let snapshotKeys: Set<String>?
+    /// The leading pane's width before the attempt acted; nil when unreadable.
+    let dividerPosition: CGFloat?
+}
+
+/// Throttle and streak state for the launch step, which must not write the `[OutlineLaunchWidth]`
+/// diagnostic line once per poll tick. A class, held in the pane's `@State`, so that recording an
+/// attempt mutates the box and never the `@State` value itself -- the latter would invalidate the
+/// pane's body on every tick.
+private final class LaunchPositioningProgress {
+    /// The diagnostic line is also written unconditionally on every Nth attempt, so a stuck state
+    /// shows its duration instead of one line and seconds of silence.
+    private static let heartbeatEvery = 10
+
+    private(set) var attempts = 0
+    /// Consecutive `.notLanded` attempts; any other outcome resets it, and a landing does.
+    private(set) var notLandedStreak = 0
+    /// Consecutive landings (`.landedUnconfirmed` or `.positioned`) BEFORE the attempt in flight;
+    /// a non-landing resets it. Read to decide whether an attempt's own landing is the confirming one.
+    private(set) var landedStreak = 0
+    private var lastLabel: String?
+
+    /// Counts one attempt, updates both streaks, and returns whether the attempt deserves a
+    /// diagnostic line: the first attempt, every change of outcome (which covers the final
+    /// resolution, always a change from an unresolved outcome or the first attempt), and every
+    /// `heartbeatEvery`th attempt regardless, so a long wait reports on a fixed cadence.
+    func recordAttempt(_ outcome: LaunchPositioningOutcome) -> Bool {
+        attempts += 1
+        if case .notLanded = outcome {
+            notLandedStreak += 1
+        } else {
+            notLandedStreak = 0
+        }
+        landedStreak = outcome.isLanding ? landedStreak + 1 : 0
+        defer { lastLabel = outcome.label }
+        return attempts == 1 || attempts % Self.heartbeatEvery == 0 || outcome.label != lastLabel
     }
 }

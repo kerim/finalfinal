@@ -31,6 +31,11 @@
 //  fails after its own cmd-[ cannot hand a hidden sidebar to the next one. XCTest's alphabetical
 //  order does not matter.
 //
+//  Structure. The class body holds only the constants, `setUp`/`tearDown` and the four `test...`
+//  methods; the launch/toggle helpers and the geometry helpers live in same-file extensions below
+//  it (which still see the class's `private` members), so the class stays under SwiftLint's
+//  `type_body_length` limit.
+//
 //  The `[SidebarWidthE2E]` emitters are plain test-side output (`print`, the same channel
 //  `TestFixtureHelper` uses) recording the measured column/window/editor/annotations widths at
 //  each stage, so a VM run can be read rather than only believed.
@@ -103,8 +108,18 @@ final class SidebarWidthBoundsE2ETests: XCTestCase {
         // `idealWidth`, which used to leave the pane at its 400pt maximum). Waits rather than
         // asserting instantly: the positioning lands on the pane's first layout, which can be a
         // moment after the sidebar is first measurable.
+        //
+        // The settle result is read FIRST and asserted only after the launch evidence is attached:
+        // `continueAfterFailure = false` ends this method at the first failure, so evidence taken
+        // after the assertion would never exist in exactly the run that needs it. In that failing
+        // case the settle polls its whole 15s, well past the app's launch-positioning poll (up to
+        // ~3s), so the app's final `[OutlineLaunchWidth]` line is in the diagnostic log by then.
+        // (A passing run may return sooner and capture an earlier line; the evidence exists to
+        // explain a failure.)
+        let launchSettled = settleColumnWidth(Self.idealWidth)
+        attachOutlineLaunchEvidence()
         XCTAssertTrue(
-            settleColumnWidth(Self.idealWidth),
+            launchSettled,
             "A launch with no autosaved divider position should open the Outline at the shared "
                 + "default of \(Self.idealWidth)pt -- `OutlineSidebarPane` positions the divider via "
                 + "`SplitViewAutosaveNaming.setTopLevelDividerPosition` because `HSplitView` ignores "
@@ -350,11 +365,20 @@ final class SidebarWidthBoundsE2ETests: XCTestCase {
     //
     // What IS still asserted about a launch: the achieved window width (1000 +/- 5, in
     // `launch(width:)`) and the split view's own bounds, both of which are layout, not persistence.
+}
 
-    // MARK: - Launch / toggle helpers
+// MARK: - Launch / toggle helpers
+
+extension SidebarWidthBoundsE2ETests {
 
     private func launch(width: CGFloat) {
         app.launchEnvironment["FF_UI_TESTING_WINDOW_WIDTH"] = String(Int(width))
+        // Forces the app's persistent diagnostic sink on (`DiagnosticLogFile.isEnabled` reads this
+        // straight from the environment, bypassing the hermetic UserDefaults wipe) so the
+        // `[OutlineLaunchWidth]` line the launch positioning writes reaches the diagnostic file
+        // `attachOutlineLaunchEvidence()` reads. Must be set BEFORE `launchForTesting`, which only
+        // adds its own two keys to `launchEnvironment` and never clears the rest.
+        app.launchEnvironment["FF_UI_TESTING_FORCE_DIAGNOSTIC_LOGGING"] = "1"
         app.launchForTesting(fixturePath: TestFixtureHelper.fixturePath)
         // The achieved width is asserted, not assumed: a silently broken
         // FF_UI_TESTING_WINDOW_WIDTH would leave every drag delta below meaning something other
@@ -385,6 +409,46 @@ final class SidebarWidthBoundsE2ETests: XCTestCase {
                 + "editor=\(String(format: "%.1f", editorAreaWidth())) "
                 + "annotations=\(annotationsWidthDescription(annotationsPanelWidth()))"
         )
+    }
+
+    /// Records HOW the launch positioned the Outline divider, whether or not the launch width
+    /// assertion goes on to pass: the app's `[OutlineLaunchWidth]` diagnostic lines (read from its
+    /// persistent diagnostic log), plus a screenshot of the launched window.
+    ///
+    /// The lines are printed on the `[SidebarWidthE2E]` channel (lands in `xcodebuild.log`) AND
+    /// attached as `outline-launch-width-log`. "No lines" is itself evidence, so the two ways it can
+    /// happen read differently: the log could not be read at all (a wrong path or a sandboxed read,
+    /// with `AppFileHelper`'s attempted paths in the message), versus the file was read and simply
+    /// holds no such line (the app never logged one, or diagnostics never turned on). Every line in
+    /// the log carries an ISO timestamp, so lines from an earlier launch in the same guest are
+    /// distinguishable from this one's. Only the active `diagnostic.log` is read (not the rotated
+    /// slots), which is stated in the zero-lines message so a rotation cannot masquerade as silence.
+    private func attachOutlineLaunchEvidence() {
+        let marker = "[OutlineLaunchWidth]"
+        let logRelativePath = "Library/Application Support/com.kerim.final-final/Diagnostics/diagnostic.log"
+        let report: String
+        do {
+            let contents = try AppFileHelper.read(appRelativePath: logRelativePath)
+            let lines = contents.components(separatedBy: "\n").filter { $0.contains(marker) }
+            if lines.isEmpty {
+                report = "[SidebarWidthE2E] launch-positioning: no \(marker) lines found "
+                    + "(file read but zero matching lines; only the active diagnostic.log was read, "
+                    + "not its rotated slots)"
+            } else {
+                report = "[SidebarWidthE2E] launch-positioning:\n" + lines.joined(separator: "\n")
+            }
+        } catch {
+            report = "[SidebarWidthE2E] launch-positioning: no \(marker) lines found "
+                + "(log unreadable: \(error))"
+        }
+        print(report)
+
+        let attachment = XCTAttachment(string: report)
+        attachment.name = "outline-launch-width-log"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+
+        attachEvidenceScreenshot(app.screenshot(), name: "outline-at-launch")
     }
 
     /// Shows the Outline when the toggle positively reports it is hidden.
@@ -447,8 +511,11 @@ final class SidebarWidthBoundsE2ETests: XCTestCase {
         )
         return XCTWaiter().wait(for: [expectation], timeout: timeout) == .completed
     }
+}
 
-    // MARK: - Geometry helpers
+// MARK: - Geometry helpers
+
+extension SidebarWidthBoundsE2ETests {
 
     private var editorArea: XCUIElement { app.groups["editor-area"] }
 

@@ -116,6 +116,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             AppDefaults.wipeTestDomainForUITesting()
         }
 
+        // Snapshot which split-view divider positions a PREVIOUS session saved. It has to be taken
+        // here, before any window exists: once the split view lays out, AppKit writes its own
+        // autosave key, and a snapshot taken any later can read THIS launch's write and wrongly
+        // suppress the Outline sidebar's 300pt launch width (bt t-218cac62). A UI-test launch has
+        // just wiped the domain, so it captures the empty set without reading it back.
+        SplitViewAutosaveNaming.captureLaunchSplitViewFrameKeys(fromDomainNamed: Bundle.main.bundleIdentifier, domainWasWiped: TestMode.isUITesting)
+
         // In test mode, clean saved application state from the CORRECT path.
         // The test runner can't do this because its NSHomeDirectory() is containerized
         // and points to the wrong location. The app's NSHomeDirectory() is the real user home.
