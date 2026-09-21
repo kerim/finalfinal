@@ -455,20 +455,6 @@ class EditorViewState {
     /// next unrelated toggle.
     var isAnnotationPanelToggleInstant: Bool = false
 
-    /// Set immediately before Focus Mode (only) mutates `isOutlineSidebarVisible` -- consumed and
-    /// cleared by `OutlineSidebarPane`'s own `onChange` handler, so that EXACTLY that one
-    /// visibility flip snaps the pane and its divider instantly (see `snapToggle`) instead of
-    /// running `animateToggle`'s stepped 250ms `.panelToggle` animation, matching the release
-    /// build's old behavior of removing the pane from the view tree outright on Focus Mode
-    /// entry/exit. Every other trigger (toolbar button, View menu, ⌘[) never touches this flag,
-    /// and `toggleOutlineSidebar()` clears it defensively on the way in. `EditorViewState
-    /// +FocusMode.swift` sets this ONLY when the upcoming assignment will actually change the
-    /// value (so a Focus Mode entry/exit that leaves the pane's visibility untouched, e.g. it
-    /// was already hidden before entering, never sets a flag nothing will consume) -- a flag
-    /// left set with no visibility change to consume it would otherwise leak into, and wrongly
-    /// de-snap, the next unrelated toggle.
-    var isOutlineSidebarToggleInstant: Bool = false
-
     /// Whether the outline sidebar is visible
     var isOutlineSidebarVisible: Bool = true
 

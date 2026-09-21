@@ -177,8 +177,6 @@ extension EditorViewState {
 
     /// Toggle outline sidebar visibility
     func toggleOutlineSidebar() {
-        // A Focus Mode arm must never survive into a plain toggle and de-snap it.
-        isOutlineSidebarToggleInstant = false
         isOutlineSidebarVisible.toggle()
     }
 

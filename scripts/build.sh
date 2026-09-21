@@ -156,7 +156,12 @@ echo "  Checking pbxproj determinism..."
 bash "$PROJECT_DIR/scripts/verify-pbxproj-determinism.sh"
 
 echo "  Running unit tests..."
+# -packageAuthorizationProvider netrc: package resolution must not consult the
+# login keychain (that raises the "wants to use your confidential information
+# stored in github.com" dialog). No netrc file exists here, so the public
+# dependencies resolve anonymously.
 xcodebuild test \
+    -packageAuthorizationProvider netrc \
     -project "final final.xcodeproj" \
     -scheme "final final" \
     -destination 'platform=macOS' \
@@ -220,7 +225,8 @@ echo "  Checking pbxproj determinism..."
 bash "$PROJECT_DIR/scripts/verify-pbxproj-determinism.sh"
 
 echo "  Building macOS app..."
-xcodebuild -scheme "final final" -configuration Release -destination 'platform=macOS' -derivedDataPath "$PROJECT_DIR/build" build
+# -packageAuthorizationProvider netrc: see the note at the unit-test invocation above.
+xcodebuild -scheme "final final" -configuration Release -destination 'platform=macOS' -packageAuthorizationProvider netrc -derivedDataPath "$PROJECT_DIR/build" build
 
 # Verify build succeeded
 BUILD_PATH="$PROJECT_DIR/build/Build/Products/Release/$APP_NAME.app"

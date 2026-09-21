@@ -11,9 +11,6 @@
 //  stays within SwiftLint's size limits). The same suite, so these tests stay serialized with
 //  the others -- they share DocumentManager.shared and the Focus / default singletons.
 //
-//  Focus Mode's Outline "snap"/instant-toggle lock cases (t-784ff3aa) moved to Tier 2's
-//  FocusModeTests.swift, to keep this file within SwiftLint's size limits.
-//
 
 import Testing
 import Foundation

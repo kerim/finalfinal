@@ -53,9 +53,7 @@ extension EditorViewState {
         // current state first, and no need to wait for the animation here.
         FullScreenManager.request(.fullScreen)
 
-        // 3. Conditionally hide sidebars. Both panes SNAP here rather than animating: their
-        // visibility is assigned with no animation in scope and the panes' own onChange handlers
-        // see the instant-toggle flags armed just below (ux-contract §12/D18).
+        // 3. Conditionally hide sidebars with animation
         // t-784ff3aa: only set the instant-toggle flag when this will actually flip
         // isAnnotationPanelVisible (it may already be false, e.g. the user hid it before
         // entering Focus Mode) -- see the flag's doc comment in EditorViewState.swift for why
@@ -63,21 +61,11 @@ extension EditorViewState {
         if settings.hideRightSidebar && isAnnotationPanelVisible {
             isAnnotationPanelToggleInstant = true
         }
-        // t-784ff3aa: the same "only set it when this will actually flip the value" arming for
-        // the Outline pane -- see the flag's doc comment in EditorViewState.swift for why an
-        // unconsumed flag would otherwise corrupt a later, unrelated toggle.
-        if settings.hideLeftSidebar && isOutlineSidebarVisible {
-            isOutlineSidebarToggleInstant = true
+        withAnimation(.easeInOut(duration: 0.3)) {
+            if settings.hideLeftSidebar { isOutlineSidebarVisible = false }
         }
-        // t-784ff3aa: the Outline's visibility is assigned here, OUTSIDE any animation, for the
-        // SAME reason the Annotations panel's is just below -- OutlineSidebarPane's `.frame`
-        // derives minWidth/maxWidth directly from this property, so any ambient animation active
-        // while it changes gets applied to those bounds by SwiftUI regardless of what the pane's
-        // `snapToggle` does to `sidebarWidth`. It used to sit inside a
-        // `withAnimation(.easeInOut(duration: 0.3))` block, which is what made Focus Mode's
-        // Outline enter/exit crawl (ux-contract §12/D18).
-        if settings.hideLeftSidebar { isOutlineSidebarVisible = false }
-        // t-784ff3aa: deliberately OUTSIDE any animation -- AnnotationPanel's `.frame` derives
+        // t-784ff3aa: deliberately OUTSIDE the withAnimation block above (unlike
+        // isOutlineSidebarVisible, which stays inside it) -- AnnotationPanel's `.frame` derives
         // minWidth/maxWidth directly from this property, so any ambient animation active while
         // it changes gets applied to those bounds by SwiftUI regardless of what `snapToggle`
         // does to `panelWidth`. Assigning it with no animation in scope is what actually makes
@@ -135,19 +123,12 @@ extension EditorViewState {
         if let visible = snapshot.annotationPanelVisible, visible != isAnnotationPanelVisible {
             isAnnotationPanelToggleInstant = true
         }
-        // t-784ff3aa: the same "only if it will actually change" guard for the Outline pane --
-        // this arm MUST precede the visibility write below, or the pane's onChange finds no flag
-        // to consume.
-        if let visible = snapshot.outlineSidebarVisible, visible != isOutlineSidebarVisible {
-            isOutlineSidebarToggleInstant = true
+        withAnimation(.easeInOut(duration: 0.3)) {
+            if let visible = snapshot.outlineSidebarVisible { isOutlineSidebarVisible = visible }
         }
-        // t-784ff3aa: deliberately OUTSIDE any animation -- this property drives
-        // OutlineSidebarPane's `.frame` bounds directly, so it must land with no ambient
-        // animation in scope to actually be instant; same reasoning as enterFocusMode() above,
-        // and see snapToggle's doc comment in OutlineSidebarPane.swift.
-        if let visible = snapshot.outlineSidebarVisible { isOutlineSidebarVisible = visible }
-        // t-784ff3aa: likewise OUTSIDE any animation -- same reasoning as enterFocusMode()
-        // above: this property drives AnnotationPanel's `.frame` bounds directly.
+        // t-784ff3aa: deliberately OUTSIDE the withAnimation block above -- same reasoning as
+        // enterFocusMode() above: this property drives AnnotationPanel's `.frame` bounds
+        // directly, so it must land with no ambient animation in scope to actually be instant.
         if let visible = snapshot.annotationPanelVisible { isAnnotationPanelVisible = visible }
 
         // 3. Restore annotation display modes / Panel Only if they were captured (direct

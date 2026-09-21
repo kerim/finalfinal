@@ -122,7 +122,11 @@ print_header "Step 2/3: Tier 1 + Tier 2 — Unit Tests"
 
 cd "$PROJECT_DIR"
 start_time=$(date +%s)
+# -packageAuthorizationProvider netrc: keeps package resolution out of the login
+# keychain, which otherwise raises the github.com dialog and blocks a
+# non-interactive run. Both dependencies are public; no netrc file is needed.
 if xcodebuild test \
+    -packageAuthorizationProvider netrc \
     -scheme "$SCHEME" \
     -destination "$DESTINATION" \
     -only-testing "final finalTests" \
