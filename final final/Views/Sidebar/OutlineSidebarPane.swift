@@ -203,9 +203,19 @@ struct OutlineSidebarPane: View {
             if let window = AppDelegate.shared?.mainWindow {
                 launchHadSavedDividerPosition = SplitViewAutosaveNaming.hasAutosavedDividerPosition(in: window)
             }
+            // t-784ff3aa: a stale instant-toggle flag set before this view existed (e.g. the
+            // window was rebuilt mid Focus Mode, the same scenario the comment above already
+            // accounts for) has no onChange left to consume it -- clear it defensively so it
+            // can't wrongly de-snap this fresh pane's next, unrelated toggle.
+            editorState.isOutlineSidebarToggleInstant = false
         }
         .onChange(of: editorState.isOutlineSidebarVisible) { _, newValue in
-            animateToggle(becomingVisible: newValue)
+            if editorState.isOutlineSidebarToggleInstant {
+                editorState.isOutlineSidebarToggleInstant = false
+                snapToggle(becomingVisible: newValue)
+            } else {
+                animateToggle(becomingVisible: newValue)
+            }
         }
     }
 
@@ -256,6 +266,9 @@ struct OutlineSidebarPane: View {
         }
 
         guard newWidth >= OutlineSidebarWidth.minWidth else { return }
+        #if DEBUG
+        DebugLog.log(.viewUpdates, "[OutlineWidth] adopt \(newWidth)")
+        #endif
         sidebarWidth = OutlineSidebarWidth.clamp(newWidth)
         lastVisibleWidth = sidebarWidth
     }
@@ -291,6 +304,9 @@ struct OutlineSidebarPane: View {
     /// Moves the divider to `position`. False when the split view cannot be reached.
     @discardableResult
     private func setDividerPosition(_ position: CGFloat) -> Bool {
+        #if DEBUG
+        DebugLog.log(.viewUpdates, "[OutlineDivider] set \(position)")
+        #endif
         guard let window = AppDelegate.shared?.mainWindow else { return false }
         return SplitViewAutosaveNaming.setTopLevelDividerPosition(position, in: window, animated: false)
     }
@@ -309,11 +325,13 @@ struct OutlineSidebarPane: View {
     /// is deterministically observable. `sidebarWidth` still rides `withAnimation(.panelToggle)`
     /// so the frame hint moves with the divider.
     ///
-    /// Known follow-up, NOT fixed here: Focus Mode drives `isOutlineSidebarVisible` from inside
-    /// its own `.easeInOut(duration: 0.3)` transaction, while this method animates over
-    /// `.panelToggle` (0.25s easeOut) -- so those two transitions nest with different curves.
-    /// Each animates a different property and neither double-animates the other, but unifying the
-    /// two curves is a post-merge cleanup; the animation behaviour is deliberately left as is.
+    /// The nested-curve problem this method used to carry a "Known follow-up, NOT fixed here"
+    /// note about is now gone for the Focus Mode path: Focus Mode no longer wraps
+    /// `isOutlineSidebarVisible` in its own `.easeInOut(duration: 0.3)` transaction, so it never
+    /// nests with this method's `.panelToggle` curve -- it assigns the property plainly and the
+    /// pane's `onChange` snaps instead, via `snapToggle` (ux-contract §12/D18). The plain path
+    /// (toolbar button, View menu, ⌘[) keeps this method and its stepped divider unchanged, and
+    /// `.panelToggle` remains its only curve.
     private func animateToggle(becomingVisible: Bool) {
         isAnimatingToggle = true
         let token = UUID()
@@ -351,6 +369,66 @@ struct OutlineSidebarPane: View {
             // loop be the one that clears isAnimatingToggle.
             guard toggleAnimationToken == token else { return }
             isAnimatingToggle = false
+        }
+    }
+
+    /// Snaps the pane and the divider straight to their final positions with no animation -- the
+    /// ONE transition where Focus Mode itself drives `isOutlineSidebarVisible` (ux-contract
+    /// §12/D18), gated by `editorState.isOutlineSidebarToggleInstant`. Every other trigger (the
+    /// toolbar button, the View menu, ⌘[) still runs `animateToggle` and its stepped divider.
+    /// Matches the release build's old behavior of removing the pane from the view tree outright
+    /// on Focus Mode entry/exit.
+    ///
+    /// The order here is load-bearing. Cancelling the in-flight task and bumping
+    /// `toggleAnimationToken` FIRST is what deterministically invalidates a stepped animation
+    /// already in flight: its loop returns at its next step on cancellation, and a loop already
+    /// past that check cannot clear `isAnimatingToggle` out from under this snap, because the
+    /// fresh token fails the completion guard.
+    ///
+    /// Clearing `isAnimatingToggle` (rather than setting it true) deliberately leaves
+    /// `widthObserver` live for this whole transition -- `reconcileWidth` guards on that flag, so
+    /// unlike the animated path there is no 250 ms window excluding intermediate widths here.
+    /// That is the behaviour change this design accepts, and it was measured: on a Focus Mode
+    /// exit with the Outline dragged to 330pt the observer adopted a transient (`adopt 250.0`)
+    /// and then the settled value (`adopt 330.0`), which is what the user ends up with.
+    ///
+    /// `snapToggle` itself must not write `lastVisibleWidth`: it only READS it as the restore
+    /// target. The adopt branch of `reconcileWidth` is what legitimately writes it, whenever its
+    /// three guards pass -- `isAnimatingToggle` false, the pane visible, and the observed width
+    /// at or above the 250pt floor -- which includes a width AppKit clamps or a transient during
+    /// a transition. The remembered width is therefore whatever that observer last adopted at or
+    /// above the floor, not necessarily the width the user last dragged to.
+    ///
+    /// Known, accepted interleaving: if a plain ⌘[ hide is already in flight when Focus Mode is
+    /// entered, the visibility is already false at that moment, so nothing arms and no `onChange`
+    /// fires -- the in-flight step animation simply finishes, and that particular entry is not
+    /// instant (the final state is still correct).
+    ///
+    /// No-window case: if `setDividerPosition` returns false there is no split view to move, so
+    /// the pane ends up at AppKit's 250pt floor rather than `lastVisibleWidth` -- acceptable,
+    /// since nothing could have positioned the divider anyway.
+    private func snapToggle(becomingVisible: Bool) {
+        let restore = lastVisibleWidth
+        #if DEBUG
+        DebugLog.log(.viewUpdates, "[OutlineSnap] read lastVisibleWidth \(restore) becomingVisible \(becomingVisible)")
+        #endif
+
+        dividerAnimationTask?.cancel()
+        toggleAnimationToken = UUID()
+        isAnimatingToggle = false
+
+        if becomingVisible {
+            sidebarWidth = restore
+            let moved = setDividerPosition(restore)
+            #if DEBUG
+            DebugLog.log(.viewUpdates, "[OutlineSnap] move ok \(moved) target \(restore)")
+            #endif
+        } else {
+            sidebarWidth = 0
+            let moved = setDividerPosition(0)
+            #if DEBUG
+            DebugLog.log(.viewUpdates, "[OutlineSnap] move ok \(moved) target 0")
+            #endif
         }
     }
 }
