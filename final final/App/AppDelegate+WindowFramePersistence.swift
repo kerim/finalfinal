@@ -70,12 +70,59 @@ extension AppDelegate {
         // is finally known, closes that gap regardless of which of the two ran first.
         closeSpuriousFinderOpenWindows()
         capturedWindowFrameAutosaveName = disableFrameAutosave(for: window)
+        applyUITestingWindowWidthOverride(to: window)
         if !TestMode.isTesting {
             SplitViewAutosaveNaming.stabilize(for: window)
         }
         scheduleAutosaveKeySweep()
         FullScreenManager.bootstrap(window: window)
         restoreFullScreenIfNeeded(window)
+    }
+
+    /// UI-test-only backstop for `TestMode.uiTestingWindowWidthOverride`: makes the captured main
+    /// window exactly that wide, whatever width it was actually created at. Called from
+    /// `captureMainWindow`, right after `mainWindow` is set.
+    ///
+    /// Why a backstop exists next to `.defaultWindowPlacement`'s own override branch: that branch
+    /// only sizes a window SwiftUI creates from scratch, and a full-suite VM run
+    /// (run-1789992919-38618) launched `SidebarWidthBoundsE2ETests` with
+    /// `FF_UI_TESTING_WINDOW_WIDTH = 1000` and measured a 1024pt window -- the display's whole
+    /// visible width, i.e. the non-override branch's `min(1400, visible)` -- on a guest that had
+    /// already run many launches (the class is reported to have passed only as a scoped run on a
+    /// fresh guest). The exact reason the placement did not take effect at creation there is not
+    /// established, so this sizes the window itself once it exists. It does not replace the placement branch, which
+    /// still gives the common case its width with no resize; when the window is already the
+    /// requested width this does nothing.
+    ///
+    /// Safe by construction: `uiTestingWindowWidthOverride` is `nil` unless BOTH `FF_UI_TESTING`
+    /// and `FF_UI_TESTING_WINDOW_WIDTH` are set in the process environment, so a normal launch
+    /// returns at the first guard. It runs synchronously inside `captureMainWindow`, before any
+    /// Outline launch-positioning attempt can read `mainWindow` (those run later on the main
+    /// actor), so the divider is positioned against the final window width. Only the width and the
+    /// horizontal centring change -- the vertical origin and height stay as they are, matching the
+    /// placement branch, which centres on the display's visible rect. Idempotent, since
+    /// `captureMainWindow` has two call sites (the primary launch path and the FB15577018
+    /// recovery fallback).
+    func applyUITestingWindowWidthOverride(to window: NSWindow) {
+        guard let overrideWidth = TestMode.uiTestingWindowWidthOverride else { return }
+        guard !window.styleMask.contains(.fullScreen) else {
+            DebugLog.log(.lifecycle, "[AppDelegate] UI-testing window width override \(overrideWidth): window is full screen, skipped")
+            return
+        }
+        var frame = window.frame
+        guard abs(frame.width - overrideWidth) > 0.5 else {
+            DebugLog.log(.lifecycle, "[AppDelegate] UI-testing window width override \(overrideWidth): window already \(frame.width) wide")
+            return
+        }
+        let visible = (window.screen ?? NSScreen.main)?.visibleFrame ?? frame
+        let frameBefore = frame
+        frame.size.width = overrideWidth
+        frame.origin.x = visible.midX - overrideWidth / 2
+        window.setFrame(frame, display: true)
+        DebugLog.log(
+            .lifecycle,
+            "[AppDelegate] UI-testing window width override \(overrideWidth): resized \(frameBefore) -> \(window.frame)"
+        )
     }
 
     /// Closes the extra window AppKit spawns for every Finder/`open(1)`-delivered "open documents"

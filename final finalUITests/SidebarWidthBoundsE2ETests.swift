@@ -41,6 +41,7 @@
 //  each stage, so a VM run can be read rather than only believed.
 //
 
+import AppKit
 import XCTest
 
 final class SidebarWidthBoundsE2ETests: XCTestCase {
@@ -372,6 +373,21 @@ final class SidebarWidthBoundsE2ETests: XCTestCase {
 extension SidebarWidthBoundsE2ETests {
 
     private func launch(width: CGFloat) {
+        // "The window must not grow" only means something when the launch window has room to grow.
+        // On a display no wider than the launch width the OS clamps the window to the screen, and
+        // "did not grow" holds vacuously (the VM guest display is 1024pt wide -- only 24pt of
+        // room). So the display is asserted, not assumed: a future display change fails here,
+        // loudly, instead of quietly emptying the tests below of their meaning. Read before the
+        // launch since it depends on nothing the app does. `NSScreen.main` is safe from the UI-test
+        // process (see EscapeLadderE2ETests.isMainWindowNativeFullScreen).
+        let displayVisibleWidth = NSScreen.main?.visibleFrame.width ?? 0
+        XCTAssertLessThan(
+            width, displayVisibleWidth,
+            "The launch width \(Int(width))pt must be strictly narrower than the display's visible "
+                + "width, or the window is clamped to the screen and \"the window cannot grow\" is "
+                + "vacuous. Measured visible width: \(displayVisibleWidth)pt (0 = the display could "
+                + "not be read)."
+        )
         app.launchEnvironment["FF_UI_TESTING_WINDOW_WIDTH"] = String(Int(width))
         // Forces the app's persistent diagnostic sink on (`DiagnosticLogFile.isEnabled` reads this
         // straight from the environment, bypassing the hermetic UserDefaults wipe) so the
@@ -383,7 +399,12 @@ extension SidebarWidthBoundsE2ETests {
         // The achieved width is asserted, not assumed: a silently broken
         // FF_UI_TESTING_WINDOW_WIDTH would leave every drag delta below meaning something other
         // than what its message claims while still passing.
-        let achievedWidth = windowFrame().width
+        //
+        // Read via `settleWindowWidth`, not one instantaneous sample: the app applies the override
+        // width from `AppDelegate.captureMainWindow`, which runs asynchronously right after launch.
+        // The assertion itself is unchanged -- same width, same 5pt accuracy -- it only stops
+        // depending on the sample landing before or after that step.
+        let achievedWidth = settleWindowWidth(width, accuracy: 5)
         XCTAssertEqual(
             achievedWidth, width, accuracy: 5,
             "Expected FF_UI_TESTING_WINDOW_WIDTH = \(Int(width)) to size the launch window; "
@@ -540,6 +561,19 @@ extension SidebarWidthBoundsE2ETests {
     }
 
     private func windowFrame() -> CGRect { app.windows.firstMatch.frame }
+
+    /// Waits (bounded) for the window's width to reach `expected` within `accuracy`, and returns
+    /// the LAST measured width -- so the caller's own assertion still reports the real number
+    /// when the wait runs out. Polls the element's frame, the same way `settleColumnWidth` does.
+    private func settleWindowWidth(_ expected: CGFloat, accuracy: CGFloat, timeout: TimeInterval = 5) -> CGFloat {
+        let deadline = Date(timeIntervalSinceNow: timeout)
+        var measured = windowFrame().width
+        while abs(measured - expected) > accuracy, Date() < deadline {
+            RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.1))
+            measured = windowFrame().width
+        }
+        return measured
+    }
 
     /// The Outline divider: the splitter with the smallest `minX`, i.e. the one immediately to
     /// the right of the leftmost (sidebar) column.

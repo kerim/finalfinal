@@ -122,7 +122,8 @@ enum TestMode {
     }
 
     /// UI-test-only deterministic main-window width, consumed by
-    /// `FinalFinalApp.defaultWindowPlacement`. Exists because the Outline sidebar's
+    /// `FinalFinalApp.defaultWindowPlacement` and, as a backstop once the window exists, by
+    /// `AppDelegate.applyUITestingWindowWidthOverride(to:)`. Exists because the Outline sidebar's
     /// divider-drag regression test has to assert against a KNOWN starting window width, and the
     /// saved-frame branch of that placement closure is deliberately skipped while testing (so
     /// otherwise the default 1400x900/min(visible) size would apply, which varies with the
