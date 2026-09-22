@@ -476,6 +476,40 @@ extension MilkdownEditor.Coordinator {
         webView.evaluateJavaScript("window.FinalFinal.setFocusMode(\(enabled))") { _, _ in }
     }
 
+    /// Typewriter scrolling config. Modelled on `setFocusMode` above: one
+    /// `evaluateJavaScript` call, idempotent on the JS side.
+    /// Returns whether the config actually reached JS. The not-ready guard rejects the
+    /// send on the preload-not-ready branch, and a rejected send must NOT be recorded as
+    /// delivered or the config is dropped for the session.
+    @discardableResult
+    func setTypewriterConfig(enabled: Bool, lineOffset: Int) -> Bool {
+        guard isEditorReady, let webView else { return false }
+        webView.evaluateJavaScript(
+            "window.FinalFinal.setTypewriterConfig({enabled: \(enabled), lineOffset: \(lineOffset)})"
+        ) { _, error in
+            if let error {
+                DebugLog.log(.editor, "[MilkdownEditor] setTypewriterConfig JS error: \(error)")
+            }
+        }
+        return true
+    }
+
+    /// Sends the desired config if the last DELIVERED one differs. Called below the
+    /// project-reset guard in `updateNSView`, and again from `applyPersistedToggleStates()`
+    /// (the existing ready-flip hook), so a config whose first send the not-ready guard
+    /// rejected is retried the moment the editor becomes ready.
+    func pushTypewriterConfigIfNeeded() {
+        let desired = desiredTypewriterConfig
+        guard lastTypewriterSent != desired else { return }
+        DebugLog.log(
+            .editor,
+            "[MilkdownEditor] setTypewriterConfig enabled=\(desired.enabled) lineOffset=\(desired.lineOffset)"
+        )
+        if setTypewriterConfig(enabled: desired.enabled, lineOffset: desired.lineOffset) {
+            lastTypewriterSent = desired
+        }
+    }
+
     func setSpellcheck(_ enabled: Bool) {
         guard isEditorReady, let webView else { return }
         let jsFunctionName = enabled ? "enableSpellcheck" : "disableSpellcheck"
@@ -505,6 +539,10 @@ extension MilkdownEditor.Coordinator {
         let grammarOn = UserDefaults.standard.bool(forKey: "isGrammarEnabled", defaultingTo: true)
         setSpellcheck(spellingOn || grammarOn)
         setSmartQuotes(UserDefaults.standard.bool(forKey: "isSmartQuotesEnabled", defaultingTo: true))
+        // Retry a typewriter config whose earlier send the not-ready guard rejected. This is
+        // the ready-flip hook, so a persisted enabled state that arrived before readiness is
+        // delivered here rather than being lost for the session.
+        pushTypewriterConfigIfNeeded()
     }
 
     func setTheme(_ cssVariables: String) {

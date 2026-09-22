@@ -11,6 +11,7 @@ import {
 import { type ChangeSet, EditorState, Transaction } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
 import { escapeAltAttr } from '../../shared/image-caption-attrs';
+import { clearDocumentReadiness, markDocumentReady } from '../../shared/typewriter-scrolling';
 import { stripAnchors } from './anchor-plugin';
 import { hideCitationAddButton, mergeCitations } from './citations';
 import { derivedCorrection } from './derived-correction';
@@ -43,6 +44,7 @@ import { getRecentUserEditSpan } from './recent-edit-span';
 import { formatTableCommand, insertTableCommand } from './table-format';
 import { computeMinimalChanges } from './text-diff';
 import type { AnnotationType, FindOptions, FindResult, ParsedAnnotation, SearchState } from './types';
+import { withAppOrigin } from './typewriter-plugin';
 
 /** Route diagnostic messages through the WKWebView errorHandler bridge — the same
  *  `sync-diag` message type Milkdown's `sync-debug.ts#syncLog` uses, so both editors'
@@ -203,6 +205,17 @@ export function countWords(text: string): number {
 
 // --- API implementations ---
 
+/**
+ * Typewriter-scrolling document identity for this JS context (plan §2.6). Each document
+ * gets its own WKWebView and therefore its own JS context, so "the first content load
+ * here" IS the document identity; `resetForProjectSwitch()` reuses the context for a
+ * project switch/close and resets the flag. Recognition is never by content, and never by
+ * `origin === 'intentional'` — that also covers zoom, mode-switch mount and structural
+ * undo/redo restore, which are re-pushes of the SAME document and must keep the reserve
+ * and the remembered line.
+ */
+let typewriterDocumentLoaded = false;
+
 export function setContent(
   markdown: string,
   options?: { scrollToStart?: boolean; origin?: 'derived' | 'intentional' }
@@ -223,6 +236,17 @@ export function setContent(
   // into one giant replaced range the way a single-span diff would.
   const current = view.state.doc.toString();
   const changes = computeMinimalChanges(current, markdown);
+
+  // Typewriter scrolling readiness (plan §2.6). Identity, not content: an editor that
+  // mounts on an EMPTY document still has to become ready, so the mark is not gated on a
+  // content diff. A same-document re-push keeps the reserve and the remembered line; a
+  // genuine new document clears them. `clearDocumentReadiness()` runs BEFORE this load's
+  // own dispatch; `markDocumentReady()` is scheduled on a microtask after it.
+  const isNewDocument = !typewriterDocumentLoaded;
+  if (isNewDocument) {
+    typewriterDocumentLoaded = true;
+    clearDocumentReadiness();
+  }
 
   // scrollToStart is the zoom-transition path: it deliberately resets to the top,
   // which the old whole-document replace achieved as a side effect of position
@@ -253,62 +277,73 @@ export function setContent(
     // inside the zoomed view.
     const isIntentional = (options?.origin ?? 'intentional') === 'intentional' || options?.scrollToStart === true;
 
-    if (isIntentional) {
-      view.dispatch({
-        ...(changes.length > 0 ? { changes } : {}),
-        ...(options?.scrollToStart ? { selection: { anchor: 0 } } : {}),
-        annotations: Transaction.addToHistory.of(false),
-      });
-    } else {
-      // P3 (4b, undo-mode-switch-focus second timing gap): partition PER SPAN (judge-
-      // review M3 -- a single boolean over the whole dispatch used to make a push with
-      // one overlapping and one unrelated correction wrongly treat BOTH as undoable
-      // together). A derived push that overlaps text the user just typed is, from the
-      // user's perspective, an automatic correction competing with their own edit --
-      // not invisible background sync. Dispatched as its OWN undoable step
-      // (isolateHistory so it can't merge into the user's still-open typing group
-      // either side) instead of the usual silent `addToHistory: false`, so Cmd-Z first
-      // undoes the correction, then undoes the user's own typing. Tagged
-      // `derivedCorrection` so undo-coordinator.ts's three provenance predicates (§4e)
-      // can tell this apart from both an ordinary user edit and an ordinary silent
-      // derived push. Non-overlapping spans keep today's silent behavior verbatim.
-      const recentSpan = getRecentUserEditSpan();
-      const overlaps = (c: { from: number; to: number }) =>
-        recentSpan !== null && c.from < recentSpan.to && c.to > recentSpan.from;
-      const silentChanges = changes.filter((c) => !overlaps(c));
-      const overlappingChanges = changes.filter(overlaps);
-
-      // ORDERING TRAP (M3): both sets were computed against the ORIGINAL document. The
-      // silent set must dispatch FIRST (it's the common case and preserves today's
-      // behavior exactly when nothing overlaps), and the overlapping set's positions
-      // must then be mapped through the silent dispatch's own ChangeSet before its
-      // dispatch -- the live document has already moved once the first transaction
-      // applies.
-      let mappedThroughSilent: ChangeSet | null = null;
-      if (silentChanges.length > 0) {
-        const tr = view.state.update({ changes: silentChanges, annotations: Transaction.addToHistory.of(false) });
-        mappedThroughSilent = tr.changes;
-        view.dispatch(tr);
-      }
-
-      if (overlappingChanges.length > 0) {
-        const remapped = mappedThroughSilent
-          ? overlappingChanges.map((c) => ({
-              from: mappedThroughSilent!.mapPos(c.from, -1),
-              to: mappedThroughSilent!.mapPos(c.to, 1),
-              insert: c.insert,
-            }))
-          : overlappingChanges;
+    // Every dispatch below is the application's own content push, so it goes through
+    // `withAppOrigin` and the typewriter plugin suppresses it by origin rather than by
+    // guessing at annotations.
+    withAppOrigin(() => {
+      if (isIntentional) {
         view.dispatch({
-          changes: remapped,
-          annotations: [derivedCorrection.of(true), isolateHistory.of('full')],
+          ...(changes.length > 0 ? { changes } : {}),
+          ...(options?.scrollToStart ? { selection: { anchor: 0 } } : {}),
+          annotations: Transaction.addToHistory.of(false),
         });
-      }
+      } else {
+        // P3 (4b, undo-mode-switch-focus second timing gap): partition PER SPAN (judge-
+        // review M3 -- a single boolean over the whole dispatch used to make a push with
+        // one overlapping and one unrelated correction wrongly treat BOTH as undoable
+        // together). A derived push that overlaps text the user just typed is, from the
+        // user's perspective, an automatic correction competing with their own edit --
+        // not invisible background sync. Dispatched as its OWN undoable step
+        // (isolateHistory so it can't merge into the user's still-open typing group
+        // either side) instead of the usual silent `addToHistory: false`, so Cmd-Z first
+        // undoes the correction, then undoes the user's own typing. Tagged
+        // `derivedCorrection` so undo-coordinator.ts's three provenance predicates (§4e)
+        // can tell this apart from both an ordinary user edit and an ordinary silent
+        // derived push. Non-overlapping spans keep today's silent behavior verbatim.
+        const recentSpan = getRecentUserEditSpan();
+        const overlaps = (c: { from: number; to: number }) =>
+          recentSpan !== null && c.from < recentSpan.to && c.to > recentSpan.from;
+        const silentChanges = changes.filter((c) => !overlaps(c));
+        const overlappingChanges = changes.filter(overlaps);
 
-      // scrollToStart never applies here: it forces `origin: 'intentional'` above (an
-      // overlapping/undoable dispatch is never reached with scrollToStart set).
-    }
+        // ORDERING TRAP (M3): both sets were computed against the ORIGINAL document. The
+        // silent set must dispatch FIRST (it's the common case and preserves today's
+        // behavior exactly when nothing overlaps), and the overlapping set's positions
+        // must then be mapped through the silent dispatch's own ChangeSet before its
+        // dispatch -- the live document has already moved once the first transaction
+        // applies.
+        let mappedThroughSilent: ChangeSet | null = null;
+        if (silentChanges.length > 0) {
+          const tr = view.state.update({ changes: silentChanges, annotations: Transaction.addToHistory.of(false) });
+          mappedThroughSilent = tr.changes;
+          view.dispatch(tr);
+        }
+
+        if (overlappingChanges.length > 0) {
+          const remapped = mappedThroughSilent
+            ? overlappingChanges.map((c) => ({
+                from: mappedThroughSilent!.mapPos(c.from, -1),
+                to: mappedThroughSilent!.mapPos(c.to, 1),
+                insert: c.insert,
+              }))
+            : overlappingChanges;
+          view.dispatch({
+            changes: remapped,
+            annotations: [derivedCorrection.of(true), isolateHistory.of('full')],
+          });
+        }
+
+        // scrollToStart never applies here: it forces `origin: 'intentional'` above (an
+        // overlapping/undoable dispatch is never reached with scrollToStart set).
+      }
+    });
   }
+
+  // Typewriter scrolling: the load's own transaction has applied, so the document is
+  // ready. A microtask keeps this strictly after the dispatch above. Unconditional (the
+  // module only re-centres on the activation edge), so an empty mounting document and a
+  // re-push both end ready.
+  queueMicrotask(() => markDocumentReady());
 
   // Force CodeMirror to re-measure line heights after content change.
   // Heading decorations change font-size on heading lines, but only for
@@ -1156,7 +1191,9 @@ export function renumberFootnotes(mapping: Record<string, string>): void {
   if (changes.length > 0) {
     // Sort by position for correct application
     changes.sort((a, b) => a.from - b.from);
-    view.dispatch({ changes });
+    // Application-origin dispatch: the typewriter plugin must not treat a footnote
+    // renumber as typing (plan §2.4.1's renumber row).
+    withAppOrigin(() => view.dispatch({ changes }));
   }
 }
 
@@ -1618,6 +1655,13 @@ export function resetForProjectSwitch(): void {
   setCurrentMatchIndex(0);
   const button = getCitationAddButton();
   if (button) button.style.display = 'none';
+
+  // Typewriter scrolling: a project switch/close reuses this JS context, so it is a
+  // changed document identity — tear the reserve down, drop the remembered line, and
+  // re-arm the first-load rule so the next load clears and re-centres again.
+  typewriterDocumentLoaded = false;
+  clearDocumentReadiness();
+  queueMicrotask(() => markDocumentReady());
 
   // Create fresh EditorState (clears undo history, selection, search state)
   const newState = EditorState.create({

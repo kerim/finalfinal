@@ -46,6 +46,14 @@ struct FocusPreferencesPane: View {
 
                     inlineAnnotationsRow
 
+                    Toggle("Typewriter Scrolling", isOn: Binding(
+                        get: { settingsManager.typewriterScrollingEnabled },
+                        set: { settingsManager.typewriterScrollingEnabled = $0 }
+                    ))
+                    .accessibilityIdentifier("focusTypewriterScrollingToggle")
+
+                    typewriterOffsetRow
+
                     Toggle("Hide Toolbar", isOn: Binding(
                         get: { settingsManager.hideToolbar },
                         set: { settingsManager.hideToolbar = $0 }
@@ -124,5 +132,54 @@ struct FocusPreferencesPane: View {
                 .frame(maxWidth: Self.captionMeasure, alignment: .leading)
             }
         }
+    }
+
+    /// "Line Offset": how far below centre the rest line sits, in whole lines. Built exactly
+    /// like `inlineAnnotationsRow`, because the UX contract has no rule for a numeric
+    /// preference control and this follows the pane's existing menu idiom rather than
+    /// inventing a slider. Disabled while Typewriter Scrolling is off, since it has no effect
+    /// then.
+    @ViewBuilder
+    private var typewriterOffsetRow: some View {
+        Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: Spacing.s8, verticalSpacing: Spacing.s8) {
+            GridRow {
+                Text("Line Offset:")
+                    .gridColumnAlignment(.trailing)
+                Picker("Line Offset:", selection: Binding(
+                    get: { settingsManager.typewriterLineOffset },
+                    set: { settingsManager.typewriterLineOffset = $0 }
+                )) {
+                    ForEach(
+                        Array(FocusModeSettings.typewriterLineOffsetRange),
+                        id: \.self
+                    ) { lines in
+                        Text(Self.typewriterOffsetLabel(lines)).tag(lines)
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.menu)
+                .fixedSize()
+                .disabled(!settingsManager.typewriterScrollingEnabled)
+                .accessibilityIdentifier("focusTypewriterLineOffsetPicker")
+            }
+            GridRow {
+                Color.clear
+                    .gridCellUnsizedAxes([.horizontal, .vertical])
+                Text(
+                    "Keeps the line you are typing on at the same height while Focus Mode is on. "
+                        + "Positive numbers move it below centre, negative above."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: Self.captionMeasure, alignment: .leading)
+            }
+        }
+    }
+
+    /// "Centred" for 0, "+3 Lines" / "-3 Lines" otherwise.
+    private static func typewriterOffsetLabel(_ lines: Int) -> String {
+        if lines == 0 { return "Centred" }
+        return lines > 0 ? "+\(lines) Lines" : "\(lines) Lines"
     }
 }

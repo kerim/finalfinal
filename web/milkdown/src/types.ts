@@ -79,6 +79,9 @@ declare global {
       setContent: (markdown: string, options?: { scrollToStart?: boolean; cloakToken?: number }) => void;
       getContent: () => string;
       setFocusMode: (enabled: boolean) => void;
+      /** Typewriter scrolling. Swift sends `focusMode && typewriterScrollingEnabled`;
+       *  `lineOffset` is whole lines, clamped to [-10, 10] on both sides. */
+      setTypewriterConfig: (config: { enabled: boolean; lineOffset: number }) => void;
       getStats: () => { words: number; characters: number };
       getCurrentSectionTitle: () => string | null;
       getCurrentSectionBlockId: () => string | null;

@@ -35,6 +35,9 @@ declare global {
       getContentClean: () => string; // Content with anchors stripped
       getContentRaw: () => string; // Content including hidden anchors
       setFocusMode: (enabled: boolean) => void;
+      /** Typewriter scrolling. Swift sends `focusMode && typewriterScrollingEnabled`;
+       *  `lineOffset` is whole lines, clamped to [-10, 10] on both sides. */
+      setTypewriterConfig: (config: { enabled: boolean; lineOffset: number }) => void;
       getStats: () => { words: number; characters: number };
       getCurrentSectionTitle: () => string | null;
       scrollToOffset: (offset: number) => void;

@@ -27,7 +27,10 @@ body {
 }
 
 #editor {
-  padding: 24px 48px;
+  /* Typewriter scrolling reserves blank space at both ends by writing
+     --typewriter-reserve on documentElement; the 0px fallback keeps first paint safe.
+     The existing horizontal value is preserved verbatim. */
+  padding: calc(24px + var(--typewriter-reserve, 0px)) 48px;
   min-height: 100%;
   outline: none;
   max-width: var(--column-max-width);

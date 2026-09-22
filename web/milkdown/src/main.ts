@@ -11,6 +11,11 @@ import { isHistoryTransaction } from '@milkdown/kit/prose/history';
 import { Plugin, PluginKey } from '@milkdown/kit/prose/state';
 import { $prose, getMarkdown } from '@milkdown/kit/utils';
 import { installCmdHeldTracking } from '../../shared/cmd-hover-class';
+import {
+  getTypewriterTestState,
+  setTypewriterEnabled,
+  setTypewriterLineOffset,
+} from '../../shared/typewriter-scrolling';
 import { annotationDisplayPlugin } from './annotation-display-plugin';
 import { annotationPlugin } from './annotation-plugin';
 import {
@@ -136,6 +141,7 @@ import { imagePlugin } from './image-plugin';
 import { inlineCodeCursorPlugin } from './inline-code-cursor';
 import { linkCursorPlugin } from './link-cursor';
 import { markdownLinkPlugin } from './markdown-link-input-rule';
+import { typewriterPlugin } from './typewriter-plugin';
 import {
   beginStructuralOp,
   cancelPendingInsertions,
@@ -312,6 +318,10 @@ async function initEditor() {
       .use(tablePastePlugin) // Intercept TSV/HTML table paste before clipboard plugin
       .use(clipboard) // Parse pasted markdown as rich text instead of literal text
       .use(focusModePlugin)
+      // Typewriter scrolling — keeps the caret's line at a fixed height while typing,
+      // only while Focus Mode and the setting are both on. Its `$prose` plugin reads the
+      // app-origin flag window (`withSettingContent`) to suppress content pushes.
+      .use(typewriterPlugin)
       .use(sourceModePlugin) // Dual-appearance source mode
       .use(annotationDisplayPlugin) // Controls annotation visibility
       .use(headingNodeViewPlugin) // Custom heading rendering for source mode # selection
@@ -610,6 +620,12 @@ window.FinalFinal = {
   setContent,
   getContent,
   setFocusMode,
+  // Typewriter scrolling (plan §4 bridge). Swift sends `focusMode && typewriterScrollingEnabled`
+  // and the persisted whole-line offset; the shared module re-clamps the offset itself.
+  setTypewriterConfig: (config: { enabled: boolean; lineOffset: number }) => {
+    setTypewriterEnabled(config?.enabled === true);
+    setTypewriterLineOffset(config?.lineOffset ?? 0);
+  },
   getStats,
   getCurrentSectionTitle,
   getCurrentSectionBlockId,
@@ -772,12 +788,18 @@ window.FinalFinal = {
     const content = window.FinalFinal.getContent();
     const cursorPosition = window.FinalFinal.getCursorPosition();
     const stats = window.FinalFinal.getStats();
+    const tw = getTypewriterTestState();
     return {
       content,
       cursorPosition,
       stats,
       editorReady: getEditorInstance() !== null,
       focusModeEnabled: isFocusModeEnabled(),
+      typewriterActive: tw.active,
+      typewriterReserve: tw.reserve,
+      typewriterRest: tw.rest,
+      typewriterTriggerCount: tw.triggerCount,
+      typewriterLastReason: tw.lastReason,
     };
   },
 

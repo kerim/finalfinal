@@ -12,6 +12,11 @@ import {
   dismissPopover as dismissSpellcheckPopover,
   isPopoverOpen as isSpellcheckPopoverOpen,
 } from '../../shared/spellcheck-popover';
+import {
+  getTypewriterTestState,
+  setTypewriterEnabled,
+  setTypewriterLineOffset,
+} from '../../shared/typewriter-scrolling';
 import { anchorPlugin } from './anchor-plugin';
 import { annotationDecorationPlugin } from './annotation-decoration-plugin';
 import {
@@ -113,6 +118,7 @@ import {
   triggerSpellcheck,
 } from './spellcheck-plugin';
 import { handleTablePaste } from './table-paste';
+import { typewriterExtension } from './typewriter-plugin';
 import {
   beginStructuralOp,
   clearFailedStructuralOpEntry,
@@ -505,6 +511,10 @@ function initEditor() {
     ...spellcheckPlugin(),
     // Smart quotes — live curling of straight quotes as the user types
     EditorView.inputHandler.of(smartQuotesInputHandler),
+    // Typewriter scrolling — keeps the caret's line at a fixed height while typing,
+    // only while Focus Mode and the setting are both on. Also contributes the
+    // app-origin transaction extender that api.ts's content pushes rely on.
+    ...typewriterExtension,
   ];
 
   setEditorExtensions(extensions);
@@ -556,6 +566,12 @@ window.FinalFinal = {
   getContentClean,
   getContentRaw,
   setFocusMode,
+  // Typewriter scrolling (plan §4 bridge). Swift sends `focusMode && typewriterScrollingEnabled`
+  // and the persisted whole-line offset; the shared module re-clamps the offset itself.
+  setTypewriterConfig: (config: { enabled: boolean; lineOffset: number }) => {
+    setTypewriterEnabled(config?.enabled === true);
+    setTypewriterLineOffset(config?.lineOffset ?? 0);
+  },
   getStats,
   scrollToOffset,
   setTheme,
@@ -684,12 +700,18 @@ window.FinalFinal = {
     const content = window.FinalFinal.getContent();
     const cursorPosition = window.FinalFinal.getCursorPosition();
     const stats = window.FinalFinal.getStats();
+    const tw = getTypewriterTestState();
     return {
       content,
       cursorPosition,
       stats,
       editorReady: true,
       focusModeEnabled: isFocusModeEnabled(),
+      typewriterActive: tw.active,
+      typewriterReserve: tw.reserve,
+      typewriterRest: tw.rest,
+      typewriterTriggerCount: tw.triggerCount,
+      typewriterLastReason: tw.lastReason,
     };
   },
 

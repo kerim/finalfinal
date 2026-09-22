@@ -16,6 +16,7 @@ import { getAllBlockIds } from './block-id-plugin';
 import { getDocumentFootnoteCount, getEditorInstance, getIsZoomMode, setZoomFootnoteState } from './editor-state';
 import { isSourceModeEnabled } from './source-mode-plugin';
 import { syncLog } from './sync-debug';
+import { withSettingContent } from './typewriter-plugin';
 
 // === Footnote Definitions State ===
 // Module-level map of label → definition text, populated by FootnoteSyncService via setFootnoteDefinitions()
@@ -930,7 +931,9 @@ export function renumberFootnotes(mapping: Record<string, string>): void {
   }
 
   if (tr.docChanged) {
-    view.dispatch(tr);
+    // Application-origin: the typewriter trigger table marks the renumber dispatch as
+    // "no trigger" (plan §2.4.1).
+    withSettingContent(() => view.dispatch(tr));
   }
 
   // Update the definitions map with renumbered keys

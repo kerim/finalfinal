@@ -25,6 +25,7 @@ import { restoreScrollPosition, saveScrollPosition } from './scroll-map';
 import { sectionBreakNode } from './section-break-plugin';
 import { isSourceModeEnabled, setSourceModeEnabled } from './source-mode-plugin';
 import type { FindOptions, FindResult, SearchState } from './types';
+import { withSettingContent } from './typewriter-plugin';
 import { findTableStartLine, isTableLine, isTableSeparator, stripMarkdownSyntax } from './utils';
 
 export function setFocusMode(enabled: boolean): void {
@@ -639,7 +640,9 @@ export function setEditorMode(mode: 'wysiwyg' | 'source'): void {
       }
 
       tr = tr.setMeta('addToHistory', false);
-      view.dispatch(tr);
+      // Application-origin: the typewriter trigger table marks the mode-switch strip as
+      // "no trigger" (plan §2.4.1).
+      withSettingContent(() => view.dispatch(tr));
     } catch (e) {
       console.error('[Milkdown] Heading prefix strip failed:', e);
     }
@@ -668,7 +671,8 @@ export function setEditorMode(mode: 'wysiwyg' | 'source'): void {
           tr = tr.setSelection(Selection.atStart(tr.doc));
         }
 
-        view.dispatch(tr);
+        // Application-origin: the mode-switch re-parse is not typing (plan §2.4.1).
+        withSettingContent(() => view.dispatch(tr));
       }
     } catch {
       // Parse failed, ignore
@@ -698,7 +702,8 @@ export function setEditorMode(mode: 'wysiwyg' | 'source'): void {
       }
 
       tr = tr.setMeta('addToHistory', false);
-      view.dispatch(tr);
+      // Application-origin: the mode-switch insert is not typing (plan §2.4.1).
+      withSettingContent(() => view.dispatch(tr));
     } catch (e) {
       console.error('[Milkdown] Heading prefix insert failed:', e);
     }

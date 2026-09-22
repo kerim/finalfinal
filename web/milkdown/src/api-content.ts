@@ -7,6 +7,7 @@ import { Slice } from '@milkdown/kit/prose/model';
 import { type Plugin, Selection, type Transaction } from '@milkdown/kit/prose/state';
 import type { EditorView } from '@milkdown/kit/prose/view';
 import { getMarkdown } from '@milkdown/kit/utils';
+import { clearDocumentReadiness, markDocumentReady } from '../../shared/typewriter-scrolling';
 import {
   applyPendingConfirmations,
   clearBlockIds,
@@ -481,6 +482,32 @@ function deferredSnapshotAndUnpause(detectPausedEdits = false, baseline?: Map<st
   });
 }
 
+/**
+ * Typewriter-scrolling document identity for this JS context (plan §2.6). Each document
+ * gets its own WKWebView and therefore its own JS context, so "the first content load
+ * here" IS the document identity; `resetForProjectSwitch()` reuses the context for a
+ * project switch/close and resets the flag. Never a content comparison, and never
+ * `origin === 'intentional'` — that also covers zoom, mode-switch mount and structural
+ * undo/redo restore, which are re-pushes of the SAME document.
+ */
+let typewriterDocumentLoaded = false;
+
+/**
+ * Reports whether the live editor currently holds no text. Kept exported for tests and for
+ * diagnostics only: it is deliberately NOT the readiness signal any more (a content-keyed
+ * readiness clear tore the reserve down and rebuilt it on every push).
+ */
+export function editorIsEmpty(): boolean {
+  const instance = getEditorInstance();
+  if (!instance) return true;
+  try {
+    const view = instance.ctx.get(editorViewCtx);
+    return view.state.doc.textContent.length === 0;
+  } catch {
+    return false;
+  }
+}
+
 export function setContent(markdown: string, options?: { scrollToStart?: boolean; cloakToken?: number }): void {
   syncLog('API:setContent', `entry len=${markdown.length} scrollToStart=${options?.scrollToStart ?? false}`);
 
@@ -494,6 +521,20 @@ export function setContent(markdown: string, options?: { scrollToStart?: boolean
   // caller of this function) sees no behavior change at all: no paint is posted from the
   // early-return paths below, exactly as before this fix.
   const zoomExtra = options?.cloakToken != null ? { reason: 'zoom', token: options.cloakToken } : undefined;
+
+  // Typewriter-scrolling readiness (plan §2.6). Identity, not content and not `scrollToStart`:
+  // a genuine new document is the first content load in this JS context, or a project switch
+  // (`resetForProjectSwitch` below). Zoom, a mode-switch mount and a structural restore are
+  // re-pushes of the SAME document, so they must keep the reserve and the remembered line.
+  // The mark itself is unconditional — the shared module only re-centres on the activation
+  // edge, so re-asserting readiness is a no-op once active and is what makes a re-load after
+  // a clear end ready. The microtask is scheduled before the dispatch but runs after it,
+  // because every load path in this function dispatches synchronously.
+  if (!typewriterDocumentLoaded) {
+    typewriterDocumentLoaded = true;
+    clearDocumentReadiness();
+  }
+  queueMicrotask(() => markDocumentReady());
 
   // NOTE: Do NOT clear zoom mode here. setContent() is called from updateNSView
   // during zoom, and clearing zoom mode causes temp IDs to be generated for mini-Notes
@@ -788,6 +829,12 @@ export function resetEditorState(): void {
  */
 export function resetForProjectSwitch(cloakToken?: number): void {
   clearContentPushTimer(); // Defense in depth — prevent stale timer from old project
+  // A project switch is a changed document identity: unconditional teardown of the
+  // typewriter reserve, re-armed once this reset's own dispatch has applied, and the
+  // first-load rule is re-armed so the project's real content clears and re-centres again.
+  typewriterDocumentLoaded = false;
+  clearDocumentReadiness();
+  queueMicrotask(() => markDocumentReady());
   const editorInstance = getEditorInstance();
 
   // Reset block-related state
@@ -882,6 +929,9 @@ export function resetForProjectSwitch(cloakToken?: number): void {
 
 export function applyBlocks(blocks: Block[]): void {
   clearContentPushTimer(); // Cancel stale timers before document replacement
+  // Another load path: mark the document ready once this function's own synchronous
+  // dispatches have applied. No readiness clear — a block push is not a new identity.
+  queueMicrotask(() => markDocumentReady());
   syncLog('API:applyBlocks', `entry blocks=${blocks.length} syncPaused=true`);
   // [SYNC-DIAG Round 2] First-few (id, blockType, textLen) so we can correlate
   // Swift's block-array shape with the DOM that ends up in the editor.
@@ -1241,6 +1291,15 @@ export function setContentWithBlockIds(
   }
 ): void {
   clearContentPushTimer(); // Cancel stale timers before document replacement
+  // Typewriter-scrolling readiness for THIS load path (plan §2.6). Scheduled before the
+  // dispatches below and run after them, because every dispatch in this function is
+  // synchronous. Identity-keyed exactly like setContent: a first load clears, a re-push of
+  // the same document does not.
+  if (!typewriterDocumentLoaded) {
+    typewriterDocumentLoaded = true;
+    clearDocumentReadiness();
+  }
+  queueMicrotask(() => markDocumentReady());
   syncLog(
     'API:setContentWithBlockIds',
     `entry len=${markdown.length} blocks=${blockIds.length} scrollToStart=${options?.scrollToStart ?? false} zoomMode=${options?.zoomMode ?? false}`

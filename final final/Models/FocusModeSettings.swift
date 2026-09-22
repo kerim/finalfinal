@@ -31,6 +31,14 @@ enum FocusInlineAnnotationMode: String, Codable, CaseIterable, Sendable {
     }
 }
 
+/// The typewriter-scrolling state the editors receive. A plain value type so SwiftUI's
+/// `updateNSView` can compare it against the coordinator's `lastTypewriter*` fields and the
+/// JS call stays idempotent.
+struct TypewriterConfig: Equatable, Sendable {
+    var enabled: Bool = false
+    var lineOffset: Int = 0
+}
+
 /// Focus mode settings stored in UserDefaults
 struct FocusModeSettings: Codable, Equatable, Sendable {
     var hideLeftSidebar: Bool = true
@@ -41,10 +49,20 @@ struct FocusModeSettings: Codable, Equatable, Sendable {
     var hideStatusBar: Bool = true
     var enableParagraphHighlighting: Bool = true
     var inlineAnnotations: FocusInlineAnnotationMode = .collapse
+    /// Whether typing re-centres the caret's line while Focus Mode is on. Off by default.
+    var typewriterScrollingEnabled: Bool = false
+    /// Whole-line offset from centre: positive moves the rest line below centre, negative
+    /// above. Clamped to `FocusModeSettingsManager.typewriterLineOffsetRange`.
+    var typewriterLineOffset: Int = 0
 
     // MARK: - Defaults
 
     static let `default` = FocusModeSettings()
+
+    /// The whole-line offset range. ONE owner: this struct, mirrored by the JS module's own
+    /// clamp and by the manager's convenience accessor. The parentheses around `(-10)` are
+    /// required for the unary minus in a range literal.
+    static let typewriterLineOffsetRange: ClosedRange<Int> = (-10)...10
 
     // MARK: - UserDefaults Keys
 
@@ -61,6 +79,8 @@ struct FocusModeSettings: Codable, Equatable, Sendable {
         case hideStatusBar
         case enableParagraphHighlighting
         case inlineAnnotations
+        case typewriterScrollingEnabled
+        case typewriterLineOffset
     }
 
     // MARK: - Persistence
@@ -120,6 +140,16 @@ extension FocusModeSettings {
         let storedInline = try? container.decodeIfPresent(String.self, forKey: .inlineAnnotations)
         inlineAnnotations = storedInline.flatMap(FocusInlineAnnotationMode.init(rawValue:))
             ?? (hideRightSidebar ? .collapse : .leaveAsIs)
+        typewriterScrollingEnabled = try container.decodeIfPresent(Bool.self, forKey: .typewriterScrollingEnabled)
+            ?? typewriterScrollingEnabled
+        // Clamped on decode: a hand-edited or downgraded blob must never produce an offset
+        // outside the range the JS side will accept anyway.
+        let storedOffset = try container.decodeIfPresent(Int.self, forKey: .typewriterLineOffset)
+            ?? typewriterLineOffset
+        typewriterLineOffset = min(
+            max(storedOffset, Self.typewriterLineOffsetRange.lowerBound),
+            Self.typewriterLineOffsetRange.upperBound
+        )
     }
 }
 
@@ -136,8 +166,22 @@ final class FocusModeSettingsManager {
     /// Current settings
     private(set) var settings: FocusModeSettings
 
+    /// The whole-line offset range, re-exported from `FocusModeSettings` so callers have one
+    /// spelling; the struct owns the value.
+    static var typewriterLineOffsetRange: ClosedRange<Int> { FocusModeSettings.typewriterLineOffsetRange }
+
+    /// The typewriter-scrolling state the editors receive, kept in step with `settings` at
+    /// the end of `update` and `resetToDefaults`. ONE owner for the line-offset range: this
+    /// manager, not the editors.
+    private(set) var typewriterConfig: TypewriterConfig
+
     private init() {
-        settings = FocusModeSettings.load()
+        let loaded = FocusModeSettings.load()
+        settings = loaded
+        typewriterConfig = TypewriterConfig(
+            enabled: loaded.typewriterScrollingEnabled,
+            lineOffset: loaded.typewriterLineOffset
+        )
     }
 
     /// Update settings and persist. Posts `.focusInlineAnnotationsChanged` when the block
@@ -147,6 +191,7 @@ final class FocusModeSettingsManager {
         let previousInline = settings.inlineAnnotations
         block(&settings)
         settings.save()
+        syncTypewriterConfig()
         postInlineAnnotationsChangeIfNeeded(from: previousInline)
     }
 
@@ -157,7 +202,17 @@ final class FocusModeSettingsManager {
         let previousInline = settings.inlineAnnotations
         settings = .default
         settings.save()
+        syncTypewriterConfig()
         postInlineAnnotationsChangeIfNeeded(from: previousInline)
+    }
+
+    /// Keeps `typewriterConfig` in step with `settings`. Called from `update` and
+    /// `resetToDefaults`, the two paths that write `settings`.
+    private func syncTypewriterConfig() {
+        typewriterConfig = TypewriterConfig(
+            enabled: settings.typewriterScrollingEnabled,
+            lineOffset: settings.typewriterLineOffset
+        )
     }
 
     /// Post `.focusInlineAnnotationsChanged` only if `inlineAnnotations` differs from `previous`.
@@ -196,5 +251,23 @@ final class FocusModeSettingsManager {
     var inlineAnnotations: FocusInlineAnnotationMode {
         get { settings.inlineAnnotations }
         set { update { $0.inlineAnnotations = newValue } }
+    }
+
+    var typewriterScrollingEnabled: Bool {
+        get { settings.typewriterScrollingEnabled }
+        set { update { $0.typewriterScrollingEnabled = newValue } }
+    }
+
+    /// Set through the manager so the range is enforced in ONE place and `typewriterConfig`
+    /// is re-synced by the same `update`.
+    var typewriterLineOffset: Int {
+        get { settings.typewriterLineOffset }
+        set {
+            let clamped = min(
+                max(newValue, Self.typewriterLineOffsetRange.lowerBound),
+                Self.typewriterLineOffsetRange.upperBound
+            )
+            update { $0.typewriterLineOffset = clamped }
+        }
     }
 }

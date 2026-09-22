@@ -26,6 +26,10 @@ body {
 }
 
 .cm-editor .cm-scroller {
+  /* UNCHANGED from before this feature: the reserve is deliberately NOT applied here. This
+     element is `height: 100%` + `box-sizing: border-box`, so a viewport-tall padding would
+     make its own border box grow to include that padding, and the visible height read back
+     FROM this element would then grow with the reserve — a feedback loop. */
   padding: 24px 48px;
   max-width: calc(var(--column-max-width) + 96px);
   min-width: calc(var(--column-min-width) + 96px);
@@ -34,7 +38,23 @@ body {
   box-sizing: border-box;
 }
 
-.cm-editor .cm-content {
+/* Three classes, deliberately: CodeMirror's own base theme ships
+   `.<generated-base> .cm-content { margin: 0; padding: 4px 0 }`, injected as a `<style>` by
+   style-mod at editor-construction time. Two classes would TIE with it, and a tie is decided by
+   document order — which style-mod changes by inserting its sheet as `<head>`'s FIRST child.
+   Three classes win on specificity whatever the order. */
+.cm-editor .cm-scroller .cm-content {
+  /* Typewriter scrolling reserves blank space at both ends by writing
+     --typewriter-reserve on documentElement. It is applied HERE, as PADDING on the content
+     element inside the scroller — never as padding on the scroller itself, whose own box is
+     `height: 100%` + `box-sizing: border-box` and would grow to include a viewport-tall
+     padding, feeding the reserve back into the visible height read from it; and never as a
+     MARGIN here, because `.cm-scroller` is `display: flex` with the default `align-items:
+     stretch`, so top/bottom margins on this flex item shrink its stretched cross size instead
+     of adding scrollable overflow. Padding is added to CodeMirror's own 4px, not substituted
+     for it, and the `0px` fallback makes this byte-identical to today when the feature is off. */
+  padding-top: calc(4px + var(--typewriter-reserve, 0px));
+  padding-bottom: calc(4px + var(--typewriter-reserve, 0px));
   caret-color: var(--accent-color, #007aff);
 }
 

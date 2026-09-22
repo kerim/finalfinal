@@ -151,6 +151,13 @@ extension ContentView {
 
     @ViewBuilder
     var editorView: some View {
+        // Typewriter scrolling is the AND of Focus Mode being engaged and the persisted
+        // setting. Reading the @Observable singleton HERE is what subscribes this body to
+        // both: leaving Focus Mode mutates the observed store, this body re-evaluates, and
+        // the plain `typewriterEnabled` value below changes. `updateNSView` runs no body, so
+        // reading the manager inside the editors would subscribe to nothing.
+        let typewriterConfig = FocusModeSettingsManager.shared.typewriterConfig
+        let typewriterEnabled = editorState.focusModeEnabled && typewriterConfig.enabled
         // Wait for preload to complete before showing editor
         if !isEditorPreloadReady {
             // Minimal loading state - just a blank area with theme background
@@ -167,6 +174,8 @@ extension ContentView {
                 MilkdownEditor(
                     content: $editorState.content,
                     focusModeEnabled: $editorState.focusModeEnabled,
+                    typewriterEnabled: typewriterEnabled,
+                    typewriterLineOffset: typewriterConfig.lineOffset,
                     cursorPositionToRestore: $cursorPositionToRestore,
                     scrollToOffset: $editorState.scrollToOffset,
                     scrollToBlockId: $editorState.scrollToBlockId,
@@ -278,6 +287,8 @@ extension ContentView {
                 CodeMirrorEditor(
                     content: $editorState.sourceContent,
                     focusModeEnabled: $editorState.focusModeEnabled,
+                    typewriterEnabled: typewriterEnabled,
+                    typewriterLineOffset: typewriterConfig.lineOffset,
                     cursorPositionToRestore: $cursorPositionToRestore,
                     scrollToOffset: $editorState.scrollToOffset,
                     scrollToAnnotationIndex: $editorState.scrollToAnnotationIndex,

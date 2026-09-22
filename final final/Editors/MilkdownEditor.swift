@@ -91,6 +91,12 @@ struct MilkdownEditor: NSViewRepresentable {
 
     @Binding var content: String
     @Binding var focusModeEnabled: Bool
+    /// `focusMode && typewriterScrollingEnabled`, computed once in
+    /// `ContentView+EditorPresentation.editorView`'s body so that body subscribes to the
+    /// observed settings store. Plain stored values, compared against the coordinator's
+    /// `lastTypewriter*` fields so the idempotent JS call is sent only on a real change.
+    var typewriterEnabled: Bool = false
+    var typewriterLineOffset: Int = 0
     @Binding var cursorPositionToRestore: CursorPosition?
     @Binding var scrollToOffset: Int?
     @Binding var scrollToBlockId: String?
@@ -241,6 +247,14 @@ struct MilkdownEditor: NSViewRepresentable {
             context.coordinator.setFocusMode(effectiveFocusMode)
         }
 
+        // Typewriter scrolling: record the DESIRED config here; the send happens below the
+        // project-reset guard (and again from the ready-flip hook), so a send attempted
+        // mid-reset, or one the not-ready guard rejects, is never recorded as delivered.
+        context.coordinator.desiredTypewriterConfig = TypewriterConfig(
+            enabled: typewriterEnabled,
+            lineOffset: typewriterLineOffset
+        )
+
         // Track reset state for transition detection
         let wasResetting = context.coordinator.wasResettingContent
         context.coordinator.wasResettingContent = isResettingContent
@@ -249,6 +263,10 @@ struct MilkdownEditor: NSViewRepresentable {
         guard !isResettingContent else {
             return
         }
+
+        // The config is sent AFTER the reset guard, so a send attempted mid-reset is not
+        // recorded as delivered and is retried on the next cycle or on the ready flip.
+        context.coordinator.pushTypewriterConfigIfNeeded()
 
         // If we just finished a content reset (e.g. after setContentWithBlockIds),
         // restore cursor position that was preserved during batchInitialize
@@ -361,6 +379,12 @@ struct MilkdownEditor: NSViewRepresentable {
         var lastContentChangeWasUndo: Bool = false
 
         var lastFocusModeState: Bool = false
+        /// The typewriter config `updateNSView` last asked for. Compared against
+        /// `lastTypewriterSent` so an undelivered config is retried.
+        var desiredTypewriterConfig = TypewriterConfig()
+        /// The config actually DELIVERED to JS; nil until a send succeeds. Recording only on
+        /// success is what stops a not-ready-guard rejection from dropping the config.
+        var lastTypewriterSent: TypewriterConfig?
         var lastThemeCss: String = ""
         var isEditorReady = false
         var isCleanedUp = false

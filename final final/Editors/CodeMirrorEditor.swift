@@ -15,6 +15,10 @@ private let sharedDataStore = WKWebsiteDataStore.default()
 struct CodeMirrorEditor: NSViewRepresentable {
     @Binding var content: String
     @Binding var focusModeEnabled: Bool
+    /// `focusMode && typewriterScrollingEnabled`, computed once in
+    /// `ContentView+EditorPresentation.editorView`'s body. See MilkdownEditor's twin fields.
+    var typewriterEnabled: Bool = false
+    var typewriterLineOffset: Int = 0
     @Binding var cursorPositionToRestore: CursorPosition?
     @Binding var scrollToOffset: Int?
     @Binding var scrollToAnnotationIndex: Int?
@@ -175,6 +179,14 @@ struct CodeMirrorEditor: NSViewRepresentable {
             context.coordinator.setFocusMode(effectiveFocusMode)
         }
 
+        // Typewriter scrolling — see MilkdownEditor's identical block: the DESIRED config is
+        // recorded here and sent below the project-reset guard, so a send the not-ready guard
+        // rejects is not recorded as delivered.
+        context.coordinator.desiredTypewriterConfig = TypewriterConfig(
+            enabled: typewriterEnabled,
+            lineOffset: typewriterLineOffset
+        )
+
         // Judge-review should-fix #3: called UNCONDITIONALLY (even while isResettingContent
         // is true) so a forcedPushGeneration bump landing during a reset still gets its
         // credit consumed on THIS cycle -- shouldPushContent itself now refuses to push
@@ -188,6 +200,10 @@ struct CodeMirrorEditor: NSViewRepresentable {
 
         // Skip theme pushes (and anything below) during project reset to prevent empty flash
         guard !isResettingContent else { return }
+
+        // The config is sent AFTER the reset guard, so a send attempted mid-reset is not
+        // recorded as delivered and is retried on the next cycle or on the ready flip.
+        context.coordinator.pushTypewriterConfigIfNeeded()
 
         // Push pending image metadata for width display in previews
         // Guard behind isEditorReady to avoid losing metadata when JS runtime hasn't initialized yet

@@ -87,6 +87,12 @@ extension CodeMirrorEditor {
 
         var lastThemeCss: String = ""
         var lastFocusModeState: Bool = false
+        /// The typewriter config `updateNSView` last asked for. Compared against
+        /// `lastTypewriterSent` so an undelivered config is retried.
+        var desiredTypewriterConfig = TypewriterConfig()
+        /// The config actually DELIVERED to JS; nil until a send succeeds. Recording only on
+        /// success is what stops a not-ready-guard rejection from dropping the config.
+        var lastTypewriterSent: TypewriterConfig?
 
         /// Current content state - used to suppress polling during transitions
         var contentState: EditorContentState = .idle
