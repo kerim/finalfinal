@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.135] - 2026-09-23
+
+### Added
+
+- **A new Typewriter Scrolling option for Focus Mode** — turn it on and the line you're typing on stays at a fixed height on screen while the rest of the text scrolls underneath it, instead of the page jumping as you type. It's off by default; only typing moves the page — clicking, selecting, and scrolling still work normally. Works in both the formatted and source editors.
+
+### Fixed
+
+- **Renaming a heading while zoomed into its section could empty the sidebar, and the sidebar's Zoom Out button then did nothing — worse, the text outside the zoomed section could be silently overwritten the next time the document refreshed** — fixed; renaming a heading while zoomed now keeps the sidebar and your whole document intact, and if the app ever loses track of the zoomed section it restores the full document instead of leaving part of it on screen.
+- **A footnote containing a citation or annotation could silently lose it** — citations and annotations inside a footnote's own text are now preserved instead of being stripped out when the footnote is saved.
+
 ## [0.2.134] - 2026-09-21
 
 ### Added
