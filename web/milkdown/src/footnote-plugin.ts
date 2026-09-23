@@ -68,13 +68,18 @@ const remarkFootnotePlugin = $remark('footnote', () => () => (tree: Root) => {
   visit(tree, 'footnoteDefinition', (node: any, index: number | null, parent: any) => {
     if (!parent || typeof index !== 'number') return;
     const id = node.identifier || node.label || '?';
-    const childText = extractTextFromChildren(node.children);
+    const inlineChildren: any[] = [];
+    for (const child of node.children ?? []) {
+      if (child && child.type === 'paragraph' && Array.isArray(child.children)) {
+        inlineChildren.push(...child.children);
+      } else {
+        const t = extractTextFromChildren([child]);
+        if (t) inlineChildren.push({ type: 'text', value: t });
+      }
+    }
     const replacement: any = {
       type: 'paragraph',
-      children: [
-        { type: 'footnote_def', data: { label: id } },
-        { type: 'text', value: ` ${childText}` },
-      ],
+      children: [{ type: 'footnote_def', data: { label: id } }, { type: 'text', value: ' ' }, ...inlineChildren],
     };
     parent.children.splice(index, 1, replacement);
     return index; // revisit this index (new node inserted)
