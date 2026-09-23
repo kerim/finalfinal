@@ -454,6 +454,14 @@ extension ContentView {
     func handleZoomedFootnoteInsertion(label: String, projectId: String) {
         editorState.contentState = .bibliographyUpdate
 
+        // No `blockSyncService.beginDatabaseRebuild()` marker needed here (t-7c1d3fd8,
+        // Finding #1): unlike the other three `.bibliographyUpdate` sites, this path never
+        // force-flushes the editor's JS-side pending-change queue via
+        // `pollBlockChangesNow()`/`pollBlockChangesNowForDatabaseRebuild()` -- it flushes
+        // the already-cached `editorState.content` string straight to the database below
+        // (`flushContentToDatabase()` is synchronous and calls into `BlockParser`/GRDB only,
+        // never `BlockSyncService`'s poll machinery). With no `getBlockChanges()` fetch in
+        // this path, there is no parked routine-poll batch for a marker to protect.
         // Flush current editor content to DB before modifying
         editorState.flushContentToDatabase()
 

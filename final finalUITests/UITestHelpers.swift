@@ -510,6 +510,28 @@ extension XCUIApplication {
         return nil
     }
 
+    /// Places the caret at the true end of the document: clicks near the CENTER of `element`
+    /// (safe for any resolved text-run element -- unlike a click on the whole `editorArea`
+    /// container, a single content element has no top-padding region to land in by mistake),
+    /// then presses Cmd-Down (`moveToEndOfDocument`) to reach the exact position.
+    ///
+    /// Use this instead of trying to approximate "near the start"/"near the end of the text"
+    /// with a small or large `dx` in `element.coordinate(withNormalizedOffset:)`. CONFIRMED
+    /// (t-7c1d3fd8 e2e authoring, two separate VM rounds, 2026-09-23): that offset scales by
+    /// the ELEMENT'S OWN frame width, not a fixed pixel distance, so `dx: 0.05` on a text run
+    /// can land two characters in (not "the start"), and there is no reliable `dx` for "the
+    /// end" of arbitrary text either -- only an exact keyboard command has well-defined
+    /// semantics, coordinates don't. Only correct when the target position genuinely IS the
+    /// end of the document (e.g. appending to the last block of a freshly seeded fixture, as
+    /// opposed to inserting into the middle of a longer one) -- for a different target
+    /// position, reach for other keyboard navigation instead of a coordinate trick (this
+    /// suite already uses Cmd-Up for document start, Cmd-ArrowDown for CodeMirror's true
+    /// document end since `.end` only reaches the visual wrap point there too).
+    func moveCaretToDocumentEnd(clickingInto element: XCUIElement) {
+        element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
+        typeKey(.downArrow, modifierFlags: .command)
+    }
+
     /// Waits for a menu item by TITLE and returns it, or fails. XCUITest gives
     /// `NSMenuItem` only `title` and an identifier (`menuAction:`) — no
     /// `label` — so a `label BEGINSWITH` query against `menuItems` matches

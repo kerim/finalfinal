@@ -57,6 +57,11 @@ extension ContentView {
         // and the 100ms-delayed pushBlockIds() arrives too late — block-sync reports
         // changes with temp IDs, Swift creates new blocks at maxSortOrder+1.
         editorState.contentState = .bibliographyUpdate
+        // Finding #1 (Calm_Bibliography, t-7c1d3fd8): mark the instant this bump lands,
+        // synchronously and before any Task is spawned, so a routine poll cycle parked
+        // mid-flight can keep (not discard) a batch that predates this rebuild by exactly
+        // this one transition — see BlockSyncService.checkGenerationGuard's doc comment.
+        blockSyncService.beginDatabaseRebuild()
         // This is a synthetic content rebuild, not a mode switch — any cursor position
         // already sitting in cursorPositionToRestore was computed against the
         // pre-rebuild document and is stale by construction. Drop it so the stale
@@ -70,7 +75,7 @@ extension ContentView {
             if let db = documentManager.projectDatabase, let pid = documentManager.projectId {
                 DebugLog.log(.bib, "[CV:bibRebuild] BEFORE poll: \((try? db.fetchBlockCount(projectId: pid)) ?? -1) blocks in DB")
             }
-            await blockSyncService.pollBlockChangesNow()
+            await blockSyncService.pollBlockChangesNowForDatabaseRebuild()
             if let db = documentManager.projectDatabase, let pid = documentManager.projectId {
                 DebugLog.log(.bib, "[CV:bibRebuild] AFTER poll: \((try? db.fetchBlockCount(projectId: pid)) ?? -1) blocks in DB")
             }
@@ -229,6 +234,11 @@ extension ContentView {
 
         // Atomic content+IDs push (same pattern as bibliography)
         editorState.contentState = .bibliographyUpdate  // Reuse same state
+        // Finding #1 (Calm_Bibliography, t-7c1d3fd8): mark the instant this bump lands,
+        // synchronously and before any Task is spawned — see
+        // handleBibliographySectionChanged above and
+        // BlockSyncService.checkGenerationGuard's doc comment.
+        blockSyncService.beginDatabaseRebuild()
         // This is a synthetic content rebuild, not a mode switch — any cursor position
         // already sitting in cursorPositionToRestore was computed against the
         // pre-rebuild document and is stale by construction. Drop it so the stale
@@ -239,7 +249,7 @@ extension ContentView {
 
         Task {
             // Force-flush pending JS changes to DB before reading blocks
-            await blockSyncService.pollBlockChangesNow()
+            await blockSyncService.pollBlockChangesNowForDatabaseRebuild()
 
             guard let result = fetchBlocksWithIds() else {
                 editorState.isResettingContent = false
@@ -354,6 +364,17 @@ extension ContentView {
 
         // Set content state BEFORE DB write to suppress sync
         editorState.contentState = .bibliographyUpdate
+        // Finding #1 (Calm_Bibliography, t-7c1d3fd8): mark the instant this bump lands --
+        // see handleBibliographySectionChanged above and
+        // BlockSyncService.checkGenerationGuard's doc comment. Placed here, before the
+        // database write below (handleImmediateInsertion), rather than only before the
+        // Task below, for defensive/consistent ordering with the other two handlers --
+        // NOT because a poll could otherwise observe the bump with no marker set: this
+        // whole run, from the `contentState` assignment above through this call, is one
+        // synchronous MainActor region with no suspension point in it, so no poll cycle
+        // can interleave between them regardless of exactly where in this region the
+        // marker is set.
+        blockSyncService.beginDatabaseRebuild()
         // This is a synthetic content rebuild, not a mode switch — any cursor position
         // already sitting in cursorPositionToRestore was computed against the
         // pre-rebuild document and is stale by construction. Drop it so the stale
@@ -385,7 +406,7 @@ extension ContentView {
             // returns times out (8s) and this caller then proceeds WITHOUT its own edit in
             // the DB (L8 in the poll-watchdog plan's loss-path table), which the
             // unconditional timeout log states explicitly.
-            await blockSyncService.pollBlockChangesNow()
+            await blockSyncService.pollBlockChangesNowForDatabaseRebuild()
             DebugLog.log(.footnotes, "[ContentView] handleFootnoteInsertedImmediate: fresh flush guaranteed " +
                 "complete for label=\(label), reading blocks from DB")
 

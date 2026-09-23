@@ -300,6 +300,9 @@ class BlockSyncService {
         // polling paused. Its `defer` releases against a counter that no longer
         // includes it, which the saturating decrement there tolerates.
         self.outstandingPrefetchOrphans = 0
+        // A fresh WebView means any rebuild marker set against the OLD editor no longer
+        // describes anything this service should keep a batch for.
+        self.databaseRebuildGeneration = nil
     }
 
     /// Reconfigure database references for project switch (WebView stays the same).
@@ -347,6 +350,10 @@ class BlockSyncService {
         // the previous project's chain tail and wait out its valve. The fetch stamps
         // stay monotonic on purpose — see `fetchSequence`.
         self.applyChainTail = nil
+        // A rebuild marker set against the OLD project describes a generation bump that
+        // no longer applies once the drain above has settled and this reassigns the
+        // project references.
+        self.databaseRebuildGeneration = nil
     }
 
     /// Start polling for block changes
@@ -500,6 +507,16 @@ class BlockSyncService {
     /// consumed JS-side yet, so the batch stays queued and is re-offered next tick.
     private var needsEpochBump = false
 
+    /// Set synchronously by a bibliography/Notes/footnote rebuild the instant it bumps
+    /// `contentGeneration` (i.e. the instant it sets `editorState.contentState =
+    /// .bibliographyUpdate`); cleared when its forced flush returns, before it reads the
+    /// database. Not `private` — `BlockSyncService+DatabaseRebuild.swift` (an extension)
+    /// reads and writes it. See `shouldKeepBatchForDatabaseRebuild(currentGeneration:
+    /// generationAtPollStart:rebuildGeneration:)` for how this narrow window lets a poll
+    /// cycle parked between its fetch and its generation re-check KEEP a batch that would
+    /// otherwise be discarded as stale — the fix for Finding #1 (Calm_Bibliography).
+    var databaseRebuildGeneration: Int?
+
     /// How long a cycle waits for its chain predecessor's apply before assuming it
     /// is wedged, marking it abandoned and proceeding. A wait bounded only by the
     /// predecessor would let one wedged apply stall every later cycle forever; the
@@ -540,6 +557,13 @@ class BlockSyncService {
     /// rejection, without scraping `DebugLog` console output.
     var testGenerationAbandonCount = 0
 
+    /// Test-only counter, incremented every time `checkGenerationGuard` KEEPS a batch
+    /// that would otherwise have been abandoned, because
+    /// `shouldKeepBatchForDatabaseRebuild(...)` found the pending transition was the
+    /// rebuild itself (Finding #1, Calm_Bibliography). Lets tests assert precisely that
+    /// this exception fired, without scraping `DebugLog` console output.
+    var testRebuildKeptBatchCount = 0
+
     /// Test-only hook, awaited immediately after `generationAtPoll` is captured in
     /// `doPollBlockChanges` — i.e. right at the point a wholesale content rewrite
     /// (mode toggle, zoom, bibliography/notes rebuild, project switch) landing here
@@ -564,6 +588,15 @@ class BlockSyncService {
     /// still detected regardless of exactly when the JS flush call happens to run
     /// relative to this point.
     var testAfterGenerationCaptureHook: (() async -> Void)?
+
+    /// Test-only hook, awaited immediately after `pollBlockChangesNowForDatabaseRebuild()`
+    /// (`BlockSyncService+DatabaseRebuild.swift`) captures its own `myMarker` snapshot of
+    /// `databaseRebuildGeneration` — before that call can suspend on anything. Lets a test
+    /// prove exactly when that entry (and therefore that capture) happened, rather than
+    /// assuming a freshly spawned `Task`'s body starts only after its spawner's next
+    /// `await` — that is not a language guarantee. No cost in release builds (property
+    /// doesn't exist).
+    var testAfterMarkerCaptureHook: (() async -> Void)?
 
     /// Test-only entry point to the otherwise-private poll, so tests can drive
     /// forced/periodic cycles directly instead of waiting on the real timer.
@@ -1007,6 +1040,17 @@ class BlockSyncService {
         // since gone nil" (a teardown mid-poll, which IS staleness) — see
         // `shouldAbandonForGenerationChange`.
         let wasEditorStateWiredAtPoll = editorState != nil
+        // Scoped to THIS cycle only (a fresh `false` on every `doPollBlockChanges` call,
+        // never a stored property): `checkGenerationGuard` is invoked at up to three
+        // checkpoints below (preFetch, postFetch, postChainWait) against the SAME
+        // unchanged (generationAtPoll, databaseRebuildGeneration) snapshot whenever
+        // nothing else moves the generation between them — unlike an abandon, which
+        // short-circuits the cycle at its first checkpoint and so can only ever fire
+        // once, a KEEP does not return, so postFetch and postChainWait both legitimately
+        // re-evaluate and would both find the same rebuild-in-flight condition true.
+        // That is one save rescued from discard, not two, so the diagnostic counter/log
+        // is gated on this flag to fire only at the first checkpoint that finds it.
+        var keptForDatabaseRebuildThisCycle = false
 
         #if DEBUG
         await testAfterGenerationCaptureHook?()
@@ -1033,8 +1077,15 @@ class BlockSyncService {
         // Applies in force mode too: force bypasses the contentState *precondition*,
         // not mid-flight invalidation. Nothing has been consumed from JS yet at this
         // point, so an abandoned batch simply stays queued and is re-offered on the
-        // next poll — this check is provably lossless.
-        if checkGenerationGuard(generationAtPoll: generationAtPoll, wasWiredAtPoll: wasEditorStateWiredAtPoll, stage: "preFetch", force: force) {
+        // next poll — this check is provably lossless. `allowDatabaseRebuildKeep: false`:
+        // a discard HERE loses nothing (the forced flush that bumped the generation
+        // re-fetches from scratch), so there is no reason to open the database-rebuild
+        // exception at this checkpoint — see `checkGenerationGuard`'s doc comment.
+        if checkGenerationGuard(
+            generationAtPoll: generationAtPoll, wasWiredAtPoll: wasEditorStateWiredAtPoll,
+            stage: "preFetch", force: force, allowDatabaseRebuildKeep: false,
+            alreadyKeptForRebuild: &keptForDatabaseRebuildThisCycle
+        ) {
             return
         }
 
@@ -1128,12 +1179,30 @@ class BlockSyncService {
         // getBlockChanges() (block-sync-plugin.ts's getBlockChanges(), ~line 704-707) has
         // already cleared the JS-side pendingUpdates/pendingInserts/pendingDeletes, so this
         // batch will not be re-offered on a later poll — returning now genuinely discards
-        // it. That's still the right call: there is no lossless option inside this window.
-        // The alternative — re-queuing the already-fetched batch for a later poll — would
-        // mean writing pre-rewrite content against a document that's actively being rebuilt
-        // from the DB (mode toggle / zoom / bibliography-notes rebuild / project switch),
-        // which corrupts the rebuild instead of just dropping one already-stale batch.
-        if checkGenerationGuard(generationAtPoll: generationAtPoll, wasWiredAtPoll: wasEditorStateWiredAtPoll, stage: "postFetch", force: force) {
+        // it. That's still the right call for a mode toggle, zoom, or project switch: there
+        // is no lossless option inside this window, and the alternative — re-queuing the
+        // already-fetched batch for a later poll — would mean writing pre-rewrite content
+        // against a document that's actively being rebuilt from the DB, corrupting the
+        // rebuild instead of just dropping one already-stale batch.
+        //
+        // ONE EXCEPTION (Finding #1, Calm_Bibliography, t-7c1d3fd8): a bibliography/Notes/
+        // footnote rebuild is different in kind from those other rewrites — for THOSE, the
+        // database is the FRESHER copy and this parked batch is the stale one; for a
+        // database rebuild, this parked batch is the FRESHER copy (it may hold the very
+        // citation/footnote edit that triggered the rebuild) and the database — which the
+        // rebuild is about to read via `fetchBlocksWithIds()` — is the OLDER one. Discarding
+        // here would let the rebuild overwrite the editor with its own stale pre-edit text.
+        // `allowDatabaseRebuildKeep: true` lets `checkGenerationGuard` below KEEP (not
+        // abandon) a batch in that one specific case — see that function's doc comment for
+        // why it's safe: the rebuild cannot read the database until ITS forced flush
+        // returns, and that forced flush awaits this very poll cycle first, so a kept batch
+        // is normally written before the rebuild's read (see that doc comment's KNOWN
+        // RESIDUAL for the narrow hung-WebKit-watchdog window where it is not).
+        if checkGenerationGuard(
+            generationAtPoll: generationAtPoll, wasWiredAtPoll: wasEditorStateWiredAtPoll,
+            stage: "postFetch", force: force, allowDatabaseRebuildKeep: true,
+            alreadyKeptForRebuild: &keptForDatabaseRebuildThisCycle
+        ) {
             return
         }
 
@@ -1206,8 +1275,14 @@ class BlockSyncService {
         // park (none of which drain the poll) cannot get this pre-rewrite batch
         // written over it. Abandoning here is not lossless (the batch was consumed
         // JS-side), but a stale write over a fresh rebuild is the worse outcome —
-        // the same trade the postFetch check above already makes.
-        if checkGenerationGuard(generationAtPoll: generationAtPoll, wasWiredAtPoll: wasEditorStateWiredAtPoll, stage: "postChainWait", force: force) {
+        // the same trade the postFetch check above already makes. `allowDatabaseRebuildKeep:
+        // true` for the same reason as the postFetch call above — see that call site's
+        // comment and `checkGenerationGuard`'s doc comment.
+        if checkGenerationGuard(
+            generationAtPoll: generationAtPoll, wasWiredAtPoll: wasEditorStateWiredAtPoll,
+            stage: "postChainWait", force: force, allowDatabaseRebuildKeep: true,
+            alreadyKeptForRebuild: &keptForDatabaseRebuildThisCycle
+        ) {
             return
         }
 
@@ -1256,12 +1331,94 @@ class BlockSyncService {
     /// rewrite landing during their poll would still be caught — just worth naming so a
     /// future reader doesn't assume those three callers are protected against every stale
     /// scenario by this guard alone.
-    private func checkGenerationGuard(generationAtPoll: Int, wasWiredAtPoll: Bool, stage: String, force: Bool) -> Bool {
+    ///
+    /// ONE EXCEPTION (Finding #1, Calm_Bibliography, t-7c1d3fd8), gated by
+    /// `allowDatabaseRebuildKeep`: a bibliography/Notes/footnote rebuild is not a wholesale
+    /// content rewrite in the same sense as the others above — it FORCE-FLUSHES (via
+    /// `pollBlockChangesNowForDatabaseRebuild()`) and only THEN reads the database, which
+    /// means the database it is about to read cannot yet reflect anything this method's
+    /// caller (the ROUTINE 2-second cycle, parked here since before the rebuild began) has
+    /// not already written. If that routine cycle's own snapshot predates the rebuild by
+    /// exactly one generation — i.e. the pending transition IS the rebuild itself, not some
+    /// earlier or additional rewrite (`shouldKeepBatchForDatabaseRebuild` enforces this
+    /// precisely) — abandoning it here would DISCARD the very edit the rebuild is about to
+    /// overwrite with older database text. Safe because of ordering, not luck: the rebuild's
+    /// force-flush (`pollBlockChangesNowForDatabaseRebuild`) awaits THIS cycle before it can
+    /// return (the forced-cycle drain/await machinery in `pollBlockChanges(force:)`), and
+    /// the rebuild does not touch the database until that await returns — so a kept batch is
+    /// normally fully written before the rebuild's read (see the KNOWN RESIDUAL below for the
+    /// narrow case where it is not). `allowDatabaseRebuildKeep: false` at the preFetch call
+    /// site because a discard there is lossless anyway (nothing has been consumed JS-side, and
+    /// the rebuild's own forced flush re-fetches from scratch) — the exception only matters,
+    /// and is only enabled, once a batch has actually been consumed (postFetch, postChainWait).
+    ///
+    /// KNOWN RESIDUAL (same hung-WebKit class as L8/L10 above — a doc-comment-only limit,
+    /// not chased further here): "the rebuild does not touch the database until that await
+    /// returns" is true of the SPAWNER (`pollBlockChanges(force:)`'s drain loop, `while let
+    /// inFlight = inFlightPoll { await inFlight.value }`), but the spawner itself can return
+    /// at its OWN `defaultPollWatchdogSeconds` (8s) watchdog even while the underlying WORK
+    /// TASK — which already holds this kept batch and is mid-write — is still running
+    /// (`runPollCycle`'s `.timedOut` arm releases the slot without cancelling a
+    /// post-fetch-consumed cycle; see that arm's own comment). If the rebuild's forced flush
+    /// then finds no further changes and returns WITHOUT joining that still-running work
+    /// task's own completion, the marker clears and the rebuild reads the database BEFORE
+    /// the kept write lands, not after. Needs a WebKit reply arriving right at the 8s limit
+    /// to trigger. Consequence, stated plainly: the editor is repainted with the rebuilt
+    /// content MINUS the kept edit; the kept write then lands in the database moments later,
+    /// so editor and database now disagree; nothing re-syncs that gap until the next edit to
+    /// that same block, and that next routine save's own postFetch/postChainWait check then
+    /// overwrites the out-of-order write with the editor's (still-missing-the-edit) state —
+    /// a correct, ordinary generation-guard write at THAT point, not a further bug. The same
+    /// window can also make one physical batch log as both KEPT (at postFetch, before the
+    /// watchdog fires) and REJECTED (at postChainWait or a later cycle's preFetch, once the
+    /// marker has cleared) — if the `[SYNC-DIAG:BlockPoll]` log ever shows that pair for what
+    /// looks like one save, this residual is why; it is not a decision-reversal bug. A cheap
+    /// fix was considered (having the forced flush additionally wait, with its own short time
+    /// limit, for the current apply-chain tail before returning) and was not judged worth the
+    /// added complexity for a window this narrow; revisit if it is ever observed in practice
+    /// rather than reasoned about.
+    ///
+    /// `alreadyKeptForRebuild` (`inout`): postFetch and postChainWait both pass
+    /// `allowDatabaseRebuildKeep: true` and, when nothing moves the generation between
+    /// them, both independently find the SAME keep condition true against the SAME
+    /// unchanged snapshot -- unlike an abandon, which returns immediately and so can only
+    /// ever fire at one checkpoint, a keep does not return, so a naive per-call log/count
+    /// would double-count one rescued save as two. The caller (`doPollBlockChanges`)
+    /// declares this flag fresh (`false`) once per cycle and threads the SAME instance
+    /// through every call site in that cycle, so the log/count below fires only at
+    /// whichever checkpoint reaches the condition first.
+    private func checkGenerationGuard(
+        generationAtPoll: Int, wasWiredAtPoll: Bool, stage: String, force: Bool,
+        allowDatabaseRebuildKeep: Bool, alreadyKeptForRebuild: inout Bool
+    ) -> Bool {
         guard Self.shouldAbandonForGenerationChange(
             currentGeneration: editorState?.contentGeneration,
             generationAtPollStart: generationAtPoll,
             wasWiredAtPollStart: wasWiredAtPoll
         ) else { return false }
+        if allowDatabaseRebuildKeep, Self.shouldKeepBatchForDatabaseRebuild(
+            currentGeneration: editorState?.contentGeneration,
+            generationAtPollStart: generationAtPoll,
+            rebuildGeneration: databaseRebuildGeneration
+        ) {
+            // `alreadyKeptForRebuild` is one flag, scoped to and owned by THIS cycle's
+            // `doPollBlockChanges` call (see its declaration there): postFetch and
+            // postChainWait both call this on the SAME unchanged snapshot whenever
+            // nothing moves the generation between them, so both independently find
+            // this condition true. That is one save rescued from discard, not two --
+            // log and count it once, at whichever checkpoint reaches it first.
+            if !alreadyKeptForRebuild {
+                alreadyKeptForRebuild = true
+                DebugLog.always(
+                    "[SYNC-DIAG:BlockPoll] KEPT: reason=databaseRebuildPending stage=\(stage) " +
+                    "generationAtPoll=\(generationAtPoll) current=\(String(describing: editorState?.contentGeneration))"
+                )
+                #if DEBUG
+                testRebuildKeptBatchCount += 1
+                #endif
+            }
+            return false
+        }
         DebugLog.always(
             "[SYNC-DIAG:BlockPoll] REJECTED: reason=generationChangedMidFlight stage=\(stage) " +
             "generationAtPoll=\(generationAtPoll) wasWired=\(wasWiredAtPoll) " +
@@ -1567,22 +1724,8 @@ extension BlockSyncService {
         // Build options object
         var optionParts: [String] = []
         appendFlagOption(&optionParts, scrollToStart, "scrollToStart")
-        if !imageMeta.isEmpty {
-            let metaArray = imageMeta.map { meta -> [String: Any] in
-                var dict: [String: Any] = ["id": meta.id]
-                if let width = meta.width { dict["width"] = width }
-                if let caption = meta.caption { dict["caption"] = caption }
-                if let alt = meta.alt { dict["alt"] = alt }
-                return dict
-            }
-            if let metaData = try? JSONSerialization.data(withJSONObject: metaArray),
-               let metaJson = String(data: metaData, encoding: .utf8) {
-                let escapedMeta = metaJson
-                    .replacingOccurrences(of: "\\", with: "\\\\")
-                    .replacingOccurrences(of: "`", with: "\\`")
-                    .replacingOccurrences(of: "${", with: "\\${")
-                optionParts.append("imageMeta: JSON.parse(`\(escapedMeta)`)")
-            }
+        if let imageMetaOption = imageMetaOptionString(imageMeta) {
+            optionParts.append(imageMetaOption)
         }
         appendOption(&optionParts, cursorBoundary) { "cursorBoundary: \($0)" }
         appendOption(&optionParts, cursorBoundaryEnd) { "cursorBoundaryEnd: \($0)" }
@@ -1640,6 +1783,33 @@ extension BlockSyncService {
         if flag {
             optionParts.append("\(key): true")
         }
+    }
+
+    /// Builds the `imageMeta: ...` JS option-string entry (same shape as `appendOption`'s
+    /// callers, but with its own multi-field JSON encoding, hence its own helper) — `nil`
+    /// when there is nothing to append (empty input, or JSON encoding failed), matching the
+    /// no-op behavior of the `if !imageMeta.isEmpty { ... }` block this replaced. Extracted
+    /// from `setContentWithBlockIds` (contained fix, no behavior change) to bring that
+    /// function's cyclomatic complexity back under the project's cap — this block's own
+    /// internal branching (the three `if let` field checks inside the `.map`, plus the
+    /// outer emptiness/encoding checks) was most of what pushed it over. Pure, no side
+    /// effects beyond its own local state.
+    private func imageMetaOptionString(_ imageMeta: [ContentView.ImageBlockMeta]) -> String? {
+        guard !imageMeta.isEmpty else { return nil }
+        let metaArray = imageMeta.map { meta -> [String: Any] in
+            var dict: [String: Any] = ["id": meta.id]
+            if let width = meta.width { dict["width"] = width }
+            if let caption = meta.caption { dict["caption"] = caption }
+            if let alt = meta.alt { dict["alt"] = alt }
+            return dict
+        }
+        guard let metaData = try? JSONSerialization.data(withJSONObject: metaArray),
+              let metaJson = String(data: metaData, encoding: .utf8) else { return nil }
+        let escapedMeta = metaJson
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "`", with: "\\`")
+            .replacingOccurrences(of: "${", with: "\\${")
+        return "imageMeta: JSON.parse(`\(escapedMeta)`)"
     }
 
     /// Surgically update heading levels in the editor without replacing the document.

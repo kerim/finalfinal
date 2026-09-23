@@ -33,6 +33,7 @@
 		04195D3F2962ED2D9A21C2F5 /* SectionSyncService.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA5B65E36E0BB3661A7CE09A /* SectionSyncService.swift */; };
 		0482D5E5C956125D76159EA2 /* SectionTypography.swift in Sources */ = {isa = PBXBuildFile; fileRef = 049B00CFA6C19B14553937F3 /* SectionTypography.swift */; };
 		04EE75F2C42EA3D00794201C /* ShortcutTooltipTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A2286C247D0FD7EA16CEA7B /* ShortcutTooltipTests.swift */; };
+		05F31A57B0A848E68D626545 /* BibRebuildErasesEditE2ETests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BCE7466F715ED793160DAE8A /* BibRebuildErasesEditE2ETests.swift */; };
 		062B41D5D62F9F40057C254B /* ContentView+ProjectLifecycle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 07DB82121B58A51D0946666A /* ContentView+ProjectLifecycle.swift */; };
 		06807360FCBE527719BEA326 /* ZoteroLibraryScopeTests+DuplicateLibraryNamesPipeline.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF492B7BDEB66C579BD04EA1 /* ZoteroLibraryScopeTests+DuplicateLibraryNamesPipeline.swift */; };
 		071A6C54575481A6FB19E51E /* ProjectLifecycleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6496027A3F7CD0097F05A189 /* ProjectLifecycleTests.swift */; };
@@ -162,6 +163,7 @@
 		49DBFD0515384750FE283806 /* ContentView+HierarchyEnforcement.swift in Sources */ = {isa = PBXBuildFile; fileRef = 97EBF329386AD7C3A261ACC6 /* ContentView+HierarchyEnforcement.swift */; };
 		4AA86A11D7EC52D97D029274 /* Annotation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7311920CB617B184B124B6F4 /* Annotation.swift */; };
 		4B15F94165EB4173302F37E6 /* BibliographyHeadingRenamer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8351B381EDB11BFCCAAEE2BC /* BibliographyHeadingRenamer.swift */; };
+		4BF6457E54A539D332F2D0E6 /* BlockSyncPollWatchdogTests+RebuildKeepsBatch.swift in Sources */ = {isa = PBXBuildFile; fileRef = 38253288A80BF62423945A6F /* BlockSyncPollWatchdogTests+RebuildKeepsBatch.swift */; };
 		4C7E2457DC3A7DA2BCE893AB /* Database+BlocksReorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5902C341D97A143E13EC44CA /* Database+BlocksReorder.swift */; };
 		4C928D3A6E337665ED5BB7C1 /* SectionSyncService+Anchors.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F9E113796E1D22FF7D8AB97 /* SectionSyncService+Anchors.swift */; };
 		4D07ADEF710AD6172D563F4A /* ProjectSwitchBibliographyE2ETests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E9CA41441EE221094E95C972 /* ProjectSwitchBibliographyE2ETests.swift */; };
@@ -189,6 +191,7 @@
 		53CA97BC44F8EF963A212FAE /* ZoomRenameFlushTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A8A8B0915B9E016AF46A8E39 /* ZoomRenameFlushTests.swift */; };
 		53CB37D15CCB3AF5AF41F3D6 /* ToolbarSymbolAvailabilityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7447AEBB76A8FD3531FA9E7C /* ToolbarSymbolAvailabilityTests.swift */; };
 		54057EC3C94ED504CC870459 /* BibliographySectionFlagTests+DataIntegrity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 540E3275C45E40D89DE7C03E /* BibliographySectionFlagTests+DataIntegrity.swift */; };
+		541EE533D39291B4D7C746A5 /* BlockSyncService+DatabaseRebuild.swift in Sources */ = {isa = PBXBuildFile; fileRef = E2C501483E9485F9FF03A27B /* BlockSyncService+DatabaseRebuild.swift */; };
 		5428AB4DBE5F4E61BBD3DFAC /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = 980503AFBDB8FC8CEF6F8BFE /* GRDB */; };
 		548CF9F987699A77EF54127D /* DiagnosticReportGeneratorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 28645F6BE3303F093FF09EAF /* DiagnosticReportGeneratorTests.swift */; };
 		567224468A31CDC730E15859 /* FocusModeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F56781FE0EE291AAD9AE24E8 /* FocusModeTests.swift */; };
@@ -658,6 +661,7 @@
 		367B2F46489B76939193E674 /* BibliographyCarryForwardTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BibliographyCarryForwardTests.swift; sourceTree = "<group>"; };
 		374D7FF771D6B32ACD8C031A /* FullScreenTransitionModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FullScreenTransitionModel.swift; sourceTree = "<group>"; };
 		3801050BDCDC043F4E8A5120 /* Database+BlocksReplace.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Database+BlocksReplace.swift"; sourceTree = "<group>"; };
+		38253288A80BF62423945A6F /* BlockSyncPollWatchdogTests+RebuildKeepsBatch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "BlockSyncPollWatchdogTests+RebuildKeepsBatch.swift"; sourceTree = "<group>"; };
 		38966163E9812E157C3C33BE /* ProjectIntegrityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectIntegrityTests.swift; sourceTree = "<group>"; };
 		3A039544E54D1306A86A1EFF /* FullScreenTransitionModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FullScreenTransitionModelTests.swift; sourceTree = "<group>"; };
 		3A17150D551A7F6CA8079CBC /* EditorTypeScaleBridgeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorTypeScaleBridgeTests.swift; sourceTree = "<group>"; };
@@ -919,6 +923,7 @@
 		BC27954DE76B2ADD62BBFF00 /* Section.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Section.swift; sourceTree = "<group>"; };
 		BC996CF1AA9E25EC3AAE818A /* EscapeLadderHost.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EscapeLadderHost.swift; sourceTree = "<group>"; };
 		BCB5CA0B192FE6F4DA38EA98 /* AnnotationPanelWidth.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnnotationPanelWidth.swift; sourceTree = "<group>"; };
+		BCE7466F715ED793160DAE8A /* BibRebuildErasesEditE2ETests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BibRebuildErasesEditE2ETests.swift; sourceTree = "<group>"; };
 		BE81F62E86637409893DDB0A /* CitationRevertScrollBridgeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CitationRevertScrollBridgeTests.swift; sourceTree = "<group>"; };
 		BEC20B55C260FCF5460E4E23 /* ExportPreferencesPane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportPreferencesPane.swift; sourceTree = "<group>"; };
 		BF41CB39EB2C5BD4E30A2CDA /* StatusBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusBar.swift; sourceTree = "<group>"; };
@@ -980,6 +985,7 @@
 		E16909CB53D2BCFD8CC1B0BF /* ZoteroService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZoteroService.swift; sourceTree = "<group>"; };
 		E1CCFECDA6EF65B53C684359 /* ExportService+Diagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ExportService+Diagnostics.swift"; sourceTree = "<group>"; };
 		E2BEC2E8F18731A82D861A36 /* ProjectRepairServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectRepairServiceTests.swift; sourceTree = "<group>"; };
+		E2C501483E9485F9FF03A27B /* BlockSyncService+DatabaseRebuild.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "BlockSyncService+DatabaseRebuild.swift"; sourceTree = "<group>"; };
 		E34DF3B19EEE7F362D7D3591 /* ZoteroLibraryScopeTests+GroupScopeByName.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ZoteroLibraryScopeTests+GroupScopeByName.swift"; sourceTree = "<group>"; };
 		E6138BCD179DB2FB36132C52 /* BibliographyHeaderNameWiringTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BibliographyHeaderNameWiringTests.swift; sourceTree = "<group>"; };
 		E614BA7EFA79C8EAF96B80C0 /* AppearanceSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppearanceSettings.swift; sourceTree = "<group>"; };
@@ -1316,6 +1322,7 @@
 				FAD8FFDABECD9BD823A0CA42 /* BlockParser+Images.swift */,
 				86A46F4701A4F13FB110CE54 /* BlockParser+Splitting.swift */,
 				4BE2C3C3ABC2BC1990C2AC24 /* BlockSyncService.swift */,
+				E2C501483E9485F9FF03A27B /* BlockSyncService+DatabaseRebuild.swift */,
 				DDC98D54901B8744835E5EF4 /* BuiltInProvider.swift */,
 				621214D7AF8029CB872C0562 /* DiagnosticReportGenerator.swift */,
 				44DE11B8C0AD43E4C7DA35BF /* DocumentManager.swift */,
@@ -1451,6 +1458,7 @@
 			children = (
 				2CC0A169990C1E32FBB84D01 /* AnnotationDeleteE2ETests.swift */,
 				9E8C85DB3B0A253A468D033A /* AnnotationDisplayPersistenceE2ETests.swift */,
+				BCE7466F715ED793160DAE8A /* BibRebuildErasesEditE2ETests.swift */,
 				879345BDC47D8C35185DE723 /* ChromeTypographyE2ETests.swift */,
 				F003067596015F20CACF08B0 /* DiagnosticsReportSavedInlineE2ETests.swift */,
 				AE0C4913B4292CB7BA3EDFB5 /* E2EAsyncImageCorruptionTests.swift */,
@@ -1518,6 +1526,7 @@
 				D9C92ED5B2BE260D34B66182 /* BlockIdAlignmentHardeningLiveTests.swift */,
 				C0F329FF9416B93E41F3AE2A /* BlockSyncPollWatchdogTests.swift */,
 				3BD1D08751729BC9E4B339C7 /* BlockSyncPollWatchdogTests+EpochBarrier.swift */,
+				38253288A80BF62423945A6F /* BlockSyncPollWatchdogTests+RebuildKeepsBatch.swift */,
 				16D654EA23E3A5795647A363 /* BlockSyncProjectSwitchDrainTests.swift */,
 				59C494C6F45F9B2C4EB019EB /* CAYWConcurrentInsertTests.swift */,
 				3C093D047A50B1700205B6D0 /* CitationDeleteTests.swift */,
@@ -2061,6 +2070,7 @@
 				0E73A2CA77ADED759B79CD01 /* BlockRoundtripTests.swift in Sources */,
 				8E5B8B36419386E92D16A1E5 /* BlockSyncGenerationGuardTests.swift in Sources */,
 				D6A69E6D49A78269EFDF72A2 /* BlockSyncPollWatchdogTests+EpochBarrier.swift in Sources */,
+				4BF6457E54A539D332F2D0E6 /* BlockSyncPollWatchdogTests+RebuildKeepsBatch.swift in Sources */,
 				5912438A8A3155C77DC6219D /* BlockSyncPollWatchdogTests.swift in Sources */,
 				623A514928E10DD695655F2F /* BlockSyncProjectSwitchDrainTests.swift in Sources */,
 				1F5CD824C3B255DA2D04B0E0 /* BlockSyncStaleGuardTests.swift in Sources */,
@@ -2231,6 +2241,7 @@
 			files = (
 				9860866FCBBC151F55CB80B5 /* AnnotationDeleteE2ETests.swift in Sources */,
 				005F67731262B060199323B6 /* AnnotationDisplayPersistenceE2ETests.swift in Sources */,
+				05F31A57B0A848E68D626545 /* BibRebuildErasesEditE2ETests.swift in Sources */,
 				172629C8ED117A35FD65F419 /* ChromeTypographyE2ETests.swift in Sources */,
 				EDFE9D8F4AB77EF2E6BF88E9 /* DiagnosticsReportSavedInlineE2ETests.swift in Sources */,
 				285B36F89EB24DC54F98B30C /* E2EAsyncImageCorruptionTests.swift in Sources */,
@@ -2293,6 +2304,7 @@
 				92C94AB7BDFA6D2F61712B2D /* BlockParser+Images.swift in Sources */,
 				E405022033898171C8C866EE /* BlockParser+Splitting.swift in Sources */,
 				9E99C57C2D8101B560301BAE /* BlockParser.swift in Sources */,
+				541EE533D39291B4D7C746A5 /* BlockSyncService+DatabaseRebuild.swift in Sources */,
 				230D53A0B012FF234621652E /* BlockSyncService.swift in Sources */,
 				21E9D0A73D4F1709F165CC1E /* BuiltInProvider.swift in Sources */,
 				8A96868113B77FF320A4AFB9 /* CSLItem.swift in Sources */,
