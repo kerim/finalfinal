@@ -383,13 +383,30 @@ extension ProjectDatabase {
 
     /// Replace blocks within a sort order range (used during zoomed CodeMirror re-parse).
     /// Only deletes/inserts blocks in [startSortOrder, endSortOrder), preserving blocks outside the zoom.
-    /// Restores heading metadata (status, tags, wordGoal, goalType) by title match.
+    ///
+    /// Heading identity is preserved by TWO independent mechanisms now, not title alone:
+    /// `anchorHeadingId` (when non-nil) matches the zoom root by POSITION -- the first non-empty
+    /// heading in `newBlocks` inherits `anchorHeadingId`'s id/metadata regardless of whether its
+    /// title changed, via `resolveAnchorHeading` -- and every OTHER heading is still matched by
+    /// the existing title-queue mechanism (`buildHeadingQueues`/`applyPreservedHeading`). This
+    /// closes the "rename the zoomed heading" data-loss bug: a title-only match silently drops
+    /// a renamed root heading's id (and its status/tags/word goal), which corrupts the
+    /// position-paired `SectionSyncService.zoomedExistingSections` lookup and empties the
+    /// sidebar. See `resolveAnchorHeading`'s own doc comment (Database+BlocksReplace+
+    /// Preservation.swift) for the exact binding conditions.
+    ///
+    /// `@discardableResult`: every pre-existing caller ignores the return value, unaffected by
+    /// this signature change. Returns the rows ACTUALLY inserted (final ids, in document order)
+    /// -- rows skipped or merged by `handleMachineManagedBlock` are excluded -- so a caller like
+    /// `flushContentToDatabase` can resolve the new zoom root without a second DB round trip.
+    @discardableResult
     func replaceBlocksInRange(
         _ newBlocks: [Block],
         for projectId: String,
         startSortOrder: Double,
-        endSortOrder: Double?
-    ) throws {
+        endSortOrder: Double?,
+        anchorHeadingId: String? = nil
+    ) throws -> [Block] {
         try write { db in
             // 1. Fetch existing blocks in range to preserve heading metadata and IDs
             var existingQuery = Block
@@ -400,11 +417,29 @@ extension ProjectDatabase {
             }
             let existingBlocks = try existingQuery.order(Block.Columns.sortOrder).fetchAll(db)
 
+            // 1.5. Resolve the zoom-root anchor (position-based), if requested. When bound, the
+            // anchor's existing row and its corresponding newBlocks heading are excluded from
+            // the title-queue inputs below -- see resolveAnchorHeading's doc comment for why:
+            // otherwise the anchor's own occurrence would compete for a title-queue slot and
+            // could steal (or be stolen by) an unrelated same-titled heading's identity.
+            let resolvedAnchor = resolveAnchorHeading(existing: existingBlocks, newBlocks: newBlocks, anchorId: anchorHeadingId)
+            let headingQueueExisting: [Block]
+            let headingQueueNewBlocks: [Block]
+            if let resolvedAnchor {
+                headingQueueExisting = existingBlocks.filter { $0.id != resolvedAnchor.preserved.id }
+                headingQueueNewBlocks = newBlocks.enumerated()
+                    .filter { $0.offset != resolvedAnchor.newIndex }
+                    .map { $0.element }
+            } else {
+                headingQueueExisting = existingBlocks
+                headingQueueNewBlocks = newBlocks
+            }
+
             // 2. Build the heading id/metadata pop-queue (keyed by title) plus the set of
             // existing heading ids that must never be deleted or popped. This is the
             // highest-risk piece of logic in this function — see buildHeadingQueues for the
             // full occurrence-index / count-mismatch-protection rationale.
-            let headingQueueResult = buildHeadingQueues(existing: existingBlocks, newBlocks: newBlocks)
+            let headingQueueResult = buildHeadingQueues(existing: headingQueueExisting, newBlocks: headingQueueNewBlocks)
             var headingsByTitle = headingQueueResult.queues
             let protectedHeadingIds = headingQueueResult.protectedIds
 
@@ -491,6 +526,11 @@ extension ProjectDatabase {
             )
 
             // 3. Insert new blocks with sort orders starting at startSortOrder
+            // `insertedRows` collects every row this loop actually inserts (final id, document
+            // order) -- excludes anything handleMachineManagedBlock skips/merges below. Returned
+            // to the caller (see this function's doc comment); a rename-flush caller resolves
+            // its new zoom root from this without a second DB round trip.
+            var insertedRows: [Block] = []
             for (index, var block) in newBlocks.enumerated() {
                 block.sortOrder = startSortOrder + Double(index)
 
@@ -505,14 +545,20 @@ extension ProjectDatabase {
                     continue
                 }
 
-                // 4 & 5. Preserve heading ID and metadata by occurrence-indexed title match
-                // (see applyPreservedHeading).
-                applyPreservedHeading(to: &block, queues: &headingsByTitle)
+                // 4 & 5. Preserve heading ID and metadata: the zoom-root anchor (position-based,
+                // see resolveAnchorHeading) wins at its own bound index; every other heading is
+                // still matched by occurrence-indexed title (see applyPreservedHeading).
+                if let resolvedAnchor, index == resolvedAnchor.newIndex {
+                    applyPreserved(resolvedAnchor.preserved, to: &block, restoringBibliography: true)
+                } else {
+                    applyPreservedHeading(to: &block, queues: &headingsByTitle)
+                }
 
                 // 6. Preserve image metadata by imageSrc match (see applyPreservedImageMetadata).
                 applyPreservedImageMetadata(to: &block, index: &imageMetaBySrc)
 
                 try block.insert(db)
+                insertedRows.append(block)
             }
 
             // Any continuation row the incoming batch never claimed -- the user deleted that
@@ -549,6 +595,8 @@ extension ProjectDatabase {
             try Self.stampWholeProjectForRewrite(db: db, projectId: projectId)
 
             try Self.recomputeSectionParents(db: db, projectId: projectId)
+
+            return insertedRows
         }
     }
 

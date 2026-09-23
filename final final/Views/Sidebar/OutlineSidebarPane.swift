@@ -159,6 +159,7 @@ struct OutlineSidebarPane: View {
                 currentSectionId: editorState.currentSectionId,
                 onZoomToSection: onZoomToSection,
                 onZoomOut: onZoomOutFromSidebar,
+                canZoomOut: editorState.contentState == .idle,
                 onDragStarted: onDragStarted,
                 onDragEnded: onDragEnded,
                 sectionDropInFlight: $editorState.sectionDropInFlight,

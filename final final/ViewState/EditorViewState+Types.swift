@@ -171,6 +171,15 @@ extension Notification.Name {
     /// sites) means every one of them is covered uniformly, including any future one. See
     /// `ContentView.handleZoomStateCleared()`, the one place this is currently consumed.
     static let zoomStateCleared = Notification.Name("zoomStateCleared")
+    /// Posted by `EditorViewState.clearZoomRestoringEditor()` after it auto-recovers from
+    /// "the zoom root's heading line was deleted entirely, with nothing left to fall back to"
+    /// -- see `flushContentToDatabase`'s lost-root branch. Distinct from `.didZoomOut` (also
+    /// posted on this same path, for the ordinary bibliography/footnote/annotation resync):
+    /// this one exists purely as the undo barrier a user-initiated zoom-out already gets via
+    /// `performUserZoomOut`'s `unifiedUndoService.invalidateAll(reason:)` call, since this
+    /// path has no such user gesture to hang that call off of. `ContentView` observes it and
+    /// calls `invalidateAll` itself.
+    static let zoomExitedAfterRootLost = Notification.Name("zoomExitedAfterRootLost")
     /// Posted by MilkdownCoordinator+MessageDispatch's "zoomHeadingClicked" case when the
     /// user Cmd-clicks a heading in the editor (heading-zoom-click-handler.ts). Always-on
     /// editor interaction -- no Focus Mode gate. userInfo carries `"blockId": String`.

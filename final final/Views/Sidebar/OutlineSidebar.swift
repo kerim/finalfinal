@@ -38,6 +38,14 @@ struct OutlineSidebar: View {
     var onZoomToSection: ((String, ZoomMode) -> Void)?
     /// Called when user requests zoom out (double-click on already zoomed section)
     var onZoomOut: (() -> Void)?
+    /// Whether the empty-state "Zoom Out" button may be used right now -- `false` while a
+    /// content transition is in flight (`editorState.contentState != .idle`), matching the
+    /// status-bar chevron and breadcrumb's own zoom-out affordances, which disable
+    /// themselves the same way. Prevents a rapid double-fire hitting `onZoomOut?()` (wired to
+    /// the real `zoomOut()`, which self-guards on re-entry but would otherwise let a second
+    /// click queue up against an in-flight transition). No default: every call site (this
+    /// file's own `#Preview` included) states its value explicitly.
+    let canZoomOut: Bool
     /// Called when drag operation starts - use to suppress sync
     var onDragStarted: (() -> Void)?
     /// Called when drag operation ends - use to resume sync
@@ -109,6 +117,21 @@ struct OutlineSidebar: View {
     }
 
     private var filteredSections: [SectionViewModel] {
+        Self.filterSections(
+            sections, statusFilter: statusFilter, headerLevelFilter: headerLevelFilter, zoomedIds: zoomedSectionIds
+        )
+    }
+
+    /// The sidebar's filter/sort pipeline (status filter, header-level filter, zoom filter,
+    /// bibliography-pinned-last sort) lifted verbatim out of `filteredSections` so tests can
+    /// call it directly against real `db.fetchOutlineBlocks(projectId:)`-derived section
+    /// output, instead of only being reachable through a live `OutlineSidebar` instance.
+    static func filterSections(
+        _ sections: [SectionViewModel],
+        statusFilter: SectionStatus?,
+        headerLevelFilter: Int?,
+        zoomedIds: Set<String>?
+    ) -> [SectionViewModel] {
         var result = sections
 
         // Apply status filter
@@ -123,7 +146,7 @@ struct OutlineSidebar: View {
 
         // Apply zoom filter using zoomedSectionIds from EditorViewState
         // This uses the same document-order-based descendant calculation as the editor
-        if let zoomedIds = zoomedSectionIds {
+        if let zoomedIds {
             result = result.filter { zoomedIds.contains($0.id) }
         }
 
@@ -677,10 +700,24 @@ struct OutlineSidebar: View {
                     .foregroundColor(themeManager.currentTheme.sidebarText.opacity(0.6))
 
                 Button("Zoom Out") {
-                    zoomedSectionId = nil
+                    // The REAL zoom-out (performUserZoomOut -> EditorViewState.zoomOut()),
+                    // not a bare `zoomedSectionId = nil`: clearing only the binding here left
+                    // zoomedSectionIds/zoomedBlockRange stale and pointing at a heading no
+                    // longer in the DB, so this button did nothing visible and the next edit
+                    // could flush that stale range over the rest of the document.
+                    onZoomOut?()
                 }
                 .buttonStyle(.plain)
-                .foregroundColor(themeManager.currentTheme.accentColor)
+                // M9 (judge fix round): `.plain` buttons don't dim on `.disabled` by
+                // themselves once a foregroundColor is set explicitly -- without this, the
+                // button looked identically clickable whether or not it actually was.
+                .foregroundColor(
+                    canZoomOut
+                        ? themeManager.currentTheme.accentColor
+                        : themeManager.currentTheme.accentColor.opacity(0.4)
+                )
+                .disabled(!canZoomOut)
+                .accessibilityIdentifier("outline-empty-zoom-out")
             } else {
                 Text("No sections yet")
                     .font(.system(size: TypeScale.chromeLabel))
@@ -810,6 +847,7 @@ struct SectionTitleTooltip: View {
             zoom = nil
             print("Zoom out")
         },
+        canZoomOut: true,
         onDragStarted: { print("Drag started") },
         onDragEnded: { print("Drag ended") },
         sectionDropInFlight: $dropInFlight

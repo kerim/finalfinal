@@ -392,6 +392,21 @@ class SectionSyncService {
         }
     }
 
+    /// Filters existing Section rows down to the zoomed subset, in document order --
+    /// extracted verbatim from `syncZoomedSections` (Step 5 of the rename-sidebar plan) so it
+    /// can be exercised directly by a test, and reused unchanged at that call site. `nonisolated`
+    /// so it can be called from `syncZoomedSections`'s `Task.detached` closure below without an
+    /// actor hop; `Section` is `Sendable`, so this is safe. Excludes `isBibliography`/`isNotes`
+    /// rows for the reason `bodyHeaders` filters `headers` at that call site: the update/
+    /// insertion/deletion helpers pair this array against `bodyHeaders` purely by ARRAY INDEX,
+    /// so a flagged bibliography/notes row occupying a slot here with no counterpart there would
+    /// shift every subsequent index out of alignment.
+    nonisolated static func zoomedExistingSections(_ existing: [Section], zoomedIds: Set<String>) -> [Section] {
+        existing
+            .filter { zoomedIds.contains($0.id) && !$0.isBibliography && !$0.isNotes }
+            .sorted { $0.sortOrder < $1.sortOrder }
+    }
+
     /// Sync zoomed content without replacing the full sections array
     /// Updates zoomed sections in-place and saves only those to database
     /// Handles insertions (new headers) and deletions (removed headers) while zoomed
@@ -441,9 +456,7 @@ class SectionSyncService {
                 // `bodyHeaders`, shifting every subsequent index out of alignment -- and in
                 // particular `zoomedDeletionChanges` would delete whatever unrelated trailing
                 // section that misalignment shifted into the "removed" slice.
-                let zoomedExisting = existingSections
-                    .filter { zoomedIds.contains($0.id) && !$0.isBibliography && !$0.isNotes }
-                    .sorted { $0.sortOrder < $1.sortOrder }
+                let zoomedExisting = SectionSyncService.zoomedExistingSections(existingSections, zoomedIds: zoomedIds)
 
                 let allSorted = existingSections.sorted { $0.sortOrder < $1.sortOrder }
 

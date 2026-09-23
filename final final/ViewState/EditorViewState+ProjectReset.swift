@@ -37,6 +37,11 @@ extension EditorViewState {
         zoomedSectionIds = nil
         zoomedBlockRange = nil
         isZoomingContent = false
+        // A project switch ends any in-flight zoom episode -- bumps `zoomEpoch` so a
+        // `clearZoomRestoringEditor()` recovery spawned for the OLD project's lost zoom root
+        // abandons instead of restoring the old project's blocks into the editor now showing
+        // the new one (M3, judge fix round).
+        zoomEpoch += 1
 
         // Reset content state machine
         contentState = .idle

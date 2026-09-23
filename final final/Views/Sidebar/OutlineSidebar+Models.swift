@@ -238,6 +238,7 @@ extension OutlineSidebar: Equatable {
             // (always-true) comparisons, reintroducing the original bug for those two fields.
             && lhs.zoomedSectionIds == rhs.zoomedSectionIds
             && lhs.currentSectionId == rhs.currentSectionId
+            && lhs.canZoomOut == rhs.canZoomOut
             && (lhs.onSectionReorder == nil) == (rhs.onSectionReorder == nil)
             && (lhs.onZoomToSection == nil) == (rhs.onZoomToSection == nil)
             && (lhs.onZoomOut == nil) == (rhs.onZoomOut == nil)

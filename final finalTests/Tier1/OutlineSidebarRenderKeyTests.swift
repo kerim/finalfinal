@@ -90,7 +90,8 @@ struct OutlineSidebarRenderKeyTests {
         sections: [SectionViewModel] = [],
         currentSectionId: String? = nil,
         zoomedSectionIds: Set<String>? = nil,
-        onDeleteSection: ((String) -> Void)? = nil
+        onDeleteSection: ((String) -> Void)? = nil,
+        canZoomOut: Bool = true
     ) -> OutlineSidebar {
         OutlineSidebar(
             sections: .constant(sections),
@@ -108,6 +109,7 @@ struct OutlineSidebarRenderKeyTests {
             currentSectionId: currentSectionId,
             onZoomToSection: nil,
             onZoomOut: nil,
+            canZoomOut: canZoomOut,
             onDragStarted: nil,
             onDragEnded: nil,
             sectionDropInFlight: .constant(false),
@@ -325,5 +327,16 @@ struct OutlineSidebarRenderKeyTests {
 
         let after = makeSidebar(sections: sections)
         #expect(after == before, "editing title/wordCount in place must not invalidate the sidebar")
+    }
+
+    // MARK: - Operator-level: canZoomOut (rename-empties-sidebar fix, Step 4)
+
+    @Test("sidebars differing only in canZoomOut are not equal")
+    func sidebarsDifferingOnlyInCanZoomOutAreNotEqual() {
+        let sections = [makeSection(sortOrder: 0)]
+        #expect(
+            makeSidebar(sections: sections, canZoomOut: true)
+                != makeSidebar(sections: sections, canZoomOut: false)
+        )
     }
 }

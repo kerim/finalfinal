@@ -117,6 +117,7 @@
 		31EE4F7EA3B0C9163BEF4206 /* ZoomWordCountSyncTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 354FD04A50F29512BEE6C1ED /* ZoomWordCountSyncTests.swift */; };
 		327564850CBFEF8115249F90 /* EditorTypeScaleBridgeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A17150D551A7F6CA8079CBC /* EditorTypeScaleBridgeTests.swift */; };
 		32D06559805D6BFD4485614D /* FocusModeTests+InlineAnnotations.swift in Sources */ = {isa = PBXBuildFile; fileRef = 154CE34C1EA1A98EFD75B642 /* FocusModeTests+InlineAnnotations.swift */; };
+		33799F1ACAF7E5B4BEDB8F90 /* ZoomDataIntegrityRenameTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F8F512252508A2071CE38D68 /* ZoomDataIntegrityRenameTests.swift */; };
 		33D75A040525127AEF5D5D03 /* MathSpecialCharsExportTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1136299C7BF49F9B8B7F5CA /* MathSpecialCharsExportTests.swift */; };
 		340253991038A90C28898154 /* DocumentPreviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 944062D49633F32557CC7161 /* DocumentPreviewView.swift */; };
 		34A75521A78071D5E5FE842C /* DiagnosticsSettingsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A4947E787A1E091BE060589 /* DiagnosticsSettingsTests.swift */; };
@@ -185,6 +186,7 @@
 		533D8BDE9118ACC34CF4BF89 /* ExportPreferencesPane.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEC20B55C260FCF5460E4E23 /* ExportPreferencesPane.swift */; };
 		53870951193FF6433568FC60 /* ZoteroLibraryScopeTests+ExportDecodeError.swift in Sources */ = {isa = PBXBuildFile; fileRef = C40F7F01A5564D0FB229F5D2 /* ZoteroLibraryScopeTests+ExportDecodeError.swift */; };
 		53A856455FD6985D356DF716 /* ExportService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C65021F994002F139C1184C /* ExportService.swift */; };
+		53CA97BC44F8EF963A212FAE /* ZoomRenameFlushTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A8A8B0915B9E016AF46A8E39 /* ZoomRenameFlushTests.swift */; };
 		53CB37D15CCB3AF5AF41F3D6 /* ToolbarSymbolAvailabilityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7447AEBB76A8FD3531FA9E7C /* ToolbarSymbolAvailabilityTests.swift */; };
 		54057EC3C94ED504CC870459 /* BibliographySectionFlagTests+DataIntegrity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 540E3275C45E40D89DE7C03E /* BibliographySectionFlagTests+DataIntegrity.swift */; };
 		5428AB4DBE5F4E61BBD3DFAC /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = 980503AFBDB8FC8CEF6F8BFE /* GRDB */; };
@@ -880,6 +882,7 @@
 		A68A93212735EBAA064098B5 /* SectionReconcilerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SectionReconcilerTests.swift; sourceTree = "<group>"; };
 		A6D0392785BD97CBA2E0B4A7 /* BibliographyOpeningSelectorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BibliographyOpeningSelectorTests.swift; sourceTree = "<group>"; };
 		A85601DB766C7F746FEE509A /* SnapshotBackupFlushTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SnapshotBackupFlushTests.swift; sourceTree = "<group>"; };
+		A8A8B0915B9E016AF46A8E39 /* ZoomRenameFlushTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZoomRenameFlushTests.swift; sourceTree = "<group>"; };
 		A97DAA603C9EB29DE79FB8EB /* PreferencesView+Actions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "PreferencesView+Actions.swift"; sourceTree = "<group>"; };
 		AABAA974FA6CC968A6C933C6 /* AnnotationDisplayPersistenceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnnotationDisplayPersistenceTests.swift; sourceTree = "<group>"; };
 		AB26408FC5CF1E991EFAD81E /* MilkdownCoordinator+Images.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "MilkdownCoordinator+Images.swift"; sourceTree = "<group>"; };
@@ -1014,6 +1017,7 @@
 		F6F416FB7DADDC6E7E5C1D49 /* BlockParser+Assembly.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "BlockParser+Assembly.swift"; sourceTree = "<group>"; };
 		F7632E03467F96CF1B16972B /* AnnotationDisplayPersistenceTests+FocusMode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AnnotationDisplayPersistenceTests+FocusMode.swift"; sourceTree = "<group>"; };
 		F81113C37BEEB70AFE5F618D /* EditorTypeScale.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorTypeScale.swift; sourceTree = "<group>"; };
+		F8F512252508A2071CE38D68 /* ZoomDataIntegrityRenameTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZoomDataIntegrityRenameTests.swift; sourceTree = "<group>"; };
 		F953977D45349BF472FE6C7F /* ExportActivityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportActivityTests.swift; sourceTree = "<group>"; };
 		F96E769CEEE1DE5503BB6C03 /* SectionReconcilerPrecedencePinTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SectionReconcilerPrecedencePinTests.swift; sourceTree = "<group>"; };
 		FA8E40231CCB32EC98E3B48F /* ProjectPickerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectPickerView.swift; sourceTree = "<group>"; };
@@ -1696,8 +1700,10 @@
 				E9AD7E7D5BB907AF08313DC0 /* ZoomDataIntegrityCountMismatchTests.swift */,
 				F146952AC504CD9CCFD951D7 /* ZoomDataIntegrityDuplicateHeadingTests.swift */,
 				244E416708C8E01AE3A135F2 /* ZoomDataIntegrityNotesTests.swift */,
+				F8F512252508A2071CE38D68 /* ZoomDataIntegrityRenameTests.swift */,
 				3BA6663D048A71FA1B3EC42A /* ZoomDataIntegrityTests.swift */,
 				768AE0636AB0C5E436A2FF28 /* ZoomExitPillTests.swift */,
+				A8A8B0915B9E016AF46A8E39 /* ZoomRenameFlushTests.swift */,
 				3FD732C8C524EAB2945096A2 /* ZoteroApplyProbedStatusTests.swift */,
 				B8EE2BE4643241D9AD43EABF /* ZoteroExportDecodeResultTests.swift */,
 				B74C8F818689D9A62910CDD8 /* ZoteroLibraryScopeTests.swift */,
@@ -2199,8 +2205,10 @@
 				612F76A9AC746AC2A8A6C8CB /* ZoomDataIntegrityCountMismatchTests.swift in Sources */,
 				4F90445BA2C273F6C49F47D6 /* ZoomDataIntegrityDuplicateHeadingTests.swift in Sources */,
 				FCDEC16908ED1ABD61D221AE /* ZoomDataIntegrityNotesTests.swift in Sources */,
+				33799F1ACAF7E5B4BEDB8F90 /* ZoomDataIntegrityRenameTests.swift in Sources */,
 				D6C6A8835E54DC2898CC1871 /* ZoomDataIntegrityTests.swift in Sources */,
 				6BA29DF48C7805444BF56C04 /* ZoomExitPillTests.swift in Sources */,
+				53CA97BC44F8EF963A212FAE /* ZoomRenameFlushTests.swift in Sources */,
 				31EE4F7EA3B0C9163BEF4206 /* ZoomWordCountSyncTests.swift in Sources */,
 				654C860545EFFAEE698BE0F0 /* ZoomWordCountSyncZoomedTests.swift in Sources */,
 				4D4E276B052E7B3AB9188592 /* ZoteroApplyProbedStatusTests.swift in Sources */,

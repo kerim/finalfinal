@@ -131,16 +131,95 @@ extension ProjectDatabase {
            var queue = queues[block.textContent], !queue.isEmpty {
             let preserved = queue.removeFirst()
             queues[block.textContent] = queue
-            block.id = preserved.id
-            block.status = preserved.metadata.status
-            block.tags = preserved.metadata.tags
-            block.wordGoal = preserved.metadata.wordGoal
-            block.goalType = preserved.metadata.goalType
-            block.aggregateGoal = preserved.metadata.aggregateGoal
-            block.aggregateGoalType = preserved.metadata.aggregateGoalType
-            if restoringBibliography, preserved.metadata.isBibliography { block.isBibliography = true }
-            if preserved.metadata.isNotes { block.isNotes = true }
+            applyPreserved(preserved, to: &block, restoringBibliography: restoringBibliography)
         }
+    }
+
+    /// Mechanical core shared by `applyPreservedHeading`'s title-queue path (above) and the
+    /// position-based zoom-root anchor path (`resolveAnchorHeading`, below): applies a
+    /// preserved heading's id + metadata directly onto `block`. `restoringBibliography`
+    /// semantics are identical to `applyPreservedHeading`'s own parameter of the same name --
+    /// see that function's doc comment.
+    func applyPreserved(_ preserved: PreservedHeading, to block: inout Block, restoringBibliography: Bool) {
+        block.id = preserved.id
+        block.status = preserved.metadata.status
+        block.tags = preserved.metadata.tags
+        block.wordGoal = preserved.metadata.wordGoal
+        block.goalType = preserved.metadata.goalType
+        block.aggregateGoal = preserved.metadata.aggregateGoal
+        block.aggregateGoalType = preserved.metadata.aggregateGoalType
+        if restoringBibliography, preserved.metadata.isBibliography { block.isBibliography = true }
+        if preserved.metadata.isNotes { block.isNotes = true }
+    }
+
+    /// Position-based match for the zoom root: preserves the id/metadata of the existing
+    /// heading at `anchorId` onto the first (non-empty) heading in `newBlocks`, REGARDLESS of
+    /// whether its title changed -- unlike `applyPreservedHeading`'s title-queue match, which a
+    /// rename defeats outright (the renamed heading simply stops popping its old queue slot,
+    /// and a fresh id/UUID-generated-by-the-parser churns instead). See
+    /// `Database+BlocksReplace.swift`'s `replaceBlocksInRange` doc comment (Step 1) for why this
+    /// must be ADD-ONLY at every call site: `SectionSyncService` pairs its own Section-record
+    /// table to `zoomedSectionIds` by array position, so swapping an id (rather than only ever
+    /// adding one) can shift that pairing and corrupt unrelated section metadata.
+    ///
+    /// Binds (returns non-nil) only when ALL of:
+    ///  (a) an existing in-range heading has `id == anchorId`, and that row is not `isNotes`
+    ///      and not `isBibliography`;
+    ///  (b) the first non-empty block of `newBlocks` is itself a heading, and that heading is
+    ///      not `isNotes`/`isBibliography`;
+    ///  (c) it is NOT the case that (the new heading's level is deeper than the anchor's old
+    ///      level) AND (the new heading's title equals the title of some OTHER existing,
+    ///      non-anchor heading in range) -- the relaxed guard: plain promotion, a same-level
+    ///      rename, and a rename-plus-demotion to a genuinely new title all bind and preserve
+    ///      metadata; only a demotion that collides with another real heading's title declines
+    ///      (the "user deleted the root heading, revealing an existing child" case, where
+    ///      binding the anchor would misattribute that other heading's content to the anchor's
+    ///      id instead of leaving both to resolve independently).
+    func resolveAnchorHeading(
+        existing: [Block],
+        newBlocks: [Block],
+        anchorId: String?
+    ) -> (preserved: PreservedHeading, newIndex: Int)? {
+        guard let anchorId else { return nil }
+        guard let anchorBlock = existing.first(where: { $0.id == anchorId }),
+              anchorBlock.blockType == .heading,
+              !anchorBlock.isNotes, !anchorBlock.isBibliography else {
+            return nil
+        }
+        guard let newIndex = newBlocks.firstIndex(where: { !BlockParser.isEmptyFragment($0.markdownFragment) }) else {
+            return nil
+        }
+        let candidate = newBlocks[newIndex]
+        guard candidate.blockType == .heading, !candidate.isNotes, !candidate.isBibliography else {
+            return nil
+        }
+
+        // M8 (judge fix round): decline when the anchor's OLD title+level still appear
+        // elsewhere among the new blocks -- i.e. the real root is still genuinely present,
+        // unchanged, just pushed to a LATER position (the user typed a new heading above it
+        // within one debounce window). Binding here would steal the real root's identity
+        // (id + metadata) onto that new heading, while the real root -- now excluded from the
+        // title-matching queue below because ITS OWN old row is removed from the pool as
+        // "already claimed by the anchor" -- gets a completely fresh parser id and silently
+        // loses its own status/tags/goals. An ordinary RENAME never trips this: the candidate's
+        // title differs from the anchor's OLD title by definition, so this only matches when
+        // the anchor's old identity survives at some OTHER index than `newIndex`.
+        let anchorStillPresentElsewhere = newBlocks.enumerated().contains { offset, block in
+            offset != newIndex
+                && block.blockType == .heading
+                && block.textContent == anchorBlock.textContent
+                && block.headingLevel == anchorBlock.headingLevel
+        }
+        if anchorStillPresentElsewhere { return nil }
+
+        if let newLevel = candidate.headingLevel, let oldLevel = anchorBlock.headingLevel, newLevel > oldLevel {
+            let collidesWithOtherHeading = existing.contains { other in
+                other.id != anchorId && other.blockType == .heading && other.textContent == candidate.textContent
+            }
+            if collidesWithOtherHeading { return nil }
+        }
+
+        return (PreservedHeading(from: anchorBlock), newIndex)
     }
 
     /// Restore `isBibliography` onto the entry rows beneath a heading that
@@ -280,8 +359,11 @@ extension ProjectDatabase {
     /// claims the 1st old occurrence titled T, the 2nd new claims the 2nd old, ...). Used to
     /// decide, per OLD occurrence, whether its own slot will ever be popped.
     ///
-    /// Group existing headings by title, in existing-range order (preserves zoomedSectionId
-    /// across re-parses), then split each title's occurrences into `protectedIds` (never
+    /// Group existing headings by title, in existing-range order (preserves a heading's id
+    /// across a re-parse that keeps its title unchanged -- the zoom ROOT itself is now matched
+    /// by POSITION instead, via `resolveAnchorHeading`/`anchorHeadingId`, precisely because a
+    /// rename defeats a title match; see `replaceBlocksInRange`'s doc comment), then split each
+    /// title's occurrences into `protectedIds` (never
     /// deleted, never eligible to be popped) vs. `queues` (the pop queue consumed by
     /// `applyPreservedHeading`). A duplicate title gets a queue of length > 1; consuming the
     /// new parse in order pops the front of the matching title's queue, so the nth heading

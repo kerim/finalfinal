@@ -383,6 +383,70 @@ extension XCUIApplication {
         return nil
     }
 
+    /// Locates a heading's line by its BARE TEXT alone -- NEVER by the raw markdown syntax mark
+    /// ("#", "##", "###", ...) that precedes it in Source mode. Two tiers, both scoped to
+    /// `.staticTexts` ONLY: (1) exact-prefix match (`editorStaticText(startingWith:)`), (2) a
+    /// substring scan still scoped to `.staticTexts` (catches a leaf whose text doesn't START
+    /// with `text` -- e.g. a leading space left over from a split-off syntax mark).
+    ///
+    /// **Deliberately has NO third, broader (`.any`-descendants) fallback tier -- do not re-add
+    /// one.** LESSON (zoom-rename-sidebar e2e batch, 2026-09-23, superdev-diagnostician,
+    /// CONFIRMED from the driver's `xcodebuild.log` StaticText scans): a round-1 version of this
+    /// function had exactly that fallback, reasoning (WRONG -- corrected here) that a zoomed
+    /// root heading's markdown-prefixed text ("## Riverside") must be splitting across leaves.
+    /// The real cause: the zoom root's heading line is not exposed as a `StaticText` AT ALL in
+    /// Source mode, under ANY query text, prefixed or bare -- confirmed directly from the AX
+    /// scans (`## Riverside`/`## Garden` never appear, in any pass, across the whole test run).
+    /// The `.any`-descendants fallback then did exactly what a broader element-type net risks
+    /// doing: it matched the FIRST unrelated element anywhere under `editor-area` whose value
+    /// happened to contain the bare title -- `status-bar-outline`, the status bar's own
+    /// zoom-summary button (value "Zoomed into Riverside"), which is nested inside `editor-area`
+    /// (`ContentView+EditorPresentation.swift:43`). Clicking that button opened a section-list
+    /// popover instead of placing a cursor in the document, so every subsequent
+    /// select-line/type/delete keystroke went to the popover, not the editor -- a SILENT wrong
+    /// click, not a clean failure, and strictly worse than the `nil` this two-tier version
+    /// returns instead. **A broader fallback here can silently succeed against interactive
+    /// chrome (a button, a control) instead of content -- never widen this beyond
+    /// `.staticTexts`.** For a heading that genuinely isn't exposed as a `StaticText` at all
+    /// (the zoom root's own case), locate its line STRUCTURALLY instead -- see
+    /// `E2EScratchTests.swift`'s `selectZoomRootHeadingLine(bodyPrefix:)` (click a known-reliable
+    /// body-paragraph StaticText, then Cmd-Up/`cursorDocStart` to reach line 1) -- rather than
+    /// widening this function's own element-type net to compensate.
+    func editorHeadingText(matching text: String, timeout: TimeInterval = 10) -> XCUIElement? {
+        if let exact = editorStaticText(startingWith: text, timeout: timeout) {
+            return exact
+        }
+        let deadline = Date(timeIntervalSinceNow: 2)
+        repeat {
+            for element in editorArea.staticTexts.allElementsBoundByIndex {
+                guard element.exists else { continue }
+                if let value = element.value as? String, value.contains(text) { return element }
+                if element.label.contains(text) { return element }
+            }
+            RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.25))
+        } while Date() < deadline
+        return nil
+    }
+
+    /// Dumps every `editorArea.staticTexts` element's `label`/`value` as one string, for
+    /// attaching as failure evidence when a heading/content lookup fails -- so a future
+    /// diagnosis doesn't need forensic screen-recording archaeology (as `editorHeadingText`'s
+    /// own doc comment above required) to see what the AX tree actually looked like at the
+    /// moment of failure. Manual `.exists`-guarded scan, not a predicate: same reasoning as
+    /// `editorStaticText` above (a heading container's `value` can be a non-String NSNumber).
+    func editorStaticTextsDump() -> String {
+        var lines: [String] = []
+        for (index, element) in editorArea.staticTexts.allElementsBoundByIndex.enumerated() {
+            guard element.exists else {
+                lines.append("[\(index)] (vanished before it could be read)")
+                continue
+            }
+            let valueDescription = (element.value as? String).map { "\"\($0)\"" } ?? String(describing: element.value)
+            lines.append("[\(index)] label=\"\(element.label)\" value=\(valueDescription)")
+        }
+        return lines.isEmpty ? "(no staticTexts found in editor-area)" : lines.joined(separator: "\n")
+    }
+
     /// True if a StaticText inside `editor-area` whose value/label starts with `prefix` EXISTS
     /// (within `timeout`) AND its accessibility frame currently intersects `editor-area`'s own
     /// visible frame -- i.e. it is genuinely on screen right now, not merely present somewhere
