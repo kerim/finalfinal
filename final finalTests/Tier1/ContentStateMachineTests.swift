@@ -97,8 +97,8 @@ struct ContentStateMachineTests {
         #expect(!state.isBusy)
     }
 
-    @Test("Watchdog clears zoom state on zoomTransition timeout")
-    func watchdogClearsZoomState() async throws {
+    @Test("Watchdog defers to safe recovery on zoomTransition timeout, without clearing zoom state")
+    func watchdogDefersToSafeRecoveryOnZoomTimeout() async throws {
         let state = EditorViewState()
         state.zoomedSectionId = "test-section"
         state.zoomedSectionIds = Set(["test-section", "child-1"])
@@ -109,10 +109,29 @@ struct ContentStateMachineTests {
         // Wait for watchdog
         try await Task.sleep(for: .seconds(6))
 
+        // The watchdog itself always resets contentState to .idle and clears the
+        // in-flight isZoomingContent flag, unconditionally, on a stuck zoomTransition.
         #expect(state.contentState == .idle)
-        #expect(state.zoomedSectionId == nil, "Watchdog should clear zoomedSectionId on zoom timeout")
-        #expect(state.zoomedSectionIds == nil, "Watchdog should clear zoomedSectionIds on zoom timeout")
         #expect(state.isZoomingContent == false, "Watchdog should clear isZoomingContent on zoom timeout")
+
+        // It does NOT blindly clear zoomedSectionId/zoomedSectionIds anymore -- that was the
+        // data-loss hazard fixed alongside the zoom-rename-sidebar bug (it could leave the
+        // editor showing partial/zoomed content while the app believed it wasn't zoomed,
+        // risking a silent overwrite on the next edit). Instead the watchdog hands off to
+        // the same background recovery (clearZoomRestoringEditor() / attemptZoomRootLostRecovery())
+        // used elsewhere, which only clears section tracking once it has actually restored
+        // the full document. This bare EditorViewState() has no projectDatabase/
+        // currentProjectId, so that recovery can never succeed -- it retries a few times and
+        // then gives up (showing a warning toast), leaving the section state frozen (safe)
+        // rather than silently declaring "not zoomed" over content that was never restored.
+        #expect(
+            state.zoomedSectionId == "test-section",
+            "With no project context, recovery can never complete, so zoomedSectionId is left frozen rather than blindly cleared"
+        )
+        #expect(
+            state.zoomedSectionIds == Set(["test-section", "child-1"]),
+            "With no project context, recovery can never complete, so zoomedSectionIds is left frozen rather than blindly cleared"
+        )
     }
 
     @Test("Returning to idle cancels watchdog")
